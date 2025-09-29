@@ -60,7 +60,7 @@ def save_session(path: str, world, drives) -> str:
         "world": world.to_dict(),
         "drives": drives.to_dict(),
         "skills": skills_to_dict(),
-        "app_version": "cca8_run/0.7.7",
+        "app_version": "cca8_run/0.7.8",
         "platform": platform.platform(),
     }
     tmp = path + ".tmp"
@@ -75,7 +75,7 @@ def save_session(path: str, world, drives) -> str:
 
 def print_header():
     print("\nWelcome to the CCA8 Mammalian Brain Simulation")
-    print("(version cca8_run.py: 0.7.7)")
+    print("(version cca8_run.py: 0.7.8)")
     print(f"(cca8_world_graph: 0.1.0, cca8_column: 0.1.0,\n run_world_patched: n/a, cca8_features: 0.1.0, cca8_temporal: 0.1.0)\n")
     print(f"Entry point program being run: {os.path.abspath(sys.argv[0])}")
     print(f"OS: {sys.platform} (run system-dependent utilities for more detailed info)")
@@ -201,7 +201,7 @@ def choose_profile(ctx) -> dict:
 def versions_dict() -> dict:
     """Collect versions/platform info used for preflight stamps."""
     return {
-        "runner": "0.7.7",
+        "runner": "0.7.8",
         "world_graph": "0.1.0",
         "column": "0.1.0",
         "features": "0.1.0",
@@ -505,12 +505,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2 if e.code else 0
 
     if args.version:
-        print("0.7.7")
+        print("0.7.8")
         return 0
 
     if args.about:
         print("CCA8 Components:")
-        print(f"  - cca8_run.py v0.7.7 ({os.path.abspath(__file__)})")
+        print(f"  - cca8_run.py v0.7.8 ({os.path.abspath(__file__)})")
         print(f"  - cca8_world_graph v0.1.0 ({getattr(wgmod, '__file__', 'cca8_world_graph.py')})")
         print(f"  - cca8_column   v0.1.0 (cca8_column.py)")
         print(f"  - cca8_features      v0.1.0 (cca8_features.py)")
