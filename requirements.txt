@@ -1,0 +1,5 @@
+# CCA8 requirements
+# Python >= 3.11 is recommended.
+# Third-party developer tools:
+mypy
+pylint

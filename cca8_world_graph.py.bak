@@ -1,0 +1,183 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+# Minimal, self-contained WorldGraph with engram pointers and helpers.
+from dataclasses import dataclass, field
+from typing import Any, Optional, Protocol, Dict, List, Set, Tuple
+import itertools
+
+__version__ = "0.1.0"
+
+class ColumnProvider(Protocol):
+    def get(self, engram_id: str) -> dict: ...
+
+@dataclass
+class Binding:
+    id: str
+    tags: Set[str] = field(default_factory=set)
+    edges: List[Dict[str, Any]] = field(default_factory=list)  # outgoing edges
+    meta: Dict[str, Any] = field(default_factory=dict)
+    engrams: Dict[str, Any] = field(default_factory=dict)      # column_name -> pointer
+    
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "tags": list(self.tags),
+            "edges": [dict(e) for e in self.edges],
+            "meta": dict(self.meta),
+            "engrams": dict(self.engrams),
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "Binding":
+        return Binding(
+            id=d["id"],
+            #tags=list(d.get("tags", [])),
+            tags=set(d.get("tags", [])),         # set, not list
+            edges=[dict(e) for e in d.get("edges", [])],
+            meta=dict(d.get("meta", {})),
+            engrams=dict(d.get("engrams", {})),
+        )  
+    
+
+class WorldGraph:
+    def __init__(self) -> None:
+        self._bindings: Dict[str, Binding] = {}
+        self._anchors: Dict[str, str] = {}
+        self._id_counter = itertools.count(1)
+        self._latest_binding_id: Optional[str] = None
+        self._column_providers: dict[str, Any] = {}
+        
+    def to_dict(self) -> dict:
+        return {
+            "bindings": {bid: b.to_dict() for bid, b in self._bindings.items()},
+            "anchors": dict(self._anchors),                    # {"NOW": "b1", ...}
+            "latest": self._latest_binding_id,                 # e.g., "b152"
+            "version": "0.1",                                  # schema version
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "WorldGraph":
+        g = cls()
+        g._bindings = {bid: Binding.from_dict(b) for bid, b in data.get("bindings", {}).items()}
+        g._anchors = dict(data.get("anchors", {}))
+        g._latest_binding_id = data.get("latest")
+        # ensure counter continues from highest binding id
+        # (optional: if you use integer suffixes to mint new ids)
+        # Advance the id counter past the max numeric suffix
+        if g._bindings:
+            try:
+                mx = max(int(bid[1:]) for bid in g._bindings if bid.startswith("b"))
+            except ValueError:
+                mx = 0
+            import itertools
+            g._id_counter = itertools.count(mx + 1)
+        return g          
+
+    # ---- Core helpers ----
+    def _next_binding_id(self) -> str:
+        return f"b{next(self._id_counter)}"
+
+    def ensure_anchor(self, name: str) -> str:
+        bid = self._anchors.get(name)
+        if bid is not None:
+            return bid
+        bid = self.add_binding(tags={f"anchor:{name}"}, meta={"anchor": name})
+        self._anchors[name] = bid
+        return bid
+
+    def add_binding(self, tags: Optional[Set[str]] = None,
+                    engrams: Optional[Dict[str, Any]] = None,
+                    meta: Optional[Dict[str, Any]] = None) -> str:
+        bid = self._next_binding_id()
+        rec = Binding(id=bid,
+                      tags=set(tags or []),
+                      edges=[],
+                      meta=dict(meta or {}),
+                      engrams=dict(engrams or {}))
+        self._bindings[bid] = rec
+        self._latest_binding_id = bid
+        return bid
+
+    def add_edge(self, src: str, dst: str, label: str, meta: Optional[Dict[str, Any]] = None) -> None:
+        self._bindings[src].edges.append({
+            "to": dst,
+            "label": label,
+            "meta": dict(meta or {})
+        })
+
+    def add_predicate(self, name: str,
+                      attach: str = "latest",
+                      engrams: Optional[Dict[str, Any]] = None,
+                      meta: Optional[Dict[str, Any]] = None) -> str:
+        parent: Optional[str] = None
+        if attach == "now":
+            parent = self.ensure_anchor("NOW")
+        elif attach == "latest":
+            parent = self._latest_binding_id
+        elif attach == "none":
+            parent = None
+        else:
+            raise ValueError("attach must be one of {'now','latest','none'}")
+
+        bid = self.add_binding(tags={f"pred:{name}"}, engrams=engrams, meta=meta)
+        if parent is not None and attach != "none":
+            self.add_edge(parent, bid, label=f"attach:{attach}", meta={})
+        return bid
+
+    # ---- Provider registry & deref ----
+    def register_column_provider(self, name: str, provider: ColumnProvider) -> None:
+        self._column_providers[name] = provider
+
+    def get_engrams(self, binding_id: str) -> Dict[str, Any]:
+        return dict(self._bindings[binding_id].engrams)
+
+    def resolve_fact(self, binding_id: str, name: str) -> dict:
+        hits = []
+        ed = self.get_engrams(binding_id)
+        for col_name, ptr in ed.items():
+            engram_id = ptr.get("id") if isinstance(ptr, dict) else ptr
+            prov = self._column_providers.get(col_name)
+            if not prov:
+                continue
+            try:
+                rec = prov.get(engram_id)
+            except KeyError:
+                continue
+            hits.append({
+                "column": col_name,
+                "engram_id": engram_id,
+                "record": rec,
+            })
+        return {"name": name, "hits": hits}
+
+    # ---- Simple BFS planner ----
+    def plan_to_predicate(self, src: str, pred_name: str) -> List[str]:
+        target_tag = f"pred:{pred_name}"
+        if src not in self._bindings:
+            raise KeyError(f"Unknown source binding {src}")
+
+        # If src already has the tag, return [src]
+        if target_tag in self._bindings[src].tags:
+            return [src]
+
+        from collections import deque
+        q = deque([[src]])
+        seen = {src}
+        while q:
+            path = q.popleft()
+            last = path[-1]
+            for e in self._bindings[last].edges:
+                nxt = e["to"]
+                if nxt in seen:
+                    continue
+                seen.add(nxt)
+                new_path = path + [nxt]
+                if target_tag in self._bindings[nxt].tags:
+                    return new_path
+                q.append(new_path)
+        return []  # not found
+
+    # Convenience: latest binding id
+    @property
+    def latest(self) -> Optional[str]:
+        return self._latest_binding_id
