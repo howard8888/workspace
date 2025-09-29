@@ -1,0 +1,20 @@
+echo # Python
+echo __pycache__/
+echo *.py[cod]
+echo *.pyo
+echo *.pyd
+echo *.egg-info/
+echo
+echo # Virtual envs
+echo .venv/
+echo venv/
+echo
+echo # Editors/OS
+echo .vscode/
+echo .idea/
+echo .DS_Store
+echo Thumbs.db
+echo
+echo # Patch / temp
+echo *.patch
+echo *.rej
