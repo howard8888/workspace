@@ -88,7 +88,7 @@ def print_header():
     print("  2. Chimpanzee-like brain simulation")
     print("  3. Human-like brain simulation")
     print("  4. Super-Human-like machine simulation\n")
-    print("Introduction goes here")
+    print("Intro goes here")
 
 def loop_helper(autosave_from_args: Optional[str], world, drives, time_limited: bool = False):
     """Operations to run at the end of each menu branch before looping again.
