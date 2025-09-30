@@ -74,7 +74,7 @@ def save_session(path: str, world, drives) -> str:
 # --------------------------------------------------------------------------------------
 
 def print_header():
-    print("\nWelcome to the CCA8 Mammalian Brain Simulation")
+    print("\nA Warm Welcome to the CCA8 Mammalian Brain Simulation")
     print("(version cca8_run.py: 0.7.8)")
     print(f"(cca8_world_graph: 0.1.0, cca8_column: 0.1.0,\n run_world_patched: n/a, cca8_features: 0.1.0, cca8_temporal: 0.1.0)\n")
     print(f"Entry point program being run: {os.path.abspath(sys.argv[0])}")
