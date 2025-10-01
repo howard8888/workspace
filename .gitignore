@@ -18,3 +18,5 @@ Thumbs.db
 # Patches/temp
 *.patch
 *.rej
+*.diff 
+session.json 
