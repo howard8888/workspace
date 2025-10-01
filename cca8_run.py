@@ -146,6 +146,7 @@ MENU = """\
 12) Instinct step (Action Center)
 13) Show skill stats
 14) Autonomic tick (emit interoceptive cues)
+15) Delete edge (src, dst, relation)
 [S] Save session → path
 [L] Load session → path
 [D] Show drives (raw + tags)
@@ -216,6 +217,91 @@ def run_preflight_lite_maybe():
     if mode == "off":
         return
     print("[preflight-lite] basic checks ok.\n")
+
+
+# --------------------------------------------------------------------------------------
+# Edge delete helpers (self-contained)
+# --------------------------------------------------------------------------------------
+
+from typing import Any, Dict, List, Optional
+
+def _rm_from_list(lst: List[Dict[str, Any]], dst: str, rel: Optional[str]) -> int:
+    before = len(lst)
+    def match(e: Dict[str, Any]) -> bool:
+        d = e.get("dst") or e.get("to") or e.get("dst_id") or e.get("id")
+        r = e.get("rel") or e.get("label") or e.get("relation")
+        if d != dst:
+            return False
+        return (rel is None) or (r == rel)
+    lst[:] = [e for e in lst if not match(e)]
+    return before - len(lst)
+
+def world_delete_edge(WG: Any, src: str, dst: str, rel: Optional[str]) -> int:
+    """
+    Remove edges matching (src -> dst [rel]) from WG, regardless of storage layout.
+    Returns number of removed edges. No-op if structures aren’t present.
+    """
+    removed = 0
+
+    # 1) Per-binding adjacency (e.g., WG.bindings[src]['edges'/'out'/...])
+    bindings = getattr(WG, "bindings", None) or getattr(WG, "nodes", None)
+    if isinstance(bindings, dict) and src in bindings:
+        node = bindings[src]
+        for key in ("edges", "out", "links", "outgoing"):
+            if isinstance(node.get(key), list):
+                removed += _rm_from_list(node[key], dst, rel)
+
+    # 2) Global list of edges (e.g., WG.edges = [{src,dst,rel}, ...])
+    edges = getattr(WG, "edges", None)
+    if isinstance(edges, list):
+        before = len(edges)
+        def match_gl(e: Dict[str, Any]) -> bool:
+            s = e.get("src") or e.get("from") or e.get("src_id")
+            d = e.get("dst") or e.get("to") or e.get("dst_id")
+            r = e.get("rel") or e.get("label") or e.get("relation")
+            if s != src or d != dst:
+                return False
+            return (rel is None) or (r == rel)
+        WG.edges = [e for e in edges if not match_gl(e)]
+        removed += before - len(WG.edges)
+    elif isinstance(edges, dict) and src in edges:
+        # 3) Global adjacency dict: WG.edges[src] = [{dst,rel}, ...]
+        lst = edges.get(src)
+        if isinstance(lst, list):
+            removed += _rm_from_list(lst, dst, rel)
+
+    return removed
+
+def delete_edge_flow(WG: Any, autosave_cb=None) -> None:
+    print("Delete edge (src -> dst [relation])")
+    src = input("Source binding id (e.g., b1): ").strip()
+    dst = input("Dest binding id (e.g., b3): ").strip()
+    rel = input("Relation label (optional; blank = ANY): ").strip() or None
+
+    # Prefer a first-party method if it exists (future-proof)
+    removed = 0
+    for method in ("remove_edge", "delete_edge"):
+        if hasattr(WG, method):
+            try:
+                removed = getattr(WG, method)(src, dst, rel)
+                break
+            except TypeError:
+                # Method exists with a different signature; fall back to generic remover
+                pass
+            except Exception as e:
+                print(f"Note: WG.{method} raised {e!r}; using generic remover.")
+
+    if removed == 0:
+        removed = world_delete_edge(WG, src, dst, rel)
+
+    print(f"Removed {removed} edge(s) {src} -> {dst}{(' (rel='+rel+')' if rel else '')}")
+
+    # Autosave if the runner exposes a callback
+    if autosave_cb:
+        try:
+            autosave_cb()
+        except Exception:
+            pass
 
 # --------------------------------------------------------------------------------------
 # Interactive loop
@@ -403,6 +489,13 @@ def interactive_loop(args: argparse.Namespace) -> None:
         elif choice == "14":
             drives.fatigue = min(1.0, drives.fatigue + 0.01)
             print("Autonomic: fatigue +0.01")
+            loop_helper(args.autosave, world, drives)
+
+        elif choice == "15":
+            try:
+                delete_edge_flow(world, autosave_cb=lambda: loop_helper(args.autosave, world, drives))
+            except NameError:
+                delete_edge_flow(world, autosave_cb=None)
             loop_helper(args.autosave, world, drives)
 
         elif choice.lower() == "s":
