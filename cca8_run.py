@@ -238,6 +238,8 @@ MENU = """\
 13) Show skill stats
 14) Autonomic tick (emit interoceptive cues)
 15) Delete edge (source, destn, relation)
+16) Export snapshot (bindings + edges)
+
 [S] Save session → path
 [L] Load session → path
 [D] Show drives (raw + tags)
@@ -323,6 +325,61 @@ def _anchor_id(world, name="NOW") -> str:
         if any(t == f"anchor:{name}" for t in getattr(b, "tags", [])):
             return bid
     return "?"
+    
+def _sorted_bids(world) -> list[str]:
+    def key_fn(bid: str):
+        try: return int(bid[1:])  # sort b1,b2,... numerically
+        except: return 10**9
+    return sorted(world._bindings.keys(), key=key_fn)
+
+def export_snapshot(world, path_txt="world_snapshot.txt", path_dot="world_snapshot.dot") -> None:
+    """Write a complete snapshot of bindings + edges to text and DOT files."""
+    # Text dump
+    with open(path_txt, "w", encoding="utf-8") as f:
+        now_id = _anchor_id(world, "NOW")
+        f.write(f"NOW={now_id}  LATEST={world._latest_binding_id}\n\n")
+        f.write("BINDINGS:\n")
+        for bid in _sorted_bids(world):
+            b = world._bindings[bid]
+            tags = ", ".join(getattr(b, "tags", []))
+            f.write(f"{bid}: [{tags}]\n")
+        f.write("\nEDGES:\n")
+        for bid in _sorted_bids(world):
+            b = world._bindings[bid]
+            edges = getattr(b, "edges", []) or getattr(b, "out", []) or getattr(b, "links", []) or getattr(b, "outgoing", [])
+            if isinstance(edges, list):
+                for e in edges:
+                    rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
+                    dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                    if dst:
+                        f.write(f"{bid} --{rel}--> {dst}\n")
+
+    # Graphviz DOT (optional nice rendering)
+    with open(path_dot, "w", encoding="utf-8") as g:
+        g.write("digraph CCA8 {\n  rankdir=LR;\n  node [shape=box,fontsize=10];\n")
+        for bid in _sorted_bids(world):
+            b = world._bindings[bid]
+            tag_lines = "\\n".join(t.replace("pred:", "") for t in getattr(b, "tags", []))
+            g.write(f'  {bid} [label="{bid}\\n{tag_lines}"];\n')
+        for bid in _sorted_bids(world):
+            b = world._bindings[bid]
+            edges = getattr(b, "edges", []) or getattr(b, "out", []) or getattr(b, "links", []) or getattr(b, "outgoing", [])
+            if isinstance(edges, list):
+                for e in edges:
+                    rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
+                    dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                    if dst:
+                        g.write(f'  {bid} -> {dst} [label="{rel}"];\n')
+        g.write("}\n")
+    # message of exporting with absolute paths + directory   
+    path_txt_abs = os.path.abspath(path_txt)
+    path_dot_abs = os.path.abspath(path_dot)
+    out_dir = os.path.dirname(path_txt_abs)
+    print("Exported snapshot:")
+    print(f"  {path_txt_abs}")
+    print(f"  {path_dot_abs}")
+    print(f"Directory: {out_dir}")
+
 
 
 # --------------------------------------------------------------------------------------
@@ -525,6 +582,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 # Older builds: no helper available for callback style—do a simple save after.
                 delete_edge_flow(world, autosave_cb=None)
                 loop_helper(args.autosave, world, drives)
+        
+        elif choice == "16":
+            export_snapshot(world)
+            loop_helper(args.autosave, world, drives)
 
         elif choice.lower() == "s":
             path = input("Save to file (e.g., session.json): ").strip()
