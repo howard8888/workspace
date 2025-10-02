@@ -44,6 +44,8 @@ from typing import Optional, Any, Dict, List
 import cca8_world_graph as wgmod
 from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict
 
+__version__ = "0.7.9"
+
 # --- Edge delete helpers (self-contained) ------------------------------------
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
     return edge.get("dst") or edge.get("to") or edge.get("dst_id") or edge.get("id")
@@ -150,7 +152,7 @@ def save_session(path: str, world, drives) -> str:
         "world": world.to_dict(),
         "drives": drives.to_dict(),
         "skills": skills_to_dict(),
-        "app_version": "cca8_run/0.7.8",
+        "app_version": f"cca8_run/{__version__}",
         "platform": platform.platform(),
     }
     tmp = path + ".tmp"
@@ -165,8 +167,7 @@ def save_session(path: str, world, drives) -> str:
 
 def print_header():
     print("\nA Warm Welcome to the CCA8 Mammalian Brain Simulation")
-    print("(version cca8_run.py: 0.7.8)")
-    print(f"(cca8_world_graph: 0.1.0, cca8_column: 0.1.0,\n run_world_patched: n/a, cca8_features: 0.1.0, cca8_temporal: 0.1.0)\n")
+    print(f"(cca8_run.py v{__version__})\n")
     print(f"Entry point program being run: {os.path.abspath(sys.argv[0])}")
     print(f"OS: {sys.platform} (run system-dependent utilities for more detailed info)")
     print('(for non-interactive execution, ">python cca8_run.py --help" to see optional flags you can set)')
@@ -178,7 +179,7 @@ def print_header():
     print("  2. Chimpanzee-like brain simulation")
     print("  3. Human-like brain simulation")
     print("  4. Super-Human-like machine simulation\n")
-    print("Intro goes here")
+    print("Pending additional intro material here....")
 
 def loop_helper(autosave_from_args: Optional[str], world, drives, time_limited: bool = False):
     """Operations to run at the end of each menu branch before looping again.
@@ -292,7 +293,7 @@ def choose_profile(ctx) -> dict:
 def versions_dict() -> dict:
     """Collect versions/platform info used for preflight stamps."""
     return {
-        "runner": "0.7.8",
+        "runner": __version__,
         "world_graph": "0.1.0",
         "column": "0.1.0",
         "features": "0.1.0",
@@ -307,6 +308,22 @@ def run_preflight_lite_maybe():
     if mode == "off":
         return
     print("[preflight-lite] basic checks ok.\n")
+    
+def _anchor_id(world, name="NOW") -> str:
+    # Try a direct lookup if available
+    try:
+        if hasattr(world, "_anchors") and isinstance(world._anchors, dict):
+            bid = world._anchors.get(name)
+            if bid:
+                return bid
+    except Exception:
+        pass
+    # Fallback: scan tags
+    for bid, b in world._bindings.items():
+        if any(t == f"anchor:{name}" for t in getattr(b, "tags", [])):
+            return bid
+    return "?"
+
 
 # --------------------------------------------------------------------------------------
 # Interactive loop
@@ -378,25 +395,29 @@ def interactive_loop(args: argparse.Namespace) -> None:
             return
 
         if choice == "1":
-            print(f"Bindings: {len(world._bindings)}  Anchors: {list(world._anchors.keys())}  Latest: {world._latest_binding_id}")
+            now_id = _anchor_id(world, "NOW")
+            print(f"Bindings: {len(world._bindings)}  Anchors: NOW={now_id}  Latest: {world._latest_binding_id}")
             loop_helper(args.autosave, world, drives)
 
         elif choice == "2":
-            seen = set()
-            for b in world._bindings.values():
-                for t in b.tags:
-                    if t.startswith("pred:"):
-                        seen.add(t)
-            for t in sorted(seen):
-                print(" ", t.replace("pred:", "", 1))
-            if not seen:
+            idx: Dict[str, List[str]] = {}
+            for bid, b in world._bindings.items():
+                for t in getattr(b, "tags", []):
+                    if isinstance(t, str) and t.startswith("pred:"):
+                        key = t.replace("pred:", "", 1)
+                        idx.setdefault(key, []).append(bid)
+            if not idx:
                 print("(no predicates yet)")
+            else:
+                for key in sorted(idx.keys()):
+                    bids = sorted(idx[key], key=lambda x: int(x[1:]) if x[1:].isdigit() else x)
+                    print(f"  {key:<22} -> {', '.join(bids)}")
             loop_helper(args.autosave, world, drives)
 
         elif choice == "3":
             token = input("Enter predicate token (e.g., state:posture_standing): ").strip()
             if token:
-                bid = world.add_predicate(token, attach="now", meta={"added_by": "user"})
+                bid = world.add_predicate(token, attach="latest", meta={"added_by": "user"})
                 print(f"Added binding {bid} with pred:{token}")
             loop_helper(args.autosave, world, drives)
 
@@ -556,8 +577,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice.lower() == "t":
             # Tutorial access: try to open the local compendium
-            comp = os.path.join(os.getcwd(), "CCA8_Compendium_All-in-One.md")
-            print(f"Tutorial file (Compendium): {comp}")
+            comp = os.path.join(os.getcwd(), "README.md")
+            print(f"Tutorial file (README.md which acts as an all-in-one compendium): {comp}")
             if os.path.exists(comp):
                 try:
                     if sys.platform.startswith("win"):
@@ -566,12 +587,12 @@ def interactive_loop(args: argparse.Namespace) -> None:
                         os.system(f'open "{comp}"')
                     else:
                         os.system(f'xdg-open "{comp}"')
-                    print("Opened the compendium in your default viewer.")
+                    print("Opened the README.md/compendium in your default viewer.")
                 except Exception as e:
                     print(f"[warn] Could not open automatically: {e}")
                     print("Please open the file manually in your editor.")
             else:
-                print("Compendium not found in the current folder. Copy it here to open directly.")
+                print("README.md not found in the current folder. Copy it here to open directly.")
             # no autosave here
             continue
 
@@ -605,22 +626,22 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2 if e.code else 0
 
     if args.version:
-        print("0.7.8")
+        print(__version__)
         return 0
 
     if args.about:
         print("CCA8 Components:")
-        print(f"  - cca8_run.py v0.7.8 ({os.path.abspath(__file__)})")
-        print(f"  - cca8_world_graph v0.1.0 ({getattr(wgmod, '__file__', 'cca8_world_graph.py')})")
-        print(f"  - cca8_column   v0.1.0 (cca8_column.py)")
-        print(f"  - cca8_features      v0.1.0 (cca8_features.py)")
-        print(f"  - cca8_temporal   v0.1.0 (cca8_temporal.py)")
+        print(f"  - cca8_run.py v{__version__} ({os.path.abspath(__file__)})")
+        print(f"  - cca8_world_graph v... ({getattr(wgmod, '__file__', 'cca8_world_graph.py')})")
+        print(f"  - cca8_column   v... (cca8_column.py)")
+        print(f"  - cca8_features      v... (cca8_features.py)")
+        print(f"  - cca8_temporal   v... (cca8_temporal.py)")
         print(f"  - Profile: Human (k=3, sigma=0.02, jump=0.25)")
         try:
             from cca8_controller import PRIMITIVES
-            print(f"  - cca8_controller v0.1.2 (cca8_controller.py) [primitives: {len(PRIMITIVES)}]")
+            print(f"  - cca8_controller v... (cca8_controller.py) [primitives: {len(PRIMITIVES)}]")
         except Exception:
-            print(f"  - cca8_controller v0.1.2 (cca8_controller.py)")
+            print(f"  - cca8_controller v...(cca8_controller.py)")
         return 0
 
     if args.preflight:
