@@ -39,6 +39,7 @@ import platform
 import sys
 import time
 from datetime import datetime
+from dataclasses import dataclass
 from typing import Optional, Any, Dict, List
 
 import cca8_world_graph as wgmod
@@ -162,7 +163,7 @@ def save_session(path: str, world, drives) -> str:
     return ts
 
 # --------------------------------------------------------------------------------------
-# Console helpers
+# Two-gate policy and helpers and console helpers
 # --------------------------------------------------------------------------------------
 
 def print_header():
@@ -217,6 +218,122 @@ def _drive_tags(drives) -> list[str]:
     except Exception:
         pass
     return tags
+    
+def _normalize_pred(tok: str) -> str:
+    return tok if tok.startswith("pred:") else f"pred:{tok}"
+
+def _neighbors(world, bid: str) -> List[str]:
+    b = world._bindings.get(bid)
+    if not b:
+        return []
+    edges = getattr(b, "edges", []) or getattr(b, "out", []) or getattr(b, "links", []) or getattr(b, "outgoing", [])
+    out = []
+    if isinstance(edges, list):
+        for e in edges:
+            dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+            if dst:
+                out.append(dst)
+    return out
+
+def _bfs_reachable(world, src: str, dst: str, max_hops: int = 3) -> bool:
+    from collections import deque
+    if src == dst:
+        return True
+    q, seen, depth = deque([src]), {src}, {src: 0}
+    while q:
+        u = q.popleft()
+        if depth[u] >= max_hops:
+            continue
+        for v in _neighbors(world, u):
+            if v in seen:
+                continue
+            if v == dst:
+                return True
+            seen.add(v)
+            depth[v] = depth[u] + 1
+            q.append(v)
+    return False
+
+def _bindings_with_pred(world, token: str) -> List[str]:
+    want = _normalize_pred(token)
+    out = []
+    for bid, b in world._bindings.items():
+        for t in getattr(b, "tags", []):
+            if t == want:
+                out.append(bid)
+                break
+    return out
+
+def has_pred_near_now(world, token: str, hops: int = 3) -> bool:
+    now_id = _anchor_id(world, "NOW")
+    for bid in _bindings_with_pred(world, token):
+        if _bfs_reachable(world, now_id, bid, max_hops=hops):
+            return True
+    return False
+
+def any_pred_present(world, tokens: List[str]) -> bool:
+    return any(_bindings_with_pred(world, tok) for tok in tokens)
+    
+@dataclass
+class PolicyGate:
+    name: str
+    dev_gate: Callable[[Any], bool]                      # ctx -> bool
+    trigger: Callable[[Any, Any, Any], bool]             # (world, drives, ctx) -> bool
+
+class PolicyRuntime:
+    def __init__(self, catalog: List[PolicyGate]):
+        self.catalog = list(catalog)
+        self.loaded: List[PolicyGate] = []
+
+    def refresh_loaded(self, ctx) -> None:
+        self.loaded = [p for p in self.catalog if _safe(p.dev_gate, ctx)]
+
+    def list_loaded_names(self) -> List[str]:
+        return [p.name for p in self.loaded]
+
+    def consider_and_maybe_fire(self, world, drives, ctx, tie_break: str = "first") -> str:
+        # evaluate triggers on available policies
+        matches = [p for p in self.loaded if _safe(p.trigger, world, drives, ctx)]
+        if not matches:
+            return "no_match"
+        chosen = matches[0] if tie_break == "first" else matches[0]  # placeholder for later scoring
+        # delegate actual step selection/execution to your existing Action Center primitive
+        try:
+            result = action_center_step(world, ctx, drives)
+        except Exception as e:
+            return f"{chosen.name} (error: {e})"
+        return f"{chosen.name} -> {result}"
+
+def _safe(fn, *args):
+    try:
+        return bool(fn(*args))
+    except Exception:
+        return False
+
+CATALOG_GATES: List[PolicyGate] = [
+    PolicyGate(
+        name="policy:stand_up",
+        dev_gate=lambda ctx: getattr(ctx, "age_days", 0.0) <= 3.0,  # available from birth
+        trigger=lambda W, D, ctx: has_pred_near_now(W, "stand")
+    ),
+    PolicyGate(
+        name="policy:seek_mom",
+        dev_gate=lambda ctx: True,
+        trigger=lambda W, D, ctx: (getattr(D, "hunger", 0.0) > 0.6) and any_pred_present(
+            W, ["vision:silhouette:mom", "smell:milk:scent", "sound:bleat:mom"]
+        )
+    ),
+    PolicyGate(
+        name="policy:suckle",
+        dev_gate=lambda ctx: True,
+        trigger=lambda W, D, ctx: has_pred_near_now(W, "mom:close")
+    ),
+    PolicyGate(
+        name="policy:recover_miss",
+        dev_gate=lambda ctx: True,
+        trigger=lambda W, D, ctx: has_pred_near_now(W, "nipple:missed")
+    ),
+]
 
 # --------------------------------------------------------------------------------------
 # Menu text
@@ -238,7 +355,7 @@ MENU = """\
 13) Show skill stats
 14) Autonomic tick (emit interoceptive cues)
 15) Delete edge (source, destn, relation)
-16) Export snapshot (bindings + edges)
+16) Export snapshot (bindings + edges + ctx + policies)
 
 [S] Save session → path
 [L] Load session → path
@@ -331,18 +448,76 @@ def _sorted_bids(world) -> list[str]:
         try: return int(bid[1:])  # sort b1,b2,... numerically
         except: return 10**9
     return sorted(world._bindings.keys(), key=key_fn)
+    
+def export_snapshot(world, drives=None, ctx=None, policy_rt=None, path_txt="world_snapshot.txt", path_dot="world_snapshot.dot") -> None:
 
-def export_snapshot(world, path_txt="world_snapshot.txt", path_dot="world_snapshot.dot") -> None:
-    """Write a complete snapshot of bindings + edges to text and DOT files."""
+    """Write a complete snapshot of bindings + edges to text and DOT files, plus ctx/drives/policies."""
     # Text dump
     with open(path_txt, "w", encoding="utf-8") as f:
         now_id = _anchor_id(world, "NOW")
         f.write(f"NOW={now_id}  LATEST={world._latest_binding_id}\n\n")
+
+        # CTX section (if provided)
+        if ctx is not None:
+            try:
+                ctx_dict = dict(vars(ctx))
+            except Exception:
+                ctx_dict = {}
+            f.write("CTX:\n")
+            if ctx_dict:
+                for k in sorted(ctx_dict.keys()):
+                    v = ctx_dict[k]
+                    # keep it readable
+                    if isinstance(v, float):
+                        f.write(f"  {k}: {v:.4f}\n")
+                    else:
+                        f.write(f"  {k}: {v}\n")
+            else:
+                f.write("  (none)\n")
+            f.write("\n")
+
+        # DRIVES section (if provided)
+        if drives is not None:
+            f.write("DRIVES:\n")
+            try:
+                f.write(f"  hunger={drives.hunger:.2f}, fatigue={drives.fatigue:.2f}, warmth={drives.warmth:.2f}\n")
+            except Exception:
+                f.write("  (unavailable)\n")
+            f.write("\n")
+
+        # POLICIES / skills
+        try:
+            sr = skill_readout()  # imported from controller
+            f.write("POLICIES:\n")
+            if sr.strip():
+                # skill_readout() already returns formatted text
+                for line in sr.strip().splitlines():
+                    f.write(f"  {line}\n")
+            else:
+                f.write("  (none)\n")
+            f.write("\n")
+        except Exception:
+            pass
+              
+        # POLICY GATES (availability)
+        if policy_rt is not None:
+            f.write("POLICY_GATES_LOADED:\n")
+            names = policy_rt.list_loaded_names()
+            if names:
+                for nm in names:
+                    f.write(f"  - {nm}\n")
+            else:
+                f.write("  (none)\n")
+            f.write("\n")
+
+        # BINDINGS list
         f.write("BINDINGS:\n")
         for bid in _sorted_bids(world):
             b = world._bindings[bid]
             tags = ", ".join(getattr(b, "tags", []))
             f.write(f"{bid}: [{tags}]\n")
+
+        # EDGES list
         f.write("\nEDGES:\n")
         for bid in _sorted_bids(world):
             b = world._bindings[bid]
@@ -371,7 +546,9 @@ def export_snapshot(world, path_txt="world_snapshot.txt", path_dot="world_snapsh
                     if dst:
                         g.write(f'  {bid} -> {dst} [label="{rel}"];\n')
         g.write("}\n")
-    # message of exporting with absolute paths + directory   
+
+    # Final message with absolute paths + directory
+    import os
     path_txt_abs = os.path.abspath(path_txt)
     path_dot_abs = os.path.abspath(path_dot)
     out_dir = os.path.dirname(path_txt_abs)
@@ -379,8 +556,6 @@ def export_snapshot(world, path_txt="world_snapshot.txt", path_dot="world_snapsh
     print(f"  {path_txt_abs}")
     print(f"  {path_dot_abs}")
     print(f"Directory: {out_dir}")
-
-
 
 # --------------------------------------------------------------------------------------
 # Interactive loop
@@ -394,6 +569,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
     ctx = type("Ctx", (), {})()   # minimal context object
     ctx.sigma = 0.015
     ctx.jump = 0.2
+    ctx.age_days = 0.0
+    ctx.ticks = 0
+    POLICY_RT = PolicyRuntime(CATALOG_GATES)
+    POLICY_RT.refresh_loaded(ctx)
+
 
     # Attempt to load a prior session if requested
     if args.load:
@@ -426,6 +606,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     ctx.sigma = sigma
     ctx.jump = jump
     print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
+    POLICY_RT.refresh_loaded(ctx)
 
     # Ensure NOW anchor exists for the episode (so attachments from "now" resolve)
     world.ensure_anchor("NOW")
@@ -454,6 +635,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
         if choice == "1":
             now_id = _anchor_id(world, "NOW")
             print(f"Bindings: {len(world._bindings)}  Anchors: NOW={now_id}  Latest: {world._latest_binding_id}")
+            try:
+                print(f"Policies loaded: {len(POLICY_RT.loaded)} -> {', '.join(POLICY_RT.list_loaded_names()) or '(none)'}")
+            except Exception:
+                pass
             loop_helper(args.autosave, world, drives)
 
         elif choice == "2":
@@ -558,6 +743,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 pred = f"{ch}:{tok}"
                 bid = world.add_predicate(pred, attach="now", meta={"channel": ch, "user": True})
                 print(f"Added sensory cue: pred:{pred} as {bid}")
+                fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx, tie_break="first")
+                if fired != "no_match":
+                    print("Policy executed:", fired)
             loop_helper(args.autosave, world, drives)
 
         elif choice == "12":
@@ -571,7 +759,19 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "14":
             drives.fatigue = min(1.0, drives.fatigue + 0.01)
-            print("Autonomic: fatigue +0.01")
+            # advance developmental clock
+            try:
+                ctx.ticks = getattr(ctx, "ticks", 0) + 1
+                ctx.age_days = getattr(ctx, "age_days", 0.0) + 0.01   # tune step as you like
+                print(f"Autonomic: fatigue +0.01 | ticks={ctx.ticks} age_days={ctx.age_days:.2f}")
+            except Exception:
+                print("Autonomic: fatigue +0.01")               
+                
+            #Refresh availability and consider firing regardless
+            POLICY_RT.refresh_loaded(ctx)
+            fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
+            if fired != "no_match":
+                print("Policy executed:", fired)
             loop_helper(args.autosave, world, drives)
             
         elif choice == "15":
@@ -584,7 +784,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 loop_helper(args.autosave, world, drives)
         
         elif choice == "16":
-            export_snapshot(world)
+            export_snapshot(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT)
             loop_helper(args.autosave, world, drives)
 
         elif choice.lower() == "s":

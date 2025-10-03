@@ -707,3 +707,68 @@ Say these during a chat and I will update this compendium accordingly:
 --
 
 --
+
+---
+
+# Updates in v0.7.9 — Policies, `ctx`, and Menu Reference (2025-10-03)
+
+## Two‑Gate Policies (Availability vs. Execution)
+
+CCA8 now treats policies with **two gates**:
+
+- **Developmental availability (load gate):** a policy exists in code but is only **loaded** when developmental criteria in `ctx` are met (e.g., age/profile/milestones). The **World stats** menu shows how many policies are currently **loaded** (available).  
+- **Execution (fire gate):** whenever an **event** occurs (e.g., you add a **sensory cue** with menu **11** or run an **autonomic tick** with menu **14**), all *loaded* policies are considered. For now we use a simple **first‑match** rule (ties can become scoring later). If a policy fires, its primitive writes bindings/edges and stamps provenance in `binding.meta.policy`.
+
+**Where you can see it:**
+
+- **World stats (1):** `Policies loaded: …`  
+- **Export snapshot (16):** `POLICY_GATES_LOADED` plus the skill readout under `POLICIES:`  
+- **Console prints:** after events, you’ll see `Policy executed: policy:<name> -> {...status...}`
+
+**Examples of gates in the default catalog** (intent only—actual triggers live in code):
+- `policy:stand_up` — available from birth; executes when `pred:stand` is reachable near NOW.  
+- `policy:seek_mom` — available from birth; executes when hunger is high and relevant cues exist (e.g., `vision:silhouette:mom`, `smell:milk:scent`, `sound:bleat:mom`).  
+- `policy:suckle` — available from birth; executes when `pred:mom:close` is near NOW.  
+- `policy:recover_miss` — available from birth; executes when `pred:nipple:missed` is near NOW.
+
+> **Provenance:** Any binding written by a policy records `meta.policy = "policy:<name>"` so you can trace who created it.
+
+## `ctx` (Context) — What it is and how it evolves
+
+`ctx` holds lightweight, session‑level context used by policy gates and planning knobs. Current fields include:
+
+- `sigma`, `jump`, and `k` (from profile selection)  
+- `age_days` (float) and `ticks` (int) — **incremented on menu 14** (autonomic tick)  
+- (optionally) `profile` name
+
+**Where to see it:** export with menu **16**; the TXT includes a **CTX** section showing these values. `age_days`/`ticks` advance each time you run **14**.
+
+> We keep `ctx` intentionally small; richer context belongs in bindings’ `meta`/engrams.
+
+## Menu Reference (v0.7.9)
+
+**1) World stats** — counts + `NOW=<id>`, latest binding id, **Policies loaded** list.  
+**2) List predicates** — `pred:token -> bIDs` mapping for quick paper copies.  
+**3) Add predicate** — creates `pred:<token>` on a new binding, **attaching to `latest`** by default (adds a `then` edge). Relabel edges with **15+4** if you want semantic labels.  
+**4) Connect two bindings** — `src -> dst` with a relation label (e.g., `approach`, `search`, `latch`, `suckle`).  
+**5) Plan from NOW → <predicate>** — BFS to the first binding carrying `pred:<token>`.  
+**6) Resolve engrams on a binding** — dereference rich payloads for a given binding.  
+**7) Show last 5 bindings** — quick tail (ids + primary tags).  
+**8) Quit** — exit (saves if you used `--save`).  
+**9) Run preflight now** — full preflight (debugging).  
+**10) Inspect binding details** — tags/meta + outgoing edges for a binding.  
+**11) Add sensory cue** — creates cue predicates (e.g., `pred:vision:silhouette:mom`). **Triggers policy consideration**.  
+**12) Instinct step (Action Center)** — run the ordered policy scan once; prints the policy’s status dict.  
+**13) Show skill stats** — per‑policy usage (`n`, `succ`, `rate`, `q`, `last`).  
+**14) Autonomic tick** — updates drives, **advances `ctx.ticks`/`ctx.age_days`**, **considers policies**.  
+**15) Delete edge (source, destn, relation)** — remove stray/shortcut edges cleanly.  
+**16) Export snapshot (bindings + edges + ctx + policies)** — writes `world_snapshot.txt` & `.dot` with **absolute paths**.  
+**[S] Save**, **[L] Load**, **[D] Show drives**, **[R] Reset**, **[T] Tutorial** (opens `README.md`).
+
+### Practical tips
+- If a **plan** skips steps, check NOW’s edges (`10`) and remove shortcuts with **15**.  
+- When adding a **branch** from a non‑latest node, add the node, delete the auto `then` from latest (**15**), then wire the intended source with **4**.  
+- Keep **semantic edge labels** (`approach`, `search`, `latch`, `suckle`) for readable traces.
+
+---
+
