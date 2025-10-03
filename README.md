@@ -45,8 +45,6 @@ The CCA8 (Causal Cognitive Architecture version 8) is a cognitive architecture t
 
 <img title="" src="3day_old_mountain_goat.jpg" alt="3-day-old mountain goat" style="zoom:200%;">
 
-**AI-rendered video of robotic embodiment + CCA8 :** [Robotic mountain goat (Sora)](https://sora.chatgpt.com/g/gen_01k6jsgnqcfnm83vprbxb1jq73)
-Note: If viewer won't open the video link, then copy this URL:  https://sora.chatgpt.com/g/gen_01k6jsgnqcfnm83vprbxb1jq73
 
 ****Planned versions: ****
 
