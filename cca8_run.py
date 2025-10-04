@@ -333,7 +333,70 @@ CATALOG_GATES: List[PolicyGate] = [
         dev_gate=lambda ctx: True,
         trigger=lambda W, D, ctx: has_pred_near_now(W, "nipple:missed")
     ),
+    PolicyGate(
+        name="policy:recover_fall",
+        dev_gate=lambda ctx: True,  # available from birth
+        trigger=lambda W, D, ctx: (
+            has_pred_near_now(W, "state:posture_fallen") or
+            any_pred_present(W, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"])
+        )
+    ),
 ]
+
+
+def _first_binding_with_pred(world, token: str) -> str | None:
+    """Return the first binding id that carries pred:<token>, else None."""
+    want = token if token.startswith("pred:") else f"pred:{token}"
+    for bid, b in world._bindings.items():
+        for t in getattr(b, "tags", []):
+            if t == want:
+                return bid
+    return None
+
+def boot_prime_stand(world, ctx) -> None:
+    """
+    At birth (age_days == 0), ensure NOW can reach a stand intent.
+    - If a stand binding exists but isn't reachable from NOW, link NOW -> stand.
+    - Else create a new stand binding attached to NOW.
+    Idempotent: safe to run on fresh sessions.
+    """
+    try:
+        if float(getattr(ctx, "age_days", 0.0)) != 0.0:
+            return  # only at birth
+    except Exception:
+        pass
+
+    now_id = _anchor_id(world, "NOW")
+    stand_bid = _first_binding_with_pred(world, "stand")
+    if stand_bid:
+        # If NOW can't reach it in 1 hop, add an edge
+        if not _bfs_reachable(world, now_id, stand_bid, max_hops=1):
+            try:
+                world.add_edge(now_id, stand_bid, "initiate_stand")
+                print(f"[boot] Linked {now_id} --initiate_stand--> {stand_bid}")
+            except Exception as e:
+                print(f"[boot] Could not link NOW->stand: {e}")
+    else:
+        try:
+            # attach="now" will add NOW -> <new> with default 'then' (fine for boot)
+            new_bid = world.add_predicate("stand", attach="now", meta={"boot": "init", "added_by": "system"})
+            print(f"[boot] Seeded stand as {new_bid} (NOW -> stand)")
+            # Optional: relabel auto 'then' to 'initiate_stand' for readability
+            try:
+                # remove any NOW->new edges regardless of label
+                try:
+                    world_delete_edge(world, now_id, new_bid, None)  # our helper, if present
+                except NameError:
+                    pass  # older build without the helper
+
+                world.add_edge(now_id, new_bid, "initiate_stand")
+                print(f"[boot] Relabeled NOW -> {new_bid} to 'initiate_stand'")
+            except Exception as e:
+                print(f"[boot] Relabel skipped: {e}")
+        except Exception as e:
+            print(f"[boot] Could not seed stand: {e}")
+
+
 
 # --------------------------------------------------------------------------------------
 # Menu text
@@ -356,6 +419,8 @@ MENU = """\
 14) Autonomic tick (emit interoceptive cues)
 15) Delete edge (source, destn, relation)
 16) Export snapshot (bindings + edges + ctx + policies)
+17) Display snapshot (bindings + edges + ctx + policies)
+18) Simulate fall (add state:posture_fallen and try recovery)
 
 [S] Save session → path
 [L] Load session → path
@@ -405,6 +470,8 @@ def choose_profile(ctx) -> dict:
             break
         else:
             print("Select 1, 2, 3, or 4.")
+            
+    ctx.profile = name  #so that CTX will show the friendly profile name in snapshots
 
     CURRENT_PROFILE = {"name": name, "ctx_sigma": sigma, "ctx_jump": jump, "winners_k": k}
     return CURRENT_PROFILE
@@ -413,10 +480,10 @@ def versions_dict() -> dict:
     """Collect versions/platform info used for preflight stamps."""
     return {
         "runner": __version__,
-        "world_graph": "0.1.0",
-        "column": "0.1.0",
-        "features": "0.1.0",
-        "temporal": "0.1.0",
+        "world_graph": "...",
+        "column": "...",
+        "features": "...",
+        "temporal": "...",
         "platform": platform.platform(),
         "python": sys.version.split()[0],
     }
@@ -448,86 +515,104 @@ def _sorted_bids(world) -> list[str]:
         try: return int(bid[1:])  # sort b1,b2,... numerically
         except: return 10**9
     return sorted(world._bindings.keys(), key=key_fn)
-    
-def export_snapshot(world, drives=None, ctx=None, policy_rt=None, path_txt="world_snapshot.txt", path_dot="world_snapshot.dot") -> None:
 
-    """Write a complete snapshot of bindings + edges to text and DOT files, plus ctx/drives/policies."""
-    # Text dump
-    with open(path_txt, "w", encoding="utf-8") as f:
-        now_id = _anchor_id(world, "NOW")
-        f.write(f"NOW={now_id}  LATEST={world._latest_binding_id}\n\n")
+def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
+    """Return the same snapshot text that #16 writes to world_snapshot.txt."""
+    lines: List[str] = []
+    lines.append("\n--------------------------------------------------------------------------------------")
+    lines.append(f"WorldGraph snapshot at {datetime.now()}")
+    lines.append("--------------------------------------------------------------------------------------")
+    now_id = _anchor_id(world, "NOW")
+    lines.append(f"NOW={now_id}  LATEST={world._latest_binding_id}")
+    lines.append("")
 
-        # CTX section (if provided)
-        if ctx is not None:
-            try:
-                ctx_dict = dict(vars(ctx))
-            except Exception:
-                ctx_dict = {}
-            f.write("CTX:\n")
-            if ctx_dict:
-                for k in sorted(ctx_dict.keys()):
-                    v = ctx_dict[k]
-                    # keep it readable
-                    if isinstance(v, float):
-                        f.write(f"  {k}: {v:.4f}\n")
-                    else:
-                        f.write(f"  {k}: {v}\n")
-            else:
-                f.write("  (none)\n")
-            f.write("\n")
-
-        # DRIVES section (if provided)
-        if drives is not None:
-            f.write("DRIVES:\n")
-            try:
-                f.write(f"  hunger={drives.hunger:.2f}, fatigue={drives.fatigue:.2f}, warmth={drives.warmth:.2f}\n")
-            except Exception:
-                f.write("  (unavailable)\n")
-            f.write("\n")
-
-        # POLICIES / skills
+    # CTX
+    lines.append("CTX:")
+    if ctx is not None:
         try:
-            sr = skill_readout()  # imported from controller
-            f.write("POLICIES:\n")
-            if sr.strip():
-                # skill_readout() already returns formatted text
-                for line in sr.strip().splitlines():
-                    f.write(f"  {line}\n")
-            else:
-                f.write("  (none)\n")
-            f.write("\n")
+            ctx_dict = dict(vars(ctx))
         except Exception:
-            pass
-              
-        # POLICY GATES (availability)
-        if policy_rt is not None:
-            f.write("POLICY_GATES_LOADED:\n")
-            names = policy_rt.list_loaded_names()
-            if names:
-                for nm in names:
-                    f.write(f"  - {nm}\n")
-            else:
-                f.write("  (none)\n")
-            f.write("\n")
+            ctx_dict = {}
+        if ctx_dict:
+            for k in sorted(ctx_dict.keys()):
+                v = ctx_dict[k]
+                if isinstance(v, float):
+                    lines.append(f"  {k}: {v:.4f}")
+                else:
+                    lines.append(f"  {k}: {v}")
+        else:
+            lines.append("  (none)")
+    else:
+        lines.append("  (none)")
+    lines.append("")
 
-        # BINDINGS list
-        f.write("BINDINGS:\n")
-        for bid in _sorted_bids(world):
-            b = world._bindings[bid]
-            tags = ", ".join(getattr(b, "tags", []))
-            f.write(f"{bid}: [{tags}]\n")
+    # DRIVES
+    lines.append("DRIVES:")
+    if drives is not None:
+        try:
+            lines.append(f"  hunger={drives.hunger:.2f}, fatigue={drives.fatigue:.2f}, warmth={drives.warmth:.2f}")
+        except Exception:
+            lines.append("  (unavailable)")
+    else:
+        lines.append("  (none)")
+    lines.append("")
 
-        # EDGES list
-        f.write("\nEDGES:\n")
-        for bid in _sorted_bids(world):
-            b = world._bindings[bid]
-            edges = getattr(b, "edges", []) or getattr(b, "out", []) or getattr(b, "links", []) or getattr(b, "outgoing", [])
-            if isinstance(edges, list):
-                for e in edges:
-                    rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
-                    dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
-                    if dst:
-                        f.write(f"{bid} --{rel}--> {dst}\n")
+    # POLICIES (skills readout)
+    lines.append("POLICIES:")
+    try:
+        sr = skill_readout()
+        if sr.strip():
+            for ln in sr.strip().splitlines():
+                lines.append(f"  {ln}")
+        else:
+            lines.append("  (none)")
+    except Exception:
+        lines.append("  (unavailable)")
+    lines.append("")
+
+    # POLICY GATES (availability)
+    lines.append("POLICIES LOADED (meet devpt requirements):")
+    try:
+        names = policy_rt.list_loaded_names() if policy_rt is not None else []
+        if names:
+            for nm in names:
+                lines.append(f"  - {nm}")
+        else:
+            lines.append("  (none)")
+    except Exception:
+        lines.append("  (unavailable)")
+    lines.append("")
+
+    # BINDINGS
+    lines.append("BINDINGS:")
+    for bid in _sorted_bids(world):
+        b = world._bindings[bid]
+        tags = ", ".join(getattr(b, "tags", []))
+        lines.append(f"{bid}: [{tags}]")
+
+    # EDGES
+    lines.append("")
+    lines.append("EDGES:")
+    for bid in _sorted_bids(world):
+        b = world._bindings[bid]
+        edges = getattr(b, "edges", []) or getattr(b, "out", []) or getattr(b, "links", []) or getattr(b, "outgoing", [])
+        if isinstance(edges, list):
+            for e in edges:
+                rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
+                dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                if dst:
+                    lines.append(f"{bid} --{rel}--> {dst}")
+                    
+    #return text to display
+    lines.append("--------------------------------------------------------------------------------------\n")
+    return "\n".join(lines)
+
+def export_snapshot(world, drives=None, ctx=None, policy_rt=None, path_txt="world_snapshot.txt", path_dot="world_snapshot.dot") -> None:
+    """Write a complete snapshot of bindings + edges to text and DOT files, plus ctx/drives/policies."""
+    # Text dump (reuse the same builder as #17)
+    text_blob = snapshot_text(world, drives=drives, ctx=ctx, policy_rt=policy_rt)
+    with open(path_txt, "w", encoding="utf-8") as f:
+        f.write(text_blob + "\n")
 
     # Graphviz DOT (optional nice rendering)
     with open(path_dot, "w", encoding="utf-8") as g:
@@ -610,6 +695,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
     # Ensure NOW anchor exists for the episode (so attachments from "now" resolve)
     world.ensure_anchor("NOW")
+    #boot policy, e.g., mountain goat should stand up
+    if not args.no_boot_prime:
+        boot_prime_stand(world, ctx)
 
     # Non-interactive plan flag (one-shot planning and exit)
     if args.plan:
@@ -786,6 +874,42 @@ def interactive_loop(args: argparse.Namespace) -> None:
         elif choice == "16":
             export_snapshot(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT)
             loop_helper(args.autosave, world, drives)
+            
+        elif choice == "17":
+            print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT))
+            loop_helper(args.autosave, world, drives)
+            
+        elif choice == "18":
+            # Simulate a fall event and try a recovery attempt immediately
+            prev_latest = world._latest_binding_id
+            # Create a 'fallen' state as a new binding attached to latest
+            fallen_bid = world.add_predicate(
+                "state:posture_fallen",
+                attach="latest",
+                meta={"event": "fall", "added_by": "user"}
+            )
+            # Relabel the auto 'then' edge from the previous latest → fallen as 'fall'
+            try:
+                if prev_latest:
+                    # Remove any auto edge regardless of label, then add a semantic one
+                    try:
+                        world_delete_edge(world, prev_latest, fallen_bid, None)
+                    except NameError:
+                        pass
+                    world.add_edge(prev_latest, fallen_bid, "fall")
+            except Exception as e:
+                print(f"[fall] relabel note: {e}")
+
+            print(f"Simulated fall as {fallen_bid}")
+
+            # Refresh and consider policies now; recovery gate will nudge Action Center
+            POLICY_RT.refresh_loaded(ctx)
+            fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
+            if fired != "no_match":
+                print("Policy executed:", fired)
+
+            loop_helper(args.autosave, world, drives)
+
 
         elif choice.lower() == "s":
             path = input("Save to file (e.g., session.json): ").strip()
@@ -880,6 +1004,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--save", help="Save session to JSON file on exit")
     p.add_argument("--autosave", help="Autosave session to JSON file after each action")
     p.add_argument("--plan", metavar="PRED", help="Plan from NOW to predicate and exit")
+    p.add_argument("--no-boot-prime", action="store_true", help="Disable boot seeding of stand intent")
 
     try:
         args = p.parse_args(argv)
