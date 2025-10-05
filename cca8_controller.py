@@ -117,6 +117,37 @@ def skill_readout() -> str:
         )
     return "\n".join(lines)
 
+# -----------------------------------------------------------------------------
+# Helper queries (controller-local; simple global scans)
+# -----------------------------------------------------------------------------
+
+def _any_tag(world, full_tag: str) -> bool:
+    """Return True if any binding carries the exact 'pred:...' tag."""
+    try:
+        for b in world._bindings.values():
+            if full_tag in getattr(b, "tags", []):
+                return True
+    except Exception:
+        pass
+    return False
+
+def _has(world, token: str) -> bool:
+    """Convenience: token like 'state:posture_fallen' → checks 'pred:<token>' anywhere."""
+    return _any_tag(world, f"pred:{token}")
+
+def _any_cue_present(world) -> bool:
+    """Loose cue check: any vision/smell/sound cue is present (no proximity test here)."""
+    try:
+        for b in world._bindings.values():
+            for t in getattr(b, "tags", []):
+                if isinstance(t, str) and (
+                    t.startswith("pred:vision:") or t.startswith("pred:smell:") or t.startswith("pred:sound:")
+                ):
+                    return True
+    except Exception:
+        pass
+    return False
+
 
 # -----------------------------------------------------------------------------
 # Policy base
@@ -160,17 +191,24 @@ class StandUp(Primitive):
     name = "policy:stand_up"
 
     def trigger(self, world, drives: Drives) -> bool:
-        # require hunger_high
+        # Safety-first: if fallen, allow stand-up regardless of historical standing
+        if _has(world, "state:posture_fallen"):
+            return True
+
+        # Otherwise require hunger_high (toy heuristic)
         if "drive:hunger_high" not in set(drives.predicates()):
             return False
-        # guard: if any binding already has pred:state:posture_standing, don't refire
-        try:
-            for b in world._bindings.values():  # ok to touch internal in this build
-                if "pred:state:posture_standing" in b.tags:
-                    return False
-        except Exception:
-            pass
+
+        # Guard: if already upright now (historically recorded), skip
+        # (This is a coarse global check; runner guards the near-NOW case.)
+        if _has(world, "state:posture_standing"):
+            return False
+
         return True
+
+        
+        
+    
 
     def execute(self, world, ctx, drives: Drives) -> dict:
         now = datetime.now().isoformat(timespec="seconds")
@@ -192,13 +230,30 @@ class SeekNipple(Primitive):
     """Example/stub of a follow-up behavior; you can flesh this out later."""
     name = "policy:seek_nipple"
 
+
     def trigger(self, world, drives: Drives) -> bool:
-        # Fires if hunger is very high and we're already standing (toy heuristic)
         tags = set(drives.predicates())
         if "drive:hunger_high" not in tags:
             return False
-        standing = any("pred:state:posture_standing" in b.tags for b in world._bindings.values())
-        return standing
+
+        # must be upright
+        if not _has(world, "state:posture_standing"):
+            return False
+
+        # do NOT seek while fallen; recover first
+        if _has(world, "state:posture_fallen"):
+            return False
+
+        # prevent repeats if already in a seeking state
+        if _has(world, "state:seeking_mom"):
+            return False
+
+        # require at least one sensory cue (vision/smell/sound)
+        if not _any_cue_present(world):
+            return False
+
+        return True
+
 
     def execute(self, world, ctx, drives: Drives) -> dict:
         now = datetime.now().isoformat(timespec="seconds")
@@ -266,7 +321,7 @@ PRIMITIVES: List[Primitive] = [
 
 def action_center_step(world, ctx, drives: Drives) -> dict:
     """Scan PRIMITIVES in order; run the first policy whose trigger returns True.
-
+ 
     Returns a status dict:
         {
           "policy": "policy:<name>" | None,
@@ -279,6 +334,18 @@ def action_center_step(world, ctx, drives: Drives) -> dict:
         - Adjusts drives (e.g., fatigue).
         - Updates SKILLS ledger.
     """
+    # ---- SAFETY-FIRST SHORT-CIRCUIT ----
+    if _has(world, "state:posture_fallen"):
+        # run stand_up immediately
+        for policy in PRIMITIVES:
+            if policy.name == "policy:stand_up":
+                try:
+                    return policy.execute(world, ctx, drives)
+                except Exception as e:
+                    update_skill(policy.name, 0.0, ok=False)
+                    return {"policy": policy.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}
+    # ------------------------------------
+    
     for policy in PRIMITIVES:
         try:
             if policy.trigger(world, drives):
