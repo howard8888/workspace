@@ -10,7 +10,7 @@ preflight checks (lite at startup; full on demand).
 
 The program is run at the command line interface:
         python cca8_run.py [FLAGS]
-        
+
         e.g., > python cca8_run.py
         e.g., > python cca8_run.py --about
         e.g., > python cca8_run.py --preflight
@@ -40,7 +40,7 @@ import sys
 import time
 from datetime import datetime
 from dataclasses import dataclass
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, Dict, List, Callable
 
 import cca8_world_graph as wgmod
 from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict
@@ -218,7 +218,7 @@ def _drive_tags(drives) -> list[str]:
     except Exception:
         pass
     return tags
-    
+
 def _normalize_pred(tok: str) -> str:
     return tok if tok.startswith("pred:") else f"pred:{tok}"
 
@@ -273,12 +273,13 @@ def has_pred_near_now(world, token: str, hops: int = 3) -> bool:
 
 def any_pred_present(world, tokens: List[str]) -> bool:
     return any(_bindings_with_pred(world, tok) for tok in tokens)
-    
+
 @dataclass
 class PolicyGate:
     name: str
     dev_gate: Callable[[Any], bool]                      # ctx -> bool
     trigger: Callable[[Any, Any, Any], bool]             # (world, drives, ctx) -> bool
+    explain: Optional[Callable[[Any, Any, Any], str]] = None
 
 class PolicyRuntime:
     def __init__(self, catalog: List[PolicyGate]):
@@ -292,17 +293,52 @@ class PolicyRuntime:
         return [p.name for p in self.loaded]
 
     def consider_and_maybe_fire(self, world, drives, ctx, tie_break: str = "first") -> str:
-        # evaluate triggers on available policies
+        # 1) evaluate triggers on available policies
         matches = [p for p in self.loaded if _safe(p.trigger, world, drives, ctx)]
         if not matches:
             return "no_match"
-        chosen = matches[0] if tie_break == "first" else matches[0]  # placeholder for later scoring
-        # delegate actual step selection/execution to your existing Action Center primitive
+
+        # 2) prefer safety-critical gates if present (then fallback)
+        safety = ("policy:recover_fall", "policy:stand_up")
+        chosen = next((p for p in matches if p.name in safety), matches[0])
+
+        # 3) context we’ll log (base suggestion, candidate anchors, FOA)
+        base  = choose_contextual_base(world, ctx, targets=["state:posture_standing", "stand"])
+        foa   = compute_foa(world, ctx, max_hops=2)
+        cands = candidate_anchors(world, ctx)
+
+        # 4) run the controller once
         try:
-            result = action_center_step(world, ctx, drives)
+            before_n = len(world._bindings)
+            result   = action_center_step(world, ctx, drives)
+            after_n  = len(world._bindings)
+            delta_n  = after_n - before_n
+            # use the controller’s own label when available
+            label    = result.get("policy") if isinstance(result, dict) and "policy" in result else chosen.name
         except Exception as e:
             return f"{chosen.name} (error: {e})"
-        return f"{chosen.name} -> {result}"
+
+        # 5) build a correct WHY from the gate that actually ran
+        gate_for_label = next((p for p in self.loaded if p.name == label), chosen)
+        expl = gate_for_label.explain(world, drives, ctx) if gate_for_label.explain else "explain: (not provided)"
+
+        # 6) annotate anchors for readability
+        now_id  = _anchor_id(world, "NOW")
+        here_id = _anchor_id(world, "HERE") if hasattr(world, "_anchors") else None
+        def _ann(bid: str) -> str:
+            if bid == now_id:  return f"{bid}(NOW)"
+            if here_id and bid == here_id: return f"{bid}(HERE)"
+            return f"{bid}"
+
+        # 7) multi-line message
+        msg = []
+        msg.append(f"Policy executed: {label}")
+        msg.append(f"  why: {expl}")
+        msg.append(f"  base_suggestion: {base}")
+        msg.append(f"  anchors: [{', '.join(_ann(x) for x in cands)}]")
+        msg.append(f"  foa: size={foa['size']} seeds={foa['seeds']}")
+        msg.append(f"  effect: {delta_n:+d} new binding(s), result={result}")
+        return '\n'.join(msg)
 
 def _safe(fn, *args):
     try:
@@ -310,36 +346,62 @@ def _safe(fn, *args):
     except Exception:
         return False
 
+
 CATALOG_GATES: List[PolicyGate] = [
     PolicyGate(
         name="policy:stand_up",
-        dev_gate=lambda ctx: getattr(ctx, "age_days", 0.0) <= 3.0,  # available from birth
-        trigger=lambda W, D, ctx: has_pred_near_now(W, "stand")
-    ),
+        dev_gate=lambda ctx: getattr(ctx, "age_days", 0.0) <= 3.0,   
+        trigger=lambda W, D, ctx: (
+            has_pred_near_now(W, "stand")
+            and not has_pred_near_now(W, "state:posture_standing")   # ← NEW: don’t stand twice
+        ),        
+        explain=lambda W, D, ctx: (
+            f"dev_gate: age_days={getattr(ctx,'age_days',0.0):.2f}≤3.0, "
+            f"trigger: stand near NOW={has_pred_near_now(W,'stand')}"
+        ),
+    ),   
     PolicyGate(
-        name="policy:seek_mom",
+        name="policy:seek_nipple",
         dev_gate=lambda ctx: True,
-        trigger=lambda W, D, ctx: (getattr(D, "hunger", 0.0) > 0.6) and any_pred_present(
-            W, ["vision:silhouette:mom", "smell:milk:scent", "sound:bleat:mom"]
-        )
+        trigger=lambda W, D, ctx: (
+            has_pred_near_now(W, "state:posture_standing") and
+            (getattr(D, "hunger", 0.0) > 0.6) and
+            any_pred_present(W, ["vision:silhouette:mom", "smell:milk:scent", "sound:bleat:mom"]) and
+            not has_pred_near_now(W, "state:seeking_mom")            # ← NEW: prevent repeats
+        ),
+        explain=lambda W, D, ctx: (
+            f"dev_gate: True, trigger: posture_standing={has_pred_near_now(W,'state:posture_standing')} "
+            f"and hunger={getattr(D,'hunger',0.0):.2f}>0.60 and cues={present_cue_bids(W)} "
+            f"and not seeking={not has_pred_near_now(W,'state:seeking_mom')}"
+        ),
     ),
     PolicyGate(
         name="policy:suckle",
         dev_gate=lambda ctx: True,
-        trigger=lambda W, D, ctx: has_pred_near_now(W, "mom:close")
+        trigger=lambda W, D, ctx: has_pred_near_now(W, "mom:close"),
+        explain=lambda W, D, ctx: (
+            f"dev_gate: True, trigger: mom:close near NOW={has_pred_near_now(W,'mom:close')}"
+        ),
     ),
     PolicyGate(
         name="policy:recover_miss",
         dev_gate=lambda ctx: True,
-        trigger=lambda W, D, ctx: has_pred_near_now(W, "nipple:missed")
+        trigger=lambda W, D, ctx: has_pred_near_now(W, "nipple:missed"),
+        explain=lambda W, D, ctx: (
+            f"dev_gate: True, trigger: nipple:missed near NOW={has_pred_near_now(W,'nipple:missed')}"
+        ),
     ),
     PolicyGate(
         name="policy:recover_fall",
-        dev_gate=lambda ctx: True,  # available from birth
+        dev_gate=lambda ctx: True,
         trigger=lambda W, D, ctx: (
-            has_pred_near_now(W, "state:posture_fallen") or
-            any_pred_present(W, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"])
-        )
+            has_pred_near_now(W, "state:posture_fallen")
+            or any_pred_present(W, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"])
+        ),
+        explain=lambda W, D, ctx: (
+            f"dev_gate: True, trigger: fallen={has_pred_near_now(W,'state:posture_fallen')} "
+            f"or cues={present_cue_bids(W)}"
+        ),
     ),
 ]
 
@@ -427,7 +489,7 @@ MENU = """\
 [D] Show drives (raw + tags)
 [R] Reset current saved session
 [T] Tutorial on using and maintaining this simulation
-    
+
 Select: """
 
 # --------------------------------------------------------------------------------------
@@ -470,7 +532,7 @@ def choose_profile(ctx) -> dict:
             break
         else:
             print("Select 1, 2, 3, or 4.")
-            
+
     ctx.profile = name  #so that CTX will show the friendly profile name in snapshots
 
     CURRENT_PROFILE = {"name": name, "ctx_sigma": sigma, "ctx_jump": jump, "winners_k": k}
@@ -494,7 +556,7 @@ def run_preflight_lite_maybe():
     if mode == "off":
         return
     print("[preflight-lite] basic checks ok.\n")
-    
+
 def _anchor_id(world, name="NOW") -> str:
     # Try a direct lookup if available
     try:
@@ -509,7 +571,7 @@ def _anchor_id(world, name="NOW") -> str:
         if any(t == f"anchor:{name}" for t in getattr(b, "tags", [])):
             return bid
     return "?"
-    
+
 def _sorted_bids(world) -> list[str]:
     def key_fn(bid: str):
         try: return int(bid[1:])  # sort b1,b2,... numerically
@@ -602,8 +664,8 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
                 dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
                 if dst:
                     lines.append(f"{bid} --{rel}--> {dst}")
-                    
-    #return text to display
+
+    #return  text to display
     lines.append("--------------------------------------------------------------------------------------\n")
     return "\n".join(lines)
 
@@ -614,7 +676,7 @@ def export_snapshot(world, drives=None, ctx=None, policy_rt=None, path_txt="worl
     with open(path_txt, "w", encoding="utf-8") as f:
         f.write(text_blob + "\n")
 
-    # Graphviz DOT (optional nice rendering)
+    # Graphviz DOT (optional nice  rendering)
     with open(path_dot, "w", encoding="utf-8") as g:
         g.write("digraph CCA8 {\n  rankdir=LR;\n  node [shape=box,fontsize=10];\n")
         for bid in _sorted_bids(world):
@@ -641,6 +703,108 @@ def export_snapshot(world, drives=None, ctx=None, policy_rt=None, path_txt="worl
     print(f"  {path_txt_abs}")
     print(f"  {path_dot_abs}")
     print(f"Directory: {out_dir}")
+    
+    
+# ---------- Contextual base selection (skeleton) ----------
+def _nearest_binding_with_pred(world, token: str, from_bid: str, max_hops: int = 3) -> str | None:
+    want = token if token.startswith("pred:") else f"pred:{token}"
+    # BFS with early exit that returns the first binding matching the predicate
+    from collections import deque
+    q, seen, depth = deque([from_bid]), {from_bid}, {from_bid: 0}
+    while q:
+        u = q.popleft()
+        b = world._bindings.get(u)
+        if b and any(t == want for t in getattr(b, "tags", [])):
+            return u
+        if depth[u] >= max_hops:
+            continue
+        edges = getattr(b, "edges", []) or getattr(b, "out", []) or getattr(b, "links", []) or getattr(b, "outgoing", [])
+        if isinstance(edges, list):
+            for e in edges:
+                v = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                if v and v not in seen:
+                    seen.add(v); depth[v] = depth[u] + 1; q.append(v)
+    return None
+
+def choose_contextual_base(world, ctx, targets: list[str] | None = None) -> dict:
+    """
+    Skeleton: pick where a primitive *should* anchor writes.
+    Order: nearest target predicate -> HERE (if exists) -> NOW.
+    We only *suggest* the base here; controller may ignore it today.
+    """
+    targets = targets or ["state:posture_standing", "stand"]
+    now_id  = _anchor_id(world, "NOW")
+    here_id = _anchor_id(world, "HERE") if hasattr(world, "_anchors") else None
+    # try each target nearest to NOW
+    for tok in targets:
+        bid = _nearest_binding_with_pred(world, tok, from_bid=now_id, max_hops=3)
+        if bid:
+            return {"base": "NEAREST_PRED", "pred": tok, "bid": bid}
+    if here_id:
+        return {"base": "HERE", "bid": here_id}
+    return {"base": "NOW", "bid": now_id}
+
+# ---------- FOA (Focus of Attention) skeleton ----------
+def present_cue_bids(world) -> list[str]:
+    bids = []
+    for bid, b in world._bindings.items():
+        ts = getattr(b, "tags", [])
+        if any(isinstance(t, str) and (t.startswith("pred:vision:") or t.startswith("pred:smell:") or t.startswith("pred:sound:") or t.startswith("pred:touch:")) for t in ts):
+            bids.append(bid)
+    return bids
+
+def neighbors_k(world, start_bid: str, max_hops: int = 2) -> set[str]:
+    from collections import deque
+    out = set()
+    q = deque([(start_bid, 0)])
+    seen = {start_bid}
+    while q:
+        u, d = q.popleft()
+        out.add(u)
+        if d >= max_hops: 
+            continue
+        b = world._bindings.get(u)
+        edges = getattr(b, "edges", []) or getattr(b, "out", []) or getattr(b, "links", []) or getattr(b, "outgoing", [])
+        if isinstance(edges, list):
+            for e in edges:
+                v = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                if v and v not in seen:
+                    seen.add(v); q.append((v, d+1))
+    return out
+
+def compute_foa(world, ctx, max_hops: int = 2) -> dict:
+    """
+    Skeleton FOA window: union of neighborhoods around LATEST and NOW, plus cue nodes.
+    Later we can weight by drives/costs and restrict size aggressively.
+    """
+    now_id   = _anchor_id(world, "NOW")
+    latest   = world._latest_binding_id
+    seeds    = [x for x in [latest, now_id] if x]
+    seeds   += present_cue_bids(world)
+    # dedupe seeds while preserving original order
+    _seen = set()
+    seeds = [s for s in seeds if not (s in _seen or _seen.add(s))]   
+    foa_ids  = set()
+    for s in seeds:
+        foa_ids |= neighbors_k(world, s, max_hops=max_hops)
+    return {"seeds": seeds, "size": len(foa_ids), "ids": foa_ids}
+
+# ---------- Multi-anchor candidates (skeleton) ----------
+def candidate_anchors(world, ctx) -> list[str]:
+    """
+    Skeleton list of candidate start anchors for planning/search.
+    Later we’ll run K parallel searches from these.
+    """
+    now_id   = _anchor_id(world, "NOW")
+    here_id  = _anchor_id(world, "HERE") if hasattr(world, "_anchors") else None
+    picks    = [now_id]
+    if here_id and here_id not in picks: picks.append(here_id)
+    for tok in ("state:posture_standing", "stand", "mom:close"):
+        bid = _nearest_binding_with_pred(world, tok, from_bid=now_id, max_hops=3)
+        if bid and bid not in picks:
+            picks.append(bid)
+    return [p for p in picks if p]
+
 
 # --------------------------------------------------------------------------------------
 # Interactive loop
@@ -837,8 +1001,44 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "12":
+            before_n = len(world._bindings)
+
+            # --- context (for teaching / debugging) ---
+            base  = choose_contextual_base(world, ctx, targets=["state:posture_standing", "stand"])
+            foa   = compute_foa(world, ctx, max_hops=2)
+            cands = candidate_anchors(world, ctx)
+
+            # annotate anchors for readability: b1(NOW), ?(HERE), etc.
+            now_id  = _anchor_id(world, "NOW")
+            here_id = _anchor_id(world, "HERE") if hasattr(world, "_anchors") else None
+
+            def _ann(bid: str) -> str:
+                if bid == now_id:  return f"{bid}(NOW)"
+                if here_id and bid == here_id: return f"{bid}(HERE)"
+                return f"{bid}"
+
+            print(f"[instinct] base_suggestion={base}, anchors={[ _ann(x) for x in cands ]}, foa_size={foa['size']}")
+
+            # --- execute the controller once (probe) ---
             result = action_center_step(world, ctx, drives)
             print("Action Center:", result)
+
+            # best-effort WHY: match the controller's returned label to a loaded gate
+            label = result.get("policy") if isinstance(result, dict) and "policy" in result else "(controller)"
+            gate  = next((p for p in POLICY_RT.loaded if p.name == label), None)
+            if gate and gate.explain:
+                try:
+                    print("[instinct] why:", gate.explain(world, drives, ctx))
+                except Exception:
+                    pass
+
+            # delta and autosave
+            after_n = len(world._bindings)
+            if after_n == before_n:
+                print("(no new bindings/edges created this step)")
+            else:
+                print(f"(graph updated: bindings {before_n} -> {after_n})")
+
             loop_helper(args.autosave, world, drives)
 
         elif choice == "13":
@@ -853,15 +1053,15 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 ctx.age_days = getattr(ctx, "age_days", 0.0) + 0.01   # tune step as you like
                 print(f"Autonomic: fatigue +0.01 | ticks={ctx.ticks} age_days={ctx.age_days:.2f}")
             except Exception:
-                print("Autonomic: fatigue +0.01")               
-                
+                print("Autonomic: fatigue +0.01")
+
             #Refresh availability and consider firing regardless
             POLICY_RT.refresh_loaded(ctx)
             fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
             if fired != "no_match":
                 print("Policy executed:", fired)
             loop_helper(args.autosave, world, drives)
-            
+
         elif choice == "15":
             # Delete edge and autosave (if --autosave is active).
             try:
@@ -870,15 +1070,15 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 # Older builds: no helper available for callback style—do a simple save after.
                 delete_edge_flow(world, autosave_cb=None)
                 loop_helper(args.autosave, world, drives)
-        
+
         elif choice == "16":
             export_snapshot(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT)
             loop_helper(args.autosave, world, drives)
-            
+
         elif choice == "17":
             print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT))
             loop_helper(args.autosave, world, drives)
-            
+
         elif choice == "18":
             # Simulate a fall event and try a recovery attempt immediately
             prev_latest = world._latest_binding_id
@@ -1022,7 +1222,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"  - cca8_column   v... (cca8_column.py)")
         print(f"  - cca8_features      v... (cca8_features.py)")
         print(f"  - cca8_temporal   v... (cca8_temporal.py)")
-        print(f"  - Profile: Human (k=3, sigma=0.02, jump=0.25)")
         try:
             from cca8_controller import PRIMITIVES
             print(f"  - cca8_controller v... (cca8_controller.py) [primitives: {len(PRIMITIVES)}]")
