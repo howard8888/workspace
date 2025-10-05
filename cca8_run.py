@@ -45,7 +45,7 @@ from typing import Optional, Any, Dict, List, Callable
 import cca8_world_graph as wgmod
 from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict
 
-__version__ = "0.7.9"
+__version__ = "0.7.10"
 
 # --- Edge delete helpers (self-contained) ------------------------------------
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
@@ -298,6 +298,13 @@ class PolicyRuntime:
         if not matches:
             return "no_match"
 
+        # If we are fallen, only allow safety gates to execute this tick
+        if has_pred_near_now(world, "state:posture_fallen"):
+            safety_only = {"policy:recover_fall", "policy:stand_up"}
+            matches = [p for p in matches if p.name in safety_only]
+            if not matches:
+                return "no_match"
+
         # 2) prefer safety-critical gates if present (then fallback)
         safety = ("policy:recover_fall", "policy:stand_up")
         chosen = next((p for p in matches if p.name in safety), matches[0])
@@ -306,6 +313,9 @@ class PolicyRuntime:
         base  = choose_contextual_base(world, ctx, targets=["state:posture_standing", "stand"])
         foa   = compute_foa(world, ctx, max_hops=2)
         cands = candidate_anchors(world, ctx)
+
+        # PRE-state explanation for the gate we intend to run
+        pre_expl = chosen.explain(world, drives, ctx) if chosen.explain else "explain: (not provided)"
 
         # 4) run the controller once
         try:
@@ -318,22 +328,23 @@ class PolicyRuntime:
         except Exception as e:
             return f"{chosen.name} (error: {e})"
 
-        # 5) build a correct WHY from the gate that actually ran
+        # 5) POST-state explanation for what actually ran
         gate_for_label = next((p for p in self.loaded if p.name == label), chosen)
-        expl = gate_for_label.explain(world, drives, ctx) if gate_for_label.explain else "explain: (not provided)"
+        post_expl = gate_for_label.explain(world, drives, ctx) if gate_for_label.explain else "explain: (not provided)"
 
-        # 6) annotate anchors for readability
+        # 6) annotate anchors for readability (NOW/HERE tagging)
         now_id  = _anchor_id(world, "NOW")
         here_id = _anchor_id(world, "HERE") if hasattr(world, "_anchors") else None
         def _ann(bid: str) -> str:
-            if bid == now_id:  return f"{bid}(NOW)"
+            if bid == now_id: return f"{bid}(NOW)"
             if here_id and bid == here_id: return f"{bid}(HERE)"
             return f"{bid}"
 
         # 7) multi-line message
         msg = []
         msg.append(f"Policy executed: {label}")
-        msg.append(f"  why: {expl}")
+        msg.append(f"  why(pre):  {pre_expl}")
+        msg.append(f"  why(post): {post_expl}")
         msg.append(f"  base_suggestion: {base}")
         msg.append(f"  anchors: [{', '.join(_ann(x) for x in cands)}]")
         msg.append(f"  foa: size={foa['size']} seeds={foa['seeds']}")
@@ -350,31 +361,35 @@ def _safe(fn, *args):
 CATALOG_GATES: List[PolicyGate] = [
     PolicyGate(
         name="policy:stand_up",
-        dev_gate=lambda ctx: getattr(ctx, "age_days", 0.0) <= 3.0,   
+        dev_gate=lambda ctx: getattr(ctx, "age_days", 0.0) <= 3.0,
         trigger=lambda W, D, ctx: (
             has_pred_near_now(W, "stand")
-            and not has_pred_near_now(W, "state:posture_standing")   # ← NEW: don’t stand twice
-        ),        
+            and not has_pred_near_now(W, "state:posture_standing")  # don't stand twice
+        ),
         explain=lambda W, D, ctx: (
             f"dev_gate: age_days={getattr(ctx,'age_days',0.0):.2f}≤3.0, "
             f"trigger: stand near NOW={has_pred_near_now(W,'stand')}"
         ),
-    ),   
+    ),
+
     PolicyGate(
         name="policy:seek_nipple",
         dev_gate=lambda ctx: True,
         trigger=lambda W, D, ctx: (
-            has_pred_near_now(W, "state:posture_standing") and
-            (getattr(D, "hunger", 0.0) > 0.6) and
-            any_pred_present(W, ["vision:silhouette:mom", "smell:milk:scent", "sound:bleat:mom"]) and
-            not has_pred_near_now(W, "state:seeking_mom")            # ← NEW: prevent repeats
+            has_pred_near_now(W, "state:posture_standing")
+            and (getattr(D, "hunger", 0.0) > 0.6)
+            and any_pred_present(W, ["vision:silhouette:mom", "smell:milk:scent", "sound:bleat:mom"])
+            and not has_pred_near_now(W, "state:seeking_mom")      # prevent repeats
+            and not has_pred_near_now(W, "state:posture_fallen")   # ineligible while fallen
         ),
         explain=lambda W, D, ctx: (
             f"dev_gate: True, trigger: posture_standing={has_pred_near_now(W,'state:posture_standing')} "
             f"and hunger={getattr(D,'hunger',0.0):.2f}>0.60 and cues={present_cue_bids(W)} "
-            f"and not seeking={not has_pred_near_now(W,'state:seeking_mom')}"
+            f"and not seeking={not has_pred_near_now(W,'state:seeking_mom')} "
+            f"and not fallen={not has_pred_near_now(W,'state:posture_fallen')}"
         ),
     ),
+
     PolicyGate(
         name="policy:suckle",
         dev_gate=lambda ctx: True,
@@ -383,6 +398,7 @@ CATALOG_GATES: List[PolicyGate] = [
             f"dev_gate: True, trigger: mom:close near NOW={has_pred_near_now(W,'mom:close')}"
         ),
     ),
+
     PolicyGate(
         name="policy:recover_miss",
         dev_gate=lambda ctx: True,
@@ -391,6 +407,7 @@ CATALOG_GATES: List[PolicyGate] = [
             f"dev_gate: True, trigger: nipple:missed near NOW={has_pred_near_now(W,'nipple:missed')}"
         ),
     ),
+
     PolicyGate(
         name="policy:recover_fall",
         dev_gate=lambda ctx: True,
@@ -404,7 +421,6 @@ CATALOG_GATES: List[PolicyGate] = [
         ),
     ),
 ]
-
 
 def _first_binding_with_pred(world, token: str) -> str | None:
     """Return the first binding id that carries pred:<token>, else None."""
@@ -703,8 +719,8 @@ def export_snapshot(world, drives=None, ctx=None, policy_rt=None, path_txt="worl
     print(f"  {path_txt_abs}")
     print(f"  {path_dot_abs}")
     print(f"Directory: {out_dir}")
-    
-    
+
+
 # ---------- Contextual base selection (skeleton) ----------
 def _nearest_binding_with_pred(world, token: str, from_bid: str, max_hops: int = 3) -> str | None:
     want = token if token.startswith("pred:") else f"pred:{token}"
@@ -761,7 +777,7 @@ def neighbors_k(world, start_bid: str, max_hops: int = 2) -> set[str]:
     while q:
         u, d = q.popleft()
         out.add(u)
-        if d >= max_hops: 
+        if d >= max_hops:
             continue
         b = world._bindings.get(u)
         edges = getattr(b, "edges", []) or getattr(b, "out", []) or getattr(b, "links", []) or getattr(b, "outgoing", [])
@@ -783,7 +799,7 @@ def compute_foa(world, ctx, max_hops: int = 2) -> dict:
     seeds   += present_cue_bids(world)
     # dedupe seeds while preserving original order
     _seen = set()
-    seeds = [s for s in seeds if not (s in _seen or _seen.add(s))]   
+    seeds = [s for s in seeds if not (s in _seen or _seen.add(s))]
     foa_ids  = set()
     for s in seeds:
         foa_ids |= neighbors_k(world, s, max_hops=max_hops)
@@ -997,7 +1013,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print(f"Added sensory cue: pred:{pred} as {bid}")
                 fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx, tie_break="first")
                 if fired != "no_match":
-                    print("Policy executed:", fired)
+                    print(fired)
             loop_helper(args.autosave, world, drives)
 
         elif choice == "12":
@@ -1011,7 +1027,6 @@ def interactive_loop(args: argparse.Namespace) -> None:
             # annotate anchors for readability: b1(NOW), ?(HERE), etc.
             now_id  = _anchor_id(world, "NOW")
             here_id = _anchor_id(world, "HERE") if hasattr(world, "_anchors") else None
-
             def _ann(bid: str) -> str:
                 if bid == now_id:  return f"{bid}(NOW)"
                 if here_id and bid == here_id: return f"{bid}(HERE)"
@@ -1041,6 +1056,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
             loop_helper(args.autosave, world, drives)
 
+
         elif choice == "13":
             print(skill_readout())
             loop_helper(args.autosave, world, drives)
@@ -1059,7 +1075,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             POLICY_RT.refresh_loaded(ctx)
             fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
             if fired != "no_match":
-                print("Policy executed:", fired)
+                print(fired)
             loop_helper(args.autosave, world, drives)
 
         elif choice == "15":
@@ -1106,7 +1122,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             POLICY_RT.refresh_loaded(ctx)
             fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
             if fired != "no_match":
-                print("Policy executed:", fired)
+                print(fired)
 
             loop_helper(args.autosave, world, drives)
 
