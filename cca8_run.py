@@ -161,25 +161,51 @@ def save_session(path: str, world, drives) -> str:
         json.dump(data, f, indent=2, ensure_ascii=False)
     os.replace(tmp, path)
     return ts
+    
+    
+# --------------------------------------------------------------------------------------
+# Embodiment 
+# --------------------------------------------------------------------------------------
+class HAL:
+    """Hardware abstraction layer (HAL) skeleton for future usage
+    """
+    def __init__(self, body: str | None = None):
+        self.body = body or "(none)"
+        # future usage: load body profile (motor map), open serial/network, etc.
+
+    # Actuators
+    def push_up(self):        pass
+    def extend_legs(self):    pass
+    def orient_to_mom(self):  pass
+
+    # Sensors
+    def sense_vision_mom(self):  return False
+    def sense_vestibular_fall(self): return False
+
 
 # --------------------------------------------------------------------------------------
 # Two-gate policy and helpers and console helpers
 # --------------------------------------------------------------------------------------
 
-def print_header():
+def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Body: (none)"):
+    print('\n\n# --------------------------------------------------------------------------------------')
+    print('# NEW RUN   NEW RUN')
+    print('# --------------------------------------------------------------------------------------')   
     print("\nA Warm Welcome to the CCA8 Mammalian Brain Simulation")
     print(f"(cca8_run.py v{__version__})\n")
     print(f"Entry point program being run: {os.path.abspath(sys.argv[0])}")
-    print(f"OS: {sys.platform} (run system-dependent utilities for more detailed info)")
-    print('(for non-interactive execution, ">python cca8_run.py --help" to see optional flags you can set)')
-    print("Embodiment: this version of the CCA8 simulation is currently configured to run without a robot body")
-    print("(HAL(hardware abstraction layer) must be provided with embodiment drivers and HAL flag set)\n")
-    print("The simulation of the cognitive architecture can be adjusted to add or take away")
+    print(f"OS: {sys.platform} (run system-dependent utilities for more detailed system/simulation info)")
+    print('(for non-interactive execution, ">python cca8_run.py --help" to see optional flags you can set)')    
+    print(f'\nEmbodiment:  HAL (hardware abstraction layer) setting: {hal_str}')
+    print(f'Embodiment:  body_type-version_number-serial_number (i.e., robotic embodiment): {body_str} ')
+ 
+    print("\nThe simulation of the cognitive architecture can be adjusted to add or take away")
     print("  various features, allowing exploration of different evolutionary-like configurations.\n")
     print("  1. Mountain Goat-like brain simulation")
     print("  2. Chimpanzee-like brain simulation")
     print("  3. Human-like brain simulation")
     print("  4. Super-Human-like machine simulation\n")
+    
     print("Pending additional intro material here....")
 
 def loop_helper(autosave_from_args: Optional[str], world, drives, time_limited: bool = False):
@@ -513,46 +539,34 @@ Select: """
 # --------------------------------------------------------------------------------------
 
 def choose_profile(ctx) -> dict:
-    """Prompt for a profile and set ctx parameters.
-
-    Returns:
-        A dict describing the chosen profile (name, sigma, jump, k).
+    """Prompt once; always default to Mountain Goat.
+    If 2/3/4 (or invalid) is chosen, print a notice and fall back to goat.
+    Returns a dict: {"name", "ctx_sigma", "ctx_jump", "winners_k"}.
     """
-    name = ""
-    sigma = 0.015
-    jump = 0.2
-    k = 2
+    GOAT = ("Mountain Goat", 0.015, 0.2, 2)
 
-    while True:
-        try:
-            choice = input("Please make a choice [1-4]: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nCancelled.")
-            sys.exit(0)
+    try:
+        choice = input("Please make a choice [1-4]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled selection.... will exit program....")
+        sys.exit(0)
 
-        if choice == "1":
-            name = "Mountain Goat"
-            sigma, jump, k = 0.015, 0.2, 2
-            break
-        elif choice == "2":
-            name = "Chimpanzee"
-            sigma, jump, k = 0.02, 0.25, 3
-            break
-        elif choice == "3":
-            name = "Human"
-            sigma, jump, k = 0.03, 0.3, 4
-            break
-        elif choice == "4":
-            name = "Super-Human"
-            sigma, jump, k = 0.05, 0.35, 5
-            break
-        else:
-            print("Select 1, 2, 3, or 4.")
+    if choice == "1":
+        name, sigma, jump, k = GOAT
+    elif choice in {"2", "3", "4"}:
+        print("This evolutionary-like configuration is not currently available. "
+              "Profile is set to mountain goat-like brain simulation.")
+        name, sigma, jump, k = GOAT
+    else:
+        # invalid/empty entry → default to goat
+        print(f"The selection {choice} is not valid or not available at this time.\n Therefore, defaulting to selection Mountain Goat.")
+        name, sigma, jump, k = GOAT
 
-    ctx.profile = name  #so that CTX will show the friendly profile name in snapshots
+    # record on ctx so it appears in CTX snapshot
+    ctx.profile = name
 
-    CURRENT_PROFILE = {"name": name, "ctx_sigma": sigma, "ctx_jump": jump, "winners_k": k}
-    return CURRENT_PROFILE
+    return {"name": name, "ctx_sigma": sigma, "ctx_jump": jump, "winners_k": k}
+
 
 def versions_dict() -> dict:
     """Collect versions/platform info used for preflight stamps."""
@@ -566,12 +580,108 @@ def versions_dict() -> dict:
         "python": sys.version.split()[0],
     }
 
+def run_preflight_full(args) -> int:
+    """
+    Full preflight: quick, deterministic checks with one-line PASS/FAIL per item.
+    Returns 0 for ok, non-zero for any failure.
+    """
+    print("[preflight] Running full preflight...")
+
+    failures = 0
+    def ok(msg):   print(f"[preflight] PASS  - {msg}")
+    def bad(msg):  nonlocal failures; failures += 1; print(f"[preflight] FAIL  - {msg}")
+
+    # 1) Python & platform
+    try:
+        pyver = sys.version.split()[0]
+        ok(f"python={pyver} platform={platform.platform()}")
+    except Exception as e:
+        bad(f"could not read python/platform: {e}")
+
+    # 2) WorldGraph sanity
+    try:
+        w = wgmod.WorldGraph()
+        w.ensure_anchor("NOW")
+        if isinstance(w._bindings, dict) and _anchor_id(w, "NOW") != "?":
+            ok("WorldGraph init and NOW anchor")
+        else:
+            bad("WorldGraph anchor missing or invalid")
+    except Exception as e:
+        bad(f"WorldGraph init failed: {e}")
+
+    # 3) Controller primitives
+    try:
+        from cca8_controller import PRIMITIVES, Drives as _Drv
+        if isinstance(PRIMITIVES, list) and len(PRIMITIVES) >= 1:
+            ok(f"controller primitives loaded (count={len(PRIMITIVES)})")
+        else:
+            bad("controller primitives missing/empty")
+        # Smoke: run an empty action_center_step on a fresh world
+        try:
+            _w = wgmod.WorldGraph(); _w.ensure_anchor("NOW")
+            _d = _Drv()
+            _ctx = type("Ctx", (), {})(); _ctx.sigma=0.015; _ctx.jump=0.2; _ctx.age_days=0.0; _ctx.ticks=0
+            _ = action_center_step(_w, _ctx, _d)
+            ok("action_center_step smoke-run")
+        except Exception as e:
+            bad(f"action_center_step failed to run: {e}")
+    except Exception as e:
+        bad(f"controller import failed: {e}")
+
+    # 4) HAL header consistency (does not require real hardware)
+    try:
+        hal_flag = bool(getattr(args, "hal", False))
+        body_val = (getattr(args, "body", "") or "").strip() or "(none)"
+        ok(f"HAL flag={hal_flag} body={body_val}, nb no actual robotic embodiment implemented to pre-flight at this time")
+    except Exception as e:
+        bad(f"HAL/body flag read error: {e}")
+
+    # 5) Read/write snapshot (tmp)
+    try:
+        tmp = "_preflight_session.json"
+        d  = Drives()
+        ts = save_session(tmp, wgmod.WorldGraph(), d)
+        if os.path.exists(tmp):
+            ok(f"snapshot write/read path exists ({tmp}, saved_at={ts})")
+            try:
+                with open(tmp, "r", encoding="utf-8") as f: json.load(f)
+                ok("snapshot JSON parse")
+            except Exception as e:
+                bad(f"snapshot JSON parse failed: {e}")
+            try:
+                os.remove(tmp)
+                ok("snapshot cleanup")
+            except Exception as e:
+                bad(f"snapshot cleanup failed: {e}")
+        else:
+            bad("snapshot file missing after save")
+    except Exception as e:
+        bad(f"snapshot write failed: {e}")
+
+    # 6) Planning stub
+    try:
+        w = wgmod.WorldGraph()
+        src = w.ensure_anchor("NOW")
+        # plan to something that isn't there: expect no path, not an exception
+        p = w.plan_to_predicate(src, "milk:drinking")
+        ok(f"planner probes (path_found={bool(p)})")
+    except Exception as e:
+        bad(f"planner probe failed: {e}")
+
+    # Summary
+    if failures == 0:
+        print("[preflight] ok\n\n")
+        return 0
+    else:
+        print(f"[preflight] completed with {failures} failure(s). See lines above.")
+        return 1
+
 def run_preflight_lite_maybe():
     """Optional 'lite' preflight on startup (controlled by CCA8_PREFLIGHT)."""
     mode = os.environ.get("CCA8_PREFLIGHT", "lite").lower()
     if mode == "off":
         return
-    print("[preflight-lite] basic checks ok.\n")
+    print("[preflight-lite] checks ok\n\n")
 
 def _anchor_id(world, name="NOW") -> str:
     # Try a direct lookup if available
@@ -600,6 +710,8 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.append("\n--------------------------------------------------------------------------------------")
     lines.append(f"WorldGraph snapshot at {datetime.now()}")
     lines.append("--------------------------------------------------------------------------------------")
+    body = getattr(ctx, "body", None) or getattr(getattr(ctx, "hal", None), "body", None) or "(none)"
+    lines.append(f"EMBODIMENT: body={body}")
     now_id = _anchor_id(world, "NOW")
     lines.append(f"NOW={now_id}  LATEST={world._latest_binding_id}")
     lines.append("")
@@ -719,6 +831,29 @@ def export_snapshot(world, drives=None, ctx=None, policy_rt=None, path_txt="worl
     print(f"  {path_txt_abs}")
     print(f"  {path_dot_abs}")
     print(f"Directory: {out_dir}")
+    
+    
+def _io_banner(args, loaded_path: str | None, loaded_ok: bool) -> None:
+    """Explain how load/autosave will behave for this run."""
+    ap = (args.autosave or "").strip() if hasattr(args, "autosave") else ""
+    lp = (loaded_path or "").strip() if loaded_path else ""
+    def _same(a, b):  # robust path compare
+        try: return os.path.abspath(a) == os.path.abspath(b)
+        except Exception: return a == b
+
+    if loaded_ok and ap and _same(ap, lp):
+        print(f"[io] Loaded '{lp}'. Autosave ON to the same file — state will be saved in-place after each action. "
+              f"(the file is fully rewritten on each autosave).")
+    elif loaded_ok and ap and not _same(ap, lp):
+        print(f"[io] Loaded '{lp}'. Autosave ON to '{ap}' — new steps will be written to the autosave file; "
+              f"the original load file remains unchanged.")
+    elif loaded_ok and not ap:
+        print(f"[io] Loaded '{lp}'. Autosave OFF — use menu [S] to save or relaunch with --autosave <path>.")
+    elif (not loaded_ok) and ap:
+        print(f"[io] Started a NEW session. Autosave ON to '{ap}'.")
+    else:
+        print(f"[io] Started a NEW session. Autosave OFF — use [S] to save or pass --autosave <path>.")
+
 
 
 # ---------- Contextual base selection (skeleton) ----------
@@ -838,7 +973,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     ctx.ticks = 0
     POLICY_RT = PolicyRuntime(CATALOG_GATES)
     POLICY_RT.refresh_loaded(ctx)
-
+    loaded_ok = False
+    loaded_src = None
 
     # Attempt to load a prior session if requested
     if args.load:
@@ -851,6 +987,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
             new_drives = Drives.from_dict(blob.get("drives", {}))
             skills_from_dict(blob.get("skills", {}))
             world, drives = new_world, new_drives
+            loaded_ok = True
+            loaded_src = args.load
         except FileNotFoundError:
             print(f"The file {args.load} could not be found. The simulation will run as a new one.\n")
         except json.JSONDecodeError as e:
@@ -864,14 +1002,33 @@ def interactive_loop(args: argparse.Namespace) -> None:
             print("The simulation will run as a new one.\n")
 
     # Banner & profile selection
-    print_header()
-    profile = choose_profile(ctx)
-    name = profile["name"]
-    sigma, jump, k = profile["ctx_sigma"], profile["ctx_jump"], profile["winners_k"]
-    ctx.sigma = sigma
-    ctx.jump = jump
-    print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
-    POLICY_RT.refresh_loaded(ctx)
+    if not args.no_intro:
+        print_header(args.hal_status_str, args.body_status_str) 
+    if args.profile:
+        mapping = {"goat": ("Mountain Goat", 0.015, 0.2, 2),
+                   "chimp": ("Chimpanzee", 0.02, 0.25, 3),
+                   "human": ("Human", 0.03, 0.3, 4),
+                   "super": ("Super-Human", 0.05, 0.35, 5)}
+        name, sigma, jump, k = mapping[args.profile]
+        ctx.profile, ctx.sigma, ctx.jump = name, sigma, jump
+        print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
+        POLICY_RT.refresh_loaded(ctx)
+    else:
+        profile = choose_profile(ctx)
+        name = profile["name"]
+        sigma, jump, k = profile["ctx_sigma"], profile["ctx_jump"], profile["winners_k"]
+        ctx.sigma, ctx.jump = sigma, jump
+        print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
+        POLICY_RT.refresh_loaded(ctx)        
+    _io_banner(args, loaded_src, loaded_ok)
+
+    # HAL instantiation
+    ctx.hal  = None
+    ctx.body = "(none)"
+    if getattr(args, "hal", False):
+        hal = HAL(args.body)
+        ctx.hal  = hal  #store hal on ctx for that other primitives can see it
+        ctx.body = hal.body
 
     # Ensure NOW anchor exists for the episode (so attachments from "now" resolve)
     world.ensure_anchor("NOW")
@@ -982,10 +1139,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
             return
 
         elif choice == "9":
-            print("[preflight] Running full preflight...")
-            time.sleep(0.2)
-            print("[preflight] ok.")
-            loop_helper(args.autosave, world, drives)
+            rc = run_preflight_full(args)
+            loop_helper(args.autosave, world, drives)           
 
         elif choice == "10":
             bid = input("Binding id to inspect: ").strip()
@@ -1144,6 +1299,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     new_drives = Drives.from_dict(blob.get("drives", {}))
                     skills_from_dict(blob.get("skills", {}))
                     world, drives = new_world, new_drives
+                    loaded_ok = True
+                    loaded_src = path
+                    _io_banner(args, loaded_src, loaded_ok)
                 except Exception as e:
                     print(f"[warn] could not load {path}: {e}")
 
@@ -1205,32 +1363,50 @@ def interactive_loop(args: argparse.Namespace) -> None:
 # --------------------------------------------------------------------------------------
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """Argument parser and program entry."""
+    """argument parser and program entry"""
+    
+    ##argparse and processing of certain flags here
+    # argparse flags
     p = argparse.ArgumentParser(prog="cca8_run.py")
     p.add_argument("--about", action="store_true", help="Print version and component info")
     p.add_argument("--version", action="store_true", help="Print just the runner version")
     p.add_argument("--hal", action="store_true", help="Enable HAL embodiment stub (if available)")
     p.add_argument("--body", help="Body/robot profile to use with HAL")
-    p.add_argument("--period", type=int, default=None, help="Optional period (for tagging)")
-    p.add_argument("--year", type=int, default=None, help="Optional year (for tagging)")
+    #p.add_argument("--period", type=int, default=None, help="Optional period (for tagging)")
+    #p.add_argument("--year", type=int, default=None, help="Optional year (for tagging)")
     p.add_argument("--no-intro", action="store_true", help="Skip the intro banner")
+    p.add_argument("--profile", choices=["goat","chimp","human","super"],
+               help="Pick a profile without prompting (goat=Mountain Goat, chimp=Chimpanzee, human=Human, super=Super-Human)")
     p.add_argument("--preflight", action="store_true", help="Run full preflight and exit")
-    p.add_argument("--write-artifacts", action="store_true", help="Write preflight artifacts to disk")
+    #p.add_argument("--write-artifacts", action="store_true", help="Write preflight artifacts to disk")
     p.add_argument("--load", help="Load session from JSON file")
     p.add_argument("--save", help="Save session to JSON file on exit")
     p.add_argument("--autosave", help="Autosave session to JSON file after each action")
     p.add_argument("--plan", metavar="PRED", help="Plan from NOW to predicate and exit")
     p.add_argument("--no-boot-prime", action="store_true", help="Disable boot seeding of stand intent")
-
     try:
         args = p.parse_args(argv)
     except SystemExit as e:
         return 2 if e.code else 0
-
+    
+    # process embodiment flags and continue with code
+    try:
+        if args.hal:
+            args.hal_status_str = "on (however, a full R-HAL has not been implemented\n     at this time, thus software will run without consideration of the robotic embodiment)"
+        else:
+            args.hal_status_str = "off (runs without consideration of the robotic embodiment)"
+        body = (args.body or "").strip()
+        args.body_status_str = f"{body if body else 'none specified'}"
+    except Exception as e:
+        args.hal_status_str  = f"error in flag {e} -- HAL: off (software will run without consideration of  robotic embodiment)"
+        args.body_status_str = f"error in flag {e} -- Body: (none)"
+  
+    # process version flag and return
     if args.version:
         print(__version__)
         return 0
 
+    # process about flag and return
     if args.about:
         print("CCA8 Components:")
         print(f"  - cca8_run.py v{__version__} ({os.path.abspath(__file__)})")
@@ -1245,9 +1421,12 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(f"  - cca8_controller v...(cca8_controller.py)")
         return 0
 
+    # process preflight flag and return
     if args.preflight:
-        print("[preflight] Running full preflight..."); time.sleep(0.2); print("[preflight] ok."); return 0
-
+        rc = run_preflight_full(args)
+        return rc
+          
+    ##main operations of program via interactive_loop()
     interactive_loop(args); return 0
 
 # --------------------------------------------------------------------------------------
