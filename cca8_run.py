@@ -45,7 +45,41 @@ from typing import Optional, Any, Dict, List, Callable
 import cca8_world_graph as wgmod
 from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict
 
-__version__ = "0.7.10"
+__version__ = "0.7.11"
+
+# --- Public API index -------------------------------------------------------------
+__all__ = [
+    "main",
+    "interactive_loop",
+    "run_preflight_full",
+    "snapshot_text",
+    "export_snapshot",
+    "world_delete_edge",
+    "boot_prime_stand",
+    "__version__",
+    "Ctx",
+]
+
+# --- Runtime Context (ENGINE↔CLI seam) --------------------------------------------
+@dataclass
+class Ctx:
+    """Mutable runtime context for the agent.
+
+    This deliberately small struct is the boundary object passed between the
+    engine (pure helpers) and the CLI. Defaults match the prior inline stub.
+    """
+    sigma: float = 0.015
+    jump: float = 0.2
+    age_days: float = 0.0
+    ticks: int = 0
+    profile: str = "Mountain Goat"
+    hal: Optional[Any] = None
+    body: str = "(none)"
+
+
+# Module layout/seam:
+#   ENGINE (pure helpers; import-safe; no user I/O)  → can be reused by other front-ends
+#   CLI    (printing/input; menus; argparse)        → terminal user experience
 
 # --- Edge delete helpers (self-contained) ------------------------------------
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
@@ -109,6 +143,9 @@ def world_delete_edge(world: Any, src: str, dst: str, rel: str | None) -> int:
 
     return removed
 
+
+# --- CLI flow: delete edge -------------------------------------------------------
+# This is part of the CLI layer; it calls engine helper `world_delete_edge()`.
 def delete_edge_flow(world: Any, autosave_cb=None) -> None:
     print("Delete edge (src -> dst [relation])")
     src = input("Source binding id (e.g., b1): ").strip()
@@ -507,24 +544,34 @@ def boot_prime_stand(world, ctx) -> None:
 # --------------------------------------------------------------------------------------
 
 MENU = """\
+# Inspect / View
 1) World stats
-2) List predicates
-3) Add predicate (creates column engram + binding with pointer)
-4) Connect two bindings (src, dst, relation)
-5) Plan from NOW -> <predicate>
-6) Resolve engrams on a binding
-7) Show last 5 bindings
-8) Quit
-9) Run preflight now
-10) Inspect binding details
-11) Add sensory cue (vision/smell/touch/sound)
-12) Instinct step (Action Center)
-13) Show skill stats
-14) Autonomic tick (emit interoceptive cues)
-15) Delete edge (source, destn, relation)
-16) Export snapshot (bindings + edges + ctx + policies)
-17) Display snapshot (bindings + edges + ctx + policies)
-18) Simulate fall (add state:posture_fallen and try recovery)
+2) Show last 5 bindings
+3) Inspect binding details
+4) List predicates
+5) Show drives (raw + tags)
+6) Show skill stats
+7) Display snapshot (bindings + edges + ctx + policies)
+8) Resolve engrams on a binding
+
+# Build / Edit
+9) Add predicate (creates column engram + binding with pointer)
+10) Connect two bindings (src, dst, relation)
+11) Delete edge (source, destn, relation)
+
+# Plan / Act
+12) Plan from NOW -> <predicate>
+13) Add sensory cue (vision/smell/touch/sound)
+14) Instinct step (Action Center)
+15) Autonomic tick (emit interoceptive cues)
+16) Simulate fall (add state:posture_fallen and try recovery)
+
+# Save / Export / System
+17) Export snapshot (bindings + edges + ctx + policies)
+18) Save session → path   [S]
+19) Load session → path   [L]
+20) Run preflight now
+21) Quit
 
 [S] Save session → path
 [L] Load session → path
@@ -533,6 +580,7 @@ MENU = """\
 [T] Tutorial on using and maintaining this simulation
 
 Select: """
+
 
 # --------------------------------------------------------------------------------------
 # World/intro flows and preflight-lite stamp helpers
@@ -1056,6 +1104,37 @@ def interactive_loop(args: argparse.Namespace) -> None:
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye.")
             return
+        # NEW MENU compatibility: accept new grouped numbers and legacy ones.
+        _new_to_old = {
+            "2": "7",    # Show last 5 bindings
+            "3": "10",   # Inspect binding details
+            "4": "2",    # List predicates
+            "5": "d",    # Show drives (raw + tags)
+            "6": "13",   # Show skill stats
+            "7": "17",   # Display snapshot
+            "8": "6",    # Resolve engrams on a binding
+            "9": "3",    # Add predicate
+            "10": "4",   # Connect two bindings
+            "11": "15",  # Delete edge
+            "12": "5",   # Plan from NOW -> <predicate>
+            "13": "11",  # Add sensory cue
+            "14": "12",  # Instinct step
+            "15": "14",  # Autonomic tick
+            "16": "18",  # Simulate fall
+            "17": "16",  # Export snapshot
+            "18": "s",   # Save session
+            "19": "l",   # Load session
+            "20": "9",   # Run preflight now
+            "21": "8",   # Quit
+        }
+        c0 = choice.strip()
+        ckey = c0.lower()
+        if ckey in _new_to_old:
+            routed = _new_to_old[ckey]
+            print(f"[compat] Routed selection {c0} → {routed}.")
+            choice = routed
+        else:
+            choice = ckey
 
         if choice == "1":
             now_id = _anchor_id(world, "NOW")
