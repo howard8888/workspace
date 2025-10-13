@@ -45,9 +45,12 @@ from typing import Optional, Any, Dict, List, Callable
 import cca8_world_graph as wgmod
 from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict
 
-__version__ = "0.7.11"
 
-# --- Public API index -------------------------------------------------------------
+# --- Public API index and version-------------------------------------------------------------
+#nb version number of different modules are unique to that module
+#nb the public API index specifies what downstream code should import from this module
+
+__version__ = "0.7.11"
 __all__ = [
     "main",
     "interactive_loop",
@@ -61,7 +64,7 @@ __all__ = [
 ]
 
 # --- Runtime Context (ENGINE↔CLI seam) --------------------------------------------
-@dataclass
+@dataclass(slots=True)
 class Ctx:
     """Mutable runtime context for the agent.
 
@@ -198,10 +201,29 @@ def save_session(path: str, world, drives) -> str:
         json.dump(data, f, indent=2, ensure_ascii=False)
     os.replace(tmp, path)
     return ts
-    
-    
+
+
+def _module_version_and_path(modname: str) -> tuple[str, str]:
+    """Return (version_string, path) for a module name, safely.
+    - If module can't be imported → ('-- unavailable (i.e.,not found)', '<name>.py')
+    - If no __version__ on module → ('n/a', path)
+    """
+    try:
+        import importlib
+        m = importlib.import_module(modname)
+    except Exception:
+        return "-- unavailable (i.e., not found)", f"{modname}.py"
+    ver = getattr(m, "__version__", None)
+    ver_str = str(ver) if ver is not None else "n/a"
+    path = getattr(m, "__file__", f"{modname}.py")
+    return ver_str, path
+
+
+
+
+
 # --------------------------------------------------------------------------------------
-# Embodiment 
+# Embodiment
 # --------------------------------------------------------------------------------------
 class HAL:
     """Hardware abstraction layer (HAL) skeleton for future usage
@@ -227,22 +249,22 @@ class HAL:
 def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Body: (none)"):
     print('\n\n# --------------------------------------------------------------------------------------')
     print('# NEW RUN   NEW RUN')
-    print('# --------------------------------------------------------------------------------------')   
+    print('# --------------------------------------------------------------------------------------')
     print("\nA Warm Welcome to the CCA8 Mammalian Brain Simulation")
     print(f"(cca8_run.py v{__version__})\n")
     print(f"Entry point program being run: {os.path.abspath(sys.argv[0])}")
     print(f"OS: {sys.platform} (run system-dependent utilities for more detailed system/simulation info)")
-    print('(for non-interactive execution, ">python cca8_run.py --help" to see optional flags you can set)')    
+    print('(for non-interactive execution, ">python cca8_run.py --help" to see optional flags you can set)')
     print(f'\nEmbodiment:  HAL (hardware abstraction layer) setting: {hal_str}')
     print(f'Embodiment:  body_type-version_number-serial_number (i.e., robotic embodiment): {body_str} ')
- 
+
     print("\nThe simulation of the cognitive architecture can be adjusted to add or take away")
     print("  various features, allowing exploration of different evolutionary-like configurations.\n")
     print("  1. Mountain Goat-like brain simulation")
     print("  2. Chimpanzee-like brain simulation")
     print("  3. Human-like brain simulation")
     print("  4. Super-Human-like machine simulation\n")
-    
+
     print("Pending additional intro material here....")
 
 def loop_helper(autosave_from_args: Optional[str], world, drives, time_limited: bool = False):
@@ -544,6 +566,7 @@ def boot_prime_stand(world, ctx) -> None:
 # --------------------------------------------------------------------------------------
 
 MENU = """\
+[hints for text selection instead of numerical selection]
 # Inspect / View
 1) World stats
 2) Show last 5 bindings
@@ -555,13 +578,13 @@ MENU = """\
 8) Resolve engrams on a binding
 
 # Build / Edit
-9) Add predicate (creates column engram + binding with pointer)
+9) [Add] predicate (creates column engram + binding with pointer)
 10) Connect two bindings (src, dst, relation)
 11) Delete edge (source, destn, relation)
 
 # Plan / Act
 12) Plan from NOW -> <predicate>
-13) Add sensory cue (vision/smell/touch/sound)
+13) Input [sensory] cue (vision/smell/touch/sound)
 14) Instinct step (Action Center)
 15) Autonomic tick (emit interoceptive cues)
 16) Simulate fall (add state:posture_fallen and try recovery)
@@ -659,22 +682,25 @@ def run_preflight_full(args) -> int:
 
     # 3) Controller primitives
     try:
-        from cca8_controller import PRIMITIVES, Drives as _Drv
-        if isinstance(PRIMITIVES, list) and len(PRIMITIVES) >= 1:
+        from cca8_controller import PRIMITIVES, Drives as _Drv, __version__ as _CTRL_VER
+        # (action_center_step is already imported at module top; if not, import it here too)
+        if isinstance(PRIMITIVES, list) and PRIMITIVES:
             ok(f"controller primitives loaded (count={len(PRIMITIVES)})")
         else:
             bad("controller primitives missing/empty")
-        # Smoke: run an empty action_center_step on a fresh world
+
+        # Smoke: run the controller once on a fresh world using the real Ctx dataclass
         try:
             _w = wgmod.WorldGraph(); _w.ensure_anchor("NOW")
             _d = _Drv()
-            _ctx = type("Ctx", (), {})(); _ctx.sigma=0.015; _ctx.jump=0.2; _ctx.age_days=0.0; _ctx.ticks=0
+            _ctx = Ctx()
             _ = action_center_step(_w, _ctx, _d)
-            ok("action_center_step smoke-run")
+            ok(f"action_center_step smoke-run (cca8_controller v{_CTRL_VER})")
         except Exception as e:
             bad(f"action_center_step failed to run: {e}")
     except Exception as e:
         bad(f"controller import failed: {e}")
+
 
     # 4) HAL header consistency (does not require real hardware)
     try:
@@ -765,10 +791,15 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.append("")
 
     # CTX
+    # CTX
     lines.append("CTX:")
     if ctx is not None:
         try:
-            ctx_dict = dict(vars(ctx))
+            from dataclasses import is_dataclass, asdict
+            if is_dataclass(ctx):
+                ctx_dict = asdict(ctx)
+            else:
+                ctx_dict = dict(vars(ctx))
         except Exception:
             ctx_dict = {}
         if ctx_dict:
@@ -879,8 +910,8 @@ def export_snapshot(world, drives=None, ctx=None, policy_rt=None, path_txt="worl
     print(f"  {path_txt_abs}")
     print(f"  {path_dot_abs}")
     print(f"Directory: {out_dir}")
-    
-    
+
+
 def _io_banner(args, loaded_path: str | None, loaded_ok: bool) -> None:
     """Explain how load/autosave will behave for this run."""
     ap = (args.autosave or "").strip() if hasattr(args, "autosave") else ""
@@ -1014,7 +1045,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Build initial world/drives fresh
     world = wgmod.WorldGraph()
     drives = Drives()
-    ctx = type("Ctx", (), {})()   # minimal context object
+    ctx = Ctx()
+    #attribute defaults already exist in class Ctx but can be adjusted here also
     ctx.sigma = 0.015
     ctx.jump = 0.2
     ctx.age_days = 0.0
@@ -1029,14 +1061,22 @@ def interactive_loop(args: argparse.Namespace) -> None:
         try:
             with open(args.load, "r", encoding="utf-8") as f:
                 blob = json.load(f)
-            print(f"Loaded {args.load} (saved_at={blob.get('saved_at','?')})")
-            print("A previously saved simulation session is being continued here.\n")
+
             new_world  = wgmod.WorldGraph.from_dict(blob.get("world", {}))
-            new_drives = Drives.from_dict(blob.get("drives", {}))
+            try:
+                new_drives = Drives.from_dict(blob.get("drives", {}))
+            except Exception as e:
+                print(f"[warn] --load: invalid drives in {args.load}: {e}; using defaults.")
+                new_drives = Drives()
+
             skills_from_dict(blob.get("skills", {}))
             world, drives = new_world, new_drives
             loaded_ok = True
             loaded_src = args.load
+
+            print(f"Loaded {args.load} (saved_at={blob.get('saved_at','?')})")
+            print("A previously saved simulation session is being continued here.\n")
+
         except FileNotFoundError:
             print(f"The file {args.load} could not be found. The simulation will run as a new one.\n")
         except json.JSONDecodeError as e:
@@ -1051,7 +1091,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
     # Banner & profile selection
     if not args.no_intro:
-        print_header(args.hal_status_str, args.body_status_str) 
+        print_header(args.hal_status_str, args.body_status_str)
     if args.profile:
         mapping = {"goat": ("Mountain Goat", 0.015, 0.2, 2),
                    "chimp": ("Chimpanzee", 0.02, 0.25, 3),
@@ -1067,10 +1107,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
         sigma, jump, k = profile["ctx_sigma"], profile["ctx_jump"], profile["winners_k"]
         ctx.sigma, ctx.jump = sigma, jump
         print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
-        POLICY_RT.refresh_loaded(ctx)        
+        POLICY_RT.refresh_loaded(ctx)
     _io_banner(args, loaded_src, loaded_ok)
 
-    # HAL instantiation
+    # HAL instantiation (although already set in class Ctx, but can modify here)
     ctx.hal  = None
     ctx.body = "(none)"
     if getattr(args, "hal", False):
@@ -1098,14 +1138,85 @@ def interactive_loop(args: argparse.Namespace) -> None:
     run_preflight_lite_maybe()
 
     # Interactive menu loop
+    pretty_scroll = True  #to see changes before terminal menu scrolls over screen
     while True:
         try:
+            if pretty_scroll:
+                temp = input('\nPlease press any key (* stops this scroll pause) to continue with menu (above screen will scroll)....\n')
+                if temp == "*":
+                    pretty_scroll = False
             choice = input(MENU).strip()
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye.")
             return
+
+        # ---- Text command aliases (words + 3-letter prefixes → legacy actions) -----
+        MIN_PREFIX = 3 #if not perfect match then this specifies how many letters to match
+        #will map to current menu which then must be mapped to original menu numbers
+        _ALIASES = {
+            # Inspect / View
+            "world": "1", "stats": "1",
+            "last": "2", "bindings": "2",
+            "inspect": "3", "details": "3", "id": "3",
+            "listpredicates": "4", "listpreds": "4", "listp": "4",
+            "drives": "d",
+            "skills": "6",
+            "snapshot": "7", "display": "7",
+
+            # Build / Edit
+            "resolve": "8", "engrams": "8",
+            "add": "9", "predicate": "9",
+            "connect": "10", "link": "10",
+            "delete": "11", "del": "11", "rm": "11",
+
+            # Plan / Act
+            "plan": "12",
+            "sensory": "13", "cue": "13",
+            "instinct": "14", "act": "14",
+            "autonomic": "15", "tick": "15",
+            "fall": "16", "simulate": "16",
+
+            # Save / Export / System
+            "export": "17",
+            "save": "s",
+            "load": "l",
+            "preflight": "20",
+            "quit": "21", "exit": "21",  #no 'q' to avoid exit by mistake
+            "tutorial": "t", "help": "t",
+        }
+
+        def _route_alias(cmd: str) -> tuple[str | None, list[str]]:
+            """Return (routed_choice, matches). routed_choice is None if no unique match.
+            matches lists alias keys that begin with the provided prefix (for help)."""
+            s = cmd.strip().lower() #s not a number and that's why routed here
+            if s in _ALIASES: #check to see if s is a whole word in _ALIASES
+                return _ALIASES[s], []  #returns ("routed", matches[]) <--
+            if len(s) >= MIN_PREFIX: #s not a number and not a whole matching word and at least 3/variable letters
+                matches = [k for k in _ALIASES if k.startswith(s)] #
+                if len(matches) == 1:
+                    return _ALIASES[matches[0]], matches #returns ("routed", matches[]) <--
+                return None, matches #returns (None, [matches]) if more than one match  <--
+            return None, [] #returns (None, matches[]]) if no match  <--
+
+        ckey = choice.strip().lower()
+
+        # If it's not a pure number, try word/prefix routing first
+        if not ckey.isdigit():
+            routed, matches = _route_alias(ckey) #(routed, []), if no match -- (None, []), if multiple matches -- (None, [matches])
+            if routed is not None:
+                if pretty_scroll:
+                    print(f"abbreviated input entry successfully matched: '{ckey}' → {routed}")
+                choice = routed
+            else:
+                if len(matches) > 1:
+                    print(f"[help] Ambiguous input '{ckey}'. "
+                          f"Try one of: {', '.join(sorted(matches)[:6])}"
+                          f"{'...' if len(matches) > 6 else ''}")
+                    continue #ambiguous entry thus restart while loop above for new input
+
         # NEW MENU compatibility: accept new grouped numbers and legacy ones.
         _new_to_old = {
+            "1": "1",    # World stats
             "2": "7",    # Show last 5 bindings
             "3": "10",   # Inspect binding details
             "4": "2",    # List predicates
@@ -1127,16 +1238,19 @@ def interactive_loop(args: argparse.Namespace) -> None:
             "20": "9",   # Run preflight now
             "21": "8",   # Quit
         }
-        c0 = choice.strip()
-        ckey = c0.lower()
+
+        ckey = choice.strip().lower() #ensure any present or future routed value is in correct form
+
         if ckey in _new_to_old:
             routed = _new_to_old[ckey]
-            print(f"[compat] Routed selection {c0} → {routed}.")
+            if pretty_scroll:
+                print(f"[compat] processed input entry routed to old value: {ckey} → {routed}")
             choice = routed
         else:
             choice = ckey
 
         if choice == "1":
+            # World stats
             now_id = _anchor_id(world, "NOW")
             print(f"Bindings: {len(world._bindings)}  Anchors: NOW={now_id}  Latest: {world._latest_binding_id}")
             try:
@@ -1146,6 +1260,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "2":
+            # List predicates
             idx: Dict[str, List[str]] = {}
             for bid, b in world._bindings.items():
                 for t in getattr(b, "tags", []):
@@ -1161,6 +1276,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "3":
+            # Add predicate
             token = input("Enter predicate token (e.g., state:posture_standing): ").strip()
             if token:
                 bid = world.add_predicate(token, attach="latest", meta={"added_by": "user"})
@@ -1168,6 +1284,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "4":
+            # Connect two bindings
             src = input("Source binding id (e.g., b12): ").strip()
             dst = input("Dest binding id (e.g., b13): ").strip()
             label = input('Relation label (e.g., "then"): ').strip() or "then"
@@ -1179,6 +1296,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "5":
+            # Plan from NOW -> <predicate>
             token = input("Target predicate (e.g., state:posture_standing): ").strip()
             if not token:
                 loop_helper(args.autosave, world, drives)
@@ -1192,6 +1310,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "6":
+            # Resolve engrams on a binding
             bid = input("Binding id to resolve engrams: ").strip()
             b = world._bindings.get(bid)
             if not b:
@@ -1201,6 +1320,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "7":
+            # Show last 5 bindings
             last_ids = sorted(world._bindings.keys(), key=lambda x: int(x[1:]))[-5:]
             for bid in last_ids:
                 b = world._bindings[bid]
@@ -1212,16 +1332,19 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "8":
+            # Quit
             print("Goodbye.")
             if args.save:
                 save_session(args.save, world, drives)
             return
 
         elif choice == "9":
+            # Run preflight now
             rc = run_preflight_full(args)
-            loop_helper(args.autosave, world, drives)           
+            loop_helper(args.autosave, world, drives)
 
         elif choice == "10":
+            # Inspect binding details
             bid = input("Binding id to inspect: ").strip()
             b = world._bindings.get(bid)
             if not b:
@@ -1239,6 +1362,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "11":
+            # Add sensory cue
             ch = input("Channel (vision/smell/touch/sound): ").strip().lower()
             tok = input("Cue token (e.g., mom:close): ").strip()
             if ch and tok:
@@ -1251,6 +1375,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "12":
+            # Instinct step
             before_n = len(world._bindings)
 
             # --- context (for teaching / debugging) ---
@@ -1290,12 +1415,13 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
             loop_helper(args.autosave, world, drives)
 
-
         elif choice == "13":
+            # Show skill stats
             print(skill_readout())
             loop_helper(args.autosave, world, drives)
 
         elif choice == "14":
+            # Autonomic tick
             drives.fatigue = min(1.0, drives.fatigue + 0.01)
             # advance developmental clock
             try:
@@ -1322,10 +1448,12 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 loop_helper(args.autosave, world, drives)
 
         elif choice == "16":
+            # Export snapshot
             export_snapshot(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT)
             loop_helper(args.autosave, world, drives)
 
         elif choice == "17":
+            # Display snapshot
             print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT))
             loop_helper(args.autosave, world, drives)
 
@@ -1360,14 +1488,15 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
             loop_helper(args.autosave, world, drives)
 
-
         elif choice.lower() == "s":
+            # Save session
             path = input("Save to file (e.g., session.json): ").strip()
             if path:
                 ts = save_session(path, world, drives)
                 print(f"Saved to {path} at {ts}")
 
         elif choice.lower() == "l":
+            # Load session
             path = input("Load from file: ").strip()
             if path and os.path.exists(path):
                 try:
@@ -1435,7 +1564,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             continue
 
         else:
-            print("Unknown selection.")
+            print("Input selection does not match any existing options. Please try again.")
 
 # --------------------------------------------------------------------------------------
 # main()
@@ -1443,7 +1572,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
 def main(argv: Optional[list[str]] = None) -> int:
     """argument parser and program entry"""
-    
+
     ##argparse and processing of certain flags here
     # argparse flags
     p = argparse.ArgumentParser(prog="cca8_run.py")
@@ -1467,7 +1596,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         args = p.parse_args(argv)
     except SystemExit as e:
         return 2 if e.code else 0
-    
+
     # process embodiment flags and continue with code
     try:
         if args.hal:
@@ -1479,7 +1608,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     except Exception as e:
         args.hal_status_str  = f"error in flag {e} -- HAL: off (software will run without consideration of  robotic embodiment)"
         args.body_status_str = f"error in flag {e} -- Body: (none)"
-  
+
     # process version flag and return
     if args.version:
         print(__version__)
@@ -1487,24 +1616,31 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     # process about flag and return
     if args.about:
+        comps = [  # (label, version, path)
+            ("cca8_run.py", __version__, os.path.abspath(__file__)),
+        ]
+        for name in ["cca8_world_graph", "cca8_controller", "cca8_column", "cca8_features", "cca8_temporal"]:
+            ver, path = _module_version_and_path(name)
+            comps.append((name, ver, path))
+
         print("CCA8 Components:")
-        print(f"  - cca8_run.py v{__version__} ({os.path.abspath(__file__)})")
-        print(f"  - cca8_world_graph v... ({getattr(wgmod, '__file__', 'cca8_world_graph.py')})")
-        print(f"  - cca8_column   v... (cca8_column.py)")
-        print(f"  - cca8_features      v... (cca8_features.py)")
-        print(f"  - cca8_temporal   v... (cca8_temporal.py)")
+        for label, ver, path in comps:
+            print(f"  - {label} v{ver} ({path})")
+
+        # nice extra: show primitive count if the controller is importable
         try:
             from cca8_controller import PRIMITIVES
-            print(f"  - cca8_controller v... (cca8_controller.py) [primitives: {len(PRIMITIVES)}]")
+            print(f"    [controller primitives: {len(PRIMITIVES)}]")
         except Exception:
-            print(f"  - cca8_controller v...(cca8_controller.py)")
+            pass
+
         return 0
 
     # process preflight flag and return
     if args.preflight:
         rc = run_preflight_full(args)
         return rc
-          
+
     ##main operations of program via interactive_loop()
     interactive_loop(args); return 0
 

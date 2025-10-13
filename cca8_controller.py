@@ -9,6 +9,12 @@ Concepts
   When executed, a policy appends a *small chain* of predicates/edges to the WorldGraph and returns
   a status dict: {"policy": "policy:<name>", "status": "ok|fail|noop|error", "reward": float, "notes": str}.
 - Provenance: bindings created by a policy stamp meta.policy = "policy:<name>".
+  "provenance" means when a primitive/policy fires and creates bindings or links we stamp metadata
+   eg, "created_by: policy:<name>", timestamp, tag "policy:stand_up", "note: 'standing'"
+   thus effective means recording origin so later debugging/credit assignment skill ledger,RL is explainable
+   -state predicates, e.g., state:posture_standing, assert something about the agent or world that reasoner can use as facts
+   -provenance tags, e.g., policy:stand_up, assert who/what produced this binding/edge rather than something you plan for, it already occurred
+   -despite the same effect predicate being produced there could have been two different policies creating it, provenance tags help figure out which one
 - Skill ledger: tiny RL-style counters (n, succ, q, last_reward) per policy; not used for selection yet.
 
 Action loop
@@ -24,11 +30,40 @@ from datetime import datetime
 from typing import Dict, List
 
 
+
+# --- Public API index and version-------------------------------------------------------------
+#nb version number of different modules are unique to that module
+#nb the public API index specifies what downstream code should import from this module
+
+__version__ = "0.0.3"  
+__all__ = [
+    "Drives",
+    "SkillStat",
+    "skills_to_dict",
+    "skills_from_dict",
+    "skill_readout",
+    "Primitive",
+    "StandUp",
+    "SeekNipple",
+    "FollowMom",
+    "ExploreCheck",
+    "Rest",
+    "PRIMITIVES",
+    "action_center_step",
+    "__version__",
+]
+
+# Drive thresholds
+HUNGER_HIGH = 0.60
+FATIGUE_HIGH = 0.70
+WARMTH_COLD = 0.30
+
+
 # -----------------------------------------------------------------------------
 # Drives
 # -----------------------------------------------------------------------------
 
-@dataclass
+@dataclass(slots=True)
 class Drives:
     """Agent internal state.
 
@@ -47,20 +82,21 @@ class Drives:
 
     def predicates(self) -> List[str]:
         tags: List[str] = []
-        if self.hunger > 0.6:
+        if self.hunger > HUNGER_HIGH:
             tags.append("drive:hunger_high")
-        if self.fatigue > 0.7:
+        if self.fatigue > FATIGUE_HIGH:
             tags.append("drive:fatigue_high")
-        if self.warmth < 0.3:
+        if self.warmth < WARMTH_COLD:
             tags.append("drive:cold")
         return tags
 
     def to_dict(self) -> dict:
         return {"hunger": self.hunger, "fatigue": self.fatigue, "warmth": self.warmth}
 
-    @staticmethod
-    def from_dict(d: dict) -> "Drives":
-        return Drives(
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Drives":
+        return cls(
             hunger=float(d.get("hunger", 0.7)),
             fatigue=float(d.get("fatigue", 0.2)),
             warmth=float(d.get("warmth", 0.6)),
@@ -71,7 +107,7 @@ class Drives:
 # Skills (tiny RL-style ledger)
 # -----------------------------------------------------------------------------
 
-@dataclass
+@dataclass(slots=True)
 class SkillStat:
     """Simple running stats per policy (scaffolding for future RL)."""
     n: int = 0
@@ -79,12 +115,16 @@ class SkillStat:
     q: float = 0.0
     last_reward: float = 0.0
 
-
 SKILLS: Dict[str, SkillStat] = {}
 
-
+    
 def update_skill(name: str, reward: float, ok: bool = True, alpha: float = 0.3) -> None:
-    s = SKILLS.setdefault(name, SkillStat())
+    # get-or-create (more readable than setdefault)
+    s = SKILLS.get(name)
+    if s is None:
+        s = SkillStat()
+        SKILLS[name] = s
+
     s.n += 1
     if ok:
         s.succ += 1
@@ -94,16 +134,32 @@ def update_skill(name: str, reward: float, ok: bool = True, alpha: float = 0.3) 
 
 
 def skills_to_dict() -> dict:
-    """Serialize SKILLS dataclass values to plain dicts."""
-    return {k: asdict(v) for k, v in SKILLS.items()}
+    """    
+    Converts each SkillStat dataclass to a built-in mapping (i.e., plain dict with field names as keys)
+       via dataclasses.asdict(), so the result is detached (editing it will not mutate the original SKILLS)
+    Returns:
+        dict[str, dict[str, float|int]]
 
+    e.g. SKILLS is: {'policy:stand_up': SkillStat(n=1, succ=1, q=0.3, last_reward=1.0)}
+    output is: {'policy:stand_up': {'n': 1, 'succ': 1, 'q': 0.3, 'last_reward': 1.0}}   
+    """
+    return {k: asdict(v) for k, v in SKILLS.items()}
+    
 
 def skills_from_dict(d: dict) -> None:
-    """Rebuild SKILLS dataclass values from plain dicts."""
+    """Rebuild SKILLS dataclass values from plain dicts (robust to bad inputs)."""
     SKILLS.clear()
     for k, v in (d or {}).items():
-        SKILLS[k] = SkillStat(**v)
-
+        try:
+            SKILLS[k] = SkillStat(
+                n=int(v.get("n", 0)),
+                succ=int(v.get("succ", 0)),
+                q=float(v.get("q", 0.0)),
+                last_reward=float(v.get("last_reward", 0.0)),
+            )
+        except Exception:
+            # Skip malformed rows rather than breaking session load.
+            continue
 
 def skill_readout() -> str:
     if not SKILLS:
@@ -180,7 +236,7 @@ class StandUp(Primitive):
     """Primitive that creates a tiny posture chain and marks standing.
 
     Trigger:
-        Fire when hunger is high and the agent is not already upright.
+        Fires if fallen OR when hunger is high and the agent is not already upright
     Execute:
         Add predicates:
             action:push_up -> action:extend_legs -> state:posture_standing
@@ -205,10 +261,6 @@ class StandUp(Primitive):
             return False
 
         return True
-
-        
-        
-    
 
     def execute(self, world, ctx, drives: Drives) -> dict:
         now = datetime.now().isoformat(timespec="seconds")
@@ -319,6 +371,13 @@ PRIMITIVES: List[Primitive] = [
 # Action Center
 # -----------------------------------------------------------------------------
 
+def _run(policy):
+    try:
+        return policy.execute(world, ctx, drives)
+    except Exception as e:
+        update_skill(policy.name, 0.0, ok=False)
+        return {"policy": policy.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}
+
 def action_center_step(world, ctx, drives: Drives) -> dict:
     """Scan PRIMITIVES in order; run the first policy whose trigger returns True.
  
@@ -340,7 +399,7 @@ def action_center_step(world, ctx, drives: Drives) -> dict:
         for policy in PRIMITIVES:
             if policy.name == "policy:stand_up":
                 try:
-                    return policy.execute(world, ctx, drives)
+                    return _run(policy)
                 except Exception as e:
                     update_skill(policy.name, 0.0, ok=False)
                     return {"policy": policy.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}
@@ -350,7 +409,7 @@ def action_center_step(world, ctx, drives: Drives) -> dict:
         try:
             if policy.trigger(world, drives):
                 try:
-                    return policy.execute(world, ctx, drives)
+                    return _run(policy)
                 except Exception as e:
                     update_skill(policy.name, 0.0, ok=False)
                     return {"policy": policy.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}

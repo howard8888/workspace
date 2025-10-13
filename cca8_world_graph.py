@@ -24,15 +24,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections import deque
-from typing import Dict, List, Set, Optional
+from typing import Dict, List, Set, Optional, TypedDict
 import itertools
 
+# --- Public API index and version, constants -------------------------------------------------
+__version__ = "0.1.1"
+__all__ = ["Binding", "WorldGraph", "Edge", "__version__"]
+
+
+_ATTACH_OPTIONS: Set[str] = {"now", "latest", "none"}
 
 # -----------------------------------------------------------------------------
 # Data model
 # -----------------------------------------------------------------------------
 
-@dataclass
+class Edge(TypedDict):
+    #more precise typing of edges in class Binding
+    to: str
+    label: str
+    meta: dict
+
+@dataclass(slots=True)
 class Binding:
     """One node in the episode graph.
 
@@ -46,7 +58,7 @@ class Binding:
     """
     id: str
     tags: Set[str]
-    edges: List[dict]
+    edges: List[Edge] #e.g. [{"to": "b153", "label": "then", "meta": {...}}, ...]
     meta: dict
     engrams: dict
 
@@ -92,6 +104,9 @@ class WorldGraph:
     """
 
     def __init__(self) -> None:
+        """Initializes an empty episode graph
+        ids are b1, b2, .... via an internal counter
+        """
         self._bindings: Dict[str, Binding] = {}
         self._anchors: Dict[str, str] = {}           # name -> binding_id
         self._latest_binding_id: Optional[str] = None
@@ -100,6 +115,7 @@ class WorldGraph:
     # ------------------------- internals -------------------------
 
     def _next_id(self) -> str:
+        """Return the next binding id as 'b<N>' using the internal counter."""
         return f"b{next(self._id_counter)}"
 
     # ------------------------- anchors ---------------------------
@@ -143,51 +159,63 @@ class WorldGraph:
         self._latest_binding_id = bid
         return bid
 
-    def add_predicate(
-        self,
-        token: str,
-        *,
-        attach: Optional[str] = None,
-        meta: Optional[dict] = None,
-        engrams: Optional[dict] = None,
-    ) -> str:
-        """Create a binding that carries the predicate token.
+    def add_predicate(self, token: str, *, attach: Optional[str] = None, meta: Optional[dict] = None, engrams: Optional[dict] = None) -> str:
+        """Create a new predicate binding and optionally auto-link it.
 
         Args:
-            token: Predicate token like "state:posture_standing".
-            attach: One of {"now", "latest", "none"} (case-insensitive):
-                - "now":    auto-create an edge from the NOW anchor to this binding.
-                - "latest": if a previous binding exists, edge from latest -> this.
-                - "none"/None: no auto-edge.
-            meta: Provenance/context to store on the binding (e.g., {"policy": "policy:stand_up"}).
-            engrams: Optional pointer dict into column memory.
+            token: Predicate token. Accepts either "<token>" or "pred:<token>".
+                   We normalize so the stored tag is always "pred:<token>" (no double "pred:").
+                   Examples: "state:posture_standing", "action:push_up", "vision:silhouette:mom".
+            attach: If "now", link NOW → new. If "latest", link <previous latest> → new.
+                    If None or "none", no auto-link is added.
+            meta:   Optional provenance dictionary to store on the binding.
+            engrams:Optional engram attachments (small dict).
 
         Returns:
-            The new binding id (e.g., "b152").
+            The new binding id (e.g., "b42").
         """
-        # normalize attach
+        # --- normalize token to a single 'pred:' prefix --------------------------------
+        tok = (token or "").strip()
+        if tok.startswith("pred:"):
+            tok = tok[5:]
+        tag = f"pred:{tok}"
+
+        # --- validate attach option -----------------------------------------------------
         att = (attach or "none").lower()
-        if att not in {"now", "latest", "none"}:
-            raise ValueError("attach must be one of {'now','latest','none'}")
+        if att not in _ATTACH_OPTIONS:  # e.g., {"now", "latest", "none"}
+            raise ValueError(f"attach must be one of {_ATTACH_OPTIONS!r}")
 
-        # create binding
-        tags = {f"pred:{token}"}
-        bid = self.add_binding(tags=tags, meta=meta, engrams=engrams)
+        # --- allocate id and construct the binding ---
+        prev_latest = self._latest_binding_id         # keep BEFORE we change it
+        bid = self._next_id()
+        b = Binding(
+            id=bid,
+            tags={tag},
+            edges=[],
+            meta=dict(meta) if meta else {},
+            engrams=dict(engrams) if engrams else {},
+        )
+        self._bindings[bid] = b
+        self._latest_binding_id = bid
 
-        # optional auto-attachment
+        # --- optional auto-linking ---
         if att == "now":
             src = self.ensure_anchor("NOW")
-            self.add_edge(src, bid, "then")
-        elif att == "latest":
-            if self._latest_binding_id and self._latest_binding_id != bid:
-                self.add_edge(self._latest_binding_id, bid, "then")
+            self.add_edge(src, bid, "then", meta or {})
+        elif att == "latest" and prev_latest and prev_latest in self._bindings:
+            # link from the binding that was 'latest' BEFORE creating this one
+            self.add_edge(prev_latest, bid, "then", meta or {})
 
         return bid
 
     # --------------------------- edges ---------------------------
 
     def add_edge(self, src_id: str, dst_id: str, label: str, meta: Optional[dict] = None) -> None:
-        """Add a directed edge from src->dst with a label like 'then' and optional meta."""
+        """Add a directed edge from src->dst with a label like 'then' and optional meta.
+
+        Raises:
+            KeyError: if either binding id is unknown.
+        """
         if src_id not in self._bindings or dst_id not in self._bindings:
             raise KeyError(f"unknown binding id: {src_id!r} or {dst_id!r}")
         self._bindings[src_id].edges.append(
@@ -196,44 +224,67 @@ class WorldGraph:
 
     # -------------------------- planning -------------------------
 
+    def _reconstruct_path(self, parent: Dict[str, Optional[str]], goal: str) -> List[str]:
+        """Rebuild a path from parent links (goal back to source)."""
+        path: List[str] = []
+        cur: Optional[str] = goal
+        while cur is not None:
+            path.append(cur)
+            cur = parent.get(cur)
+        path.reverse()
+        return path
+
     def plan_to_predicate(self, src_id: str, token: str) -> Optional[List[str]]:
-        """BFS from src_id to the first binding that carries 'pred:<token>'.
+        """Breadth-first search from src_id to the first binding that carries the target predicate.
+
+        Args:
+            src_id: Starting binding id (e.g., "b1").
+            token: Predicate token to search for. May be given as "pred:<token>" or just "<token>".
 
         Returns:
-            List of binding ids forming a path, or None if not found.
-        """
-        if src_id not in self._bindings:
-            return None
+            A list of binding ids forming a path from src_id to the goal (inclusive), or None if no path.
 
-        target_tag = f"pred:{token}"
-        # Quick check: if source already satisfies the predicate
+        Notes:
+            - This traverses all outgoing edges (label-agnostic).
+            - If the source already carries the predicate, returns [src_id].
+            - Uses _reconstruct_path(parent, goal) to rebuild the path once the goal is found.
+        """
+        # Normalize the tag we are searching for
+        token = (token or "").strip()
+        target_tag = token if token.startswith("pred:") else f"pred:{token}"
+
+        # Quick checks
+        if not src_id or src_id not in self._bindings:
+            return None
         if target_tag in self._bindings[src_id].tags:
             return [src_id]
 
-        q = deque([src_id])
-        visited = {src_id}
+        q: deque[str] = deque([src_id])
         parent: Dict[str, Optional[str]] = {src_id: None}
+        visited: Set[str] = {src_id}
 
         while q:
             cur = q.popleft()
-            # expand
-            for e in self._bindings[cur].edges:
+            cur_binding = self._bindings.get(cur)
+            if not cur_binding:
+                continue  # defensive; shouldn't happen
+
+            # Explore neighbors
+            for e in cur_binding.edges:
                 nxt = e.get("to")
-                if not nxt or nxt in visited:
+                if not nxt or nxt in visited or nxt not in self._bindings:
                     continue
+
                 visited.add(nxt)
                 parent[nxt] = cur
 
-                # goal test
+                # Goal test: does this neighbor carry the predicate?
                 if target_tag in self._bindings[nxt].tags:
-                    # reconstruct path
-                    path = [nxt]
-                    while parent[path[-1]] is not None:
-                        path.append(parent[path[-1]])  # type: ignore
-                    path.reverse()
-                    return path
+                    return self._reconstruct_path(parent, nxt)
+
                 q.append(nxt)
 
+        # No path found
         return None
 
     # ------------------------- persistence -----------------------
