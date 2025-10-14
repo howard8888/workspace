@@ -18,6 +18,20 @@ Why this exists:
 Persistence:
 - `to_dict()` / `from_dict()` serialize/restore an episode (bindings, anchors, latest).
 - ID format is "b<N>"; `from_dict()` advances the internal counter to avoid collisions.
+
+ --- Navigator --------------------------------------------------------------------
+ Data model:
+   Binding(id, tags, edges, meta, engrams)
+     - tags must contain exactly one 'pred:<token>' for facts, or 'anchor:<name>' for anchors
+     - edges: [{'to': 'bN', 'label': 'then', 'meta': {...}}, ...]
+ Invariants:
+   - ids are 'b1','b2',... (monotonic)
+   - ONE 'NOW' anchor exists when ensure_anchor('NOW') is called
+   - stored tokens always use a single 'pred:' prefix
+ Public entry points:
+   - ensure_anchor, add_predicate, add_edge, plan_to_predicate, to_dict/from_dict
+ Read-only helpers added below keep runner code simple and consistent.
+
 """
 
 from __future__ import annotations
@@ -25,13 +39,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from collections import deque
 from typing import Dict, List, Set, Optional, TypedDict
-import itertools
+
 
 # --- Public API index and version, constants -------------------------------------------------
 __version__ = "0.1.1"
 __all__ = ["Binding", "WorldGraph", "Edge", "__version__"]
 
 
+PRED_PREFIX = "pred:"
 _ATTACH_OPTIONS: Set[str] = {"now", "latest", "none"}
 
 # -----------------------------------------------------------------------------
@@ -89,7 +104,7 @@ class Binding:
 # -----------------------------------------------------------------------------
 
 class WorldGraph:
-    """Directed episode graph for predicates (facts) and weakly causal edges.
+    """Directed episode graph for predicates (facts) and weakly causal ('then') edges.
 
     Key operations:
         - ensure_anchor(name): create/get special timeline nodes (e.g., "NOW").
@@ -101,6 +116,16 @@ class WorldGraph:
         - We keep the symbolic layer tiny and fast; engrams carry the heavy payloads.
         - Edges express *episode* causality (not logical necessity).
         - The planner is intentionally simple (BFS) and replaceable later.
+
+    Invariants:
+        - Each predicate binding has exactly one 'pred:<token>' tag.
+        - Anchor bindings carry 'anchor:<name>' and live in self._anchors (e.g., 'NOW').
+        - Binding ids are 'b1', 'b2', ... and never reused.
+        - 'attach="latest"' links the previous 'latest' binding -> newly created one.
+
+    The API offers: ensure_anchor, add_predicate, add_edge, plan_to_predicate,
+         and full serialization via to_dict()/from_dict().
+
     """
 
     def __init__(self) -> None:
@@ -110,13 +135,15 @@ class WorldGraph:
         self._bindings: Dict[str, Binding] = {}
         self._anchors: Dict[str, str] = {}           # name -> binding_id
         self._latest_binding_id: Optional[str] = None
-        self._id_counter = itertools.count(1)
+        self._id_next: int = 1                      # was: itertools.count(1)
 
     # ------------------------- internals -------------------------
 
     def _next_id(self) -> str:
         """Return the next binding id as 'b<N>' using the internal counter."""
-        return f"b{next(self._id_counter)}"
+        nid = self._id_next
+        self._id_next += 1
+        return f"b{nid}"
 
     # ------------------------- anchors ---------------------------
 
@@ -287,6 +314,73 @@ class WorldGraph:
         # No path found
         return None
 
+        # --- Read-only helpers (for clarity; no behavior change) --------------
+
+    def get_binding(self, bid: str) -> Optional["Binding"]:
+        """Return the binding by id, or None if missing."""
+        return self._bindings.get(bid)
+
+    def num_bindings(self) -> int:
+        """Total number of bindings in the graph."""
+        return len(self._bindings)
+
+    def num_edges(self) -> int:
+        """Total number of outgoing edges in the graph."""
+        return sum(len(b.edges) for b in self._bindings.values())
+
+    def get_anchor(self, name: str) -> Optional[str]:
+        """Return the binding id for a named anchor, if present (e.g., 'NOW')."""
+        return self._anchors.get(name)
+
+    def bindings_with_tag(self, tag: str) -> Set[str]:
+        """Return ids of all bindings that carry the exact tag (e.g., 'pred:stand')."""
+        return {bid for bid, b in self._bindings.items() if tag in b.tags}
+
+    def has_tag(self, tag: str) -> bool:
+        """True if any binding carries the exact tag."""
+        return any(tag in b.tags for b in self._bindings.values())
+
+    def list_predicates(self, limit: Optional[int] = None) -> List[str]:
+        """Unique sorted predicate tokens present (without 'pred:')."""
+        preds = []
+        seen = set()
+        for b in self._bindings.values():
+            for t in b.tags:
+                if t.startswith(PRED_PREFIX):
+                    tok = t[len(PRED_PREFIX):]
+                    if tok not in seen:
+                        seen.add(tok); preds.append(tok)
+        preds.sort()
+        return preds[:limit] if limit else preds
+
+    def last_n_bindings(self, n: int = 5) -> List[str]:
+        """Return up to N most recent ids by numeric order (bK ... bN)."""
+        # reconstruct from the highest numeric id we have
+        ids = sorted(
+            (int(bid[1:]) for bid in self._bindings if bid.startswith("b")),
+            reverse=True,
+        )
+        take = [f"b{i}" for i in ids[:max(0, n)]]
+        take.reverse()  # chronological
+        return take
+
+    def neighbors(self, bid: str, label: Optional[str] = None) -> List[str]:
+        """Return ids of direct neighbors from 'bid' (optionally filtered by label)."""
+        b = self._bindings.get(bid)
+        if not b:
+            return []
+        if label is None:
+            return [e.get("to") for e in b.edges if e.get("to")]
+        return [e.get("to") for e in b.edges if e.get("to") and e.get("label") == label]
+
+    def stats_text(self) -> str:
+        """Human-readable one-liner of graph stats (nice in the runner)."""
+        nb = self.num_bindings()
+        ne = self.num_edges()
+        na = len(self._anchors)
+        return f"WorldGraph: bindings={nb}, edges={ne}, anchors={na}"
+
+
     # ------------------------- persistence -----------------------
 
     def to_dict(self) -> dict:
@@ -295,8 +389,9 @@ class WorldGraph:
             "bindings": {bid: b.to_dict() for bid, b in self._bindings.items()},
             "anchors": dict(self._anchors),
             "latest": self._latest_binding_id,
-            "version": "0.1",
+            "version": "schema",
         }
+
 
     @classmethod
     def from_dict(cls, data: dict) -> "WorldGraph":
@@ -312,6 +407,8 @@ class WorldGraph:
                 mx = max(int(bid[1:]) for bid in g._bindings if bid.startswith("b"))
             except ValueError:
                 mx = 0
-            g._id_counter = itertools.count(mx + 1)
+            g._id_next = mx + 1          # was: itertools.count(mx + 1)
+        else:
+            g._id_next = 1
 
         return g
