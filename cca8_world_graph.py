@@ -287,6 +287,191 @@ class WorldGraph:
         # No path found
         return None
 
+
+    # ------------------------- pretty path helpers -------------------------
+
+    def _first_pred_of(self, bid: str) -> str | None:
+        """Return the first 'pred:*' tag (without the 'pred:' prefix) if present."""
+        b = self._bindings.get(bid)
+        if not b:
+            return None
+        for t in b.tags:
+            if isinstance(t, str) and t.startswith("pred:"):
+                return t[5:]
+        return None
+
+    def _anchor_name_of(self, bid: str) -> str | None:
+        b = self._bindings.get(bid)
+        if not b:
+            return None
+        for t in b.tags:
+            if isinstance(t, str) and t.startswith("anchor:"):
+                return t.split(":", 1)[1]
+        return None
+
+    def _edge_label(self, src: str, dst: str) -> str | None:
+        b = self._bindings.get(src)
+        if not b or not b.edges:
+            return None
+        for e in b.edges:
+            if e.get("to") == dst:
+                return e.get("label") or "then"
+        return None
+
+    def pretty_path(
+        self,
+        ids: list[str] | None,
+        *,
+        node_mode: str = "id+pred",       # 'id' | 'pred' | 'id+pred'
+        show_edge_labels: bool = True,
+        annotate_anchors: bool = True
+        ) -> str:
+        """Return a readable, single-line rendering of a path of binding IDs."""
+        if not ids:
+            return "(no path)"
+        def node_label(bid: str) -> str:
+            pred = self._first_pred_of(bid)
+            anch = self._anchor_name_of(bid)
+            if node_mode == "id":
+                base = bid
+            elif node_mode == "pred":
+                base = pred or anch or bid
+            else:  # id+pred
+                base = f"{bid}[{pred}]" if pred else (f"{bid}({anch})" if anch else bid)
+            if annotate_anchors and anch:
+                # make anchors explicit even if node_mode != 'id+pred'
+                if "NOW" == anch or "HERE" == anch:
+                    if "[" in base or "(" in base:
+                        return base.replace("]", "](NOW)") if anch == "NOW" else base.replace("]", "](HERE)")
+                    return f"{base}({anch})"
+            return base
+
+        parts: list[str] = []
+        for i, u in enumerate(ids):
+            parts.append(node_label(u))
+            if i + 1 < len(ids):
+                v = ids[i + 1]
+                lbl = self._edge_label(u, v) if show_edge_labels else None
+                parts.append(f" --{lbl}--> " if lbl else " -> ")
+        return "".join(parts)
+
+    def plan_pretty(
+        self, src_id: str, token: str, **kwargs
+        ) -> str:
+        """Convenience: plan_to_predicate then pretty_path (returns text or '(no path)')."""
+        path = self.plan_to_predicate(src_id, token)
+        return self.pretty_path(path, **kwargs) if path else "(no path)"
+
+    # ------------------------- visualize the graph -----------------------
+
+
+    def to_pyvis_html(
+        self,
+        path_html: str = "world_graph.html",
+        *,
+        label_mode: str = "first_pred",   # 'first_pred' | 'id' | 'id+first_pred'
+        show_edge_labels: bool = True,
+        physics: bool = True,
+        height: str = "750px",
+        width: str = "100%",
+        title: str = "CCA8 WorldGraph"
+        ) -> str:
+        """
+        Export the current episode graph to an interactive HTML (Pyvis).
+        Returns the absolute output path.
+
+        Node labels:
+            - 'first_pred': use the first 'pred:*' tag if present; else anchor name; else the id (default)
+            - 'id': just the binding id (e.g., b42)
+            - 'id+first_pred': 'b42\\nstate:posture_standing' (if present)
+
+        Notes:
+            - Highlights NOW (amber) and LATEST (green) to help navigation.
+            - Edge labels (e.g., 'then') appear as edge labels/tooltips if enabled.
+        """
+        try:
+            from pyvis.network import Network
+        except Exception as e:
+            raise RuntimeError(
+                "Pyvis not installed. Install with:  pip install pyvis"
+            ) from e
+
+        net = Network(height=height, width=width, directed=True, notebook=False)
+        net.barnes_hut() if physics else net.toggle_physics(False)
+
+        now_id = self._anchors.get("NOW")
+        here_id = self._anchors.get("HERE")
+        latest_id = self._latest_binding_id
+
+        def _first_pred(b) -> str | None:
+            for t in b.tags:
+                if isinstance(t, str) and t.startswith("pred:"):
+                    return t[5:]
+            return None
+
+        def _anchor_name(b) -> str | None:
+            for t in b.tags:
+                if isinstance(t, str) and t.startswith("anchor:"):
+                    return t.split(":", 1)[1]
+            return None
+
+        # Nodes
+        for bid, b in self._bindings.items():
+            pred = _first_pred(b)
+            anch = _anchor_name(b)
+
+            if label_mode == "id":
+                label_txt = bid
+            elif label_mode == "id+first_pred":
+                label_txt = f"{bid}\\n{pred}" if pred else bid
+            else:  # first_pred
+                label_txt = pred or anch or bid
+
+            # Tooltip with id, tags, and a small meta preview
+            import html, json
+            tags_str = ", ".join(sorted(b.tags))
+            meta_preview = html.escape(json.dumps(b.meta, ensure_ascii=False)[:240])
+            title_html = "<br/>".join([
+                f"<b>{html.escape(bid)}</b>",
+                f"tags: {html.escape(tags_str)}" if tags_str else "tags: (none)",
+                f"meta: {meta_preview}" if b.meta else "meta: (none)"
+            ])
+
+            # A bit of visual affordance
+            color = None
+            shape = "ellipse"
+            if anch:
+                shape = "box"
+                color = "#FFD54F" if bid == now_id else "#64B5F6"
+            if bid == latest_id and bid != now_id:
+                color = "#81C784"
+
+            node_kwargs = {"label": label_txt, "title": title_html, "shape": shape}
+            if color:
+                node_kwargs["color"] = color
+            net.add_node(bid, **node_kwargs)
+
+        # Edges
+        for src, b in self._bindings.items():
+            for e in (b.edges or []):
+                dst = e.get("to")
+                if not dst or dst not in self._bindings:
+                    continue
+                rel = e.get("label", "then")
+                edge_kwargs = {"title": rel}
+                if show_edge_labels:
+                    edge_kwargs["label"] = rel
+                net.add_edge(src, dst, **edge_kwargs)
+
+        # Write HTML
+        import os
+        out = os.path.abspath(path_html)
+        os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+        net.write_html(out, notebook=False)
+        return out
+
+
+
     # ------------------------- persistence -----------------------
 
     def to_dict(self) -> dict:

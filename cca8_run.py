@@ -595,6 +595,7 @@ MENU = """\
 19) Load session → path   [L]
 20) Run preflight now
 21) Quit
+22) Export and display interactive graph with options
 
 [S] Save session → path
 [L] Load session → path
@@ -1177,7 +1178,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
             "fall": "16", "simulate": "16",
 
             # Save / Export / System
-            "export": "17",
+            "export snapshot": "17",
+            "pyvis": "22", "graph": "22", "viz": "22", "html": "22", "interactive": "22", "export and display": "22",
             "save": "s",
             "load": "l",
             "preflight": "20",
@@ -1205,7 +1207,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             routed, matches = _route_alias(ckey) #(routed, []), if no match -- (None, []), if multiple matches -- (None, [matches])
             if routed is not None:
                 if pretty_scroll:
-                    print(f"abbreviated input entry successfully matched: '{ckey}' → {routed}")
+                    print(f"[text input menu selection successfully matched: '{ckey}' → {routed}]")
                 choice = routed
             else:
                 if len(matches) > 1:
@@ -1237,6 +1239,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             "19": "l",   # Load session
             "20": "9",   # Run preflight now
             "21": "8",   # Quit
+            "22": "22",  # Export and display interactive graph (Pyvis HTML)
         }
 
         ckey = choice.strip().lower() #ensure any present or future routed value is in correct form
@@ -1244,7 +1247,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
         if ckey in _new_to_old:
             routed = _new_to_old[ckey]
             if pretty_scroll:
-                print(f"[compat] processed input entry routed to old value: {ckey} → {routed}")
+                print(f"[[menu numbering auto-compatibility] processed input entry routed to old value: {ckey} → {routed}]")
             choice = routed
         else:
             choice = ckey
@@ -1284,15 +1287,31 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "4":
-            # Connect two bindings
+            # Connect two bindings (with duplicate warning)
             src = input("Source binding id (e.g., b12): ").strip()
             dst = input("Dest binding id (e.g., b13): ").strip()
             label = input('Relation label (e.g., "then"): ').strip() or "then"
+
             try:
-                world.add_edge(src, dst, label)
-                print(f"Linked {src} --{label}--> {dst}")
+                b = world._bindings.get(src)
+                if not b:
+                    print("Invalid id: unknown source binding.")
+                elif dst not in world._bindings:
+                    print("Invalid id: unknown destination binding.")
+                else:
+                    edges = getattr(b, "edges", []) or []
+                    # Treat missing/alt keys the same as our stored "label"/"to"
+                    def _rel(e): return e.get("label") or e.get("rel") or e.get("relation") or "then"
+                    duplicate = any((e.get("to") == dst) and (_rel(e) == label) for e in edges)
+
+                    if duplicate:
+                        print(f"[info] Edge already exists: {src} --{label}--> {dst} (skipping)")
+                    else:
+                        world.add_edge(src, dst, label)  # this is the real write
+                        print(f"Linked {src} --{label}--> {dst}")
             except KeyError as e:
                 print("Invalid id:", e)
+
             loop_helper(args.autosave, world, drives)
 
         elif choice == "5":
@@ -1304,11 +1323,21 @@ def interactive_loop(args: argparse.Namespace) -> None:
             src_id = world.ensure_anchor("NOW")
             path = world.plan_to_predicate(src_id, token)
             if path:
-                print("Path:", " -> ".join(path))
+                print("Path (ids):", " -> ".join(path))
+                try:
+                    pretty = world.pretty_path(
+                        path,
+                        node_mode="id+pred",       # try 'pred' if you prefer only tokens
+                        show_edge_labels=True,
+                        annotate_anchors=True
+                    )
+                    print("Pretty printing of path:\n", pretty)
+                except Exception as e:
+                    print(f"(pretty-path error: {e})")
             else:
                 print("No path found.")
             loop_helper(args.autosave, world, drives)
-
+    
         elif choice == "6":
             # Resolve engrams on a binding
             bid = input("Binding id to resolve engrams: ").strip()
@@ -1455,6 +1484,118 @@ def interactive_loop(args: argparse.Namespace) -> None:
         elif choice == "17":
             # Display snapshot
             print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT))
+
+            # Optional: generate an interactive Pyvis HTML view
+            try:
+                yn = input("Generate interactive graph (Pyvis HTML)? [y/N]: ").strip().lower()
+            except Exception:
+                yn = "n"
+            if yn in ("y", "yes"):
+                default_path = "world_graph.html"
+                try:
+                    path = input(f"Save HTML to (default: {default_path}): ").strip() or default_path
+                except Exception:
+                    path = default_path
+                try:
+                    out = world.to_pyvis_html(path_html=path, label_mode="id+first_pred", show_edge_labels=True, physics=True)
+                    print(f"Interactive graph written to: {out}")
+                    try:
+                        open_now = input("Open in your default browser now? [y/N]: ").strip().lower()
+                    except Exception:
+                        open_now = "n"
+                    if open_now in ("y", "yes"):
+                        try:
+                            import sys, os, webbrowser
+                            if sys.platform.startswith("win"):
+                                os.startfile(out)  # type: ignore[attr-defined]
+                            elif sys.platform == "darwin":
+                                os.system(f'open "{out}"')
+                            else:
+                                webbrowser.open(f"file://{out}")
+                            print("(opened in your browser)")
+                        except Exception as e:
+                            print(f"[warn] Could not open automatically: {e}")
+                except Exception as e:
+                    print(f"[warn] Could not generate Pyvis HTML: {e}")
+                    print("       Tip: install with  pip install pyvis")
+
+            loop_helper(args.autosave, world, drives)
+        
+        elif choice == "22":
+            # Export and display interactive graph (Pyvis HTML) with options
+            print("\nExport and display graph of nodes and links with more options (Pyvis HTML)")
+            print("   Note: the graph opened in your web browser is interactive -- even if you don't show")
+            print("       edge labels to save space, put the mouse on them and the labels appear")
+            print("   Note: the graph HTML file will be saved in your current directory\n")
+            print(" — Edge labels: draw text on the links, e.g.,'then' or 'initiate_stand'")
+            print("    On = label printed on the arrow (and still a tooltip). Off = only tooltip.")
+            print("    -->Recommend Y on small graphs, n on larger ones to reduce clutter")
+            print(" — Node label mode:")
+            print("    'id'           → show binding ids only (e.g., b5)")
+            print("    'first_pred'   → show first pred:* token (e.g., stand, nurse)")
+            print("    'id+first_pred'→ show both (two-line label)")
+            print("     -->Recommend id+first_pred if enough space")
+            print(" — Physics: enable force-directed layout; turn off for very large graphs.")
+            print("      (We model the graph as a physical system and then try to achieve a minimal")
+            print("       energy state by simulating the movement of the nodes into this minimal state. The result is a")
+            print("       graph which many people find easier to read. This option uses Barnes-Hut physics which is an")
+            print("       algorithm originally for the N-body problem in astrophysics and which speeds up the layout calculations.")
+            print("       Nonetheless, for very large graphs may not be computationally feasible.")
+            print("      -->Recommend physics ON unless issues with very large graphs\n")
+
+            # Collect options
+            try:
+                label_mode = input("Node label mode [id / first_pred / id+first_pred] (default: id+first_pred): ").strip().lower()
+            except Exception:
+                label_mode = ""
+            if label_mode not in {"id", "first_pred", "id+first_pred"}:
+                label_mode = "id+first_pred"
+
+            try:
+                el = input("Show edge labels on links? [Y/n]: ").strip().lower()
+            except Exception:
+                el = ""
+            show_edge_labels = False if el in {"n", "no", "0"} else True
+
+            try:
+                ph = input("Enable physics (force-directed layout)? [Y/n]: ").strip().lower()
+            except Exception:
+                ph = ""
+            physics = False if ph in {"n", "no", "0"} else True
+
+            default_path = "world_graph.html"
+            try:
+                path = input(f"Save HTML to (default: {default_path}): ").strip() or default_path
+            except Exception:
+                path = default_path
+
+            try:
+                out = world.to_pyvis_html(
+                    path_html=path,
+                    label_mode=label_mode,
+                    show_edge_labels=show_edge_labels,
+                    physics=physics
+                )
+                print(f"Interactive graph written to: {out}")
+                try:
+                    open_now = input("Open in your default browser now? [y/N]: ").strip().lower()
+                except Exception:
+                    open_now = "n"
+                if open_now in ("y", "yes"):
+                    try:
+                        import sys, os, webbrowser
+                        if sys.platform.startswith("win"):
+                            os.startfile(out)  # type: ignore[attr-defined]
+                        elif sys.platform == "darwin":
+                            os.system(f'open "{out}"')
+                        else:
+                            webbrowser.open(f"file://{out}")
+                        print("(opened in your browser)")
+                    except Exception as e:
+                        print(f"[warn] Could not open automatically: {e}")
+            except Exception as e:
+                print(f"[warn] Could not generate Pyvis HTML: {e}")
+                print("       Tip: install with  pip install pyvis")
             loop_helper(args.autosave, world, drives)
 
         elif choice == "18":
