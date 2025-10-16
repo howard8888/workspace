@@ -21,4 +21,5 @@ Thumbs.db
 *.diff 
 session.json 
 *.bak
+*.bak.*
 world_snapshot.*
