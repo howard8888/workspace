@@ -24,8 +24,8 @@ Entry point: `cca8_run.py`Primary modules: `cca8_run.py`, `cca8_world_graph.py`,
 **Purpose of Program:** Simulation of the brain of a mountain goat through the lifecycle with hooks for robotic embodiment
 
 **Newborn mountain goat demo (fast path):**  
-Menu →  add `stand`; connect NOW→stand (`stand_up`); then add and connect  
-`mom:close` (`approach`) → `nipple:found` (`search`) → `nipple:latched` (`latch`) → `milk:drinking` (`suckle`);  
+Menu →  add `stand`, connect NOW→stand (`stand_up`), then add and connect  
+`mom:close` (`approach`) → `nipple:found` (`search`) → `nipple:latched` (`latch`) → `milk:drinking` (`suckle`),  
 verify with  plan NOW → `milk:drinking`.  
 **Glossary:** predicates, bindings, edges, policies, drives (hunger/warmth/fatigue), and search knobs (`k`, `sigma`, `jump`).
 
@@ -45,7 +45,7 @@ Q: Is there a “fast path” demo to sanity-check planning?
 A: Yes—add `stand`, connect `NOW→stand`, then add and connect `mom:close → nipple:found → nipple:latched → milk:drinking`, and plan to `milk:drinking`.
 
 Q: Where will this README send me if I get lost?   
-A: Use the Table of Contents to jump to Architecture, Planner Contract, or Tutorial sections; this single file is the canonical compendium.
+A: Use the Table of Contents to jump to Architecture, Planner Contract, or Tutorial sections, this single file is the canonical compendium.
 
 
 
@@ -57,7 +57,7 @@ A: Use the Table of Contents to jump to Architecture, Planner Contract, or Tutor
 
 
 
-<img title="Mountain Goat Calf" src="./calf_goat.jpg" alt="" style="zoom:200%;">
+<img title="Mountain Goat Calf" src="./calf_goat.jpg" alt="" style="zoom:200%,">
 
 ****Planned versions: ****
 
@@ -69,7 +69,7 @@ CCA10 Simulation of a human through the lifecycle
 
 ***Q&A to help you learn this section***
 
-Q: How will concepts carry forward?  A: As per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. The chimpanzee has the main structures of the mountain goat (some differences nonetheless in these "same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.
+Q: How will concepts carry forward?  A: As per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.
 
 
 
@@ -90,7 +90,7 @@ CCA8 is a small, inspectable simulation of early mammalian cognition. It models 
 
 The symbolic graph is not a full knowledge base. Its job is to index “what led to what” as simple, directed edges between small records called bindings. Planning is then just graph search over these edges.
 
-Design decision (formerly ADR-0001): We intentionally use a small episode graph with weak causality. Each edge means “this tended to follow that” rather than a logical implication. This keeps recall and planning fast and transparent; deeper causal reasoning can be layered on later.
+Design decision (formerly ADR-0001): We intentionally use a small episode graph with weak causality. Each edge means “this tended to follow that” rather than a logical implication. This keeps recall and planning fast and transparent, deeper causal reasoning can be layered on later.
 
 
 
@@ -100,9 +100,9 @@ Q: What exactly is a “binding”? A: A node that carries tags (at least one `p
 
 Q: What does the graph represent day-to-day? A: Small, directed steps an agent experienced (“this led to that”), not a full world model.
 
-*Q: Why BFS and not Dijkstra/A*? A: Edges are unweighted; BFS guarantees fewest hops and is simpler to reason about. You can layer heuristics later if weights appear.
+*Q: Why BFS and not Dijkstra/A*? A: Edges are unweighted, BFS guarantees fewest hops and is simpler to reason about. You can layer heuristics later if weights appear.
 
-Q: Are cycles allowed? A: Yes; the planner uses visited-on-enqueue to avoid re-enqueuing discovered nodes.
+Q: Are cycles allowed? A: Yes, the planner uses visited-on-enqueue to avoid re-enqueuing discovered nodes.
 
 
 
@@ -131,7 +131,7 @@ Q: Where does `--autosave` write and what’s in the file?
 A: It writes a JSON snapshot in your working directory containing world (bindings/edges), drives, skills, and a timestamp.
 
 Q: How do I resume the same run later?   
-A: Launch with `--load session.json`; the runner restores the world and advances the id counter to avoid collisions.
+A: Launch with `--load session.json`, the runner restores the world and advances the id counter to avoid collisions.
 
 Q: What if I want a fresh run but keep history?   
 A: Use a new autosave filename or copy the old snapshot aside and start with `--autosave new_session.json`.
@@ -162,7 +162,7 @@ Design decision (formerly ADR-0002): We use drives + policies instead of a heavy
 ***Q&A to help you learn this section***
 
 Q: Binding vs. Predicate vs. Anchor—what’s the difference?   
-A: A **predicate** is a token (`pred:…`); a **binding** is the node that carries it (plus meta/engrams); an **anchor** (e.g., NOW) is a special binding used as a planning start.
+A: A **predicate** is a token (`pred:…`), a **binding** is the node that carries it (plus meta/engrams), an **anchor** (e.g., NOW) is a special binding used as a planning start.
 
 Q: Where do I see who created a node?   
 A: In `meta.policy`—policies stamp their names when they create bindings.
@@ -174,6 +174,74 @@ Q: Can I inspect an engram from the UI?
 A: Yes—use the binding inspection flow to see engram pointers and meta.
 
 
+
+###### Opening screen (banner) explained
+
+    A Warm Welcome to the CCA8 Mammalian Brain Simulation
+    (cca8_run.py v0.7.11)
+    
+    Entry point program being run: C:\Users\howar\workspace\cca8_run.py
+    OS: win32 (run system-dependent utilities for more detailed system/simulation info)
+    (for non-interactive execution, ">python cca8_run.py --help" to see optional flags you can set)
+    
+    Embodiment:  HAL (hardware abstraction layer) setting: off (runs without consideration of the robotic embodiment)
+    Embodiment:  body_type-version_number-serial_number (i.e., robotic embodiment): none specified
+    
+    The simulation of the cognitive architecture can be adjusted to add or take away
+      various features, allowing exploration of different evolutionary-like configurations.
+    
+      1. Mountain Goat-like brain simulation
+      2. Chimpanzee-like brain simulation
+      3. Human-like brain simulation
+      4. Human-like one-agent multiple-brains simulation
+      5. Human-like one-brain simulation × multiple-agents society
+      6. Human-like one-agent multiple-brains simulation with combinatorial planning
+      7. Super-Human-like machine simulation
+    
+    Pending additional intro material here....
+    Please make a choice [1-7]:
+
+What each part means:
+
+* Version and path: printed by the runner, the version comes from `__version__` in the runner. The path helps confirm which file you launched.
+
+* OS/flags line: a reminder that you can run `--help` or the non-interactive flags such as `--about`, `--plan`, `--preflight`.
+
+* Embodiment (HAL/body): shows whether the hardware abstraction layer is enabled and which body profile (if any) was provided. The current build runs fine with HAL off.
+
+* Profile menu: seven presets that configure or demonstrate different cognitive configurations (documented below). Selection is handled by `choose_profile`, which records your choice in the runtime context and proceeds with the session.
+
+* * *
+
+##### Profiles (1–7): overview and implementation notes
+
+This section documents what each profile intends to represent and how the current runner implements it. Items 2–7 are demonstration stubs that explain the idea, print a short trace, and then fall back to the Mountain Goat profile so today’s simulation continues unchanged.
+
+1. Mountain Goat-like brain simulation  
+   Baseline profile focused on a neonate mountain goat. Defaults: sigma=0.015, jump=0.2, winners_k=2. A boot step ensures a stand intent early in the episode. Use this profile for all current demos and for reading the code.
+
+2. Chimpanzee-like brain simulation  
+   Narrative only. Prints an explanation of enhanced feedback pathways and combinatorial language relative to the goat, then falls back to the Mountain Goat defaults. This is a placeholder for a richer causal model.
+
+3. Human-like brain simulation  
+   Narrative only. Prints an explanation of further-enhanced feedback pathways, causal and analogical reasoning, then falls back to the Mountain Goat defaults.
+
+4. Human-like one-agent multiple-brains simulation  
+   Implements a dry-run “multi-brains” scaffold inside one agent. The runner forks five sandbox WorldGraphs (deep copies of the live world for now), each proposes a next action with a confidence and rationale, and a voting rule selects the winner (most popular, ties broken by average and maximum confidence). No changes are committed to the live world, it is a read-only demonstration of the mechanism. Future work would merge only new nodes/edges from the winning sandbox and re-id them to avoid collisions.
+
+5. Human-like one-brain × multiple-agents society  
+   Implements a dry-run “society” scaffold. The runner creates three independent agents, each with its own WorldGraph and Drives, runs one action-center tick per agent, and demonstrates a simple inter-agent message as a cue (e.g., A1 bleats, A2 receives a sound cue). No snapshots are written, this is a safe, print-only demo. In a full build, you would iterate over agents each tick and exchange messages via a queue or shared mailbox.
+
+6. Human-like one-agent multiple-brains with combinatorial planning  
+   Implements a dry-run combinatorial planner. Five “brains” each run many von Neumann processors (configurable, the current stub uses 256 per brain) to explore short candidate plans, score them with a simple utility (sum of action rewards minus a per-step cost), report the per-brain best and average score, and then select a champion brain. In a real system only the first action of the winning plan would be committed to the live world after a safety check, the stub prints the commit rule but does not modify state.
+
+7. Super-Human-like machine simulation  
+   Implements a dry-run meta-controller. Three proposal sources (symbolic search, neural value, program synthesis) each provide an action and a utility, the meta-controller picks the winner by score with a fixed tie-break preference. The printout illustrates how a higher-level controller could arbitrate between heterogeneous planners. No state is modified.
+   
+   
+* 
+
+* * *
 
 **The WorldGraph in detail**
 
@@ -193,7 +261,7 @@ Bindings live in an index by id (`b1`, `b2`, …). The id is what edges point to
 
 Edges live in a simple adjacency list: `src_id -> [{ "to": dst_id, "label": "then", "meta": {...}}, ...]`.
 
-Design decision (ADR-0001 folded in): We keep edges small and directed; multiple distinct edges between the same nodes are allowed if their labels differ (e.g., “then”, “causes”); dedup is left to the caller and the UI can warn on duplication.
+Design decision (ADR-0001 folded in): We keep edges small and directed, multiple distinct edges between the same nodes are allowed if their labels differ (e.g., “then”, “causes”), dedup is left to the caller and the UI can warn on duplication.
 
 
 
@@ -216,8 +284,8 @@ We decided not use a library to implement the WorldGraph but instead have coded 
 2. For development scale simulations the Python code should run fast enough. For larger simulations (e.g., a billion nodes) the WorldGraph and BFS will, of course, need more scalable representations.
 
 3. Note that we are using deques in our Python code which unlike the O(n) behavior of lists, gives O(1) behavior for popleft() -- manipulation of the WorldGraph appears quick enough for small to medium simulations.
-
-
+   
+   
 
 ##### Indexing & goal resolution (how the planner finds a match)
 
@@ -234,17 +302,17 @@ Use `"then"` for episode flow. Reserve domain labels when they clarify intent:
 * **`latch`**: discrete state change with contact.
 
 * **`suckle`**: sustained action with reward.  
-  You can add richer domain labels over time; keep them short and consistent so paths remain readable.
+  You can consider richer domain labels but keep them short and consistent so paths remain readable.
 
 ##### Consistency invariants (quick checklist)
 
 * Every binding has a unique `id` (`bN`), and **anchors** (e.g., `NOW`) map to real binding ids.
 
-* Edges are **directed**; the adjacency lives on the **source** binding’s `edges[]`.
+* Edges are **directed**, the adjacency lives on the **source** binding’s `edges[]`.
 
 * A binding without edges is a valid **sink**.
 
-* The first `pred:*` tag is used as the default UI label; if absent, the `id` is shown.
+* The first `pred:*` tag is used as the default UI label, if absent, the `id` is shown.
 
 * Snapshots must restore `latest`, anchor ids, and advance the internal `bN` counter beyond any loaded ids.
 
@@ -260,10 +328,10 @@ Q: How are edges stored?
 A: On the source binding in an adjacency list: each edge is `{to, label, meta}`.
 
 Q: Do we dedupe edges?   
-A: The design allows multiple edges; the UI warns if you add an identical labeled edge so you can skip duplicates.
+A: The design allows multiple edges, the UI warns if you add an identical labeled edge so you can skip duplicates.
 
 Q: What labels should I use?   
-A: `"then"` for episode flow; you can add others like `approach`, `search`, `latch`, `suckle` to clarify intent.
+A: `"then"` for episode flow,  you can add others like `approach`, `search`, `latch`, `suckle` to clarify intent.
 
 Q: How does NOW behave?   
 A: It’s a named binding used as the plan start and orientation point in the runner and visualizations.
@@ -279,12 +347,12 @@ The controller tracks simple drives (hunger, fatigue, warmth). Policies consume 
 
 Example (stand up):
 
-* Trigger: standing is not already true; body is not severely fatigued.
-* Execute: create a `pred:stand` binding; connect from LATEST (or NOW) with label `initiate_stand`, then follow‑on edges `then` into chronological progression.
+* Trigger: standing is not already true, body is not severely fatigued.
+* Execute: create a `pred:stand` binding, connect from LATEST (or NOW) with label `initiate_stand`, then follow‑on edges `then` into chronological progression.
 
 Design decision (ADR-0002 folded in): Policies are intentionally small and readable. We avoid global planning for every step to keep the code explainable and the UI responsive. Guards in `trigger()` prevent repeated firing (e.g., don’t stand up twice if standing exists).
 
-Design decision (ADR-0008 folded in): If a drive source cannot publish tag predicates for some reason, the system should continue running; policies degrade gracefully by relying on tags already in the graph.
+Design decision (ADR-0008 folded in): If a drive source cannot publish tag predicates for some reason, the system should continue running, policies degrade gracefully by relying on tags already in the graph.
 
 
 
@@ -299,7 +367,7 @@ Q: What does a policy return?
 A: A small status dict (policy name, ok/fail/noop, reward, notes) and it stamps provenance on any binding it creates.
 
 Q: What if drive predicates aren’t available?   
-A: Policies degrade gracefully by relying on existing graph tags; the system keeps running.
+A: Policies degrade gracefully by relying on existing graph tags, the system keeps running.
 
 
 
@@ -307,7 +375,7 @@ A: Policies degrade gracefully by relying on existing graph tags; the system kee
 
 **Persistence (snapshots):**
 
-A session snapshot is a JSON file that contains: the world graph (bindings + edges + internal counters), drives, minimal skill telemetry, and small context items. Saving is atomic; loading restores indices and advances the id counter so new bindings don’t collide with old ids.
+A session snapshot is a JSON file that contains: the world graph (bindings + edges + internal counters), drives, minimal skill telemetry, and small context items. Saving is atomic, loading restores indices and advances the id counter so new bindings don’t collide with old ids.
 
 Design decision (ADR-0003 folded in): We use human‑readable JSON for portability and easy field debugging. A binary format would be smaller but harder to inspect. The JSON structure is stable enough to be versioned if we add fields later.
 
@@ -325,7 +393,7 @@ Q: After load, why don’t my new nodes collide with old ids?
 A: The loader restores and **advances** the internal id counter.
 
 Q: Binary vs JSON?   
-A: JSON keeps sessions portable and debuggable; binary would be smaller but opaque.
+A: JSON keeps sessions portable and debuggable, binary would be smaller but opaque.
 
 
 
@@ -335,9 +403,9 @@ A: JSON keeps sessions portable and debuggable; binary would be smaller but opaq
 
 You can explore the graph via an interactive menu. Relevant items:
 
-* Display snapshot (prints bindings, edges, drives; optionally exports an interactive graph).
-* Add predicate (creates a node with a `pred:*` tag; you can attach it to NOW or LATEST to auto‑link chronology).
-* Connect two bindings (adds a directed edge; the UI warns if the same labeled edge already exists).
+* Display snapshot (prints bindings, edges, drives, optionally exports an interactive graph).
+* Add predicate (creates a node with a `pred:*` tag, you can attach it to NOW or LATEST to auto‑link chronology).
+* Connect two bindings (adds a directed edge, the UI warns if the same labeled edge already exists).
 * Plan from NOW to a predicate (prints ids and a pretty path).
 
 Design decision (ADR-0004 folded in): The runner offers a quick‑exit `--plan <token>` flag when you only need to compute a plan once and exit. The menu shows a short “drives” view because drives are central to policy triggers.
@@ -350,7 +418,7 @@ Q: What are the most useful menu items while learning?
 A: Display snapshot, Add predicate, Connect two bindings, Plan from NOW, and the interactive graph export.
 
 Q: Is there a quick way to visualize the graph?   
-A: Yes—export an interactive HTML graph from the menu; labels can show `id`, `first_pred`, or both.
+A: Yes—export an interactive HTML graph from the menu, labels can show `id`, `first_pred`, or both.
 
 Q: Why does the menu warn about duplicate edges?   
 A: To avoid clutter when auto-attach already created the same `(src, label, dst)` relation.
@@ -390,7 +458,7 @@ CCA8 aims to simulate early mammalian cognition with a **small symbolic episode 
 - **Predicate** — a symbolic fact token (e.g., `state:posture_standing`). Atomic.  
 - **Binding** — a node instance that *carries* one or more tags, including `pred:<token>`, plus `meta` and optional `engrams`.  
 - **Edge** — a directed link between bindings with a label (often `"then"`) representing **weak, episode-level causality** (“in this run, this led to that”).  
-- **WorldGraph** — the directed graph composed of these bindings and edges; supports **BFS planning**.  
+- **WorldGraph** — the directed graph composed of these bindings and edges, supports **BFS planning**.  
 - **Policy (primitive)** — an instinctive behavior with `trigger()` + `execute()`. The **Action Center** scans policies in order and runs the first whose trigger matches current **drive** tags (hunger/fatigue/warmth).  
 - **Provenance** — when a policy creates a new binding, its name is stamped into `binding.meta["policy"]`.  
 - **Autosave/Load** — a JSON snapshot persists (world, drives, skills) with `saved_at`, written via atomic replace.
@@ -423,7 +491,7 @@ Pick **Profile 1: Mountain Goat** when prompted.
 
 -----------------------------------
 
-* `14` Autonomic tick once or twice; then `D` Show drives (aim for `drive:hunger_high`).
+* `14` Autonomic tick once or twice, then `D` Show drives (aim for `drive:hunger_high`).
 
 * `11` Add sensory cue a few times:
   
@@ -508,7 +576,7 @@ _(Tip: use `7` Show last 5 bindings as you go to copy the exact IDs.)_
 
 ***Q&A to help you learn this section***
 
-Q: Why keep the symbolic graph small?  A: For fast indexing/planning; heavy content lives in engrams.
+Q: Why keep the symbolic graph small?  A: For fast indexing/planning, heavy content lives in engrams.
 
 Q: Which primitives form “standing”?  A: action:push_up, action:extend_legs, state:posture_standing.
 
@@ -523,9 +591,9 @@ Q: What’s the key separation in CCA8?  A: A compact symbolic episode index** (
 
 Q: Are edges logical implications?  A: No—edges encode weak, episode-level causality** (“then”), good for action and recall without heavy inference.
 
-Q: Why not store everything in the graph? A: Keeping symbols small avoids brittleness and keeps planning fast; the heavy 95% lives in engrams referenced by bindings.
+Q: Why not store everything in the graph? A: Keeping symbols small avoids brittleness and keeps planning fast, the heavy 95% lives in engrams referenced by bindings.
 
-Q: How does this help planning? A: BFS over a sparse adjacency list gives shortest-hop paths quickly; the graph is shaped for that.
+Q: How does this help planning? A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph is shaped for that.
 
 ---
 
@@ -541,7 +609,7 @@ Q: How does this help planning? A: BFS over a sparse adjacency list gives shorte
 
 Q: Define “weak causality.” A: Soft episode links (“then”) without asserting logical necessity.
 
-Q: Why engrams vs symbols?  A: Symbols = fast index; engrams = heavy content → avoids brittle all-graph designs.
+Q: Why engrams vs symbols?  A: Symbols = fast index, engrams = heavy content → avoids brittle all-graph designs.
 
 Q: Can we add stronger causal reasoning later?  A: Yes, layered above (edge annotations, utilities).
 
@@ -575,7 +643,7 @@ Q: Where do engrams live?  A: cca8_column.py, referenced by bindings’ engrams.
 ### Data flow (a tick)
 
 1. Action Center computes active **drive tags**.  
-2. Scans **policies** in order; first `trigger()` that returns True **fires**.  
+2. Scans **policies** in order, first `trigger()` that returns True **fires**.  
 3. `execute()` appends a **small chain** of predicates + edges to the WorldGraph, stamps `meta.policy`, returns a status dict, and updates the skill ledger.  
 4. Planner (on demand) runs BFS from **NOW** to a target `pred:<token>`.  
 
@@ -597,7 +665,7 @@ Q: Where do engrams live?  A: cca8_column.py, referenced by bindings’ engrams.
 
 ##### Policy ordering & fairness
 
-Policies are evaluated in a fixed order to keep behavior explainable. If two policies could fire on the same tick, the one earlier in the list wins that tick; the other will get a chance later if its trigger remains true. For fairness in long runs, you can:
+Policies are evaluated in a fixed order to keep behavior explainable. If two policies could fire on the same tick, the one earlier in the list wins that tick, the other will get a chance later if its trigger remains true. For fairness in long runs, you can:
 
 * periodically rotate policy order, or
 
@@ -650,11 +718,11 @@ Two equivalent conventions exist:
 * **Stop-on-pop (default):** return when a goal binding is **popped** from the frontier.
 
 * **Stop-on-discovery:** return as soon as a goal binding is **enqueued**.  
-  Both yield shortest paths in unweighted graphs; stop-on-pop tends to produce cleaner logs because the pop order matches the BFS layers.
+  Both yield shortest paths in unweighted graphs, stop-on-pop tends to produce cleaner logs because the pop order matches the BFS layers.
 
 ##### Frontier semantics (one line mental model)
 
-The frontier is the **FIFO queue of discovered-but-not-expanded nodes**. A node is marked “discovered” at **enqueue time**; never enqueue a discovered node again. This invariant prevents cycles from causing duplicates.
+The frontier is the **FIFO queue of discovered-but-not-expanded nodes**. A node is marked “discovered” at **enqueue time**, never enqueue a discovered node again. This invariant prevents cycles from causing duplicates.
 
 ##### Path presentation
 
@@ -685,7 +753,7 @@ Q: Why might a path be missing?  A: Predicate not created yet or the graph is di
 
 - **Autosave:** `--autosave session.json` writes after each completed action (atomic replace). Overwrites prior file if same name.
 
-- **Load:** `--load session.json` restores world/drives/skills; id counter advances to avoid `bNN` collisions.
+- **Load:** `--load session.json` restores world/drives/skills, id counter advances to avoid `bNN` collisions.
 
 - **Fresh start:** Use a new filename, delete/rename old file, or load a non-existent file (runner continues with a fresh session and starts saving after first action).
 
@@ -693,7 +761,7 @@ Q: Why might a path be missing?  A: Predicate not created yet or the graph is di
 
 Snapshots are written via **atomic replace**: write to a temp file in the same directory and rename over the old snapshot. If a crash occurs mid-write, the old file remains intact. On load:
 
-1. Parse JSON safely; if it fails, print a clear error with the path and keep the process alive so the user can save to a new file.
+1. Parse JSON safely, if it fails, print a clear error with the path and keep the process alive so the user can save to a new file.
 
 2. Validate minimal invariants (`anchors`, `latest`, `bN` shape). If any are missing, reconstruct conservative defaults and continue (prefer a live session to a hard fail).
 
@@ -709,7 +777,7 @@ Q: What does autosave write?  A: {saved_at, world, drives, skills}.
 
 Q: How do we avoid id collisions after load?  A: from_dict() advances the internal bNN counter.
 
-Q: Missing --load file?  A: Continue fresh; file created on first autosave.
+Q: Missing --load file?  A: Continue fresh, file created on first autosave.
 Q: Why atomic replace on save?  A: Prevents partial/corrupt snapshots.
 
 ---
@@ -796,10 +864,10 @@ From the main menu choose **22) Export interactive graph (Pyvis HTML)**, then:
 
 * **Node label mode** → `id+first_pred` (shows both `bN` and the first predicate).
 
-* **Edge labels** → `Y` for small graphs; `n` for big graphs to reduce clutter.
+* **Edge labels** → `Y` for small graphs, `n` for big graphs to reduce clutter.
 
 * **Physics** → `Y` unless the graph is very large.  
-  Open the saved HTML in your browser and hover nodes/edges for tooltips; the NOW anchor is highlighted to orient you.
+  Open the saved HTML in your browser and hover nodes/edges for tooltips, the NOW anchor is highlighted to orient you.
 
 ### Delete a mistaken edge
 
@@ -810,8 +878,8 @@ If you accidentally created a duplicate or wrong link:
 2. Use the “edge delete” helper (if present in `tools/`) or manually edit the snapshot JSON (`edges[]` on the source binding), then **Load** that edited snapshot.
 
 3. Re-export the graph to confirm the fix.
-
-
+   
+   
 
 ***Q&A to help you learn this section***
 
@@ -878,9 +946,9 @@ Bindings are the atomic “episode cards” in the graph.
 
 * `id` is a string of the form `b<num>`, unique within the world.
 
-* `tags` is a list of strings; at least one tag for a “stateful” node should be a `pred:*` token (e.g., `pred:stand`).
+* `tags` is a list of strings, at least one tag for a “stateful” node should be a `pred:*` token (e.g., `pred:stand`).
 
-* `meta.policy` records provenance (which policy created the node); `meta` can hold timestamps or light context.
+* `meta.policy` records provenance (which policy created the node), `meta` can hold timestamps or light context.
 
 * `engrams` holds **pointers** to rich content (stored outside the WorldGraph).
 
@@ -893,9 +961,9 @@ Edges are stored **on the source binding** in its `edges[]` list, forming a clas
 
 * `to` is the destination binding id.
 
-* `label` is a short relation name. Use `"then"` for episode flow; feel free to add domain labels (e.g., `approach`, `search`, `latch`, `suckle`) when helpful.
+* `label` is a short relation name. Use `"then"` for episode flow, feel free to add domain labels (e.g., `approach`, `search`, `latch`, `suckle`) when helpful.
 
-* Multiple edges between the same pair are allowed if labels differ; the UI warns when you attempt to add an identical `(src, label, dst)` edge.
+* Multiple edges between the same pair are allowed if labels differ, the UI warns when you attempt to add an identical `(src, label, dst)` edge.
 
 ### Anchors
 
@@ -922,9 +990,9 @@ Field meanings are intentionally minimal: total runs `n`, number succeeded `succ
 
 * **Sinks:** a binding without `edges` is a valid sink.
 
-* **Labels & pretty print:** when displaying paths or graphs, the first `pred:*` tag is used as a human label if present; otherwise the id is shown.
-
-
+* **Labels & pretty print:** when displaying paths or graphs, the first `pred:*` tag is used as a human label if present, otherwise the id is shown.
+  
+  
 
 #### Why edges live on the source binding (design rationale)
 
@@ -935,9 +1003,9 @@ Storing edges on the source binding gives:
 * **Locality of reasoning:** everything needed to “expand” a node is on that node.
 
 * **Simple persistence:** the snapshot is a direct dump of each binding’s edges.  
-  The trade-off is that reverse lookups (who points _to_ `bK`?) require scanning or a small auxiliary index; in practice we only need forward edges for planning.
-
-
+  The trade-off is that reverse lookups (who points _to_ `bK`?) require scanning or a small auxiliary index, in practice we only need forward edges for planning.
+  
+  
 
 ***Q&A to help you learn this section***
 
@@ -953,13 +1021,13 @@ Q: Where do edges live relative to nodes?  A: On the source binding, inside its 
 
 Q: Are duplicate edges allowed? A: The structure allows them, but the UI warns when an identical `(src, label, dst)` already exists so you can skip duplicates.
 
-Q: Which tag shows as the node label in UIs? A: The first `pred:*` tag if present; otherwise the binding id.
+Q: Which tag shows as the node label in UIs? A: The first `pred:*` tag if present, otherwise the binding id.
 
 Q: How does the loader avoid `bNN` collisions after a load? A: It advances `next_id` past the highest numeric suffix seen in `bindings`.
 
 Q: Do I need to add an edge for a terminal node? A: No. A binding with an empty (or missing) `edges` list is a valid sink.
 
-Q: What makes a predicate “atomic”?A: It’s a single namespaced token (`pred:…`) carried by a binding; we don’t decompose it further inside the graph.
+Q: What makes a predicate “atomic”?A: It’s a single namespaced token (`pred:…`) carried by a binding, we don’t decompose it further inside the graph.
 
 Q: One concrete example of provenance?A: `meta.policy = "policy:stand_up"` on the standing binding created by the StandUp policy.
 
@@ -1018,7 +1086,7 @@ Design decision (ADR-0003 folded in): We chose JSON over a binary format to keep
 ***Q&A to help you learn this section***
 
 Q: What are the versioning expectations of the JSON shape?   
-A: Keep it stable; if fields change, bump a version field and handle compatibility in `from_dict()`.
+A: Keep it stable, if fields change, bump a version field and handle compatibility in `from_dict()`.
 
 Q: Does loading mutate counters?   
 A: Yes—counters advance so newly created bindings get fresh ids.
@@ -1039,33 +1107,33 @@ A traceability‑lite table maps major requirements to the modules and functions
 * REQ‑PERS‑03: Loading a snapshot advances the id counter.Satisfied by `WorldGraph.from_dict`.
 
 You can expand this list as the codebase grows.
-Note -- Currently halted as much work.. but to consider implementing again in the future...
+Note -- Currently paused. To revisit as the codebase grows and requirements stabilize.
+
+
 
 ***Q&A to help you learn this section***
 
-Q: Does it seem silly having these Q&A for section barely used.  A: No... as forms part of scaffolding of multi-purpose README/compedium document.
-
-**Q: How do I keep requirements and code in sync?   
+Q: How do I keep requirements and code in sync?   
 A: Add a short REQ row and tag the relevant functions/classes with the REQ id in comments.
 
-**Q: Where should new ADRs go now that decisions are in-line?   
+Q: Where should new ADRs go now that decisions are in-line?   
 A: Summarize in the section where the topic appears and, if large, put the full ADR under `docs/adr/` with a link.
 
-**Q: What belongs in a REQ vs. ADR?   
-A: REQ = behavior the system must provide; ADR = why a design choice was made among alternatives. 
+Q: What belongs in a REQ vs. ADR?   
+A: REQ = behavior the system must provide, ADR = why a design choice was made among alternatives. 
 
 * * *
 
 ## Roadmap
 
-* Enrich engrams and column providers; add minimal perception‑to‑predicate pipelines.
+* Enrich engrams and column providers, add minimal perception‑to‑predicate pipelines.
 * Add “landmarks” and heuristics for long‑distance plans (A* when we add weights).
 * Optional database or CSR backend if the graph grows beyond memory.
-* Exporters: NetworkX/GraphML for interoperability; continue shipping the Pyvis HTML for quick, zero‑install visualization.
+* Exporters: NetworkX/GraphML for interoperability, continue shipping the Pyvis HTML for quick, zero‑install visualization.
 
 ***Q&A to help you learn this section***
 
-Q: Does it seem silly having these Q&A for section barely used. A: No... as forms part of scaffolding of multi-purpose README/compedium document.
+Pending as codebase grows and features stabilize
 
 * * *
 
@@ -1076,13 +1144,13 @@ Q: Does it seem silly having these Q&A for section barely used. A: No... as form
 - **traceback:** In `except Exception:` add `traceback.print_exc()` to print a full stack. Use when a loader/snapshot fails.  
 - **pdb:** Drop `breakpoint()` in code or run `python -m pdb cca8_run.py --load ...`. Commands: `n` (next), `s` (step), `c` (continue), `l` (list), `p`/`pp` (print), `b` (breakpoint), `where`.  
 - **VS Code debugger:** Create `.vscode/launch.json` with args, set breakpoints in the gutter, F5 to start. Great for multi-file stepping.
-* Tracebacks: the runner keeps exceptions readable; copy the stack into an issue if you see unexpected behavior.
-* `pdb`: insert `import pdb; pdb.set_trace()` where needed to inspect bindings and edges.
+* Tracebacks: the runner keeps exceptions readable, copy the stack into an issue if you see unexpected behavior.
+* `pdb`: insert `import pdb, pdb.set_trace()` where needed to inspect bindings and edges.
 * VS Code: run `cca8_run.py` with the debugger and place breakpoints in `plan_to_predicate()` or policy `trigger()`/`execute()`.
   
   
 
-A common pitfall is duplicate edges when both auto‑attach and a manual connect create the same relation. The UI warns when you try to add a duplicate; you can also inspect the `edges` list on a binding directly in the debugger.
+A common pitfall is duplicate edges when both auto‑attach and a manual connect create the same relation. The UI warns when you try to add a duplicate, you can also inspect the `edges` list on a binding directly in the debugger.
 
 #### Playbook: “No path found”
 
@@ -1092,9 +1160,9 @@ A common pitfall is duplicate edges when both auto‑attach and a manual connect
 
 3. **Look for reversed edges** (common error: added `B→A` instead of `A→B`).
 
-4. **Confirm the goal token** (exact `pred:<token>` string; avoid typos/extra spaces).
+4. **Confirm the goal token** (exact `pred:<token>` string, avoid typos/extra spaces).
 
-5. **Inspect layers** (use the interactive graph; the missing hop will be visually obvious).
+5. **Inspect layers** (use the interactive graph, the missing hop will be visually obvious).
 
 #### Playbook: “Repeated standing”
 
@@ -1103,8 +1171,8 @@ A common pitfall is duplicate edges when both auto‑attach and a manual connect
 2. Verify policy order (another policy shouldn’t insert a second standing node as a side effect).
 
 3. Grep recent bindings for `meta.policy` to see who created duplicates.
-
-
+   
+   
 
 ***Q&A to help you learn this section***
 
@@ -1123,18 +1191,18 @@ Q: IDE workflow?  A: VS Code launch config + gutter breakpoints.
 - **“No path found to state:posture_standing”** — You planned before creating the state. Run one instinct tick (menu **12**) first or `--load` a session that already has it.
 - **Repeated “standing” nodes** — Tightened `StandUp.trigger()` prevents refiring when a standing binding exists. If you see repeats, ensure you’re on the updated controller.
 - **Autosave overwrote my old run** — Use a new filename for autosave (e.g., `--autosave session_YYYYMMDD.json`) or keep read-only load + new autosave path.
-- **Loading says file not found** — We continue with a fresh session; the file will be created on your first autosave event.
+- **Loading says file not found** — We continue with a fresh session, the file will be created on your first autosave event.
   
   
 
 ***Q&A to help you learn this section***
 
-Q: Why “No path found …” on a new session?  A: You planned before adding the predicate; run one instinct tick.
+Q: Why “No path found …” on a new session?  A: You planned before adding the predicate, run one instinct tick.
 
-Q: Why duplicate “standing” nodes?  A: Old controller; update to guarded StandUp.trigger().
+Q: Why duplicate “standing” nodes?  A: Old controller, update to guarded StandUp.trigger().
 
 Q: How to keep an old snapshot?  A: Autosave to a new filename.
-Q: Is load failure fatal?  A: No; runner continues with a fresh session.
+Q: Is load failure fatal?  A: No, runner continues with a fresh session.
 
 ---
 
@@ -1159,7 +1227,7 @@ Note -- ADR's are paused at present. Instead new material is integrated directly
 - **Edge** — directed relation labeled `"then"`, encoding episode flow.  
 - **WorldGraph** — the episode index graph.  
 - **Policy** — primitive behavior with `trigger` + `execute`.  
-- **Action Center** — ordered scan of policies; runs first match per tick.  
+- **Action Center** — ordered scan of policies, runs first match per tick.  
 - **Drives** — homeostatic variables (hunger/fatigue/warmth) that generate drive tags for triggers.  
 - **Engram** — pointer to heavy content (features/sensory/temporal traces) stored outside the graph.  
 - **Provenance** — `meta.policy` stamp recording which policy created a binding.
@@ -1217,7 +1285,7 @@ BFS-style search from the `NOW` anchor to any binding carrying a target predicat
 
 ***Q&A to help you learn this section***
 
-Q: Binding vs Predicate?  A: Binding = node container; Predicate = symbolic fact carried by the binding.
+Q: Binding vs Predicate?  A: Binding = node container, Predicate = symbolic fact carried by the binding.
 
 Q: Edge label semantics today?  A: "then" = weak episode causality.
 
@@ -1227,7 +1295,7 @@ Q: Provenance?  A: meta.policy records which policy created the node.
 
 ---
 
-*End of compendium. Keep this single file updated. If size ever becomes unwieldy, we can split into a `docs/` tree while preserving the same section structure.*
+
 
 ## Session Notes (Living Log)
 
@@ -1235,17 +1303,7 @@ Q: Provenance?  A: meta.policy records which policy created the node.
 
 - - 
 
-## Tiny Command Vocabulary
-
-Say these during a chat and I will update this compendium accordingly:
-
-- **“log this …”** → Append a dated entry under *Session Notes* summarizing the decision/insight.  
-- **“new ADR: <title> …”** → Create a new ADR block (ID, status, context, decision, consequences) and link it in Traceability‑Lite.  
-- **“update ADR-0002 …”** → Amend the specified ADR with new nuance and update cross‑links.  
-- **“add REQ: <short requirement> …”** → Add a row to the Traceability‑Lite table with a new REQ ID and suggested code anchors to tag.  
-- **“promote note to ADR …”** → Convert a *Session Note* item into a formal ADR entry.
-  
-  
+#### 
 
 ## Work in Progress
 

@@ -30,8 +30,9 @@ emitting sensory cues, and running the Action Center ("Instinct step"). It also 
 non-interactive utility flags for scripting, like `--about`, `--version`, and `--plan <predicate>`.
 """
 
+# --- Imports -------------------------------------------------------------
+# Standard Library Imports
 from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -42,11 +43,15 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional, Any, Dict, List, Callable
 
-import cca8_world_graph as wgmod
+# PyPI and Third-Party Imports
+# --none at this time at program startup --
+
+# CCA8 Module Imports
+#import cca8_world_graph as wgmod  # modular alternative: allows swapping WorldGraph engines
+import cca8_world_graph
 from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict
 
-
-# --- Public API index and version-------------------------------------------------------------
+# --- Public API index and version-----------------------------------------------------
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
@@ -263,8 +268,10 @@ def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Bod
     print("  1. Mountain Goat-like brain simulation")
     print("  2. Chimpanzee-like brain simulation")
     print("  3. Human-like brain simulation")
-    print("  4. Super-Human-like machine simulation\n")
-
+    print("  4. Human-like one-agent multiple-brains simulation")
+    print("  5. Human-like one-brain simulation × multiple-agents society")
+    print("  6. Human-like one-agent multiple-brains simulation with combinatorial planning")
+    print("  7. Super-Human-like machine simulation\n")
     print("Pending additional intro material here....")
 
 def loop_helper(autosave_from_args: Optional[str], world, drives, time_limited: bool = False):
@@ -607,38 +614,343 @@ Select: """
 
 
 # --------------------------------------------------------------------------------------
+# Profile stubs (experimental profiles print info and fall back to Mountain Goat)
+# --------------------------------------------------------------------------------------
+
+def _goat_defaults():
+    # (name, sigma, jump, winners_k)
+    return ("Mountain Goat", 0.015, 0.2, 2)
+
+def _print_goat_fallback():
+    print("This evolutionary-like configuration is not currently available. "
+          "Profile is set to mountain goat-like brain simulation.\n")
+
+def profile_chimpanzee(ctx) -> tuple[str, float, float, int]:
+    print(
+        "\nChimpanzee-like brain simulation"
+        "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
+        "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
+        '"same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language.\n'
+    )
+    _print_goat_fallback()
+    return _goat_defaults()
+
+def profile_human(ctx) -> tuple[str, float, float, int]:
+    print(
+        "\nHuman-like brain simulation"
+        "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
+        "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
+        '"same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
+        "The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.\n"
+    )
+    _print_goat_fallback()
+    return _goat_defaults()
+
+def profile_human_multi_brains(ctx, world) -> tuple[str, float, float, int]:
+    # Narrative
+    print(
+        "\nHuman-like one-agent multiple-brains simulation"
+        "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
+        "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
+        '"same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
+        "The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.\n"
+        "\nIn this model each agent has multiple brains operating in parallel. There is an intelligent voting mechanism to decide on a response whereby "
+        "each of the 5 processes running in parallel can give a response with an indication of how certain they are this is the best response, and the most "
+        "certain + most popular response is chosen. As well, all 5 symbolic maps along with their rich store of information in their engrams is continually learning "
+        "and updated.\n"
+    )
+    print(
+        "Implementation sketch for multiple-brains in one agent:"
+        "\n  • Representation: 5 symbolic hippocampal-like maps (5 sandbox WorldGraphs) running in parallel."
+        "\n  • Fork: each sandbox starts as a deep copy of the live WorldGraph (later: thin overlay base+delta)."
+        "\n  • Propose: each sandbox generates a candidate next action and a confidence in that proposal."
+        "\n  • Vote: choose the most popular action; tie-break by highest average confidence, then max confidence."
+        "\n  • Learn: (future) on commit, merge only new nodes/edges from the winning sandbox into the live world; "
+        "re-id new nodes to avoid bN collisions; keep provenance in meta."
+        "\n  • Safety: this stub does a dry-run only; it does not commit changes to the live world.\n"
+    )
+
+    # Scaffolding (non-crashing; prints a trace and falls back)
+    try:
+        import copy, random
+        random.seed(42)  # deterministic demo
+
+        print("[scaffold] Spawning 5 parallel 'brains' (sandbox worlds)...")
+        # Thick clones for now; later this could be a thin overlay (base + delta)
+        base_dict = world.to_dict()
+        brains = []
+        for i in range(5):
+            try:
+                clone = cca8_world_graph.WorldGraph.from_dict(copy.deepcopy(base_dict))
+            except Exception:
+                # Fallback: construct an empty world (still fine for a stub)
+                clone = cca8_world_graph.WorldGraph()
+            brains.append(clone)
+        print(f"[scaffold] Created {len(brains)} sandbox worlds.")
+
+        # Each brain proposes a response + confidence + short rationale
+        possible = ["stand", "seek_mom", "suckle", "recover_fall", "idle"]
+        proposals = []
+        for i, bw in enumerate(brains, start=1):
+            resp = random.choice(possible)
+            conf = round(random.uniform(0.40, 0.95), 2)
+            why  = {
+                "stand":        "posture not yet stable, maximize readiness",
+                "seek_mom":     "hunger cues + mom likely nearby",
+                "suckle":       "latched recently → continue reward behavior",
+                "recover_fall": "vestibular/touch cues suggest instability",
+                "idle":         "no strong drive signal; conserve energy",
+            }.get(resp, "heuristic selection")
+            proposals.append((resp, conf, why))
+            print(f"[scaffold] Brain#{i} proposes: {resp:12s}  (confidence={conf:.2f})  rationale: {why}")
+
+        # Voting: most popular; tie-break by highest avg confidence, then max confidence
+        from collections import Counter, defaultdict
+        counts = Counter(r for r, _, _ in proposals)
+        avg_conf = defaultdict(list)
+        max_conf = defaultdict(float)
+        for r, c, _ in proposals:
+            avg_conf[r].append(c)
+            if c > max_conf[r]: max_conf[r] = c
+        for r in list(avg_conf.keys()):
+            avg_conf[r] = sum(avg_conf[r]) / len(avg_conf[r])
+
+        popular = max(counts.items(), key=lambda kv: (kv[1], avg_conf[kv[0]], max_conf[kv[0]]))
+        winning_resp = popular[0]
+        print(f"[scaffold] Winner by popularity: {winning_resp} "
+              f"(votes={counts[winning_resp]}, avg_conf={avg_conf[winning_resp]:.2f}, max_conf={max_conf[winning_resp]:.2f})")
+
+        print("[scaffold] (No changes committed—this is a dry run only.)\n")
+    except Exception as e:
+        print(f"[scaffold] Note: sandbox demo encountered a recoverable issue: {e}\n")
+
+    _print_goat_fallback()
+    return _goat_defaults()
+
+def profile_society_multi_agents(ctx) -> tuple[str, float, float, int]:
+    print(
+        "\nHuman-like one-brain simulation × multiple-agents society"
+        "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
+        "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
+        '"same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
+        "The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.\n"
+        "\nIn this simulation we have multiple agents each with one human-like brain, all interacting with each other.\n"
+    )
+    print(
+        "Implementation sketch for multiple agents (one brain per agent):"
+        "\n  • Representation: each agent has its own WorldGraph, Drives, and policy set; no shared mutable state."
+        "\n  • Scheduler: iterate agents each tick (single process first; later, one process per agent with queues)."
+        "\n  • Communication: send messages as tags/edges in the receiver’s world (e.g., pred:sound:bleat:mom)."
+        "\n  • Persistence: autosave per agent (session_A1.json, session_A2.json, ...)."
+        "\n  • Safety: this stub simulates 3 agents for one tick; everything is printed only; no files are written.\n"
+    )
+
+    # Scaffolding: create 3 tiny agents, run one tick, pass a simple message
+    try:
+        import random
+        from dataclasses import dataclass
+
+        random.seed(7)  # deterministic print
+
+        @dataclass
+        class _Agent:
+            name: str
+            world: Any
+            drives: Any
+
+        agents: list[_Agent] = []
+        for i in range(3):
+            w = cca8_world_graph.WorldGraph()
+            w.ensure_anchor("NOW")
+            d = Drives()
+            agents.append(_Agent(name=f"A{i+1}", world=w, drives=d))
+
+        print(f"[scaffold] Created {len(agents)} agents: {', '.join(a.name for a in agents)}")
+
+        # One tick: each agent runs action_center_step (dry outcome)
+        for a in agents:
+            try:
+                res = action_center_step(a.world, ctx, a.drives)
+                print(f"[scaffold] {a.name}: Action Center → {res}")
+            except Exception as e:
+                print(f"[scaffold] {a.name}: controller error: {e}")
+
+        # Simple broadcast message: A1 'bleats', A2 receives a cue (sound:bleat:mom)
+        try:
+            print("[scaffold] A1 broadcasts 'sound:bleat:mom' → A2")
+            bid = agents[1].world.add_predicate("sound:bleat:mom", attach="now", meta={"sender": agents[0].name})
+            print(f"[scaffold] A2 received cue as binding {bid}; running one controller step on A2...")
+            res2 = action_center_step(agents[1].world, ctx, agents[1].drives)
+            print(f"[scaffold] A2: Action Center → {res2}")
+        except Exception as e:
+            print(f"[scaffold] message/cue demo note: {e}")
+
+        print("[scaffold] (End of society dry-run; no snapshots written.)\n")
+    except Exception as e:
+        print(f"[scaffold] Society demo encountered a recoverable issue: {e}\n")
+
+    _print_goat_fallback()
+    return _goat_defaults()
+    
+def profile_multi_brains_adv_planning(ctx) -> tuple[str, float, float, int]:
+    print(
+        "\nHuman-like one-agent multiple-brains simulation with combinatorial planning"
+        "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
+        "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
+        '"same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
+        "The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.\n"
+        "\nIn this model there are multiple brains, e.g., 5 at the time of this writing, in one agent."
+        "There is an intelligent voting mechanism to decide on a response whereby each of the 5 processes running in parallel can give a response with an "
+        "indication of how certain they are this is the best response, and the most certain + most popular response is chosen. As well, all 5 "
+        "symbolic maps along with their rich store of information in their engrams is continually learning and updated.\n"
+        "\nIn addition, in this model each brain has multiple von Neumann processors to independently explore different possible routes to take "
+        "or different possible decisions to make.\n"
+    )
+    print(
+        "Implementation sketch (this stub does not commit changes to the live world):"
+        "\n  • Brains: 5 symbolic hippocampal-like maps (conceptual ‘brains’) exploring in parallel."
+        "\n  • Processors: each brain has 256 von Neumann processors that independently explore candidate plans."
+        "\n  • Rollouts: each processor tries a short action sequence (horizon H=3) from a small discrete action set."
+        "\n  • Scoring: utility(plan) = Σ reward(action) − cost_per_step·len(plan) (simple, deterministic toy scoring)."
+        "\n  • Selection: within a brain, keep the best plan; across brains, pick the champion by best score, then avg score."
+        "\n  • Commit rule: in a real system we would commit only the FIRST action of the winning plan after a safety check."
+        "\n  • Parallelism note: this stub runs sequentially; a real build would farm processors to separate OS processes.\n"
+    )
+
+    # Scaffolding: 5 brains × 256 processors → 1280 candidate plans; pick a champion (no world writes)
+    try:
+        import random
+        random.seed(20251)  # reproducible demo
+
+        brain_count       = 5
+        procs_per_brain   = 256
+        horizon           = 3
+        actions           = ["stand", "seek_mom", "suckle", "recover_fall", "idle"]
+        reward            = {"stand": 0.20, "seek_mom": 0.45, "suckle": 1.00, "recover_fall": 0.30, "idle": -0.10}
+        cost_per_step     = 0.05
+
+        # (plan, score) comparison: higher score better; tie-break by shorter, then lexical
+        def _better(a, b):
+            if a is None: return True
+            pa, sa = a
+            pb, sb = b
+            return (sb > sa) or (sb == sa and (len(pb) < len(pa) or (len(pb) == len(pa) and tuple(pb) < tuple(pa))))
+
+        brain_summaries = []  # list of (brain_idx, best_plan, best_score, avg_score)
+
+        for bi in range(1, brain_count + 1):
+            best = None
+            sum_scores = 0.0
+            for pj in range(procs_per_brain):
+                plan  = [random.choice(actions) for _ in range(horizon)]
+                score = sum(reward.get(a, 0.0) for a in plan) - cost_per_step * len(plan)
+                sum_scores += score
+                if _better(best, (plan, score)):
+                    best = (plan, score)
+            avg = sum_scores / procs_per_brain
+            brain_summaries.append((bi, best[0], best[1], avg))
+            print(f"[scaffold] Brain#{bi:>2}: best={best[0]}  best_score={best[1]:.3f}  avg_score={avg:.3f}  (processors={procs_per_brain})")
+
+        # Champion across brains: choose by best_score, then avg_score, then shorter plan, then lexical
+        champion = max(
+            brain_summaries,
+            key=lambda t: (t[2], t[3], -len(t[1]), tuple(t[1]))
+        )
+        champ_idx, champ_plan, champ_best, champ_avg = champion
+        print(f"[scaffold] Champion brain: #{champ_idx}  best_score={champ_best:.3f}  avg_score={champ_avg:.3f}")
+        print(f"[scaffold] Winning plan: {champ_plan}")
+        print(f"[scaffold] Commit rule (not executed here): take FIRST action '{champ_plan[0]}' on the live world.\n")
+
+    except Exception as e:
+        print(f"[scaffold] advanced-planning demo encountered a recoverable issue: {e}\n")
+
+    _print_goat_fallback()
+    return _goat_defaults()
+
+def profile_superhuman(ctx) -> tuple[str, float, float, int]:
+    print(
+        "\nSuper-human-like machine simulation"
+        "\n\nFeatures sketch for an ASI-grade architecture:"
+        "\n  • Hierarchical memory: massive multi-modal engrams (vision/sound/touch/text) linked to a compact symbolic index."
+        "\n  • Weighted graph planning: edges carry costs/uncertainty; A*/landmarks for long-range navigation in concept space."
+        "\n  • Meta-controller: blends proposals from symbolic search, neural value estimation, and program-synthesis planning."
+        "\n  • Self-healing & explanation: detect/repair inconsistent states; produce human-readable rationales for actions."
+        "\n  • Tool-use & embodiment: external tools (math/vision/robots) wrapped as policies with provenances and safeguards."
+        "\n  • Safety envelope: constraint-checking policies that can veto/redirect unsafe plans."
+        "\n\nThis stub prints a dry-run of the meta-controller triage and falls back to the Mountain Goat profile.\n"
+    )
+
+    # Scaffolding: three-module meta-controller, pick best proposal (no world writes)
+    try:
+        import random
+        random.seed(123)
+
+        modules = [
+            ("symbolic_search", ["stand", "seek_mom", "suckle"]),
+            ("neural_value",    ["seek_mom", "suckle", "stand"]),
+            ("prog_synthesis",  ["suckle", "seek_mom", "recover_fall"]),
+        ]
+        proposals = []
+        for name, pref in modules:
+            action = pref[0]                           # top preference
+            score  = round(random.uniform(0.50, 0.98), 3)  # mock utility
+            why = {
+                "symbolic_search": "shortest-hop path to immediate reward",
+                "neural_value":   "high expected value under learned drive model",
+                "prog_synthesis": "small program proves preconditions & reward",
+            }[name]
+            proposals.append((name, action, score, why))
+            print(f"[scaffold] {name:15s} → {action:12s} score={score:.3f}  rationale: {why}")
+
+        # pick by score; tie-break by a fixed preference order
+        pref_order = {"suckle": 3, "seek_mom": 2, "stand": 1, "recover_fall": 1, "idle": 0}
+        best = max(proposals, key=lambda t: (t[2], pref_order.get(t[1], 0)))
+        print(f"[scaffold] Meta-controller winner: action={best[1]} "
+              f"(score={best[2]:.3f}) from {best[0]}")
+
+        print("[scaffold] (No changes committed—safety envelope would check constraints before execution.)\n")
+    except Exception as e:
+        print(f"[scaffold] ASI meta-controller demo encountered a recoverable issue: {e}\n")
+
+    _print_goat_fallback()
+    return _goat_defaults()
+
+# --------------------------------------------------------------------------------------
 # World/intro flows and preflight-lite stamp helpers
 # --------------------------------------------------------------------------------------
 
-def choose_profile(ctx) -> dict:
-    """Prompt once; always default to Mountain Goat.
-    If 2/3/4 (or invalid) is chosen, print a notice and fall back to goat.
+def choose_profile(ctx, world) -> dict:
+    """Prompt once; always default to Mountain Goat unless a profile is implemented.
+    For unimplemented profiles, print a narrative and fall back to goat defaults.
     Returns a dict: {"name", "ctx_sigma", "ctx_jump", "winners_k"}.
     """
     GOAT = ("Mountain Goat", 0.015, 0.2, 2)
-
     try:
-        choice = input("Please make a choice [1-4]: ").strip()
+        choice = input("Please make a choice [1-7]: ").strip()
     except (EOFError, KeyboardInterrupt):
         print("\nCancelled selection.... will exit program....")
         sys.exit(0)
 
     if choice == "1":
         name, sigma, jump, k = GOAT
-    elif choice in {"2", "3", "4"}:
-        print("This evolutionary-like configuration is not currently available. "
-              "Profile is set to mountain goat-like brain simulation.")
-        name, sigma, jump, k = GOAT
+    elif choice == "2":
+        name, sigma, jump, k = profile_chimpanzee(ctx)
+    elif choice == "3":
+        name, sigma, jump, k = profile_human(ctx)
+    elif choice == "4":
+        name, sigma, jump, k = profile_human_multi_brains(ctx, world)
+    elif choice == "5":
+        name, sigma, jump, k = profile_society_multi_agents(ctx)
+    elif choice == "6":
+        name, sigma, jump, k = profile_multi_brains_adv_planning(ctx)
+    elif choice == "7":
+        name, sigma, jump, k = profile_superhuman(ctx)
     else:
-        # invalid/empty entry → default to goat
         print(f"The selection {choice} is not valid or not available at this time.\n Therefore, defaulting to selection Mountain Goat.")
         name, sigma, jump, k = GOAT
 
-    # record on ctx so it appears in CTX snapshot
-    ctx.profile = name
-
+    ctx.profile = name  # record on ctx so it appears in CTX snapshot
     return {"name": name, "ctx_sigma": sigma, "ctx_jump": jump, "winners_k": k}
-
 
 def versions_dict() -> dict:
     """Collect versions/platform info used for preflight stamps."""
@@ -670,9 +982,70 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"could not read python/platform: {e}")
 
+    # 2a) CCA8 modules present & importable (plus key symbols)
+    try:
+        import importlib, os as _os
+
+        # module name → list of symbols we expect to exist
+        _mods: list[tuple[str, list[str]]] = [
+            ("cca8_world_graph", ["WorldGraph", "__version__"]),
+            ("cca8_controller",  ["Drives", "action_center_step", "__version__"]),
+            ("cca8_column",      ["__version__"]),
+            ("cca8_features",    ["__version__"]),
+            ("cca8_temporal",    ["__version__"]),
+        ]
+
+        for _name, _symbols in _mods:
+            try:
+                _m = importlib.import_module(_name)
+                _ver = getattr(_m, "__version__", None)
+                _pth = getattr(_m, "__file__", None)
+                ok(f"import {_name}" + (f" v{_ver}" if _ver else "") +
+                   (f" ({_os.path.basename(_pth)})" if _pth else ""))
+
+                for _sym in _symbols:
+                    # "__version__" may not exist on every module; treat missing version as OK
+                    if _sym == "__version__":
+                        continue
+                    if hasattr(_m, _sym):
+                        # Touch the symbol to ensure it resolves
+                        getattr(_m, _sym)
+                        ok(f"{_name}.{_sym} available")
+                    else:
+                        bad(f"{_name}: missing symbol '{_sym}'")
+            except Exception as e:
+                bad(f"import {_name} failed: {e}")
+    except Exception as e:
+        bad(f"module import checks failed: {e}")
+
+    # 3a) Accessory files present (README + image), non-empty
+    try:
+        _files = ["README.md", "calf_goat.jpg"]  # add more here if needed
+        for _f in _files:
+            try:
+                if os.path.exists(_f):
+                    _sz = os.path.getsize(_f)
+                    if _sz > 0:
+                        ok(f"file present: {_f} ({_sz} bytes)")
+                    else:
+                        bad(f"file present but empty: {_f}")
+                else:
+                    bad(f"file missing: {_f}")
+            except Exception as e:
+                bad(f"file check failed for {_f}: {e}")
+    except Exception as e:
+        bad(f"accessory file checks failed: {e}")
+
+    # 4a) Pyvis installed (for HTML graph export)
+    try:
+        import pyvis  # type: ignore
+        ok("pyvis installed")
+    except Exception as e:
+        ok(f"pyvis not installed (export still optional): {e}")
+
     # 2) WorldGraph sanity
     try:
-        w = wgmod.WorldGraph()
+        w = cca8_world_graph.WorldGraph()
         w.ensure_anchor("NOW")
         if isinstance(w._bindings, dict) and _anchor_id(w, "NOW") != "?":
             ok("WorldGraph init and NOW anchor")
@@ -692,7 +1065,7 @@ def run_preflight_full(args) -> int:
 
         # Smoke: run the controller once on a fresh world using the real Ctx dataclass
         try:
-            _w = wgmod.WorldGraph(); _w.ensure_anchor("NOW")
+            _w = cca8_world_graph.WorldGraph(); _w.ensure_anchor("NOW")
             _d = _Drv()
             _ctx = Ctx()
             _ = action_center_step(_w, _ctx, _d)
@@ -715,7 +1088,7 @@ def run_preflight_full(args) -> int:
     try:
         tmp = "_preflight_session.json"
         d  = Drives()
-        ts = save_session(tmp, wgmod.WorldGraph(), d)
+        ts = save_session(tmp, cca8_world_graph.WorldGraph(), d)
         if os.path.exists(tmp):
             ok(f"snapshot write/read path exists ({tmp}, saved_at={ts})")
             try:
@@ -735,7 +1108,7 @@ def run_preflight_full(args) -> int:
 
     # 6) Planning stub
     try:
-        w = wgmod.WorldGraph()
+        w = cca8_world_graph.WorldGraph()
         src = w.ensure_anchor("NOW")
         # plan to something that isn't there: expect no path, not an exception
         p = w.plan_to_predicate(src, "milk:drinking")
@@ -884,7 +1257,7 @@ def export_snapshot(world, drives=None, ctx=None, policy_rt=None, path_txt="worl
     with open(path_txt, "w", encoding="utf-8") as f:
         f.write(text_blob + "\n")
 
-    # Graphviz DOT (optional nice  rendering)
+    # Graphviz DOT (optional rendering)
     with open(path_dot, "w", encoding="utf-8") as g:
         g.write("digraph CCA8 {\n  rankdir=LR;\n  node [shape=box,fontsize=10];\n")
         for bid in _sorted_bids(world):
@@ -1044,7 +1417,7 @@ def candidate_anchors(world, ctx) -> list[str]:
 def interactive_loop(args: argparse.Namespace) -> None:
     """Main interactive loop."""
     # Build initial world/drives fresh
-    world = wgmod.WorldGraph()
+    world = cca8_world_graph.WorldGraph()
     drives = Drives()
     ctx = Ctx()
     #attribute defaults already exist in class Ctx but can be adjusted here also
@@ -1063,7 +1436,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             with open(args.load, "r", encoding="utf-8") as f:
                 blob = json.load(f)
 
-            new_world  = wgmod.WorldGraph.from_dict(blob.get("world", {}))
+            new_world  = cca8_world_graph.WorldGraph.from_dict(blob.get("world", {}))
             try:
                 new_drives = Drives.from_dict(blob.get("drives", {}))
             except Exception as e:
@@ -1103,7 +1476,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
         print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
         POLICY_RT.refresh_loaded(ctx)
     else:
-        profile = choose_profile(ctx)
+        profile = choose_profile(ctx, world)
         name = profile["name"]
         sigma, jump, k = profile["ctx_sigma"], profile["ctx_jump"], profile["winners_k"]
         ctx.sigma, ctx.jump = sigma, jump
@@ -1116,7 +1489,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     ctx.body = "(none)"
     if getattr(args, "hal", False):
         hal = HAL(args.body)
-        ctx.hal  = hal  #store hal on ctx for that other primitives can see it
+        ctx.hal  = hal  #store HAL on ctx so that other primitives can see it
         ctx.body = hal.body
 
     # Ensure NOW anchor exists for the episode (so attachments from "now" resolve)
@@ -1337,7 +1710,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             else:
                 print("No path found.")
             loop_helper(args.autosave, world, drives)
-    
+
         elif choice == "6":
             # Resolve engrams on a binding
             bid = input("Binding id to resolve engrams: ").strip()
@@ -1520,7 +1893,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     print("       Tip: install with  pip install pyvis")
 
             loop_helper(args.autosave, world, drives)
-        
+
         elif choice == "22":
             # Export and display interactive graph (Pyvis HTML) with options
             print("\nExport and display graph of nodes and links with more options (Pyvis HTML)")
@@ -1644,7 +2017,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     with open(path, "r", encoding="utf-8") as f:
                         blob = json.load(f)
                     print(f"Loaded {path} (saved_at={blob.get('saved_at','?')})")
-                    new_world  = wgmod.WorldGraph.from_dict(blob.get("world", {}))
+                    new_world  = cca8_world_graph.WorldGraph.from_dict(blob.get("world", {}))
                     new_drives = Drives.from_dict(blob.get("drives", {}))
                     skills_from_dict(blob.get("skills", {}))
                     world, drives = new_world, new_drives
@@ -1676,7 +2049,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 except Exception as e:
                     print(f"[warn] Could not delete {path}: {e}")
                 # Reinitialize episode state
-                world = wgmod.WorldGraph()
+                world = cca8_world_graph.WorldGraph()
                 drives = Drives()
                 skills_from_dict({})  # clear skill ledger
                 world.ensure_anchor("NOW")
@@ -1768,7 +2141,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         for label, ver, path in comps:
             print(f"  - {label} v{ver} ({path})")
 
-        # nice extra: show primitive count if the controller is importable
+        # additionally show primitive count if the controller is importable
         try:
             from cca8_controller import PRIMITIVES
             print(f"    [controller primitives: {len(PRIMITIVES)}]")
