@@ -15,37 +15,26 @@ Explaining the terminology chosen:
 facts and pointers, much like in neuro/cog systems linking features, time  and cause into abs
 coherent moment or episode; we are aiming for knowledge representation rather than just
 graph topology
+    -bindings can contain predicates and/or cues and/or anchors 
+    (or none although not recommended -- add at least one tag if need a placeholder)
+    (technically allow bindings without tags or edges, but not recommended stylistically)
+    -bindings usually contain edges but can existed isolated without edges (e.g., checkpoint to be connected later, placeholders, etc)
+    -see code below for structure of a binding, note that it stores id, tags, engrams, metadata, source edge data
 - "Provenance" -- it documents the history or lineage of the data who/what/why
-- "Metadata" -- characteristics including admin features of the data
-- "Edge" -- a standard term for link; note that we use directed edges
+- "Metadata" -- characteristics including admin features of the data, and in our code actually includes the provenance
+- "Edge" -- a standard term for link; note that we use directed edges expressing weak causality "then"
+         - actions -- we usually encode as edge labels rather than as predicates
+           e.g., pred:stand:alone --run-->pred:stand:mom
 - "WorldGraph" -- our graph made up of bindings + directed edges
-
-Mental model:
-- **Predicate**: a symbolic fact token, e.g., "state:posture_standing".
-    state predicates - pred:born, pred:stand, pred:mom:close, pred:nipple:latched
-    drive-derivated state predicates: e.g.,  pred:drive:hunger_high
-    (can also show as separate drive: tag, e.g., drive:hunger_high)
-    event predicates: pred:event:fall_detected (transient facts you might mark explicitly)
-    goal marker predicates:  pred:goal:milk_obtained (optional; useful for readability)
-- **Binding**: a *node instance* that carries a predicate tag (plus meta & engrams).
-- **Edge**: a directed link between bindings with a label (e.g., "then") expressing
-  weak/soft causality ("in this episode, this led to that").
-     actions -- we usually encode as edge labels rather than as predicates
-        e.g., born -- then --> wobble --then--> stand -->
-        e.g., stand --search--> nipple:found --latch--> nipple:latched -->
-     note: if want better record of action completed you can add a predicate state the relfects
-       the outcome, e.g., pred:stood, or pred:nipple:latched, but try to avoid same concept in
-       edge as well predicate
-     note: edges are directed
-     note: edges are stored on the source binding (adjacency list)
-- **Anchors**: special bindings like NOW, may have anchor:* tags, don't need a pred:*
-  note: some bindings may not have a pred:*, for example anchors, cues
-  note: the code uses the first pred:* tag as the human-readable label in pretty printing
-    but otherwise falls back to the binding id
-  note: a binding should carry at least 1 tag -- e.g., pred:*, anchor:NOW (special orientation nodes),
-    cue:scent:milk (sensory/context markers)
-  note: if you want to plan a route to it or display it as a "state" then the binding needs a pred:*
-  note: a binding can exist without an edge, e.g., used as a marker or anchor
+- "Tags" -- bindings have predicate and/or cue and/or anchor tags:
+  "Predicate: a symbolic fact token, e.g., "state:posture_standing"
+     -the reason we use this term with logic/AI heritage rather than a term like "fact" is because a fact
+     implies a ground truth while a "predicate" is a symbolic claim
+        e.g., "pred:standing"
+     -terminology note:   "pred: x" or "cue:x"  -- x can be simple like "standing" or expanded eg, "standing:forest:north"
+  "Cue" : while we plan to or target a predicate, a cue represents a current condition
+     e.g., "cue:scent:milk"
+  "Anchor": special bindings like NOW, actually created via e.g., self._anchors["NOW"] = "b100"
 
 Persistence:
 - `to_dict()` / `from_dict()` serialize/restore an episode (bindings, anchors, latest).
@@ -172,6 +161,80 @@ class WorldGraph:
         self._anchors[name] = bid
         # latest may remain whatever last predicate node was; anchor creation doesn't change latest
         return bid
+        
+    def set_now(self, bid: str, *, tag: bool = True, clean_previous: bool = True) -> str | None:
+        """
+        Re-point the NOW anchor to an existing binding id and (optionally) keep tags tidy.
+
+        Why this helper:
+          - In CCA8, "NOW" is a temporal orientation used by the runner and planner.
+            The authoritative source of truth is the anchors map: self._anchors["NOW"].
+          - It's easy to forget to update the human-facing tag 'anchor:NOW' when moving NOW,
+            or to leave two bindings visually tagged as NOW. This helper updates both.
+
+        Parameters
+        ----------
+        bid : str
+            Binding id to become the NOW anchor. Must exist in this world.
+        tag : bool, default True
+            If True, ensure the new NOW binding's tags include 'anchor:NOW'.
+        clean_previous : bool, default True
+            If True, remove 'anchor:NOW' from the old NOW binding's tags (if present).
+
+        Returns
+        -------
+        prev_now : str | None
+            The previous NOW binding id (if any), for logging/inspection.
+
+        Notes
+        -----
+        - No-op if bid is already the NOW anchor (still ensures tag housekeeping).
+        - Does not create bindings; bid must exist (raises KeyError otherwise).
+        - Does not alter edges or LATEST; it only changes orientation.
+        """
+
+        if bid not in self._bindings:
+            raise KeyError(f"Unknown binding id for NOW: {bid!r}")
+
+        def _tags_of(bid_: str):
+            b = self._bindings[bid_]
+            ts = getattr(b, "tags", None)
+            if ts is None:
+                # default to a list for compatibility with existing snapshots
+                b.tags = []
+                ts = b.tags
+            return ts
+
+        def _tag_add(ts, t: str):
+            # works for set or list
+            try:
+                ts.add(t)        # set
+            except AttributeError:
+                if t not in ts:  # list
+                    ts.append(t)
+
+        def _tag_discard(ts, t: str):
+            # works for set or list
+            try:
+                ts.discard(t)    # set
+            except AttributeError:
+                try:
+                    ts.remove(t) # list
+                except ValueError:
+                    pass
+
+        prev = self._anchors.get("NOW")
+
+        if clean_previous and prev and prev in self._bindings and prev != bid:
+            _tag_discard(_tags_of(prev), "anchor:NOW")
+
+        # point NOW to the new id
+        self._anchors["NOW"] = bid
+
+        if tag:
+            _tag_add(_tags_of(bid), "anchor:NOW")
+
+        return prev
 
     # ------------------------- creation --------------------------
 
@@ -246,6 +309,39 @@ class WorldGraph:
             self.add_edge(prev_latest, bid, "then", meta or {})
 
         return bid
+        
+    
+    def add_cue(self, token: str, *, attach: Optional[str] = None,
+            meta: Optional[dict] = None, engrams: Optional[dict] = None) -> str:
+        """Create a new cue binding (tag normalized to 'cue:<token>') and optionally auto-link it.
+
+        Use this for sensory/context evidence that policies will react to (not planning targets).
+        attach: 'now' → NOW→new, 'latest' → LATEST→new, 'none'/None → no auto edge.
+        """
+        tok = (token or "").strip()
+        if tok.startswith("cue:"):
+            tok = tok[4:]
+        tag = f"cue:{tok}"
+
+        att = (attach or "none").lower()
+        if att not in _ATTACH_OPTIONS:
+            raise ValueError(f"attach must be one of {_ATTACH_OPTIONS!r}")
+
+        prev_latest = self._latest_binding_id
+        bid = self._next_id()
+        b = Binding(
+            id=bid, tags={tag}, edges=[],
+            meta=dict(meta or {}), engrams=dict(engrams or {}))
+        self._bindings[bid] = b
+        self._latest_binding_id = bid
+
+        if att == "now":
+            src = self.ensure_anchor("NOW")
+            self.add_edge(src, bid, "then", meta or {})
+        elif att == "latest" and prev_latest and prev_latest in self._bindings:
+            self.add_edge(prev_latest, bid, "then", meta or {})
+
+        return bid
 
     # --------------------------- edges ---------------------------
 
@@ -260,6 +356,14 @@ class WorldGraph:
         self._bindings[src_id].edges.append(
             {"to": dst_id, "label": label, "meta": dict(meta or {})}
         )
+        
+    def add_action(self, src_id: str, dst_id: str, action: str, meta: dict | None = None):
+        """
+        Syntactic sugar for adding an action-labeled edge: src --action--> dst.
+        Equivalent to add_edge(src_id, dst_id, label=action, meta=meta).
+        """
+        return self.add_edge(src_id, dst_id, label=action, meta=meta)
+
 
     # -------------------------- planning -------------------------
 
@@ -400,6 +504,126 @@ class WorldGraph:
         """Convenience: plan_to_predicate then pretty_path (returns text or '(no path)')."""
         path = self.plan_to_predicate(src_id, token)
         return self.pretty_path(path, **kwargs) if path else "(no path)"
+        
+        
+    # ------------------------- action / edge-label utilities -------------------------
+
+    def _iter_edges(self):
+        """
+        Internal: yield (src_id, dst_id, edge_dict) for every well-formed edge.
+        Skips edges that point to unknown dst ids.
+        """
+        for src_id, b in self._bindings.items():
+            edges = getattr(b, "edges", None) or []
+            for e in edges:
+                dst = e.get("to")
+                if not dst or dst not in self._bindings:
+                    continue
+                yield src_id, dst, e
+
+    def list_actions(self, *, include_then: bool = True) -> list[str]:
+        """
+        Return a sorted list of unique edge labels present in the graph.
+        By default includes the generic 'then'; pass include_then=False to hide it.
+        """
+        labels: set[str] = set()
+        for _src, _dst, e in self._iter_edges():
+            lab = e.get("label", "then")
+            if lab == "then" and not include_then:
+                continue
+            labels.add(lab)
+        return sorted(labels)
+
+    def action_counts(self, *, include_then: bool = True) -> dict[str, int]:
+        """
+        Return a dict: {label -> count of edges with that label}.
+        Include or exclude the generic 'then' via include_then.
+        """
+        from collections import Counter
+        c = Counter()
+        for _src, _dst, e in self._iter_edges():
+            lab = e.get("label", "then")
+            if lab == "then" and not include_then:
+                continue
+            c[lab] += 1
+        return dict(c)
+
+    def edges_with_action(self, label: str):
+        """
+        Generator over edges that match a given action label.
+        Yields tuples: (src_id, dst_id, meta_dict).
+        """
+        for src, dst, e in self._iter_edges():
+            if (e.get("label", "then") == label):
+                yield (src, dst, e.get("meta", {}) or {})
+
+    def action_metrics(self, label: str, *, numeric_keys: tuple[str, ...] = ("meters", "duration_s", "speed_mps")) -> dict:
+        """
+        Aggregate simple numeric metrics from edge.meta for all edges with a given label.
+        Returns a dict: {
+            'count': N,
+            'keys': {
+                <key>: {'count': kN, 'sum': Σ, 'avg': Σ/kN}
+            }
+        }
+        Only keys present AND numeric are aggregated; others are ignored.
+        """
+        import numbers
+        out = {"count": 0, "keys": {}}
+        acc = {k: {"count": 0, "sum": 0.0} for k in numeric_keys}
+        n = 0
+        for _src, _dst, meta in self.edges_with_action(label):
+            n += 1
+            for k in numeric_keys:
+                v = meta.get(k, None)
+                if isinstance(v, numbers.Number):
+                    acc[k]["count"] += 1
+                    acc[k]["sum"] += float(v)
+        out["count"] = n
+        for k, d in acc.items():
+            if d["count"] > 0:
+                out.setdefault("keys", {})[k] = {
+                    "count": d["count"],
+                    "sum": d["sum"],
+                    "avg": d["sum"] / d["count"],
+                }
+        return out
+
+    def action_summary_text(self, *, include_then: bool = False, examples_per_action: int = 2) -> str:
+        """
+        Return a human-readable summary of actions (edge labels) in the graph:
+        - unique labels with counts
+        - a couple of example edges per label (src --label--> dst)
+        Hide the generic 'then' by default to reduce noise.
+        """
+        lines: list[str] = []
+        counts = self.action_counts(include_then=include_then)
+        if not counts:
+            return "No actions (edge labels) recorded."
+        # header
+        total = sum(counts.values())
+        lines.append(f"Actions summary (labels) — total labeled edges: {total}")
+        for lab in sorted(counts):
+            lines.append(f"  • {lab}: {counts[lab]}")
+            # examples
+            i = 0
+            for src, dst, _meta in self.edges_with_action(lab):
+                # use first pred:* as short label if present
+                def _first_pred(bid: str) -> str:
+                    b = self._bindings.get(bid)
+                    if not b:
+                        return bid
+                    for t in getattr(b, "tags", []) or []:
+                        if isinstance(t, str) and t.startswith("pred:"):
+                            return t[5:]
+                    return bid
+                if i < examples_per_action:
+                    lines.append(f"      e.g., {src}[{_first_pred(src)}] --{lab}--> {dst}[{_first_pred(dst)}]")
+                    i += 1
+                else:
+                    break
+        return "\n".join(lines)
+
 
     # ------------------------- visualize the graph -----------------------
 
@@ -508,7 +732,6 @@ class WorldGraph:
         os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
         net.write_html(out, notebook=False)
         return out
-
 
 
     # ------------------------- persistence -----------------------

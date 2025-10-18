@@ -356,6 +356,19 @@ def _bindings_with_pred(world, token: str) -> List[str]:
                 break
     return out
 
+def _bindings_with_cue(world, token: str) -> List[str]:
+    want = f"cue:{token}"
+    out = []
+    for bid, b in world._bindings.items():
+        for t in getattr(b, "tags", []):
+            if t == want:
+                out.append(bid)
+                break
+    return out
+
+def any_cue_tokens_present(world, tokens: List[str]) -> bool:
+    return any(_bindings_with_cue(world, tok) for tok in tokens)
+
 def has_pred_near_now(world, token: str, hops: int = 3) -> bool:
     now_id = _anchor_id(world, "NOW")
     for bid in _bindings_with_pred(world, token):
@@ -470,7 +483,7 @@ CATALOG_GATES: List[PolicyGate] = [
         trigger=lambda W, D, ctx: (
             has_pred_near_now(W, "state:posture_standing")
             and (getattr(D, "hunger", 0.0) > 0.6)
-            and any_pred_present(W, ["vision:silhouette:mom", "smell:milk:scent", "sound:bleat:mom"])
+            and any_cue_tokens_present(W, ["vision:silhouette:mom", "scent:milk", "sound:bleat:mom"])
             and not has_pred_near_now(W, "state:seeking_mom")      # prevent repeats
             and not has_pred_near_now(W, "state:posture_fallen")   # ineligible while fallen
         ),
@@ -505,7 +518,8 @@ CATALOG_GATES: List[PolicyGate] = [
         dev_gate=lambda ctx: True,
         trigger=lambda W, D, ctx: (
             has_pred_near_now(W, "state:posture_fallen")
-            or any_pred_present(W, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"])
+            or any_cue_tokens_present(W, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"])
+            #or any_pred_present(W, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"])
         ),
         explain=lambda W, D, ctx: (
             f"dev_gate: True, trigger: fallen={has_pred_near_now(W,'state:posture_fallen')} "
@@ -856,7 +870,8 @@ def profile_society_multi_agents(ctx) -> tuple[str, float, float, int]:
         # Simple broadcast message: A1 'bleats', A2 receives a cue (sound:bleat:mom)
         try:
             print("[scaffold] A1 broadcasts 'sound:bleat:mom' → A2")
-            bid = agents[1].world.add_predicate("sound:bleat:mom", attach="now", meta={"sender": agents[0].name})
+            bid = agents[1].world.add_cue("sound:bleat:mom", attach="now", meta={"sender": agents[0].name})
+            #bid = agents[1].world.add_predicate("sound:bleat:mom", attach="now", meta={"sender": agents[0].name})
             print(f"[scaffold] A2 received cue as binding {bid}; running one controller step on A2...")
             res2 = action_center_step(agents[1].world, ctx, agents[1].drives)
             print(f"[scaffold] A2: Action Center → {res2}")
@@ -1131,6 +1146,86 @@ def run_preflight_full(args) -> int:
             bad("WorldGraph anchor missing or invalid")
     except Exception as e:
         bad(f"WorldGraph init failed: {e}")
+        
+    # 2a) WorldGraph.set_now() — anchor remap & tag housekeeping
+    try:
+        # fresh temp world just for this test
+        _w2 = cca8_world_graph.WorldGraph()
+
+        # ensure NOW exists for this instance
+        _old_now = _w2.ensure_anchor("NOW")
+
+        def _tags_of(bid_: str):
+            b = _w2._bindings[bid_]
+            ts = getattr(b, "tags", None)
+            if ts is None:
+                b.tags = []
+                ts = b.tags
+            return ts
+
+        def _has_tag(bid_: str, t: str) -> bool:
+            ts = getattr(_w2._bindings[bid_], "tags", None)
+            return bool(ts) and (t in ts)
+
+        def _tag_add(bid_: str, t: str):
+            ts = _tags_of(bid_)
+            try:
+                ts.add(t)        # set
+            except AttributeError:
+                if t not in ts:  # list
+                    ts.append(t)
+
+        def _tag_discard(bid_: str, t: str):
+            ts = getattr(_w2._bindings[bid_], "tags", None)
+            if ts is None:
+                return
+            try:
+                ts.discard(t)    # set
+            except AttributeError:
+                try:
+                    ts.remove(t) # list
+                except ValueError:
+                    pass
+
+        ok("set_now: ensured initial NOW exists")
+
+        # make sure the old NOW is visibly tagged so we can verify removal later
+        if not _has_tag(_old_now, "anchor:NOW"):
+            _tag_add(_old_now, "anchor:NOW")
+
+        # create a new binding to become NOW (no auto-attach)
+        _new_now = _w2.add_predicate("pred:preflight:now_test", attach="none", meta={"created_by": "preflight"})
+
+        _prev = _w2.set_now(_new_now, tag=True, clean_previous=True)
+
+        # anchors map updated?
+        if _w2._anchors.get("NOW") == _new_now:
+            ok("set_now: NOW anchor re-pointed")
+        else:
+            bad("set_now: anchors map not updated")
+
+        # new NOW has anchor tag?
+        if _has_tag(_new_now, "anchor:NOW"):
+            ok("set_now: new NOW has anchor:NOW tag")
+        else:
+            bad("set_now: new NOW missing anchor:NOW tag")
+
+        # previous NOW lost the anchor tag?
+        if _prev and _prev in _w2._bindings:
+            if not _has_tag(_prev, "anchor:NOW"):
+                ok("set_now: removed anchor:NOW from previous NOW")
+            else:
+                bad("set_now: previous NOW still tagged anchor:NOW")
+
+        # negative test: unknown id must raise KeyError
+        try:
+            _w2.set_now("b999999", tag=True)
+            bad("set_now: accepted unknown id (expected KeyError)")
+        except KeyError:
+            ok("set_now: rejects unknown id (KeyError)")
+
+    except Exception as e:
+        bad(f"set_now test failed: {e}")
 
     # 3) Controller primitives
     try:
@@ -1193,6 +1288,93 @@ def run_preflight_full(args) -> int:
         ok(f"planner probes (path_found={bool(p)})")
     except Exception as e:
         bad(f"planner probe failed: {e}")
+              
+    # Z1) Attach semantics (NOW/latest → new binding)
+    try:
+        _w = cca8_world_graph.WorldGraph()
+        _now = _w.ensure_anchor("NOW")
+
+        # attach="now" creates NOW→new (then) and updates LATEST
+        _a = _w.add_predicate("pred:test:A", attach="now")
+        if any(e.get("to") == _a and e.get("label", "then") == "then" for e in (_w._bindings[_now].edges or [])):
+            ok("attach=now: NOW→new edge recorded")
+        else:
+            bad("attach=now: missing NOW→new edge")
+        if _w._latest_binding_id == _a:
+            ok("attach=now: LATEST updated to new binding")
+        else:
+            bad("attach=now: LATEST not updated")
+
+        # attach="latest" creates oldLATEST→new (then) and updates LATEST
+        _b = _w.add_predicate("pred:test:B", attach="latest")
+        if any(e.get("to") == _b and e.get("label", "then") == "then" for e in (_w._bindings[_a].edges or [])):
+            ok("attach=latest: LATEST→new edge recorded")
+        else:
+            bad("attach=latest: missing LATEST→new edge")
+        if _w._latest_binding_id == _b:
+            ok("attach=latest: LATEST updated to new binding")
+        else:
+            bad("attach=latest: LATEST not updated")
+    except Exception as e:
+        bad(f"attach semantics failed: {e}")
+
+    # Z2) Cue normalization & family check
+    try:
+        _w3 = cca8_world_graph.WorldGraph()
+        _w3.ensure_anchor("NOW")
+        _c = _w3.add_cue("vision:silhouette:mom", attach="now", meta={"preflight": True})
+        _tags = getattr(_w3._bindings[_c], "tags", []) or []
+        if "cue:vision:silhouette:mom" in _tags:
+            ok("cue add: created tag cue:vision:silhouette:mom")
+        else:
+            bad("cue add: did not normalize to cue:*")
+        if any(isinstance(t, str) and t.startswith("pred:vision:") for t in _tags):
+            bad("cue add: legacy pred:vision:* still present")
+        else:
+            ok("cue add: no legacy pred:vision:* present")
+    except Exception as e:
+        bad(f"cue normalization failed: {e}")
+
+    # Z3) Action metrics aggregator (run with numbers on edge.meta)
+    try:
+        _w4 = cca8_world_graph.WorldGraph()
+        _src = _w4.add_predicate("pred:test:src", attach="now")
+        _dst = _w4.add_predicate("pred:test:dst", attach="none")
+        _w4.add_edge(_src, _dst, label="run", meta={"meters": 10.0, "duration_s": 4.0})
+        _met = _w4.action_metrics("run")
+        if _met.get("count") == 1 and _met.get("keys", {}).get("meters", {}).get("sum") == 10.0:
+            ok("action metrics: aggregated numeric meta (meters)")
+        else:
+            bad(f"action metrics: unexpected aggregate { _met }")
+    except Exception as e:
+        bad(f"action metrics failed: {e}")
+
+    # Z4) BFS sanity (shortest-hop path found)
+    try:
+        _w5 = cca8_world_graph.WorldGraph()
+        _start = _w5.ensure_anchor("NOW")
+        _a1 = _w5.add_predicate("pred:test:A", attach="now")
+        _a2 = _w5.add_predicate("pred:test:B", attach="latest")
+        _goal = _w5.add_predicate("pred:test:goal", attach="latest")
+        _path = _w5.plan_to_predicate(_start, "pred:test:goal")
+        if _path and _path[-1] == _goal and len(_path) >= 2:
+            ok("planner: shortest-hop path to pred:test:goal found")
+        else:
+            bad(f"planner: unexpected path { _path }")
+    except Exception as e:
+        bad(f"planner (BFS) sanity failed: {e}")
+   
+    # 7) Action helpers sanity
+    try:
+        _wa = cca8_world_graph.WorldGraph()
+        s = _wa.action_summary_text(include_then=True, examples_per_action=1)
+        # minimal presence check — the string can say "No actions..." on a fresh world, still OK
+        if isinstance(s, str):
+            ok("action helpers: summary generated")
+        else:
+            bad("action helpers: summary did not return text")
+    except Exception as e:
+        bad(f"action helpers failed: {e}")
 
     # Summary
     if failures == 0:
@@ -1431,7 +1613,7 @@ def present_cue_bids(world) -> list[str]:
     bids = []
     for bid, b in world._bindings.items():
         ts = getattr(b, "tags", [])
-        if any(isinstance(t, str) and (t.startswith("pred:vision:") or t.startswith("pred:smell:") or t.startswith("pred:sound:") or t.startswith("pred:touch:")) for t in ts):
+        if any(isinstance(t, str) and t.startswith("cue:") for t in ts):
             bids.append(bid)
     return bids
 
@@ -1849,12 +2031,12 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "11":
             # Add sensory cue
-            ch = input("Channel (vision/smell/touch/sound): ").strip().lower()
-            tok = input("Cue token (e.g., mom:close): ").strip()
+            ch = input("Channel (vision/scent/touch/sound): ").strip().lower()
+            tok = input("Cue token (e.g., silhouette:mom): ").strip()
             if ch and tok:
-                pred = f"{ch}:{tok}"
-                bid = world.add_predicate(pred, attach="now", meta={"channel": ch, "user": True})
-                print(f"Added sensory cue: pred:{pred} as {bid}")
+                cue_token = f"{ch}:{tok}"
+                bid = world.add_cue(cue_token, attach="now", meta={"channel": ch, "user": True})
+                print(f"Added sensory cue: cue:{cue_token} as {bid}")
                 fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx, tie_break="first")
                 if fired != "no_match":
                     print(fired)

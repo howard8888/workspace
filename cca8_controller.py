@@ -197,13 +197,11 @@ def _has(world, token: str) -> bool:
     return _any_tag(world, f"pred:{token}")
 
 def _any_cue_present(world) -> bool:
-    """Loose cue check: any vision/smell/sound cue is present (no proximity test here)."""
+    """Loose cue check: any cue:* is present (no proximity test here)."""
     try:
         for b in world._bindings.values():
             for t in getattr(b, "tags", []):
-                if isinstance(t, str) and (
-                    t.startswith("pred:vision:") or t.startswith("pred:smell:") or t.startswith("pred:sound:")
-                ):
+                if isinstance(t, str) and t.startswith("cue:"):
                     return True
     except Exception:
         pass
@@ -376,7 +374,7 @@ PRIMITIVES: List[Primitive] = [
 # Action Center
 # -----------------------------------------------------------------------------
 
-def _run(policy):
+def _run(policy, world, ctx, drives):
     try:
         return policy.execute(world, ctx, drives)
     except Exception as e:
@@ -404,7 +402,7 @@ def action_center_step(world, ctx, drives: Drives) -> dict:
         for policy in PRIMITIVES:
             if policy.name == "policy:stand_up":
                 try:
-                    return _run(policy)
+                    return _run(policy, world, ctx, drives)
                 except Exception as e:
                     update_skill(policy.name, 0.0, ok=False)
                     return {"policy": policy.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}
@@ -414,7 +412,7 @@ def action_center_step(world, ctx, drives: Drives) -> dict:
         try:
             if policy.trigger(world, drives):
                 try:
-                    return _run(policy)
+                    return _run(policy, world, ctx, drives)
                 except Exception as e:
                     update_skill(policy.name, 0.0, ok=False)
                     return {"policy": policy.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}

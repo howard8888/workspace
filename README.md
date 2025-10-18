@@ -6,9 +6,7 @@ The CCA8 Project is the simulation of the brain of a mountain goat through the l
 
 Scaffolding in place (partially operational) for simulation of a chimpanzee-like brain, human-like brain, human-like brain with five brains operating in parallel in the same agent, human-like brain with multiple agents interacting, human-like brain with five brains operating in parallel with combinatorial planning ability.
 
-
 This single document is the canonical “compendium” for the Causal Cognitive Architecture 8 (CCA8).It serves as: README, user guide, architecture notes, design decisions, and maintainer reference.
-
 
 Entry point: `cca8_run.py`Primary modules: `cca8_run.py`, `cca8_world_graph.py`, `cca8_controller.py`, `cca8_column.py`, `cca8_features.py`, `cca8_temporal.py`
 
@@ -1207,6 +1205,503 @@ Q: What makes a predicate “atomic”?A: It’s a single namespaced token (`pre
 Q: One concrete example of provenance?A: `meta.policy = "policy:stand_up"` on the standing binding created by the StandUp policy.
 
 Q: What is the “skill ledger”?A: Lightweight per-policy stats (counts, success, running q, last reward) to support analytics or future RL.
+
+* * *
+
+Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts
+----------------------------------------------------------
+
+This tutorial introduces the mental model behind WorldGraph and shows how to encode experience in a way that stays simple for planning, clear for humans, and easy to maintain. It complements the “Tagging Standard” and “WorldGraph in detail” sections by walking through the why and how with concrete, domain-flavored examples.
+
+### 1) Mental model at a glance
+
+WorldGraph is a compact, symbolic **episode index**. Each “moment” is captured as a small record (a **binding**) that carries tags and optional pointers to richer memory (**engrams**). **Edges** connect moments to show how one led to another. Planning is graph search over those edges from a temporal **anchor** called **NOW** toward a goal predicate.
+
+A readable example path:
+    born --then--> wobble --stabilize--> posture:standing --suckle--> milk:drinking
+
+Here the words on the nodes are **predicates** (states), and the words on the arrows are **actions** (edge labels). The generic label `then` just means “and then this happened.”
+
+* * *
+
+### 2) Why “bindings” and not just “nodes”?
+
+A binding is more than a vertex. It **binds** together:
+
+* lightweight symbols (**tags**) that describe the moment (predicates you can plan to, cues you noticed, and anchors),
+
+* **engrams** that point to richer content stored outside WorldGraph (e.g., a column or feature store),
+
+* **provenance** in **meta** (who/when/why this binding was created),
+
+* and outgoing **edges** that encode how we moved forward.
+
+“Binding” emphasizes that this is an episode card—a snapshot you can read and understand—rather than an abstract graph point.
+
+* * *
+
+### 3) What a binding contains (shape and invariants)
+
+Every binding is identified by an id like `b42`. Conceptually it looks like:
+    id: "b42"
+    tags: [ ... ]                  # strings; families are pred:*, cue:*, anchor:*
+    engrams: { ... }               # pointers to rich memory outside WorldGraph
+    meta: { ... }                  # provenance and light notes (e.g., policy that created it)
+    edges: [                       # directed adjacency (stored on the source)
+      { "to": "b43", "label": "then", "meta": { "created_by": "policy:..." } },
+      ...
+    ]
+
+Invariants that keep the graph healthy:
+
+* ids are unique (`bN`);
+
+* edges are directed and live on the **source** binding (adjacency list);
+
+* a binding with no edges is a valid **sink**;
+
+* the **first** `pred:*` tag (if present) is used as the node label in pretty paths/exports; fallback is the id;
+
+* the engine keeps a small `anchors` map, e.g., `{"NOW": "b1"}`.
+
+* * *
+
+### 4) Tags: predicates, cues, anchors (and drive thresholds)
+
+Use exactly these families (see the Tagging Standard for full details):
+
+* **pred:** states/goals/events you may plan to  
+  Examples: `pred:posture:standing`, `pred:nipple:latched`, `pred:milk:drinking`, `pred:event:fall_detected`, `pred:goal:safe_standing`.
+
+* **cue:** evidence or context you noticed (conditions for policy triggers; not planning targets)  
+  Examples: `cue:scent:milk`, `cue:sound:bleat:mom`, `cue:terrain:rocky`, `cue:tilt:left`.
+
+* **anchor:** orientation markers (e.g., `anchor:NOW`, `anchor:HERE`)  
+  The anchors map is authoritative (`anchors["NOW"]=...`); the tag is recommended for readability.
+
+* **Drive thresholds:** pick one convention and be consistent  
+  Default in this project: `pred:drive:hunger_high` if the condition is plannable;  
+  Alternative: `cue:drive:hunger_high` if it is strictly a trigger for policies.
+
+Style tips:
+
+* keep tokens lowercase and colon-separated (`pred:locomotion:running`);
+
+* keep depth to two or three segments when possible (`pred:mom:close` is usually better than a long chain);
+
+* if you might search by a broader class later, you can add a second umbrella tag (e.g., `pred:location:mom:northish`) alongside a specific one.
+
+* * *
+
+### 5) Edges: actions and transition metadata
+
+* The **edge label** is the action name (plain string): `then`, `search`, `latch`, `suckle`, `approach`, `recover_fall`, `run`, `stabilize`, etc.
+
+* **Quantities** about the action (e.g., distance, duration, success) belong in **`edge.meta`**, not in tags. For example:
+  
+      { "to": "b101", "label": "run",
+        "meta": {"meters": 12.0, "duration_s": 5.0, "speed_mps": 2.4, "created_by": "policy:locomote"} }
+
+* The planner today **ignores labels for correctness** (it follows structure), so labels serve readability and analytics. They can later inform costs (Dijkstra/A*) or filters (“avoid recover_fall”).
+
+* The runner warns if you try to add an **exact duplicate** `(src, label, dst)` edge.
+
+* * *
+
+### 6) Anchors and orientation (NOW, HERE, and housekeeping)
+
+* **NOW** is the temporal anchor used by the runner and planner as the default starting point. The **map** `anchors["NOW"]=...` is the source of truth; the tag `anchor:NOW` on the binding is for human-friendly display.
+
+* It is valid for a binding to be **anchor-only** (no predicate or cue). It is also valid for a binding to combine an anchor with predicates and/or cues.
+
+* You can “move” NOW by updating the anchors map. A helper like `set_now(bid, tag=True, clean_previous=True)` re-points the map, adds `anchor:NOW` to the new binding and removes it from the previous one (so you don’t end up with two bindings tagged as NOW).
+
+* Optional anchors (used if helpful): `HERE` (spatial rather than temporal), `SESSION_START`, `CHECKPOINT_*`. Only NOW has semantics in the current runner.
+
+* * *
+
+### 7) Planning (how goals are recognized; why BFS works well here)
+
+* Planning starts from the binding id referenced by **NOW**.
+
+* The algorithm is classic **Breadth-First Search** with **visited-on-enqueue** (don’t enqueue a node twice) and **stop-on-pop** (the first time you pop a goal, you have a shortest-hop path).
+
+* The **goal test** is: “do this binding’s tags contain the exact token `pred:<token>`?” If yes, reconstruct the path via the parent map and return it.
+
+* Because edges are unweighted, BFS is the right tool and guarantees fewest edges. If you later introduce costs, switch to Dijkstra/A*; labels and/or context can determine edge costs.
+
+Practical effect: when you type `pred:milk:drinking` as your goal, the planner will stop when it pops the first binding whose tags include that token, and return the shortest-hop path from NOW.
+
+* * *
+
+### 8) Adding new states and wiring them (attach semantics)
+
+When you add a new predicate, you can choose how to **attach** it:
+
+* `attach="latest"`: add a `then` edge from the current LATEST to the new binding, then update LATEST to the new binding.
+
+* `attach="now"`: add a `then` edge from NOW to the new binding, then update LATEST to the new binding.
+
+* `attach="none"`: create the binding with no auto-edge; LATEST still updates to the new binding.
+
+Nuances:
+
+* If NOW == LATEST, `attach="now"` and `attach="latest"` behave the same.
+
+* Auto-attachments help you build an episode spine quickly; you can name the transition (e.g., `search`, `latch`) instead of using the generic `then` when helpful.
+
+* * *
+
+### 9) Style choices for state: snapshot vs delta
+
+Two workable styles exist; pick one and stay consistent.
+
+* **Snapshot-of-state (recommended):** each binding is a full current state. Carry stable invariants forward (e.g., still standing, still close), and **replace** transient milestones (e.g., drop `pred:nipple:found` once `pred:nipple:latched` is true).  
+  Pros: every binding is self-describing; planning and debugging are easier.
+
+* **Delta/minimal:** each binding adds only what changed (e.g., add `found`, later add `latched`) and omits repeated invariants.  
+  Pros: fewer tags; cons: harder to interpret a single node without its history.
+
+* * *
+
+### 10) Worked examples (no code, just structure)
+
+#### 10.1 Smell of milk (policy trigger, not a plan target)
+
+* Current binding tags add: `cue:scent:milk`.
+
+* Rationale: cues are evidence for policies. Policies may then consider seeking mom or searching for nipple depending on other context. We do not plan to `cue:*`.
+
+#### 10.2 Running with measurements (action on the edge)
+
+* Source binding: `pred:posture:standing`, `pred:proximity:mom:far`.
+
+* Destination binding: `pred:posture:standing`, `pred:proximity:mom:close`.
+
+* Transition: `--run-->` with `edge.meta = {meters: 12.0, duration_s: 5.0, speed_mps: 2.4, created_by: ...}`.
+
+* Optional: if “running” is a state you sometimes plan to, insert an intermediate `pred:locomotion:running` node; otherwise keep it on the edge.
+
+#### 10.3 Nipple found → latched (milestone to state)
+
+* From standing/far to “found”:
+  
+  * Add binding `pred:nipple:found`, `pred:posture:standing`, `pred:proximity:mom:close`.
+  
+  * Edge: `--search-->` from the previous binding.
+
+* From “found” to “latched”:
+  
+  * Add binding `pred:nipple:latched`, keep posture/proximity as appropriate.
+  
+  * Edge: `--latch-->` from the “found” binding.
+
+* Style note: on the “latched” binding, you generally don’t need to keep `pred:nipple:found` unless you explicitly want milestone redundancy.
+
+#### 10.4 Fall and recovery (two transitions)
+
+* Standing → Fallen: edge `--fall-->`, destination tags `pred:posture:fallen`.
+
+* Fallen → Recovered standing: edge `--stand_up-->` (or `recover_fall`), destination tags `pred:posture:standing`.
+
+* If you record timing, use a standard key like `duration_s` in `edge.meta` (e.g., time to stand again).
+
+#### 10.5 Hunger high as a trigger (not a goal)
+
+* Add `cue:drive:hunger_high` to the current binding.
+
+* Rationale: a trigger for policies to act (seek mom, search, etc.). If you ever want to plan to that condition instead, emit `pred:drive:hunger_high`—but avoid using both forms at the same time.
+
+* * *
+
+### 11) Isolated bindings and anchors (and when they’re useful)
+
+* It’s valid to create **isolated anchors** (e.g., NOW with no edges yet). Planning will fail until wiring exists; that’s expected during construction.
+
+* It’s valid to create **isolated bindings** with cues or predicates and wire them later (e.g., a received message as a cue).
+
+* Avoid long-lived **tagless** bindings: they’re hard to interpret. If you must create a placeholder, give it a minimal tag (`pred:event:placeholder` or `cue:import:pending`) or a clear meta note.
+
+* Reusing an old binding to “return to the same state” collapses time; generally prefer a fresh binding, even if the tags match, so the episode remains chronological.
+
+* * *
+
+### 12) Inspecting and explaining the graph
+
+* **Pretty paths:** the runner prints both a path of ids and a readable line like  
+  `b3[born] --then--> b4[wobble] --stabilize--> b5[posture:standing] --suckle--> b6[milk:drinking]`.  
+  Place the tag you want to show first in the binding’s tag list.
+
+* **Interactive HTML (Pyvis):** export an HTML graph from the menu; choose label mode `id+first_pred` while developing so you see both id and the first predicate. NOW is highlighted as a box.
+
+* **Action summaries:** summarize action labels across the graph and (optionally) aggregate simple metrics like `duration_s` or `meters` to check data quality and get a quick feel for what happened.
+
+* * *
+
+### 13) Common pitfalls and quick fixes
+
+* **“No path found”**: verify the exact goal token (`pred:...`), check that edges form a forward chain from NOW, watch for reversed edges (`B→A` when you meant `A→B`).
+
+* **Duplicate edges**: the UI warns on exact duplicate `(src,label,dst)`; accept different labels (`then` vs `search`) if intentional.
+
+* **Tagless bindings**: add at least one predicate, cue, or anchor so snapshots and exports stay readable.
+
+* **Two NOW tags**: if you move the anchor, remove `anchor:NOW` from the previous binding (the helper can do this).
+
+* * *
+
+### 14) Quick reference (cheat sheet)
+
+* Use `pred:*` for states/goals/events (and, by project default, plannable drive thresholds).
+
+* Use `cue:*` for evidence/conditions that policies react to; you do not plan to cues.
+
+* Use `anchor:*` for orientation markers; the anchors map is authoritative.
+
+* Edge labels are actions; keep measurements in `edge.meta`.
+
+* Prefer the **snapshot-of-state** style; drop stale milestones and carry stable invariants.
+
+* NOW is the default start for planning; LATEST updates when you add a new binding.
+
+* It’s okay to build the episode spine with `then` labels; add named actions where it improves clarity.
+
+* * *
+
+### 15) Short FAQ
+
+**Q: Can a binding be only an anchor?**  
+Yes. `anchor:NOW` alone is valid; you can combine anchors with predicates/cues when helpful.
+
+**Q: Can a binding be only a cue?**  
+Yes. Useful for a “noticed” moment you may wire later. You cannot plan to a cue.
+
+**Q: How do I record that “running happened” with distance/time?**  
+Label the edge `run` and put numbers in `edge.meta` (e.g., `meters`, `duration_s`, `speed_mps`). If you also want a plannable state, add `pred:locomotion:running`.
+
+**Q: Do edge labels change planning outcomes today?**  
+No. They’re readability/analytics metadata. Planning follows structure. Later you can map labels to costs and use Dijkstra/A*.
+
+**Q: Should I reuse an earlier binding when I return to the same state?**  
+Prefer a new binding (e.g., `standing` again) to preserve chronology. Reusing the old one collapses time.
+
+**Q: Where are policies and learning kept?**  
+Policies live in the controller, not in WorldGraph. Provenance is stamped into `meta`. Learning hooks (skill ledger, edge costs) can be layered without changing the graph format.
+
+* * *
+
+Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index
+------------------------------------------------------------------
+
+This tutorial explains the exact BFS discipline the CCA8 planner uses over the WorldGraph’s adjacency list. It is written to be followed with pencil-and-paper; no code is required.
+
+BFS is deliberately simple: a queue, a parent map, and two rules (visited-on-enqueue, stop-on-pop). In CCA8 this simplicity pays off—planning remains predictable and fast, and the returned paths are immediately readable against the episode structure.
+
+
+### What BFS is doing for CCA8
+
+* **Goal:** find a **shortest-hop** path (fewest edges) from a start binding (by default, the **NOW** anchor) to any binding whose tags contain the requested **`pred:<token>`**.
+
+* **Why BFS:** WorldGraph edges are **unweighted**. BFS guarantees the first time you pop a node (remove it from the left of the queue) you have reached it by a shortest number of edges.
+
+* **Data you maintain while running BFS:**
+  
+  * **Frontier** — a **FIFO queue** (think `deque`) of nodes discovered but not yet expanded.
+  
+  * **Expanded** — the set of nodes already popped/processed.
+  
+  * **Parent** — a discovery map `{child: parent}` that doubles as the **visited** set.
+
+**Rules used here (and by CCA8):**  
+**Visited-on-enqueue** (never enqueue a node that already appears in `parent`) and **Stop-on-pop** (return as soon as the goal node is popped).
+
+* * *
+
+### Worked example (hand simulation)
+
+**Adjacency (directed; neighbor order matters):**
+
+* S → [A, B]
+
+* A → [C, D]
+
+* B → [D, E]
+
+* C → [G]
+
+* D → [E, A] _(cycle back to A)_
+
+* E → [G]
+
+* G → []
+
+**Start:** S  **Goal:** G
+
+We will record the **three buckets** at each step:
+
+* `frontier = [...]`
+
+* `expanded = {…}`
+
+* `parent = {child: parent, ...}`
+
+#### Initial state
+
+`frontier = [S] expanded = {} parent   = {S: None}`
+
+#### Step 1 — pop S, enqueue S’s neighbors
+
+Neighbors in order: A, B.
+
+`frontier = [A, B] expanded = {S} parent   = {S: None, A: S, B: S}`
+
+#### Step 2 — pop A, enqueue A’s neighbors
+
+Neighbors: C, D.
+
+`frontier = [B, C, D] expanded = {S, A} parent   = {S: None, A: S, B: S, C: A, D: A}`
+
+#### Step 3 — pop B, enqueue B’s neighbors
+
+Neighbors: D, E.  
+D is already in `parent` (visited-on-enqueue), so **skip D**; enqueue only E.
+
+`frontier = [C, D, E] expanded = {S, A, B} parent   = {S: None, A: S, B: S, C: A, D: A, E: B}`
+
+#### Step 4 — pop C, enqueue C’s neighbors
+
+Neighbor: G (the goal). Enqueue it.
+
+`frontier = [D, E, G] expanded = {S, A, B, C} parent   = {S: None, A: S, B: S, C: A, D: A, E: B, G: C}`
+
+#### Step 5 — pop D, enqueue D’s neighbors
+
+Neighbors: E, A. Both already discovered; **skip**.
+
+`frontier = [E, G] expanded = {S, A, B, C, D} parent   = {S: None, A: S, B: S, C: A, D: A, E: B, G: C}`
+
+#### Step 6 — pop E, enqueue E’s neighbors
+
+Neighbor: G (already discovered); **skip**.
+
+`frontier = [G] expanded = {S, A, B, C, D, E} parent   = {S: None, A: S, B: S, C: A, D: A, E: B, G: C}`
+
+#### Step 7 — pop G (goal)
+
+We are using **stop-on-pop**: the moment G is popped, we stop.
+
+**Final buckets:**
+
+`frontier = [] expanded = {S, A, B, C, D, E, G} parent   = {S: None, A: S, B: S, C: A, D: A, E: B, G: C}`
+
+> Note: With **visited-on-enqueue**, you never actually hold duplicate entries like `[G, E, G]` in the frontier. The second `G` would have been skipped at discovery.
+
+* * *
+
+### Reconstructing the shortest path
+
+Use the **parent** map to walk backward from the goal to the start, then reverse:
+
+* `G ← C ← A ← S` → reverse → **`S → A → C → G`**
+
+**Path length (edges):** 3.
+
+There is also an equally short route **`S → B → E → G`**. BFS returns the first shortest path it pops; **neighbor order** determines which one appears.
+
+* * *
+
+### Distances and BFS layers
+
+Compute distances (in edges) from `S` by layer:
+
+* `dist(S) = 0`
+
+* `dist(A) = 1`, `dist(B) = 1`
+
+* `dist(C) = 2`, `dist(D) = 2`, `dist(E) = 2`
+
+* `dist(G) = 3`
+
+Layers (by distance):
+
+* **L0:** {S}
+
+* **L1:** {A, B}
+
+* **L2:** {C, D, E}
+
+* **L3:** {G}
+
+**Why BFS guarantees shortest paths:** the frontier (a queue) ensures you completely explore **Lk** before touching **Lk+1**. When a node at **Lk+1** is first popped, there cannot exist a path with fewer than `k+1` edges to it that you haven’t already discovered.
+
+* * *
+
+### Neighbor order and tie-paths
+
+If you swap the order at S to `[B, A]`, you will still find a shortest path of length 3, but the **pop order** and the **returned path** may differ (e.g., via `B → E → G`). BFS correctness doesn’t change; only the specific shortest path chosen among equals may change.
+
+* * *
+
+### Cycles and correctness
+
+The edge `D → A` introduces a cycle. **Visited-on-enqueue** prevents re-enqueuing already discovered nodes, so BFS never loops. This is the standard cycle-safety discipline.
+
+* * *
+
+### Stop-on-pop vs. Stop-on-discovery
+
+Both conventions produce correct shortest paths in an unweighted graph:
+
+* **Stop-on-pop** (used here): simpler logs; the pop order matches layers.
+
+* **Stop-on-discovery**: returns as soon as the goal is enqueued; also correct but may be slightly less intuitive when you read queue traces.
+
+CCA8 uses **stop-on-pop**.
+
+* * *
+
+### How this maps to CCA8 planning
+
+* **Start node:** the binding id referenced by the **NOW** anchor.
+
+* **Goal test:** “do the tags of this popped binding contain the exact token `pred:<token>`?”
+
+* **Path reconstruction:** backtrack with `parent` to NOW, then reverse.
+
+* **Frontier implementation:** a `deque` for O(1) `popleft()`; never re-enqueue a node once it appears in `parent`.
+
+**Practical example:** To plan toward milk drinking, set NOW as your start and request the goal token `pred:milk:drinking`. The first binding popped that carries this tag ends the search; the reconstructed path is a shortest-hop route from NOW.
+
+* * *
+
+### Common pitfalls (and quick fixes)
+
+* **Duplicate frontier entries:** violated visited-on-enqueue. Always check `if v not in parent` before enqueue.
+
+* **“No path found”:** verify the exact goal token (`pred:...`), confirm edges form a forward chain from NOW, and watch for reversed links (`B→A` instead of `A→B`).
+
+* **Neighbor order surprises:** BFS may return a different (but equally short) path when neighbor orders change; that’s expected.
+
+* **Assuming labels matter:** BFS follows **structure**, not action labels. Labels are for readability and (later) analytics/costs.
+
+* * *
+
+### Self-check (one minute)
+
+1. In the given adjacency, what is the **pop order** under stop-on-pop?  
+   **Answer:** `S, A, B, C, D, E, G`.
+
+2. What are the **three buckets** immediately after popping `G`?  
+   **Answer:**  
+   `frontier = []`  
+   `expanded = {S, A, B, C, D, E, G}`  
+   `parent = {S:None, A:S, B:S, C:A, D:A, E:B, G:C}`
+
+3. Give a **shortest path** and its **length**.  
+   **Answer:** `S → A → C → G` (3 edges) — `S → B → E → G` is also 3.
+
+4. Distances from S?  
+   **Answer:** `S:0, A:1, B:1, C:2, D:2, E:2, G:3`.
 
 * * *
 
