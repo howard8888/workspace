@@ -566,6 +566,83 @@ def boot_prime_stand(world, ctx) -> None:
         except Exception as e:
             print(f"[boot] Could not seed stand: {e}")
 
+def print_tagging_and_policies_help(policy_rt=None) -> None:
+    """Terminal help: bindings, edges, predicates, cues, anchors, provenance/engrams, and policies."""
+    print("\n==================== Understanding Bindings, Edges, Predicates, Cues & Policies ====================\n")
+
+    print("What is a Binding?")
+    print("  • A small 'episode card' that binds together:")
+    print("      - tags (symbols: predicates / cues / anchors)")
+    print("      - engrams (pointers to rich memory outside WorldGraph)")
+    print("      - meta (provenance, timestamps, light notes)")
+    print("      - edges (directed links from this binding)\n")
+    print("  Structure (conceptual):")
+    print("      { id:'bN', tags:[...], engrams:{...}, meta:{...}, edges:[{'to': 'bK', 'label':'then', 'meta':{...}}, ...] }\n")
+
+    print("Tag Families (use these prefixes)")
+    print("  • pred:*   → states/goals/events you might plan TO")
+    print("      examples: pred:born, pred:posture:standing, pred:nipple:latched, pred:milk:drinking, pred:event:fall_detected")
+    print("  • cue:*    → evidence/context you NOTICE (policy triggers); not planner goals")
+    print("      examples: cue:scent:milk, cue:sound:bleat:mom, cue:silhouette:mom, cue:terrain:rocky")
+    print("  • anchor:* → orientation markers (e.g., anchor:NOW); also mapped in engine anchors {'NOW': 'b1'}")
+    print("  • drive thresholds (pick one convention and be consistent):")
+    print("      default: pred:drive:hunger_high  (plannable)")
+    print("      alt:     cue:drive:hunger_high   (trigger/evidence only)\n")
+
+    print("Edges = Actions/Transitions")
+    print("  • Edge label is the action (string): 'then', 'search', 'latch', 'suckle', 'approach', 'recover_fall', 'run', 'stabilize'")
+    print("  • Quantities about the action live in edge.meta (e.g., meters, duration_s, created_by)")
+    print("  • Planner behavior today: labels are for readability; BFS follows structure (not names)")
+    print("  • Duplicate protection: the UI warns on exact duplicates of (src, label, dst)\n")
+
+    print("Provenance & Engrams")
+    print("  • Who created a binding?   binding.meta['policy'] = 'policy:<name>'")
+    print("  • Who created an edge?     edge.meta['created_by'] = 'policy:<name>'")
+    print("  • Where is the rich data?  binding.engrams[...] → pointers (large payloads live outside WorldGraph)\n")
+
+    print("Anchors")
+    print("  • anchor:NOW exists; used as the start for planning; may have no pred:*")
+    print("  • Other anchors (e.g., HERE) are allowed; anchors are just bindings with special meaning\n")
+
+    print("Planner (BFS) Basics")
+    print("  • Goal test: a popped binding whose tags contain the target 'pred:<token>'")
+    print("  • Shortest hops: BFS with visited-on-enqueue; parent map reconstructs the path")
+    print("  • Pretty paths show first pred:* as the node label (fallback to id) and --label--> between nodes")
+    print("  • Try: menu 12 'Plan from NOW', menu 7 'Display snapshot', menu 22 'Export interactive graph'\n")
+
+    print("Policies (Action Center overview)")
+    print("  • Policies live in cca8_controller and expose:")
+    print("      - dev_gate(ctx)       → True/False (availability by development stage/context)")
+    print("      - trigger(world, drives, ctx) → True/False (should we act now?)")
+    print("      - execute(world, ctx, drives) → adds bindings/edges; stamps provenance")
+    print("  • Action Center scans loaded policies in order each tick; first match runs (with safety priority for recovery)")
+    print("  • After execute, you may see:")
+    print("      - new bindings (with meta.policy)")
+    print("      - new edges (with edge.meta.created_by)")
+    print("      - skill ledger updates (menu 13 'Show skill stats')\n")
+
+    # If we can read the currently loaded policy names, show them:
+    try:
+        names = policy_rt.list_loaded_names() if policy_rt is not None else []
+        if names:
+            print("Policies currently loaded (meet dev requirements):")
+            for nm in names:
+                print(f"  - {nm}")
+            print()
+    except Exception:
+        pass
+
+    print("Do / Don’t (project house style)")
+    print("  ✓ Use pred:* for states/goals/events (and drive thresholds if plannable)")
+    print("  ✓ Use cue:* for evidence/conditions (not planning targets)")
+    print("  ✓ Put creator/time/notes in meta; put action measurements in edge.meta")
+    print("  ✓ Allow anchor-only bindings (e.g., anchor:NOW)")
+    print("  ✗ Don’t mix state:* with pred:* (pick pred:*)")
+    print("  ✗ Don’t store large data in tags; put it in engrams")
+    print("\nExamples")
+    print("  born --then--> wobble --stabilize--> posture:standing --suckle--> milk:drinking")
+    print("  stand --search--> nipple:found --latch--> nipple:latched --suckle--> milk:drinking")
+    print("\n(See README.md → Tagging Standard for the full write-up.)\n")
 
 
 # --------------------------------------------------------------------------------------
@@ -603,6 +680,7 @@ MENU = """\
 20) Run preflight now
 21) Quit
 22) Export and display interactive graph with options
+23) Understanding bindings, edges, predicates, cues, anchors, policies
 
 [S] Save session → path
 [L] Load session → path
@@ -1558,6 +1636,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
             "preflight": "20",
             "quit": "21", "exit": "21",  #no 'q' to avoid exit by mistake
             "tutorial": "t", "help": "t",
+            
+            # Tagging/policies help
+            "understanding": "23", "bindings-help": "23", "predicates-help": "23",
+            "cues-help": "23", "policies-help": "23", "tagging": "23", "standard": "23",
+            
         }
 
         def _route_alias(cmd: str) -> tuple[str | None, list[str]]:
@@ -1613,6 +1696,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             "20": "9",   # Run preflight now
             "21": "8",   # Quit
             "22": "22",  # Export and display interactive graph (Pyvis HTML)
+            "23": "23",  # Understanding bindings/edges/predicates/cues/anchors/policies
         }
 
         ckey = choice.strip().lower() #ensure any present or future routed value is in correct form
@@ -1970,6 +2054,12 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print(f"[warn] Could not generate Pyvis HTML: {e}")
                 print("       Tip: install with  pip install pyvis")
             loop_helper(args.autosave, world, drives)
+            
+        elif choice == "23":
+            # Understanding bindings/edges/predicates/cues/anchors/policies (terminal help)
+            print_tagging_and_policies_help(POLICY_RT)
+            loop_helper(args.autosave, world, drives)
+
 
         elif choice == "18":
             # Simulate a fall event and try a recovery attempt immediately

@@ -2,7 +2,13 @@
 
 **1 minute summary:**
 
+The CCA8 Project is the simulation of the brain of a mountain goat through the lifecycle with hooks for different robotic embodiments.
+
+Scaffolding in place (partially operational) for simulation of a chimpanzee-like brain, human-like brain, human-like brain with five brains operating in parallel in the same agent, human-like brain with multiple agents interacting, human-like brain with five brains operating in parallel with combinatorial planning ability.
+
+
 This single document is the canonical “compendium” for the Causal Cognitive Architecture 8 (CCA8).It serves as: README, user guide, architecture notes, design decisions, and maintainer reference.
+
 
 Entry point: `cca8_run.py`Primary modules: `cca8_run.py`, `cca8_world_graph.py`, `cca8_controller.py`, `cca8_column.py`, `cca8_features.py`, `cca8_temporal.py`
 
@@ -21,15 +27,15 @@ Entry point: `cca8_run.py`Primary modules: `cca8_run.py`, `cca8_world_graph.py`,
 
 **CCA8 Python Modules:**`cca8_run.py, cca8_world_graph.py, cca8_column.py, cca8_controller.py, cca8_features.py, cca8_temporal.py` 
 
-**Purpose of Program:** Simulation of the brain of a mountain goat through the lifecycle with hooks for robotic embodiment
+**Purpose of Program:** Simulation of the brain of a mountain goat through the lifecycle with hooks for different robotic embodiments.
+
+Scaffolding in place (partially operational) for simulation of a chimpanzee-like brain, human-like brain, human-like brain with five brains operating in parallel in the same agent, human-like brain with multiple agents interacting, human-like brain with five brains operating in parallel with combinatorial planning ability.
 
 **Newborn mountain goat demo (fast path):**  
 Menu →  add `stand`, connect NOW→stand (`stand_up`), then add and connect  
 `mom:close` (`approach`) → `nipple:found` (`search`) → `nipple:latched` (`latch`) → `milk:drinking` (`suckle`),  
 verify with  plan NOW → `milk:drinking`.  
 **Glossary:** predicates, bindings, edges, policies, drives (hunger/warmth/fatigue), and search knobs (`k`, `sigma`, `jump`).
-
-
 
 
 
@@ -51,7 +57,7 @@ A: Use the Table of Contents to jump to Architecture, Planner Contract, or Tutor
 
 # CCA8 Compendium (All-in-One)
 
-*A living document that captures the design, rationale, and practical know-how for the CCA8 simulation.*  
+*An ongoing document that captures the design, rationale, and practical know-how for the CCA8 simulation.*  
 **Audience:** future software maintainers, new collaborators, persons with an interest in the project.  
 **Tone:** mostly technical, with tutorial-style sections so it’s readable without “tribal knowledge.”
 
@@ -62,6 +68,12 @@ A: Use the Table of Contents to jump to Architecture, Planner Contract, or Tutor
 ****Planned versions: ****
 
 CCA8 Simulation of a mountain goat through the lifecycle
+
+CCA8b Simulation of a mountain goat-like brain with 5 brains within the same agent
+
+CCA8c Simulation of multiple agents with goat-like brains able to interact
+
+CCA8d Simulation of a mountain goat-like brain with 5 brains within the same agent with combinatorial planning
 
 CCA9 Simulation of a chimpanzee through the lifecycle
 
@@ -237,8 +249,6 @@ This section documents what each profile intends to represent and how the curren
 
 7. Super-Human-like machine simulation  
    Implements a dry-run meta-controller. Three proposal sources (symbolic search, neural value, program synthesis) each provide an action and a utility, the meta-controller picks the winner by score with a fixed tie-break preference. The printout illustrates how a higher-level controller could arbitrate between heterogeneous planners. No state is modified.
-   
-   
 * 
 
 * * *
@@ -614,6 +624,171 @@ Q: Why engrams vs symbols?  A: Symbols = fast index, engrams = heavy content →
 Q: Can we add stronger causal reasoning later?  A: Yes, layered above (edge annotations, utilities).
 
 ---
+
+Tagging Standard (bindings, predicates, cues, anchors, actions, provenance & engrams)
+-------------------------------------------------------------------------------------
+
+This section standardizes how we name and store information in the WorldGraph so planning stays simple, policies remain readable, and snapshots are easy to inspect.
+
+### Why we say “binding” (not just node)
+
+A **binding** is a small “episode card” that _binds_ together:
+
+* lightweight **symbols** (tags: predicates, cues, anchors),
+
+* pointers to **engrams** (rich memory stored outside the graph),
+
+* and **provenance/meta** (who/when/why).
+
+“Binding” emphasizes that we’re recording a coherent moment with attached facts and references, not just a graph vertex.
+
+### What a binding contains
+
+* **id** — `b<number>`; referenced by edges.
+
+* **tags: list[str]** — the symbolic labels for this moment (see families below).
+
+* **engrams: dict** _(optional)_ — pointers to rich content (e.g., `{ "column01": {"id": "...", "act": 1.0} }`).
+
+* **meta: dict** _(optional)_ — provenance & light context (e.g., `{"policy": "policy:stand_up", "t": 123.4}`).
+
+* **edges: list[{"to": id, "label": str, "meta": dict}]** _(optional)_ — directed links from this binding (adjacency list).
+
+### Tag families (use exactly these)
+
+Keep families distinct so humans (and the planner) never have to guess.
+
+1. **Predicates — states/goals/events you might plan _to_**
+   
+   * **Prefix:** `pred:`
+   
+   * **Purpose:** targets for planning and state description.
+   
+   * **Examples:**  
+     `pred:born`, `pred:posture:standing`, `pred:locomotion:running`,  
+     `pred:mom:close`, `pred:nipple:found`, `pred:nipple:latched`, `pred:milk:drinking`,  
+     `pred:event:fall_detected`, `pred:goal:safe_standing`.
+
+> The planner looks for `pred:*`. The **first** `pred:*` (if present) is used as the human label in pretty paths/exports.
+
+2. **Cues — evidence/context you _notice_, not goals**
+   
+   * **Prefix:** `cue:`
+   
+   * **Purpose:** sensory/context hints for policy `trigger()` logic.
+   
+   * **Examples:**  
+     `cue:scent:milk`, `cue:sound:bleat:mom`, `cue:silhouette:mom`, `cue:terrain:rocky`, `cue:tilt:left`.
+
+> We **do not** plan to cues; they’re conditions that help decide which policy fires.
+
+3. **Anchors — orientation markers**
+   
+   * **Prefix:** `anchor:` (e.g., `anchor:NOW`).
+   
+   * Also recorded in the engine’s `anchors` map, e.g., `{"NOW": "b1"}`.
+   
+   * A binding can be _only_ an anchor (no `pred:*`) — that’s fine.
+
+4. **Drive-derived tags — pick **one** convention and stick to it**  
+   You wanted consistency; we standardize as:
+   
+   * **Project default:** use **`pred:drive:*`** for drive conditions that matter to planning (e.g., `pred:drive:hunger_high`).
+   
+   * **Optional alternative (if you prefer purely as conditions):** use **`cue:drive:*`** when the drive threshold is only a trigger and never a plan target.
+   
+   * **Do not** use bare `drive:*` in tags; prefer one of the two forms above.
+
+### Actions = edge labels (transitions)
+
+* The **edge** from `src → dst` bears the action name in its `label`.  
+  Examples: `then`, `search`, `latch`, `suckle`, `approach`, `recover_fall`, `run`, `stabilize`.
+
+* Put **quantities** about the action (e.g., meters, duration, success) in **`edge.meta`**, not in tags:
+  `{ "to": "b101", "label": "run", "meta": {"meters": 8.5, "duration_s": 3.2, "created_by": "policy:locomote"} }`
+
+* **Planner behavior today:** edge labels are **readability metadata**; BFS follows structure (not names). Labels may later inform costs/filters.
+
+### Provenance & engrams
+
+* **Provenance:**
+  
+  * Binding creator: `binding.meta["policy"] = "policy:<name>"`
+  
+  * Edge creator: `edge.meta["created_by"] = "policy:<name>"`
+
+* **Engrams:**
+  
+  * Only pointers live on the binding: `binding.engrams["column01"] = {"id": "...", "act": 1.0}`
+  
+  * The large payloads live outside WorldGraph (resolved via column provider).
+
+### Naming style (predicates & cues)
+
+* Use **lowercase, colon-separated** segments: `pred:locomotion:running`.
+
+* Prefer **2–3 segments** for clarity; avoid very deep chains:
+  
+  * `pred:mom:location:north_forest` (ok)
+  
+  * `pred:location:mom:north_forest` (also ok)  
+    Choose one pattern and stay consistent within a domain.
+
+* If you might search by a broader class later, consider adding a second umbrella tag (e.g., `pred:location:mom:northish`) when useful.
+
+### Invariants checklist
+
+* Every binding has a unique **id** (`bN`).
+
+* **Edges are directed**; stored on the **source** binding’s `edges[]`. A binding without edges is a valid **sink**.
+
+* **Anchors** (e.g., NOW) exist and point to real binding ids (they may also carry `anchor:*` tags).
+
+* The **first `pred:*`** (if present) is used as the node label in UIs; fallback is the `id`.
+
+* Snapshots restore `latest`, anchors, and advance the id counter past loaded ids.
+
+### Vocabulary starter table
+
+| Family     | Examples                                                                                                                                                           | Purpose                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| `pred:`    | `pred:born`, `pred:posture:standing`, `pred:nipple:latched`, `pred:milk:drinking`, `pred:event:fall_detected`, `pred:goal:safe_standing`, `pred:drive:hunger_high` | planner targets; human labels        |
+| `cue:`     | `cue:scent:milk`, `cue:sound:bleat:mom`, `cue:silhouette:mom`, `cue:terrain:rocky`, `cue:tilt:left`                                                                | policy triggers; not planner goals   |
+| `anchor:`  | `anchor:NOW`, `anchor:HERE`                                                                                                                                        | orientation; also in `anchors` map   |
+| Edge label | `then`, `search`, `latch`, `suckle`, `approach`, `recover_fall`, `run`                                                                                             | action/transition; metrics in `meta` |
+
+### Do / Don’t
+
+* Use **one** predicate prefix: `pred:*` for states/goals/events (and drives, per project default above).
+
+* Keep **cues** separate (`cue:*`), used by policies (not planner goals).
+
+* Put creator/time/notes in **`meta`**; put action measurements in **`edge.meta`**.
+
+* Allow anchor-only bindings (e.g., `anchor:NOW`).
+
+* Don’t mix `state:*` and `pred:*` (pick `pred:*`).
+
+* Don’t encode rich data in tags; use **engrams** for large payloads.
+
+#### Q&A
+
+**Q: Can a binding exist with only an anchor and no predicate?**  
+A: Yes. Anchors (e.g., `anchor:NOW`) are bindings and don’t require a `pred:*`.
+
+**Q: Can a binding exist with only a cue and no predicate?**  
+A: Yes. It’s valid for a cue-only moment; just remember you **can’t plan to a cue**.
+
+**Q: How do I record that “running happened”?**  
+A: Put it on the **edge label** (e.g., `--run-->`) and any measurements in `edge.meta`. If you also want a plannable “running” state, add `pred:locomotion:running` as the destination binding label.
+
+**Q: Do we allow duplicate edges?**  
+A: The structure allows them; the UI warns on exact duplicates of `(src, label, dst)` so you can skip unintended repeats.
+
+**Q: Which tag shows up as the node’s label?**  
+A: The **first `pred:*`** tag; otherwise we fall back to the binding id.
+
+* * *
 
 ## Architecture
 

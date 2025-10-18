@@ -3,29 +3,68 @@
 CCA8 World Graph (episode index)
 
 This module implements the *symbolic episode index* for CCA8.
-
-Mental model:
-- **Predicate**: a symbolic fact token, e.g., "state:posture_standing".
-- **Binding**: a *node instance* that carries a predicate tag (plus meta & engrams).
-- **Edge**: a directed link between bindings with a label (e.g., "then") expressing
-  weak/soft causality ("in this episode, this led to that").
+Summary of basic concepts below but see README.MD for more explanation of these concepts.
 
 Why this exists:
 - The WorldGraph is a *fast index & planner substrate* (~5% of information).
 - Rich content lives in column **engrams** (~95%), and bindings can point to them.
 - Planning is simple BFS over binding edges to a target predicate tag.
 
+Explaining the terminology chosen:
+- "Binding" -- indeed a node instance but binding implies the binding, i.e., association, of 
+facts and pointers, much like in neuro/cog systems linking features, time  and cause into abs
+coherent moment or episode; we are aiming for knowledge representation rather than just
+graph topology
+- "Provenance" -- it documents the history or lineage of the data who/what/why
+- "Metadata" -- characteristics including admin features of the data
+- "Edge" -- a standard term for link; note that we use directed edges
+- "WorldGraph" -- our graph made up of bindings + directed edges
+
+Mental model:
+- **Predicate**: a symbolic fact token, e.g., "state:posture_standing".
+    state predicates - pred:born, pred:stand, pred:mom:close, pred:nipple:latched
+    drive-derivated state predicates: e.g.,  pred:drive:hunger_high
+    (can also show as separate drive: tag, e.g., drive:hunger_high)
+    event predicates: pred:event:fall_detected (transient facts you might mark explicitly)
+    goal marker predicates:  pred:goal:milk_obtained (optional; useful for readability)
+- **Binding**: a *node instance* that carries a predicate tag (plus meta & engrams).
+- **Edge**: a directed link between bindings with a label (e.g., "then") expressing
+  weak/soft causality ("in this episode, this led to that").
+     actions -- we usually encode as edge labels rather than as predicates
+        e.g., born -- then --> wobble --then--> stand -->
+        e.g., stand --search--> nipple:found --latch--> nipple:latched -->
+     note: if want better record of action completed you can add a predicate state the relfects
+       the outcome, e.g., pred:stood, or pred:nipple:latched, but try to avoid same concept in
+       edge as well predicate
+     note: edges are directed
+     note: edges are stored on the source binding (adjacency list)
+- **Anchors**: special bindings like NOW, may have anchor:* tags, don't need a pred:*
+  note: some bindings may not have a pred:*, for example anchors, cues
+  note: the code uses the first pred:* tag as the human-readable label in pretty printing
+    but otherwise falls back to the binding id
+  note: a binding should carry at least 1 tag -- e.g., pred:*, anchor:NOW (special orientation nodes),
+    cue:scent:milk (sensory/context markers)
+  note: if you want to plan a route to it or display it as a "state" then the binding needs a pred:*
+  note: a binding can exist without an edge, e.g., used as a marker or anchor
+
 Persistence:
 - `to_dict()` / `from_dict()` serialize/restore an episode (bindings, anchors, latest).
 - ID format is "b<N>"; `from_dict()` advances the internal counter to avoid collisions.
 """
 
+# --- Imports -------------------------------------------------------------
+# Standard Library Imports
 from __future__ import annotations
-
 from dataclasses import dataclass
 from collections import deque
 from typing import Dict, List, Set, Optional, TypedDict
 import itertools
+
+# PyPI and Third-Party Imports
+# --none at this time at program startup--
+
+# CCA8 Module Imports
+# --none at this time at program startup--
 
 # --- Public API index and version, constants -------------------------------------------------
 __version__ = "0.1.1"

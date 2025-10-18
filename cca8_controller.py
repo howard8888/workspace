@@ -23,13 +23,18 @@ Action loop
 A permissive fallback (e.g., FollowMom) prevents 'noop' unless you tighten its trigger.
 """
 
+# --- Imports -------------------------------------------------------------
+# Standard Library Imports
 from __future__ import annotations
-
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Dict, List
 
+# PyPI and Third-Party Imports
+# --none at this time at program startup--
 
+# CCA8 Module Imports
+# --none at this time at program startup--
 
 # --- Public API index and version-------------------------------------------------------------
 #nb version number of different modules are unique to that module
