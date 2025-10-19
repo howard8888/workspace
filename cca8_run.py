@@ -38,6 +38,7 @@ import json
 import os
 import platform
 import sys
+import logging
 import time
 from datetime import datetime
 from dataclasses import dataclass
@@ -55,7 +56,7 @@ from cca8_controller import Drives, action_center_step, skill_readout, skills_to
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.7.11"
+__version__ = "0.8.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -64,6 +65,11 @@ __all__ = [
     "export_snapshot",
     "world_delete_edge",
     "boot_prime_stand",
+    "save_session",
+    "versions_dict",
+    "choose_contextual_base",
+    "compute_foa",
+    "candidate_anchors",
     "__version__",
     "Ctx",
 ]
@@ -71,16 +77,16 @@ __all__ = [
 # --- Runtime Context (ENGINE↔CLI seam) --------------------------------------------
 @dataclass(slots=True)
 class Ctx:
-    """Mutable runtime context for the agent.
+    """Mutable runtime context for the agent (module-level, importable).
 
-    This deliberately small struct is the boundary object passed between the
-    engine (pure helpers) and the CLI. Defaults match the prior inline stub.
+    Boundary object passed between the engine and the CLI.
     """
     sigma: float = 0.015
     jump: float = 0.2
     age_days: float = 0.0
     ticks: int = 0
     profile: str = "Mountain Goat"
+    winners_k: Optional[int] = None   # record profile’s selection fan-out (e.g., 2)
     hal: Optional[Any] = None
     body: str = "(none)"
 
@@ -735,7 +741,7 @@ def _goat_defaults():
     return ("Mountain Goat", 0.015, 0.2, 2)
 
 def _print_goat_fallback():
-    print("This evolutionary-like configuration is not currently available. "
+    print("Although scaffolding is in place for its implementation, this evolutionary-like configuration is not currently available. "
           "Profile is set to mountain goat-like brain simulation.\n")
 
 def profile_chimpanzee(ctx) -> tuple[str, float, float, int]:
@@ -1067,27 +1073,51 @@ def choose_profile(ctx, world) -> dict:
     return {"name": name, "ctx_sigma": sigma, "ctx_jump": jump, "winners_k": k}
 
 def versions_dict() -> dict:
-    """Collect versions/platform info used for preflight stamps."""
-    return {
-        "runner": __version__,
-        "world_graph": "...",
-        "column": "...",
-        "features": "...",
-        "temporal": "...",
-        "platform": platform.platform(),
-        "python": sys.version.split()[0],
-    }
+    """Collect versions/paths for core CCA8 components and environment."""
+    mods = ["cca8_world_graph", "cca8_controller", "cca8_column", "cca8_features", "cca8_temporal"]
+    info = {"runner": __version__, "platform": platform.platform(), "python": sys.version.split()[0]}
+    for m in mods:
+        ver, path = _module_version_and_path(m)
+        key = m.replace("cca8_", "")          # world_graph, controller, column, features, temporal
+        info[key] = ver
+        info[key + "_path"] = path
+    return info
 
 def run_preflight_full(args) -> int:
     """
     Full preflight: quick, deterministic checks with one-line PASS/FAIL per item.
     Returns 0 for ok, non-zero for any failure.
+    
+    While the preflight system is a very convenient way for testing the cca8 simulation software, particularly after code or large
+    data changes, we acknowledge the strength and tradition of the Pytest (or equivalent) unit tests in validating the correctness of
+    code logic, the ability for very granular testing and better proves that the code works. Thus, the preflight system by design
+    calls Pytest to run whatever unit tests are present in the /tests subdirectory from the main working directory.
+    
     """
     print("[preflight] Running full preflight...")
 
     failures = 0
     def ok(msg):   print(f"[preflight] PASS  - {msg}")
     def bad(msg):  nonlocal failures; failures += 1; print(f"[preflight] FAIL  - {msg}")
+    
+    # --- Unit tests (pytest) — run first ------------------------------------------------
+    try:
+        import os as _os
+        if _os.path.isdir("tests"):
+            try:
+                import pytest as _pytest
+                print("[preflight] Running unit tests (pytest)...")
+                _rc = _pytest.main(["-q", "tests"])
+                if _rc == 0:
+                    ok("pytest: all tests passed")
+                else:
+                    bad(f"pytest: test run reported failures (exit={_rc})")
+            except Exception as e:
+                bad(f"pytest run error: {e}")
+        else:
+            ok("pytest: no 'tests' directory found — skipping")
+    except Exception as e:
+        bad(f"pytest not available or other error: {e}")
 
     # 1) Python & platform
     try:
@@ -1457,7 +1487,6 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.append("")
 
     # CTX
-    # CTX
     lines.append("CTX:")
     if ctx is not None:
         try:
@@ -1546,41 +1575,18 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.append("--------------------------------------------------------------------------------------\n")
     return "\n".join(lines)
 
-def export_snapshot(world, drives=None, ctx=None, policy_rt=None, path_txt="world_snapshot.txt", path_dot="world_snapshot.dot") -> None:
-    """Write a complete snapshot of bindings + edges to text and DOT files, plus ctx/drives/policies."""
-    # Text dump (reuse the same builder as #17)
+def export_snapshot(world, drives=None, ctx=None, policy_rt=None,
+                    path_txt="world_snapshot.txt", path_dot=None) -> None:
+    """Write a complete snapshot of bindings + edges to a text file (no DOT)."""
     text_blob = snapshot_text(world, drives=drives, ctx=ctx, policy_rt=policy_rt)
     with open(path_txt, "w", encoding="utf-8") as f:
         f.write(text_blob + "\n")
 
-    # Graphviz DOT (optional rendering)
-    with open(path_dot, "w", encoding="utf-8") as g:
-        g.write("digraph CCA8 {\n  rankdir=LR;\n  node [shape=box,fontsize=10];\n")
-        for bid in _sorted_bids(world):
-            b = world._bindings[bid]
-            tag_lines = "\\n".join(t.replace("pred:", "") for t in getattr(b, "tags", []))
-            g.write(f'  {bid} [label="{bid}\\n{tag_lines}"];\n')
-        for bid in _sorted_bids(world):
-            b = world._bindings[bid]
-            edges = getattr(b, "edges", []) or getattr(b, "out", []) or getattr(b, "links", []) or getattr(b, "outgoing", [])
-            if isinstance(edges, list):
-                for e in edges:
-                    rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
-                    dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
-                    if dst:
-                        g.write(f'  {bid} -> {dst} [label="{rel}"];\n')
-        g.write("}\n")
-
-    # Final message with absolute paths + directory
-    import os
     path_txt_abs = os.path.abspath(path_txt)
-    path_dot_abs = os.path.abspath(path_dot)
     out_dir = os.path.dirname(path_txt_abs)
-    print("Exported snapshot:")
+    print("Exported snapshot (text only):")
     print(f"  {path_txt_abs}")
-    print(f"  {path_dot_abs}")
     print(f"Directory: {out_dir}")
-
 
 def _io_banner(args, loaded_path: str | None, loaded_ok: bool) -> None:
     """Explain how load/autosave will behave for this run."""
@@ -1602,7 +1608,6 @@ def _io_banner(args, loaded_path: str | None, loaded_ok: bool) -> None:
         print(f"[io] Started a NEW session. Autosave ON to '{ap}'.")
     else:
         print(f"[io] Started a NEW session. Autosave OFF — use [S] to save or pass --autosave <path>.")
-
 
 
 # ---------- Contextual base selection (skeleton) ----------
@@ -1715,16 +1720,82 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Build initial world/drives fresh
     world = cca8_world_graph.WorldGraph()
     drives = Drives()
-    ctx = Ctx()
-    #attribute defaults already exist in class Ctx but can be adjusted here also
-    ctx.sigma = 0.015
-    ctx.jump = 0.2
-    ctx.age_days = 0.0
-    ctx.ticks = 0
+    ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
     POLICY_RT = PolicyRuntime(CATALOG_GATES)
     POLICY_RT.refresh_loaded(ctx)
     loaded_ok = False
     loaded_src = None
+    
+    # ---- Text command aliases (words + 3-letter prefixes → legacy actions) -----
+    #will map to current menu which then must be mapped to original menu numbers
+    #intentionally keep here so easier for development visualization than up at top with constants
+    MIN_PREFIX = 3 #if not perfect match then this specifies how many letters to match
+    _ALIASES = {
+        # Inspect / View
+        "world": "1", "stats": "1",
+        "last": "2", "bindings": "2",
+        "inspect": "3", "details": "3", "id": "3",
+        "listpredicates": "4", "listpreds": "4", "listp": "4",
+        "drives": "d",
+        "skills": "6",
+        "snapshot": "7", "display": "7",
+
+        # Build / Edit
+        "resolve": "8", "engrams": "8",
+        "add": "9", "predicate": "9",
+        "connect": "10", "link": "10",
+        "delete": "11", "del": "11", "rm": "11",
+
+        # Plan / Act
+        "plan": "12",
+        "sensory": "13", "cue": "13",
+        "instinct": "14", "act": "14",
+        "autonomic": "15", "tick": "15",
+        "fall": "16", "simulate": "16",
+
+        # Save / Export / System
+        "export snapshot": "17",
+        "pyvis": "22", "graph": "22", "viz": "22", "html": "22", "interactive": "22", "export and display": "22",
+        "save": "s",
+        "load": "l",
+        "preflight": "20",
+        "quit": "21", "exit": "21",  #no 'q' to avoid exit by mistake
+        "tutorial": "t", "help": "t",
+        
+        # Tagging/policies help, engram scene
+        "understanding": "23", "bindings-help": "23", "predicates-help": "23",
+        "cues-help": "23", "policies-help": "23", "tagging": "23", "standard": "23",
+        "capture": "24", "scene": "24", "engram": "24", "engrams": "24",
+    }
+    
+    # NEW MENU compatibility: accept new grouped numbers and legacy ones.
+    NEW_TO_OLD = {
+        "1": "1",    # World stats
+        "2": "7",    # Show last 5 bindings
+        "3": "10",   # Inspect binding details
+        "4": "2",    # List predicates
+        "5": "d",    # Show drives (raw + tags)
+        "6": "13",   # Show skill stats
+        "7": "17",   # Display snapshot
+        "8": "6",    # Resolve engrams on a binding
+        "9": "3",    # Add predicate
+        "10": "4",   # Connect two bindings
+        "11": "15",  # Delete edge
+        "12": "5",   # Plan from NOW -> <predicate>
+        "13": "11",  # Add sensory cue
+        "14": "12",  # Instinct step
+        "15": "14",  # Autonomic tick
+        "16": "18",  # Simulate fall
+        "17": "16",  # Export snapshot
+        "18": "s",   # Save session
+        "19": "l",   # Load session
+        "20": "9",   # Run preflight now
+        "21": "8",   # Quit
+        "22": "22",  # Export and display interactive graph (Pyvis HTML)
+        "23": "23",  # Understanding bindings/edges/predicates/cues/anchors/policies
+        "24": "24",  # Capture scene → emit cue/predicate + tiny engram (signal bridge demo)
+
+    }
 
     # Attempt to load a prior session if requested
     if args.load:
@@ -1769,6 +1840,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                    "super": ("Super-Human", 0.05, 0.35, 5)}
         name, sigma, jump, k = mapping[args.profile]
         ctx.profile, ctx.sigma, ctx.jump = name, sigma, jump
+        ctx.winners_k = k  
         print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
         POLICY_RT.refresh_loaded(ctx)
     else:
@@ -1776,6 +1848,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
         name = profile["name"]
         sigma, jump, k = profile["ctx_sigma"], profile["ctx_jump"], profile["winners_k"]
         ctx.sigma, ctx.jump = sigma, jump
+        ctx.winners_k = k  
         print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
         POLICY_RT.refresh_loaded(ctx)
     _io_banner(args, loaded_src, loaded_ok)
@@ -1824,49 +1897,6 @@ def interactive_loop(args: argparse.Namespace) -> None:
             print("\nGoodbye.")
             return
 
-        # ---- Text command aliases (words + 3-letter prefixes → legacy actions) -----
-        MIN_PREFIX = 3 #if not perfect match then this specifies how many letters to match
-        #will map to current menu which then must be mapped to original menu numbers
-        _ALIASES = {
-            # Inspect / View
-            "world": "1", "stats": "1",
-            "last": "2", "bindings": "2",
-            "inspect": "3", "details": "3", "id": "3",
-            "listpredicates": "4", "listpreds": "4", "listp": "4",
-            "drives": "d",
-            "skills": "6",
-            "snapshot": "7", "display": "7",
-
-            # Build / Edit
-            "resolve": "8", "engrams": "8",
-            "add": "9", "predicate": "9",
-            "connect": "10", "link": "10",
-            "delete": "11", "del": "11", "rm": "11",
-
-            # Plan / Act
-            "plan": "12",
-            "sensory": "13", "cue": "13",
-            "instinct": "14", "act": "14",
-            "autonomic": "15", "tick": "15",
-            "fall": "16", "simulate": "16",
-
-            # Save / Export / System
-            "export snapshot": "17",
-            "pyvis": "22", "graph": "22", "viz": "22", "html": "22", "interactive": "22", "export and display": "22",
-            "save": "s",
-            "load": "l",
-            "preflight": "20",
-            "quit": "21", "exit": "21",  #no 'q' to avoid exit by mistake
-            "tutorial": "t", "help": "t",
-            
-            # Tagging/policies help, engram scene
-            "understanding": "23", "bindings-help": "23", "predicates-help": "23",
-            "cues-help": "23", "policies-help": "23", "tagging": "23", "standard": "23",
-            "capture": "24", "scene": "24", "engram": "24", "engrams": "24",
-
-            
-        }
-
         def _route_alias(cmd: str) -> tuple[str | None, list[str]]:
             """Return (routed_choice, matches). routed_choice is None if no unique match.
             matches lists alias keys that begin with the provided prefix (for help)."""
@@ -1896,39 +1926,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
                           f"{'...' if len(matches) > 6 else ''}")
                     continue #ambiguous entry thus restart while loop above for new input
 
-        # NEW MENU compatibility: accept new grouped numbers and legacy ones.
-        _new_to_old = {
-            "1": "1",    # World stats
-            "2": "7",    # Show last 5 bindings
-            "3": "10",   # Inspect binding details
-            "4": "2",    # List predicates
-            "5": "d",    # Show drives (raw + tags)
-            "6": "13",   # Show skill stats
-            "7": "17",   # Display snapshot
-            "8": "6",    # Resolve engrams on a binding
-            "9": "3",    # Add predicate
-            "10": "4",   # Connect two bindings
-            "11": "15",  # Delete edge
-            "12": "5",   # Plan from NOW -> <predicate>
-            "13": "11",  # Add sensory cue
-            "14": "12",  # Instinct step
-            "15": "14",  # Autonomic tick
-            "16": "18",  # Simulate fall
-            "17": "16",  # Export snapshot
-            "18": "s",   # Save session
-            "19": "l",   # Load session
-            "20": "9",   # Run preflight now
-            "21": "8",   # Quit
-            "22": "22",  # Export and display interactive graph (Pyvis HTML)
-            "23": "23",  # Understanding bindings/edges/predicates/cues/anchors/policies
-            "24": "24",  # Capture scene → emit cue/predicate + tiny engram (signal bridge demo)
-
-        }
-
         ckey = choice.strip().lower() #ensure any present or future routed value is in correct form
-
-        if ckey in _new_to_old:
-            routed = _new_to_old[ckey]
+        if ckey in NEW_TO_OLD:
+            routed = NEW_TO_OLD[ckey]
             if pretty_scroll:
                 print(f"[[menu numbering auto-compatibility] processed input entry routed to old value: {ckey} → {routed}]")
             choice = routed
@@ -2033,10 +2033,12 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "7":
             # Show last 5 bindings
-            last_ids = sorted(world._bindings.keys(), key=lambda x: int(x[1:]))[-5:]
+            #last_ids = sorted(world._bindings.keys(), key=lambda x: int(x[1:]))[-5:]
+            last_ids = _sorted_bids(world)[-5:]
             for bid in last_ids:
                 b = world._bindings[bid]
-                tags = ", ".join(sorted(b.tags))
+                #tags = ", ".join(sorted(b.tags))
+                tags = ", ".join(sorted(getattr(b, "tags", []))) #in case bindings without a tags list
                 print(f"  {bid}: tags=[{tags}] engrams={[k for k in (b.engrams or {}).keys()]}")
             if not last_ids:
                 print("(no bindings yet)")
@@ -2070,10 +2072,15 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     print("Engrams:", json.dumps(b.engrams, indent=2))
                 else:
                     print("Engrams: (none)")
-                if b.edges:
+                # Robust edge display (handles edges/out/links/outgoing and dict/attr)
+                edges = getattr(b, "edges", []) or getattr(b, "out", []) \
+                        or getattr(b, "links", []) or getattr(b, "outgoing", [])
+                if isinstance(edges, list) and edges:
                     print("Edges:")
-                    for e in b.edges:
-                        print("  --", e.get("label", "?"), "-->", e.get("to"))
+                    for e in edges:
+                        rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
+                        dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                        print(f"  -- {rel} --> {dst}")
                 else:
                     print("Edges: (none)")
             loop_helper(args.autosave, world, drives)
@@ -2242,9 +2249,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
             
 
-        #elif "19"  see _new_to_old compatibility map
-        #elif "20"  see _new_to_old compatibility map
-        #elif "21"  see _new_to_old compatibility map
+        #elif "19"  see new_to_old compatibility map
+        #elif "20"  see new_to_old compatibility map
+        #elif "21"  see new_to_old compatibility map
 
 
         elif choice == "22":
@@ -2421,26 +2428,40 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice.lower() == "r":
-            # Reset current saved session: delete autosave file (if any) and reinit state
+            # Reset current saved session: explicit confirmation
             if not args.autosave:
-                print("No current saved json file to reset.")
+                print("No current saved json file to reset (you did not pass --autosave <path>).")
             else:
-                path = args.autosave
+                path = os.path.abspath(args.autosave)
+                cwd  = os.path.abspath(os.getcwd())
+                print("\n[RESET] This will:")
+                print("  • Delete the autosave file shown below (if it exists), and")
+                print("  • Re-initialize an empty world, drives, and skill ledger in memory.\n")
+                print(f"Autosave file: {path}")
+                if not path.startswith(cwd):
+                    print(f"[CAUTION] The file is outside the current directory: {cwd}")
                 try:
-                    if os.path.exists(path):
-                        os.remove(path)
-                        print(f"Deleted {path}.")
-                    else:
-                        print(f"No file at {path} (nothing to delete).")
-                except Exception as e:
-                    print(f"[warn] Could not delete {path}: {e}")
-                # Reinitialize episode state
-                world = cca8_world_graph.WorldGraph()
-                drives = Drives()
-                skills_from_dict({})  # clear skill ledger
-                world.ensure_anchor("NOW")
-                print("Initialized a fresh episode in memory. Next action will autosave a new snapshot.")
-            continue  # back to menu
+                    reply = input("Type DELETE in uppercase to confirm, or press Enter to cancel: ").strip()
+                except Exception:
+                    reply = ""
+                if reply == "DELETE":
+                    try:
+                        if os.path.exists(path):
+                            os.remove(path)
+                            print(f"Deleted {path}.")
+                        else:
+                            print(f"No file at {path} (nothing to delete).")
+                    except Exception as e:
+                        print(f"[warn] Could not delete {path}: {e}")
+                    # Reinitialize episode state
+                    world = cca8_world_graph.WorldGraph()
+                    drives = Drives()
+                    skills_from_dict({})  # clear skill ledger
+                    world.ensure_anchor("NOW")
+                    print("Initialized a fresh episode in memory. Next action will autosave a new snapshot.")
+                else:
+                    print("Reset cancelled.")
+            continue   # back to menu
 
         elif choice.lower() == "t":
             # Tutorial access: try to open the local compendium
@@ -2471,7 +2492,18 @@ def interactive_loop(args: argparse.Namespace) -> None:
 # --------------------------------------------------------------------------------------
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """argument parser and program entry"""
+    """argument parser and program entry
+    """
+
+    # set up logging (one-time)
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(message)s",
+            handlers=[logging.FileHandler("cca8_run.log", encoding="utf-8"),
+                      logging.StreamHandler()] )
+    logging.info("cca8_run start v%s python=%s platform=%s",
+                 __version__, sys.version.split()[0], platform.platform())
 
     ##argparse and processing of certain flags here
     # argparse flags

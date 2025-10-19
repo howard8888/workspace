@@ -1,6 +1,40 @@
-* text=auto
-*.py text eol=lf
-*.sh text eol=lf
-*.ps1 text eol=crlf
-*.bat text eol=crlf
-*.md  text eol=lf
+# Normalize text files. Let Git detect text, but default to LF in the repo.
+*           text=auto
+
+# Common source & docs: force LF in repo and on checkout
+*.py        text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+*.json      text eol=lf
+*.toml      text eol=lf
+*.ini       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.html      text eol=lf
+*.css       text eol=lf
+*.js        text eol=lf
+*.ts        text eol=lf
+*.csv       text eol=lf
+*.tsv       text eol=lf
+
+# Windows scripts: keep CRLF because Windows expects it
+*.bat       text eol=crlf
+*.ps1       text eol=crlf
+
+# Binary files: never modify line endings, avoid diff noise
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.pdf       binary
+*.zip       binary
+*.7z        binary
+*.gz        binary
+*.bz2       binary
+*.xz        binary
+*.ttf       binary
+*.otf       binary
+*.mp3       binary
+*.mp4       binary
+

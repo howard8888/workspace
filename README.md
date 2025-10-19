@@ -58,6 +58,8 @@ verify with  plan NOW → `milk:drinking`.
 
 ---
 
+
+
 ## Table of Contents
 
 - [Executive Overview](#executive-overview)
@@ -66,9 +68,7 @@ verify with  plan NOW → `milk:drinking`.
 - [The WorldGraph in detail](#the-worldgraph-in-detail)
 - [Tagging Standard (bindings, predicates, cues, anchors, actions, provenance & engrams)](#tagging-standard-bindings-predicates-cues-anchors-actions-provenance--engrams)
 - [Restricted Lexicon (Developmental Vocabulary)](#restricted-lexicon-developmental-vocabulary)
-- [Signal Bridge (WorldGraph <-->Engrams)](#signal-bridge)
-- [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
-- [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
+- [Signal Bridge (WorldGraph ↔ Engrams)](#signal-bridge-worldgraph--engrams)
 - [Architecture](#architecture)
   - [Modules (lean overview)](#modules-lean-overview)
   - [Data flow (a tick)](#data-flow-a-tick)
@@ -76,6 +76,7 @@ verify with  plan NOW → `milk:drinking`.
 - [Planner Contract](#planner-contract)
 - [Persistence: Autosave/Load](#persistence-autosaveload)
 - [Runner, menus, and CLI](#runner-menus-and-cli)
+- [Logging & Unit Tests](#logging--unit-tests)
 - [How-To Guides](#how-to-guides)
 - [Data schemas (for contributors)](#data-schemas-for-contributors)
 - [Traceability (requirements to code)](#traceability-requirements-to-code)
@@ -86,14 +87,21 @@ verify with  plan NOW → `milk:drinking`.
 - [References](#references)
 - [Session Notes (Living Log)](#session-notes-living-log)
 - [Work in Progress](#work-in-progress)
-  
-  
-  
-  
-  
-  
-  
-  
+
+<!-- Optional tutorial entries; include if you want them surfaced from the top -->
+
+- [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
+- [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
+- [Planner contract (for maintainers)](#planner-contract-for-maintainers)
+- [Persistence contract](#persistence-contract)
+
+
+
+
+
+
+
+
 
 **Summary Overview:**
 
@@ -443,6 +451,60 @@ A: To avoid clutter when auto-attach already created the same `(src, label, dst)
 
 Q: Can I skip the menu and just plan?   
 A: Use `--plan pred:<token>` from the CLI for a one-shot plan.
+
+
+
+## Logging & Unit Tests
+
+###### Logging (minimal, already enabled)
+
+The runner initializes logging once at startup:
+
+Version:1.0StartHTML:0000000105EndHTML:0000040966StartFragment:0000038726EndFragment:0000040926<style></style>
+
+The runner initializes logging once at startup:
+
+- Writes to **`cca8_run.log`** (UTF-8) and also echoes tothe console.
+
+- One INFO line per run (version, Python, platform).
+
+- You can expand logging later by sprinkling`logging.info(...)` / `warning(...)` where useful.
+
+**Change level or file:**
+
+Edit `cca8_run.py` in `main(...)` where`logging.basicConfig(...)` is called.
+
+**Tail the log while you run (Windows PowerShell):**
+
+Get-Content .\cca8_run.log -Wait
+
+Unit tests (pytest)
+
+We keep tests under tests/.
+
+Preflight runs pytest first (so failures stop you early).
+
+Stdout from tests is captured by default; enable prints byrunning pytest with -s (see below).
+
+Run preflight (will run tests first):
+
+Copy code
+
+python cca8_run.py --preflight
+
+Run tests directly (show prints):
+
+Copy code
+
+pytest -q -s
+
+Included starter tests:
+
+tests/test_smoke.py — basic sanity (asserts True).
+
+tests/test_boot_prime_stand.py — seeds stand near NOW andasserts a path NOW → pred:stand exists.
+
+
 
 ---
 
@@ -2346,5 +2408,3 @@ Q: Provenance?  A: meta.policy records which policy created the node.
 --
 
 --
-
-
