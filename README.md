@@ -16,7 +16,7 @@ Entry point: `cca8_run.py`Primary modules: `cca8_run.py`, `cca8_world_graph.py`,
 
 
 
-<img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
+<img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
 
 *Adult Mountain Goat with recently born Calf*
 
