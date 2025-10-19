@@ -16,9 +16,10 @@ Entry point: `cca8_run.py`Primary modules: `cca8_run.py`, `cca8_world_graph.py`,
 
 
 
-<img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
+<img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
 
-*Adult Mountain Goat with recently born Calf*
+*Adult Mountain Goat with recently born Calf (walking within minutes
+of birth, and by one week can climb most places its mother can)*
 
 **CCA8** Simulation of a mountain goat through the lifecycle 
 **CCA8b** Simulation of a mountain goat-like brain with 5 brains within the same agent
@@ -65,6 +66,7 @@ verify with  plan NOW → `milk:drinking`.
 - [The WorldGraph in detail](#the-worldgraph-in-detail)
 - [Tagging Standard (bindings, predicates, cues, anchors, actions, provenance & engrams)](#tagging-standard-bindings-predicates-cues-anchors-actions-provenance--engrams)
 - [Restricted Lexicon (Developmental Vocabulary)](#restricted-lexicon-developmental-vocabulary)
+- [Signal Bridge (WorldGraph <-->Engrams)](#signal-bridge)
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
 - [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
 - [Architecture](#architecture)
@@ -936,6 +938,214 @@ Yes. Use temporary worlds with `set_tag_policy("allow")` inside tests/preflight.
 
 **How do I add a new domain (e.g., landmarks)?**  
 Add tokens under the appropriate stage in `TagLexicon.BASE` (and `LEGACY_MAP` if you’re renaming), then adjust your policies to emit/check the new tokens.
+
+
+
+* * *
+
+Signal Bridge (WorldGraph ↔ Engrams)
+------------------------------------
+
+Early animals do not decide purely in symbols; spatial/visual structure in perception strongly shapes behavior. In CCA8, **WorldGraph** is the fast symbolic index (states, cues, anchors, transitions), while **columns/engrams** hold richer scene-like data (vectors, features, metadata). The **signal bridge** connects the two without committing to heavy perception yet:
+
+* **Emit** a lightweight scene/cue into the column (creates an **engram** and returns its id).
+
+* **Attach** the engram id back to the current binding in **`binding.engrams`** (pointer only).
+
+* **Fetch** the engram later for inspection or analytics.
+
+This lets you keep planning/search **simple and fast** while still recording a **traceable link** to the perception that motivated a step.
+
+* * *
+
+### What the bridge does now (and near-term path)
+
+**Implemented now (lightweight, safe):**
+
+* Create a binding (`pred:*` or `cue:*`) and **assert** a tiny engram record in the column memory.
+
+* Store only a **pointer** on the binding:
+  
+      "engrams": {
+        "column01": { "id": "<engram_id>", "act": 1.0, "meta": {…optional…} }
+      }
+
+* Retrieve the full column record by id for debugging/analytics.
+
+**Soon (drop-in extensions, no format change):**
+
+* Search **similar** engrams (nearest neighbors) to bias which policy fires.
+
+* Enrich payloads (e.g., multi-modal features) while keeping the binding pointer small.
+
+* Summaries in UI/HTML (e.g., show engram ids or small stats in tooltips).
+
+* * *
+
+### How to use it (menu)
+
+From the runner:
+
+1. **Capture scene → emit cue/predicate with tiny engram** (menu **24**):
+   
+   * Choose **channel** (`vision/scent/sound/touch`), **token** (e.g., `silhouette:mom`), **family** (`cue` or `pred`), **attach** (`now/latest/none`), and an optional vector (e.g., `0.1, 0.2, 0.3`).
+   
+   * The runner prints the created binding id and the attached **engram id**.
+   
+   * “Display snapshot” lists **engrams=[column01]** on that binding; “Inspect binding details” shows the pointer JSON.
+   
+   * Pyvis HTML shows the node; hover for tags/meta. (Labels fall back to **cue** when no `pred:*` is present.)
+
+2. **Resolve engrams on a binding** (existing menu): enter a binding id (e.g., `b9`) to dump its `engrams` map.
+
+Tip: Attach mode matters for episode wiring—`now` will add `NOW → new` (label `then`) and update LATEST; `latest` attaches from the previous LATEST; `none` creates a floating binding (valid sink).
+
+* * *
+
+### Technical details (what lives where)
+
+**On the binding (WorldGraph):**
+
+* `tags` — symbols (`pred:*`, `cue:*`, `anchor:*`)
+
+* `edges` — transitions (edge `label` is the action; measurements in `edge.meta`)
+
+* **`engrams`** — pointer(s) only:
+  
+      {
+        "column01": {
+          "id": "<engram_id>",
+          "act": 1.0,
+          "meta": { "...optional..." }
+        }
+      }
+  
+  
+
+**In the column (engram store):**
+
+* A small record keyed by `engram_id`, typically containing a **payload** and/or metadata.
+
+* For “scene” captures we create a tiny numeric payload (vector) and optional descriptors (links/attrs).
+
+* Heavy data stays **out** of WorldGraph; you only carry the id.
+
+**Bridge API (inside `WorldGraph`):**
+
+* `attach_engram(bid, column="column01", engram_id, act=1.0, extra_meta=None)`  
+  Attach an existing engram pointer to a binding.
+
+* `get_engram(column="column01", engram_id)`  
+  Fetch the column record by id (read-only).
+
+* `emit_pred_with_engram(token, payload=None, name=None, column="column01", attach="now", links=None, attrs=None, meta=None) -> (bid, engram_id)`  
+  Create a **predicate** binding and assert an engram in one call; attach the pointer.
+
+* `emit_cue_with_engram(cue_token, payload=None, name=None, column="column01", attach="now", links=None, attrs=None, meta=None) -> (bid, engram_id)`  
+  Same as above for a **cue** binding.
+
+* `capture_scene(channel, token, vector, attach="now", family="cue", name=None, links=None, attrs=None) -> (bid, engram_id)`  
+  Convenience wrapper: builds a tiny scene payload (vector) and calls the appropriate emit function.
+  
+  * **family**: `cue` (default) or `pred`
+  
+  * **attach**: `now/latest/none`
+
+**Column functions (internal):**
+
+* `cca8_column.mem.assert_fact(name, payload, fact_meta) -> engram_id`
+
+* `cca8_column.mem.get(engram_id) -> dict`
+
+**Features helpers (optional):**
+
+* `cca8_features.TensorPayload`, `cca8_features.FactMeta` — typed wrappers for payload and metadata; the bridge gracefully falls back to plain dicts if these are unavailable.
+
+* * *
+
+### Example workflows
+
+**A. Cue + scene pointer (vision silhouette, neonate)**
+    menu 24 → channel=vision, token=silhouette:mom, family=cue, attach=now
+
+* Creates `bX: [cue:vision:silhouette:mom]`
+
+* Adds `NOW --then--> bX`
+
+* Attaches `engrams["column01"].id = <engram_id>`
+
+* (Optional) a policy may react (e.g., orient or follow)
+
+**B. Predicate + scene pointer (if plannable state)**
+    menu 24 → family=pred, token=location:mom:north_forest, attach=latest
+
+* Creates a `pred:*` node (ensure the token is allowed by the restricted lexicon for the current stage)
+
+* Records an engram id for later inspection; planning can now **target** the predicate token.
+
+* * *
+
+### Notes & guardrails
+
+* The **restricted lexicon** still applies at creation time. In neonates, `cue:vision:silhouette:mom` is allowed; off-lexicon tokens print a warn (or raise in `strict` mode).
+
+* Keep payloads **small** (vectors, light descriptors). Use the column to store/compute heavier structures; the binding only needs the pointer.
+
+* Planning/search is **unchanged**: BFS uses tags/edges; the bridge does not slow down the fast index.
+
+* Provenance remains visible: bindings created by a policy stamp `binding.meta["policy"]`; engrams created via the bridge store their **id** in the binding pointer and a record in the column memory.
+  
+  
+  
+  
+
+#### Q&A — Signal Bridge (WorldGraph ↔ Engrams)
+
+**Q: Why store only a pointer on the binding instead of the full scene?**  
+A: To keep the **fast index** small and predictable. Bindings carry lightweight symbols for planning; the **heavy payloads** (tensors, features, frames) live in the column. A pointer preserves traceability without slowing graph operations.
+
+**Q: Does the bridge change how planning works today?**  
+A: No. Planning is still **BFS over bindings/edges**. The bridge adds provenance to perception (via pointers) but does not alter search or path cost.
+
+**Q: When should I emit a `cue:*` vs a `pred:*` with an engram?**  
+A: Use **`cue:*`** when the scene is **evidence** for policy triggers (not a goal). Use **`pred:*`** when the scene defines a **state you may plan to** (e.g., `pred:location:mom:north_forest`).
+
+**Q: How do I see that a binding has an engram attached?**  
+A: In **Display snapshot**, you’ll see `engrams=[column01]` on that binding; in **Inspect binding details** you’ll see the pointer JSON, e.g.  
+`"column01": {"id": "<engram_id>", "act": 1.0, "meta": {...}}`.
+
+**Q: How do I retrieve the actual engram record?**  
+A: The bridge provides `get_engram(engram_id=...)`. The column returns the full record (payload + descriptors) so you can inspect data shape, kind, links, etc.
+
+**Q: Can a binding point to more than one engram?**  
+A: Yes. The `engrams` map is **column-name → pointer**. You can attach multiple columns (e.g., `column01`, `column_vision`, `column_audio`) to the same binding.
+
+**Q: What does `act` (activation) in the pointer represent?**  
+A: A lightweight scalar you can use as a confidence/strength hint. It does not affect planning; it’s there for downstream analytics or heuristics.
+
+**Q: What happens if the column entry is missing or cannot be found?**  
+A: The binding remains valid (it only stores a pointer). `get_engram(...)` will raise an error; you can handle it to report a broken pointer and continue.
+
+**Q: How is this used from the menu today?**  
+A: Use **menu 24** (“Capture scene → emit cue/predicate with tiny engram”). It creates a cue/predicate, asserts an engram in the column, and attaches the pointer—everything in one step.
+
+**Q: How do I attach an existing engram id to a binding?**  
+A: Call `attach_engram(bid, column="column01", engram_id=...)`. This is useful when a policy or external tool computed an engram beforehand.
+
+**Q: Does the restricted lexicon still apply when using the bridge?**  
+A: Yes. The **creation-time** check still enforces stage-appropriate tokens (`neonate/infant/...`). Use `cue:*` tokens that are allowed at the current stage, or switch to `strict` mode to catch mistakes early.
+
+**Q: How will similarity search or value estimates plug in later?**  
+A: The pointer makes it easy: a future call (e.g., `search_similar(engram_id)`) can fetch nearest neighbors in the column and return candidate bindings or hints for policy arbitration—without disrupting WorldGraph’s structure.
+
+**Q: Can I show engram details in the HTML visualization?**  
+A: Tooltips already display tags/meta; you can extend them to include **engram keys** or a short id preview if you’d like (cosmetic change in the exporter).
+
+**Q: Any guidance on payload size?**  
+A: Keep payloads **small** (tiny vectors, short descriptors). The bridge is meant for quick linking; large arrays should stay in the column (and be summarized when displayed).
+
+**Q: What’s the minimal recommended pattern when adding perception today?**  
+A: (1) Emit a `cue:*` that captures the gist (e.g., `cue:vision:silhouette:mom`), (2) attach a tiny scene vector through the bridge, (3) let policies read the cue and stamp provenance; planning remains structure-first.
 
 * * *
 
@@ -2117,6 +2327,10 @@ Q: Provenance?  A: meta.policy records which policy created the node.
 
 ---
 
+## References
+
+
+
 
 
 ## Session Notes (Living Log)
@@ -2132,3 +2346,5 @@ Q: Provenance?  A: meta.policy records which policy created the node.
 --
 
 --
+
+
