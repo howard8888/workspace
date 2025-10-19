@@ -273,6 +273,25 @@ def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Bod
     print("  6. Human-like one-agent multiple-brains simulation with combinatorial planning")
     print("  7. Super-Human-like machine simulation\n")
     print("Pending additional intro material here....")
+       
+def _parse_vector(text: str) -> list[float]:
+    """
+    Parse a comma/space-separated string into a list of floats.
+    Empty input → [0.0, 0.0, 0.0].
+    """
+    import re
+    s = (text or "").strip()
+    if not s:
+        return [0.0, 0.0, 0.0]
+    vec = []
+    for tok in re.split(r"[,\s]+", s):
+        if not tok:
+            continue
+        try:
+            vec.append(float(tok))
+        except ValueError:
+            pass
+    return vec or [0.0, 0.0, 0.0]
 
 def loop_helper(autosave_from_args: Optional[str], world, drives, time_limited: bool = False):
     """Operations to run at the end of each menu branch before looping again.
@@ -695,6 +714,8 @@ MENU = """\
 21) Quit
 22) Export and display interactive graph with options
 23) Understanding bindings, edges, predicates, cues, anchors, policies
+24) Capture scene → emit cue/predicate with tiny engram (signal bridge)
+
 
 [S] Save session → path
 [L] Load session → path
@@ -1353,8 +1374,28 @@ def run_preflight_full(args) -> int:
             ok("lexicon: strict rejects out-of-lexicon token at neonate")
     except Exception as e:
         bad(f"lexicon strictness failed: {e}")
+        
+    # Z6) Engram bridge: capture_scene → engram asserted, pointer attached
+    try:
+        _w7 = cca8_world_graph.WorldGraph()
+        _w7.ensure_anchor("NOW")
+        bid, eid = _w7.capture_scene("vision", "silhouette:mom", [0.1, 0.2, 0.3], attach="now", family="cue")
+        # engram pointer attached?
+        b = _w7._bindings[bid]
+        ok("engram bridge: binding created with cue") if any(t.startswith("cue:") for t in (b.tags or [])) else bad("engram bridge: cue tag missing")
+        if b.engrams and "column01" in b.engrams and b.engrams["column01"].get("id") == eid:
+            ok("engram bridge: pointer attached to binding")
+        else:
+            bad("engram bridge: pointer not attached")
+        # column record retrievable?
+        rec = _w7.get_engram(engram_id=eid)
+        if isinstance(rec, dict) and rec.get("id") == eid:
+            ok("engram bridge: column record retrievable")
+        else:
+            bad("engram bridge: column record missing or malformed")
+    except Exception as e:
+        bad(f"engram bridge failed: {e}")
 
-   
     # 7) Action helpers sanity
     try:
         _wa = cca8_world_graph.WorldGraph()
@@ -1482,7 +1523,11 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     for bid in _sorted_bids(world):
         b = world._bindings[bid]
         tags = ", ".join(getattr(b, "tags", []))
-        lines.append(f"{bid}: [{tags}]")
+        ek = ", ".join((b.engrams or {}).keys())
+        if ek:
+            lines.append(f"{bid}: [{tags}] engrams=[{ek}]")
+        else:
+            lines.append(f"{bid}: [{tags}]")
 
     # EDGES
     lines.append("")
@@ -1814,9 +1859,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
             "quit": "21", "exit": "21",  #no 'q' to avoid exit by mistake
             "tutorial": "t", "help": "t",
             
-            # Tagging/policies help
+            # Tagging/policies help, engram scene
             "understanding": "23", "bindings-help": "23", "predicates-help": "23",
             "cues-help": "23", "policies-help": "23", "tagging": "23", "standard": "23",
+            "capture": "24", "scene": "24", "engram": "24", "engrams": "24",
+
             
         }
 
@@ -1874,6 +1921,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
             "21": "8",   # Quit
             "22": "22",  # Export and display interactive graph (Pyvis HTML)
             "23": "23",  # Understanding bindings/edges/predicates/cues/anchors/policies
+            "24": "24",  # Capture scene → emit cue/predicate + tiny engram (signal bridge demo)
+
         }
 
         ckey = choice.strip().lower() #ensure any present or future routed value is in correct form
@@ -2016,6 +2065,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print(f"ID: {bid}")
                 print("Tags:", ", ".join(sorted(b.tags)))
                 print("Meta:", json.dumps(b.meta, indent=2))
+                # NEW: show engrams
+                if b.engrams:
+                    print("Engrams:", json.dumps(b.engrams, indent=2))
+                else:
+                    print("Engrams: (none)")
                 if b.edges:
                     print("Edges:")
                     for e in b.edges:
@@ -2140,7 +2194,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                         open_now = "n"
                     if open_now in ("y", "yes"):
                         try:
-                            import sys, os, webbrowser
+                            import webbrowser # use the top-level 'sys','os'
                             if sys.platform.startswith("win"):
                                 os.startfile(out)  # type: ignore[attr-defined]
                             elif sys.platform == "darwin":
@@ -2155,6 +2209,43 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     print("       Tip: install with  pip install pyvis")
 
             loop_helper(args.autosave, world, drives)
+            
+        elif choice == "18":
+            # Simulate a fall event and try a recovery attempt immediately
+            prev_latest = world._latest_binding_id
+            # Create a 'fallen' state as a new binding attached to latest
+            fallen_bid = world.add_predicate(
+                "state:posture_fallen",
+                attach="latest",
+                meta={"event": "fall", "added_by": "user"}
+            )
+            # Relabel the auto 'then' edge from the previous latest → fallen as 'fall'
+            try:
+                if prev_latest:
+                    # Remove any auto edge regardless of label, then add a semantic one
+                    try:
+                        world_delete_edge(world, prev_latest, fallen_bid, None)
+                    except NameError:
+                        pass
+                    world.add_edge(prev_latest, fallen_bid, "fall")
+            except Exception as e:
+                print(f"[fall] relabel note: {e}")
+
+            print(f"Simulated fall as {fallen_bid}")
+
+            # Refresh and consider policies now; recovery gate will nudge Action Center
+            POLICY_RT.refresh_loaded(ctx)
+            fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
+            if fired != "no_match":
+                print(fired)
+
+            loop_helper(args.autosave, world, drives)
+            
+
+        #elif "19"  see _new_to_old compatibility map
+        #elif "20"  see _new_to_old compatibility map
+        #elif "21"  see _new_to_old compatibility map
+
 
         elif choice == "22":
             # Export and display interactive graph (Pyvis HTML) with options
@@ -2218,7 +2309,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     open_now = "n"
                 if open_now in ("y", "yes"):
                     try:
-                        import sys, os, webbrowser
+                        import webbrowser # use the top-level 'sys', 'os'
                         if sys.platform.startswith("win"):
                             os.startfile(out)  # type: ignore[attr-defined]
                         elif sys.platform == "darwin":
@@ -2237,38 +2328,65 @@ def interactive_loop(args: argparse.Namespace) -> None:
             # Understanding bindings/edges/predicates/cues/anchors/policies (terminal help)
             print_tagging_and_policies_help(POLICY_RT)
             loop_helper(args.autosave, world, drives)
-
-
-        elif choice == "18":
-            # Simulate a fall event and try a recovery attempt immediately
-            prev_latest = world._latest_binding_id
-            # Create a 'fallen' state as a new binding attached to latest
-            fallen_bid = world.add_predicate(
-                "state:posture_fallen",
-                attach="latest",
-                meta={"event": "fall", "added_by": "user"}
-            )
-            # Relabel the auto 'then' edge from the previous latest → fallen as 'fall'
+            
+        elif choice == "24":
+            # Capture scene → emit cue/predicate + tiny engram (signal bridge demo)
+            print("\nCapture scene — this will create a binding (cue/pred), assert a tiny engram in the column,")
+            print("and attach the engram pointer to the binding. You can see the pointer in the snapshot/HTML.")
             try:
-                if prev_latest:
-                    # Remove any auto edge regardless of label, then add a semantic one
-                    try:
-                        world_delete_edge(world, prev_latest, fallen_bid, None)
-                    except NameError:
-                        pass
-                    world.add_edge(prev_latest, fallen_bid, "fall")
+                channel = input("Channel [vision/scent/sound/touch] (default: vision): ").strip().lower() or "vision"
+                token   = input("Token   (e.g., silhouette:mom) (default: silhouette:mom): ").strip() or "silhouette:mom"
+                family  = input("Family  [cue/pred] (default: cue): ").strip().lower() or "cue"
+                attach  = input("Attach  [now/latest/none] (default: now): ").strip().lower() or "now"
+                vtext   = input("Vector  (comma/space floats; default: 0.0,0.0,0.0): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n(cancelled)")
+                loop_helper(args.autosave, world, drives)
+                continue
+
+            if family not in ("cue", "pred"):
+                print("[info] unknown family; defaulting to 'cue'")
+                family = "cue"
+            if attach not in ("now", "latest", "none"):
+                print("[info] unknown attach; defaulting to 'now'")
+                attach = "now"
+
+            vec = _parse_vector(vtext)
+            try:
+                bid, eid = world.capture_scene(channel, token, vec, attach=attach, family=family)
+                print(f"[bridge] created binding {bid} with tag "
+                      f"{family}:{channel}:{token} and attached engram id={eid}")
+
+
+                # Fetch and summarize the engram record (robust to different shapes)
+                try:
+                    rec = world.get_engram(engram_id=eid)
+                    rid   = rec.get("id", eid)
+                    # payload can be nested or flat
+                    payload = rec.get("payload") if isinstance(rec, dict) else None
+                    if isinstance(payload, dict):
+                        kind  = payload.get("kind") or payload.get("meta", {}).get("kind")
+                        shape = payload.get("shape") or payload.get("meta", {}).get("shape")
+                    else:
+                        kind  = rec.get("kind")
+                        shape = rec.get("shape")
+                    print(f"[bridge] column record ok: id={rid} kind={kind} shape={shape} keys={list(rec.keys()) if isinstance(rec, dict) else type(rec)}")
+                except Exception as e:
+                    print(f"[warn] could not retrieve engram record: {e}")
+
+                # optional: nudge controller once to see if anything reacts
+                try:
+                    res = action_center_step(world, ctx, drives)
+                    if res.get("status") != "noop":
+                        print(f"[controller] {res}")
+                except Exception as e:
+                    print(f"[warn] controller step errored: {e}")
+
             except Exception as e:
-                print(f"[fall] relabel note: {e}")
-
-            print(f"Simulated fall as {fallen_bid}")
-
-            # Refresh and consider policies now; recovery gate will nudge Action Center
-            POLICY_RT.refresh_loaded(ctx)
-            fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
-            if fired != "no_match":
-                print(fired)
+                print(f"[warn] capture_scene failed: {e}")
 
             loop_helper(args.autosave, world, drives)
+
 
         elif choice.lower() == "s":
             # Save session

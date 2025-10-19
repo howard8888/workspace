@@ -116,7 +116,7 @@ class Binding:
 class TagLexicon:
     """
     Constrained vocabulary for tags by developmental stage, with a small legacy map.
-    - Part of implementation of Spelke's core knowledge idea, here as a contrainted early lexicon
+    - Part of implementation of Spelke's core knowledge idea, here as a contrained early lexicon
         that then unlocks richer tokens with development
     -TagLexicon that defines which tokens are allowed at each developmental stage 
        (e.g., neonate → infant → juvenile → adult), including some legacy forms for devp't ease
@@ -143,7 +143,7 @@ class TagLexicon:
                 "seeking_mom",
                 # action-like states we currently model as predicates
                 "action:push_up", "action:extend_legs", "action:orient_to_mom",
-                "stand",
+                "stand", "action:look_around", "state:alert",
                 # drives as *plannable* states, if ever used that way
                 "drive:hunger_high",
             },
@@ -481,6 +481,186 @@ class WorldGraph:
             self.add_edge(prev_latest, bid, "then", meta or {})
 
         return bid
+        
+        
+        
+    # ------------------------- engram / signal bridge -------------------------
+
+    def attach_engram(self, bid: str, *, column: str = "column01",
+                      engram_id: str, act: float = 1.0, extra_meta: dict | None = None) -> None:
+        """
+        Attach an existing engram pointer to a binding.
+        
+        
+        At this time, we We can put a thin “signal bridge” between the WorldGraph (symbols) and the column (engrams),
+        without committing to heavy perception, although to implement in near future.
+        The bridge does three things:
+        1. Emit a signal from WorldGraph → Column (creates an engram and returns its id)
+        2. Attach that engram id to a binding’s engrams dict
+        3. Fetch engrams back (Column → WorldGraph) for inspection/analytics later
+
+        This uses existing column memory and feature payloads (no new dependencies): the column
+        already stores engrams and hands back ids, and provides a get() to retrieve them ; the
+        features module defines a small TensorPayload and FactMeta we can use for toy “scene” vectors
+        and metadata . (Temporal helpers stay separate and can be used to stamp meta["created_at"] later.)
+
+        Parameters
+        ----------
+        bid : binding id to decorate
+        column : name of the column provider that owns this engram ('column01' by default)
+        engram_id : id returned by the column after asserting a fact
+        act : optional activation weight (kept small and human-friendly)
+        extra_meta : optional small dict to travel with the pointer
+
+        Notes
+        -----
+        - This keeps WorldGraph lightweight: only the pointer (id) + tiny numbers
+          live on the binding; the heavy payload stays inside the column.
+        """
+        if bid not in self._bindings:
+            raise KeyError(f"Unknown binding: {bid!r}")
+        b = self._bindings[bid]
+        if b.engrams is None:
+            b.engrams = {}
+        payload = {"id": engram_id, "act": float(act)}
+        if extra_meta:
+            payload["meta"] = dict(extra_meta)
+        b.engrams[column] = payload
+
+    def get_engram(self, *, column: str = "column01", engram_id: str) -> dict:
+        """
+        Fetch a full engram record from the column. Read-only convenience.
+
+        Returns
+        -------
+        dict : whatever the column stored for this engram id (payload + meta).
+
+        Implementation note: imports at call-site to avoid tight coupling.
+        """
+        from cca8_column import mem as _mem   # column memory (RAM)  :contentReference[oaicite:3]{index=3}
+        return _mem.get(engrams_id := engram_id)  # will raise KeyError if missing
+
+    def emit_pred_with_engram(self, token: str, *, payload=None, name: str | None = None,
+                              column: str = "column01", attach: str | None = "now",
+                              links: list[str] | None = None, attrs: dict | None = None,
+                              meta: dict | None = None) -> tuple[str, str]:
+        """
+        Create a predicate binding and simultaneously assert an engram in the column,
+        then attach the engram pointer to the new binding.
+        
+        As a result this signal bridge to the engrams for initial work:
+        -A policy (or the runner) can emit a cue/predicate and a small engram in one call
+        -The new binding’s engrams dict will carry a pointer like:
+                {"column01": {"id": "<engram_id>", "act": 1.0, "meta": {...}}}
+        -We can later get_engram(engram_id=...) to retrieve the full record from the column
+        
+        Returns
+        -------
+        (bid, engram_id)
+
+        This is a stub-level bridge: it records a small payload and links so that
+        later perception/planning can coordinate. Heavy computation stays in the column.
+        """
+        # 1) make/normalize the predicate binding
+        bid = self.add_predicate(token, attach=attach, meta=meta)
+
+        # 2) assert a lightweight engram in column memory
+        from cca8_column import mem as _mem, ColumnMemory   # :contentReference[oaicite:4]{index=4}
+        try:
+            from cca8_features import FactMeta              # optional sugar  :contentReference[oaicite:5]{index=5}
+            _fm = FactMeta(name=(name or token), links=links, attrs=attrs)
+        except Exception:
+            _fm = None
+        engram_id = _mem.assert_fact(name or token, payload, _fm)
+
+        # 3) attach pointer to the binding
+        self.attach_engram(bid, column=column, engram_id=engram_id, act=1.0)
+
+        return bid, engram_id
+
+    def emit_cue_with_engram(self, cue_token: str, *, payload=None, name: str | None = None,
+                             column: str = "column01", attach: str | None = "now",
+                             links: list[str] | None = None, attrs: dict | None = None,
+                             meta: dict | None = None) -> tuple[str, str]:
+        """
+        Create a cue binding (cue:*), assert an engram in the column, and attach the pointer.
+
+        Returns
+        -------
+        (bid, engram_id)
+
+        Usage example:
+            bid, eid = world.emit_cue_with_engram(
+                "vision:silhouette:mom",
+                payload=TensorPayload([0.1,0.2,0.3], shape=(3,)),
+                name="scene:vision:silhouette:mom",
+                links=["cue:vision:silhouette:mom"]
+            )
+        """
+        # 1) add the cue binding (normalized to cue:*)
+        bid = self.add_cue(cue_token, attach=attach, meta=meta)
+
+        # 2) assert a lightweight engram in column memory
+        from cca8_column import mem as _mem                    # :contentReference[oaicite:6]{index=6}
+        try:
+            from cca8_features import FactMeta                 # :contentReference[oaicite:7]{index=7}
+            _fm = FactMeta(name=(name or cue_token), links=links, attrs=attrs)
+        except Exception:
+            _fm = None
+        engram_id = _mem.assert_fact(name or cue_token, payload, _fm)
+
+        # 3) attach pointer to the cue binding
+        self.attach_engram(bid, column=column, engram_id=engram_id, act=1.0)
+
+        return bid, engram_id
+
+    def capture_scene(self, channel: str, token: str, vector: list[float],
+                      *, shape: tuple[int, ...] | None = None, attach: str = "now",
+                      family: str = "cue", name: str | None = None,
+                      links: list[str] | None = None, attrs: dict | None = None) -> tuple[str, str]:
+        """
+        Convenience for creating a tiny numeric 'scene' payload and emitting it
+        as a cue or predicate with an attached engram pointer.
+
+        Parameters
+        ----------
+        channel : e.g., 'vision' | 'scent' | 'sound'
+        token   : e.g., 'silhouette:mom'
+        vector  : small float list (toy embedding); use shape=(N,) if not provided
+        attach  : 'now'|'latest'|'none'
+        family  : 'cue' (default) or 'pred'
+        name    : optional column record name; default uses channel:token
+        links   : optional world tokens to record alongside the engram
+        attrs   : optional dict for extra descriptors
+
+        Returns
+        -------
+        (bid, engram_id)
+        """
+        try:
+            from cca8_features import TensorPayload           # :contentReference[oaicite:8]{index=8}
+        except Exception:
+            TensorPayload = None
+
+        if TensorPayload is not None:
+            payload = TensorPayload(data=list(vector), shape=shape or (len(vector),),
+                                    kind="scene", fmt="tensor/list-f32")
+        else:
+            payload = {"kind": "scene", "fmt": "raw/list", "data": list(vector), "shape": shape or (len(vector),)}
+
+        full_token = f"{channel}:{token}"
+        name = name or f"scene:{full_token}"
+        links = links or [f"{'cue' if family=='cue' else 'pred'}:{full_token}"]
+
+        if family == "cue":
+            return self.emit_cue_with_engram(full_token, payload=payload, name=name,
+                                             attach=attach, links=links, attrs=attrs)
+        elif family == "pred":
+            return self.emit_pred_with_engram(full_token, payload=payload, name=name,
+                                              attach=attach, links=links, attrs=attrs)
+        else:
+            raise ValueError("family must be 'cue' or 'pred'")
+
 
     # --------------------------- edges ---------------------------
 
@@ -817,25 +997,38 @@ class WorldGraph:
                     return t.split(":", 1)[1]
             return None
 
+        def _first_cue(b) -> str | None:
+            for t in getattr(b, "tags", []) or []:
+                if isinstance(t, str) and t.startswith("cue:"):
+                    return t[4:]
+            return None
+
         # Nodes
         for bid, b in self._bindings.items():
             pred = _first_pred(b)
+            cue  = _first_cue(b)
             anch = _anchor_name(b)
 
             if label_mode == "id":
                 label_txt = bid
             elif label_mode == "id+first_pred":
-                label_txt = f"{bid}\\n{pred}" if pred else bid
-            else:  # first_pred
-                label_txt = pred or anch or bid
+                # show pred if present; else show cue; else show anchor name; else id only
+                second = pred or cue or anch
+                label_txt = f"{bid}\n{second}" if second else bid
+            elif label_mode == "first_pred":
+                label_txt = pred or cue or anch or bid
+            else:
+                label_txt = pred or cue or anch or bid
 
             # Tooltip with id, tags, and a small meta preview
             import html, json
             tags_str = ", ".join(sorted(b.tags))
             meta_preview = html.escape(json.dumps(b.meta, ensure_ascii=False)[:240])
+            eng = ", ".join((b.engrams or {}).keys()) or "(none)"
             title_html = "<br/>".join([
                 f"<b>{html.escape(bid)}</b>",
                 f"tags: {html.escape(tags_str)}" if tags_str else "tags: (none)",
+                f"engrams: {html.escape(eng)}",
                 f"meta: {meta_preview}" if b.meta else "meta: (none)"
             ])
 
