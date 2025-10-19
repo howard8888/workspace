@@ -111,6 +111,96 @@ class Binding:
             engrams=dict(d.get("engrams", {})),
         )
 
+# ------------------------- Developmental Tag Lexicon -------------------------
+
+class TagLexicon:
+    """
+    Constrained vocabulary for tags by developmental stage, with a small legacy map.
+    - Part of implementation of Spelke's core knowledge idea, here as a contrainted early lexicon
+        that then unlocks richer tokens with development
+    -TagLexicon that defines which tokens are allowed at each developmental stage 
+       (e.g., neonate → infant → juvenile → adult), including some legacy forms for devp't ease
+    -there is light enforcement in WorldGraph.add_predicate/add_cue (configurable: "allow" | "warn" | "strict");
+ 
+    - Families: 'pred', 'cue', 'anchor'
+    - Stages are cumulative: infant ⊇ neonate, juvenile ⊇ infant, etc.
+    - Legacy tokens are accepted but a preferred canonical is suggested.
+
+    This is deliberately small and focused on the newborn goat domain. Pending fuller development.
+    """
+
+    STAGE_ORDER = ("neonate", "infant", "juvenile", "adult")
+
+    # Preferred tokens by family and stage
+    BASE: dict[str, dict[str, set[str]]] = {
+        "neonate": {
+            "pred": {
+                # posture / proximity
+                "posture:standing", "posture:fallen",
+                "proximity:mom:close", "proximity:mom:far",
+                # feeding milestones
+                "nipple:found", "nipple:latched", "milk:drinking",
+                "seeking_mom",
+                # action-like states we currently model as predicates
+                "action:push_up", "action:extend_legs", "action:orient_to_mom",
+                "stand",
+                # drives as *plannable* states, if ever used that way
+                "drive:hunger_high",
+            },
+            "cue": {
+                "vision:silhouette:mom", "scent:milk", "sound:bleat:mom",
+                "vestibular:fall", "touch:flank_on_ground", "balance:lost",
+                # optional cue form for drives (if used only as triggers)
+                "drive:hunger_high",
+            },
+            "anchor": {"NOW", "HERE"},
+        },
+        #   can extend these as   grow the task space
+        "infant":  {"pred": set(), "cue": set(), "anchor": set()},
+        "juvenile":{"pred": set(), "cue": set(), "anchor": set()},
+        "adult":   {"pred": set(), "cue": set(), "anchor": set()},
+    }
+
+    # Legacy → preferred (we *accept* the legacy but suggest the preferred)
+    LEGACY_MAP = {
+        "state:posture_standing": "posture:standing",
+        "state:posture_fallen":   "posture:fallen",
+        "state:seeking_mom":      "seeking_mom",
+        # add more renames as   migrate
+    }
+
+    def __init__(self):
+        # Build cumulative sets per stage
+        self.allowed: dict[str, dict[str, set[str]]] = {}
+        acc = {"pred": set(), "cue": set(), "anchor": set()}
+        for stage in self.STAGE_ORDER:
+            # accumulate
+            for fam in ("pred", "cue", "anchor"):
+                acc[fam] |= set(self.BASE.get(stage, {}).get(fam, set()))
+            self.allowed[stage] = {fam: set(acc[fam]) for fam in acc}
+
+    def is_allowed(self, family: str, token: str, stage: str) -> bool:
+        """Return True if 'token' is permitted (preferred or legacy) at 'stage'."""
+        # accept canonical preferred
+        if token in self.allowed.get(stage, {}).get(family, set()):
+            return True
+        # accept legacy if we have a mapping for it
+        if token in self.LEGACY_MAP:
+            return True
+        return False
+
+    def preferred_of(self, token: str) -> str | None:
+        """If 'token' is legacy, return its preferred canonical form, else None."""
+        return self.LEGACY_MAP.get(token)
+
+    def normalize_family_and_token(self, family: str, raw: str) -> tuple[str, str]:
+        """
+        Ensure the *family-local* token is returned (strip 'pred:'/'cue:' prefix if present).
+        Example: ('pred', 'pred:state:posture_standing') -> ('pred', 'state:posture_standing')
+        """
+        tok = (raw or "").strip()
+        prefix = family + ":"
+        return family, tok[len(prefix):] if tok.startswith(prefix) else tok
 
 # -----------------------------------------------------------------------------
 # World graph
@@ -139,6 +229,52 @@ class WorldGraph:
         self._anchors: Dict[str, str] = {}           # name -> binding_id
         self._latest_binding_id: Optional[str] = None
         self._id_counter = itertools.count(1)
+        self._init_lexicon()
+        
+    # --- tag policy / developmental stage -----------------------------------
+
+    def _init_lexicon(self):
+        self._lexicon = TagLexicon()
+        self._stage: str = "neonate"         # default
+        self._tag_policy: str = "warn"       # 'allow' | 'warn' | 'strict'
+
+    def set_stage(self, stage: str) -> None:
+        """Set developmental stage for tag constraints ('neonate'|'infant'|'juvenile'|'adult')."""
+        if stage not in TagLexicon.STAGE_ORDER:
+            raise ValueError(f"Unknown stage: {stage!r}")
+        self._stage = stage
+
+    def set_stage_from_ctx(self, ctx) -> None:
+        """Derive stage from ctx.age_days (toy thresholds; adjust as desired)."""
+        age = float(getattr(ctx, "age_days", 0.0) or 0.0)
+        stage = "neonate" if age <= 3.0 else "infant"
+        self.set_stage(stage)
+
+    def set_tag_policy(self, policy: str) -> None:
+        """Set enforcement: 'allow' (off), 'warn' (default), or 'strict' (raise on out-of-lexicon)."""
+        if policy not in ("allow", "warn", "strict"):
+            raise ValueError("policy must be 'allow' | 'warn' | 'strict'")
+        self._tag_policy = policy
+
+    def _enforce_tag(self, family: str, token_local: str) -> str:
+        """
+        Enforce lexicon constraints for a single tag *without* family prefix (e.g., 'posture:standing').
+        Returns the tag-local string that will be stored (we do not auto-rewrite legacy—only warn).
+        """
+        ok = self._lexicon.is_allowed(family, token_local, self._stage)
+        if not ok:
+            msg = f"[tags] {family}:{token_local} not allowed at stage={self._stage}"
+            if self._tag_policy == "strict":
+                raise ValueError(msg)
+            elif self._tag_policy == "warn":
+                print("WARN", msg, "(allowing)")
+        else:
+            preferred = self._lexicon.preferred_of(token_local)
+            if preferred and preferred != token_local:
+                # Legacy accepted but suggest canonical
+                if self._tag_policy != "allow":
+                    print(f"WARN [tags] legacy '{family}:{token_local}' — prefer '{family}:{preferred}' (kept legacy to avoid breakage)")
+        return token_local
 
     # ------------------------- internals -------------------------
 
@@ -280,8 +416,10 @@ class WorldGraph:
         tok = (token or "").strip()
         if tok.startswith("pred:"):
             tok = tok[5:]
+        # enforce against lexicon (do not auto-rewrite legacy; just warn/allow)
+        tok = self._enforce_tag("pred", tok)
         tag = f"pred:{tok}"
-
+        
         # --- validate attach option -----------------------------------------------------
         att = (attach or "none").lower()
         if att not in _ATTACH_OPTIONS:  # e.g., {"now", "latest", "none"}
@@ -321,6 +459,7 @@ class WorldGraph:
         tok = (token or "").strip()
         if tok.startswith("cue:"):
             tok = tok[4:]
+        tok = self._enforce_tag("cue", tok)
         tag = f"cue:{tok}"
 
         att = (attach or "none").lower()

@@ -1147,11 +1147,12 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"WorldGraph init failed: {e}")
         
-    # 2a) WorldGraph.set_now() — anchor remap & tag housekeeping
+    
+    # 2a) WorldGraph.set_now() — anchor remap & tag housekeeping (no warnings)
     try:
         # fresh temp world just for this test
         _w2 = cca8_world_graph.WorldGraph()
-
+        _w2.set_tag_policy("allow")  # silence lexicon WARNs in this probe
         # ensure NOW exists for this instance
         _old_now = _w2.ensure_anchor("NOW")
 
@@ -1169,23 +1170,17 @@ def run_preflight_full(args) -> int:
 
         def _tag_add(bid_: str, t: str):
             ts = _tags_of(bid_)
-            try:
-                ts.add(t)        # set
+            try: ts.add(t)
             except AttributeError:
-                if t not in ts:  # list
-                    ts.append(t)
+                if t not in ts: ts.append(t)
 
         def _tag_discard(bid_: str, t: str):
             ts = getattr(_w2._bindings[bid_], "tags", None)
-            if ts is None:
-                return
-            try:
-                ts.discard(t)    # set
+            if ts is None: return
+            try: ts.discard(t)
             except AttributeError:
-                try:
-                    ts.remove(t) # list
-                except ValueError:
-                    pass
+                try: ts.remove(t)
+                except ValueError: pass
 
         ok("set_now: ensured initial NOW exists")
 
@@ -1199,23 +1194,14 @@ def run_preflight_full(args) -> int:
         _prev = _w2.set_now(_new_now, tag=True, clean_previous=True)
 
         # anchors map updated?
-        if _w2._anchors.get("NOW") == _new_now:
-            ok("set_now: NOW anchor re-pointed")
-        else:
-            bad("set_now: anchors map not updated")
+        ok("set_now: NOW anchor re-pointed") if _w2._anchors.get("NOW") == _new_now else bad("set_now: anchors map not updated")
 
         # new NOW has anchor tag?
-        if _has_tag(_new_now, "anchor:NOW"):
-            ok("set_now: new NOW has anchor:NOW tag")
-        else:
-            bad("set_now: new NOW missing anchor:NOW tag")
+        ok("set_now: new NOW has anchor:NOW tag") if _has_tag(_new_now, "anchor:NOW") else bad("set_now: new NOW missing anchor:NOW tag")
 
         # previous NOW lost the anchor tag?
         if _prev and _prev in _w2._bindings:
-            if not _has_tag(_prev, "anchor:NOW"):
-                ok("set_now: removed anchor:NOW from previous NOW")
-            else:
-                bad("set_now: previous NOW still tagged anchor:NOW")
+            ok("set_now: removed anchor:NOW from previous NOW") if not _has_tag(_prev, "anchor:NOW") else bad("set_now: previous NOW still tagged anchor:NOW")
 
         # negative test: unknown id must raise KeyError
         try:
@@ -1289,32 +1275,21 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"planner probe failed: {e}")
               
-    # Z1) Attach semantics (NOW/latest → new binding)
+    # Z1) Attach semantics (NOW/latest → new binding) — no warnings
     try:
         _w = cca8_world_graph.WorldGraph()
+        _w.set_tag_policy("allow")  # silence lexicon WARNs here
         _now = _w.ensure_anchor("NOW")
 
         # attach="now" creates NOW→new (then) and updates LATEST
         _a = _w.add_predicate("pred:test:A", attach="now")
-        if any(e.get("to") == _a and e.get("label", "then") == "then" for e in (_w._bindings[_now].edges or [])):
-            ok("attach=now: NOW→new edge recorded")
-        else:
-            bad("attach=now: missing NOW→new edge")
-        if _w._latest_binding_id == _a:
-            ok("attach=now: LATEST updated to new binding")
-        else:
-            bad("attach=now: LATEST not updated")
+        ok("attach=now: NOW→new edge recorded") if any(e.get("to") == _a and e.get("label", "then") == "then" for e in (_w._bindings[_now].edges or [])) else bad("attach=now: missing NOW→new edge")
+        ok("attach=now: LATEST updated to new binding") if _w._latest_binding_id == _a else bad("attach=now: LATEST not updated")
 
         # attach="latest" creates oldLATEST→new (then) and updates LATEST
         _b = _w.add_predicate("pred:test:B", attach="latest")
-        if any(e.get("to") == _b and e.get("label", "then") == "then" for e in (_w._bindings[_a].edges or [])):
-            ok("attach=latest: LATEST→new edge recorded")
-        else:
-            bad("attach=latest: missing LATEST→new edge")
-        if _w._latest_binding_id == _b:
-            ok("attach=latest: LATEST updated to new binding")
-        else:
-            bad("attach=latest: LATEST not updated")
+        ok("attach=latest: LATEST→new edge recorded") if any(e.get("to") == _b and e.get("label", "then") == "then" for e in (_w._bindings[_a].edges or [])) else bad("attach=latest: missing LATEST→new edge")
+        ok("attach=latest: LATEST updated to new binding") if _w._latest_binding_id == _b else bad("attach=latest: LATEST not updated")
     except Exception as e:
         bad(f"attach semantics failed: {e}")
 
@@ -1335,9 +1310,11 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"cue normalization failed: {e}")
 
-    # Z3) Action metrics aggregator (run with numbers on edge.meta)
+    # Z3) Action metrics aggregator — no warnings
     try:
         _w4 = cca8_world_graph.WorldGraph()
+        _w4.set_tag_policy("allow")  # silence lexicon WARNs here
+        _w4.ensure_anchor("NOW")
         _src = _w4.add_predicate("pred:test:src", attach="now")
         _dst = _w4.add_predicate("pred:test:dst", attach="none")
         _w4.add_edge(_src, _dst, label="run", meta={"meters": 10.0, "duration_s": 4.0})
@@ -1349,9 +1326,10 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"action metrics failed: {e}")
 
-    # Z4) BFS sanity (shortest-hop path found)
+    # Z4) BFS sanity (shortest-hop path found) — no warnings
     try:
         _w5 = cca8_world_graph.WorldGraph()
+        _w5.set_tag_policy("allow")  # silence lexicon WARNs here
         _start = _w5.ensure_anchor("NOW")
         _a1 = _w5.add_predicate("pred:test:A", attach="now")
         _a2 = _w5.add_predicate("pred:test:B", attach="latest")
@@ -1363,6 +1341,19 @@ def run_preflight_full(args) -> int:
             bad(f"planner: unexpected path { _path }")
     except Exception as e:
         bad(f"planner (BFS) sanity failed: {e}")
+        
+    # Z5) Lexicon strictness: reject out-of-lexicon pred at neonate
+    try:
+        _w6 = cca8_world_graph.WorldGraph()
+        _w6.set_stage("neonate"); _w6.set_tag_policy("strict"); _w6.ensure_anchor("NOW")
+        try:
+            _w6.add_predicate("abstract:calculus", attach="now")
+            bad("lexicon: strict did not reject out-of-lexicon token")
+        except ValueError:
+            ok("lexicon: strict rejects out-of-lexicon token at neonate")
+    except Exception as e:
+        bad(f"lexicon strictness failed: {e}")
+
    
     # 7) Action helpers sanity
     try:
@@ -1743,6 +1734,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
         print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
         POLICY_RT.refresh_loaded(ctx)
     _io_banner(args, loaded_src, loaded_ok)
+    
+    world.set_stage_from_ctx(ctx)        # derive 'neonate'/'infant' from ctx.age_days
+    world.set_tag_policy("warn")         # or "strict" once you’re ready
+
 
     # HAL instantiation (although already set in class Ctx, but can modify here)
     ctx.hal  = None
@@ -1966,7 +1961,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 try:
                     pretty = world.pretty_path(
                         path,
-                        node_mode="id+pred",       # try 'pred' if you prefer only tokens
+                        node_mode="id+pred",       # try 'pred' if   prefer only tokens
                         show_edge_labels=True,
                         annotate_anchors=True
                     )
@@ -2094,7 +2089,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
             # advance developmental clock
             try:
                 ctx.ticks = getattr(ctx, "ticks", 0) + 1
-                ctx.age_days = getattr(ctx, "age_days", 0.0) + 0.01   # tune step as you like
+                ctx.age_days = getattr(ctx, "age_days", 0.0) + 0.01   # tune step as   like
+                world.set_stage_from_ctx(ctx)           # keep the stage in sync as age changes
                 print(f"Autonomic: fatigue +0.01 | ticks={ctx.ticks} age_days={ctx.age_days:.2f}")
             except Exception:
                 print("Autonomic: fatigue +0.01")

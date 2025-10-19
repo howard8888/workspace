@@ -1,4 +1,9 @@
-# # CCA8 (v0.7.x) — Project Compendium (Canonical README)
+# # CCA8  — Project Compendium (README)
+
+# CCA8 Compendium (All-in-One)
+
+The CCA8 Compendium is an all-in-one ongoing document that captures the design, rationale, and practical know-how for the CCA8 simulation project. It is intended to function as a user manual how to use the software as well as provide technical details to persons with an interest in the project.
+
 
 **1 minute summary:**
 
@@ -9,6 +14,22 @@ Scaffolding in place (partially operational) for simulation of a chimpanzee-like
 This single document is the canonical “compendium” for the Causal Cognitive Architecture 8 (CCA8).It serves as: README, user guide, architecture notes, design decisions, and maintainer reference.
 
 Entry point: `cca8_run.py`Primary modules: `cca8_run.py`, `cca8_world_graph.py`, `cca8_controller.py`, `cca8_column.py`, `cca8_features.py`, `cca8_temporal.py`
+
+
+
+<img src="file:///C:\Users\howar\workspace/calf_goat.jpg" title="Mountain Goat Calf" alt="" style="zoom:200%;">
+
+*Adult Mountain Goat with recently born Calf*
+
+**CCA8** Simulation of a mountain goat through the lifecycle 
+**CCA8b** Simulation of a mountain goat-like brain with 5 brains within the same agent
+**CCA8c** Simulation of multiple agents with goat-like brains able to interact
+**CCA8d** Simulation of a mountain goat-like brain with 5 brains within the same agent with combinatorial planning
+**CCA9** Simulation of a chimpanzee through the lifecycle
+**CCA10** Simulation of a human through the lifecycle
+*See **References** Section for published peer reviewed articles on the **CCA7** and earlier versions*
+
+
 
 
 
@@ -35,55 +56,43 @@ Menu →  add `stand`, connect NOW→stand (`stand_up`), then add and connect
 verify with  plan NOW → `milk:drinking`.  
 **Glossary:** predicates, bindings, edges, policies, drives (hunger/warmth/fatigue), and search knobs (`k`, `sigma`, `jump`).
 
-
-
-***Q&A to help you learn this section***
-
-Q: What’s the entry point and the minimal way to see something run?   
-A: Run `cca8_run.py` from a Python 3.11 venv. Use `--about` to confirm the install and `--autosave session.json` to start an interactive run that continuously writes your progress.
-
-Q: Which modules should I know by name on day one?   
-A: `cca8_run.py` (runner/CLI), `cca8_world_graph.py` (WorldGraph + planner), `cca8_controller.py` (drives/policies), and the engram/feature/time helpers: `cca8_column.py`, `cca8_features.py`, `cca8_temporal.py`.
-
-Q: Is there a “fast path” demo to sanity-check planning?   
-A: Yes—add `stand`, connect `NOW→stand`, then add and connect `mom:close → nipple:found → nipple:latched → milk:drinking`, and plan to `milk:drinking`.
-
-Q: Where will this README send me if I get lost?   
-A: Use the Table of Contents to jump to Architecture, Planner Contract, or Tutorial sections, this single file is the canonical compendium.
-
-
-
-# CCA8 Compendium (All-in-One)
-
-*An ongoing document that captures the design, rationale, and practical know-how for the CCA8 simulation.*  
-**Audience:** future software maintainers, new collaborators, persons with an interest in the project.  
-**Tone:** mostly technical, with tutorial-style sections so it’s readable without “tribal knowledge.”
-
-
-
-<img title="Mountain Goat Calf" src="./calf_goat.jpg" alt="" style="zoom:200%,">
-
-****Planned versions: ****
-
-CCA8 Simulation of a mountain goat through the lifecycle
-
-CCA8b Simulation of a mountain goat-like brain with 5 brains within the same agent
-
-CCA8c Simulation of multiple agents with goat-like brains able to interact
-
-CCA8d Simulation of a mountain goat-like brain with 5 brains within the same agent with combinatorial planning
-
-CCA9 Simulation of a chimpanzee through the lifecycle
-
-CCA10 Simulation of a human through the lifecycle
-
-***Q&A to help you learn this section***
-
-Q: How will concepts carry forward?  A: As per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.
-
-
-
 ---
+
+## Table of Contents
+
+- [Executive Overview](#executive-overview)
+- [Opening screen (banner) explained](#opening-screen-banner-explained)
+- [Profiles (1–7): overview and implementation notes](#profiles-17-overview-and-implementation-notes)
+- [The WorldGraph in detail](#the-worldgraph-in-detail)
+- [Tagging Standard (bindings, predicates, cues, anchors, actions, provenance & engrams)](#tagging-standard-bindings-predicates-cues-anchors-actions-provenance--engrams)
+- [Restricted Lexicon (Developmental Vocabulary)](#restricted-lexicon-developmental-vocabulary)
+- [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
+- [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
+- [Architecture](#architecture)
+  - [Modules (lean overview)](#modules-lean-overview)
+  - [Data flow (a tick)](#data-flow-a-tick)
+- [Action Selection: Drives, Policies, Action Center](#action-selection-drives-policies-action-center)
+- [Planner Contract](#planner-contract)
+- [Persistence: Autosave/Load](#persistence-autosaveload)
+- [Runner, menus, and CLI](#runner-menus-and-cli)
+- [How-To Guides](#how-to-guides)
+- [Data schemas (for contributors)](#data-schemas-for-contributors)
+- [Traceability (requirements to code)](#traceability-requirements-to-code)
+- [Roadmap](#roadmap)
+- [Debugging Tips (traceback, pdb, VS Code)](#debugging-tips-traceback-pdb-vs-code)
+- [FAQ / Pitfalls](#faq--pitfalls)
+- [Glossary](#glossary)
+- [References](#references)
+- [Session Notes (Living Log)](#session-notes-living-log)
+- [Work in Progress](#work-in-progress)
+  
+  
+  
+  
+  
+  
+  
+  
 
 **Summary Overview:**
 
@@ -434,27 +443,6 @@ A: To avoid clutter when auto-attach already created the same `(src, label, dst)
 Q: Can I skip the menu and just plan?   
 A: Use `--plan pred:<token>` from the CLI for a one-shot plan.
 
-
-
-
-
-## Table of Contents
-
-1. [Executive Overview](#executive-overview)  
-2. [Theory Primer](#theory-primer)  
-3. [Architecture](#architecture)  
-4. [Key Data Structures (Schemas)](#key-data-structures-schemas)  
-5. [Action Selection: Drives, Policies, Action Center](#action-selection-drives-policies-action-center)  
-6. [Planner Contract](#planner-contract)  
-7. [Persistence: Autosave/Load](#persistence-autosaveload)  
-8. [Tutorial: Newborn Mountain Goat — First Minutes](#tutorial-newborn-mountain-goat--first-minutes)  
-9. [How-To Guides](#how-to-guides)  
-10. [Traceability-Lite (Requirements ↔ Code)](#traceability-lite-requirements--code)  
-11. [Architecture Decision Records (ADRs)](#architecture-decision-records-adrs)  
-12. [Debugging Tips (traceback, pdb, VS Code)](#debugging-tips-traceback-pdb-vs-code)  
-13. [FAQ / Pitfalls](#faq--pitfalls)  
-14. [Glossary](#glossary)
-
 ---
 
 ## Executive Overview
@@ -786,7 +774,173 @@ A: The structure allows them; the UI warns on exact duplicates of `(src, label, 
 **Q: Which tag shows up as the node’s label?**  
 A: The **first `pred:*`** tag; otherwise we fall back to the binding id.
 
+
+
 * * *
+
+Here’s a drop-in section for your README. I recommend placing it **immediately after “Tagging Standard (bindings, predicates, cues, anchors, actions, provenance & engrams)” and before “Data schemas (for contributors)”**, and adding it to the Table of Contents as:
+
+* `Restricted Lexicon (Developmental Vocabulary)`
+
+* * *
+
+Restricted Lexicon (Developmental Vocabulary)
+---------------------------------------------
+
+Early mammals don’t start life with an unlimited conceptual vocabulary. Following the spirit of **Spelke’s core knowledge** (a constrained, structured set of early abilities), CCA8 introduces a **restricted lexicon** for tags at early developmental stages and then **unlocks** a broader vocabulary as the agent “matures.” The goal is to keep symbols clean, avoid tag drift, and make early planning/search tractable and biologically plausible.
+
+### Why we constrain early vocabulary
+
+* **Developmental realism.** Neonates have a small, structured set of capacities (posture, proximity, feeding milestones, a few salient cues). The lexicon mirrors this and scales up later.
+
+* **Software hygiene.** Constraining tags prevents ad-hoc token variations (e.g., `pred:standing`, `pred:posture_standing`, `pred:posture:standing`) from creeping in.
+
+* **Search simplicity.** A smaller, consistent tag set makes paths/states easier to debug and keeps the fast index coherent.
+
+* * *
+
+### How it works (user view)
+
+* **Stages.** The world tracks a developmental **stage** (`"neonate"`, `"infant"`, `"juvenile"`, `"adult"`). Stages are **cumulative**: later stages include all earlier tokens.
+
+* **Automatic stage setting.** The runner derives the stage from `ctx.age_days` (toy rule: `<= 3.0 → neonate`, otherwise infant). This happens right after profile selection and after each autonomic tick (so the stage follows age).
+
+* **Enforcement policy.** Creation-time checks use one of:
+  
+  * `"allow"` — accept any tag silently.
+  
+  * `"warn"` (default) — accept out-of-lexicon or legacy tags but print a short warning.
+  
+  * `"strict"` — reject out-of-lexicon tags with an error.
+
+* **Legacy tokens.** A small **legacy map** accepts older forms (e.g., `state:posture_standing`) while **suggesting** the canonical form (`posture:standing`). This keeps old snapshots workable while you migrate.
+
+**Everyday behavior you’ll notice:**
+
+* When you **add** a predicate/cue in early life, it is checked against the stage vocabulary. In `"warn"` mode you’ll see a one-line hint if the token is off-lexicon (still accepted). In `"strict"` mode you’ll get a clear error.
+
+* Planning, pretty-printing, autosave, etc., are unchanged; the lexicon guards **creation**, not reading.
+
+* * *
+
+### How to adjust the vocabulary
+
+* **Add tokens to a stage.** Edit the stage sets in `TagLexicon.BASE[...]` (inside `cca8_world_graph.py`). New tokens added under `"infant"` (or higher) automatically become available after the agent “grows” into that stage.
+
+* **Rename/normalize tokens.** Put old → new mappings in `TagLexicon.LEGACY_MAP`. Old tags are still accepted; a warning suggests the canonical form until you finish migration.
+
+* **Change stage thresholds.** Update `WorldGraph.set_stage_from_ctx(ctx)` (e.g., change the age rule or read a profile flag).
+
+* **Adjust enforcement.** Call `world.set_tag_policy("allow"|"warn"|"strict")`. During development you can start with `"warn"`, switch to `"strict"` when the vocabulary stabilizes.
+
+* * *
+
+### Technical notes (what’s under the hood)
+
+* **`TagLexicon` (in `cca8_world_graph.py`)**
+  
+  * `STAGE_ORDER = ("neonate","infant","juvenile","adult")` — later stages include earlier tokens.
+  
+  * `BASE[stage][family]` — preferred tokens per **family** (`pred`, `cue`, `anchor`) and **stage**.
+  
+  * `LEGACY_MAP` — accepts legacy tokens (e.g., `state:posture_standing`) and suggests the canonical form (`posture:standing`).
+  
+  * Methods:
+    
+    * `is_allowed(family, token, stage)` — “Is this token ok at this stage?”
+    
+    * `preferred_of(token)` — returns canonical name if token is legacy.
+
+* **`WorldGraph` integration**
+  
+  * Initialization wires the lexicon and defaults the stage to `"neonate"` and policy to `"warn"`.
+  
+  * Stage helpers:
+    
+    * `set_stage(stage)` — explicitly set stage.
+    
+    * `set_stage_from_ctx(ctx)` — derive from `ctx.age_days` (runner calls this after profile selection and after each autonomic tick).
+    
+    * `set_tag_policy("allow"|"warn"|"strict")` — choose enforcement.
+  
+  * Enforcement hook:
+    
+    * `add_predicate(...)` and `add_cue(...)` normalize input (`pred:`/`cue:` prefixes), then call a private `_enforce_tag(...)`. In `"warn"` it logs once and allows; in `"strict"` it raises `ValueError`.
+
+* **Preflight coverage (no warning noise).** Preflight exercises attach semantics, action metrics, and BFS with temporary worlds set to `"allow"` (so runs are quiet), and separately verifies `"strict"` on an intentionally illegal token. You’ll still see a clean PASS wall.
+
+* * *
+
+### What’s currently in the neonate vocabulary (starter set)
+
+* **`pred:` posture/proximity/feeding**
+  
+  * `posture:standing`, `posture:fallen`
+  
+  * `proximity:mom:close`, `proximity:mom:far`
+  
+  * `nipple:found`, `nipple:latched`, `milk:drinking`
+  
+  * `seeking_mom`
+  
+  * “action-like” states we currently model as predicates: `action:push_up`, `action:extend_legs`, `action:orient_to_mom`
+  
+  * (Optional) `drive:hunger_high` if you intend to **plan to** a drive threshold
+
+* **`cue:` sensory/context**
+  
+  * `vision:silhouette:mom`, `scent:milk`, `sound:bleat:mom`
+  
+  * `vestibular:fall`, `touch:flank_on_ground`, `balance:lost`
+  
+  * (Optional) `drive:hunger_high` if used only as a **trigger**
+
+* **`anchor:`** `NOW`, `HERE`
+
+You can expand `"infant"` and later stages as you add tasks (e.g., navigation landmarks, social signals).
+
+* * *
+
+### Quick usage examples
+
+* **Set the stage automatically (runner):**
+  
+      world.set_stage_from_ctx(ctx)     # after profile selection and after autonomic tick
+      world.set_tag_policy("warn")      # start permissive; flip to "strict" when stable
+
+* **Add a canonical predicate (neonate-ok):**
+  
+      world.add_predicate("posture:standing", attach="latest")
+
+* **Add a cue (neonate-ok):**
+  
+      world.add_cue("vision:silhouette:mom", attach="now")
+
+* **Accept an old snapshot silently (warn today, migrate later):**
+  
+      # legacy 'state:posture_standing' is accepted; warning suggests 'posture:standing'
+  
+  
+
+* * *
+
+### FAQ (restricted lexicon)
+
+**Does this break old runs?**  
+No. Legacy tokens are accepted; in `"warn"` you’ll see a one-line hint suggesting the canonical form. Switch to `"strict"` after you migrate.
+
+**Will planning fail because of the lexicon?**  
+No. The lexicon checks **creation** time. Planner behavior (BFS over existing tags) is unchanged.
+
+**Can I silence warnings during automated checks?**  
+Yes. Use temporary worlds with `set_tag_policy("allow")` inside tests/preflight. The codebase already does this for its synthetic preflight tokens.
+
+**How do I add a new domain (e.g., landmarks)?**  
+Add tokens under the appropriate stage in `TagLexicon.BASE` (and `LEGACY_MAP` if you’re renaming), then adjust your policies to emit/check the new tokens.
+
+* * *
+
+
 
 ## Architecture
 
@@ -1496,7 +1650,6 @@ Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index
 This tutorial explains the exact BFS discipline the CCA8 planner uses over the WorldGraph’s adjacency list. It is written to be followed with pencil-and-paper; no code is required.
 
 BFS is deliberately simple: a queue, a parent map, and two rules (visited-on-enqueue, stop-on-pop). In CCA8 this simplicity pays off—planning remains predictable and fast, and the returned paths are immediately readable against the episode structure.
-
 
 ### What BFS is doing for CCA8
 

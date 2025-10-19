@@ -13,14 +13,14 @@ Concepts
    eg, "created_by: policy:<name>", timestamp, tag "policy:stand_up", "note: 'standing'"
    thus effective means recording origin so later debugging/credit assignment skill ledger,RL is explainable
    -state predicates, e.g., state:posture_standing, assert something about the agent or world that reasoner can use as facts
-   -provenance tags, e.g., policy:stand_up, assert who/what produced this binding/edge rather than something you plan for, it already occurred
+   -provenance tags, e.g., policy:stand_up, assert who/what produced this binding/edge rather than something  plan for, it already occurred
    -despite the same effect predicate being produced there could have been two different policies creating it, provenance tags help figure out which one
 - Skill ledger: tiny RL-style counters (n, succ, q, last_reward) per policy; not used for selection yet.
 
 Action loop
 -----------
 `action_center_step(world, ctx, drives)` scans PRIMITIVES in order and runs the *first* whose trigger is true.
-A permissive fallback (e.g., FollowMom) prevents 'noop' unless you tighten its trigger.
+A permissive fallback (e.g., FollowMom) prevents 'noop' unless  tighten its trigger.
 """
 
 # --- Imports -------------------------------------------------------------
@@ -251,7 +251,7 @@ class StandUp(Primitive):
 
     def trigger(self, world, drives: Drives) -> bool:
         # Safety-first: if fallen, allow stand-up regardless of historical standing
-        if _has(world, "state:posture_fallen"):
+        if _has(world, "state:posture_fallen") or _has(world, "posture:fallen"):
             return True
 
         # Otherwise require hunger_high (toy heuristic)
@@ -260,67 +260,77 @@ class StandUp(Primitive):
 
         # Guard: if already upright now (historically recorded), skip
         # (This is a coarse global check; runner guards the near-NOW case.)
-        if _has(world, "state:posture_standing"):
+        if _has(world, "state:posture_standing") or _has(world, "posture:standing"):
             return False
 
         return True
 
-    def execute(self, world, ctx, drives: Drives) -> dict:
-        now = datetime.now().isoformat(timespec="seconds")
-        meta_common = {"policy": self.name, "created_at": now}
+    
+    def execute(self, world, ctx, drives):
+        """
+        Create a short 'stand up' sequence and finish at the canonical state:
+        pred:posture:standing
+        """
+        meta_common = {"created_by": self.name}
+        try:
+            # toy sub-actions (optional but nice for the spine)
+            world.add_predicate("action:push_up",    attach="now",    meta=meta_common)
+            world.add_predicate("action:extend_legs", attach="latest", meta=meta_common)
 
-        b_push  = world.add_predicate("action:push_up",    attach="now", meta=meta_common)
-        b_ext   = world.add_predicate("action:extend_legs",               meta=meta_common)
-        b_stand = world.add_predicate("state:posture_standing",           meta=meta_common)
+            # canonical standing state (no legacy 'state:posture_standing')
+            b_stand = world.add_predicate("posture:standing", attach="latest", meta=meta_common)
 
-        world.add_edge(b_push, b_ext, "then")
-        world.add_edge(b_ext, b_stand, "then")
-
-        # simple fatigue bump to show side-effect
-        drives.fatigue = min(1.0, drives.fatigue + 0.05)
-        return self._success(reward=1.0, notes="standing")
+            update_skill(self.name, +1.0, ok=True)
+            return {
+                "policy": self.name,
+                "status": "ok",
+                "reward": 1.0,
+                "notes": "stood up",
+                "binding": b_stand,
+            }
+        except Exception as e:
+            update_skill(self.name, 0.0, ok=False)
+            return {"policy": self.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}
 
 
 class SeekNipple(Primitive):
-    """Example/stub of a follow-up behavior; you can flesh this out later."""
+    """Example/stub of a follow-up behavior"""
     name = "policy:seek_nipple"
 
-
     def trigger(self, world, drives: Drives) -> bool:
+        """
+        Fire only when hungry, upright, not fallen, and not already seeking.
+        Accept both legacy and canonical posture tags for backward compatibility.
+        """
         tags = set(drives.predicates())
         if "drive:hunger_high" not in tags:
             return False
 
-        # must be upright
-        if not _has(world, "state:posture_standing"):
+        # must be upright (accept old or canonical form)
+        if not (_has(world, "state:posture_standing") or _has(world, "posture:standing")):
             return False
 
-        # do NOT seek while fallen; recover first
-        if _has(world, "state:posture_fallen"):
+        # do NOT seek while fallen; recover first (accept old or canonical form)
+        if _has(world, "state:posture_fallen") or _has(world, "posture:fallen"):
             return False
 
-        # prevent repeats if already in a seeking state
-        if _has(world, "state:seeking_mom"):
-            return False
-
-        # require at least one sensory cue (vision/smell/sound)
-        if not _any_cue_present(world):
+        # avoid re-firing if already seeking (accept old or canonical form)
+        if _has(world, "state:seeking_mom") or _has(world, "seeking_mom"):
             return False
 
         return True
-
-
+   
     def execute(self, world, ctx, drives: Drives) -> dict:
         now = datetime.now().isoformat(timespec="seconds")
         meta = {"policy": self.name, "created_at": now}
         a = world.add_predicate("action:orient_to_mom", attach="now", meta=meta)
-        b = world.add_predicate("state:seeking_mom",                 meta=meta)
+        b = world.add_predicate("seeking_mom",                 meta=meta)
         world.add_edge(a, b, "then")
         return self._success(reward=0.5, notes="seeking mom")
 
 
 class FollowMom(Primitive):
-    """Fallback primitive (permissive). Tighten trigger if you prefer fewer defaults."""
+    """Fallback primitive (permissive). Tighten trigger if prefer fewer defaults."""
     name = "policy:follow_mom"
 
     def trigger(self, world, drives: Drives) -> bool:
@@ -339,7 +349,7 @@ class ExploreCheck(Primitive):
     name = "policy:explore_check"
 
     def trigger(self, world, drives: Drives) -> bool:
-        # simple periodic check; you can add a timer or stochastic gate later
+        # simple periodic check;  can add a timer or stochastic gate later
         return False
 
     def execute(self, world, ctx, drives: Drives) -> dict:
@@ -397,8 +407,8 @@ def action_center_step(world, ctx, drives: Drives) -> dict:
         - Updates SKILLS ledger.
     """
     # ---- SAFETY-FIRST SHORT-CIRCUIT ----
-    if _has(world, "state:posture_fallen"):
-        # run stand_up immediately
+    # if fallen, recover immediately (accept old or canonical form)
+    if _has(world, "state:posture_fallen") or _has(world, "posture:fallen"):
         for policy in PRIMITIVES:
             if policy.name == "policy:stand_up":
                 try:
@@ -406,6 +416,7 @@ def action_center_step(world, ctx, drives: Drives) -> dict:
                 except Exception as e:
                     update_skill(policy.name, 0.0, ok=False)
                     return {"policy": policy.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}
+
     # ------------------------------------
     
     for policy in PRIMITIVES:
