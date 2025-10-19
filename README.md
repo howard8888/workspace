@@ -4,7 +4,6 @@
 
 The CCA8 Compendium is an all-in-one ongoing document that captures the design, rationale, and practical know-how for the CCA8 simulation project. It is intended to function as a user manual how to use the software as well as provide technical details to persons with an interest in the project.
 
-
 **1 minute summary:**
 
 The CCA8 Project is the simulation of the brain of a mountain goat through the lifecycle with hooks for different robotic embodiments.
@@ -17,7 +16,7 @@ Entry point: `cca8_run.py`Primary modules: `cca8_run.py`, `cca8_world_graph.py`,
 
 
 
-<img src="file:///C:\Users\howar\workspace/calf_goat.jpg" title="Mountain Goat Calf" alt="" style="zoom:200%;">
+<img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
 
 *Adult Mountain Goat with recently born Calf*
 
