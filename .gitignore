@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *.pyo
 *.pyd
@@ -14,6 +15,7 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+*.swp
 
 # Patches/temp
 *.patch
@@ -23,3 +25,12 @@ session.json
 *.bak
 *.bak.*
 world_snapshot.*
+
+# Logs and run outputs
+cca8_run.log
+world_snapshot.txt
+world_graph.html
+session*.json
+
+
+
