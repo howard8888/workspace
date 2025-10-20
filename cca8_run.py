@@ -721,6 +721,7 @@ MENU = """\
 22) Export and display interactive graph with options
 23) Understanding bindings, edges, predicates, cues, anchors, policies
 24) Capture scene → emit cue/predicate with tiny engram (signal bridge)
+25) Planner strategy (toggle BFS ↔ Dijkstra)
 
 
 [S] Save session → path
@@ -1090,8 +1091,8 @@ def run_preflight_full(args) -> int:
     
     While the preflight system is a very convenient way for testing the cca8 simulation software, particularly after code or large
     data changes, we acknowledge the strength and tradition of the Pytest (or equivalent) unit tests in validating the correctness of
-    code logic, the ability for very granular testing and better proves that the code works. Thus, the preflight system by design
-    calls Pytest to run whatever unit tests are present in the /tests subdirectory from the main working directory.
+    code logic, the ability for very granular testing and better proves that the code works. Thus, the preflight system by design first
+    calls pytest to run whatever unit tests are present in the /tests subdirectory from the main working directory.
     
     """
     print("[preflight] Running full preflight...")
@@ -1106,18 +1107,44 @@ def run_preflight_full(args) -> int:
         if _os.path.isdir("tests"):
             try:
                 import pytest as _pytest
-                print("[preflight] Running unit tests (pytest)...")
-                _rc = _pytest.main(["-q", "tests"])
-                if _rc == 0:
-                    ok("pytest: all tests passed")
+                print("[preflight] Running unit tests (pytest)...\n")
+
+                # Detect pytest-cov plugin; if missing, run without coverage
+                try:
+                    import pytest_cov  # noqa: F401
+                    _have_cov = True
+                except Exception:
+                    _have_cov = False
+
+                if _have_cov:
+                    # Where to store coverage artifacts during preflight
+                    _os.makedirs(".coverage", exist_ok=True)
+                    _os.environ.setdefault("COVERAGE_FILE", ".coverage/.coverage.preflight")
+
+                    _cov_pkgs = ["cca8_world_graph", "cca8_controller", "cca8_run"] #ensure covering active codebase
+                    _args = ["-v", "--maxfail=1"]
+                    for _pkg in _cov_pkgs:
+                        _args += ["--cov", _pkg]
+
+                    # Human-friendly console and a machine-friendly XML for CI/tools
+                    _args += ["--cov-report=term-missing", "--cov-report=xml:.coverage/coverage.xml", "tests"]
                 else:
-                    bad(f"pytest: test run reported failures (exit={_rc})")
+                    # Fallback: run tests without coverage
+                    _args = ["-v", "--maxfail=1", "tests"]
+
+                _rc = _pytest.main(_args)
+                if _rc == 0:
+                    ok("pytest: all tests passed\n")
+                    if _have_cov:
+                        ok("coverage: see .coverage/coverage.xml and console summary above\n")
+                else:
+                    bad(f"pytest: test run reported failures (exit={_rc})\n")
             except Exception as e:
                 bad(f"pytest run error: {e}")
         else:
-            ok("pytest: no 'tests' directory found — skipping")
+            ok("pytest: no 'tests' directory found — skipping\n")
     except Exception as e:
-        bad(f"pytest not available or other error: {e}")
+        bad(f"pytest not available or other error: {e}\n")
 
     # 1) Python & platform
     try:
@@ -1766,6 +1793,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
         "understanding": "23", "bindings-help": "23", "predicates-help": "23",
         "cues-help": "23", "policies-help": "23", "tagging": "23", "standard": "23",
         "capture": "24", "scene": "24", "engram": "24", "engrams": "24",
+        "planner": "25", "strategy": "25", "dijkstra": "25", "bfs": "25", "toggle planner": "25",
+
     }
     
     # NEW MENU compatibility: accept new grouped numbers and legacy ones.
@@ -1794,6 +1823,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
         "22": "22",  # Export and display interactive graph (Pyvis HTML)
         "23": "23",  # Understanding bindings/edges/predicates/cues/anchors/policies
         "24": "24",  # Capture scene → emit cue/predicate + tiny engram (signal bridge demo)
+        "25": "25",  # Planner strategy toggle
 
     }
 
@@ -2393,7 +2423,28 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print(f"[warn] capture_scene failed: {e}")
 
             loop_helper(args.autosave, world, drives)
-
+            
+        elif choice == "25":
+            # Planner strategy toggle
+            try:
+                current = getattr(world, "get_planner", lambda: "bfs")()
+            except Exception:
+                current = "bfs"
+            print(f"\nCurrent planner: {current.upper()}  (BFS = fewest hops; Dijkstra = lowest total edge weight)")
+            print("Note: Edge weights are read from edge.meta keys: 'weight' → 'cost' → 'distance' → 'duration_s' (default 1.0).")
+            try:
+                sel = input("Choose planner: [b]fs / [d]ijkstra / [Enter]=keep → ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                sel = ""
+            if sel.startswith("b"):
+                world.set_planner("bfs")
+                print("Planner set to BFS (unweighted shortest path by hops).")
+            elif sel.startswith("d"):
+                world.set_planner("dijkstra")
+                print("Planner set to Dijkstra (weighted; defaults to 1 per edge when unspecified).")
+            else:
+                print("Planner unchanged.")
+            loop_helper(args.autosave, world, drives)
 
         elif choice.lower() == "s":
             # Save session

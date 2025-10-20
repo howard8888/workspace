@@ -48,6 +48,9 @@ from dataclasses import dataclass
 from collections import deque
 from typing import Dict, List, Set, Optional, TypedDict
 import itertools
+import heapq
+import os
+
 
 # PyPI and Third-Party Imports
 # --none at this time at program startup--
@@ -56,7 +59,7 @@ import itertools
 # --none at this time at program startup--
 
 # --- Public API index and version, constants -------------------------------------------------
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __all__ = ["Binding", "WorldGraph", "Edge", "__version__"]
 
 
@@ -230,6 +233,8 @@ class WorldGraph:
         self._latest_binding_id: Optional[str] = None
         self._id_counter = itertools.count(1)
         self._init_lexicon()
+        self._plan_strategy: str = (os.environ.get("CCA8_PLANNER", "bfs") or "bfs").lower()
+
         
     # --- tag policy / developmental stage -----------------------------------
 
@@ -275,6 +280,20 @@ class WorldGraph:
                 if self._tag_policy != "allow":
                     print(f"WARN [tags] legacy '{family}:{token_local}' — prefer '{family}:{preferred}' (kept legacy to avoid breakage)")
         return token_local
+
+    def set_planner(self, strategy: str = "bfs") -> None:
+        """
+        Set the path planner used by plan_to_predicate().
+        Accepts 'bfs' (default) or 'dijkstra'.
+        """
+        s = (strategy or "bfs").lower()
+        if s not in {"bfs", "dijkstra"}:
+            raise ValueError("strategy must be 'bfs' or 'dijkstra'")
+        self._plan_strategy = s
+
+    def get_planner(self) -> str:
+        """Return the current planner strategy ('bfs' or 'dijkstra')."""
+        return getattr(self, "_plan_strategy", "bfs")
 
     # ------------------------- internals -------------------------
 
@@ -697,19 +716,8 @@ class WorldGraph:
         return path
 
     def plan_to_predicate(self, src_id: str, token: str) -> Optional[List[str]]:
-        """Breadth-first search from src_id to the first binding that carries the target predicate.
-
-        Args:
-            src_id: Starting binding id (e.g., "b1").
-            token: Predicate token to search for. May be given as "pred:<token>" or just "<token>".
-
-        Returns:
-            A list of binding ids forming a path from src_id to the goal (inclusive), or None if no path.
-
-        Notes:
-            - This traverses all outgoing edges (label-agnostic).
-            - If the source already carries the predicate, returns [src_id].
-            - Uses _reconstruct_path(parent, goal) to rebuild the path once the goal is found.
+        """Plan from src_id to first binding carrying 'pred:<token>'.
+        Strategy chosen by self._plan_strategy ('bfs' | 'dijkstra').
         """
         # Normalize the tag we are searching for
         token = (token or "").strip()
@@ -721,6 +729,11 @@ class WorldGraph:
         if target_tag in self._bindings[src_id].tags:
             return [src_id]
 
+        # Strategy dispatch
+        if getattr(self, "_plan_strategy", "bfs") == "dijkstra":
+            return self._plan_to_predicate_dijkstra(src_id, target_tag)
+
+        # --- BFS (current behavior) ---
         q: deque[str] = deque([src_id])
         parent: Dict[str, Optional[str]] = {src_id: None}
         visited: Set[str] = {src_id}
@@ -749,7 +762,67 @@ class WorldGraph:
         # No path found
         return None
 
+    def _edge_cost(self, e: Edge) -> float:
+        """
+        Return numeric cost/weight for an edge.
+        Priority: meta['weight'] → meta['cost'] → meta['distance'] → meta['duration_s'] → 1.0
+        """
+        meta = (e.get("meta") or {}) if isinstance(e, dict) else {}
+        for k in ("weight", "cost", "distance", "duration_s"):
+            v = meta.get(k)
+            if isinstance(v, (int, float)):
+                return float(v)
+        return 1.0  # default infrastructure: unweighted edges
 
+    def _plan_to_predicate_dijkstra(self, src_id: str, target_tag: str) -> Optional[List[str]]:
+        """
+        Dijkstra search from src_id to the first node that carries 'target_tag'.
+        With all edge weights = 1, this is equivalent to BFS.
+        """
+        if not src_id or src_id not in self._bindings:
+            return None
+        if target_tag in self._bindings[src_id].tags:
+            return [src_id]
+
+        # distance & parent maps
+        dist: Dict[str, float] = {src_id: 0.0}
+        parent: Dict[str, Optional[str]] = {src_id: None}
+        seen: Set[str] = set()
+
+        # (total_cost, node_id)
+        pq: list[tuple[float, str]] = [(0.0, src_id)]
+
+        while pq:
+            d_u, u = heapq.heappop(pq)
+            if u in seen:
+                continue
+            seen.add(u)
+
+            # goal test when node is *popped* (guaranteed minimal cost)
+            b_u = self._bindings.get(u)
+            if b_u and (target_tag in getattr(b_u, "tags", [])):
+                return self._reconstruct_path(parent, u)
+
+            # relax outgoing edges
+            if not b_u:
+                continue
+            for e in getattr(b_u, "edges", []) or []:
+                v = e.get("to")
+                if not v or v not in self._bindings:
+                    continue
+                w = self._edge_cost(e)
+                if w < 0:
+                    # ignore pathological negatives; infra is for non-negative costs
+                    continue
+                nd = d_u + w
+                if nd < dist.get(v, float("inf")):
+                    dist[v] = nd
+                    parent[v] = u
+                    heapq.heappush(pq, (nd, v))
+
+        return None
+
+    
     # ------------------------- pretty path helpers -------------------------
 
     def _first_pred_of(self, bid: str) -> str | None:

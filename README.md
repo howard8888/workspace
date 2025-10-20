@@ -74,6 +74,7 @@ verify with  plan NOW → `milk:drinking`.
   - [Data flow (a tick)](#data-flow-a-tick)
 - [Action Selection: Drives, Policies, Action Center](#action-selection-drives-policies-action-center)
 - [Planner Contract](#planner-contract)
+- [Planner: BFS vs Dijkstra (weighted edges)](#planner-bfs-vs-dijkstra-weighted-edges)
 - [Persistence: Autosave/Load](#persistence-autosaveload)
 - [Runner, menus, and CLI](#runner-menus-and-cli)
 - [Logging & Unit Tests](#logging--unit-tests)
@@ -94,14 +95,14 @@ verify with  plan NOW → `milk:drinking`.
 - [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
 - [Planner contract (for maintainers)](#planner-contract-for-maintainers)
 - [Persistence contract](#persistence-contract)
-
-
-
-
-
-
-
-
+  
+  
+  
+  
+  
+  
+  
+  
 
 **Summary Overview:**
 
@@ -1340,6 +1341,39 @@ Q: Complexity?  A: O(|V|+|E|) BFS.
 Q: Why might a path be missing?  A: Predicate not created yet or the graph is disconnected.
 
 ---
+
+### Planner: BFS vs Dijkstra (weighted edges)
+
+**What’s available**
+
+- **Default = BFS** (fewest edges/hops).
+
+- **Dijkstra** (optional) computes the **lowest total edge weight**; uses the same API and return type as BFS (`WorldGraph.plan_to_predicate(...)` returns a list of binding ids).
+  In the real world, pathways from node to node are not at the same advantage or cost, and we end up using weighted edges past the neonatal state very quickly.
+
+**Edge weights**
+
+- Each directed edge can carry metadata; cost is read in this priority:
+  `weight` → `cost` → `distance` → `duration_s` → **1.0** (fallback).
+- If you don’t set any weights, Dijkstra and BFS usually produce the same path.
+
+**Switching planners**
+
+- **Interactive**: menu item **25) Planner strategy (toggle BFS ↔ Dijkstra)** (if your runner exposes it).
+
+- **Environment**:
+  
+  - Windows (cmd):  
+    `set CCA8_PLANNER=dijkstra && python cca8_run.py --plan goal:whatever`
+  - macOS/Linux (bash/zsh):  
+    `CCA8_PLANNER=dijkstra python3 cca8_run.py --plan goal:whatever`
+
+- **In code**:
+  
+  ```python
+  world.set_planner("dijkstra")    # or "bfs"
+  current = world.get_planner()
+  ```
 
 ## Persistence: Autosave/Load
 
