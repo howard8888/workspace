@@ -6,7 +6,7 @@ The CCA8 Compendium is an all-in-one ongoing document that captures the design, 
 
 **1 minute summary:**
 
-The CCA8 Project is the simulation of the brain of a mountain goat through the lifecycle with hooks for different robotic embodiments.
+The CCA8 Project is the simulation of the brain of a mountain goat through the lifecycle with hooks for different robotic embodiments. 
 
 Scaffolding in place (partially operational) for simulation of a chimpanzee-like brain, human-like brain, human-like brain with five brains operating in parallel in the same agent, human-like brain with multiple agents interacting, human-like brain with five brains operating in parallel with combinatorial planning ability.
 

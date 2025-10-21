@@ -29,6 +29,8 @@ from array import array
 
 # in cca8_features.py
 __version__ = "0.1.0"
+__all__ = ["FeaturePayload", "TensorPayload", "FactMeta", "__version__"]
+
 
 class FeaturePayload(Protocol):
     """Typed payload interface for column engrams.

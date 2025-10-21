@@ -27,6 +27,8 @@ from typing import Dict, Any, Optional
 import uuid
 
 __version__ = "0.1.0"
+__all__ = ["ColumnMemory", "mem", "__version__"]
+
 
 try:
     from cca8_features import FeaturePayload, FactMeta, TensorPayload  # noqa: F401

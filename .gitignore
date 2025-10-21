@@ -1,10 +1,31 @@
 # Python
 __pycache__/
-.pytest_cache/
 *.py[cod]
 *.pyo
 *.pyd
 *.egg-info/
+
+
+# Tools & caches
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage/
+coverage.xml
+.hypothesis/
+
+
+# Build/dist
+build/
+dist/
+*.egg-info/
+
+# Local scratch / artifacts (edit to taste)
+archive/
+tools/
+lib/
+*.bak
+*.tmp
 
 # Virtual envs
 .venv/

@@ -30,7 +30,14 @@ emitting sensory cues, and running the Action Center ("Instinct step"). It also 
 non-interactive utility flags for scripting, like `--about`, `--version`, and `--plan <predicate>`.
 """
 
-# --- Imports -------------------------------------------------------------
+# --- Pragmas and Imports -------------------------------------------------------------
+
+# pylint: disable=protected-access
+#   we treat the cca8_runner module as a trusted friend module and thus silence warnings for acces to _objects
+# pylint: disable=import-outside-toplevel
+#   a number of the imports in profile/preflight stubs are by design and leave for now
+
+
 # Standard Library Imports
 from __future__ import annotations
 import argparse
@@ -39,10 +46,11 @@ import os
 import platform
 import sys
 import logging
-import time
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional, Any, Dict, List, Callable
+from typing import DefaultDict
+from collections import defaultdict
 
 # PyPI and Third-Party Imports
 # --none at this time at program startup --
@@ -67,6 +75,7 @@ __all__ = [
     "boot_prime_stand",
     "save_session",
     "versions_dict",
+    "versions_text",
     "choose_contextual_base",
     "compute_foa",
     "candidate_anchors",
@@ -161,6 +170,8 @@ def world_delete_edge(world: Any, src: str, dst: str, rel: str | None) -> int:
 # --- CLI flow: delete edge -------------------------------------------------------
 # This is part of the CLI layer; it calls engine helper `world_delete_edge()`.
 def delete_edge_flow(world: Any, autosave_cb=None) -> None:
+    """delete edge
+    """
     print("Delete edge (src -> dst [relation])")
     src = input("Source binding id (e.g., b1): ").strip()
     dst = input("Dest binding id (e.g., b3): ").strip()
@@ -240,24 +251,38 @@ class HAL:
     """Hardware abstraction layer (HAL) skeleton for future usage
     """
     def __init__(self, body: str | None = None):
+        # future usage: load body profile (motor map), open serial/network, etc.
         self.body = body or "(none)"
         # future usage: load body profile (motor map), open serial/network, etc.
 
     # Actuators
-    def push_up(self):        pass
-    def extend_legs(self):    pass
-    def orient_to_mom(self):  pass
+    def push_up(self):
+        """Raise chest (stub)."""
+        return False
+
+    def extend_legs(self):
+        """Extend legs (stub)."""
+        return False
+
+    def orient_to_mom(self):
+        """Rotate toward maternal stimulus (stub)."""
+        return False
 
     # Sensors
-    def sense_vision_mom(self):  return False
-    def sense_vestibular_fall(self): return False
+    def sense_vision_mom(self):
+        """Return True if mother's silhouette is detected (stub)."""
+        return False
 
+    def sense_vestibular_fall(self):
+        """Return True if fall is detected (stub)."""
+        return False
 
 # --------------------------------------------------------------------------------------
 # Two-gate policy and helpers and console helpers
 # --------------------------------------------------------------------------------------
 
 def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Body: (none)"):
+    """Print the intro banner and a brief explanation of the simulation profiles and CLI usage."""
     print('\n\n# --------------------------------------------------------------------------------------')
     print('# NEW RUN   NEW RUN')
     print('# --------------------------------------------------------------------------------------')
@@ -279,7 +304,7 @@ def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Bod
     print("  6. Human-like one-agent multiple-brains simulation with combinatorial planning")
     print("  7. Super-Human-like machine simulation\n")
     print("Pending additional intro material here....")
-       
+
 def _parse_vector(text: str) -> list[float]:
     """
     Parse a comma/space-separated string into a list of floats.
@@ -307,7 +332,7 @@ def loop_helper(autosave_from_args: Optional[str], world, drives, time_limited: 
     if time_limited:
         return
     if autosave_from_args:
-        ts = save_session(autosave_from_args, world, drives)
+        save_session(autosave_from_args, world, drives)
         # Quiet by default; uncomment for debugging:
         # print(f"[autosaved {ts}] {autosave_from_args}")
 
@@ -337,9 +362,13 @@ def _drive_tags(drives) -> list[str]:
     return tags
 
 def _normalize_pred(tok: str) -> str:
+    """Ensure a token is 'pred:<x>' form (idempotent).
+    """
     return tok if tok.startswith("pred:") else f"pred:{tok}"
 
 def _neighbors(world, bid: str) -> List[str]:
+    """Return outgoing neighbor ids from a binding, being tolerant of alternative edge
+         layouts ('edges'/'out'/'links')."""
     b = world._bindings.get(bid)
     if not b:
         return []
@@ -353,6 +382,8 @@ def _neighbors(world, bid: str) -> List[str]:
     return out
 
 def _bfs_reachable(world, src: str, dst: str, max_hops: int = 3) -> bool:
+    """Light BFS reachability within `max_hops` hops; early exit on first match.
+    """
     from collections import deque
     if src == dst:
         return True
@@ -372,6 +403,7 @@ def _bfs_reachable(world, src: str, dst: str, max_hops: int = 3) -> bool:
     return False
 
 def _bindings_with_pred(world, token: str) -> List[str]:
+    """Return binding ids whose tags contain pred:<token> (exact match)."""
     want = _normalize_pred(token)
     out = []
     for bid, b in world._bindings.items():
@@ -382,6 +414,7 @@ def _bindings_with_pred(world, token: str) -> List[str]:
     return out
 
 def _bindings_with_cue(world, token: str) -> List[str]:
+    """Return binding ids whose tags contain cue:<token> (exact match)."""
     want = f"cue:{token}"
     out = []
     for bid, b in world._bindings.items():
@@ -392,9 +425,12 @@ def _bindings_with_cue(world, token: str) -> List[str]:
     return out
 
 def any_cue_tokens_present(world, tokens: List[str]) -> bool:
+    """Return True if **any** `cue:<token>` exists anywhere in the graph.
+    """
     return any(_bindings_with_cue(world, tok) for tok in tokens)
 
 def has_pred_near_now(world, token: str, hops: int = 3) -> bool:
+    """Return True if any pred:<token> is reachable from NOW in ≤ `hops` edges."""
     now_id = _anchor_id(world, "NOW")
     for bid in _bindings_with_pred(world, token):
         if _bfs_reachable(world, now_id, bid, max_hops=hops):
@@ -402,27 +438,40 @@ def has_pred_near_now(world, token: str, hops: int = 3) -> bool:
     return False
 
 def any_pred_present(world, tokens: List[str]) -> bool:
+    """Return True if any pred:<token> in `tokens` exists anywhere in the graph."""
     return any(_bindings_with_pred(world, tok) for tok in tokens)
 
 @dataclass
 class PolicyGate:
+    """Declarative description of a controller gate used by PolicyRuntime (dev_gating,
+       trigger, and optional explain)."""
     name: str
     dev_gate: Callable[[Any], bool]                      # ctx -> bool
     trigger: Callable[[Any, Any, Any], bool]             # (world, drives, ctx) -> bool
     explain: Optional[Callable[[Any, Any, Any], str]] = None
 
 class PolicyRuntime:
+    """Runtime wrapper around a gate catalog that filters by dev gating, evaluates
+         triggers, and executes one step."""
     def __init__(self, catalog: List[PolicyGate]):
+        """Initialize with a catalog (list of PolicyGate) and compute the 'loaded'
+           subset based on ctx.dev gating."""
         self.catalog = list(catalog)
         self.loaded: List[PolicyGate] = []
 
     def refresh_loaded(self, ctx) -> None:
+        """Recompute `self.loaded` by applying each gate's dev_gating predicate to `ctx`.
+        """
         self.loaded = [p for p in self.catalog if _safe(p.dev_gate, ctx)]
 
     def list_loaded_names(self) -> List[str]:
+        """Return names of currently loaded (dev-eligible) gates.
+        """
         return [p.name for p in self.loaded]
 
-    def consider_and_maybe_fire(self, world, drives, ctx, tie_break: str = "first") -> str:
+    def consider_and_maybe_fire(self, world, drives, ctx, tie_break: str = "first") -> str: # pylint: disable=unused-argument
+        """Evaluate triggers, prefer safety-critical gates, then run the controller once;
+          return a short human string."""
         # 1) evaluate triggers on available policies
         matches = [p for p in self.loaded if _safe(p.trigger, world, drives, ctx)]
         if not matches:
@@ -482,6 +531,8 @@ class PolicyRuntime:
         return '\n'.join(msg)
 
 def _safe(fn, *args):
+    """Invoke a predicate defensively (exceptions → False).
+    """
     try:
         return bool(fn(*args))
     except Exception:
@@ -738,14 +789,16 @@ Select: """
 # --------------------------------------------------------------------------------------
 
 def _goat_defaults():
-    # (name, sigma, jump, winners_k)
+    """Return the Mountain Goat default profile tuple: (name, sigma, jump, winners_k)."""
     return ("Mountain Goat", 0.015, 0.2, 2)
 
 def _print_goat_fallback():
+    """Explain that the chosen profile is not implemented and we fall back to Mountain Goat."""
     print("Although scaffolding is in place for its implementation, this evolutionary-like configuration is not currently available. "
           "Profile is set to mountain goat-like brain simulation.\n")
 
-def profile_chimpanzee(ctx) -> tuple[str, float, float, int]:
+def profile_chimpanzee(_ctx) -> tuple[str, float, float, int]:
+    """Print a narrative about the chimpanzee profile; fall back to Mountain Goat defaults."""
     print(
         "\nChimpanzee-like brain simulation"
         "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
@@ -755,7 +808,8 @@ def profile_chimpanzee(ctx) -> tuple[str, float, float, int]:
     _print_goat_fallback()
     return _goat_defaults()
 
-def profile_human(ctx) -> tuple[str, float, float, int]:
+def profile_human(_ctx) -> tuple[str, float, float, int]:
+    """Print a narrative about the human profile; fall back to Mountain Goat defaults."""
     print(
         "\nHuman-like brain simulation"
         "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
@@ -766,7 +820,8 @@ def profile_human(ctx) -> tuple[str, float, float, int]:
     _print_goat_fallback()
     return _goat_defaults()
 
-def profile_human_multi_brains(ctx, world) -> tuple[str, float, float, int]:
+def profile_human_multi_brains(_ctx, world) -> tuple[str, float, float, int]:
+    """Dry-run multi-brain sandbox (no writes); print trace; fall back to Mountain Goat defaults."""
     # Narrative
     print(
         "\nHuman-like one-agent multiple-brains simulation"
@@ -792,7 +847,8 @@ def profile_human_multi_brains(ctx, world) -> tuple[str, float, float, int]:
 
     # Scaffolding (non-crashing; prints a trace and falls back)
     try:
-        import copy, random
+        import copy
+        import random
         random.seed(42)  # deterministic demo
 
         print("[scaffold] Spawning 5 parallel 'brains' (sandbox worlds)...")
@@ -811,7 +867,7 @@ def profile_human_multi_brains(ctx, world) -> tuple[str, float, float, int]:
         # Each brain proposes a response + confidence + short rationale
         possible = ["stand", "seek_mom", "suckle", "recover_fall", "idle"]
         proposals = []
-        for i, bw in enumerate(brains, start=1):
+        for i, _ in enumerate(brains, start=1):
             resp = random.choice(possible)
             conf = round(random.uniform(0.40, 0.95), 2)
             why  = {
@@ -825,10 +881,11 @@ def profile_human_multi_brains(ctx, world) -> tuple[str, float, float, int]:
             print(f"[scaffold] Brain#{i} proposes: {resp:12s}  (confidence={conf:.2f})  rationale: {why}")
 
         # Voting: most popular; tie-break by highest avg confidence, then max confidence
-        from collections import Counter, defaultdict
+        from collections import Counter
         counts = Counter(r for r, _, _ in proposals)
         avg_conf = defaultdict(list)
-        max_conf = defaultdict(float)
+        #max_conf = defaultdict(float)
+        max_conf: DefaultDict[int, float] = defaultdict(float)
         for r, c, _ in proposals:
             avg_conf[r].append(c)
             if c > max_conf[r]: max_conf[r] = c
@@ -847,7 +904,8 @@ def profile_human_multi_brains(ctx, world) -> tuple[str, float, float, int]:
     _print_goat_fallback()
     return _goat_defaults()
 
-def profile_society_multi_agents(ctx) -> tuple[str, float, float, int]:
+def profile_society_multi_agents(_ctx) -> tuple[str, float, float, int]:
+    """Dry-run 3-agent society (no writes); print trace; fall back to Mountain Goat defaults."""
     print(
         "\nHuman-like one-brain simulation × multiple-agents society"
         "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
@@ -868,8 +926,6 @@ def profile_society_multi_agents(ctx) -> tuple[str, float, float, int]:
     # Scaffolding: create 3 tiny agents, run one tick, pass a simple message
     try:
         import random
-        from dataclasses import dataclass
-
         random.seed(7)  # deterministic print
 
         @dataclass
@@ -890,7 +946,7 @@ def profile_society_multi_agents(ctx) -> tuple[str, float, float, int]:
         # One tick: each agent runs action_center_step (dry outcome)
         for a in agents:
             try:
-                res = action_center_step(a.world, ctx, a.drives)
+                res = action_center_step(a.world, _ctx, a.drives)
                 print(f"[scaffold] {a.name}: Action Center → {res}")
             except Exception as e:
                 print(f"[scaffold] {a.name}: controller error: {e}")
@@ -901,7 +957,7 @@ def profile_society_multi_agents(ctx) -> tuple[str, float, float, int]:
             bid = agents[1].world.add_cue("sound:bleat:mom", attach="now", meta={"sender": agents[0].name})
             #bid = agents[1].world.add_predicate("sound:bleat:mom", attach="now", meta={"sender": agents[0].name})
             print(f"[scaffold] A2 received cue as binding {bid}; running one controller step on A2...")
-            res2 = action_center_step(agents[1].world, ctx, agents[1].drives)
+            res2 = action_center_step(agents[1].world, _ctx, agents[1].drives)
             print(f"[scaffold] A2: Action Center → {res2}")
         except Exception as e:
             print(f"[scaffold] message/cue demo note: {e}")
@@ -912,8 +968,9 @@ def profile_society_multi_agents(ctx) -> tuple[str, float, float, int]:
 
     _print_goat_fallback()
     return _goat_defaults()
-    
-def profile_multi_brains_adv_planning(ctx) -> tuple[str, float, float, int]:
+
+def profile_multi_brains_adv_planning(_ctx) -> tuple[str, float, float, int]:
+    """Dry-run 5x256 combinatorial planning stub (no writes); print trace; fall back to Mountain Goat defaults."""
     print(
         "\nHuman-like one-agent multiple-brains simulation with combinatorial planning"
         "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
@@ -962,7 +1019,7 @@ def profile_multi_brains_adv_planning(ctx) -> tuple[str, float, float, int]:
         for bi in range(1, brain_count + 1):
             best = None
             sum_scores = 0.0
-            for pj in range(procs_per_brain):
+            for _ in range(procs_per_brain):
                 plan  = [random.choice(actions) for _ in range(horizon)]
                 score = sum(reward.get(a, 0.0) for a in plan) - cost_per_step * len(plan)
                 sum_scores += score
@@ -988,7 +1045,8 @@ def profile_multi_brains_adv_planning(ctx) -> tuple[str, float, float, int]:
     _print_goat_fallback()
     return _goat_defaults()
 
-def profile_superhuman(ctx) -> tuple[str, float, float, int]:
+def profile_superhuman(_ctx) -> tuple[str, float, float, int]:
+    """Dry-run ‘ASI’ meta-controller stub (no writes); print trace; fall back to Mountain Goat defaults."""
     print(
         "\nSuper-human-like machine simulation"
         "\n\nFeatures sketch for an ASI-grade architecture:"
@@ -1084,26 +1142,49 @@ def versions_dict() -> dict:
         info[key + "_path"] = path
     return info
 
+def versions_text() -> str:
+    """
+    Return a human-readable summary of core component versions.
+
+    Includes: runner, world_graph, controller, column, features, temporal.
+    Internally formats `versions_dict()` so tests (and users) have a quick glanceable string.
+    """
+    d = versions_dict()  # existing function
+    keys = ("runner", "world_graph", "controller", "column", "features", "temporal")
+    lines = [f"{k}: {d.get(k, 'n/a')}" for k in keys]
+    return "\n".join(lines)
+
+def print_startup_notices(world) -> None:
+    '''print active planner and other statuses at
+    startup of the runner
+    '''
+    try:
+        print(f"[planner] Active planner on startup: {world.get_planner().upper()}")
+    except Exception as e:
+        print(f"unable to retrieve which active planner is running: {e}")
+        logging.error(f"Unable to retrieve startup active planner status: {e}", exc_info=True)
+
 def run_preflight_full(args) -> int:
     """
     Full preflight: quick, deterministic checks with one-line PASS/FAIL per item.
     Returns 0 for ok, non-zero for any failure.
-    
+
     While the preflight system is a very convenient way for testing the cca8 simulation software, particularly after code or large
     data changes, we acknowledge the strength and tradition of the Pytest (or equivalent) unit tests in validating the correctness of
     code logic, the ability for very granular testing and better proves that the code works. Thus, the preflight system by design first
     calls pytest to run whatever unit tests are present in the /tests subdirectory from the main working directory.
-    
+
     """
+    # pylint: disable=reimported
+    import os as _os  #required for running pyvis in browswer if os being used elsewhere
     print("[preflight] Running full preflight...")
 
     failures = 0
     def ok(msg):   print(f"[preflight] PASS  - {msg}")
     def bad(msg):  nonlocal failures; failures += 1; print(f"[preflight] FAIL  - {msg}")
-    
+
     # --- Unit tests (pytest) — run first ------------------------------------------------
     try:
-        import os as _os
         if _os.path.isdir("tests"):
             try:
                 import pytest as _pytest
@@ -1111,7 +1192,7 @@ def run_preflight_full(args) -> int:
 
                 # Detect pytest-cov plugin; if missing, run without coverage
                 try:
-                    import pytest_cov  # noqa: F401
+                    import pytest_cov as _pytest_cov  # noqa: F401  ## pylint: disable=unused-import
                     _have_cov = True
                 except Exception:
                     _have_cov = False
@@ -1155,7 +1236,7 @@ def run_preflight_full(args) -> int:
 
     # 2a) CCA8 modules present & importable (plus key symbols)
     try:
-        import importlib, os as _os
+        import importlib
 
         # module name → list of symbols we expect to exist
         _mods: list[tuple[str, list[str]]] = [
@@ -1189,6 +1270,19 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"module import checks failed: {e}")
 
+        # 2b) Explicit invariant check on a tiny fresh world
+    try:
+        _wi = cca8_world_graph.WorldGraph()
+        _wi.ensure_anchor("NOW")
+        issues = _wi.check_invariants(raise_on_error=False)
+        if issues:
+            bad("invariants: " + "; ".join(issues))
+        else:
+            ok("invariants: no issues on fresh world")
+    except Exception as e:
+        bad(f"invariants: check raised: {e}")
+
+
     # 3a) Accessory files present (README + image), non-empty
     try:
         _files = ["README.md", "calf_goat.jpg"]  # add more here if needed
@@ -1209,7 +1303,7 @@ def run_preflight_full(args) -> int:
 
     # 4a) Pyvis installed (for HTML graph export)
     try:
-        import pyvis  # type: ignore
+        import pyvis as _pyvis # type: ignore # pylint: disable=unused-import
         ok("pyvis installed")
     except Exception as e:
         ok(f"pyvis not installed (export still optional): {e}")
@@ -1224,8 +1318,8 @@ def run_preflight_full(args) -> int:
             bad("WorldGraph anchor missing or invalid")
     except Exception as e:
         bad(f"WorldGraph init failed: {e}")
-        
-    
+
+
     # 2a) WorldGraph.set_now() — anchor remap & tag housekeeping (no warnings)
     try:
         # fresh temp world just for this test
@@ -1272,14 +1366,23 @@ def run_preflight_full(args) -> int:
         _prev = _w2.set_now(_new_now, tag=True, clean_previous=True)
 
         # anchors map updated?
-        ok("set_now: NOW anchor re-pointed") if _w2._anchors.get("NOW") == _new_now else bad("set_now: anchors map not updated")
+        if _w2._anchors.get("NOW") == _new_now:
+            ok("set_now: NOW anchor re-pointed")
+        else:
+            bad("set_now: anchors map not updated")
 
         # new NOW has anchor tag?
-        ok("set_now: new NOW has anchor:NOW tag") if _has_tag(_new_now, "anchor:NOW") else bad("set_now: new NOW missing anchor:NOW tag")
+        if _has_tag(_new_now, "anchor:NOW"):
+            ok("set_now: new NOW has anchor:NOW tag")
+        else:
+            bad("set_now: new NOW missing anchor:NOW tag")
 
         # previous NOW lost the anchor tag?
         if _prev and _prev in _w2._bindings:
-            ok("set_now: removed anchor:NOW from previous NOW") if not _has_tag(_prev, "anchor:NOW") else bad("set_now: previous NOW still tagged anchor:NOW")
+            if not _has_tag(_prev, "anchor:NOW"):
+                ok("set_now: removed anchor:NOW from previous NOW")
+            else:
+                bad("set_now: previous NOW still tagged anchor:NOW")
 
         # negative test: unknown id must raise KeyError
         try:
@@ -1352,7 +1455,7 @@ def run_preflight_full(args) -> int:
         ok(f"planner probes (path_found={bool(p)})")
     except Exception as e:
         bad(f"planner probe failed: {e}")
-              
+
     # Z1) Attach semantics (NOW/latest → new binding) — no warnings
     try:
         _w = cca8_world_graph.WorldGraph()
@@ -1361,13 +1464,30 @@ def run_preflight_full(args) -> int:
 
         # attach="now" creates NOW→new (then) and updates LATEST
         _a = _w.add_predicate("pred:test:A", attach="now")
-        ok("attach=now: NOW→new edge recorded") if any(e.get("to") == _a and e.get("label", "then") == "then" for e in (_w._bindings[_now].edges or [])) else bad("attach=now: missing NOW→new edge")
-        ok("attach=now: LATEST updated to new binding") if _w._latest_binding_id == _a else bad("attach=now: LATEST not updated")
+
+        if any(e.get("to") == _a and e.get("label", "then") == "then" for e in (_w._bindings[_now].edges or [])):
+            ok("attach=now: NOW→new edge recorded")
+        else:
+            bad("attach=now: missing NOW→new edge")
+
+        if _w._latest_binding_id == _a:
+            ok("attach=now: LATEST updated to new binding")
+        else:
+            bad("attach=now: LATEST not updated")
 
         # attach="latest" creates oldLATEST→new (then) and updates LATEST
         _b = _w.add_predicate("pred:test:B", attach="latest")
-        ok("attach=latest: LATEST→new edge recorded") if any(e.get("to") == _b and e.get("label", "then") == "then" for e in (_w._bindings[_a].edges or [])) else bad("attach=latest: missing LATEST→new edge")
-        ok("attach=latest: LATEST updated to new binding") if _w._latest_binding_id == _b else bad("attach=latest: LATEST not updated")
+
+        if any(e.get("to") == _b and e.get("label", "then") == "then" for e in (_w._bindings[_a].edges or [])):
+            ok("attach=latest: LATEST→new edge recorded")
+        else:
+            bad("attach=latest: missing LATEST→new edge")
+
+        if _w._latest_binding_id == _b:
+            ok("attach=latest: LATEST updated to new binding")
+        else:
+            bad("attach=latest: LATEST not updated")
+
     except Exception as e:
         bad(f"attach semantics failed: {e}")
 
@@ -1419,7 +1539,7 @@ def run_preflight_full(args) -> int:
             bad(f"planner: unexpected path { _path }")
     except Exception as e:
         bad(f"planner (BFS) sanity failed: {e}")
-        
+
     # Z5) Lexicon strictness: reject out-of-lexicon pred at neonate
     try:
         _w6 = cca8_world_graph.WorldGraph()
@@ -1431,7 +1551,7 @@ def run_preflight_full(args) -> int:
             ok("lexicon: strict rejects out-of-lexicon token at neonate")
     except Exception as e:
         bad(f"lexicon strictness failed: {e}")
-        
+
     # Z6) Engram bridge: capture_scene → engram asserted, pointer attached
     try:
         _w7 = cca8_world_graph.WorldGraph()
@@ -1439,7 +1559,12 @@ def run_preflight_full(args) -> int:
         bid, eid = _w7.capture_scene("vision", "silhouette:mom", [0.1, 0.2, 0.3], attach="now", family="cue")
         # engram pointer attached?
         b = _w7._bindings[bid]
-        ok("engram bridge: binding created with cue") if any(t.startswith("cue:") for t in (b.tags or [])) else bad("engram bridge: cue tag missing")
+
+        if any(t.startswith("cue:") for t in (b.tags or [])):
+            ok("engram bridge: binding created with cue")
+        else:
+            bad("engram bridge: cue tag missing")
+
         if b.engrams and "column01" in b.engrams and b.engrams["column01"].get("id") == eid:
             ok("engram bridge: pointer attached to binding")
         else:
@@ -1481,6 +1606,7 @@ def run_preflight_lite_maybe():
     print("[preflight-lite] checks ok\n\n")
 
 def _anchor_id(world, name="NOW") -> str:
+    """Return the binding id for anchor:<name>, scanning internals or tags; '?' if not found."""
     # Try a direct lookup if available
     try:
         if hasattr(world, "_anchors") and isinstance(world._anchors, dict):
@@ -1496,6 +1622,7 @@ def _anchor_id(world, name="NOW") -> str:
     return "?"
 
 def _sorted_bids(world) -> list[str]:
+    """Return binding ids sorted numerically (b1, b2, ...), with non-numeric ids last."""
     def key_fn(bid: str):
         try: return int(bid[1:])  # sort b1,b2,... numerically
         except: return 10**9
@@ -1603,7 +1730,7 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     return "\n".join(lines)
 
 def export_snapshot(world, drives=None, ctx=None, policy_rt=None,
-                    path_txt="world_snapshot.txt", path_dot=None) -> None:
+                    path_txt="world_snapshot.txt", _path_dot=None) -> None:
     """Write a complete snapshot of bindings + edges to a text file (no DOT)."""
     text_blob = snapshot_text(world, drives=drives, ctx=ctx, policy_rt=policy_rt)
     with open(path_txt, "w", encoding="utf-8") as f:
@@ -1634,11 +1761,12 @@ def _io_banner(args, loaded_path: str | None, loaded_ok: bool) -> None:
     elif (not loaded_ok) and ap:
         print(f"[io] Started a NEW session. Autosave ON to '{ap}'.")
     else:
-        print(f"[io] Started a NEW session. Autosave OFF — use [S] to save or pass --autosave <path>.")
+        print("[io] Started a NEW session. Autosave OFF — use [S] to save or pass --autosave <path>.")
 
 
 # ---------- Contextual base selection (skeleton) ----------
 def _nearest_binding_with_pred(world, token: str, from_bid: str, max_hops: int = 3) -> str | None:
+    """Return the first binding matching pred:<token> found by BFS from `from_bid` within `max_hops`."""
     want = token if token.startswith("pred:") else f"pred:{token}"
     # BFS with early exit that returns the first binding matching the predicate
     from collections import deque
@@ -1658,7 +1786,7 @@ def _nearest_binding_with_pred(world, token: str, from_bid: str, max_hops: int =
                     seen.add(v); depth[v] = depth[u] + 1; q.append(v)
     return None
 
-def choose_contextual_base(world, ctx, targets: list[str] | None = None) -> dict:
+def choose_contextual_base(world, ctx, targets: list[str] | None = None) -> dict: # pylint: disable=unused-argument
     """
     Skeleton: pick where a primitive *should* anchor writes.
     Order: nearest target predicate -> HERE (if exists) -> NOW.
@@ -1678,6 +1806,8 @@ def choose_contextual_base(world, ctx, targets: list[str] | None = None) -> dict
 
 # ---------- FOA (Focus of Attention) skeleton ----------
 def present_cue_bids(world) -> list[str]:
+    """Return binding ids that carry any `cue:*` tag (unordered)
+    """
     bids = []
     for bid, b in world._bindings.items():
         ts = getattr(b, "tags", [])
@@ -1686,6 +1816,8 @@ def present_cue_bids(world) -> list[str]:
     return bids
 
 def neighbors_k(world, start_bid: str, max_hops: int = 2) -> set[str]:
+    """Return the set of nodes within `max_hops` hops of `start_bid` (inclusive).
+    """
     from collections import deque
     out = set()
     q = deque([(start_bid, 0)])
@@ -1704,7 +1836,7 @@ def neighbors_k(world, start_bid: str, max_hops: int = 2) -> set[str]:
                     seen.add(v); q.append((v, d+1))
     return out
 
-def compute_foa(world, ctx, max_hops: int = 2) -> dict:
+def compute_foa(world, ctx, max_hops: int = 2) -> dict: # pylint: disable=unused-argument
     """
     Skeleton FOA window: union of neighborhoods around LATEST and NOW, plus cue nodes.
     Later we can weight by drives/costs and restrict size aggressively.
@@ -1714,15 +1846,20 @@ def compute_foa(world, ctx, max_hops: int = 2) -> dict:
     seeds    = [x for x in [latest, now_id] if x]
     seeds   += present_cue_bids(world)
     # dedupe seeds while preserving original order
-    _seen = set()
-    seeds = [s for s in seeds if not (s in _seen or _seen.add(s))]
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for s in seeds:
+        if s not in seen:
+            seen.add(s)
+            uniq.append(s)
+    seeds = uniq
     foa_ids  = set()
     for s in seeds:
         foa_ids |= neighbors_k(world, s, max_hops=max_hops)
     return {"seeds": seeds, "size": len(foa_ids), "ids": foa_ids}
 
 # ---------- Multi-anchor candidates (skeleton) ----------
-def candidate_anchors(world, ctx) -> list[str]:
+def candidate_anchors(world, ctx) -> list[str]:  # pylint: disable=unused-argument
     """
     Skeleton list of candidate start anchors for planning/search.
     Later we’ll run K parallel searches from these.
@@ -1748,11 +1885,13 @@ def interactive_loop(args: argparse.Namespace) -> None:
     world = cca8_world_graph.WorldGraph()
     drives = Drives()
     ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
+    print_startup_notices(world)
+
     POLICY_RT = PolicyRuntime(CATALOG_GATES)
     POLICY_RT.refresh_loaded(ctx)
     loaded_ok = False
     loaded_src = None
-    
+
     # ---- Text command aliases (words + 3-letter prefixes → legacy actions) -----
     #will map to current menu which then must be mapped to original menu numbers
     #intentionally keep here so easier for development visualization than up at top with constants
@@ -1788,15 +1927,15 @@ def interactive_loop(args: argparse.Namespace) -> None:
         "preflight": "20",
         "quit": "21", "exit": "21",  #no 'q' to avoid exit by mistake
         "tutorial": "t", "help": "t",
-        
+
         # Tagging/policies help, engram scene
         "understanding": "23", "bindings-help": "23", "predicates-help": "23",
         "cues-help": "23", "policies-help": "23", "tagging": "23", "standard": "23",
-        "capture": "24", "scene": "24", "engram": "24", "engrams": "24",
+        "capture": "24", "scene": "24", "engram": "24",
         "planner": "25", "strategy": "25", "dijkstra": "25", "bfs": "25", "toggle planner": "25",
 
     }
-    
+
     # NEW MENU compatibility: accept new grouped numbers and legacy ones.
     NEW_TO_OLD = {
         "1": "1",    # World stats
@@ -1870,7 +2009,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                    "super": ("Super-Human", 0.05, 0.35, 5)}
         name, sigma, jump, k = mapping[args.profile]
         ctx.profile, ctx.sigma, ctx.jump = name, sigma, jump
-        ctx.winners_k = k  
+        ctx.winners_k = k
         print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
         POLICY_RT.refresh_loaded(ctx)
     else:
@@ -1878,11 +2017,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
         name = profile["name"]
         sigma, jump, k = profile["ctx_sigma"], profile["ctx_jump"], profile["winners_k"]
         ctx.sigma, ctx.jump = sigma, jump
-        ctx.winners_k = k  
+        ctx.winners_k = k
         print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
         POLICY_RT.refresh_loaded(ctx)
     _io_banner(args, loaded_src, loaded_ok)
-    
+
     world.set_stage_from_ctx(ctx)        # derive 'neonate'/'infant' from ctx.age_days
     world.set_tag_policy("warn")         # or "strict" once you’re ready
 
@@ -2024,6 +2163,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
                         print(f"Linked {src} --{label}--> {dst}")
             except KeyError as e:
                 print("Invalid id:", e)
+            except ValueError as e:
+                print(f"[guard] {e}")
 
             loop_helper(args.autosave, world, drives)
 
@@ -2069,7 +2210,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 b = world._bindings[bid]
                 #tags = ", ".join(sorted(b.tags))
                 tags = ", ".join(sorted(getattr(b, "tags", []))) #in case bindings without a tags list
-                print(f"  {bid}: tags=[{tags}] engrams={[k for k in (b.engrams or {}).keys()]}")
+                print(f"  {bid}: tags=[{tags}] engrams={list((b.engrams or {}).keys())}")
             if not last_ids:
                 print("(no bindings yet)")
             print()
@@ -2084,7 +2225,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "9":
             # Run preflight now
-            rc = run_preflight_full(args)
+            #rc = run_preflight_full(args)
+            run_preflight_full(args)
             loop_helper(args.autosave, world, drives)
 
         elif choice == "10":
@@ -2107,9 +2249,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
                         or getattr(b, "links", []) or getattr(b, "outgoing", [])
                 if isinstance(edges, list) and edges:
                     print("Edges:")
-                    for e in edges:
-                        rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
-                        dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                    for ee in edges:
+                        rel = ee.get("label") or ee.get("rel") or ee.get("relation") or "then"
+                        dst = ee.get("to") or ee.get("dst") or ee.get("dst_id") or ee.get("id")
                         print(f"  -- {rel} --> {dst}")
                 else:
                     print("Edges: (none)")
@@ -2246,7 +2388,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     print("       Tip: install with  pip install pyvis")
 
             loop_helper(args.autosave, world, drives)
-            
+
         elif choice == "18":
             # Simulate a fall event and try a recovery attempt immediately
             prev_latest = world._latest_binding_id
@@ -2277,7 +2419,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print(fired)
 
             loop_helper(args.autosave, world, drives)
-            
+
 
         #elif "19"  see new_to_old compatibility map
         #elif "20"  see new_to_old compatibility map
@@ -2318,13 +2460,13 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 el = input("Show edge labels on links? [Y/n]: ").strip().lower()
             except Exception:
                 el = ""
-            show_edge_labels = False if el in {"n", "no", "0"} else True
+            show_edge_labels = not (el in {"n", "no", "0"})
 
             try:
                 ph = input("Enable physics (force-directed layout)? [Y/n]: ").strip().lower()
             except Exception:
                 ph = ""
-            physics = False if ph in {"n", "no", "0"} else True
+            physics = not (ph in {"n", "no", "0"})
 
             default_path = "world_graph.html"
             try:
@@ -2360,12 +2502,12 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print(f"[warn] Could not generate Pyvis HTML: {e}")
                 print("       Tip: install with  pip install pyvis")
             loop_helper(args.autosave, world, drives)
-            
+
         elif choice == "23":
             # Understanding bindings/edges/predicates/cues/anchors/policies (terminal help)
             print_tagging_and_policies_help(POLICY_RT)
             loop_helper(args.autosave, world, drives)
-            
+
         elif choice == "24":
             # Capture scene → emit cue/predicate + tiny engram (signal bridge demo)
             print("\nCapture scene — this will create a binding (cue/pred), assert a tiny engram in the column,")
@@ -2423,7 +2565,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print(f"[warn] capture_scene failed: {e}")
 
             loop_helper(args.autosave, world, drives)
-            
+
         elif choice == "25":
             # Planner strategy toggle
             try:
@@ -2578,7 +2720,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         args = p.parse_args(argv)
     except SystemExit as e:
-        return 2 if e.code else 0
+        code = getattr(e, "code", 0)
+        return 2 if code else 0  # pylint: disable=using-constant-test
+
 
     # process embodiment flags and continue with code
     try:

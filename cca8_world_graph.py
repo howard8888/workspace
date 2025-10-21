@@ -11,11 +11,11 @@ Why this exists:
 - Planning is simple BFS over binding edges to a target predicate tag.
 
 Explaining the terminology chosen:
-- "Binding" -- indeed a node instance but binding implies the binding, i.e., association, of 
+- "Binding" -- indeed a node instance but binding implies the binding, i.e., association, of
 facts and pointers, much like in neuro/cog systems linking features, time  and cause into abs
 coherent moment or episode; we are aiming for knowledge representation rather than just
 graph topology
-    -bindings can contain predicates and/or cues and/or anchors 
+    -bindings can contain predicates and/or cues and/or anchors
     (or none although not recommended -- add at least one tag if need a placeholder)
     (technically allow bindings without tags or edges, but not recommended stylistically)
     -bindings usually contain edges but can existed isolated without edges (e.g., checkpoint to be connected later, placeholders, etc)
@@ -59,9 +59,9 @@ import os
 # --none at this time at program startup--
 
 # --- Public API index and version, constants -------------------------------------------------
-__version__ = "0.1.2"
-__all__ = ["Binding", "WorldGraph", "Edge", "__version__"]
-
+__version__ = "0.1.3"
+__all__ = ["Edge", "Binding", "WorldGraph", "__version__"]
+# convenient public helpers (methods remain accessed via WorldGraph instance, this is just explicit export)
 
 _ATTACH_OPTIONS: Set[str] = {"now", "latest", "none"}
 
@@ -70,7 +70,8 @@ _ATTACH_OPTIONS: Set[str] = {"now", "latest", "none"}
 # -----------------------------------------------------------------------------
 
 class Edge(TypedDict):
-    #more precise typing of edges in class Binding
+    '''more precise typing of edges in class Binding
+    '''
     to: str
     label: str
     meta: dict
@@ -121,10 +122,10 @@ class TagLexicon:
     Constrained vocabulary for tags by developmental stage, with a small legacy map.
     - Part of implementation of Spelke's core knowledge idea, here as a contrained early lexicon
         that then unlocks richer tokens with development
-    -TagLexicon that defines which tokens are allowed at each developmental stage 
+    -TagLexicon that defines which tokens are allowed at each developmental stage
        (e.g., neonate → infant → juvenile → adult), including some legacy forms for devp't ease
     -there is light enforcement in WorldGraph.add_predicate/add_cue (configurable: "allow" | "warn" | "strict");
- 
+
     - Families: 'pred', 'cue', 'anchor'
     - Stages are cumulative: infant ⊇ neonate, juvenile ⊇ infant, etc.
     - Legacy tokens are accepted but a preferred canonical is suggested.
@@ -180,7 +181,9 @@ class TagLexicon:
             # accumulate
             for fam in ("pred", "cue", "anchor"):
                 acc[fam] |= set(self.BASE.get(stage, {}).get(fam, set()))
-            self.allowed[stage] = {fam: set(acc[fam]) for fam in acc}
+            #self.allowed[stage] = {fam: set(acc[fam]) for fam in acc}
+            self.allowed[stage] = {fam: set(vals) for fam, vals in acc.items()}
+
 
     def is_allowed(self, family: str, token: str, stage: str) -> bool:
         """Return True if 'token' is permitted (preferred or legacy) at 'stage'."""
@@ -234,11 +237,14 @@ class WorldGraph:
         self._id_counter = itertools.count(1)
         self._init_lexicon()
         self._plan_strategy: str = (os.environ.get("CCA8_PLANNER", "bfs") or "bfs").lower()
+        self._stage = "neonate"      # predeclare
+        self._tag_policy = "warn"    # predeclare
 
-        
+
     # --- tag policy / developmental stage -----------------------------------
 
     def _init_lexicon(self):
+        """Initialize stage/tag-lexicon state and default tag policy."""
         self._lexicon = TagLexicon()
         self._stage: str = "neonate"         # default
         self._tag_policy: str = "warn"       # 'allow' | 'warn' | 'strict'
@@ -271,7 +277,7 @@ class WorldGraph:
             msg = f"[tags] {family}:{token_local} not allowed at stage={self._stage}"
             if self._tag_policy == "strict":
                 raise ValueError(msg)
-            elif self._tag_policy == "warn":
+            if self._tag_policy == "warn":
                 print("WARN", msg, "(allowing)")
         else:
             preferred = self._lexicon.preferred_of(token_local)
@@ -316,7 +322,7 @@ class WorldGraph:
         self._anchors[name] = bid
         # latest may remain whatever last predicate node was; anchor creation doesn't change latest
         return bid
-        
+
     def set_now(self, bid: str, *, tag: bool = True, clean_previous: bool = True) -> str | None:
         """
         Re-point the NOW anchor to an existing binding id and (optionally) keep tags tidy.
@@ -355,10 +361,12 @@ class WorldGraph:
             b = self._bindings[bid_]
             ts = getattr(b, "tags", None)
             if ts is None:
-                # default to a list for compatibility with existing snapshots
-                b.tags = []
-                ts = b.tags
-            return ts
+                b.tags = set()
+            elif isinstance(ts, list):
+                # upgrade legacy snapshots that stored a list
+                b.tags = set(ts)
+            # now guaranteed a set
+            return b.tags
 
         def _tag_add(ts, t: str):
             # works for set or list
@@ -438,7 +446,7 @@ class WorldGraph:
         # enforce against lexicon (do not auto-rewrite legacy; just warn/allow)
         tok = self._enforce_tag("pred", tok)
         tag = f"pred:{tok}"
-        
+
         # --- validate attach option -----------------------------------------------------
         att = (attach or "none").lower()
         if att not in _ATTACH_OPTIONS:  # e.g., {"now", "latest", "none"}
@@ -466,8 +474,8 @@ class WorldGraph:
             self.add_edge(prev_latest, bid, "then", meta or {})
 
         return bid
-        
-    
+
+
     def add_cue(self, token: str, *, attach: Optional[str] = None,
             meta: Optional[dict] = None, engrams: Optional[dict] = None) -> str:
         """Create a new cue binding (tag normalized to 'cue:<token>') and optionally auto-link it.
@@ -500,17 +508,17 @@ class WorldGraph:
             self.add_edge(prev_latest, bid, "then", meta or {})
 
         return bid
-        
-        
-        
+
+
+
     # ------------------------- engram / signal bridge -------------------------
 
     def attach_engram(self, bid: str, *, column: str = "column01",
                       engram_id: str, act: float = 1.0, extra_meta: dict | None = None) -> None:
         """
         Attach an existing engram pointer to a binding.
-        
-        
+
+
         At this time, we We can put a thin “signal bridge” between the WorldGraph (symbols) and the column (engrams),
         without committing to heavy perception, although to implement in near future.
         The bridge does three things:
@@ -556,8 +564,10 @@ class WorldGraph:
 
         Implementation note: imports at call-site to avoid tight coupling.
         """
+        # pylint: disable=import-outside-toplevel
+        _ = column  #to mark used and keep for future multi-column routing
         from cca8_column import mem as _mem   # column memory (RAM)  :contentReference[oaicite:3]{index=3}
-        return _mem.get(engrams_id := engram_id)  # will raise KeyError if missing
+        return _mem.get(engram_id)
 
     def emit_pred_with_engram(self, token: str, *, payload=None, name: str | None = None,
                               column: str = "column01", attach: str | None = "now",
@@ -566,13 +576,13 @@ class WorldGraph:
         """
         Create a predicate binding and simultaneously assert an engram in the column,
         then attach the engram pointer to the new binding.
-        
+
         As a result this signal bridge to the engrams for initial work:
         -A policy (or the runner) can emit a cue/predicate and a small engram in one call
         -The new binding’s engrams dict will carry a pointer like:
                 {"column01": {"id": "<engram_id>", "act": 1.0, "meta": {...}}}
         -We can later get_engram(engram_id=...) to retrieve the full record from the column
-        
+
         Returns
         -------
         (bid, engram_id)
@@ -580,11 +590,13 @@ class WorldGraph:
         This is a stub-level bridge: it records a small payload and links so that
         later perception/planning can coordinate. Heavy computation stays in the column.
         """
+        # pylint: disable=import-outside-toplevel, broad-exception-caught
+
         # 1) make/normalize the predicate binding
         bid = self.add_predicate(token, attach=attach, meta=meta)
 
         # 2) assert a lightweight engram in column memory
-        from cca8_column import mem as _mem, ColumnMemory   # :contentReference[oaicite:4]{index=4}
+        from cca8_column import mem as _mem   #, ColumnMemory   # :contentReference[oaicite:4]{index=4}
         try:
             from cca8_features import FactMeta              # optional sugar  :contentReference[oaicite:5]{index=5}
             _fm = FactMeta(name=(name or token), links=links, attrs=attrs)
@@ -620,6 +632,7 @@ class WorldGraph:
         bid = self.add_cue(cue_token, attach=attach, meta=meta)
 
         # 2) assert a lightweight engram in column memory
+        # pylint: disable=import-outside-toplevel
         from cca8_column import mem as _mem                    # :contentReference[oaicite:6]{index=6}
         try:
             from cca8_features import FactMeta                 # :contentReference[oaicite:7]{index=7}
@@ -656,10 +669,11 @@ class WorldGraph:
         -------
         (bid, engram_id)
         """
+        # pylint: disable=import-outside-toplevel
         try:
             from cca8_features import TensorPayload           # :contentReference[oaicite:8]{index=8}
         except Exception:
-            TensorPayload = None
+            TensorPayload = None  # type: ignore[assignment, misc]
 
         if TensorPayload is not None:
             payload = TensorPayload(data=list(vector), shape=shape or (len(vector),),
@@ -683,18 +697,51 @@ class WorldGraph:
 
     # --------------------------- edges ---------------------------
 
-    def add_edge(self, src_id: str, dst_id: str, label: str, meta: Optional[dict] = None) -> None:
-        """Add a directed edge from src->dst with a label like 'then' and optional meta.
+    def add_edge(self, src_id: str, dst_id: str, label: str, meta: Optional[dict] = None, *, allow_self_loop: bool = False) -> None:
+        """Add a directed edge src->dst.
 
         Raises:
-            KeyError: if either binding id is unknown.
+            KeyError: if either id is unknown.
+            ValueError: if a self-loop is attempted without allow_self_loop=True.
         """
         if src_id not in self._bindings or dst_id not in self._bindings:
             raise KeyError(f"unknown binding id: {src_id!r} or {dst_id!r}")
-        self._bindings[src_id].edges.append(
-            {"to": dst_id, "label": label, "meta": dict(meta or {})}
-        )
+        if (src_id == dst_id) and not allow_self_loop:
+            raise ValueError("self-loop rejected (pass allow_self_loop=True to permit)")
+        self._bindings[src_id].edges.append({"to": dst_id, "label": label, "meta": dict(meta or {})})
         
+    def delete_edge(self, src_id: str, dst_id: str, label: str | None = None) -> int:
+        """
+        Remove edges matching (src_id -> dst_id [label]) from the per-binding adjacency list.
+
+        Returns:
+            int: number of removed edges.
+
+        Raises:
+            KeyError: if src_id is unknown in this world.
+        """
+        if src_id not in self._bindings:
+            raise KeyError(f"unknown binding id: {src_id!r}")
+
+        b = self._bindings[src_id]
+        edges = getattr(b, "edges", None)
+        if not isinstance(edges, list):
+            return 0
+
+        def _rel(e: dict) -> str:
+            return e.get("label") or e.get("rel") or e.get("relation") or "then"
+
+        before = len(edges)
+        if label is None:
+            edges[:] = [e for e in edges if e.get("to") != dst_id]
+        else:
+            edges[:] = [e for e in edges if not (e.get("to") == dst_id and _rel(e) == label)]
+        return before - len(edges)
+
+    # alias (older callers may still use remove_edge() )
+    remove_edge = delete_edge
+
+
     def add_action(self, src_id: str, dst_id: str, action: str, meta: dict | None = None):
         """
         Syntactic sugar for adding an action-labeled edge: src --action--> dst.
@@ -822,7 +869,7 @@ class WorldGraph:
 
         return None
 
-    
+
     # ------------------------- pretty path helpers -------------------------
 
     def _first_pred_of(self, bid: str) -> str | None:
@@ -875,7 +922,8 @@ class WorldGraph:
                 base = f"{bid}[{pred}]" if pred else (f"{bid}({anch})" if anch else bid)
             if annotate_anchors and anch:
                 # make anchors explicit even if node_mode != 'id+pred'
-                if "NOW" == anch or "HERE" == anch:
+                # pylint: disable=consider-using-in
+                if "NOW" == anch or "HERE" == anch:  #more explicit than writing if anch in ....
                     if "[" in base or "(" in base:
                         return base.replace("]", "](NOW)") if anch == "NOW" else base.replace("]", "](HERE)")
                     return f"{base}({anch})"
@@ -896,8 +944,8 @@ class WorldGraph:
         """Convenience: plan_to_predicate then pretty_path (returns text or '(no path)')."""
         path = self.plan_to_predicate(src_id, token)
         return self.pretty_path(path, **kwargs) if path else "(no path)"
-        
-        
+
+
     # ------------------------- action / edge-label utilities -------------------------
 
     def _iter_edges(self):
@@ -931,8 +979,9 @@ class WorldGraph:
         Return a dict: {label -> count of edges with that label}.
         Include or exclude the generic 'then' via include_then.
         """
+        # pylint: disable=import-outside-toplevel
         from collections import Counter
-        c = Counter()
+        c = Counter()  # type: ignore[var-annotated]
         for _src, _dst, e in self._iter_edges():
             lab = e.get("label", "then")
             if lab == "then" and not include_then:
@@ -946,7 +995,7 @@ class WorldGraph:
         Yields tuples: (src_id, dst_id, meta_dict).
         """
         for src, dst, e in self._iter_edges():
-            if (e.get("label", "then") == label):
+            if e.get("label", "then") == label:
                 yield (src, dst, e.get("meta", {}) or {})
 
     def action_metrics(self, label: str, *, numeric_keys: tuple[str, ...] = ("meters", "duration_s", "speed_mps")) -> dict:
@@ -960,6 +1009,7 @@ class WorldGraph:
         }
         Only keys present AND numeric are aggregated; others are ignored.
         """
+        # pylint: disable=import-outside-toplevel
         import numbers
         out = {"count": 0, "keys": {}}
         acc = {k: {"count": 0, "sum": 0.0} for k in numeric_keys}
@@ -968,7 +1018,7 @@ class WorldGraph:
             n += 1
             for k in numeric_keys:
                 v = meta.get(k, None)
-                if isinstance(v, numbers.Number):
+                if isinstance(v, numbers.Real):
                     acc[k]["count"] += 1
                     acc[k]["sum"] += float(v)
         out["count"] = n
@@ -1044,6 +1094,8 @@ class WorldGraph:
             - Highlights NOW (amber) and LATEST (green) to help navigation.
             - Edge labels (e.g., 'then') appear as edge labels/tooltips if enabled.
         """
+        # pylint: disable=import-outside-toplevel
+        _ = title
         try:
             from pyvis.network import Network
         except Exception as e:
@@ -1052,10 +1104,13 @@ class WorldGraph:
             ) from e
 
         net = Network(height=height, width=width, directed=True, notebook=False)
+        #pylint: disable=expression-not-assigned
         net.barnes_hut() if physics else net.toggle_physics(False)
+        #pylint: enable=expression-not-assigned
 
         now_id = self._anchors.get("NOW")
-        here_id = self._anchors.get("HERE")
+        #here_id = self._anchors.get("HERE")
+        _here_id = self._anchors.get("HERE")  # currently unused; reserved for future highlighting
         latest_id = self._latest_binding_id
 
         def _first_pred(b) -> str | None:
@@ -1094,7 +1149,9 @@ class WorldGraph:
                 label_txt = pred or cue or anch or bid
 
             # Tooltip with id, tags, and a small meta preview
-            import html, json
+            # pylint: disable=import-outside-toplevel
+            import html
+            import json
             tags_str = ", ".join(sorted(b.tags))
             meta_preview = html.escape(json.dumps(b.meta, ensure_ascii=False)[:240])
             eng = ", ".join((b.engrams or {}).keys()) or "(none)"
@@ -1132,7 +1189,7 @@ class WorldGraph:
                 net.add_edge(src, dst, **edge_kwargs)
 
         # Write HTML
-        import os
+        #import os
         out = os.path.abspath(path_html)
         os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
         net.write_html(out, notebook=False)
@@ -1167,3 +1224,38 @@ class WorldGraph:
             g._id_counter = itertools.count(mx + 1)
 
         return g
+
+    def check_invariants(self, *, raise_on_error: bool = True) -> list[str]:
+        """Validate basic graph invariants. Return a list of human-readable issues.
+
+        Checks:
+          - anchors['NOW'] exists and its binding carries 'anchor:NOW'
+          - latest id (if set) exists
+          - all edges point to existing nodes (dst)
+        """
+        issues: list[str] = []
+
+        # NOW anchor sanity
+        now_id = self._anchors.get("NOW")
+        if now_id is not None:
+            if now_id not in self._bindings:
+                issues.append("anchors['NOW'] points to unknown binding id")
+            else:
+                tags = getattr(self._bindings[now_id], "tags", []) or []
+                if "anchor:NOW" not in tags:
+                    issues.append("NOW binding missing 'anchor:NOW' tag")
+
+        # latest sanity
+        if self._latest_binding_id and self._latest_binding_id not in self._bindings:
+            issues.append("latest binding id is not present in _bindings")
+
+        # edges must point to existing nodes
+        for src_id, b in self._bindings.items():
+            for e in getattr(b, "edges", []) or []:
+                dst = e.get("to")
+                if not dst or dst not in self._bindings:
+                    issues.append(f"edge {src_id} -> {dst!r} points to unknown binding")
+
+        if raise_on_error and issues:
+            raise AssertionError("WorldGraph invariant violations:\n  - " + "\n  - ".join(issues))
+        return issues

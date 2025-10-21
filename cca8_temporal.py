@@ -28,6 +28,8 @@ from typing import List
 
 # in temporal_context.py
 __version__ = "0.1.0"
+__all__ = ["TemporalContext", "__version__"]
+
 
 @dataclass
 class TemporalContext:
@@ -49,16 +51,19 @@ class TemporalContext:
         return list(self._v)
 
     def step(self) -> list[float]:
+        """Drift the temporal vector by Gaussian noise (σ = self.sigma), renormalize to unit length, and return a copy."""
         vals = [a + random.gauss(0.0, self.sigma) for a in self._v]
         self._v = self._normalize(vals)
         return self.vector()
 
     def boundary(self) -> list[float]:
+        """Apply a larger 'event-boundary' jump (σ = self.jump), renormalize to unit length, and return a copy."""
         vals = [a + random.gauss(0.0, self.jump) for a in self._v]
         self._v = self._normalize(vals)
         return self.vector()
 
     @staticmethod
     def _normalize(vals: list[float]) -> list[float]:
+        """Return a unit-norm copy of `vals` (L2 normalize); safeguards against zero norm by using 1.0."""
         s = math.sqrt(sum(a * a for a in vals)) or 1.0
         return [a / s for a in vals]

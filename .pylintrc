@@ -1,0 +1,23 @@
+# .pylintrc (excerpt)
+[MASTER]
+ignore=tests
+
+[MESSAGES CONTROL]
+disable=
+    invalid-name,
+    line-too-long,
+    too-many-arguments, too-many-locals, too-many-branches, too-many-statements,
+    too-many-instance-attributes, too-many-public-methods, too-many-return-statements,
+    logging-fstring-interpolation,
+    bare-except,
+    pointless-string-statement,
+    too-many-lines,
+    too-many-nested-blocks,
+    multiple-statements,
+    wrong-import-position,
+    use-implicit-booleaness-not-comparison,
+    no-else-return,
+    broad-exception-caught
+
+[FORMAT]
+max-line-length=170
