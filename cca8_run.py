@@ -60,7 +60,7 @@ from collections import defaultdict
 import cca8_world_graph
 from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict
 
-# --- Public API index and version-----------------------------------------------------
+# --- Public API index, version, global variables and constants ----------------------------------------
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
@@ -82,6 +82,8 @@ __all__ = [
     "__version__",
     "Ctx",
 ]
+
+PLACEHOLDER_EMBODIMENT = '0.0.0 : none specified'
 
 # --- Runtime Context (ENGINE↔CLI seam) --------------------------------------------
 @dataclass(slots=True)
@@ -289,10 +291,10 @@ def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Bod
     print("\nA Warm Welcome to the CCA8 Mammalian Brain Simulation")
     print(f"(cca8_run.py v{__version__})\n")
     print(f"Entry point program being run: {os.path.abspath(sys.argv[0])}")
-    print(f"OS: {sys.platform} (run system-dependent utilities for more detailed system/simulation info)")
+    print(f"OS: {sys.platform} (see system-dependent utilities for more detailed system/simulation info)")
     print('(for non-interactive execution, ">python cca8_run.py --help" to see optional flags you can set)')
     print(f'\nEmbodiment:  HAL (hardware abstraction layer) setting: {hal_str}')
-    print(f'Embodiment:  body_type-version_number-serial_number (i.e., robotic embodiment): {body_str} ')
+    print(f'Embodiment:  body_type|version_number|serial_number (i.e., robotic embodiment): {body_str} ')
 
     print("\nThe simulation of the cognitive architecture can be adjusted to add or take away")
     print("  various features, allowing exploration of different evolutionary-like configurations.\n")
@@ -302,8 +304,8 @@ def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Bod
     print("  4. Human-like one-agent multiple-brains simulation")
     print("  5. Human-like one-brain simulation × multiple-agents society")
     print("  6. Human-like one-agent multiple-brains simulation with combinatorial planning")
-    print("  7. Super-Human-like machine simulation\n")
-    print("Pending additional intro material here....")
+    print("  7. Super-Human-like machine simulation")
+    print("  T. Tutorial (more information) on using and maintaining this program, references\n")
 
 def _parse_vector(text: str) -> list[float]:
     """
@@ -640,7 +642,7 @@ def boot_prime_stand(world, ctx) -> None:
         try:
             # attach="now" will add NOW -> <new> with default 'then' (fine for boot)
             new_bid = world.add_predicate("stand", attach="now", meta={"boot": "init", "added_by": "system"})
-            print(f"[boot] Seeded stand as {new_bid} (NOW -> stand)")
+            print(f"[boot] Seeded stand (i.e., default value) as {new_bid} (NOW -> stand)")
             # Optional: relabel auto 'then' to 'initiate_stand' for readability
             try:
                 # remove any NOW->new edges regardless of label
@@ -795,7 +797,7 @@ def _goat_defaults():
 def _print_goat_fallback():
     """Explain that the chosen profile is not implemented and we fall back to Mountain Goat."""
     print("Although scaffolding is in place for its implementation, this evolutionary-like configuration is not currently available. "
-          "Profile is set to mountain goat-like brain simulation.\n")
+          "Profile will be set to mountain goat-like brain simulation.\n")
 
 def profile_chimpanzee(_ctx) -> tuple[str, float, float, int]:
     """Print a narrative about the chimpanzee profile; fall back to Mountain Goat defaults."""
@@ -803,7 +805,7 @@ def profile_chimpanzee(_ctx) -> tuple[str, float, float, int]:
         "\nChimpanzee-like brain simulation"
         "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
         "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
-        '"same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language.\n'
+        '"similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language.\n'
     )
     _print_goat_fallback()
     return _goat_defaults()
@@ -814,7 +816,7 @@ def profile_human(_ctx) -> tuple[str, float, float, int]:
         "\nHuman-like brain simulation"
         "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
         "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
-        '"same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
+        '"similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
         "The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.\n"
     )
     _print_goat_fallback()
@@ -827,7 +829,7 @@ def profile_human_multi_brains(_ctx, world) -> tuple[str, float, float, int]:
         "\nHuman-like one-agent multiple-brains simulation"
         "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
         "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
-        '"same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
+        '"similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
         "The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.\n"
         "\nIn this model each agent has multiple brains operating in parallel. There is an intelligent voting mechanism to decide on a response whereby "
         "each of the 5 processes running in parallel can give a response with an indication of how certain they are this is the best response, and the most "
@@ -835,7 +837,7 @@ def profile_human_multi_brains(_ctx, world) -> tuple[str, float, float, int]:
         "and updated.\n"
     )
     print(
-        "Implementation sketch for multiple-brains in one agent:"
+        "Implementation scaffolding for multiple-brains in one agent:"
         "\n  • Representation: 5 symbolic hippocampal-like maps (5 sandbox WorldGraphs) running in parallel."
         "\n  • Fork: each sandbox starts as a deep copy of the live WorldGraph (later: thin overlay base+delta)."
         "\n  • Propose: each sandbox generates a candidate next action and a confidence in that proposal."
@@ -910,12 +912,12 @@ def profile_society_multi_agents(_ctx) -> tuple[str, float, float, int]:
         "\nHuman-like one-brain simulation × multiple-agents society"
         "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
         "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
-        '"same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
+        '"similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
         "The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.\n"
         "\nIn this simulation we have multiple agents each with one human-like brain, all interacting with each other.\n"
     )
     print(
-        "Implementation sketch for multiple agents (one brain per agent):"
+        "Implementation scaffolding for multiple agents (one brain per agent):"
         "\n  • Representation: each agent has its own WorldGraph, Drives, and policy set; no shared mutable state."
         "\n  • Scheduler: iterate agents each tick (single process first; later, one process per agent with queues)."
         "\n  • Communication: send messages as tags/edges in the receiver’s world (e.g., pred:sound:bleat:mom)."
@@ -975,7 +977,7 @@ def profile_multi_brains_adv_planning(_ctx) -> tuple[str, float, float, int]:
         "\nHuman-like one-agent multiple-brains simulation with combinatorial planning"
         "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
         "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
-        '"same" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
+        '"similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
         "The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.\n"
         "\nIn this model there are multiple brains, e.g., 5 at the time of this writing, in one agent."
         "There is an intelligent voting mechanism to decide on a response whereby each of the 5 processes running in parallel can give a response with an "
@@ -985,7 +987,7 @@ def profile_multi_brains_adv_planning(_ctx) -> tuple[str, float, float, int]:
         "or different possible decisions to make.\n"
     )
     print(
-        "Implementation sketch (this stub does not commit changes to the live world):"
+        "Implementation scaffolding (this stub does not commit changes to the live world):"
         "\n  • Brains: 5 symbolic hippocampal-like maps (conceptual ‘brains’) exploring in parallel."
         "\n  • Processors: each brain has 256 von Neumann processors that independently explore candidate plans."
         "\n  • Rollouts: each processor tries a short action sequence (horizon H=3) from a small discrete action set."
@@ -1049,14 +1051,14 @@ def profile_superhuman(_ctx) -> tuple[str, float, float, int]:
     """Dry-run ‘ASI’ meta-controller stub (no writes); print trace; fall back to Mountain Goat defaults."""
     print(
         "\nSuper-human-like machine simulation"
-        "\n\nFeatures sketch for an ASI-grade architecture:"
+        "\n\nFeatures scaffolding for an ASI-grade architecture:"
         "\n  • Hierarchical memory: massive multi-modal engrams (vision/sound/touch/text) linked to a compact symbolic index."
         "\n  • Weighted graph planning: edges carry costs/uncertainty; A*/landmarks for long-range navigation in concept space."
         "\n  • Meta-controller: blends proposals from symbolic search, neural value estimation, and program-synthesis planning."
         "\n  • Self-healing & explanation: detect/repair inconsistent states; produce human-readable rationales for actions."
         "\n  • Tool-use & embodiment: external tools (math/vision/robots) wrapped as policies with provenances and safeguards."
         "\n  • Safety envelope: constraint-checking policies that can veto/redirect unsafe plans."
-        "\n\nThis stub prints a dry-run of the meta-controller triage and falls back to the Mountain Goat profile.\n"
+        "\n\nThis stub prints a dry-run of the meta-controller triage and falls back to the current==Mountain Goat profile.\n"
     )
 
     # Scaffolding: three-module meta-controller, pick best proposal (no world writes)
@@ -1094,41 +1096,89 @@ def profile_superhuman(_ctx) -> tuple[str, float, float, int]:
     _print_goat_fallback()
     return _goat_defaults()
 
+def _open_readme_tutorial() -> None:
+    """Open README.md in the default viewer, then return.
+    This may or may not have the same behavior as main-menu 'T'
+    (it does at time of writing but future versions may diverge
+    """
+    # pylint: disable=import-outside-toplevel
+    import webbrowser
+    path = os.path.abspath("README.md")
+    try:
+        if os.name == "nt":
+            os.startfile(path)  # type: ignore[attr-defined]
+        else:
+            webbrowser.open_new_tab(f"file://{path}")
+        print("[tutorial] Opened compendium document showing you how to use code, references, and technical details")
+        print("      Please close it to return to the profile selection.")
+    except Exception as e:
+        print(f"[tutorial] Could not open the compendium document automatically: {e}\n"
+              f"          You can open it manually at:\n  {path}")
+
 # --------------------------------------------------------------------------------------
 # World/intro flows and preflight-lite stamp helpers
 # --------------------------------------------------------------------------------------
 
+
 def choose_profile(ctx, world) -> dict:
-    """Prompt once; always default to Mountain Goat unless a profile is implemented.
+    """Prompt for a profile. 'T' opens the README tutorial, then re-prompts.
+    Returns a dict: {"name", "ctx_sigma", "ctx_jump", "winners_k"}.
+
+    Default to Mountain Goat unless a profile is implemented.
     For unimplemented profiles, print a narrative and fall back to goat defaults.
     Returns a dict: {"name", "ctx_sigma", "ctx_jump", "winners_k"}.
+
+    Behavior:
+      - 1..7 → select profile (unimplemented ones print a narrative, then fall back to goat defaults).
+      - 'T' or 't' → open README.md (tutorial) and re-prompt.
+      - any other input → default to Mountain Goat (as before).
     """
     GOAT = ("Mountain Goat", 0.015, 0.2, 2)
-    try:
-        choice = input("Please make a choice [1-7]: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print("\nCancelled selection.... will exit program....")
-        sys.exit(0)
 
-    if choice == "1":
-        name, sigma, jump, k = GOAT
-    elif choice == "2":
-        name, sigma, jump, k = profile_chimpanzee(ctx)
-    elif choice == "3":
-        name, sigma, jump, k = profile_human(ctx)
-    elif choice == "4":
-        name, sigma, jump, k = profile_human_multi_brains(ctx, world)
-    elif choice == "5":
-        name, sigma, jump, k = profile_society_multi_agents(ctx)
-    elif choice == "6":
-        name, sigma, jump, k = profile_multi_brains_adv_planning(ctx)
-    elif choice == "7":
-        name, sigma, jump, k = profile_superhuman(ctx)
-    else:
-        print(f"The selection {choice} is not valid or not available at this time.\n Therefore, defaulting to selection Mountain Goat.")
-        name, sigma, jump, k = GOAT
+    while True:
+        try:
+            choice = input("Please make a choice [1–7 or T | Enter = Mountain Goat]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled selection.... will exit program....")
+            sys.exit(0)
 
-    ctx.profile = name  # record on ctx so it appears in CTX snapshot
+        # Fast path: Enter accepts default
+        if choice == "":
+            name, sigma, jump, k = GOAT
+            break
+
+        # Tutorial: open README, then re-prompt
+        if choice.lower() == "t":
+            _open_readme_tutorial()
+            continue  # re-show prompt
+
+        # Numeric choices
+        if choice == "1":
+            name, sigma, jump, k = GOAT
+            break
+        if choice == "2":
+            name, sigma, jump, k = profile_chimpanzee(ctx)
+            break
+        if choice == "3":
+            name, sigma, jump, k = profile_human(ctx)
+            break
+        if choice == "4":
+            name, sigma, jump, k = profile_human_multi_brains(ctx, world)
+            break
+        if choice == "5":
+            name, sigma, jump, k = profile_society_multi_agents(ctx)
+            break
+        if choice == "6":
+            name, sigma, jump, k = profile_multi_brains_adv_planning(ctx)
+            break
+        if choice == "7":
+            name, sigma, jump, k = profile_superhuman(ctx)
+            break
+
+        # Anything else: prompt again (no silent default)
+        print(f"The selection {choice!r} is not valid. Please enter 1–7, 'T', or press Enter for Mountain Goat.\n")
+
+    ctx.profile = name
     return {"name": name, "ctx_sigma": sigma, "ctx_jump": jump, "winners_k": k}
 
 def versions_dict() -> dict:
@@ -2702,21 +2752,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     # argparse flags
     p = argparse.ArgumentParser(prog="cca8_run.py")
     p.add_argument("--about", action="store_true", help="Print version and component info")
-    p.add_argument("--version", action="store_true", help="Print just the runner version")
+    p.add_argument("--version", action="store_true", help="Print just the runner (i.e., main entry program module) version")
     p.add_argument("--hal", action="store_true", help="Enable HAL embodiment stub (if available)")
-    p.add_argument("--body", help="Body/robot profile to use with HAL")
+    p.add_argument("--body", help="Body/robot, profile to use with HAL, e.g., 'hapty'")
     #p.add_argument("--period", type=int, default=None, help="Optional period (for tagging)")
     #p.add_argument("--year", type=int, default=None, help="Optional year (for tagging)")
     p.add_argument("--no-intro", action="store_true", help="Skip the intro banner")
     p.add_argument("--profile", choices=["goat","chimp","human","super"],
-               help="Pick a profile without prompting (goat=Mountain Goat, chimp=Chimpanzee, human=Human, super=Super-Human)")
-    p.add_argument("--preflight", action="store_true", help="Run full preflight and exit")
+               help="Pick a profile without prompting (goat=Mountain Goat, chimp=Chimpanzee, human=Human, super=Super-Human), usage may be unstable")
+    p.add_argument("--preflight", action="store_true", help="Run full unit tests and preflight and exit")
     #p.add_argument("--write-artifacts", action="store_true", help="Write preflight artifacts to disk")
     p.add_argument("--load", help="Load session from JSON file")
     p.add_argument("--save", help="Save session to JSON file on exit")
     p.add_argument("--autosave", help="Autosave session to JSON file after each action")
     p.add_argument("--plan", metavar="PRED", help="Plan from NOW to predicate and exit")
-    p.add_argument("--no-boot-prime", action="store_true", help="Disable boot seeding of stand intent")
+    p.add_argument("--no-boot-prime", action="store_true", help="Disable boot/default intent for calf to stand")
     try:
         args = p.parse_args(argv)
     except SystemExit as e:
@@ -2727,11 +2777,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     # process embodiment flags and continue with code
     try:
         if args.hal:
-            args.hal_status_str = "on (however, a full R-HAL has not been implemented\n     at this time, thus software will run without consideration of the robotic embodiment)"
+            args.hal_status_str = "ON (however, a full R-HAL has not been implemented\n     at this time, thus software will run without consideration of the robotic embodiment)"
         else:
-            args.hal_status_str = "off (runs without consideration of the robotic embodiment)"
+            args.hal_status_str = "OFF (runs without consideration of the robotic embodiment)"
         body = (args.body or "").strip()
-        args.body_status_str = f"{body if body else 'none specified'}"
+        if body == "hapty":
+            body = "0.1.1 hapty"
+        args.body_status_str = f"{body if body else PLACEHOLDER_EMBODIMENT}"
     except Exception as e:
         args.hal_status_str  = f"error in flag {e} -- HAL: off (software will run without consideration of  robotic embodiment)"
         args.body_status_str = f"error in flag {e} -- Body: (none)"

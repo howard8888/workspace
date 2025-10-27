@@ -5,6 +5,10 @@ __pycache__/
 *.pyd
 *.egg-info/
 
+# Non-project code
+example_*.py
+tester.py
+
 
 # Tools & caches
 .pytest_cache/
@@ -14,6 +18,9 @@ __pycache__/
 coverage.xml
 .hypothesis/
 
+
+# Code documentation for internal usage
+doc_*.*
 
 # Build/dist
 build/

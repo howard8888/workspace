@@ -8,7 +8,7 @@ Summary of basic concepts below but see README.MD for more explanation of these 
 Why this exists:
 - The WorldGraph is a *fast index & planner substrate* (~5% of information).
 - Rich content lives in column **engrams** (~95%), and bindings can point to them.
-- Planning is simple BFS over binding edges to a target predicate tag.
+- Planning is simple BFS/Djikstra/other functionally equivalent algorithm over binding edges to a target predicate tag.
 
 Explaining the terminology chosen:
 - "Binding" -- indeed a node instance but binding implies the binding, i.e., association, of
@@ -20,7 +20,7 @@ graph topology
     (technically allow bindings without tags or edges, but not recommended stylistically)
     -bindings usually contain edges but can existed isolated without edges (e.g., checkpoint to be connected later, placeholders, etc)
     -see code below for structure of a binding, note that it stores id, tags, engrams, metadata, source edge data
-- "Provenance" -- it documents the history or lineage of the data who/what/why
+- "Provenance" -- it documents the history or lineage of the data who/what/why, lives within metadata of binding
 - "Metadata" -- characteristics including admin features of the data, and in our code actually includes the provenance
 - "Edge" -- a standard term for link; note that we use directed edges expressing weak causality "then"
          - actions -- we usually encode as edge labels rather than as predicates
@@ -35,10 +35,13 @@ graph topology
   "Cue" : while we plan to or target a predicate, a cue represents a current condition
      e.g., "cue:scent:milk"
   "Anchor": special bindings like NOW, actually created via e.g., self._anchors["NOW"] = "b100"
+- "Engrams": bindings contain as dict
 
 Persistence:
 - `to_dict()` / `from_dict()` serialize/restore an episode (bindings, anchors, latest).
-- ID format is "b<N>"; `from_dict()` advances the internal counter to avoid collisions.
+-new bindings get id's from internal counter __next__id(), i.e., "b1", "b2", etc
+-when restore from an autosave, from_dict() rebuilds _bindings and then advances the counter so that the next id
+   will be one higher than than the largest existing "b<N>"
 """
 
 # --- Imports -------------------------------------------------------------
@@ -120,22 +123,24 @@ class Binding:
 class TagLexicon:
     """
     Constrained vocabulary for tags by developmental stage, with a small legacy map.
-    - Part of implementation of Spelke's core knowledge idea, here as a contrained early lexicon
-        that then unlocks richer tokens with development
+    - Part of implementation of Spelke's core knowledge idea, here as a contrained early lexicon and then
+       in more advanced stages richer tokens are allowed
     -TagLexicon that defines which tokens are allowed at each developmental stage
        (e.g., neonate → infant → juvenile → adult), including some legacy forms for devp't ease
     -there is light enforcement in WorldGraph.add_predicate/add_cue (configurable: "allow" | "warn" | "strict");
 
-    - Families: 'pred', 'cue', 'anchor'
-    - Stages are cumulative: infant ⊇ neonate, juvenile ⊇ infant, etc.
-    - Legacy tokens are accepted but a preferred canonical is suggested.
+    - Families (i.e., the three namespaces of tags): 'pred', 'cue', 'anchor' -- lexicon keeps separate allowed
+       sets per family
+    - Stages are cumulative: infant, neonate, juvenile, infant, etc. -- later stages include earlier ones
+    - Legacy tokens from earlier software versions are accepted but a preferred canonical is suggested.
 
     This is deliberately small and focused on the newborn goat domain. Pending fuller development.
     """
 
+    #class attribute (constants by convention) for development stages considered
     STAGE_ORDER = ("neonate", "infant", "juvenile", "adult")
 
-    # Preferred tokens by family and stage
+    #class attribute for preferred tokens by family and stage
     BASE: dict[str, dict[str, set[str]]] = {
         "neonate": {
             "pred": {
@@ -165,25 +170,25 @@ class TagLexicon:
         "adult":   {"pred": set(), "cue": set(), "anchor": set()},
     }
 
-    # Legacy → preferred (we *accept* the legacy but suggest the preferred)
+    # class attribute -- legacy → preferred (we accept the legacy but suggest the preferred)
     LEGACY_MAP = {
         "state:posture_standing": "posture:standing",
         "state:posture_fallen":   "posture:fallen",
         "state:seeking_mom":      "seeking_mom",
-        # add more renames as   migrate
+        # can add more renames each time migrate vocabulary
     }
 
     def __init__(self):
-        # Build cumulative sets per stage
+        # Build cumulative sets per stage, i.e., allowed[stage][family] -> set of permitted tokens (cumulative by stage)
+        #   self.allowed: structure is dict[str, dict[str, set[str]]], i.e., { "<stage>": { "pred": {...}, "cue": {...}, "anchor": {...} }, ... }
+        #   e.g.,  {'neonate': {'pred': {'nipple:latched', 'milk:drinking'.....
         self.allowed: dict[str, dict[str, set[str]]] = {}
         acc = {"pred": set(), "cue": set(), "anchor": set()}
         for stage in self.STAGE_ORDER:
             # accumulate
             for fam in ("pred", "cue", "anchor"):
                 acc[fam] |= set(self.BASE.get(stage, {}).get(fam, set()))
-            #self.allowed[stage] = {fam: set(acc[fam]) for fam in acc}
             self.allowed[stage] = {fam: set(vals) for fam, vals in acc.items()}
-
 
     def is_allowed(self, family: str, token: str, stage: str) -> bool:
         """Return True if 'token' is permitted (preferred or legacy) at 'stage'."""
@@ -202,7 +207,9 @@ class TagLexicon:
     def normalize_family_and_token(self, family: str, raw: str) -> tuple[str, str]:
         """
         Ensure the *family-local* token is returned (strip 'pred:'/'cue:' prefix if present).
-        Example: ('pred', 'pred:state:posture_standing') -> ('pred', 'state:posture_standing')
+        e.g., lex = TagLexicon
+              family, local = lex.normalize_family_and_token("pred", "pred:state:posture_standing")
+              Example: ('pred', 'pred:state:posture_standing') -> ('pred', 'state:posture_standing')
         """
         tok = (raw or "").strip()
         prefix = family + ":"
@@ -219,12 +226,13 @@ class WorldGraph:
         - ensure_anchor(name): create/get special timeline nodes (e.g., "NOW").
         - add_predicate(token, ...): create a Binding that carries 'pred:<token>'.
         - add_edge(src_id, dst_id, label, meta=None): link two bindings.
-        - plan_to_predicate(src_id, token): BFS path to first binding with 'pred:<token>'.
+        - plan_to_predicate(src_id, token): BFS/Djikstra/other path to first binding with 'pred:<token>'.
+        - others -- see code below
 
     Design notes:
         - We keep the symbolic layer tiny and fast; engrams carry the heavy payloads.
         - Edges express *episode* causality (not logical necessity).
-        - The planner is intentionally simple (BFS) and replaceable later.
+        - The planner is intentionally simple (BFS/Djikstra/other) and replaceable later.
     """
 
     def __init__(self) -> None:

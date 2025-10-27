@@ -92,7 +92,10 @@ verify with  plan NOW → `milk:drinking`.
 <!-- Optional tutorial entries; include if you want them surfaced from the top -->
 
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
+- [Tutorial on WorldGraph Technical Features](#tutorial-on-worldgraph-technical-features)
 - [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
+- [Tutorial on Main (Runner) Module Technical Features](#tutorial-on-main-runner-module-technical-features)
+- [Tutorial on Controller Module Technical Features](#tutorial-on-controller-module-technical-features)
 - [Planner contract (for maintainers)](#planner-contract-for-maintainers)
 - [Persistence contract](#persistence-contract)
   
@@ -1947,6 +1950,545 @@ Prefer a new binding (e.g., `standing` again) to preserve chronology. Reusing th
 **Q: Where are policies and learning kept?**  
 Policies live in the controller, not in WorldGraph. Provenance is stamped into `meta`. Learning hooks (skill ledger, edge costs) can be layered without changing the graph format.
 
+
+
+* * *
+
+Tutorial: Technical Features and Usage of `cca8_world_graph.py`
+---------------------------------------------------------------
+
+This tutorial teaches you how to **build, inspect, and reason about the WorldGraph**—the symbolic fast index that sits at the heart of CCA8. It’s written for developers new to the codebase.
+
+***Note: Code changes but the main ideas below should remain stable with the project***
+
+* * *
+
+### 1. Purpose of `cca8_world_graph.py`
+
+`cca8_world_graph.py` implements the **symbolic episode index**:
+
+* **Bindings** = nodes (episode cards) that hold tags, meta, and optional engram pointers.
+
+* **Edges** = directed links (`src → dst`) with labels like `"then"`, `"search"`, `"suckle"`.
+
+* **Anchors** = named bindings (e.g., `NOW`) used as temporal reference points.
+
+* **Planner** = BFS (or Dijkstra) search from `NOW` to the first `pred:<token>` goal.
+
+The file also enforces a **restricted developmental lexicon** (`TagLexicon`) and provides `to_dict()` / `from_dict()` for JSON persistence.
+
+* * *
+
+### 2. Key Classes and What They Do
+
+| Class            | Purpose                                                                                                                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **`Edge`**       | A `TypedDict` describing one outgoing link: `{"to": str, "label": str, "meta": dict}`                                   |
+| **`Binding`**    | A `dataclass(slots=True)` representing one node in the episode graph. Fields: `id`, `tags`, `edges`, `meta`, `engrams`. |
+| **`TagLexicon`** | Defines allowed tokens by developmental stage (neonate→adult). Enforces `allow/warn/strict` policy.                     |
+| **`WorldGraph`** | The main engine: manages all bindings, edges, anchors, planning, persistence, and lexicon enforcement.                  |
+
+* * *
+
+### 3. Simplifying the Type Hints
+
+You’ll often see:
+    self.allowed: dict[str, dict[str, set[str]]] = {}
+
+Read this **inside-out**:
+
+> mapping of `<stage>` → `<family>` → `<set of tokens>`
+
+Example:
+    {
+      "neonate": {
+         "pred": {"posture:standing", "milk:drinking"},
+         "cue":  {"vision:silhouette:mom"},
+         "anchor": {"NOW"}
+      }
+    }
+
+Use this mental model whenever you meet deeply nested hints.
+
+* * *
+
+### 4. Creating Bindings (Nodes)
+
+| Tag type                      | Method                                              | Example                                       |
+| ----------------------------- | --------------------------------------------------- | --------------------------------------------- |
+| **Anchor**                    | `ensure_anchor("NOW")`                              | creates or returns the NOW binding            |
+| **Predicate**                 | `add_predicate("posture:standing", attach="now")`   | auto-links from NOW                           |
+| **Cue**                       | `add_cue("vision:silhouette:mom", attach="latest")` | links from latest predicate                   |
+| **Tagless (not recommended)** | `add_binding(set())`                                | creates an unlabeled node; skip in normal use |
+
+Each new predicate or cue updates the internal pointer `_latest_binding_id`.
+
+* * *
+
+### 5. Automatic vs Manual Linking
+
+| Method                      | Effect                                 |
+| --------------------------- | -------------------------------------- |
+| `attach="now"`              | Adds edge `NOW → new` (`label="then"`) |
+| `attach="latest"`           | Adds edge `<previous latest> → new`    |
+| `attach="none"`             | Creates unlinked node                  |
+| `add_edge(src, dst, label)` | Manual link (e.g., `"stand"`)          |
+
+**Example:**
+    g = WorldGraph()
+    now = g.ensure_anchor("NOW")
+    a = g.add_predicate("posture:fallen", attach="none")
+    b = g.add_predicate("posture:standing", attach="none")
+    g.add_edge(a, b, label="stand")
+    print(g.plan_pretty(a, "posture:standing"))
+    # → b3[posture:fallen] --stand--> b4[posture:standing]
+
+* * *
+
+### 6. The Lexicon (Tag Enforcement)
+
+The lexicon constrains vocabulary per developmental stage.
+    g.set_stage("neonate")
+    g.set_tag_policy("warn")  # allow, warn (default), or strict
+
+* In `warn` mode, out-of-lexicon tokens print a one-line warning.
+
+* In `strict` mode, they raise `ValueError`.
+
+* Later stages include all earlier tokens.
+
+**Quick test:**
+    g.add_predicate("posture:jumping", attach="latest")
+    # WARN [tags] pred:posture:jumping not allowed at stage=neonate (allowing)
+
+* * *
+
+### 7. Planning
+
+The planner searches from a start node (usually NOW) to the first binding whose tags include `pred:<token>`.
+    path = g.plan_to_predicate(now, "posture:standing")
+    print(path)                     # ['b1','b2']
+    print(g.plan_pretty(now, "posture:standing"))
+    # b1(NOW) --then--> b2[posture:standing]
+
+Under the hood:
+
+* BFS → unweighted (fewest edges)
+
+* Dijkstra → weighted (`meta["weight"]`, `cost`, `distance`, or `duration_s`)
+
+Switch planners:
+    g.set_planner("dijkstra")
+    print(g.get_planner())  # 'dijkstra'
+
+* * *
+
+### 8. Exercises (with solutions)
+
+**Exercise 1 – Manual edge**
+    a = g.add_predicate("posture:fallen", attach="none")
+    b = g.add_predicate("posture:standing", attach="none")
+    g.add_edge(a, b, "stand")
+    print(g.plan_pretty(a, "posture:standing"))
+
+✅ _Output:_ `b3[posture:fallen] --stand--> b4[posture:standing]`
+
+* * *
+
+**Exercise 2 – Auto chain**
+    g = WorldGraph()
+    g.ensure_anchor("NOW")
+    g.add_predicate("posture:standing", attach="now")
+    g.add_predicate("posture:jumping", attach="latest")
+    print(g.plan_pretty("b1", "posture:jumping"))
+
+✅ _Output:_ `b1(NOW) --then--> b2[posture:standing] --then--> b3[posture:jumping]`
+
+* * *
+
+**Exercise 3 – Lexicon policy test**
+    g.set_stage("neonate")
+    g.set_tag_policy("strict")
+    try:
+        g.add_predicate("posture:jumping", attach="latest")
+    except ValueError as e:
+        print("Caught:", e)
+
+✅ _Output:_ `Caught: [tags] pred:posture:jumping not allowed at stage=neonate`
+
+* * *
+
+### 9. Engrams (Pointers to Rich Memory)
+
+Bindings can reference “heavy” sensory or temporal data via a small pointer:
+    g.attach_engram("b2", column="column01", engram_id="engr_123", act=0.9)
+    eng = g.get_engram("b2", column="column01")
+
+Planner ignores engrams; they’re for analytics or linking perception.
+
+* * *
+
+### 10. Invariants & Best Practices
+
+| Invariant                                      | Why it matters                          |
+| ---------------------------------------------- | --------------------------------------- |
+| Every binding has a unique id (`bN`).          | Keeps planning stable.                  |
+| Edges are stored on the **source** binding.    | Local adjacency = O(1) neighbor lookup. |
+| Anchors map names (`NOW`) to real ids.         | Planning start points.                  |
+| `latest` tracks the most recent predicate/cue. | Auto-attach works correctly.            |
+| The first `pred:*` tag is used as label.       | Keeps graph readable.                   |
+
+* * *
+
+### 11. Quick Reference Summary
+
+| Concept              | Code / Description                                    |
+| -------------------- | ----------------------------------------------------- |
+| **Create world**     | `g = WorldGraph()`                                    |
+| **Add anchor**       | `now = g.ensure_anchor("NOW")`                        |
+| **Add predicate**    | `g.add_predicate("posture:standing", attach="now")`   |
+| **Add cue**          | `g.add_cue("vision:silhouette:mom", attach="latest")` |
+| **Manual edge**      | `g.add_edge(src, dst, "search")`                      |
+| **Plan**             | `g.plan_pretty(now, "pred:milk:drinking")`            |
+| **Save**             | `snap = g.to_dict()`                                  |
+| **Load**             | `g2 = WorldGraph.from_dict(snap)`                     |
+| **Check invariants** | `g.check_invariants()`                                |
+| **Export HTML**      | `g.to_pyvis_html()`                                   |
+
+* * *
+
+### 12. Common Pitfalls
+
+| Symptom           | Likely cause                                | Fix                                     |
+| ----------------- | ------------------------------------------- | --------------------------------------- |
+| `"No path"`       | predicate not created or disconnected       | check edges and direction               |
+| duplicate edges   | created manually _and_ by attach            | remove one or ignore warning            |
+| multiple NOW tags | forgot `clean_previous=True` in `set_now()` | use helper to tidy                      |
+| lexicon error     | `strict` mode, off-vocab token              | switch to `warn` or add token to `BASE` |
+
+* * *
+
+### 13. Minimal Code Snippet
+
+    from cca8_world_graph import WorldGraph
+    
+    g = WorldGraph()
+    g.set_tag_policy("allow")
+    
+    now = g.ensure_anchor("NOW")
+    g.add_predicate("posture:standing", attach="now")
+    g.add_predicate("posture:jumping", attach="latest")
+    
+    print(g.plan_pretty(now, "posture:jumping"))
+    # NOW --then--> standing --then--> jumping
+
+* * *
+
+Core instance attributes and methods for WorldGraph Module
+================================
+
+******Note: Code changes but the main ideas below should remain stable with the project***
+
+
+
+* `_bindings: dict[str, Binding]` — all nodes by id (e.g., `"b7" → Binding(...)`).
+
+* `_anchors: dict[str, str]` — anchor name → binding id (e.g., `"NOW" → "b1"`).
+
+* `_latest_binding_id: str | None` — most recently created predicate/cue binding.
+
+* `_id_counter: itertools.count` — id generator for `"b<N>"`.
+
+* `_lexicon: TagLexicon` — stage/family vocab + legacy map.
+
+* `_stage: str` — `"neonate" | "infant" | "juvenile" | "adult"`.
+
+* `_tag_policy: str` — `"allow" | "warn" | "strict"`.
+
+* `_plan_strategy: str` — `"bfs" | "dijkstra"`.
+
+(Module constants you’ll see used: `_ATTACH_OPTIONS = {"now","latest","none"}`.)
+Public API (call these)
+=======================
+
+| Method                    | Parameters (types)                                                                          | Returns                                                                                             | Purpose                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `__init__`                | `()`                                                                                        | `None`                                                                                              | Initialize empty world; set counters, lexicon, defaults.                         |
+| `set_stage`               | `(stage: str)`                                                                              | `None`                                                                                              | Set developmental stage for lexicon checks.                                      |
+| `set_stage_from_ctx`      | `(ctx)`                                                                                     | `None`                                                                                              | Derive stage from `ctx.age_days` (toy thresholds).                               |
+| `set_tag_policy`          | `(policy: str)`                                                                             | `None`                                                                                              | Lexicon enforcement: allow/warn/strict.                                          |
+| `set_planner`             | `(strategy: str = "bfs")`                                                                   | `None`                                                                                              | Choose `"bfs"` or `"dijkstra"`.                                                  |
+| `get_planner`             | `()`                                                                                        | `str`                                                                                               | Current planner strategy.                                                        |
+| `ensure_anchor`           | `(name: str)`                                                                               | `str` (binding id)                                                                                  | Ensure anchor exists (e.g., `"NOW"`), return its id; tags node `anchor:<NAME>`.  |
+| `set_now`                 | `(bid: str, *, tag: bool = True, clean_previous: bool = True)`                              | `str                                                                                                | None`                                                                            |
+| `add_binding`             | `(tags: set[str], *, meta: dict                                                             | None = None, engrams: dict                                                                          | None = None)`                                                                    |
+| `add_predicate`           | `(token: str, *, attach: str                                                                | None = None, meta: dict                                                                             | None = None, engrams: dict                                                       |
+| `add_cue`                 | `(token: str, *, attach: str                                                                | None = None, meta: dict                                                                             | None = None, engrams: dict                                                       |
+| `attach_engram`           | `(bid: str, *, column: str = "column01", engram_id: str, act: float = 1.0, extra_meta: dict | None = None)`                                                                                       | `None`                                                                           |
+| `get_engram`              | `(bid: str, *, column: str = "column01")`                                                   | `dict                                                                                               | None`                                                                            |
+| `add_edge`                | `(src_id: str, dst_id: str, label: str, meta: dict                                          | None = None, *, allow_self_loop: bool = False)`                                                     | `None`                                                                           |
+| `delete_edge`             | `(src_id: str, dst_id: str, label: str                                                      | None = None)`                                                                                       | `int`                                                                            |
+| `plan_to_predicate`       | `(src_id: str, token: str)`                                                                 | `list[str]                                                                                          | None`                                                                            |
+| `plan_pretty`             | `(src_id: str, token: str, **kwargs)`                                                       | `str`                                                                                               | Convenience: plan then pretty-print (or `"(no path)"`).                          |
+| `pretty_path`             | `(ids: list[str]                                                                            | None, *, node_mode: str = "id+pred", show_edge_labels: bool = True, annotate_anchors: bool = True)` | `str`                                                                            |
+| `list_actions`            | `(*, include_then: bool = True)`                                                            | `list[str]`                                                                                         | All distinct edge labels (optionally excluding `"then"`).                        |
+| `action_counts`           | `(*, include_then: bool = True)`                                                            | `dict[str, int]`                                                                                    | Count of edges per label.                                                        |
+| `edges_with_action`       | `(label: str)`                                                                              | `list[tuple[str, str]]`                                                                             | (Src, dst) pairs whose edge label matches.                                       |
+| `action_metrics`          | `(label: str, *, numeric_keys: tuple[str, ...] = ("meters","duration_s","speed_mps"))`      | `dict`                                                                                              | Simple metrics from `edge.meta` for a given label.                               |
+| `action_summary_text`     | `(label: str                                                                                | None = None)`                                                                                       | `str`                                                                            |
+| `to_pyvis_html`           | `(*, physics: bool = True, node_mode: str = "id+pred")`                                     | `str` (HTML)                                                                                        | Quick visualization export.                                                      |
+| `to_dict`                 | `()`                                                                                        | `dict`                                                                                              | Snapshot of the episode (bindings, anchors, latest).                             |
+| `from_dict` (classmethod) | `(data: dict)`                                                                              | `WorldGraph`                                                                                        | Rehydrate; advances id-counter above max existing `"b<N>"`.                      |
+| `check_invariants`        | `(*, raise_on_error: bool = True)`                                                          | `list[str]`                                                                                         | Validate: NOW exists & tagged, latest exists, all edges point to existing nodes. |
+
+Internal helpers (private by convention)
+========================================
+
+| Helper                        | Parameters                                   | Purpose                                                                                      |
+| ----------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `_init_lexicon`               | `()`                                         | Create `TagLexicon`, set default stage/policy.                                               |
+| `_enforce_tag`                | `(family: str, token_local: str) -> str`     | Apply lexicon policy (allow/warn/strict); return stored token-local form (no family prefix). |
+| `_next_id`                    | `() -> str`                                  | Generate `"b<N>"` from internal counter.                                                     |
+| `_edge_cost`                  | `(e: Edge) -> float`                         | Weight: `meta['weight'] → 'cost' → 'distance' → 'duration_s' → 1.0`.                         |
+| `_plan_to_predicate_dijkstra` | `(src_id: str, target_tag: str) -> list[str] | None`                                                                                        |
+| `_iter_edges`                 | `()`                                         | Yield `(src, dst, edge_dict)` for valid edges.                                               |
+| `_first_pred_of`              | `(bid: str) -> str                           | None`                                                                                        |
+| `_anchor_name_of`             | `(bid: str) -> str                           | None`                                                                                        |
+| `_edge_label`                 | `(src: str, dst: str) -> str                 | None`                                                                                        |
+
+* * *
+
+`Edge` (TypedDict)
+------------------
+
+* Shape: `{"to": str, "label": str, "meta": dict}`
+
+* Purpose: stored on the **source** `Binding` to represent a directed edge and its label/metrics.
+
+* Example:
+    e: Edge = {"to": "b7", "label": "stand", "meta": {"duration_s": 2.5}}
+
+`Binding` (dataclass, `slots=True`)
+-----------------------------------
+
+Fields:
+
+* `id: str` — e.g., `"b42"`.
+
+* `tags: set[str]` — e.g., `{"pred:posture:standing"}` or `{"anchor:NOW"}`.
+
+* `edges: list[Edge]` — outgoing edges.
+
+* `meta: dict` — provenance/context.
+
+* `engrams: dict` — small pointers into column memory.
+
+Helpers:
+    b_dict = b.to_dict()
+    b2 = Binding.from_dict(b_dict)
+`TagLexicon`
+
+------------
+
+* Class attrs (constants):  
+  `STAGE_ORDER = ("neonate","infant","juvenile","adult")`  
+  `BASE: dict[stage][family] -> set[str]` (allowed tokens per stage & family)  
+  `LEGACY_MAP: dict[str, str]` (legacy → preferred)
+
+* Instance:
+  
+  * `self.allowed: dict[str, dict[str, set[str]]]` (cumulative per stage)
+  
+  * Methods:
+    
+    * `is_allowed(family, token, stage) -> bool`
+    
+    * `preferred_of(token) -> str | None`
+    
+    * `normalize_family_and_token(family, raw) -> (family, local_token)`
+      
+      * E.g., `("pred", "pred:state:posture_standing") -> ("pred", "state:posture_standing")`
+
+Cheat-sheet: `WorldGraph` core state
+====================================
+
+* `_bindings: dict[str, Binding]`
+
+* `_anchors: dict[str, str]` (e.g., `"NOW" -> "b1"`)
+
+* `_latest_binding_id: str | None`
+
+* `_id_counter: itertools.count` (`"b<N>"` ids)
+
+* `_lexicon: TagLexicon`
+
+* `_stage: str` (`"neonate"` …)
+
+* `_tag_policy: str` (`"allow"|"warn"|"strict"`)
+
+* `_plan_strategy: str` (`"bfs"|"dijkstra"`)
+
+Cheat-sheet: `WorldGraph` public API
+====================================
+
+Lifecycle & config
+
+* `WorldGraph()` — empty graph, stage=`neonate`, policy=`warn`, planner from `CCA8_PLANNER` env (default `bfs`).
+
+* `set_stage(stage: str)` / `set_stage_from_ctx(ctx)`
+
+* `set_tag_policy(policy: str)` — `"allow"|"warn"|"strict"`
+
+* `set_planner(strategy: str = "bfs")` / `get_planner() -> str`
+
+Anchors & orientation
+
+* `ensure_anchor(name: str) -> str` — create/get anchor binding (tags it `anchor:<NAME>`).
+
+* `set_now(bid: str, *, tag=True, clean_previous=True)` — repoint the NOW anchor; tidy tags.
+
+Nodes
+
+* `add_predicate(token: str, *, attach: str|None = None, meta=None, engrams=None) -> str`
+  
+  * Creates `pred:<token>` node; updates `latest`.
+  
+  * `attach="now"|"latest"|"none"` → auto-edge (NOW→new) or (latest→new) or none.
+
+* `add_cue(token: str, *, attach: str|None = None, meta=None, engrams=None) -> str`
+  
+  * Same semantics; creates `cue:<token>`; updates `latest`.
+
+* `add_binding(tags: set[str], *, meta=None, engrams=None) -> str`
+  
+  * Low-level constructor (prefer the helpers above).
+
+Edges & actions
+
+* `add_edge(src_id: str, dst_id: str, label: str, meta: dict|None = None, *, allow_self_loop=False) -> None`
+
+* `delete_edge(src_id: str, dst_id: str, label: str|None = None) -> int` (returns removed count)
+
+Planning & display
+
+* `plan_to_predicate(src_id: str, token: str) -> list[str]|None`
+  
+  * Uses `bfs` (default) or `dijkstra` depending on `get_planner()`.
+
+* `pretty_path(ids: list[str]|None, *, node_mode="id+pred", show_edge_labels=True, annotate_anchors=True) -> str`
+
+* `plan_pretty(src_id: str, token: str, **kwargs) -> str` — convenience: plan + pretty.
+
+Actions / metrics
+
+* `list_actions(*, include_then=True) -> list[str]`
+
+* `action_counts(*, include_then=True) -> dict[str, int]`
+
+* `edges_with_action(label: str) -> list[tuple[str, str]]`
+
+* `action_metrics(label: str, *, numeric_keys=("meters","duration_s","speed_mps")) -> dict`
+
+* `action_summary_text(label: str|None = None) -> str`
+
+Persistence / checks / viz
+
+* `to_dict() -> dict`
+
+* `from_dict(data: dict) -> WorldGraph` (class method; advances id counter above max `"b<N>"`)
+
+* `check_invariants(*, raise_on_error: bool = True) -> list[str]`
+
+* `to_pyvis_html(*, physics: bool = True, node_mode: str = "id+pred") -> str`
+
+Minimal usage crib (copy/paste friendly)
+========================================
+
+0) Start a world
+
+----------------
+
+    from cca8_world_graph import WorldGraph
+    g = WorldGraph()
+    g.set_tag_policy("allow")  # keep lexicon quiet while learning
+    now = g.ensure_anchor("NOW")
+
+1) Add predicates / cues (with auto-edges)
+
+------------------------------------------
+
+    b1 = g.add_predicate("posture:standing", attach="now")     # NOW -> b1
+    b2 = g.add_cue("vision:silhouette:mom", attach="latest")   # b1 -> b2
+    print(g.plan_pretty(now, "posture:standing"))              # NOW -> b1
+
+2) Manual action edges
+
+----------------------
+
+    fallen = g.add_predicate("posture:fallen", attach="none")
+    stand  = g.add_predicate("posture:standing", attach="none")
+    g.add_edge(fallen, stand, label="stand", meta={"duration_s": 3.2})
+    print(g.plan_pretty(fallen, "posture:standing"))  # fallen --stand--> standing
+
+3) Auto-chain timeline with `attach="latest"`
+
+---------------------------------------------
+
+    a = g.add_predicate("state:alert", attach="latest")
+    b = g.add_predicate("seeking_mom", attach="latest")
+    c = g.add_predicate("nipple:found", attach="latest")
+    print(g.plan_pretty(now, "nipple:found"))  # NOW -> ... -> c
+
+4) Planner choice (BFS vs Dijkstra)
+
+-----------------------------------
+
+    print(g.get_planner())   # 'bfs'
+    g.set_planner("dijkstra")
+    print(g.get_planner())   # 'dijkstra'
+
+5) Action inspection
+
+--------------------
+
+    print(g.list_actions())               # ['stand', 'then', ...]
+    print(g.action_counts())              # {'stand': 1, 'then': 4, ...}
+    print(g.action_metrics("stand"))      # aggregates edge.meta for 'stand'
+    print(g.action_summary_text())        # readable summary of actions
+
+6) Persistence (save / load)
+
+----------------------------
+
+    snap = g.to_dict()
+    # ... write to JSON if you like ...
+    g2 = WorldGraph.from_dict(snap)       # id counter advanced above max b<N>
+
+7) Sanity checks
+
+----------------
+
+    issues = g.check_invariants(raise_on_error=False)
+    print(issues)  # [] when all good
+
+8) Pretty printing options
+
+--------------------------
+
+    path = g.plan_to_predicate(now, "seeking_mom")
+    print(g.pretty_path(path, node_mode="id+pred", show_edge_labels=True))
+    # variants: node_mode='id' or 'pred'; annotate_anchors=True/False
+
+9) Engram bridge (lightweight pointer)
+
+--------------------------------------
+
+    bid = g.add_predicate("state:alert", attach="latest")
+    g.attach_engram(bid, column="column01", engram_id="engr_123", act=0.9, extra_meta={"note": "demo"})
+    print(g.get_engram(bid, column="column01"))
+
+
+
 * * *
 
 Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index
@@ -2163,9 +2705,600 @@ CCA8 uses **stop-on-pop**.
 
 * * *
 
+Here’s a drop-in **cheat-sheet for `cca8_run.py` (Runner)** you can paste into your README. It’s concise, task-oriented, and mirrors how you actually use the runner day to day.
+
+* * *
+
+Tutorial on Main (Runner) Module Technical Features
+==================================
+
+What it is: the interactive & CLI entry point for CCA8.  It is run first and prints the banner, selects a profile, wires a `WorldGraph`, exposes preflight checks, autosave/load, and a full-screen menu to inspect/plan/act. 
+
+Why is this tutorial after the one on WorldGraph, i.e., rather than being the first tutorial to start with?  It is because you really need to know the concepts such as binding, predicate, edge, and so on, and how they are coded and stored in the instance of the WorldGraph, before looking at the overall functioning of the program, which is what this module does.
+
+***Note: Code changes but the main ideas below should remain stable with the project***
+
+#### Public surface (importables)
+
+Exports (see `__all__`):  
+`main`, `interactive_loop`, `run_preflight_full`, `snapshot_text`, `export_snapshot`, `world_delete_edge`, `boot_prime_stand`, `save_session`, `versions_dict`, `versions_text`, `choose_contextual_base`, `compute_foa`, `candidate_anchors`, `Ctx`, `__version__`.
+
+### Runtime context (`Ctx`)
+
+Dataclass carried between engine and CLI:  
+`sigma: float`, `jump: float`, `age_days: float`, `ticks: int`, `profile: str`, `winners_k: Optional[int]`, `hal: Optional[Any]`, `body: str`.
+
+* * *
+
+CLI quick reference
+-------------------
+
+    # About / versions
+    python cca8_run.py --about          # list component versions & paths
+    python cca8_run.py --version        # runner version only
+    
+    # Start interactive (fresh) with autosave
+    python cca8_run.py --autosave session.json
+    
+    # Resume from a snapshot (and keep autosaving)
+    python cca8_run.py --load session.json --autosave session.json
+    
+    # One-shot plan (non-interactive)
+    python cca8_run.py --load session.json --plan pred:milk:drinking
+    
+    # Full preflight (runs pytest + checks) and exit
+    python cca8_run.py --preflight
+
+Flags you’ll actually use: `--about`, `--version`, `--load`, `--autosave`, `--plan`, `--preflight`, `--no-intro`, `--no-boot-prime`, `--profile {goat,chimp,human,super}`, `--hal`, `--body`.
+
+* * *
+
+Interactive menu: the 10 you’ll press most
+------------------------------------------
+
+* **1 World stats** — counts, NOW/LATEST, loaded policies.
+
+* **2 Show last 5** — quickest way to grab fresh ids.
+
+* **3 Add predicate** — auto-attach to `LATEST` (uses `WorldGraph.add_predicate`).
+
+* **4 Connect two** — `(src, dst, relation)` with duplicate edge guard.
+
+* **5 Plan from NOW** — pretty path + raw ids.
+
+* **11 Add sensory cue** — adds `cue:*` and nudges controller once.
+
+* **12 Instinct step** — Action Center tick with pre/post “why” text.
+
+* **16 Export snapshot** — writes `world_snapshot.txt`.
+
+* **22 Pyvis export** — interactive HTML graph (label mode, edge labels, physics).
+
+* **25 Planner toggle** — BFS ↔ Dijkstra (weights read from `edge.meta`).
+
+Tip: word aliases work (e.g., type “plan”, “graph”, “save”). The runner maps them to menu numbers.
+
+* * *
+
+Autosave / Load
+---------------
+
+* **Autosave** rewrites the JSON atomically after each action.
+
+* **Load** restores `world/drives/skills` and **advances** internal id counter to avoid `bN` collisions.
+
+* **Reset current autosave**: press `R` in the menu (with `--autosave` active).
+
+* * *
+
+Preflight (what it actually checks)
+-----------------------------------
+
+* Runs **pytest** (optionally with coverage).
+
+* Imports core modules & symbols, prints versions.
+
+* Fresh-world invariants (NOW exists & tagged, edges well-formed).
+
+* Accessory files (e.g., `README.md`, image) present.
+
+* Pyvis availability (optional).
+
+* Planner probes, **attach semantics**, **cue normalization**, **action metrics**, **BFS shortest-hop** sanity.
+
+* **Lexicon strictness** (reject illegal tokens at neonate).
+
+* **Engram bridge**: capture→pointer attached→column record retrievable.
+
+* * *
+
+Handy engine helpers (the runner gives you)
+-------------------------------------------
+
+* **`world_delete_edge(world, src, dst, rel)`** — robust edge deletion (per-binding or global lists; tolerates legacy keys). Used by the menu delete flow.
+
+* **`boot_prime_stand(world, ctx)`** — at birth, seed or connect a `stand` intent near NOW (idempotent).
+
+* **FOA & base selection** — `compute_foa`, `candidate_anchors`, `choose_contextual_base` (light scaffolding used in the instinct printouts).
+
+* * *
+
+HAL (embodiment) stub
+---------------------
+
+`HAL` class carries `body` and exposes stubbed actuators/sensors (`push_up`, `extend_legs`, `orient_to_mom`, etc.). Gate with `--hal` / `--body`. Nothing hardware-critical runs yet.
+
+* * *
+
+Minimal usage crib (copy/paste)
+-------------------------------
+
+### A) One-shot CLI flow
+
+    # Fresh session with autosave
+    python cca8_run.py --autosave session.json
+    
+    # Add predicates / cues from the menu, then plan:
+    # 5 → "state:posture_standing"   # pretty path prints
+    
+    # Export an interactive graph
+    # 22 → choose label mode 'id+first_pred', edge labels Y, physics Y
+
+### B) Resume + one-shot plan
+
+    python cca8_run.py --load session.json --plan pred:milk:drinking
+
+### C) Preflight before a demo
+
+    python cca8_run.py --preflight
+
+Look for “PASS” lines (pytest, invariants, attach semantics, BFS, engram bridge).
+
+* * *
+
+Troubleshooting quickies
+------------------------
+
+* **“No path found”** → check exact `pred:<token>`, ensure forward chain from NOW, watch for reversed edges.
+
+* **Duplicate edge warning** → auto-attach plus manual connect; keep one.
+
+* **Two NOW tags** → use `set_now(..., clean_previous=True)` (menu already tidies).
+
+* **Strict lexicon errors** → switch to `warn` while developing or extend `TagLexicon.BASE`.
+
+* * *
+
+##### ****Note: Code changes but the main ideas below should remain stable with the project*** `
 
 
-## Planner contract (for maintainers)
+
+# cca8_run.py` — Call Flow & Usage Cheat-Sheet
+
+What `main()` does (call flow)
+------------------------------
+
+    main(argv)
+     ├─ configure logging
+     ├─ parse CLI flags (about/version/load/autosave/plan/preflight/etc.)
+     ├─ if --about: print component versions and exit
+     ├─ if --preflight: run_preflight_full(args) and exit
+     └─ interactive_loop(args)  ← primary entry for the TUI
+
+Typical entry points:
+    # About / versions
+    python cca8_run.py --about
+    python cca8_run.py --version
+    # Fresh session with autosave
+    python cca8_run.py --autosave session.json
+    # Resume + keep autosaving
+    python cca8_run.py --load session.json --autosave session.json
+
+    # One-shot plan and exit
+    python cca8_run.py --load session.json --plan pred:milk:drinking
+
+    # Full preflight and exit
+    python cca8_run.py --preflight
+
+* * *
+
+What `interactive_loop(args)` sets up (at start)
+------------------------------------------------
+
+    from cca8_world_graph import WorldGraph
+    from cca8_controller import Drives
+    
+    world = WorldGraph()            # empty world
+    drives = Drives()               # controller drives (hunger/fatigue/warmth)
+    ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)  # runtime context
+    
+    # optional: load snapshot if --load path is provided
+    # menu loop: add predicates/cues, connect edges, plan, export, etc.
+
+Menu highlights you’ll actually use during demos:
+
+* **World stats**, **Show last 5**, **Inspect binding**, **Add predicate**, **Connect two**, **Plan from NOW**, **Add sensory cue**, **Instinct step**, **Export snapshot**, **Pyvis export**, **Planner toggle (BFS↔Dijkstra)**.
+
+* * *
+
+Public surface (functions you can import)
+-----------------------------------------
+
+### Session & world utilities
+
+    from cca8_run import snapshot_text, export_snapshot, save_session, world_delete_edge
+    
+    # 1) Human-readable snapshot (same text as menu item)
+    print(snapshot_text(world, drives, ctx, policy_rt))
+    
+    # 2) Export a compact world snapshot to disk (bindings + edges)
+    export_snapshot(world, drives, ctx, policy_rt,
+                    path_txt="world_snapshot.txt",
+                    _path_dot=None)  # DOT is optional elsewhere
+    
+    # 3) Save a full session (JSON): world + drives + skills
+    save_session("session.json", world, drives)
+    
+    # 4) Robust edge deletion (handles legacy edge keys)
+    removed = world_delete_edge(world, src="b3", dst="b4", rel="then")
+    print("removed", removed)
+
+### Preflight & versions
+
+    from cca8_run import run_preflight_full, versions_dict, versions_text
+    
+    # One-shot preflight (pytest + invariants + planner/cue/attach probes)
+    exit_code = run_preflight_full(args_namespace)
+    
+    # Versions as dict or pretty text
+    print(versions_dict())
+    print(versions_text())
+
+### Planning helpers (skeletons for future control logic)
+
+    from cca8_run import choose_contextual_base, compute_foa, candidate_anchors
+    
+    base_id = choose_contextual_base(world, ctx, targets={"pred:milk:drinking"})
+    foa_ids = compute_foa(world, ctx, max_hops=2)     # Focus of Attention window
+    cands   = candidate_anchors(world, ctx)           # e.g., NOW, HERE, …
+
+### Bootstrapping newborn intent
+
+    from cca8_run import boot_prime_stand
+    boot_prime_stand(world, ctx)  # ensure NOW can reach a 'stand' intent at birth
+
+* * *
+
+Core classes defined in `cca8_run.py`
+-------------------------------------
+
+### `Ctx` — runtime context (mutable; passed around runner/controller)
+
+    from cca8_run import Ctx
+    
+    ctx = Ctx(
+        sigma=0.015,             # exploration jitter (UI demos)
+        jump=0.2,                # epsilon exploration for policies
+        age_days=0.0,            # developmental clock (drives → stage)
+        ticks=0,                 # autonomic ticks
+        profile="goat",          # selected profile label
+        winners_k=None,          # used by multi-brain stubs
+        hal=None,                # HAL instance if enabled
+        body=""                  # body profile (if any)
+    )
+
+Fields (shape):  
+`sigma: float`, `jump: float`, `age_days: float`, `ticks: int`, `profile: str`, `winners_k: Optional[int]`, `hal: Optional[Any]`, `body: str`
+
+* * *
+
+### `HAL` — hardware abstraction layer (stub)
+
+    from cca8_run import HAL
+    hal = HAL(body="hapty")     # stub embodiment
+    
+    # actuator stubs (no-ops today)
+    hal.push_up()
+    hal.extend_legs()
+    hal.orient_to_mom()
+    
+    # sensor stubs (return booleans in demos)
+    if hal.sense_vision_mom():
+        print("seeing mom")
+
+Methods:
+
+* `push_up()`, `extend_legs()`, `orient_to_mom()`
+
+* `sense_vision_mom()`, `sense_vestibular_fall()`
+
+> Enable via CLI: `--hal --body hapty` (the runner prints a HAL status line).
+
+* * *
+
+### `PolicyRuntime` — gate filtering & single-step controller wrapper
+
+    from cca8_run import PolicyRuntime
+    from cca8_controller import CATALOG_GATES, Drives
+    
+    pr = PolicyRuntime(CATALOG_GATES)
+    pr.refresh_loaded(ctx)                     # dev-gating by age/profile
+    print("loaded:", pr.list_loaded_names())   # which gates are live?
+    
+    # Evaluate controllers once (respect ordering & safety priority)
+    result = pr.consider_and_maybe_fire(world, Drives(), ctx)
+    print(result)   # {'policy': 'policy:stand_up', 'status': 'ok', ...} or 'no_match'
+
+Methods:
+
+* `refresh_loaded(ctx)`
+
+* `list_loaded_names() -> list[str]`
+
+* `consider_and_maybe_fire(world, drives, ctx, tie_break=...) -> dict | 'no_match'`
+
+> The runner’s **Instinct step** menu item uses this mechanism and prints a one-line status.
+
+* * *
+
+Putting it together (tiny end-to-end snippets)
+----------------------------------------------
+
+### 1) Minimal programmatic session (no TUI)
+
+    from cca8_world_graph import WorldGraph
+    from cca8_controller import Drives
+    from cca8_run import Ctx, save_session, versions_text
+    
+    world = WorldGraph()
+    drives = Drives()
+    ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
+    
+    now = world.ensure_anchor("NOW")
+    b1  = world.add_predicate("posture:standing", attach="now")
+    b2  = world.add_predicate("seeking_mom", attach="latest")
+    
+    print(versions_text())
+    print(world.plan_pretty(now, "seeking_mom"))  # NOW -> b1 -> b2
+    
+    save_session("session.json", world, drives)
+
+### 2) Delete a mistaken edge and autosave
+
+    from cca8_run import world_delete_edge, save_session
+    
+    removed = world_delete_edge(world, src=b1, dst=b2, rel="then")
+    if removed:
+        print("fixed:", removed, "edge(s)"); save_session("session.json", world, drives)
+
+### 3) Toggle planner strategy (code, not menu)
+
+    print(world.get_planner())    # 'bfs'
+    world.set_planner("dijkstra")
+    print(world.get_planner())    # 'dijkstra'
+
+* * *
+
+What to scan in the code (orientation map)
+------------------------------------------
+
+* **`main()`**: argparse flags, about/preflight branches, calls `interactive_loop(args)`.
+
+* **`interactive_loop()`**: world/drives/ctx construction, optional `--load`, then the **menu loop** (aliases + grouped items).  
+  Look for blocks labeled: Add predicate, Add cue, Connect two, Plan, Instinct step, Export snapshot, Pyvis export, Planner toggle.
+
+* **Exports (`__all__`)** you can import:  
+  `main`, `interactive_loop`, `run_preflight_full`, `snapshot_text`, `export_snapshot`, `world_delete_edge`, `boot_prime_stand`, `save_session`, `versions_dict`, `versions_text`, `choose_contextual_base`, `compute_foa`, `candidate_anchors`, `__version__`, `Ctx`.
+
+* * *
+
+****Note: Code changes but the main ideas below should remain stable with the project*** `
+
+ 
+
+# Tutorial on Controller Module Technical Features
+
+
+
+## cca8_controller.py : Usage & Mental Model (Part 1)
+
+**What this module does.**  
+It owns the **drives** (hunger/fatigue/warmth), the **policies** (a.k.a. primitives) that decide one step at a time, and the **Action Center** loop that picks the first policy whose `trigger(...)` is true and runs it.
+
+**Key ideas:**
+
+* **Drives → ephemeral `drive:*` tags.** `Drives.predicates()` returns strings like `drive:hunger_high`. These are **not** written into the graph; they’re only used inside policy `trigger(...)` logic.
+
+* **Policies (primitives).** Each policy has two methods:
+  
+  * `trigger(world, drives) -> bool`
+  
+  * `execute(world, ctx, drives) -> dict`  
+    `execute` appends a _small chain_ of predicates/edges to the **WorldGraph** and returns a standard status dict (policy, status, reward, notes).
+
+* **Action Center.** Scans `PRIMITIVES` in order; runs the first policy whose `trigger(...)` returns `True`. Safety exception: if the agent is **fallen**, `StandUp` is run immediately.
+
+* **Provenance & skill ledger.** Policies stamp `binding.meta["policy"]` (and edge `meta["created_by"]`) and update a small in-memory **SKILLS** ledger (n, succ, q, last_reward).
+
+### One-minute quickstart (copy/paste)
+
+    from cca8_world_graph import WorldGraph
+    from cca8_controller import Drives, action_center_step
+    
+    g = WorldGraph()
+    now = g.ensure_anchor("NOW")
+    
+    # Neonate: hungry enough to act; fatigue moderate
+    dr = Drives(hunger=0.9, fatigue=0.2, warmth=0.6)
+    print("drive tags:", dr.predicates())   # e.g., ['drive:hunger_high']
+    
+    # One Action Center tick
+    status = action_center_step(g, ctx=None, drives=dr)
+    print(status)                            # {'policy': 'policy:stand_up', 'status': 'ok', ...}
+    print(g.plan_pretty(now, "posture:standing"))
+
+**Status dict contract (always):**
+    {
+      "policy": "policy:<name>" | None,
+      "status": "ok" | "fail" | "noop" | "error",
+      "reward": float,
+      "notes": str
+    }
+
+**Drive thresholds (from `Drives` docstring):**
+
+* `hunger > 0.6 → 'drive:hunger_high'`
+
+* `fatigue > 0.7 → 'drive:fatigue_high'`
+
+* `warmth < 0.3 → 'drive:cold'`
+
+**Planner note.** Policies create/chain **predicates** with directed edges; planning remains BFS (or Dijkstra, if selected) on the episode graph you built in `cca8_world_graph.py`.
+
+* * *
+
+## `cca8_controller.py` — API & Internals (Part 2)
+
+Core data & module-level symbols
+--------------------------------
+
+* **`PRIMITIVES: list[Primitive]`** — ordered repertoire scanned by the Action Center (default order):  
+  `StandUp()`, `SeekNipple()`, `FollowMom()`, `ExploreCheck()`, `Rest()`.
+
+* **`SKILLS: dict[str, SkillStat]`** — in-memory per-policy stats (n, succ, q, last_reward).
+
+Classes
+-------
+
+### `Drives`
+
+Agent internal state + conversion to ephemeral drive tags.
+
+* **Attributes:**  
+  `hunger: float`, `fatigue: float`, `warmth: float`
+
+* **Methods:**  
+  `predicates() -> list[str]` ⮕ returns `drive:*` tags by threshold  
+  `to_dict() -> dict` / `from_dict(d) -> Drives`
+
+### `SkillStat`
+
+Tiny running stats structure for the skill ledger.  
+Fields: `n`, `succ`, `q`, `last_reward`.
+
+### `Primitive` (base class)
+
+Policy interface + standardized return helpers.
+
+* `name: str = "policy:unknown"`
+
+* `trigger(world, drives) -> bool`
+
+* `execute(world, ctx, drives) -> dict`
+
+* Helpers (update SKILLS + return dict):
+  
+  * `_success(reward: float, notes: str) -> dict`
+  
+  * `_fail(notes: str, reward: float = 0.0) -> dict`
+
+### Concrete policies (default set)
+
+#### `StandUp(Primitive)`
+
+* **Trigger:** true if **fallen**, or if **hunger high** and **not upright yet**.  
+  Accepts legacy & canonical posture tags (`state:posture_standing` / `posture:standing`).
+
+* **Execute:** append a tiny chain  
+  `action:push_up → action:extend_legs → state:posture_standing`  
+  Add `"then"` edges, stamp provenance, return reward `+1.0`.
+
+#### `SeekNipple(Primitive)`
+
+* **Trigger:** **hungry**, **upright**, **not fallen**, **not already seeking**.
+
+* **Execute:** `action:orient_to_mom → seeking_mom` with a `"then"` edge; reward `+0.5`.
+
+#### `FollowMom(Primitive)`
+
+* **Trigger:** permissive default (returns `True`).
+
+* **Execute:** `action:look_around → state:alert`; reward `+0.1`.
+
+#### `ExploreCheck(Primitive)`
+
+* **Trigger:** currently `False` (stub for periodic checks).
+
+* **Execute:** returns `_success("checked")` (no graph mutation).
+
+#### `Rest(Primitive)`
+
+* **Trigger:** `fatigue > 0.8`.
+
+* **Execute:** reduces `fatigue`, adds `state:resting` (attached to NOW), reward `+0.2`.
+
+Functions (helpers & Action Center)
+-----------------------------------
+
+* **`update_skill(name, reward, ok=True, alpha=0.3) -> None`**  
+  Get-or-create a `SkillStat`, bump counts, **exponential-avg** into `q`, set `last_reward`.
+
+* **`skills_to_dict() -> dict` / `skills_from_dict(d: dict) -> None`**  
+  Serialize/rehydrate the in-memory SKILLS ledger.
+
+* **`skill_readout() -> str`**  
+  Human-readable one-liner per policy: `n, succ, rate, q, last`.
+
+* **`_any_tag(world, full_tag: str) -> bool`**  
+  `True` if any binding carries the exact tag (used by triggers).
+
+* **`_has(world, token: str) -> bool`**  
+  Convenience: token like `"posture:fallen"` → checks for `pred:posture:fallen` anywhere.
+
+* **`_any_cue_present(world) -> bool`**  
+  `True` if any `cue:*` tag is present in the world (loose sensor check).
+
+* **`_run(policy, world, ctx, drives) -> dict`**  
+  Wrapper: call `execute`, update SKILLS; catch and report policy errors.
+
+* **`action_center_step(world, ctx, drives: Drives) -> dict`**  
+  **Contract:** scan `PRIMITIVES`; run the first whose `trigger(...)` returns `True`.  
+  **Safety short-circuit:** if fallen, immediately run `StandUp`.  
+  **Side-effects:** appends bindings/edges, may adjust drives, updates SKILLS.  
+  **Returns:** a status dict (`ok`/`fail`/`noop`/`error`).
+
+* * *
+
+Minimal usage crib (controller-focused)
+---------------------------------------
+
+    from cca8_world_graph import WorldGraph
+    from cca8_controller import Drives, action_center_step, skill_readout
+    
+    g = WorldGraph()
+    now = g.ensure_anchor("NOW")
+    
+    # 1) Hungry neonate → StandUp likely fires
+    dr = Drives(hunger=0.95, fatigue=0.2, warmth=0.6)
+    print(action_center_step(g, ctx=None, drives=dr))
+    print(g.plan_pretty(now, "posture:standing"))
+    
+    # 2) Fatigued agent → Rest fires next
+    dr.fatigue = 0.9
+    print(action_center_step(g, ctx=None, drives=dr))
+    
+    # 3) Ledger peek
+    print(skill_readout())
+
+**Style guidance:** keep **drive tags ephemeral** (policy triggers). If we want drive states visible to planning/paths, add **`pred:drive:*`** nodes (plannable) or **`cue:drive:*`** (trigger-only) deliberately in your controller logic.
+
+* * *
+
+
+
+
+
+# Planner contract (for maintainers)
 
 Input:
 
@@ -2224,7 +3357,13 @@ A: Drives and small controller telemetry to aid debugging.
 
 
 
+
+
+* * *
+
 ## Traceability (requirements to code)
+
+---------------------------------------------------------------
 
 A traceability‑lite table maps major requirements to the modules and functions that satisfy them. Keep this short and keep it close to code names so a maintainer can jump straight into the right file. Examples:
 
@@ -2423,21 +3562,33 @@ Q: Provenance?  A: meta.policy records which policy created the node.
 
 ---
 
-## References
+# Session Notes (Living Log)
 
 
 
 
 
-## Session Notes (Living Log)
+* * *
+
+
+
+# References
+
+
+
+
+
+## 
 
 ### 
 
-- - 
+[Navigation Map-Based Artificial Intelligence](https://www.mdpi.com/2673-2688/3/2/26)
+
+[Frontiers | The emergence of enhanced intelligence in a brain-inspired cognitive architecture](https://www.frontiersin.org/journals/computational-neuroscience/articles/10.3389/fncom.2024.1367712/full)
 
 #### 
 
-## Work in Progress
+# Work in Progress
 
 --
 

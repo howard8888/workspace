@@ -40,7 +40,7 @@ from typing import Dict, List
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.0.3"  
+__version__ = "0.0.3"
 __all__ = [
     "Drives",
     "SkillStat",
@@ -86,6 +86,13 @@ class Drives:
     warmth: float = 0.6
 
     def predicates(self) -> List[str]:
+        """Return ephemeral 'drive:*' tags for policy triggers (not persisted in the graph).
+
+        Thresholds:
+            hunger  > 0.60 → 'drive:hunger_high'
+            fatigue > 0.70 → 'drive:fatigue_high'
+            warmth  < 0.30 → 'drive:cold'
+        """
         tags: List[str] = []
         if self.hunger > HUNGER_HIGH:
             tags.append("drive:hunger_high")
@@ -96,16 +103,18 @@ class Drives:
         return tags
 
     def to_dict(self) -> dict:
+        """Return a plain JSON-safe dict of drive values for autosave/snapshots."""
         return {"hunger": self.hunger, "fatigue": self.fatigue, "warmth": self.warmth}
-
 
     @classmethod
     def from_dict(cls, d: dict) -> "Drives":
+        """Construct a Drives from a snapshot dict (robust to missing keys)."""
         return cls(
             hunger=float(d.get("hunger", 0.7)),
             fatigue=float(d.get("fatigue", 0.2)),
             warmth=float(d.get("warmth", 0.6)),
         )
+
 
 
 # -----------------------------------------------------------------------------
@@ -122,9 +131,16 @@ class SkillStat:
 
 SKILLS: Dict[str, SkillStat] = {}
 
-    
 def update_skill(name: str, reward: float, ok: bool = True, alpha: float = 0.3) -> None:
-    # get-or-create (more readable than setdefault)
+    """Update (or create) a SkillStat:
+    - n += 1; succ += 1 if ok
+    - q ← (1 - alpha) * q + alpha * reward     (exponential moving average)
+    - last_reward ← reward
+
+    Notes:
+        * The ledger is in-memory only (not used for selection yet).
+        * Callers should pass rewards on the same scale across policies.
+    """
     s = SKILLS.get(name)
     if s is None:
         s = SkillStat()
@@ -133,23 +149,17 @@ def update_skill(name: str, reward: float, ok: bool = True, alpha: float = 0.3) 
     s.n += 1
     if ok:
         s.succ += 1
-    # simple exponential average for q
     s.q = (1 - alpha) * s.q + alpha * float(reward)
     s.last_reward = float(reward)
 
-
 def skills_to_dict() -> dict:
-    """    
-    Converts each SkillStat dataclass to a built-in mapping (i.e., plain dict with field names as keys)
-       via dataclasses.asdict(), so the result is detached (editing it will not mutate the original SKILLS)
-    Returns:
-        dict[str, dict[str, float|int]]
-
-    e.g. SKILLS is: {'policy:stand_up': SkillStat(n=1, succ=1, q=0.3, last_reward=1.0)}
-    output is: {'policy:stand_up': {'n': 1, 'succ': 1, 'q': 0.3, 'last_reward': 1.0}}   
+    """Return a JSON-safe mapping of skill stats:
+    {
+      "policy:stand_up": {"n": int, "succ": int, "q": float, "last_reward": float},
+      ...
+    }
     """
     return {k: asdict(v) for k, v in SKILLS.items()}
-    
 
 def skills_from_dict(d: dict) -> None:
     """Rebuild SKILLS dataclass values from plain dicts (robust to bad inputs)."""
@@ -167,6 +177,7 @@ def skills_from_dict(d: dict) -> None:
             continue
 
 def skill_readout() -> str:
+    """Human-readable policy stats: one line per policy (n/succ/rate/q/last)."""
     if not SKILLS:
         return "(no skill stats yet)"
     lines: List[str] = []
@@ -178,32 +189,40 @@ def skill_readout() -> str:
         )
     return "\n".join(lines)
 
+
 # -----------------------------------------------------------------------------
 # Helper queries (controller-local; simple global scans)
 # -----------------------------------------------------------------------------
+# NOTE: in the future prefer a public iterator on WorldGraph (e.g., world.iter_tags(prefix="cue:"))
+# to avoid peeking at world._bindings here. Kept as a trusted-friend shortcut for now.
 
 def _any_tag(world, full_tag: str) -> bool:
-    """Return True if any binding carries the exact 'pred:...' tag."""
+    """Return True if any binding carries the exact tag (e.g., 'pred:...')."""
     try:
-        for b in world._bindings.values():
-            if full_tag in getattr(b, "tags", []):
+        for b in world._bindings.values():  # pylint: disable=protected-access
+            tags = getattr(b, "tags", ())
+            if isinstance(tags, (set, list, tuple)) and full_tag in tags:
                 return True
-    except Exception:
+    except (AttributeError, TypeError, KeyError):
         pass
     return False
+
 
 def _has(world, token: str) -> bool:
     """Convenience: token like 'state:posture_fallen' → checks 'pred:<token>' anywhere."""
     return _any_tag(world, f"pred:{token}")
 
 def _any_cue_present(world) -> bool:
-    """Loose cue check: any cue:* is present (no proximity test here)."""
+    """Loose cue check: True if any tag starts with 'cue:' (no proximity semantics)."""
     try:
-        for b in world._bindings.values():
-            for t in getattr(b, "tags", []):
+        for b in world._bindings.values():  # pylint: disable=protected-access
+            tags = getattr(b, "tags", ())
+            if not isinstance(tags, (set, list, tuple)):
+                continue
+            for t in tags:
                 if isinstance(t, str) and t.startswith("cue:"):
                     return True
-    except Exception:
+    except (AttributeError, TypeError, KeyError):
         pass
     return False
 
@@ -213,23 +232,32 @@ def _any_cue_present(world) -> bool:
 # -----------------------------------------------------------------------------
 
 class Primitive:
+    """Abstract policy interface: implement trigger(...) and execute(...)."""
     name: str = "policy:unknown"
 
-    def trigger(self, world, drives: Drives) -> bool:
+    def trigger(self, world, drives: Drives) -> bool:  # pylint: disable=unused-argument
+        """Return True if this policy should fire given world/drives (base returns False)."""
         return False
 
-    def execute(self, world, ctx, drives: Drives) -> dict:
+    def execute(self, world, ctx, drives: Drives) -> dict:  # pylint: disable=unused-argument
+        """Perform one step; append bindings/edges and return a status dict (base = fail)."""
         return self._fail("not implemented")
 
-    # helpers to standardize return + skill update
-    def _success(self, reward: float, notes: str) -> dict:
+    def _success(self, reward: float, notes: str, **extra) -> dict:
+        """Standard success payload + skill update; extra keys are merged (e.g., binding='b7')."""
         update_skill(self.name, reward, ok=True)
-        return {"policy": self.name, "status": "ok", "reward": float(reward), "notes": notes}
+        payload = {"policy": self.name, "status": "ok", "reward": float(reward), "notes": notes}
+        if extra:
+            payload.update(extra)
+        return payload
 
-    def _fail(self, notes: str, reward: float = 0.0) -> dict:
+    def _fail(self, notes: str, reward: float = 0.0, **extra) -> dict:
+        """Standard fail payload + skill update; extra keys are merged."""
         update_skill(self.name, reward, ok=False)
-        return {"policy": self.name, "status": "fail", "reward": float(reward), "notes": notes}
-
+        payload = {"policy": self.name, "status": "fail", "reward": float(reward), "notes": notes}
+        if extra:
+            payload.update(extra)
+        return payload
 
 # -----------------------------------------------------------------------------
 # Concrete policies
@@ -262,36 +290,25 @@ class StandUp(Primitive):
         # (This is a coarse global check; runner guards the near-NOW case.)
         if _has(world, "state:posture_standing") or _has(world, "posture:standing"):
             return False
-
         return True
 
-    
     def execute(self, world, ctx, drives):
         """
         Create a short 'stand up' sequence and finish at the canonical state:
         pred:posture:standing
+
+        Meta:
+            binding.meta = {"policy": "policy:stand_up", "created_at": "<ISO time>"}
+            edge.meta    = same dict if you choose to add one on edges later.
         """
-        meta_common = {"created_by": self.name}
+        meta = {"policy": self.name, "created_at": datetime.now().isoformat(timespec="seconds")}
         try:
-            # toy sub-actions (optional but nice for the spine)
-            world.add_predicate("action:push_up",    attach="now",    meta=meta_common)
-            world.add_predicate("action:extend_legs", attach="latest", meta=meta_common)
-
-            # canonical standing state (no legacy 'state:posture_standing')
-            b_stand = world.add_predicate("posture:standing", attach="latest", meta=meta_common)
-
-            update_skill(self.name, +1.0, ok=True)
-            return {
-                "policy": self.name,
-                "status": "ok",
-                "reward": 1.0,
-                "notes": "stood up",
-                "binding": b_stand,
-            }
+            world.add_predicate("action:push_up",     attach="now",    meta=meta)
+            world.add_predicate("action:extend_legs", attach="latest", meta=meta)
+            b_stand = world.add_predicate("posture:standing", attach="latest", meta=meta)
+            return self._success(reward=1.0, notes="stood up", binding=b_stand)
         except Exception as e:
-            update_skill(self.name, 0.0, ok=False)
-            return {"policy": self.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}
-
+            return self._fail(notes=f"exec error: {e}")
 
 class SeekNipple(Primitive):
     """Example/stub of a follow-up behavior"""
@@ -319,7 +336,7 @@ class SeekNipple(Primitive):
             return False
 
         return True
-   
+
     def execute(self, world, ctx, drives: Drives) -> dict:
         now = datetime.now().isoformat(timespec="seconds")
         meta = {"policy": self.name, "created_at": now}
@@ -346,6 +363,7 @@ class FollowMom(Primitive):
 
 
 class ExploreCheck(Primitive):
+    """Periodic/diagnostic check stub (disabled by default)."""
     name = "policy:explore_check"
 
     def trigger(self, world, drives: Drives) -> bool:
@@ -357,6 +375,7 @@ class ExploreCheck(Primitive):
 
 
 class Rest(Primitive):
+    """Reduce fatigue and mark a resting state."""    
     name = "policy:rest"
 
     def trigger(self, world, drives: Drives) -> bool:
@@ -366,17 +385,16 @@ class Rest(Primitive):
         drives.fatigue = max(0.0, drives.fatigue - 0.2)
         now = datetime.now().isoformat(timespec="seconds")
         meta = {"policy": self.name, "created_at": now}
-        a = world.add_predicate("state:resting", attach="now", meta=meta)
+        world.add_predicate("state:resting", attach="now", meta=meta)  # (no assignment)
         return self._success(reward=0.2, notes="resting")
-
 
 # Ordered repertoire scanned by the Action Center
 PRIMITIVES: List[Primitive] = [
     StandUp(),
     SeekNipple(),
-    FollowMom(),
+    Rest(),         # check restorative action before permissive fallback
+    FollowMom(),    # permissive default should be after concrete needs
     ExploreCheck(),
-    Rest(),
 ]
 
 
@@ -384,50 +402,37 @@ PRIMITIVES: List[Primitive] = [
 # Action Center
 # -----------------------------------------------------------------------------
 
-def _run(policy, world, ctx, drives):
+def _run(policy, world, ctx, drives) -> dict:
     try:
         return policy.execute(world, ctx, drives)
     except Exception as e:
         update_skill(policy.name, 0.0, ok=False)
         return {"policy": policy.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}
 
+
 def action_center_step(world, ctx, drives: Drives) -> dict:
     """Scan PRIMITIVES in order; run the first policy whose trigger returns True.
- 
-    Returns a status dict:
-        {
-          "policy": "policy:<name>" | None,
-          "status": "ok" | "fail" | "noop" | "error",
-          "reward": float,
-          "notes": str
-        }
+
+    Returns:
+        {"policy": "policy:<name>"|None, "status": "ok|fail|noop|error", "reward": float, "notes": str}
     Side effects:
         - Appends new bindings/edges to world.
-        - Adjusts drives (e.g., fatigue).
+        - May adjust drives (e.g., fatigue).
         - Updates SKILLS ledger.
     """
-    # ---- SAFETY-FIRST SHORT-CIRCUIT ----
-    # if fallen, recover immediately (accept old or canonical form)
+    # Safety-first: if fallen, run StandUp immediately
     if _has(world, "state:posture_fallen") or _has(world, "posture:fallen"):
-        for policy in PRIMITIVES:
-            if policy.name == "policy:stand_up":
-                try:
-                    return _run(policy, world, ctx, drives)
-                except Exception as e:
-                    update_skill(policy.name, 0.0, ok=False)
-                    return {"policy": policy.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}
+        stand = next((p for p in PRIMITIVES if p.name == "policy:stand_up"), None)
+        if stand:
+            return _run(stand, world, ctx, drives)
 
-    # ------------------------------------
-    
+    # Normal scan
     for policy in PRIMITIVES:
         try:
             if policy.trigger(world, drives):
-                try:
-                    return _run(policy, world, ctx, drives)
-                except Exception as e:
-                    update_skill(policy.name, 0.0, ok=False)
-                    return {"policy": policy.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}
+                return _run(policy, world, ctx, drives)
         except Exception:
-            # bad trigger shouldn't kill the loop; try next policy
+            # A bad trigger shouldn't kill the loop; try next policy.
             continue
+
     return {"policy": None, "status": "noop", "reward": 0.0, "notes": "no triggers matched"}
