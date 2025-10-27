@@ -339,19 +339,29 @@ def loop_helper(autosave_from_args: Optional[str], world, drives, time_limited: 
         # print(f"[autosaved {ts}] {autosave_from_args}")
 
 def _drive_tags(drives) -> list[str]:
-    """Robustly compute drive:* tags even if Drives.predicates() is missing.
+    """Robustly compute drive:* tags even if Drives.flags()/predicates() is missing.
 
-    If the Drives class has a .predicates() method, use that; otherwise derive
-    default tags by thresholds: hunger>0.6 → drive:hunger_high;
-    fatigue>0.7 → drive:fatigue_high; warmth<0.3 → drive:cold.
+    If the Drives class has .flags() use that; fallback to .predicates(); else derive
+    by thresholds: hunger>0.6 → drive:hunger_high; fatigue>0.7 → drive:fatigue_high; warmth<0.3 → drive:cold.
     """
+    # Prefer the new API
+    if hasattr(drives, "flags") and callable(getattr(drives, "flags")):
+        try:
+            tags = list(drives.flags())
+            return [t for t in tags if isinstance(t, str)]
+        except Exception:
+            pass
+
+    # Back-compat
     if hasattr(drives, "predicates") and callable(getattr(drives, "predicates")):
         try:
             tags = list(drives.predicates())
             return [t for t in tags if isinstance(t, str)]
         except Exception:
             pass
-    tags = ["state:breathing_ok"]
+
+    # Last-resort derived flags
+    tags = []
     try:
         if getattr(drives, "hunger", 0.0) > 0.6:
             tags.append("drive:hunger_high")

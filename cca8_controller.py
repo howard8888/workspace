@@ -5,22 +5,51 @@ CCA8 Controller: drives, primitives ("policies"), and action center.
 Concepts
 --------
 - Drives: numeric homeostatic values (hunger, fatigue, warmth) → derive 'drive:*' tags.
-- Policy (primitive): behavior object with `trigger(world, drives)` and `execute(world, ctx, drives)`.
-  When executed, a policy appends a *small chain* of predicates/edges to the WorldGraph and returns
-  a status dict: {"policy": "policy:<name>", "status": "ok|fail|noop|error", "reward": float, "notes": str}.
-- Provenance: bindings created by a policy stamp meta.policy = "policy:<name>".
-  "provenance" means when a primitive/policy fires and creates bindings or links we stamp metadata
-   eg, "created_by: policy:<name>", timestamp, tag "policy:stand_up", "note: 'standing'"
-   thus effective means recording origin so later debugging/credit assignment skill ledger,RL is explainable
-   -state predicates, e.g., state:posture_standing, assert something about the agent or world that reasoner can use as facts
-   -provenance tags, e.g., policy:stand_up, assert who/what produced this binding/edge rather than something  plan for, it already occurred
-   -despite the same effect predicate being produced there could have been two different policies creating it, provenance tags help figure out which one
-- Skill ledger: tiny RL-style counters (n, succ, q, last_reward) per policy; not used for selection yet.
+- Policy (primitive): behavior object with two parts -- trigger(...) and execute(...)
+    -parameter 'world' represents the episode state, e.g., already standing? fallen?, cues present?, anchors/latest?
+    -parameter 'drives' represent internal needs, i.e., homeostatic values (e.g., hunger, fatigue, etc)
+        -drive tags are derived from numeric levels, e.g., hunger > 0.60 --> "drive:hunger_high"
+        [note: worldgraph has only 3 families: pred:*, cue:*, anchor:* -- drive:* are ephemeral controller flags, not graph tags]
+                   [action:* actually stored as "pred:action:*" although locally sometimes referred to as action:*]
+                   [we still encode actions primarily as edge labels]
+        [created by Drives.flags() for trigger logic only and are never written to WorldGraph]
+        [e.g., plannable drive condition, then yes, can create a node with e.g., "pred:drive:hunger_high", or evidence, e.g., cue:drive:hunger_high]
+        -policies use drive tags in triggering (e.g., SeekNipple needs hunger), while execute may update drives (e.g., Rest reduces fatigue a bit)
+    -parameter 'ctx' represents runtime context
+        -includes age_days, sigma and jump (tie-breaking, exploration settings), ticks (i.e., how many steps have passed), profile (e.g., "goat", "chimp", etc),
+           winners_k, hal and body (for multi-brain scaffolding and embodiment stub)
+        -policies don't really require ctx but useful for gating behavior by age/profile, calling into HAL stubs, writing provenance, e.g., ticks, to meta
+    -trigger(world, drives)
+    -execute(world, drives, ctx) -- appends small chain of bindings/edges and set provenance to world; adjust internal states to drives; optional gating, embodiment via ctx
+    -e.g.,  def trigger (self, world, drives): if _has(world, ...) or drives.fatigue... return False
+            def execute (self, world, ctx, drives): meta=... ; world.add_predicate("action:look_around"); return self._success(reward, notes, binding)
+            -if display WorldGraph:  b1(NOW) --then--> b2[action:look_around]--then--> b3[state:alert]
+    -when executed, a policy appends a *small chain* of predicates/edges to the WorldGraph and returns a status dict
+       -status dict: {"policy": "policy:<name>", "status": "ok|fail|noop|error", "reward": float, "notes": str}.
+    - Provenance: bindings created by a policy stamp meta.policy = "policy:<name>".
+        "provenance" means when a primitive/policy fires and creates bindings or links we stamp metadata
+        eg, "created_by: policy:<name>", timestamp, tag "policy:stand_up", "note: 'standing'"
+        thus effective means recording origin so later debugging/credit assignment skill ledger,RL is explainable
+        -state predicates, e.g., state:posture_standing, assert something about the agent or world that reasoner can use as facts
+        -provenance tags, e.g., policy:stand_up, assert who/what produced this binding/edge rather than something  plan for, it already occurred
+        -despite the same effect predicate being produced there could have been two different policies creating it, provenance tags help figure out which one
+        - Skill ledger: tiny RL-style counters (n, succ, q, last_reward) per policy; not used for selection yet.
 
 Action loop
 -----------
-`action_center_step(world, ctx, drives)` scans PRIMITIVES in order and runs the *first* whose trigger is true.
-A permissive fallback (e.g., FollowMom) prevents 'noop' unless  tighten its trigger.
+-the Action Center is like a single-step orchestrator --
+   -safety short-circuit, e.g., if the world shows a fallen state then immediately run StandUp
+   -otherwise scan PRIMITIVES in order call trigger(world, dirves)
+   -run the first policy whose trigger is True --> _run wraps execute(...) and updates the skill ledger
+   -returns a status dict {"policy":"policy:<name>" | None, "status": "ok|fail|noop|error", "reward":float, "notes":str}
+-the order of PRIMITIVES matters and we placed in our priority scheme:
+   StandUp (safety) --> SeekNipple(hunger) --> Rest (fatigue) --> FollowMom (fallback) --> ExploreCheck (stub)
+A permissive fallback (e.g., FollowMom) (i.e., a policy whose trigger(...) is basically always True or at least in most normal states)
+  -the action center returns {"status":"noop"} only when no policy triggers
+  -if FollowMom.trigger(...) is nearly always True, then never see a "noop" because the fallback will always fire and produce an "ok" step instead
+  -if ever want occasional no-ops (i.e., do nothing ticks) then tighten FollowMom(...) trigger (e.g., return False if tired/hungry/just acted) or
+     move FollowMom even further down or add a timer/debounce so it doesn't constantly fire
+
 """
 
 # --- Imports -------------------------------------------------------------
@@ -85,8 +114,9 @@ class Drives:
     fatigue: float = 0.2
     warmth: float = 0.6
 
-    def predicates(self) -> List[str]:
-        """Return ephemeral 'drive:*' tags for policy triggers (not persisted in the graph).
+
+    def flags(self) -> List[str]:
+        """Return ephemeral 'drive:*' flags for policy triggers (not persisted in the graph).
 
         Thresholds:
             hunger  > 0.60 → 'drive:hunger_high'
@@ -101,6 +131,11 @@ class Drives:
         if self.warmth < WARMTH_COLD:
             tags.append("drive:cold")
         return tags
+
+    # Back-compat for older code/tests
+    def predicates(self) -> List[str]:  # pragma: no cover (legacy alias)
+        """DEPRECATED: use .flags()."""
+        return self.flags()
 
     def to_dict(self) -> dict:
         """Return a plain JSON-safe dict of drive values for autosave/snapshots."""
@@ -283,7 +318,7 @@ class StandUp(Primitive):
             return True
 
         # Otherwise require hunger_high (toy heuristic)
-        if "drive:hunger_high" not in set(drives.predicates()):
+        if "drive:hunger_high" not in set(drives.flags()):
             return False
 
         # Guard: if already upright now (historically recorded), skip
@@ -319,8 +354,8 @@ class SeekNipple(Primitive):
         Fire only when hungry, upright, not fallen, and not already seeking.
         Accept both legacy and canonical posture tags for backward compatibility.
         """
-        tags = set(drives.predicates())
-        if "drive:hunger_high" not in tags:
+        flags = set(drives.flags())
+        if "drive:hunger_high" not in flags:
             return False
 
         # must be upright (accept old or canonical form)
@@ -375,7 +410,7 @@ class ExploreCheck(Primitive):
 
 
 class Rest(Primitive):
-    """Reduce fatigue and mark a resting state."""    
+    """Reduce fatigue and mark a resting state."""
     name = "policy:rest"
 
     def trigger(self, world, drives: Drives) -> bool:

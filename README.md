@@ -181,7 +181,7 @@ A: Use `--plan <pred:token>` on the command line.
 
 **WorldGraph**. The directed graph of bindings and edges. It has a start anchor called NOW and uses breadth‑first search (BFS) to find routes from NOW to a goal predicate.
 
-**Drive**. A motive with a scalar level (e.g., hunger, fatigue, warmth). Drives can publish “drive tags” into the context to make policies easy to trigger.
+**Drive**. A motive with a scalar level (e.g., hunger, fatigue, warmth). The controller exposes **ephemeral drive flags** via `Drives.flags()` (strings like `drive:hunger_high`) used only inside policy triggers; they are **not written** into WorldGraph. If you want a persisted/plannable drive condition, create a tag explicitly as **`pred:drive:*`** (plannable) or **`cue:drive:*`** (trigger-only).
 
 **Policy**. A small routine with `trigger()` and `execute()`. The Action Center scans policies in priority order, picks the first that triggers, and executes it once. Execution typically creates a new binding and connects it to whatever was most recent.
 
@@ -199,8 +199,8 @@ A: A **predicate** is a token (`pred:…`), a **binding** is the node that carri
 Q: Where do I see who created a node?   
 A: In `meta.policy`—policies stamp their names when they create bindings.
 
-Q: What are drive tags?   
-A: Derived tags like `drive:hunger_high` that make policy triggers straightforward.
+Q: What are drive flags?   
+A: Derived flags like `drive:hunger_high` that make policy triggers straightforward.
 
 Q: Can I inspect an engram from the UI?   
 A: Yes—use the binding inspection flow to see engram pointers and meta.
@@ -333,6 +333,7 @@ Use `"then"` for episode flow. Reserve domain labels when they clarify intent:
 
 * **`suckle`**: sustained action with reward.  
   You can consider richer domain labels but keep them short and consistent so paths remain readable.
+  **Action-like predicates.** When it improves readability or you want an intermediate state, you may also record an action-like predicate such as `pred:action:push_up`. The project’s lexicon permits several `action:*` tokens **under the `pred` family**. Planner behavior is unchanged (planning is over structure), and the house style still favors **edge labels** for actions.
 
 ##### Consistency invariants (quick checklist)
 
@@ -349,6 +350,10 @@ Use `"then"` for episode flow. Reserve domain labels when they clarify intent:
 ##### Scale & performance notes
 
 For development scale (up to hundreds of thousands of bindings), the dict-of-lists adjacency plus a `deque` frontier is fast and transparent. If the graph grows toward tens of millions of edges, swap the backend (e.g., CSR or a KV store) behind the same interface without changing runner semantics or user-facing behavior.
+
+**Families recap.** WorldGraph stores only `pred:*`, `cue:*`, and `anchor:*`. The controller may compute `drive:*` **flags** for triggers, but they are never written into the graph unless you explicitly add `pred:drive:*` or `cue:drive:*`.
+
+
 
 
 
@@ -742,9 +747,12 @@ Keep families distinct so humans (and the planner) never have to guess.
    * Also recorded in the engine’s `anchors` map, e.g., `{"NOW": "b1"}`.
    
    * A binding can be _only_ an anchor (no `pred:*`) — that’s fine.
+   
+   * 
 
-4. **Drive-derived tags — pick **one** convention and stick to it**  
-   You wanted consistency; we standardize as:
+4. **Drive-derived tags — pred:drive:* or cue:drive:***  
+   **Only three stored families:** `pred:*`, `cue:*`, and `anchor:*`. Any bare `drive:*` you see is a **controller flag** (ephemeral) and is not stored in the graph.
+   We standardize as:
    
    * **Project default:** use **`pred:drive:*`** for drive conditions that matter to planning (e.g., `pred:drive:hunger_high`).
    
@@ -1244,7 +1252,7 @@ Q: Where do engrams live?  A: cca8_column.py, referenced by bindings’ engrams.
 
 ### Data flow (a tick)
 
-1. Action Center computes active **drive tags**.  
+1. Action Center computes active **drive flags**.  
 2. Scans **policies** in order, first `trigger()` that returns True **fires**.  
 3. `execute()` appends a **small chain** of predicates + edges to the WorldGraph, stamps `meta.policy`, returns a status dict, and updates the skill ledger.  
 4. Planner (on demand) runs BFS from **NOW** to a target `pred:<token>`.  
@@ -1257,6 +1265,9 @@ Q: Where do engrams live?  A: cca8_column.py, referenced by bindings’ engrams.
   - `trigger(world, drives) -> bool`  
   - `execute(world, ctx, drives) -> {"policy", "status", "reward", "notes"}`
 - **Ordered list** `PRIMITIVES = [StandUp(), SeekNipple(), FollowMom(), ExploreCheck(), Rest(), ...]`.  
+  
+   Updated: `PRIMITIVES = [StandUp(), SeekNipple(), Rest(), FollowMom(), ExploreCheck(), ...]`  
+  ( code now evaluates **Rest before FollowMom**.)
 - **Action Center** runs the **first** policy whose `trigger` is True.  
 - **StandUp guard:** `StandUp.trigger()` checks for an existing `pred:state:posture_standing` to avoid “re-standing” every tick.
 
@@ -1485,11 +1496,12 @@ cca8_run.py --load session.json --plan state:posture_standing
 
 ### Add a sensory cue
 
-Menu → **11** → channel `vision`, cue `mom:close` → creates `pred:vision:mom:close` (depending on your input normalization).
+Menu → **11** → channel `vision`, cue `mom:close` → creates `cue:vision:mom:close` (depending on your input normalization).
+Note: menu **11** adds a **cue** not a pred.
 
 ### Show drives (raw + tags)
 
-Menu → **D** → prints numeric drives and active `drive:*` tags (robust even if `Drives.predicates()` isn’t available).
+Menu → **D** → prints numeric drives and active **drive flags** (`drive:*`, ephemeral)
 
 
 
@@ -1552,6 +1564,10 @@ A saved session is a single JSON object that bundles the world, drives, skills, 
         "policy:stand_up": { "n": 3, "succ": 3, "q": 0.58, "last_reward": 1.0 }
       }
     }
+
+
+
+Note: only numeric levels are persisted. **Drive flags** (`drive:*`) are ephemeral controller signals and are not stored in the snapshot. If you need persisted drive state, write `pred:drive:*` (or `cue:drive:*`) explicitly.
 
 **Invariants (top level):**
 
@@ -1648,7 +1664,8 @@ Q: What’s inside a Binding?  A: id, tags, edges[], meta, engrams.
 
 Q: How are edges stored?  A: On the source binding as {"to", "label", "meta"}.
 
-Q: One drive:* tag example?  A: drive:hunger_high (hunger > 0.6).
+Q: One drive:* flag example?  A: drive:hunger_high (hunger > 0.6).
+(This is an ephemeral controller flag; for persisted use, write `pred:drive:hunger_high`.)
 
 Q: A skill stat besides n?  A: succ, q, or last_reward.
 
@@ -1954,8 +1971,7 @@ Policies live in the controller, not in WorldGraph. Provenance is stamped into `
 
 * * *
 
-Tutorial: Technical Features and Usage of `cca8_world_graph.py`
----------------------------------------------------------------
+# Tutorial on WorldGraph Technical Features
 
 This tutorial teaches you how to **build, inspect, and reason about the WorldGraph**—the symbolic fast index that sits at the heart of CCA8. It’s written for developers new to the codebase.
 
@@ -2893,10 +2909,8 @@ Typical entry points:
     python cca8_run.py --autosave session.json
     # Resume + keep autosaving
     python cca8_run.py --load session.json --autosave session.json
-
     # One-shot plan and exit
     python cca8_run.py --load session.json --plan pred:milk:drinking
-
     # Full preflight and exit
     python cca8_run.py --preflight
 
@@ -3094,7 +3108,7 @@ What to scan in the code (orientation map)
 
 ****Note: Code changes but the main ideas below should remain stable with the project*** `
 
- 
+
 
 # Tutorial on Controller Module Technical Features
 
@@ -3107,7 +3121,7 @@ It owns the **drives** (hunger/fatigue/warmth), the **policies** (a.k.a. primiti
 
 **Key ideas:**
 
-* **Drives → ephemeral `drive:*` tags.** `Drives.predicates()` returns strings like `drive:hunger_high`. These are **not** written into the graph; they’re only used inside policy `trigger(...)` logic.
+* **Drives → ephemeral `drive:*` tags.** `Drives.flags()` returns strings like `drive:hunger_high`. These are **not** written into the graph; they’re only used inside policy `trigger(...)` logic.
 
 * **Policies (primitives).** Each policy has two methods:
   
@@ -3130,7 +3144,7 @@ It owns the **drives** (hunger/fatigue/warmth), the **policies** (a.k.a. primiti
     
     # Neonate: hungry enough to act; fatigue moderate
     dr = Drives(hunger=0.9, fatigue=0.2, warmth=0.6)
-    print("drive tags:", dr.predicates())   # e.g., ['drive:hunger_high']
+    print("drive flags:", dr.predicates())   # e.g., ['drive:hunger_high']
     
     # One Action Center tick
     status = action_center_step(g, ctx=None, drives=dr)
@@ -3172,7 +3186,7 @@ Classes
 
 ### `Drives`
 
-Agent internal state + conversion to ephemeral drive tags.
+Agent internal state + conversion to ephemeral drive flags.
 
 * **Attributes:**  
   `hunger: float`, `fatigue: float`, `warmth: float`
@@ -3290,7 +3304,7 @@ Minimal usage crib (controller-focused)
     # 3) Ledger peek
     print(skill_readout())
 
-**Style guidance:** keep **drive tags ephemeral** (policy triggers). If we want drive states visible to planning/paths, add **`pred:drive:*`** nodes (plannable) or **`cue:drive:*`** (trigger-only) deliberately in your controller logic.
+**Style guidance:** keep **drive tags ephemeral (which is why they are called flags)** (policy triggers). If we want drive states visible to planning/paths, add **`pred:drive:*`** nodes (plannable) or **`cue:drive:*`** (trigger-only) deliberately in your controller logic.
 
 * * *
 
@@ -3495,7 +3509,7 @@ Note -- ADR's are paused at present. Instead new material is integrated directly
 - **WorldGraph** — the episode index graph.  
 - **Policy** — primitive behavior with `trigger` + `execute`.  
 - **Action Center** — ordered scan of policies, runs first match per tick.  
-- **Drives** — homeostatic variables (hunger/fatigue/warmth) that generate drive tags for triggers.  
+- **Drives** — homeostatic variables (hunger/fatigue/warmth) that generate drive flags for triggers.  
 - **Engram** — pointer to heavy content (features/sensory/temporal traces) stored outside the graph.  
 - **Provenance** — `meta.policy` stamp recording which policy created a binding.
   
@@ -3526,7 +3540,7 @@ Large payloads stored outside the graph and referenced by pointers from bindings
 Trigger (conditions on predicates/drives/sensory cues) + primitive (callable). Lives in code (`cca8_controller.py`), not in the graph.
 
 **Drives**  
-Scalar homeostatic variables (0–1): `hunger`, `warmth`, `fatigue`. When crossing thresholds, the runner emits drive tags like `drive:hunger_high`.
+Scalar homeostatic variables (0–1): `hunger`, `warmth`, `fatigue`. When crossing thresholds, the runner emits drive flags like `drive:hunger_high`.
 
 **Search knobs**
 
@@ -3540,7 +3554,7 @@ Scalar homeostatic variables (0–1): `hunger`, `warmth`, `fatigue`. When crossi
 
 * **Sensory cue** adds transient evidence (vision/smell/sound/touch).
 
-* **Autonomic tick** updates drives (e.g., hunger rises) and can emit drive tags.
+* **Autonomic tick** updates drives (e.g., hunger rises) and can emit drive flags.
 
 **Instinct step**  
 One step chosen by the controller using policies + drives + cues. You can accept/reject proposals.
