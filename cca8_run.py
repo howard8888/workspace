@@ -58,7 +58,8 @@ from collections import defaultdict
 # CCA8 Module Imports
 #import cca8_world_graph as wgmod  # modular alternative: allows swapping WorldGraph engines
 import cca8_world_graph
-from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict
+from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict, HUNGER_HIGH, FATIGUE_HIGH
+
 
 # --- Public API index, version, global variables and constants ----------------------------------------
 #nb version number of different modules are unique to that module
@@ -481,66 +482,66 @@ class PolicyRuntime:
         """
         return [p.name for p in self.loaded]
 
-    def consider_and_maybe_fire(self, world, drives, ctx, tie_break: str = "first") -> str: # pylint: disable=unused-argument
+
+    def consider_and_maybe_fire(self, world, drives, ctx, tie_break: str = "first") -> str:  # pylint: disable=unused-argument
         """Evaluate triggers, prefer safety-critical gates, then run the controller once;
-          return a short human string."""
-        # 1) evaluate triggers on available policies
+              return a short human string."""
         matches = [p for p in self.loaded if _safe(p.trigger, world, drives, ctx)]
         if not matches:
             return "no_match"
 
-        # If we are fallen, only allow safety gates to execute this tick
+        # If fallen, force safety-only gates
         if has_pred_near_now(world, "state:posture_fallen"):
             safety_only = {"policy:recover_fall", "policy:stand_up"}
             matches = [p for p in matches if p.name in safety_only]
             if not matches:
                 return "no_match"
 
-        # 2) prefer safety-critical gates if present (then fallback)
-        safety = ("policy:recover_fall", "policy:stand_up")
-        chosen = next((p for p in matches if p.name in safety), matches[0])
+        # Choose by drive-deficit
+        def deficit(name: str) -> float:
+            d = 0.0
+            if name == "policy:seek_nipple":
+                d += max(0.0, float(getattr(drives, "hunger", 0.0)) - float(HUNGER_HIGH)) * 1.0
+            if name == "policy:rest":
+                d += max(0.0, float(getattr(drives, "fatigue", 0.0)) - float(FATIGUE_HIGH)) * 0.7
+            return d
 
-        # 3) context we’ll log (base suggestion, candidate anchors, FOA)
+        def stable_idx(p):
+            try:
+                return [q.name for q in self.catalog].index(p.name)
+            except ValueError:
+                return 10_000
+
+        chosen = max(matches, key=lambda p: (deficit(p.name), -stable_idx(p)))
+
+        # Context for logging
         base  = choose_contextual_base(world, ctx, targets=["state:posture_standing", "stand"])
         foa   = compute_foa(world, ctx, max_hops=2)
         cands = candidate_anchors(world, ctx)
-
-        # PRE-state explanation for the gate we intend to run
         pre_expl = chosen.explain(world, drives, ctx) if chosen.explain else "explain: (not provided)"
 
-        # 4) run the controller once
+        # Run controller with the exact policy we selected
         try:
             before_n = len(world._bindings)
-            result   = action_center_step(world, ctx, drives)
+            result   = action_center_step(world, ctx, drives, preferred=chosen.name)
             after_n  = len(world._bindings)
             delta_n  = after_n - before_n
-            # use the controller’s own label when available
             label    = result.get("policy") if isinstance(result, dict) and "policy" in result else chosen.name
         except Exception as e:
             return f"{chosen.name} (error: {e})"
 
-        # 5) POST-state explanation for what actually ran
         gate_for_label = next((p for p in self.loaded if p.name == label), chosen)
         post_expl = gate_for_label.explain(world, drives, ctx) if gate_for_label.explain else "explain: (not provided)"
 
-        # 6) annotate anchors for readability (NOW/HERE tagging)
-        now_id  = _anchor_id(world, "NOW")
-        here_id = _anchor_id(world, "HERE") if hasattr(world, "_anchors") else None
-        def _ann(bid: str) -> str:
-            if bid == now_id: return f"{bid}(NOW)"
-            if here_id and bid == here_id: return f"{bid}(HERE)"
-            return f"{bid}"
+        return (
+            f"{label} (added {delta_n} bindings)\n"
+            f"pre:  {pre_expl}\n"
+            f"base: {base}\n"
+            f"foa:  {foa}\n"
+            f"cands:{cands}\n"
+            f"post: {post_expl}"
+        )
 
-        # 7) multi-line message
-        msg = []
-        msg.append(f"Policy executed: {label}")
-        msg.append(f"  why(pre):  {pre_expl}")
-        msg.append(f"  why(post): {post_expl}")
-        msg.append(f"  base_suggestion: {base}")
-        msg.append(f"  anchors: [{', '.join(_ann(x) for x in cands)}]")
-        msg.append(f"  foa: size={foa['size']} seeds={foa['seeds']}")
-        msg.append(f"  effect: {delta_n:+d} new binding(s), result={result}")
-        return '\n'.join(msg)
 
 def _safe(fn, *args):
     """Invoke a predicate defensively (exceptions → False).
