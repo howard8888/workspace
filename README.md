@@ -1262,13 +1262,16 @@ Q: Where do engrams live?  A: cca8_column.py, referenced by bindings’ engrams.
 ## Action Selection: Drives, Policies, Action Center
 
 - **Policies** are small classes with:
+  
   - `trigger(world, drives) -> bool`  
   - `execute(world, ctx, drives) -> {"policy", "status", "reward", "notes"}`
+
 - **Ordered list** `PRIMITIVES = [StandUp(), SeekNipple(), FollowMom(), ExploreCheck(), Rest(), ...]`.  
-  
    Updated: `PRIMITIVES = [StandUp(), SeekNipple(), Rest(), FollowMom(), ExploreCheck(), ...]`  
   ( code now evaluates **Rest before FollowMom**.)
+
 - **Action Center** runs the **first** policy whose `trigger` is True.  
+
 - **StandUp guard:** `StandUp.trigger()` checks for an existing `pred:state:posture_standing` to avoid “re-standing” every tick.
 
 **Status dict convention:**  
@@ -1975,7 +1978,7 @@ Policies live in the controller, not in WorldGraph. Provenance is stamped into `
 
 This tutorial teaches you how to **build, inspect, and reason about the WorldGraph**—the symbolic fast index that sits at the heart of CCA8. It’s written for developers new to the codebase.
 
-***Note: Code changes but the main ideas below should remain stable with the project***
+***Note: Code changes will occur over time,  but the main ideas below should remain stable with the project***
 
 * * *
 
@@ -2203,7 +2206,7 @@ Planner ignores engrams; they’re for analytics or linking perception.
 Core instance attributes and methods for WorldGraph Module
 ================================
 
-******Note: Code changes but the main ideas below should remain stable with the project***
+******Note: Code changes will occur over time, but the main ideas below should remain stable with the project***
 
 
 
@@ -2732,7 +2735,7 @@ What it is: the interactive & CLI entry point for CCA8.  It is run first and pri
 
 Why is this tutorial after the one on WorldGraph, i.e., rather than being the first tutorial to start with?  It is because you really need to know the concepts such as binding, predicate, edge, and so on, and how they are coded and stored in the instance of the WorldGraph, before looking at the overall functioning of the program, which is what this module does.
 
-***Note: Code changes but the main ideas below should remain stable with the project***
+***Note: Code changes will occur over time, but the main ideas below should remain stable with the project***
 
 #### Public surface (importables)
 
@@ -2885,7 +2888,7 @@ Troubleshooting quickies
 
 * * *
 
-##### ****Note: Code changes but the main ideas below should remain stable with the project*** `
+##### ****Note: Code changes will occur over time, but the main ideas below should remain stable with the project*** `
 
 
 
@@ -3106,7 +3109,7 @@ What to scan in the code (orientation map)
 
 * * *
 
-****Note: Code changes but the main ideas below should remain stable with the project*** `
+****Note: Code changes will occur over time, but the main ideas below should remain stable with the project*** `
 
 
 

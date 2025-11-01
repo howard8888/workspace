@@ -197,33 +197,43 @@ CANON_SYNONYMS = {
 }
 
 def _is_worldgraph(world) -> bool:
-    """Heuristic: real WorldGraph exposes planning."""
+    """Heuristic: real WorldGraph exposes planning.
+    True or False regarding if world.plan_to_predicate() exists
+    """
     return hasattr(world, "plan_to_predicate") and callable(getattr(world, "plan_to_predicate"))
 
 def _add_tag_to_binding(world, bid: str, full_tag: str) -> None:
-    """Best-effort: add a tag to an existing binding (works for WorldGraph and FakeWorld)."""
+    """Best-effort: add a tag to an existing binding (works for WorldGraph and FakeWorld).
+    -will add "full_tag" to binding "bid" assuming a binding exists for "bid", and then adds "full_tag"
+      to whatever binding.tags exists
+    -doesn't return anything since mutates binding.tags in place
+    """
     try:
-        b = getattr(world, "_bindings", {}).get(bid)
+        b = getattr(world, "_bindings", {}).get(bid) #if world._bindings exists look up bid
         if not b:
             return
-        tags = getattr(b, "tags", None)
+        tags = getattr(b, "tags", None) #fetches attribute b.tags if exists, otherwise creates from "full_tag" passed into the function
         if tags is None:
-            b.tags = {full_tag}
+            b.tags = {full_tag} #if no b.tags then we rebind the attribute here
             return
-        if isinstance(tags, set):
+        if isinstance(tags, set):  #mutate t.tags set in place --> change will persist after the function returns
             tags.add(full_tag)
-        elif isinstance(tags, list):
+        elif isinstance(tags, list): # #mutate t.tags list in place --> change will persist after the function returns
             if full_tag not in tags:
                 tags.append(full_tag)
     except Exception:
         pass
 
 def _canon(token: str) -> str:
-    """Map legacy tokens to canonical tokens; unknowns pass through unchanged."""
+    """Map legacy tokens to canonical tokens; unknowns pass through unchanged.
+    -essentially returns a newer token if one exists, otherwise returns the token you are checking
+    """
     return CANON_SYNONYMS.get(token, token)
 
 def _add_pred(world, token: str, **kwargs):
-    """Wrapper to add a canonical predicate token. WorldGraph will add the 'pred:' family automatically."""
+    """Wrapper to add a canonical predicate token. WorldGraph will add the 'pred:' family automatically.
+    -calls in worldgraph module world.add_predicate but with token updated to any newer tokens should they existing
+    """
     return world.add_predicate(_canon(token), **kwargs)
 
 # -----------------------------------------------------------------------------
@@ -238,9 +248,11 @@ class Drives:
         hunger: 0..1; >0.6 yields 'drive:hunger_high'.
         fatigue: 0..1; >0.7 yields 'drive:fatigue_high'.
         warmth: 0..1; <0.3 yields 'drive:cold'.
+        -note slots=True therefore no other attributes can be added
 
     Methods:
-        predicates(): convert numeric drives to 'drive:*' tags used by policy triggers.
+        -note dataclass, thus e.g., aa=Drives() (default values or can specify) -> aa.hunger will be 0.7
+        flags(): convert numeric drives to 'drive:*' flags (i.e., ephemeral tags) used by policy triggers.
         to_dict()/from_dict(): autosave support.
     """
     hunger: float = 0.7
@@ -248,12 +260,10 @@ class Drives:
     warmth: float = 0.6
 
     def flags(self) -> List[str]:
-        """Return ephemeral 'drive:*' flags for policy triggers (not persisted in the graph).
+        """Return ephemeral 'drive:*' flags for policy triggers (not persisted in the graph)
+        -note that above in constants section: HUNGER_HIGH = 0.60, FATIGUE_HIGH = 0.70, WARMTH_COLD = 0.30
+        -returns a list of drive:* flags where sensory values triggered  e.g., ["drive:hunger_high"]
 
-        Thresholds:
-            hunger  > 0.60 → 'drive:hunger_high'
-            fatigue > 0.70 → 'drive:fatigue_high'
-            warmth  < 0.30 → 'drive:cold'
         """
         tags: List[str] = []
         if self.hunger > HUNGER_HIGH:
@@ -264,18 +274,26 @@ class Drives:
             tags.append("drive:cold")
         return tags
 
-    # Back-compat for older code/tests
     def predicates(self) -> List[str]:  # pragma: no cover (legacy alias)
-        """DEPRECATED: use .flags()."""
+        """DEPRECATED: use flags().
+           Back-compat for older code/tests
+        """
         return self.flags()
 
     def to_dict(self) -> dict:
-        """Return a plain JSON-safe dict of drive values for autosave/snapshots."""
+        """Return a plain JSON-safe dict of drive values for autosave/snapshots.
+        """
         return {"hunger": self.hunger, "fatigue": self.fatigue, "warmth": self.warmth}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Drives":
-        """Construct a Drives from a snapshot dict (robust to missing keys)."""
+        """Construct a Drives from a snapshot dict (robust to missing keys)
+        e.g., to_dict() → {"hunger": 0.7, "fatigue": 0.2, "warmth": 0.6}
+        from_dict({"hunger": 0.7, "fatigue": 0.2, "warmth": 0.6}) -> Drive
+        this classmethod returns a new instance of Drives
+        actually is called from and returns to the Load Session menu option in the runner module
+
+        """
         return cls(
             hunger=float(d.get("hunger", 0.7)),
             fatigue=float(d.get("fatigue", 0.2)),
@@ -288,13 +306,21 @@ class Drives:
 
 @dataclass(slots=True)
 class SkillStat:
-    """Simple running stats per policy (scaffolding for future RL)."""
-    n: int = 0
-    succ: int = 0
-    q: float = 0.0
-    last_reward: float = 0.0
+    """Simple running stats per policy
+    -this is a tiny dataclass that tracks per-policy learning-like statistics
+    -really scaffolding for future RL
+    e.g., aa = SkillStat() #SkillStat(n=0, succ=0, q=0.0, last_reward=0.0)
+          print(type(aa)) #<class 'cca8_controller.SkillStat'>
+    """
+    n: int = 0   #how many times this policy has been updated/attempted
+    succ: int = 0  #how many of those attempts successful
+    q: float = 0.0  #exponential moving average EMA of recent rewards
+    last_reward: float = 0.0  #most recent reward observed for that policy
 
 SKILLS: Dict[str, SkillStat] = {}
+#module level dictionary keyed by policy name, i.e., {policy_name:SkillStat, ...}
+#e.g., StandUp.name = "policy:stand_up" (defined on the primitive)
+#e.g., SKILLS = {"policy:stand_up": SkillStat(n=3, succ=2, q=0.447, last_reward=1.0),...}
 
 def update_skill(name: str, reward: float, ok: bool = True, alpha: float = 0.3) -> None:
     """Update (or create) a SkillStat:
@@ -305,6 +331,13 @@ def update_skill(name: str, reward: float, ok: bool = True, alpha: float = 0.3) 
     Notes:
         * The ledger is in-memory only (not used for selection yet).
         * Callers should pass rewards on the same scale across policies.
+    Operation:
+        e.g., let's assume SKILLS = {"policy:stand_up": SkillStat(n=3, succ=2, q=0.447, last_reward=1.0),...}
+        thus, s= SKILLS.get(name) = SkillStat(n=3, succ=2, q=0.447, last_reward=1.0)
+        if s returns as None then create instance of default SkillStat as s and then assign it to SKILLS[name]
+        then we increment the counter n, i.e., how many times policy attempted or updated and possibly the succ attribute
+        then we adjust the exponential moving average  and update the last_reward
+
     """
     s = SKILLS.get(name)
     if s is None:
@@ -318,20 +351,20 @@ def update_skill(name: str, reward: float, ok: bool = True, alpha: float = 0.3) 
     s.last_reward = float(reward)
 
 def reset_skills() -> None:
-    """Clear the in-memory skill ledger (testing/demo convenience)."""
+    """Clear the in-memory skill ledger(testing/demo convenience).
+    SKILLS becomes {}
+    """
     SKILLS.clear()
 
 def skills_to_dict() -> dict:
     """Return a JSON-safe mapping of skill stats:
-    {
-      "policy:stand_up": {"n": int, "succ": int, "q": float, "last_reward": float},
-      ...
-    }
+    { "policy:stand_up": {"n": int, "succ": int, "q": float, "last_reward": float}, ...}
     """
     return {k: asdict(v) for k, v in SKILLS.items()}
 
 def skills_from_dict(d: dict) -> None:
-    """Rebuild SKILLS dataclass values from plain dicts (robust to bad inputs)."""
+    """Rebuild SKILLS dataclass values from plain dicts (robust to bad inputs).
+    """
     SKILLS.clear()
     for k, v in (d or {}).items():
         try:
@@ -346,7 +379,10 @@ def skills_from_dict(d: dict) -> None:
             continue
 
 def skill_readout() -> str:
-    """Human-readable policy stats: one line per policy (n/succ/rate/q/last)."""
+    """Human-readable policy stats: one line per policy (n/succ/rate/q/last)
+    -goes through SKILLS' stats and prints out
+
+    """
     if not SKILLS:
         return "(no skill stats yet)"
     lines: List[str] = []
@@ -361,11 +397,17 @@ def skill_readout() -> str:
 # -----------------------------------------------------------------------------
 # Helper queries (controller-local; simple global scans)
 # -----------------------------------------------------------------------------
-# NOTE: in the future prefer a public iterator on WorldGraph (e.g., world.iter_tags(prefix="cue:"))
-# to avoid peeking at world._bindings here. Kept as a trusted-friend shortcut for now.
+# Note: world._bindings is an internal/private attribute of world object instance of WorldGraph, meaning it shouldn't
+#   really be accessed from outside the class (or immediate subclasses), i.e., "peeking" is occurring
+#   -however, these helper queries are considered a trusted-friend shortcut and we allow access rather than
+#      implementing a more formal public API in WorldGraph (can be considered in the future if WorldGraph internal changes,
+#      graph size exceeds 50K bindings, we introduce tag indices/aliasing that really belong inside WorldGraph)
+#   -scope guard: do not access world._bindings anywhere else in the codebase
 
 def _any_tag(world, full_tag: str) -> bool:
-    """Return True if any binding carries the exact tag (e.g., 'pred:...')."""
+    """Return True if any binding carries the exact tag (e.g., 'pred:...')
+    -checks to see if full_tag argument is in the set/list/tuple attributes found
+    """
     try:
         for b in world._bindings.values():  # pylint: disable=protected-access
             tags = getattr(b, "tags", ())
@@ -376,12 +418,19 @@ def _any_tag(world, full_tag: str) -> bool:
     return False
 
 def _has(world, token: str) -> bool:
-    """True if either the canonical *or* raw token exists as a pred:* tag."""
+    """True if either the canonical *or* raw token exists as a pred:* tag
+    -recall from above that _canon(token: str) -> CANON_SYNONYMS.get(token, token)
+    -then the argument token is fed into __any_tag(...)
+    """
     canon = _canon(token)
     return _any_tag(world, f"pred:{canon}") or _any_tag(world, f"pred:{token}")
 
 def _any_cue_present(world) -> bool:
-    """Loose cue check: True if any tag starts with 'cue:' (no proximity semantics)."""
+    """Loose cue check: True if any tag starts with 'cue:' (no proximity semantics).
+    -scans through tags in world._bindings.values() to see if any starts with "cue" and
+      if so returns True
+    -used as a coarse perception gate to tell the controller if a cue present
+    """
     try:
         for b in world._bindings.values():  # pylint: disable=protected-access
             tags = getattr(b, "tags", ())
@@ -396,7 +445,7 @@ def _any_cue_present(world) -> bool:
 
 def _policy_deficit_score(name: str, drives: Drives) -> float:
     """
-    Option A (priority-by-deficit):
+    priority-by-deficit approach for policies:
         Return a non-negative score reflecting how off-setpoint the relevant drive(s) are
         for a given policy. Higher score → higher priority.
 
@@ -409,7 +458,7 @@ def _policy_deficit_score(name: str, drives: Drives) -> float:
         This affects *selection among policies that already triggered*.
         Safety is handled before scoring (e.g., explicit 'fallen' → StandUp).
 
-    Option B (future external/LLM advisory):
+    -future external/LLM advisory approach for policies:
         We already support 'preferred' in action_center_step(...). To integrate an external
         agent or LLM, expose 'drives_summary(drives)' and world facts; let the agent propose
         a 'preferred' policy string. The controller remains the safety gate (e.g., fallen →
@@ -423,8 +472,8 @@ def _policy_deficit_score(name: str, drives: Drives) -> float:
 
 def drives_summary(drives: Drives) -> dict:
     """
-    Compact snapshot of drives suitable for external advisory/LLM (Option B).
-    Safe to log/serialize; does not include world internals.
+    Compact snapshot of drives suitable for external advisory/LLM
+    Safe to log/serialize; does not include world internals
     """
     return {"hunger": drives.hunger, "fatigue": drives.fatigue, "warmth": drives.warmth, "flags": list(drives.flags())}
 
@@ -433,19 +482,52 @@ def drives_summary(drives: Drives) -> dict:
 # -----------------------------------------------------------------------------
 
 class Primitive:
-    """Abstract policy interface: implement trigger(...) and execute(...)."""
+    """Abstract policy interface: implement trigger(...) and execute(...).
+    -this is informally an abstract base-like class that provides the shared interface (contract) and
+       shared helpers while concrete subclasses are shown below (e.g., class StandUp(Primitive), etc )
+       actually provide the concrete behavior
+    -note: I have decided to avoid the full richness of Python (e.g., import ABC and use the abstractmethod decorator)
+            here and similar analogous coding/concpets in other places of the codebase, to keep the programming level
+            and concepts reasonable (i.e., pragmatic) for future maintainers (hs -- oct '25)
+    -shared interface/contract: trigger(...) and execute(...) effectively enforce that the subclass must have its own specific trigger() and execute()
+            and if not, trigger() running in the base will return False or execute running in the base ill return self._fail()
+            -thus enforcement occurs here which is intentionally forgiving and test-friendly
+            (stricter enforcement if we raise NotImplementedError, etc or switch to abc.ABC + @abstractmethod)
+    -boilerplate reduction: _success() and _fail() can be re-used by subclasses
+    -controller glue: action_center_step(...) chooses a policy (safety → preferred → scoring) and calls _run(...),
+             which catches exceptions and still updates SKILLS
+
+    -when writing a new policy:
+       1. set name = "policy:your_name"
+       2. implement a cheap trigger(...) (reads only)
+       3. implement execute(...) (write preds/edges, meta ={"policy": self.name, ...}, then call __success()/__fail() )
+       4. add an instance to PRIMITIVES in the right order
+
+    """
+    #subclasses should have their own name values but if methods here run
+    #as shown in docstring, set name = "policy:your_name"   e.g., "policy:stand_up"
     name: str = "policy:unknown"
 
     def trigger(self, world, drives: Drives) -> bool:  # pylint: disable=unused-argument
-        """Return True if this policy should fire given world/drives (base returns False)."""
+        """Return usually True if this policy should fire in a concrete subclass
+        -however, in the base class, will return False
+        -uses a → cheap gate; no world writes, returns True or False regarding triggering
+        """
         return False
 
     def execute(self, world, ctx, drives: Drives) -> dict:  # pylint: disable=unused-argument
-        """Perform one step; append bindings/edges and return a status dict (base = fail)."""
+        """Return usually _success() if policy runs in a concrete subclasses
+        -however, in the abstract base class, will return _fail(...)
+        -in the concrete subclass execute(...) does the work, returns a normalized payload
+        -perform one step; append bindings/edges and return a status dict (base = fail).
+        """
         return self._fail("not implemented")
 
     def _success(self, reward: float, notes: str, **extra) -> dict:
-        """Standard success payload + skill update; extra keys are merged (e.g., binding='b7')."""
+        """Standard success payload + skill update; extra keys are merged (e.g., binding='b7')
+        -return the status dict
+        -shared helper with the subclasses
+        """
         update_skill(self.name, reward, ok=True)
         payload = {"policy": self.name, "status": "ok", "reward": float(reward), "notes": notes}
         if extra:
@@ -453,7 +535,10 @@ class Primitive:
         return payload
 
     def _fail(self, notes: str, reward: float = 0.0, **extra) -> dict:
-        """Standard fail payload + skill update; extra keys are merged."""
+        """Standard fail payload + skill update; extra keys are merged
+        -return the status dict
+        -shared helper with the subclasses
+        """
         update_skill(self.name, reward, ok=False)
         payload = {"policy": self.name, "status": "fail", "reward": float(reward), "notes": notes}
         if extra:
@@ -465,11 +550,24 @@ class Primitive:
 # -----------------------------------------------------------------------------
 
 class StandUp(Primitive):
-    """Primitive that creates a tiny posture chain and marks standing.
+    """Primitive that creates a tiny posture chain and marks standing
+    -see above for the division of work between the abstract base class (class Primitive) and the
+       subclasses doing the concrete work such as class StandUp here, which represents the StandUp policy
+    -tips in writing this and other new subclasses which are the policies of the CCA8:
+       1. set name = "policy:your_name"
+       2. implement a cheap trigger(...) (reads only)
+       3. implement execute(...) (write preds/edges, meta ={"policy": self.name, ...}, then call __success()/__fail() )
+       4. add an instance to PRIMITIVES in the right order
 
     Trigger:
-        Fires only when the graph shows a fallen state (safety override).
-        (Previously: Fires if fallen OR when hunger is high and the agent is not already upright)
+        Fires only when the graph shows a fallen state (safety override)
+        (previous code: Fires if fallen OR when hunger is high and the agent is not already upright)
+        -the concept of a "cheap gate" == a fast, read-only eligibility check; lives in the trigger(...), and should:
+            -do no writes to the world graph (no new nodes/edges/tags)
+            -be computationally light (some flags or booleans, a few tag lookups)
+            -be safe to call every tick for every policy
+            -purpose is to keep Action Center snappy -- it can ask all primitives "ready?" without mutating state, then let
+              the chosen policy's execute(...) do the actual writes
     Execute:
         Add predicates:
             action:push_up -> action:extend_legs -> state:posture_standing
@@ -477,24 +575,34 @@ class StandUp(Primitive):
         Stamp meta.policy = 'policy:stand_up' on the final binding.
         Return success with reward=+1.0, notes='standing'.
     """
+    #policy name
     name = "policy:stand_up"
 
     def trigger(self, world, drives: Drives) -> bool:
+        '''
+         -each subclass must have its own trigger(...); if not as seen above the
+            base class Primitive's trigger() will run and return a False
+         -note that the trigger() method fires only if the worldgraph shows STATE_POSTURE_FALLEN
+         - _has(world, token) calls _any_tag(....) after checking CANON_SYNONYMS and
+              _any_tag(world, pred) checks to see if any binding is holding pred
+        -if there is a tag that the calf has fallen, then the trigger(...) returns True before any other evaluations
+        -if not, then check to see if STATE_POSTURE_STANDING and will return False
+        -if not, then looks at drives.flags() and if not fatige_high but if hunger_high then returns True, otherwise False
+
+         '''
         # Safety-first: if explicitly fallen (alias or canonical), stand up.
         if _has(world, STATE_POSTURE_FALLEN) or _has(world, "posture:fallen"):
             return True
-
         # If already upright (alias or canonical), don't fire.
         if _has(world, STATE_POSTURE_STANDING) or _has(world, "posture:standing"):
             return False
-
         # Posture unknown: prefer readiness if hungry, but yield to Rest if very fatigued.
         flags = set(drives.flags())
         if "drive:fatigue_high" in flags:
             return False
         if "drive:hunger_high" in flags:
             return True
-
+        #otherwise the policy does not trigger
         return False
 
     def execute(self, world, ctx, drives):
@@ -502,10 +610,17 @@ class StandUp(Primitive):
         Create a short 'stand up' sequence:
           pred:action:push_up -> pred:action:extend_legs -> final standing node
 
-        Final node policy:
-          • Real WorldGraph: write legacy alias pred:posture:standing (to satisfy older tests & tools),
+        - recall that _add_pred(...) calls world.add_predicate(_canon(token), **kwargs)
+        - recall that _add_tag_to_binding(....) calls tags.add(full_tag) where tags = tags from particular binding in world
+        - recall that world.add_edge(...) adds an edge from binding where it is stored to specified binding
+        - adds ACTION_PUSH_UP predicate, adds ACTION_EXTEND_LEGS predicate, adds "posture:standing" predicate, adds tag to that binding
+            "pred:state:posture_standing", adds and edge from each predicate to the next and then returns self._success(...)
+        - if these operations fail then returns self._fail(...)
+
+        -node policy:
+           -Real WorldGraph: write legacy alias pred:posture:standing (to satisfy older tests & tools),
             then also tag that SAME binding with pred:state:posture_standing.
-          • FakeWorld tests: write only pred:state:posture_standing (keeps canonical-only test passing).
+           -FakeWorld tests: write only pred:state:posture_standing (keeps canonical-only test passing).
         """
         meta = {"policy": self.name, "created_at": datetime.now().isoformat(timespec="seconds")}
         try:
@@ -527,50 +642,145 @@ class StandUp(Primitive):
         except Exception as e:
             return self._fail(f"stand_up failed: {e}")
 
+
 class SeekNipple(Primitive):
-    """Example/stub of a follow-up behavior"""
+    """
+    Seek the maternal nipple after safety and posture checks.
+
+    Intent
+    ------
+    Escalate orientation toward the maternal stimulus and mark a "seeking" state
+    when hunger is high and the agent is upright. This is a reward-seeking follow-up
+    policy that assumes the safety posture is already under control.
+
+    Triggers (read-only gates)
+    --------------------------
+    • hunger_high flag present (from Drives.flags())
+    • upright (either canonical 'state:posture_standing' or legacy 'posture:standing')
+    • not fallen (canonical or legacy)
+    • not already in a 'seeking_mom' state (canonical or legacy)
+
+    Execution (world writes)
+    ------------------------
+    1) Append `pred:action:orient_to_mom` (attach='now').
+    2) Finalize with a "seeking" state:
+       • Real WorldGraph: write legacy `pred:seeking_mom` and also tag the SAME
+         binding with `pred:state:seeking_mom` for canonical reads.
+       • FakeWorld tests: write only `pred:state:seeking_mom`.
+    3) Connect with 'then' edge(s).
+    4) Return `_success(reward=0.5, notes="seeking mom")`.
+
+    Parameters
+    ----------
+    world : WorldGraph-like
+        Must support `add_predicate(...)` and (on real builds) carry `_bindings`
+        so helpers can tag the same binding. See `WorldGraph.add_predicate` for
+        normalization and attach semantics.
+    ctx : Any
+        Runtime context (not used here beyond provenance).
+    drives : Drives
+        Provides the `flags()` signal for gating.
+
+    Returns
+    -------
+    dict
+        Standard controller payload: {"policy","status","reward","notes",...}.
+
+    Side Effects
+    ------------
+    • Mutates the WorldGraph (adds 1–2 bindings, edges).
+    • Updates the skill ledger EMA via `_success(...)`.
+
+    Notes
+    -----
+    • Alias/canonical mapping is handled by controller helpers; token storage and
+      normalization are handled by `WorldGraph.add_predicate(...)`. :contentReference[oaicite:1]{index=1}
+    """
     name = "policy:seek_nipple"
 
     def trigger(self, world, drives: Drives) -> bool:
-        """Fire only when hungry, upright, not fallen, and not already seeking."""
+        """Cheap gate (no writes). See class docstring for conditions. Returns True if eligible.
+        """
         flags = set(drives.flags())
         if "drive:hunger_high" not in flags:
             return False
-        # accept canonical or legacy upright
         if not (_has(world, STATE_POSTURE_STANDING) or _has(world, "posture:standing")):
             return False
-        # treat either canonical or legacy fallen as disqualifier
         if _has(world, STATE_POSTURE_FALLEN) or _has(world, "posture:fallen"):
             return False
-        # don't duplicate seeking; accept either spelling
         if _has(world, STATE_SEEKING_MOM) or _has(world, "seeking_mom"):
             return False
         return True
 
     def execute(self, world, ctx, drives: Drives) -> dict:
+        """
+        Append an orientation→seeking chain, stamp provenance, and return success.
+        See class docstring for exact write pattern and side effects.
+        """
         now = datetime.now().isoformat(timespec="seconds")
         meta = {"policy": self.name, "created_at": now}
         a = _add_pred(world, ACTION_ORIENT_TO_MOM, attach="now", meta=meta)
 
-        # Create the final 'seeking' node. For real WorldGraph, write the legacy alias
-        # that tests/tools look for, and also tag the canonical state on the SAME binding.
         if _is_worldgraph(world):
             b = world.add_predicate("seeking_mom", meta=meta)  # → pred:seeking_mom
-            _add_tag_to_binding(world, b, f"pred:{STATE_SEEKING_MOM}")  # also add pred:state:seeking_mom
+            _add_tag_to_binding(world, b, f"pred:{STATE_SEEKING_MOM}")  # also pred:state:seeking_mom
         else:
-            b = _add_pred(world, STATE_SEEKING_MOM, meta=meta)  # FakeWorld unit tests keep canonical-only
+            b = _add_pred(world, STATE_SEEKING_MOM, meta=meta)
 
         world.add_edge(a, b, "then")
         return self._success(reward=0.5, notes="seeking mom")
 
+
 class FollowMom(Primitive):
-    """Fallback primitive (permissive). Tighten trigger if prefer fewer defaults."""
+    """
+    Permissive fallback policy: keep the agent alert and scanning.
+
+    Intent
+    ------
+    Provide a low-cost default when no stronger need triggers. It keeps the
+    episode timeline moving and marks an "alert" state that downstream logic
+    can read as a mild arousal baseline.
+
+    Trigger
+    -------
+    Returns True unconditionally (permissive). If you want occasional 'noop'
+    ticks from the Action Center, tighten this trigger (e.g., skip when the
+    agent just acted, is very fatigued, or strong cues are present).
+
+    Execution
+    ---------
+    • Append `pred:action:look_around` (attach='now').
+    • Finalize with `pred:state:alert`.
+    • Connect with 'then' and return `_success(reward=0.1, notes="idling/alert")`.
+
+    Parameters
+    ----------
+    world : WorldGraph-like
+    ctx : Any
+    drives : Drives
+
+    Returns
+    -------
+    dict : standard controller payload.
+
+    Side Effects
+    ------------
+    • Mutates the WorldGraph (adds 2 predicates + 1 edge).
+    • Updates the skill ledger EMA.
+
+    Ordering Note
+    -------------
+    This primitive sits **after** Rest in `PRIMITIVES` so need-driven policies
+    (fatigue/hunger) win first; its permissive nature would otherwise mask them. :contentReference[oaicite:2]{index=2}
+    """
     name = "policy:follow_mom"
 
     def trigger(self, world, drives: Drives) -> bool:
-        return True  # acts as default so we rarely noop
+        """Always True (permissive fallback). Tighten if you want occasional no-ops."""
+        return True
 
     def execute(self, world, ctx, drives: Drives) -> dict:
+        """Append look_around→alert and return success (see class docstring)."""
         now = datetime.now().isoformat(timespec="seconds")
         meta = {"policy": self.name, "created_at": now}
         a = _add_pred(world, ACTION_LOOK_AROUND, attach="now", meta=meta)
@@ -578,32 +788,129 @@ class FollowMom(Primitive):
         world.add_edge(a, b, "then")
         return self._success(reward=0.1, notes="idling/alert")
 
+
 class ExploreCheck(Primitive):
-    """Periodic/diagnostic check stub (disabled by default)."""
+    """
+    Periodic/diagnostic exploration hook (disabled by default).
+
+    Intent
+    ------
+    Reserve a slot for future environment sampling / curiosity behavior without
+    committing to a design now. Useful as a placeholder in demos and tests.
+
+    Trigger
+    -------
+    Returns False (off). You can convert this into a timed/stochastic gate later
+    (e.g., every N ticks, or with small probability when the world is quiet).
+
+    Execution
+    ---------
+    Returns `_success(reward=0.0, notes="checked")` with **no world writes**
+    so that it’s safe to enable during experiments without perturbing the graph.
+
+    Parameters
+    ----------
+    world : WorldGraph-like
+    ctx : Any
+    drives : Drives
+
+    Returns
+    -------
+    dict : standard controller payload.
+    """
     name = "policy:explore_check"
 
     def trigger(self, world, drives: Drives) -> bool:
-        # simple periodic check;  can add a timer or stochastic gate later
+        """Disabled stub (always False)."""
         return False
 
     def execute(self, world, ctx, drives: Drives) -> dict:
+        """Return a success sentinel without modifying the world."""
         return self._success(reward=0.0, notes="checked")
 
+
 class Rest(Primitive):
-    """Reduce fatigue and mark a resting state."""
+    """
+    Reduce fatigue and assert a 'resting' state.
+
+    Intent
+    ------
+    Provide a simple homeostatic recovery step when fatigue is high.
+
+    Trigger
+    -------
+    `drives.fatigue > 0.8` (explicit threshold; separate from selection scoring).
+
+    Execution
+    ---------
+    • Decrease `drives.fatigue` by 0.2 (clamped at 0.0).
+    • Append `pred:state:resting` (attach='now').
+    • Return `_success(reward=0.2, notes="resting")`.
+
+    Parameters
+    ----------
+    world : WorldGraph-like
+    ctx : Any
+    drives : Drives
+        Mutated in place (fatigue reduced) as part of the side effect.
+
+    Returns
+    -------
+    dict : standard controller payload.
+
+    Side Effects
+    ------------
+    • Mutates Drives (fatigue ↓) and WorldGraph (adds one predicate).
+    • Updates the skill ledger EMA.
+
+    Design Note
+    -----------
+    In `PRIMITIVES`, Rest is ordered **before** the permissive fallback so recovery
+    can preempt idling when appropriate; the Action Center may also prefer it via
+    deficit scoring when fatigue dominates. :contentReference[oaicite:3]{index=3}
+    """
     name = "policy:rest"
 
     def trigger(self, world, drives: Drives) -> bool:
+        """Return True when fatigue is above the hard threshold (> 0.8)."""
         return drives.fatigue > 0.8
 
     def execute(self, world, ctx, drives: Drives) -> dict:
+        """Reduce fatigue, assert 'resting', and return success (see class docstring)."""
         drives.fatigue = max(0.0, drives.fatigue - 0.2)
         now = datetime.now().isoformat(timespec="seconds")
         meta = {"policy": self.name, "created_at": now}
         _add_pred(world, STATE_RESTING, attach="now", meta=meta)
         return self._success(reward=0.2, notes="resting")
 
+
+# -----------------------------------------------------------------------------
+# Primitives to be Scanned by the Action Center
+# -----------------------------------------------------------------------------
+
 # Ordered repertoire scanned by the Action Center
+# Action Center behavior (single-step orchestrator):
+#   1) Safety short-circuit: if the world shows 'fallen' → run StandUp immediately.
+#   2) Otherwise scan PRIMITIVES in order and call trigger(world, drives) on each (cheap, read-only).
+#   3) If multiple triggers are True, select by deficit score (e.g., hunger for seek, fatigue for rest),
+#      with this list order as a final tiebreaker. See _policy_deficit_score(...) and the Action Center notes.
+#   4) Execute the chosen policy; _run(...) ensures skill accounting on success/failure.
+#
+# Policy summaries (why this order):
+#   • StandUp      — Safety-first posture recovery; must come first.
+#   • SeekNipple   — Hunger-driven seeking; runs when upright & hungry, not fallen, not already seeking.
+#   • Rest         — Homeostatic recovery when very fatigued; placed before the permissive fallback.
+#   • FollowMom    — Permissive fallback (trigger is usually True); keeps the loop producing 'ok' steps
+#                    instead of 'noop' when nothing else is pressing. Tighten its trigger if you want
+#                    occasional no-op ticks.
+#   • ExploreCheck — Diagnostic placeholder; disabled stub for future exploration logic.
+#
+# **Important**
+#      -When you add a new policy class, you must also instantiate it and add it to PRIMITIVES or
+#        the Action Center will never consider it.
+#      -The list’s order matters (used as a final tie-breaker after deficit scoring), so place your new policy where its priority makes sense.
+#      -If you want the class importable from the module, add its name to __all__ too
+#
 PRIMITIVES: List[Primitive] = [
     StandUp(),
     SeekNipple(),
@@ -617,11 +924,55 @@ PRIMITIVES: List[Primitive] = [
 # -----------------------------------------------------------------------------
 
 def _run(policy, world, ctx, drives) -> dict:
+    """
+    -This is a wrapper used by action_center_step(...) to execute a policy of one of the
+       subclasses above
+    -The code consists of:  return policy.execute(world, ctx, drives)
+       plus an exception branch in which case it will run update_skill(...) and return a dict with {policy:name, status:error, ...}
+    -sample input parameter arguments, e.g. --
+      policy = <cca8_controller.StandUp object at 0x0000021DC09B0890>
+      world  = <cca8_world_graph.WorldGraph object at 0x0000021DC0A50C50>
+      ctx =  Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0, profile='Mountain Goat', winners_k=2, hal=None, body='(none)')
+      drives = Drives(hunger=0.7, fatigue=0.2, warmth=0.6)
+
+    -therefore in this example:  return StandUp.execute(WorldGraph, Ctx, Drives)
+            -StandUp.execute(self, world, ctx, drives) is shown above
+            - adds ACTION_PUSH_UP predicate, adds ACTION_EXTEND_LEGS predicate, adds "posture:standing" predicate, adds tag to that binding
+                  "pred:state:posture_standing", adds and edge from each predicate to the next and then returns self._success(...)
+    -keeping error handling + accounting in one place lets policy classes stay small and focused on world edits, while the Action Center treats every step uniformly.
+
+    Parameters
+    ----------
+    world : WorldGraph-like engine the policy may mutate (predicates/edges/tags).
+    ctx   : Opaque run context passed through to policies.
+    policy: Primitive instance being executed (must define `name`).
+    drives: Drives; policies may read and (occasionally) mutate it.
+
+    Returns
+    -------
+    dict
+        Normalized controller payload, e.g.:
+        {
+          "policy": "policy:stand_up",
+          "status": "ok" | "fail" | "error",
+          "reward": float,            # 0.0 on errors, policy-defined otherwise
+          "notes": str,               # human-readable summary
+          ...                         # any extra keys the policy adds (e.g., binding=...)
+        }
+
+    Side Effects
+    ------------
+    • Mutates `world` if/when the policy performs writes.
+    • Updates the skill ledger (via `_success/_fail`; on exceptions, via this wrapper).
+    • May emit a brief diagnostic in error paths.
+
+    """
     try:
         return policy.execute(world, ctx, drives)
     except Exception as e:
         update_skill(policy.name, 0.0, ok=False)
         return {"policy": policy.name, "status": "error", "reward": 0.0, "notes": f"exec error: {e}"}
+
 
 def action_center_step(world, ctx, drives: Drives, preferred: str | None = None) -> dict:
     """
@@ -630,10 +981,15 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
     Order of operations:
         1) Safety override: if fallen, force StandUp (ignores 'preferred').
         2) If 'preferred' is provided, execute that exact policy (controller still handles errors).
-        3) Otherwise: evaluate triggers; if multiple triggered, choose by drive deficit (Option A).
+        3) Otherwise: evaluate triggers; if multiple triggered, choose by drive deficit
            If all scores are zero, fall back to the legacy scan order for backward-compat.
 
-    About Option B (future LLM/external advisory):
+    -sample input parameter arguments, e.g. --
+      world  = <cca8_world_graph.WorldGraph object at 0x0000021DC0A50C50>
+      ctx =  Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0, profile='Mountain Goat', winners_k=2, hal=None, body='(none)')
+      drives = Drives(hunger=0.7, fatigue=0.2, warmth=0.6)
+
+    -preferred trigger mechanism --
         - Provide an external agent with a small state (see drives_summary(...), and any
           whitelisted world facts). Let that agent suggest 'preferred' by name.
         - Pass preferred='policy:...' here. Safety checks still run first.
@@ -642,17 +998,22 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
     """
     # (1) Safety-first: explicit fallen → StandUp
     if _has(world, STATE_POSTURE_FALLEN) or _has(world, "posture:fallen"):
-        stand = next((p for p in PRIMITIVES if p.name == "policy:stand_up"), None)
-        if stand:
-            return _run(stand, world, ctx, drives)
+        stand = None
+        for p in PRIMITIVES:
+            if p.name == "policy:stand_up":
+                stand = p
+                break
+        assert stand is not None, "Action Center safety override: StandUp policy not registered"
+        return _run(stand, world, ctx, drives)
 
     # (2) External advisory path (Option B-ready): honor exact 'preferred' if present
+    #  e.g., preferred="policy:rest" as specified by the argument to the function
     if preferred:
-        chosen = next((p for p in PRIMITIVES if p.name == preferred), None)
+        chosen = next((p for p in PRIMITIVES if p.name == preferred), None) #next generator value
         if chosen:
             return _run(chosen, world, ctx, drives)
 
-    # (3) Trigger evaluation
+    # (3) Trigger evaluation -- if multiple triggers choose by drive deficit
     triggered = []
     for policy in PRIMITIVES:
         try:
@@ -668,7 +1029,7 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
     if len(triggered) == 1:
         return _run(triggered[0], world, ctx, drives)
 
-    # Multiple triggered → Option A: choose by drive deficit
+    # Multiple triggered -- choose by drive deficit
     scored = [(p, _policy_deficit_score(p.name, drives)) for p in triggered]
     max_score = max(s for _, s in scored)
 
@@ -683,5 +1044,6 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
         if p in triggered:
             return _run(p, world, ctx, drives)
 
-    # Should not reach here
-    return {"policy": None, "status": "noop", "reward": 0.0, "notes": "no triggers matched (post-score)"}
+    # Should not reach here — invariant violation (triggered was non-empty)
+    raise RuntimeError("Action Center invariant violated: no policy chosen from non-empty 'triggered' set; "
+        f"triggered={[p.name for p in triggered]}, preferred={preferred}, flags={list(drives.flags())}")
