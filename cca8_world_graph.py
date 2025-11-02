@@ -717,7 +717,7 @@ class WorldGraph:
         if (src_id == dst_id) and not allow_self_loop:
             raise ValueError("self-loop rejected (pass allow_self_loop=True to permit)")
         self._bindings[src_id].edges.append({"to": dst_id, "label": label, "meta": dict(meta or {})})
-        
+
     def delete_edge(self, src_id: str, dst_id: str, label: str | None = None) -> int:
         """
         Remove edges matching (src_id -> dst_id [label]) from the per-binding adjacency list.

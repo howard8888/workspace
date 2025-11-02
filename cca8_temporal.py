@@ -92,6 +92,24 @@ cos(v0, v2) after boundary(): 0.9303704646916311
 -step() adds tiny Gaussian noise -- very small direction change
 -boundary() adds bigger noise -- noticeable change
 -The result is to get a smooth trajectory with occasional boundary breaks
+
+
+Nov 1, 2025
+i) What timestamps/provenance we stamp now--
+Bindings created by policies get:
+meta["created_at"]: ISO-8601 (seconds precision).
+meta["ticks"]: the runner’s tick counter.
+meta["tvec64"]: 64-bit sign-bit hash of the temporal vector at creation (if ctx.temporal exists).
+Edges created via attach='now'|'latest' inherit the same meta, because WorldGraph.add_predicate(...) forwards meta into its auto edge. (Explicit add_edge(...) calls don’t currently pass meta unless you add it.)
+Autosave files get a file-level saved_at timestamp in the runner.
+
+ii) How we use TemporalContext now--
+Runner creates a temporal vector and drifts it once per instinct/autonomic tick.
+On a successful write (graph grew), runner takes a boundary jump and updates tvec_last_boundary.
+Runner performs a thresholded segmentation check (τ=0.90) each tick and triggers a boundary when the cosine to the last boundary falls below τ.
+Policies don’t import Temporal directly; they just read a compact tvec64() from ctx via _policy_meta(...), so every write gets a time-fingerprint alongside created_at.
+Snapshots show a tiny TEMPORAL readout (params, cos_to_last_boundary, vhash64) so you can track time dynamics without dumping the whole 128-D vector.
+
 """
 
 # --- Imports -------------------------------------------------------------

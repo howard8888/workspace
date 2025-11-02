@@ -59,6 +59,7 @@ from collections import defaultdict
 #import cca8_world_graph as wgmod  # modular alternative: allows swapping WorldGraph engines
 import cca8_world_graph
 from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict, HUNGER_HIGH, FATIGUE_HIGH
+from cca8_temporal import TemporalContext
 
 
 # --- Public API index, version, global variables and constants ----------------------------------------
@@ -101,6 +102,30 @@ class Ctx:
     winners_k: Optional[int] = None   # record profile’s selection fan-out (e.g., 2)
     hal: Optional[Any] = None
     body: str = "(none)"
+    temporal: Optional[TemporalContext] = None
+    tvec_last_boundary: Optional[list[float]] = None
+
+    def tvec64(self) -> Optional[str]:
+        """64-bit sign-bit fingerprint of the temporal vector (hex)."""
+        tv = self.temporal
+        if not tv:
+            return None
+        v = tv.vector()
+        x = 0
+        m = min(64, len(v))
+        for i in range(m):
+            if v[i] >= 0.0:
+                x |= (1 << i)
+        return f"{x:016x}"
+
+    def cos_to_last_boundary(self) -> Optional[float]:
+        """Cosine(now, last_boundary); unit vectors → dot product."""
+        tv = self.temporal
+        lb = self.tvec_last_boundary
+        if not (tv and lb):
+            return None
+        v = tv.vector()
+        return sum(a*b for a, b in zip(v, lb))
 
 
 # Module layout/seam:
@@ -1263,7 +1288,7 @@ def run_preflight_full(args) -> int:
                     _os.makedirs(".coverage", exist_ok=True)
                     _os.environ.setdefault("COVERAGE_FILE", ".coverage/.coverage.preflight")
 
-                    _cov_pkgs = ["cca8_world_graph", "cca8_controller", "cca8_run"] #ensure covering active codebase
+                    _cov_pkgs = ["cca8_world_graph", "cca8_controller", "cca8_run", "cca8_temporal"]#ensure covering active codebase
                     _args = ["-v", "--maxfail=1"]
                     for _pkg in _cov_pkgs:
                         _args += ["--cov", _pkg]
@@ -1710,8 +1735,12 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
                 ctx_dict = asdict(ctx)
             else:
                 ctx_dict = dict(vars(ctx))
+            #  avoid dumping a huge 128-D vector and a long list
+            ctx_dict.pop("temporal", None)
+            ctx_dict.pop("tvec_last_boundary", None)
         except Exception:
             ctx_dict = {}
+
         if ctx_dict:
             for k in sorted(ctx_dict.keys()):
                 v = ctx_dict[k]
@@ -1724,6 +1753,23 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     else:
         lines.append("  (none)")
     lines.append("")
+
+    # TEMPORAL (added)
+    tv = getattr(ctx, "temporal", None)
+    if tv:
+        lines.append("TEMPORAL:")
+        lines.append(f"  dim={getattr(tv,'dim',0)} sigma={getattr(tv,'sigma',0.0):.4f} jump={getattr(tv,'jump',0.0):.4f}")
+        c = None
+        try:
+            c = ctx.cos_to_last_boundary()
+        except Exception:
+            pass
+        lines.append(f"  cos_to_last_boundary: {c:.3f}" if isinstance(c, float) else "  cos_to_last_boundary: (n/a)")
+        try:
+            lines.append(f"  vhash64: {ctx.tvec64()}")
+        except Exception:
+            lines.append("  vhash64: (n/a)")
+        lines.append("")
 
     # DRIVES
     lines.append("DRIVES:")
@@ -1946,6 +1992,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
     world = cca8_world_graph.WorldGraph()
     drives = Drives()
     ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
+    # temporal soft clock (added)
+    ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump)
+    ctx.tvec_last_boundary = ctx.temporal.vector()  # seed “last boundary”
     print_startup_notices(world)
 
     POLICY_RT = PolicyRuntime(CATALOG_GATES)
@@ -2331,9 +2380,14 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     print(fired)
             loop_helper(args.autosave, world, drives)
 
+
         elif choice == "12":
             # Instinct step
             before_n = len(world._bindings)
+
+            # [TEMPORAL] drift once per instinct step
+            if ctx.temporal:
+                ctx.temporal.step()
 
             # --- context (for teaching / debugging) ---
             base  = choose_contextual_base(world, ctx, targets=["state:posture_standing", "stand"])
@@ -2350,8 +2404,14 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
             print(f"[instinct] base_suggestion={base}, anchors={[ _ann(x) for x in cands ]}, foa_size={foa['size']}")
 
-            # --- execute the controller once (probe) ---
             result = action_center_step(world, ctx, drives)
+
+            # boundary if we actually wrote something
+            after_n = len(world._bindings)
+            if result.get("status") == "ok" and after_n > before_n and ctx.temporal:
+                new_v = ctx.temporal.boundary()
+                ctx.tvec_last_boundary = list(new_v)
+
             print("Action Center:", result)
 
             # best-effort WHY: match the controller's returned label to a loaded gate
@@ -2364,13 +2424,28 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     pass
 
             # delta and autosave
-            after_n = len(world._bindings)
             if after_n == before_n:
                 print("(no new bindings/edges created this step)")
             else:
                 print(f"(graph updated: bindings {before_n} -> {after_n})")
 
+            # [TEMPORAL] boundary when the controller actually wrote
+            if isinstance(result, dict) and result.get("status") == "ok" and after_n > before_n and ctx.temporal:
+                new_v = ctx.temporal.boundary()
+                ctx.tvec_last_boundary = list(new_v)
+                print("[temporal] boundary after write (cos reset to ~1.000)")
+
+            # [TEMPORAL] optional τ-cut (e.g., τ=0.90)
+            if ctx.temporal and ctx.tvec_last_boundary:
+                v_now = ctx.temporal.vector()
+                cos_now = sum(a*b for a,b in zip(v_now, ctx.tvec_last_boundary))
+                if cos_now < 0.90:
+                    new_v = ctx.temporal.boundary()
+                    ctx.tvec_last_boundary = list(new_v)
+                    print(f"[temporal] boundary: cos_to_last_boundary {cos_now:.3f} < 0.90")
+
             loop_helper(args.autosave, world, drives)
+
 
         elif choice == "13":
             # Show skill stats
@@ -2384,12 +2459,27 @@ def interactive_loop(args: argparse.Namespace) -> None:
             try:
                 ctx.ticks = getattr(ctx, "ticks", 0) + 1
                 ctx.age_days = getattr(ctx, "age_days", 0.0) + 0.01   # tune step as   like
+                if ctx.temporal:
+                    ctx.temporal.step()
                 world.set_stage_from_ctx(ctx)           # keep the stage in sync as age changes
                 print(f"Autonomic: fatigue +0.01 | ticks={ctx.ticks} age_days={ctx.age_days:.2f}")
+
+                # [TEMPORAL] drift on autonomic ticks
+                if ctx.temporal:
+                    ctx.temporal.step()
+
+                # [TEMPORAL] optional τ-cut
+                if ctx.temporal and ctx.tvec_last_boundary:
+                    v_now = ctx.temporal.vector()
+                    cos_now = sum(a*b for a,b in zip(v_now, ctx.tvec_last_boundary))
+                    if cos_now < 0.90:
+                        new_v = ctx.temporal.boundary()
+                        ctx.tvec_last_boundary = list(new_v)
+                        print(f"[temporal] boundary: cos_to_last_boundary {cos_now:.3f} < 0.90")
             except Exception:
                 print("Autonomic: fatigue +0.01")
 
-            #Refresh availability and consider firing regardless
+            # Refresh availability and consider firing regardless
             POLICY_RT.refresh_loaded(ctx)
             fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
             if fired != "no_match":

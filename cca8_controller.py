@@ -545,9 +545,24 @@ class Primitive:
             payload.update(extra)
         return payload
 
+
 # -----------------------------------------------------------------------------
 # Concrete policies
 # -----------------------------------------------------------------------------
+
+def _policy_meta(ctx, policy_name: str) -> dict:
+    """Helper function that contains the common meta boilerplate used by each policy.
+    Note that we now timestamp with ticks.
+    """
+    now = datetime.now().isoformat(timespec="seconds")
+    m = {"policy": policy_name, "created_at": now, "ticks": getattr(ctx, "ticks", 0)}
+    h = getattr(ctx, "tvec64", None)
+    if callable(h):
+        try:
+            m["tvec64"] = h()
+        except (AttributeError, TypeError, ValueError):
+            pass
+    return m
 
 class StandUp(Primitive):
     """Primitive that creates a tiny posture chain and marks standing
@@ -622,7 +637,7 @@ class StandUp(Primitive):
             then also tag that SAME binding with pred:state:posture_standing.
            -FakeWorld tests: write only pred:state:posture_standing (keeps canonical-only test passing).
         """
-        meta = {"policy": self.name, "created_at": datetime.now().isoformat(timespec="seconds")}
+        meta = _policy_meta(ctx, self.name)
         try:
             a = _add_pred(world, ACTION_PUSH_UP,     attach="now",    meta=meta)
             b = _add_pred(world, ACTION_EXTEND_LEGS, attach="latest", meta=meta)
@@ -694,7 +709,7 @@ class SeekNipple(Primitive):
     Notes
     -----
     • Alias/canonical mapping is handled by controller helpers; token storage and
-      normalization are handled by `WorldGraph.add_predicate(...)`. :contentReference[oaicite:1]{index=1}
+      normalization are handled by `WorldGraph.add_predicate(...)`.
     """
     name = "policy:seek_nipple"
 
@@ -717,8 +732,7 @@ class SeekNipple(Primitive):
         Append an orientation→seeking chain, stamp provenance, and return success.
         See class docstring for exact write pattern and side effects.
         """
-        now = datetime.now().isoformat(timespec="seconds")
-        meta = {"policy": self.name, "created_at": now}
+        meta = _policy_meta(ctx, self.name)
         a = _add_pred(world, ACTION_ORIENT_TO_MOM, attach="now", meta=meta)
 
         if _is_worldgraph(world):
@@ -771,7 +785,7 @@ class FollowMom(Primitive):
     Ordering Note
     -------------
     This primitive sits **after** Rest in `PRIMITIVES` so need-driven policies
-    (fatigue/hunger) win first; its permissive nature would otherwise mask them. :contentReference[oaicite:2]{index=2}
+    (fatigue/hunger) win first; its permissive nature would otherwise mask them.
     """
     name = "policy:follow_mom"
 
@@ -781,8 +795,7 @@ class FollowMom(Primitive):
 
     def execute(self, world, ctx, drives: Drives) -> dict:
         """Append look_around→alert and return success (see class docstring)."""
-        now = datetime.now().isoformat(timespec="seconds")
-        meta = {"policy": self.name, "created_at": now}
+        meta = _policy_meta(ctx, self.name)
         a = _add_pred(world, ACTION_LOOK_AROUND, attach="now", meta=meta)
         b = _add_pred(world, STATE_ALERT, meta=meta)
         world.add_edge(a, b, "then")
@@ -826,6 +839,7 @@ class ExploreCheck(Primitive):
 
     def execute(self, world, ctx, drives: Drives) -> dict:
         """Return a success sentinel without modifying the world."""
+        #meta = _policy_meta(ctx, self.name) #not used since a no op policy
         return self._success(reward=0.0, notes="checked")
 
 
@@ -867,7 +881,7 @@ class Rest(Primitive):
     -----------
     In `PRIMITIVES`, Rest is ordered **before** the permissive fallback so recovery
     can preempt idling when appropriate; the Action Center may also prefer it via
-    deficit scoring when fatigue dominates. :contentReference[oaicite:3]{index=3}
+    deficit scoring when fatigue dominates.
     """
     name = "policy:rest"
 
@@ -878,11 +892,9 @@ class Rest(Primitive):
     def execute(self, world, ctx, drives: Drives) -> dict:
         """Reduce fatigue, assert 'resting', and return success (see class docstring)."""
         drives.fatigue = max(0.0, drives.fatigue - 0.2)
-        now = datetime.now().isoformat(timespec="seconds")
-        meta = {"policy": self.name, "created_at": now}
+        meta = _policy_meta(ctx, self.name)
         _add_pred(world, STATE_RESTING, attach="now", meta=meta)
         return self._success(reward=0.2, notes="resting")
-
 
 # -----------------------------------------------------------------------------
 # Primitives to be Scanned by the Action Center

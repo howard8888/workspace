@@ -96,6 +96,7 @@ verify with  plan NOW → `milk:drinking`.
 - [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
 - [Tutorial on Main (Runner) Module Technical Features](#tutorial-on-main-runner-module-technical-features)
 - [Tutorial on Controller Module Technical Features](#tutorial-on-controller-module-technical-features)
+- [Tutorial on Temporal Module Technical Features](#tutorial-on-temporal-module-technical-features)
 - [Planner contract (for maintainers)](#planner-contract-for-maintainers)
 - [Persistence contract](#persistence-contract)
   
@@ -3308,6 +3309,152 @@ Minimal usage crib (controller-focused)
     print(skill_readout())
 
 **Style guidance:** keep **drive tags ephemeral (which is why they are called flags)** (policy triggers). If we want drive states visible to planning/paths, add **`pred:drive:*`** nodes (plannable) or **`cue:drive:*`** (trigger-only) deliberately in your controller logic.
+
+* * *
+
+
+
+Tutorial on Temporal Module Technical Features
+----------------------------------------------
+
+This tutorial explains how **`cca8_temporal.py`** gives CCA8 a lightweight notion of time that complements wall-clock timestamps. It covers the **why**, the **math**, and the **wiring** you just added to the runner and controller.
+
+### 1) Why a temporal vector if we already have timestamps?
+
+Wall-clock (ISO-8601) stamps are excellent for **provenance** and audit trails, but clumsy for two tasks we care about:
+
+* **Episode segmentation.** “Did a new episode start?” Rule-of-thumb gap detectors (e.g., “>5 s”) are brittle when sim speed varies.
+
+* **Time-aware similarity.** “Fetch things that happened around the same time as X.” Pure timestamps don’t give a smooth, unitless notion of “nearby.”
+
+The Temporal module adds a **unit-norm context vector** that **drifts** a little each tick and **jumps** at boundaries. With unit vectors, **cosine = dot product**, so “near in time” becomes a cheap dot-product check—no units, no parsing, no NumPy.
+
+> Design note: WorldGraph remains **atemporal** (except anchors like `NOW`). Time semantics live in `meta` and in this module/runner, not inside graph mechanics. Policies continue to stamp `created_at` directly.
+
+* * *
+
+### 2) What the TemporalContext is
+
+`TemporalContext` maintains a **D-dimensional unit vector** (default 128-D) representing “now.” Two operations evolve it:
+
+* `step()` – add tiny Gaussian noise (σ = `sigma`) to each component, then **re-normalize** to length 1 (a gentle **drift**).
+
+* `boundary()` – add larger Gaussian noise (σ = `jump`), then re-normalize (a **jump** for episode cuts).  
+  Because the vector is always unit-norm, comparing two time points is just a dot product. 1.0 ≈ very close; ~0.0 ≈ far/orthogonal.
+
+**Quick mental model.** Think of time as a path on a high-dimensional unit sphere: smooth motion with occasional bigger hops at important moments. “Meaning” emerges only by **comparison** (dot products), not from individual components.
+
+* * *
+
+### 3) Math refresher (why cosine is cheap here)
+
+For vectors u,v:  
+cosθ=∥u∥∥v∥u⋅v​. If ∥u∥=∥v∥=1, then cosθ=u⋅v.  
+Same direction → 1.0; orthogonal → 0.0; opposite → −1.0. We re-normalize after every drift/jump, so comparisons are just `sum(a*b for a,b in zip(u,v))`.
+
+* * *
+
+### 4) How we use it in CCA8 (current wiring)
+
+You’ve wired the soft clock in the **Runner** and added tiny provenance in the **Controller**:
+
+* **Runner creates & advances the soft clock**
+  
+  * On session start: `ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump)`; seed `ctx.tvec_last_boundary = ctx.temporal.vector()`.
+  
+  * Every **Instinct step** and **Autonomic tick**: call `ctx.temporal.step()` once (drift).
+  
+  * On a **successful write** (graph grew): call `ctx.temporal.boundary()` and update `tvec_last_boundary` (one boundary per write).
+  
+  * (Optional) **thresholded segmentation:** if `dot(now, last_boundary) < τ` (e.g., 0.90), force a boundary.
+  
+  * Snapshots show a compact **TEMPORAL** block: `(dim, sigma, jump)`, `cos_to_last_boundary`, and a short hash.
+
+* **Controller stamps temporal provenance**
+  
+  * Policies keep stamping `meta["created_at"]` (ISO-8601, seconds precision).
+  
+  * You also add `meta["ticks"]` and a compact **time fingerprint** `meta["tvec64"]` (sign-bit hash of the temporal vector at write time).
+  
+  * Result: each binding has both **wall-clock** and **soft-clock** context.
+
+A concise summary of this wiring is also recorded in the code comments you added on Nov 1, 2025.
+
+* * *
+
+### 5) What the vector “looks like” (and doesn’t)
+
+* It’s a plain Python **list[float]** of length `dim`, re-normalized each change; no NumPy dependency.
+
+* Components are **standard-normal samples** at init, then small/noisy updates—**components have no human meaning** by themselves.
+
+* We **never** read it dimension-by-dimension; we **only compare whole vectors** (cosine/dot).
+
+* * *
+
+### 6) Typical workflows
+
+**A) Segmentation by threshold**  
+Keep `v* = last_boundary`. Each tick:
+
+`cos_now = sum(a*b for a,b in zip(ctx.temporal.vector(), v_star)) if cos_now < 0.90:    v_star = ctx.temporal.boundary()`
+
+* Small `sigma` → slow decay; rare auto cuts.
+
+* Larger `jump` → deeper cosine dip on boundary.
+
+* Tune τ per profile (goat vs chimp vs human).
+
+**B) Time-aware retrieval**  
+Store `meta["tvec64"]` (or the full vector during development). Later, “near this time” queries become nearest-neighbors by dot product (or Hamming distance on the sign bits).
+
+**C) Provenance & analytics**  
+Bindings now carry `created_at` (ISO-8601), `ticks`, and `tvec64`. You can correlate actions with recency and segment chapters post-hoc.
+
+* * *
+
+### 7) Parameters you’ll tune
+
+* `dim` (64–128 typical): higher dims → smoother geometry, less variance in dot products.
+
+* `sigma` (drift): how fast “time” moves when nothing big happens.
+
+* `jump` (boundary): how distinct chapters feel (bigger jump → lower cosine after boundary).
+
+* `τ` (threshold): when to auto-cut based on similarity to the last boundary.
+
+* * *
+
+### 8) Minimal API (developer crib)
+
+`from cca8_temporal import TemporalContextt = TemporalContext(dim=128, sigma=0.02, jump=0.25)v0 = t.vector()       # defensive copy (unit-norm) v1 = t.step()         # drift (small change) v2 = t.boundary()     # jump  (larger change)  def dot(a,b): return sum(x*y for x,y in zip(a,b)) print(dot(v0, v1))    # ~0.995–0.999… print(dot(v0, v2))    # noticeably smaller (e.g., 0.7–0.95 depending on jump)`
+
+Under the hood: `_normalize(vals)` returns a unit-norm copy and guards zero-norm with `1.0`.
+
+* * *
+
+### 9) Invariants & guardrails
+
+* Always re-normalize after drift/boundary so cosine=dot remains valid.
+
+* TemporalContext **does not** stamp `created_at`; that remains a policy/controller responsibility.
+
+* The soft clock is **run-relative** (not meant for cross-run alignment unless you fix a random seed).
+
+* Pure-Python O(d) per tick; no heavy deps.
+
+* * *
+
+### 10) Quick demo in the Runner (what to expect)
+
+1. `12` Instinct step → if the controller writes, you’ll see  
+   `[temporal] boundary after write (cos reset to ~1.000)` and `cos_to_last_boundary: 1.000` in the snapshot.
+
+2. `15` Autonomic tick × N → `cos_to_last_boundary` decays gently (drift only).
+
+3. If you enabled the τ-cut, a boundary triggers automatically once cosine drops below τ (you’ll see a console note).
+
+4. Saved JSON shows `meta.created_at`, `meta.ticks`, and `meta.tvec64` on new bindings.
 
 * * *
 
