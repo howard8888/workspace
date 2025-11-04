@@ -97,6 +97,7 @@ verify with  plan NOW → `milk:drinking`.
 - [Tutorial on Main (Runner) Module Technical Features](#tutorial-on-main-runner-module-technical-features)
 - [Tutorial on Controller Module Technical Features](#tutorial-on-controller-module-technical-features)
 - [Tutorial on Temporal Module Technical Features](#tutorial-on-temporal-module-technical-features)
+- [Tutorial on Features Module Technical Features](#tutorial-on-feature-module-technical-features)
 - [Planner contract (for maintainers)](#planner-contract-for-maintainers)
 - [Persistence contract](#persistence-contract)
   
@@ -3312,12 +3313,10 @@ Minimal usage crib (controller-focused)
 
 * * *
 
-
-
 Tutorial on Temporal Module Technical Features
 ----------------------------------------------
 
-This tutorial explains how **`cca8_temporal.py`** gives CCA8 a lightweight notion of time that complements wall-clock timestamps. It covers the **why**, the **math**, and the **wiring** you just added to the runner and controller.
+This tutorial explains how **`cca8_temporal.py`** gives CCA8 a lightweight notion of time that complements wall-clock timestamps. It covers the **why**, the **math**, and the **wiring** added to the runner and controller.
 
 ### 1) Why a temporal vector if we already have timestamps?
 
@@ -3356,7 +3355,7 @@ Same direction → 1.0; orthogonal → 0.0; opposite → −1.0. We re-normalize
 
 ### 4) How we use it in CCA8 (current wiring)
 
-You’ve wired the soft clock in the **Runner** and added tiny provenance in the **Controller**:
+At this point in time, we've wired the soft clock in the **Runner** and added tiny provenance in the **Controller**:
 
 * **Runner creates & advances the soft clock**
   
@@ -3374,7 +3373,7 @@ You’ve wired the soft clock in the **Runner** and added tiny provenance in the
   
   * Policies keep stamping `meta["created_at"]` (ISO-8601, seconds precision).
   
-  * You also add `meta["ticks"]` and a compact **time fingerprint** `meta["tvec64"]` (sign-bit hash of the temporal vector at write time).
+  * We also add `meta["ticks"]` and a compact **time fingerprint** `meta["tvec64"]` (sign-bit hash of the temporal vector at write time).
   
   * Result: each binding has both **wall-clock** and **soft-clock** context.
 
@@ -3413,7 +3412,7 @@ Bindings now carry `created_at` (ISO-8601), `ticks`, and `tvec64`. You can corre
 
 * * *
 
-### 7) Parameters you’ll tune
+### 7) Parameters that can be tuned
 
 * `dim` (64–128 typical): higher dims → smoother geometry, less variance in dot products.
 
@@ -3458,7 +3457,201 @@ Under the hood: `_normalize(vals)` returns a unit-norm copy and guards zero-norm
 
 * * *
 
+Tutorial on Features Module Technical Features
+==============================================
 
+This section explains what **`cca8_features.py`** provides, why it exists, and how to use it day-to-day. It complements the Signal Bridge (WorldGraph ↔ Engrams) by defining **what an engram payload looks like**, a **concrete dense-tensor payload**, and a **lightweight descriptor** you can search/filter without touching big data.
+
+* * *
+
+### 1) What this module is
+
+A small, dependency-free toolkit for **engram payloads**:
+
+* **`FeaturePayload`** — a _Protocol_ (typing interface) describing the **shape** a payload must have (attributes + methods).
+
+* **`TensorPayload`** — a concrete, bytes-serializable dense vector/tensor (float32 body).
+
+* **`FactMeta`** — a compact descriptor for column records (name/links/attrs) with optional **time linkage** to the runner.
+
+This keeps WorldGraph lean (only an **engram pointer** lives on a binding) while Columns store the heavy content.
+
+* * *
+
+### 2) Public API (what to import)
+
+    from cca8_features import FeaturePayload, TensorPayload, FactMeta
+    # optional helper (if you exposed it): time_attrs_from_ctx
+
+* `FeaturePayload` is an **interface** (Protocol). You don’t instantiate it; any class with the required attributes/methods _conforms_.
+
+* `TensorPayload` and `FactMeta` are concrete dataclasses you use directly.
+
+* * *
+
+### 3) `FeaturePayload` (Protocol) — the interface
+
+**Purpose.** Define the minimal **contract** any engram payload must satisfy so Columns and bridges don’t depend on one concrete class.
+
+**Attributes**
+
+* `kind: str` – human/use-case label (e.g., `"embedding"`, `"scene"`).
+
+* `fmt: str` – storage/format hint (e.g., `"tensor/list-f32"`).
+
+* `shape: tuple[int, ...]` – tensor-like shape; use `()` for scalars.
+
+**Methods**
+
+* `to_bytes() -> bytes` — portable serialization.
+
+* `from_bytes(cls, data: bytes) -> FeaturePayload` — decode a payload produced by `to_bytes`.
+
+* `meta() -> dict` — JSON-safe descriptor (`{"kind","fmt","shape","len"}`) for logs/UI without decoding bytes.
+
+> Protocols are **typing interfaces** (non-instantiable). Your concrete classes (like `TensorPayload`) implement the contract.
+
+* * *
+
+### 4) `TensorPayload` — a compact dense tensor (float32)
+
+**What it carries**
+
+* `data: list[float]` — numeric values (treated as **float32** on disk).
+
+* `shape: tuple[int, ...]` — e.g., `(768,)` for an embedding.
+
+* `kind="embedding"`, `fmt="tensor/list-f32"` — defaults you can override.
+
+**Why it’s light**  
+Uses only the standard library:
+
+* Header encoded with `struct` (**little-endian, versioned**).
+
+* Body written as contiguous **float32** with `array('f')`.
+
+**Binary layout**
+    MAGIC(5) | VER(u32) | NDIMS(u32) | DIMS[NDIMS](u32 …) | DATA(float32 …)
+
+**Key methods**
+
+* `to_bytes()` — builds header via `struct.pack("<5sII…")` then appends `array('f', data).tobytes()`.
+
+* `from_bytes(...)` — validates MAGIC/version, parses dims with `struct.unpack_from`, rebuilds data via `array('f').frombytes(...)`.
+
+* `meta()` — returns `{"kind","fmt","shape","len"}` without touching the body.
+
+_Invariant hints_ (good practice you may already enforce):
+
+* `len(data) == product(shape)`
+
+* `array('f').itemsize == 4`
+
+* * *
+
+### 5) `FactMeta` — lightweight descriptor (with optional time linkage)
+
+**Fields**
+
+* `name: str` — concise, queryable label (e.g., `vision:silhouette:mom`, `scene`).
+
+* `links: list[str] | None` — cross-refs (typically **WorldGraph binding ids** this engram relates to).
+
+* `attrs: dict[str, Any] | None` — freeform descriptors you’ll filter/sort by (e.g., `{"model":"clip-vit-b32","sensor":"camera0"}`).
+
+**Nice helpers**
+
+* `as_dict()` — JSON-safe view with defaults applied.
+
+* `with_time(ctx)` — merges runner time keys into `attrs` when available:
+  
+  * `ticks` — runner’s tick counter.
+  
+  * `tvec64` — 64-bit sign-bit hash of the temporal vector (TemporalContext fingerprint).
+
+**Why mirror time here?**  
+Bindings already carry graph-side provenance (`created_at`, `ticks`, `tvec64`). Mirroring `{"ticks","tvec64"}` into Column engrams lets you **correlate** engrams with graph events _without_ opening payload bytes.
+
+* * *
+
+### 6) Where it fits in CCA8 (end-to-end picture)
+
+* **WorldGraph** stores _pointers_ to engrams on a binding:  
+  `binding.engrams["column01"] = {"id": "<engram_id>", "act": 1.0}`
+
+* **ColumnMemory** stores the **record** `{id, name, payload, meta}` where:
+  
+  * `payload` is a **FeaturePayload** (e.g., `TensorPayload`),
+  
+  * `meta` is a **FactMeta** (often with `ticks`/`tvec64` in `attrs`).
+
+* **Signal bridge** (menu **24** “Capture scene”) wraps a small vector into a `TensorPayload`, asserts it as an engram, attaches the pointer to the new binding, and—if you pass `attrs=time_attrs_from_ctx(ctx)`—**mirrors time** into the column record automatically.
+
+* * *
+
+### 7) Minimal usage cribs
+
+**A) Programmatic (Column direct)**
+    from cca8_column import mem
+    from cca8_features import TensorPayload, FactMeta
+
+    vec = [0.1, 0.2, 0.3]
+    payload = TensorPayload(data=vec, shape=(len(vec),))
+    meta = FactMeta(name="vision:silhouette:mom", links=[latest_bid]).with_time(ctx)
+
+    engram_id = mem.assert_fact("vision:silhouette:mom", payload, meta)
+    world.attach_engram(latest_bid, column="column01", engram_id=engram_id, act=1.0)
+
+**B) Via WorldGraph bridge (menu 24 path)**
+    from cca8_features import time_attrs_from_ctx  # if exported
+    attrs = time_attrs_from_ctx(ctx)  # {'ticks': ..., 'tvec64': ...} or {}
+    bid, engram_id = world.capture_scene("vision", "silhouette:mom",
+                                         vector=vec, attach="now",
+                                         family="cue", attrs=attrs)
+
+**C) Inspect an engram**
+    rec = world.get_engram(engram_id=engram_id)
+    print(rec["meta"])   # should include {'ticks': N, 'tvec64': '...'} if mirrored
+
+* * *
+
+### 8) Invariants & guardrails (quick checklist)
+
+* `TensorPayload.to_bytes()/from_bytes()`:
+  
+  * MAGIC/VER must match; shapes parsed from little-endian u32s.
+  
+  * Body length matches `product(shape) * 4` bytes (float32).
+
+* `FactMeta` is **JSON-safe** (`as_dict()` gives lists/dicts; tuples serialize as lists).
+
+* Time linkage:
+  
+  * **Graph side**: bindings carry `created_at` (ISO-8601), `ticks`, `tvec64`.
+  
+  * **Column side**: `FactMeta.attrs` may carry `ticks`/`tvec64` (optional, by your choice).
+
+* Bridge keeps **WorldGraph fast**: engrams stay outside; bindings carry only pointers.
+
+* * *
+
+### 9) Why no NumPy?
+
+This module focuses on **schema + portability**, not numeric ops. `struct` + `array('f')` give a compact, stable on-disk format and fast IO with **zero heavy deps**. If/when you need vector math, you can opt-in elsewhere without changing the engram format.
+
+* * *
+
+### 10) Quick test ideas (already partly covered)
+
+* `TensorPayload` round-trip bytes → equal `data/shape`, correct `meta()`.
+
+* `FactMeta.with_time(ctx)` merges `{"ticks","tvec64"}` when available; a missing `ctx` field yields no keys.
+
+* World bridge: `capture_scene(..., attrs=time_attrs_from_ctx(ctx))` → `get_engram(...)[ "meta"]["attrs"]` contains mirrored time.
+
+* * *
+
+**Takeaway.** `cca8_features.py` gives CCA8 a clean, typed seam for engrams: an **interface** (`FeaturePayload`), a **concrete dense vector format** (`TensorPayload`), and a **descriptor** (`FactMeta`) that can mirror time. Together, they keep the WorldGraph small, the Column useful, and the whole system easy to inspect and evolve.
 
 
 

@@ -62,7 +62,7 @@ import os
 # --none at this time at program startup--
 
 # --- Public API index and version, constants -------------------------------------------------
-__version__ = "0.1.3"
+__version__ = "0.2.0"
 __all__ = ["Edge", "Binding", "WorldGraph", "__version__"]
 # convenient public helpers (methods remain accessed via WorldGraph instance, this is just explicit export)
 

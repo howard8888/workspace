@@ -104,6 +104,10 @@ class Ctx:
     body: str = "(none)"
     temporal: Optional[TemporalContext] = None
     tvec_last_boundary: Optional[list[float]] = None
+    # Boundary tracking (incremented on each boundary() call)
+    boundary_no: int = 0
+    boundary_vhash64: Optional[str] = None
+
 
     def tvec64(self) -> Optional[str]:
         """64-bit sign-bit fingerprint of the temporal vector (hex)."""
@@ -309,6 +313,36 @@ class HAL:
 # Two-gate policy and helpers and console helpers
 # --------------------------------------------------------------------------------------
 
+def _hamming_hex64(a: str, b: str) -> int:
+    """Hamming distance between two hex strings (intended for 64-bit vhashes).
+    Returns -1 on parse error. Case-insensitive; extra whitespace ignored.
+    -we use for analysis of the temporal context vector
+    """
+    try:
+        xa = int(a.strip(), 16)
+        xb = int(b.strip(), 16)
+        return (xa ^ xb).bit_count()
+    except Exception:
+        return -1
+
+def _fmt_base(d: dict) -> str:
+    """helper to print base suggestion info,
+    particularly during snapshot displays
+
+    e.g., print(f"[context] write-base: {_fmt_base(base)}")
+    """
+    if not isinstance(d, dict):
+        return str(d)
+    kind = d.get("base")
+    bid  = d.get("bid")
+    if kind == "NEAREST_PRED":
+        p = d.get("pred")
+        return f"NEAREST_PRED(pred={p}) -> {bid}"
+    elif kind:
+        return f"{kind} -> {bid}"
+    return str(d)
+
+
 def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Body: (none)"):
     """Print the intro banner and a brief explanation of the simulation profiles and CLI usage."""
     print('\n\n# --------------------------------------------------------------------------------------')
@@ -363,6 +397,8 @@ def loop_helper(autosave_from_args: Optional[str], world, drives, time_limited: 
         save_session(autosave_from_args, world, drives)
         # Quiet by default; uncomment for debugging:
         # print(f"[autosaved {ts}] {autosave_from_args}")
+    print("\n-----\n") #visual spacer before menu prints again
+
 
 def _drive_tags(drives) -> list[str]:
     """Robustly compute drive:* tags even if Drives.flags()/predicates() is missing.
@@ -417,6 +453,21 @@ def _neighbors(world, bid: str) -> List[str]:
             dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
             if dst:
                 out.append(dst)
+    return out
+
+def _engrams_on_binding(world, bid: str) -> list[str]:
+    """Return engram ids attached to a binding (via binding.engrams)."""
+    b = world._bindings.get(bid)
+    if not b:
+        return []
+    eng = getattr(b, "engrams", None) or {}
+    out: list[str] = []
+    if isinstance(eng, dict):
+        for v in eng.values():
+            if isinstance(v, dict):
+                eid = v.get("id")
+                if isinstance(eid, str):
+                    out.append(eid)
     return out
 
 def _bfs_reachable(world, src: str, dst: str, max_hops: int = 3) -> bool:
@@ -811,7 +862,9 @@ MENU = """\
 23) Understanding bindings, edges, predicates, cues, anchors, policies
 24) Capture scene → emit cue/predicate with tiny engram (signal bridge)
 25) Planner strategy (toggle BFS ↔ Dijkstra)
-
+26) Temporal probe (epoch/hash/cos/hamming)
+27) Inspect engram by id
+28) List all engrams (id, source binding, time attrs, payload)
 
 [S] Save session → path
 [L] Load session → path
@@ -1287,8 +1340,8 @@ def run_preflight_full(args) -> int:
                     # Where to store coverage artifacts during preflight
                     _os.makedirs(".coverage", exist_ok=True)
                     _os.environ.setdefault("COVERAGE_FILE", ".coverage/.coverage.preflight")
-
-                    _cov_pkgs = ["cca8_world_graph", "cca8_controller", "cca8_run", "cca8_temporal"]#ensure covering active codebase
+                    #ensure preflight coverage statistics cover only active codebase
+                    _cov_pkgs = ["cca8_world_graph", "cca8_controller", "cca8_run", "cca8_temporal", "cca8_features", "cca8_column"]
                     _args = ["-v", "--maxfail=1"]
                     for _pkg in _cov_pkgs:
                         _args += ["--cov", _pkg]
@@ -1758,17 +1811,25 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     tv = getattr(ctx, "temporal", None)
     if tv:
         lines.append("TEMPORAL:")
-        lines.append(f"  dim={getattr(tv,'dim',0)} sigma={getattr(tv,'sigma',0.0):.4f} jump={getattr(tv,'jump',0.0):.4f}")
+        lines.append(f"  context vector: dim setting={getattr(tv,'dim',0)}, time drift setting(sigma)={getattr(tv,'sigma',0.0):.4f}, time event boundary setting(jump)={getattr(tv,'jump',0.0):.4f}")
         c = None
         try:
             c = ctx.cos_to_last_boundary()
         except Exception:
             pass
-        lines.append(f"  cos_to_last_boundary: {c:.3f}" if isinstance(c, float) else "  cos_to_last_boundary: (n/a)")
+        lines.append(f"  cos_to_last_boundary (context vector similarity to the last event): {c:.4f}" if isinstance(c, float) else "  cos_to_last_boundary: (n/a)")
         try:
-            lines.append(f"  vhash64: {ctx.tvec64()}")
+            lines.append(f"  context vector vhash64: {ctx.tvec64()}")
         except Exception:
             lines.append("  vhash64: (n/a)")
+        # epoch info (optional, purely additive)
+        try:
+            lines.append(f"  boundary_no: {getattr(ctx, 'boundary_no', 0)}")
+            bvh = getattr(ctx, "boundary_vhash64", None)
+            if bvh:
+                lines.append(f"  last_boundary_vhash64: {bvh}")
+        except Exception:
+            pass
         lines.append("")
 
     # DRIVES
@@ -1995,6 +2056,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # temporal soft clock (added)
     ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump)
     ctx.tvec_last_boundary = ctx.temporal.vector()  # seed “last boundary”
+    try:
+        ctx.boundary_vhash64 = ctx.tvec64()
+    except Exception:
+        ctx.boundary_vhash64 = None
     print_startup_notices(world)
 
     POLICY_RT = PolicyRuntime(CATALOG_GATES)
@@ -2041,8 +2106,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
         # Tagging/policies help, engram scene
         "understanding": "23", "bindings-help": "23", "predicates-help": "23",
         "cues-help": "23", "policies-help": "23", "tagging": "23", "standard": "23",
-        "capture": "24", "scene": "24", "engram": "24",
+        "capture": "24", "cap": "24", "scene": "24",
         "planner": "25", "strategy": "25", "dijkstra": "25", "bfs": "25", "toggle planner": "25",
+        "temporal": "26", "tp": "26", "probe": "26",
+        "engram": "27", "engr": "27", "ei": "27",
+        "engrams-all": "28", "list-engrams": "28", "le": "28", "la": "28",
 
     }
 
@@ -2073,6 +2141,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
         "23": "23",  # Understanding bindings/edges/predicates/cues/anchors/policies
         "24": "24",  # Capture scene → emit cue/predicate + tiny engram (signal bridge demo)
         "25": "25",  # Planner strategy toggle
+        "26": "26",  # Temporal probe (epoch/hash/cos/hamming)
+        "27": "27",  # Inspect engram by id
+        "28": "28",  # List engrams
+
+
 
     }
 
@@ -2340,21 +2413,21 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "10":
-            # Inspect binding details
-            bid = input("Binding id to inspect: ").strip()
-            b = world._bindings.get(bid)
-            if not b:
-                print("Unknown binding id.")
-            else:
-                print(f"ID: {bid}")
-                print("Tags:", ", ".join(sorted(b.tags)))
-                print("Meta:", json.dumps(b.meta, indent=2))
-                # NEW: show engrams
-                if b.engrams:
+            # Inspect binding details (accepts a single id, or ALL/* to dump everything)
+            bid = input("Binding id to inspect (or 'ALL'): ").strip()
+
+            def _print_one(_bid: str) -> None:
+                b = world._bindings.get(_bid)
+                if not b:
+                    print(f"Unknown binding id: {_bid}")
+                    return
+                print(f"ID: {_bid}")
+                print("Tags:", ", ".join(sorted(getattr(b, "tags", []))))
+                print("Meta:", json.dumps(getattr(b, "meta", {}), indent=2))
+                if getattr(b, "engrams", None):
                     print("Engrams:", json.dumps(b.engrams, indent=2))
                 else:
                     print("Engrams: (none)")
-                # Robust edge display (handles edges/out/links/outgoing and dict/attr)
                 edges = getattr(b, "edges", []) or getattr(b, "out", []) \
                         or getattr(b, "links", []) or getattr(b, "outgoing", [])
                 if isinstance(edges, list) and edges:
@@ -2365,6 +2438,13 @@ def interactive_loop(args: argparse.Namespace) -> None:
                         print(f"  -- {rel} --> {dst}")
                 else:
                     print("Edges: (none)")
+                print("-" * 78)
+
+            if bid.lower() in ("all", "*"):
+                for _bid in _sorted_bids(world):
+                    _print_one(_bid)
+            else:
+                _print_one(bid)
             loop_helper(args.autosave, world, drives)
 
         elif choice == "11":
@@ -2403,23 +2483,40 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 return f"{bid}"
 
             print(f"[instinct] base_suggestion={base}, anchors={[ _ann(x) for x in cands ]}, foa_size={foa['size']}")
+            print("Note: A base_suggestion is a proposal for where to attach writes this step. It is not a policy pick.")
+            print("      Anchors give us a write base (where to attach new preds/edges). Where we attach the new fact matters for searching paths and planning later.")
+
+            print(f"[context] write-base: {_fmt_base(base)}")
+            print(f"[context] anchors: {', '.join(_ann(x) for x in cands)}")
+            print(f"[context] foa: size={foa['size']} (ids near NOW/LATEST + cues)")
+            print("Note: write-base is where we’ll attach any new facts/edges this step (keeps the episode local and readable).")
+            print("      anchors are candidate start points the system considers for local searches/attachment.")
+            print("      foa is the current 'focus of attention' neighborhood size used for light-weight planning.")
 
             result = action_center_step(world, ctx, drives)
+            after_n  = len(world._bindings)  # NEW: measure write delta for this path
 
-            # boundary if we actually wrote something
-            after_n = len(world._bindings)
-            if result.get("status") == "ok" and after_n > before_n and ctx.temporal:
-                new_v = ctx.temporal.boundary()
-                ctx.tvec_last_boundary = list(new_v)
+            # Explicit summary of what executed
+            if isinstance(result, dict):
+                policy  = result.get("policy")
+                status  = result.get("status")
+                reward  = result.get("reward")
+                binding = result.get("binding")
+                if policy and status:
+                    rtxt = f"{reward:+.2f}" if isinstance(reward, (int, float)) else "n/a"
+                    print(f"[executed] {policy} ({status}, reward={rtxt}) binding={binding}")
+                else:
+                    print("Action Center:", result)
+            else:
+                print("Action Center:", result)
 
-            print("Action Center:", result)
-
-            # best-effort WHY: match the controller's returned label to a loaded gate
+            # WHY: show a human explanation tied to the executed policy
             label = result.get("policy") if isinstance(result, dict) and "policy" in result else "(controller)"
             gate  = next((p for p in POLICY_RT.loaded if p.name == label), None)
             if gate and gate.explain:
                 try:
-                    print("[instinct] why:", gate.explain(world, drives, ctx))
+                    why = gate.explain(world, drives, ctx)
+                    print(f"[why {label}] {why}")
                 except Exception:
                     pass
 
@@ -2433,7 +2530,14 @@ def interactive_loop(args: argparse.Namespace) -> None:
             if isinstance(result, dict) and result.get("status") == "ok" and after_n > before_n and ctx.temporal:
                 new_v = ctx.temporal.boundary()
                 ctx.tvec_last_boundary = list(new_v)
-                print("[temporal] boundary after write (cos reset to ~1.000)")
+                # epoch++
+                ctx.boundary_no = getattr(ctx, "boundary_no", 0) + 1
+                try:
+                    ctx.boundary_vhash64 = ctx.tvec64()
+                except Exception:
+                    ctx.boundary_vhash64 = None
+                print("[temporal] a new event occurred, thus not just a drift in the context vector but instead a jump to mark a temporal boundary (cos reset to ~1.000)")
+                print(f"[temporal] boundary==event changes -> epoch={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
 
             # [TEMPORAL] optional τ-cut (e.g., τ=0.90)
             if ctx.temporal and ctx.tvec_last_boundary:
@@ -2442,10 +2546,16 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 if cos_now < 0.90:
                     new_v = ctx.temporal.boundary()
                     ctx.tvec_last_boundary = list(new_v)
+                    # epoch++
+                    ctx.boundary_no = getattr(ctx, "boundary_no", 0) + 1
+                    try:
+                        ctx.boundary_vhash64 = ctx.tvec64()
+                    except Exception:
+                        ctx.boundary_vhash64 = None
                     print(f"[temporal] boundary: cos_to_last_boundary {cos_now:.3f} < 0.90")
+                    print(f"[temporal] boundary -> epoch (event changes) ={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
 
             loop_helper(args.autosave, world, drives)
-
 
         elif choice == "13":
             # Show skill stats
@@ -2464,10 +2574,6 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 world.set_stage_from_ctx(ctx)           # keep the stage in sync as age changes
                 print(f"Autonomic: fatigue +0.01 | ticks={ctx.ticks} age_days={ctx.age_days:.2f}")
 
-                # [TEMPORAL] drift on autonomic ticks
-                if ctx.temporal:
-                    ctx.temporal.step()
-
                 # [TEMPORAL] optional τ-cut
                 if ctx.temporal and ctx.tvec_last_boundary:
                     v_now = ctx.temporal.vector()
@@ -2475,7 +2581,17 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     if cos_now < 0.90:
                         new_v = ctx.temporal.boundary()
                         ctx.tvec_last_boundary = list(new_v)
+                        # epoch++
+                        ctx.boundary_no = getattr(ctx, "boundary_no", 0) + 1
+                        try:
+                            ctx.boundary_vhash64 = ctx.tvec64()
+                        except Exception:
+                            ctx.boundary_vhash64 = None
+                        print(f"[temporal] boundary -> epoch (event changes) ={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
                         print(f"[temporal] boundary: cos_to_last_boundary {cos_now:.3f} < 0.90")
+                        print(f"[temporal] boundary (event change) → epoch={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
+                        print("note: writes in the same controller step belong to the previous epoch; the epoch increments after the boundary.")
+
             except Exception:
                 print("Autonomic: fatigue +0.01")
 
@@ -2575,7 +2691,6 @@ def interactive_loop(args: argparse.Namespace) -> None:
         #elif "19"  see new_to_old compatibility map
         #elif "20"  see new_to_old compatibility map
         #elif "21"  see new_to_old compatibility map
-
 
         elif choice == "22":
             # Export and display interactive graph (Pyvis HTML) with options
@@ -2682,8 +2797,13 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 attach = "now"
 
             vec = _parse_vector(vtext)
+
+            # Pass time attrs when creating an engram
+            from cca8_features import time_attrs_from_ctx
+            attrs = time_attrs_from_ctx(ctx)
+            bid, eid = world.capture_scene(channel, token, vec, attach=attach, family=family, attrs=attrs)
+
             try:
-                bid, eid = world.capture_scene(channel, token, vec, attach=attach, family=family)
                 print(f"[bridge] created binding {bid} with tag "
                       f"{family}:{channel}:{token} and attached engram id={eid}")
 
@@ -2691,6 +2811,12 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 # Fetch and summarize the engram record (robust to different shapes)
                 try:
                     rec = world.get_engram(engram_id=eid)
+                    meta = rec.get("meta", {})
+                    attrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
+                    if attrs:
+                        print(f"[bridge] time on engram: ticks={attrs.get('ticks')} "
+                              f"tvec64={attrs.get('tvec64')} epoch={attrs.get('epoch')} "
+                              f"epoch_vhash64={attrs.get('epoch_vhash64')}")
                     rid   = rec.get("id", eid)
                     # payload can be nested or flat
                     payload = rec.get("payload") if isinstance(rec, dict) else None
@@ -2737,6 +2863,176 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print("Planner set to Dijkstra (weighted; defaults to 1 per edge when unspecified).")
             else:
                 print("Planner unchanged.")
+            loop_helper(args.autosave, world, drives)
+
+        elif choice == "26":
+            # Temporal probe (epoch/hash/cos/hamming)
+            print("[temporal probe]")
+            # Epoch + hashes
+            epoch = getattr(ctx, "boundary_no", 0)
+            vhash = ctx.tvec64() if hasattr(ctx, "tvec64") else None
+            lbvh  = getattr(ctx, "boundary_vhash64", None)
+            print(f"  epoch (i.e., event changes) ={epoch}")
+            print(f"  vhash64 (describes context vector)={vhash if vhash else '(n/a)'}")
+            print(f"  last_boundary_vhash64={lbvh if lbvh else '(n/a)'}")
+
+            # Cosine to last boundary (if available)
+            cos = None
+            try:
+                cos = ctx.cos_to_last_boundary()
+            except Exception:
+                pass
+            if isinstance(cos, float):
+                print(f"  cos_to_last_boundary (cosine similarity with vector of event boundary)={cos:.4f}")
+
+            # Hamming distance (0..64) between current vhash and last boundary
+            if vhash and lbvh:
+                h = _hamming_hex64(vhash, lbvh)
+                if h >= 0:
+                    print(f"  hamming (differences in vectors: vhash,last_boundary)={h} bits (0..64)")
+
+            # Temporal parameters
+            tv = getattr(ctx, "temporal", None)
+            if tv:
+                print(f"  dim (of context vector)={getattr(tv,'dim',0)}, sigma (time drift coefficient) ={getattr(tv,'sigma',0.0):.4f}, jump (boundary jump coefficient)={getattr(tv,'jump',0.0):.4f}")
+
+            # Status based on cosine vs. last boundary
+            if isinstance(cos, float):
+                if cos >= 0.99:
+                    status = "ON-EVENT BOUNDARY"
+                elif cos < 0.90:
+                    status = "EVENT BOUNDARY-SOON"
+                else:
+                    status = "DRIFTING slowly forward in time"
+                print(f"  status={status}")
+
+            loop_helper(args.autosave, world, drives)
+
+        elif choice == "27":
+            # Inspect engram by id OR by binding id
+            try:
+                key = input("Engram id OR Binding id: ").strip()
+            except Exception:
+                key = ""
+
+            if not key:
+                print("No id provided.")
+                loop_helper(args.autosave, world, drives)
+                continue
+
+            # Resolve binding → engram(s) if the user passed bN
+            eid = key
+            if key.lower().startswith("b") and key[1:].isdigit():
+                eids = _engrams_on_binding(world, key)
+                if not eids:
+                    print(f"No engrams on binding {key}.")
+                    loop_helper(args.autosave, world, drives)
+                    continue
+                if len(eids) > 1:
+                    print(f"Binding {key} has multiple engrams:")
+                    for i, e in enumerate(eids, 1):
+                        print(f"  {i}) {e}")
+                    try:
+                        sel = input("Pick one [number]: ").strip()
+                        idx = int(sel) - 1
+                        eid = eids[idx]
+                    except Exception:
+                        print("Cancelled.")
+                        loop_helper(args.autosave, world, drives)
+                        continue
+                else:
+                    eid = eids[0]
+
+            # Fetch and pretty-print the Column record
+            rec = None
+            try:
+                rec = world.get_engram(engram_id=eid)
+            except Exception:
+                rec = None
+
+            if not rec:
+                print(f"Engram not found: {eid}")
+                loop_helper(args.autosave, world, drives)
+                continue
+
+            try:
+                kind = rec.get("kind") or rec.get("type") or "(unknown)"
+                print(f"Engram: {eid}")
+                print(f"  kind: {kind}")
+
+                meta = rec.get("meta", {}) if isinstance(rec, dict) else {}
+                print("  meta:", json.dumps(meta, indent=2))
+
+                attrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
+                if isinstance(attrs, dict) and attrs:
+                    ticks = attrs.get("ticks")
+                    tvec  = attrs.get("tvec64")
+                    epoch = attrs.get("epoch")
+                    evh   = attrs.get("epoch_vhash64")
+                    print(f"  time attrs: ticks={ticks} tvec64={tvec} epoch={epoch} epoch_vhash64={evh}")
+
+                payload = rec.get("payload") or rec.get("data") or rec.get("value")
+                if isinstance(payload, dict):
+                    shape  = payload.get("shape") or payload.get("meta", {}).get("shape")
+                    dtype  = payload.get("dtype") or payload.get("ftype") or payload.get("kind")
+                    nbytes = payload.get("nbytes")
+                    if nbytes is None and "bytes" in payload and isinstance(payload["bytes"], (bytes, bytearray, str)):
+                        try: nbytes = len(payload["bytes"])
+                        except Exception: nbytes = None
+                    if shape or dtype or nbytes is not None:
+                        print(f"  payload: shape={shape} dtype={dtype} nbytes={nbytes}")
+                    else:
+                        print("  payload:", json.dumps(payload, indent=2))
+                elif isinstance(payload, (bytes, bytearray)):
+                    print(f"  payload: <{len(payload)} bytes>")
+                else:
+                    print("  payload: (none)" if payload is None else f"  payload: {payload}")
+
+            except Exception as e:
+                print(f"(error printing engram {eid}): {e!r}")
+
+            print("-" * 78)
+            loop_helper(args.autosave, world, drives)
+
+        elif choice == "28":
+            # List all engrams by scanning bindings; dedupe by id
+            seen: set[str] = set()
+            any_found = False
+            for bid in _sorted_bids(world):
+                eids = _engrams_on_binding(world, bid)
+                for eid in eids:
+                    if eid in seen:
+                        continue
+                    seen.add(eid)
+                    any_found = True
+                    # Best-effort fetch of Column record for summary
+                    rec = None
+                    try:
+                        rec = world.get_engram(engram_id=eid)
+                    except Exception:
+                        rec = None
+
+                    ticks = epoch = tvec = evh = shape = dtype = None
+                    if isinstance(rec, dict):
+                        meta = rec.get("meta", {})
+                        attrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
+                        if isinstance(attrs, dict):
+                            ticks = attrs.get("ticks")
+                            tvec  = attrs.get("tvec64")
+                            epoch = attrs.get("epoch")
+                            evh   = attrs.get("epoch_vhash64")
+                        payload = rec.get("payload")
+                        if isinstance(payload, dict):
+                            shape = payload.get("shape") or payload.get("meta", {}).get("shape")
+                            dtype = payload.get("dtype") or payload.get("ftype") or payload.get("kind")
+                        else:
+                            shape = rec.get("shape"); dtype = rec.get("kind") or rec.get("type")
+
+                    print(f"EID={eid}  src={bid}  ticks={ticks} epoch={epoch} tvec64={tvec} "
+                          f"payload(shape={shape}, dtype={dtype})")
+            if not any_found:
+                print("(no engrams found)")
+            print("-" * 78)
             loop_helper(args.autosave, world, drives)
 
         elif choice.lower() == "s":

@@ -128,7 +128,7 @@ from typing import List
 
 
 # --- Public API index and version, constants ---------------------------------
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["TemporalContext", "__version__"]
 
 
@@ -213,13 +213,13 @@ class TemporalContext:
 # Vector Algebra Utilities and Demos
 # -----------------------------------------------------------------------------
 
-def dot(a, b):
+def dot(a: list[float], b: list[float]) -> float:
     """Dot product (also cosine if a and b are unit vectors).
     -Note that def cos(a, b): return sum(x*y for x, y in zip(a, b)) should give same result.
     """
     return math.fsum(x*y for x, y in zip(a, b))
 
-def cosine(a, b) -> float:
+def cosine(a: list[float], b: list[float]) -> float:
     """Cosine similarity, robust even if inputs aren’t perfectly unit-length.
     """
     na = math.sqrt(math.fsum(x*x for x in a))

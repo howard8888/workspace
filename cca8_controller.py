@@ -152,7 +152,7 @@ from typing import Dict, List
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.0.4"
+__version__ = "0.2.0"
 __all__ = [
     "Drives",
     "SkillStat",
@@ -562,6 +562,13 @@ def _policy_meta(ctx, policy_name: str) -> dict:
             m["tvec64"] = h()
         except (AttributeError, TypeError, ValueError):
             pass
+    # Epoch stamp (which boundary epoch this write belonged to)
+    bno = getattr(ctx, "boundary_no", None)
+    if isinstance(bno, int):
+        m["epoch"] = bno
+    bvh = getattr(ctx, "boundary_vhash64", None)
+    if isinstance(bvh, str):
+        m["epoch_vhash64"] = bvh
     return m
 
 class StandUp(Primitive):

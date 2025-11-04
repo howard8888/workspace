@@ -1,7 +1,7 @@
 # tests/test_runner_temporal_integration.py
 import math
 import random
-from typing import List
+import re
 
 import pytest
 
@@ -11,64 +11,59 @@ from cca8_controller import Drives, action_center_step
 import cca8_run as runmod
 
 
-def _dot(a: List[float], b: List[float]) -> float:
-    return sum(x * y for x, y in zip(a, b))
-
-
-def _vhash64(v: List[float]) -> str:
-    x = 0
-    m = min(64, len(v))
-    for i in range(m):
-        if v[i] >= 0.0:
-            x |= (1 << i)
-    return f"{x:016x}"
-
-
 def _mk_ctx(dim: int = 32, sigma: float = 0.02, jump: float = 0.25):
     """
     Create a runtime ctx with a temporal soft clock suitable for tests.
     Works with the real slotted runmod.Ctx; no monkey-patching of methods.
     """
-    # Prefer the real dataclass Ctx if present
     Ctx = getattr(runmod, "Ctx", None)
-    ctx = Ctx() if Ctx is not None else object()
-
-    # Base fields (only set what exists; tolerate older builds)
-    for name, val in dict(
-        sigma=sigma, jump=jump, ticks=getattr(ctx, "ticks", 0),
-        profile=getattr(ctx, "profile", "Test"), body="(none)",
-    ).items():
+    if Ctx is not None:
+        ctx = Ctx()
+        # Only set attributes that exist; tolerate older builds.
+        for name, val in dict(
+            sigma=sigma, jump=jump, ticks=getattr(ctx, "ticks", 0),
+            profile=getattr(ctx, "profile", "Test"), body="(none)",
+        ).items():
+            if hasattr(ctx, name):
+                try:
+                    setattr(ctx, name, val)
+                except Exception:
+                    pass
         try:
-            setattr(ctx, name, val if hasattr(ctx, name) else getattr(ctx, name, val))
+            t = TemporalContext(dim=dim, sigma=sigma, jump=jump)
+            ctx.temporal = t
+            ctx.tvec_last_boundary = t.vector()
         except Exception:
             pass
+        return ctx
 
-    # Temporal plumbing: these fields exist on the real Ctx
-    try:
-        t = TemporalContext(dim=dim, sigma=sigma, jump=jump)
-        ctx.temporal = t
-        ctx.tvec_last_boundary = t.vector()
-    except Exception:
-        # Fallback shim only if we're not using the real Ctx
-        class _Shim:
-            def __init__(self):
-                self.temporal = TemporalContext(dim=dim, sigma=sigma, jump=jump)
-                self.tvec_last_boundary = self.temporal.vector()
-                self.sigma, self.jump, self.ticks, self.profile, self.body = sigma, jump, 0, "Test", "(none)"
-            # Provide the two helpers if snapshot_text expects them
-            def tvec64(self) -> str:
-                v = self.temporal.vector()
-                x = 0
-                for i in range(min(64, len(v))):
-                    if v[i] >= 0.0:
-                        x |= (1 << i)
-                return f"{x:016x}"
-            def cos_to_last_boundary(self) -> float:
-                v, lb = self.temporal.vector(), self.tvec_last_boundary
-                return sum(a*b for a, b in zip(v, lb))
-        ctx = _Shim()
+    # Fallback shim if runmod.Ctx is not available
+    class _Shim:
+        def __init__(self):
+            self.temporal = TemporalContext(dim=dim, sigma=sigma, jump=jump)
+            self.tvec_last_boundary = self.temporal.vector()
+            self.sigma, self.jump, self.ticks, self.profile, self.body = sigma, jump, 0, "Test", "(none)"
+        def tvec64(self) -> str:
+            v = self.temporal.vector()
+            x = 0
+            for i in range(min(64, len(v))):
+                if v[i] >= 0.0:
+                    x |= (1 << i)
+            return f"{x:016x}"
+        def cos_to_last_boundary(self) -> float:
+            v, lb = self.temporal.vector(), self.tvec_last_boundary
+            return sum(a*b for a, b in zip(v, lb))
+    return _Shim()
 
-    return ctx
+
+def _extract_temporal_block(text: str) -> str:
+    """
+    Extract lines under the 'TEMPORAL:' header, up to the next ALL-CAPS header or end.
+    Tolerant to minor format changes and extra whitespace.
+    """
+    m = re.search(r"^TEMPORAL:\s*(.*?)(?:^\s*[A-Z][A-Z_]+:|\Z)", text, re.S | re.M)
+    return m.group(1) if m else ""
+
 
 def test_snapshot_temporal_block_present() -> None:
     random.seed(1234)
@@ -78,9 +73,30 @@ def test_snapshot_temporal_block_present() -> None:
     txt = runmod.snapshot_text(world, drives=None, ctx=ctx, policy_rt=None)
     if "TEMPORAL:" not in txt:
         pytest.skip("Runner snapshot does not yet include TEMPORAL block in this build.")
-    assert "TEMPORAL:" in txt
-    assert "cos_to_last_boundary:" in txt
-    assert "vhash64:" in txt
+
+    block = _extract_temporal_block(txt)
+    assert block, "TEMPORAL block missing"
+
+    # Accept friendly labels like:
+    #   "context vector: dim setting=32, time drift setting(sigma)=..., time event boundary setting(jump)=..."
+    assert re.search(r"\bdim(?:\s+setting)?\s*=\s*\d+\b", block), "dim= missing"
+    assert re.search(
+        r"(?:(?:time\s+drift(?:\s+setting)?\s*)?\(\s*sigma\s*\)|sigma)\s*=\s*[-+]?\d+(?:\.\d+)?\b",
+        block,
+    ), "sigma= missing"
+    assert re.search(
+        r"(?:(?:time\s+event\s+boundary(?:\s+setting)?\s*)?\(\s*jump\s*\)|jump)\s*=\s*[-+]?\d+(?:\.\d+)?\b",
+        block,
+    ), "jump= missing"
+
+    # Allow optional explanatory parentheses before the colon
+    assert re.search(
+        r"cos[_ ]?to[_ ]?last[_ ]?boundary(?:\s*\([^)]+\))?:\s*[-+]?\d+(?:\.\d+)?",
+        block,
+    ), "cos_to_last_boundary line missing"
+
+    # vhash64 present; accept 64-bit (16 hex) or longer if the format ever expands
+    assert re.search(r"\bvhash64:\s*[0-9a-fA-F]{16,}", block), "vhash64 missing"
 
 
 def test_policy_write_stamps_tvec64_meta() -> None:
@@ -94,31 +110,29 @@ def test_policy_write_stamps_tvec64_meta() -> None:
     after = set(world._bindings.keys())   # pylint: disable=protected-access
     created = list(after - before)
 
-    assert payload.get("status") == "ok"
+    assert isinstance(payload, dict) and payload.get("status") == "ok"
     assert created, "Expected at least one new binding."
 
     metas = [world._bindings[bid].meta for bid in created]  # pylint: disable=protected-access
     assert any(isinstance(m, dict) and "tvec64" in m for m in metas), f"Missing tvec64 in metas: {metas}"
     # Sanity: created_at/ticks should also be present
-    assert any("created_at" in m and "ticks" in m for m in metas)
+    assert any("created_at" in m and "ticks" in m for m in metas), "Missing created_at/ticks in meta"
 
 
 def test_temporal_drift_and_boundary_reflect_in_cosine() -> None:
     random.seed(7)
-    _ = wgmod.WorldGraph()
     ctx = _mk_ctx(dim=32, sigma=0.02, jump=0.25)
 
     # initial cosine ~ 1.0
     c0 = ctx.cos_to_last_boundary()
-    assert math.isclose(c0, 1.0, rel_tol=1e-9, abs_tol=1e-9)
+    assert math.isfinite(c0) and math.isclose(c0, 1.0, rel_tol=1e-9, abs_tol=1e-9)
 
     # drift lowers cosine slightly
     ctx.temporal.step()
     c1 = ctx.cos_to_last_boundary()
-    assert c1 < 1.0000001
-    assert c1 > 0.90
+    assert 0.90 < c1 < 1.0000001
 
-    # boundary jump resets "last boundary" → cosine rises again
+    # boundary jump resets baseline; cosine rises again toward 1.0
     new_v = ctx.temporal.boundary()
     ctx.tvec_last_boundary = list(new_v)
     c2 = ctx.cos_to_last_boundary()
