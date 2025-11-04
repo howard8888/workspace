@@ -97,7 +97,7 @@ verify with  plan NOW → `milk:drinking`.
 - [Tutorial on Main (Runner) Module Technical Features](#tutorial-on-main-runner-module-technical-features)
 - [Tutorial on Controller Module Technical Features](#tutorial-on-controller-module-technical-features)
 - [Tutorial on Temporal Module Technical Features](#tutorial-on-temporal-module-technical-features)
-- [Tutorial on Features Module Technical Features](#tutorial-on-feature-module-technical-features)
+- [Tutorial on Features Module Technical Features](#tutorial-on-features-module-technical-features)
 - [Planner contract (for maintainers)](#planner-contract-for-maintainers)
 - [Persistence contract](#persistence-contract)
   
@@ -3462,6 +3462,8 @@ Tutorial on Features Module Technical Features
 
 This section explains what **`cca8_features.py`** provides, why it exists, and how to use it day-to-day. It complements the Signal Bridge (WorldGraph ↔ Engrams) by defining **what an engram payload looks like**, a **concrete dense-tensor payload**, and a **lightweight descriptor** you can search/filter without touching big data.
 
+**Why this design?** The WorldGraph stays an **episode index** (≈5% of data) while columns hold the rich 95%. The bridge preserves traceability without slowing planning.
+
 * * *
 
 ### 1) What this module is
@@ -3594,11 +3596,9 @@ Bindings already carry graph-side provenance (`created_at`, `ticks`, `tvec64`). 
 **A) Programmatic (Column direct)**
     from cca8_column import mem
     from cca8_features import TensorPayload, FactMeta
-
     vec = [0.1, 0.2, 0.3]
     payload = TensorPayload(data=vec, shape=(len(vec),))
     meta = FactMeta(name="vision:silhouette:mom", links=[latest_bid]).with_time(ctx)
-
     engram_id = mem.assert_fact("vision:silhouette:mom", payload, meta)
     world.attach_engram(latest_bid, column="column01", engram_id=engram_id, act=1.0)
 
@@ -3651,9 +3651,60 @@ This module focuses on **schema + portability**, not numeric ops. `struct` + `ar
 
 * * *
 
-**Takeaway.** `cca8_features.py` gives CCA8 a clean, typed seam for engrams: an **interface** (`FeaturePayload`), a **concrete dense vector format** (`TensorPayload`), and a **descriptor** (`FactMeta`) that can mirror time. Together, they keep the WorldGraph small, the Column useful, and the whole system easy to inspect and evolve.
 
 
+### **11) What’s new (Nov 2025)**
+
+* Runner’s **Capture scene** (menu **24**) now mirrors temporal context into each engram via `time_attrs_from_ctx(ctx)`: `ticks`, `tvec64`, **`epoch`**, and **`epoch_vhash64`**. This makes engrams time-aware without touching payload bytes.
+
+* Two new runner tools: **27) Inspect engram by id** (also accepts a **binding id** and resolves its pointer) and **28) List all engrams** (id, source binding, time attrs, payload summary).
+
+* Snapshot and probe make event boundaries explicit (`boundary_no`, `last_boundary_vhash64` in CTX; probe shows cosine/Hamming status). (Context; see Runner TEMPORAL section.)
+
+#### The bridge (WorldGraph ↔ Column)
+
+1. **Emit**: Runner **24) Capture scene** asks for channel/token/family (cue|pred), attach policy (now/latest/none), and a small vector. It creates a binding and asserts a column engram, then attaches a pointer:
+
+`"engrams": { "column01": { "id": "<engram_id>", "act": 1.0 } }`
+
+The Column record stores `{id, name, payload, meta}`, where `meta.attrs` carries `ticks`, `tvec64`, **epoch**, **epoch_vhash64**.
+
+2. **Attach**: Only the **pointer** (column name → id) sits on the binding; the heavy payload stays in the Column. Planning remains purely over tags/edges.
+
+3. **Inspect**:
+* **Display snapshot** shows which bindings have engrams: `engrams=[column01]`.
+
+* **Inspect binding details** prints the full pointer JSON (including the engram id).
+
+* **27) Inspect engram by id** prints the Column record (meta + payload summary). If you type a **binding id** (e.g., `b11`) it resolves its engram automatically.
+
+* **28) List all engrams** enumerates all attached engrams with time attrs.
+
+#### Minimal API surface (dev view)
+
+* **Column store** (`cca8_column.py`):  
+  `ColumnMemory.assert_fact(name, payload, meta) -> engram_id`  
+  `ColumnMemory.get(engram_id) -> dict`  
+  (Default singleton `mem = ColumnMemory(name="column01")` used by the bridge.)
+
+* **Runner bridge** (`cca8_run.py`):  
+  `world.capture_scene(channel, token, vector, attach, family, attrs=...) -> (bid, engram_id)`  
+  plus menu **24**, **27**, **28** wrappers so you don’t have to write code to use it.
+
+#### Quick tutorial (CLI)
+
+1. **24) Capture scene** → use `vision / silhouette:mom / cue / now / 0.1 0.2 0.3`  
+   Runner prints both the **binding id** and the **engram id**, and echoes the time attrs mirrored into the engram.
+
+2. **3) Inspect binding** → paste the binding id. You’ll see `Engrams: {"column01": {"id":"…"}}`.
+
+3. **27) Inspect engram by id** → paste the engram id **or** just type the binding id; it resolves for you.
+
+4. **28) List all engrams** → browse all engrams with their source binding and time attrs.
+   
+   
+   
+   
 
 # Planner contract (for maintainers)
 
