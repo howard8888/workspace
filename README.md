@@ -98,12 +98,9 @@ verify with  plan NOW → `milk:drinking`.
 - [Tutorial on Controller Module Technical Features](#tutorial-on-controller-module-technical-features)
 - [Tutorial on Temporal Module Technical Features](#tutorial-on-temporal-module-technical-features)
 - [Tutorial on Features Module Technical Features](#tutorial-on-features-module-technical-features)
+- [Tutorial on Column Module Technical Features](#tutorial-on-column-module-technical-features)
 - [Planner contract (for maintainers)](#planner-contract-for-maintainers)
 - [Persistence contract](#persistence-contract)
-  
-  
-  
-  
   
   
   
@@ -3703,8 +3700,138 @@ The Column record stores `{id, name, payload, meta}`, where `meta.attrs` carries
 4. **28) List all engrams** → browse all engrams with their source binding and time attrs.
    
    
-   
-   
+
+
+
+### Tutorial on Column Module Technical Features
+
+This section explains **`cca8_column.py`** — the in-memory engram store (“Column”) that holds **rich payloads** outside the WorldGraph. Bindings keep **only pointers** to these engrams, preserving a fast, compact episode index while still giving you traceability to perceptual/feature data.
+
+_Why this module exists._ WorldGraph stays small and plannable; columns carry the heavyweight 95% (vectors, features, descriptors). The runner’s bridge writes the minimum pointer on the binding so planning/search remain unchanged. 
+The Column keeps heavy memory **out of the graph** without losing traceability: bindings stay fast and small; engrams in Column carry the payloads + time fingerprints you can inspect and query. The Runner menus make this workflow usable without writing code, albeit for small examples.
+
+* * *
+
+#### 1) Mental model
+
+* **Binding (WorldGraph)** → carries tags + **engrams pointer(s)** like  
+  `{"column01": {"id": "<engram_id>", "act": 1.0}}`
+
+* **Column (this module)** → keyed by `engram_id`, stores the **record**:  
+  `{ "id", "name", "payload", "meta", "v" }`
+
+* **Payload** → usually a `TensorPayload` (float32 vector) or a small dict with `meta()` describing `{"kind","fmt","shape","len"}`.
+
+* **Time linkage** → runner mirrors temporal context into the engram’s `meta.attrs`: `ticks`, `tvec64`, **`epoch`**, **`epoch_vhash64`** (hash of the last event boundary).
+
+* * *
+
+#### 2) Public API (what you can call)
+
+`from cca8_column import mem as column_mem  # default singleton column ("column01")  # Core engram_id = column_mem.assert_fact(name: str, payload, meta: FactMeta|dict) -> str record    = column_mem.get(engram_id: str) -> dict  # Convenience helpers (present in current build) ok        = column_mem.exists(engram_id: str) -> bool record_or_none = column_mem.try_get(engram_id: str) -> dict|None removed   = column_mem.delete(engram_id: str) -> bool ids       = column_mem.list_ids(limit: int|None = None) -> list[str]matches   = column_mem.find(name_contains: str|None = None,                            epoch: int|None = None,                            has_attr: str|None = None,                            limit: int|None = None) -> list[dict]n         = column_mem.count() -> int`
+
+**Record shape (typical):**
+
+`{   "id": "<engram_id>",   "name": "scene:vision:silhouette:mom",   "payload": TensorPayload(...),     // or a small dict with shape/kind   "meta": {     "name": "...", "links": ["b3"], "attrs": {       "ticks": 5, "tvec64": "…", "epoch": 2, "epoch_vhash64": "…",       "column": "column01"     },     "created_at": "YYYY-MM-DDThh:mm:ss"   },   "v": "1" }`
+
+* * *
+
+#### 3) How time gets into Column records (bridge)
+
+From the Runner (menu **24 Capture scene**), we pass `attrs=time_attrs_from_ctx(ctx)`, which copies **`ticks`**, **`tvec64`**, **`epoch`**, **`epoch_vhash64`** into `meta.attrs` of the Column record at **assert time**. With the current Runner, capture does a **pre-capture event boundary**, so the engram’s `epoch` reflects the **new** boundary you just created.
+
+CLI menus that help you see this:
+
+* **24** Capture → prints binding id + engram id + mirrored time attrs.
+
+* **27** Inspect engram by id (also accepts a binding id; it resolves the pointer).
+
+* **28** List all engrams (id, source binding, time attrs, payload summary).
+
+* **29** Search engrams (by name substring / epoch).
+
+* **30** Delete engram (accepts binding id or engram id; also **prunes all binding pointers** to that id).
+
+* **31** Attach existing engram to a binding (demonstrates many-to-one pointers).
+
+* * *
+
+#### 4) Minimal usage cribs
+
+**A) Programmatic (direct Column write + pointer attach)**
+
+`from cca8_column import mem from cca8_features import TensorPayload, FactMeta, time_attrs_from_ctxvec = [0.1, 0.2, 0.3]payload = TensorPayload(data=vec, shape=(len(vec),))meta = FactMeta(name="scene:vision:silhouette:mom",                links=[latest_bid],                attrs=time_attrs_from_ctx(ctx))  # ticks, tvec64, epoch, epoch_vhash64  eid = mem.assert_fact("scene:vision:silhouette:mom", payload, meta)world.attach_engram(latest_bid, column="column01", engram_id=eid, act=1.0)`
+
+**B) Via the Runner bridge (one step)**
+
+`bid, eid = world.capture_scene(    channel="vision", token="silhouette:mom",    vector=[0.1, 0.2, 0.3], attach="now", family="cue",    attrs=time_attrs_from_ctx(ctx)  # mirrors temporal attrs )`
+
+**C) Lookup & inspect**
+
+`rec = world.get_engram(engram_id=eid) print(rec["meta"]["attrs"])   # -> ticks/tvec64/epoch/epoch_vhash64/column print(rec["payload"].meta())  # -> {'kind','fmt','shape','len'}`
+
+* * *
+
+#### 5) Invariants & guardrails
+
+* **WorldGraph only stores pointers.** Don’t stuff large blobs in bindings; keep payloads in Column.
+
+* **Provenance & time are split:** bindings stamp `created_at`, `ticks`, `tvec64`, `epoch`; engrams mirror time in `meta.attrs`.
+
+* **Pointer pruning:** deleting an engram from Column should prune any binding pointers to it (Runner menu **30**) to prevent dangling references.
+
+* **Volatility:** the default in-memory Column is session-local. Pointers aren’t persisted across restarts unless you add a persistence layer for Column (future work).
+
+* **Payload discipline:** keep payloads **small** (vectors, short descriptors). Summarize in UIs; use `.meta()` (shape/kind/len) instead of decoding bytes.
+
+* * *
+
+#### 6) CLI walkthrough (fast demo)
+
+1. **24** capture `vision / silhouette:mom / cue / now / 0.1 0.2 0.3`  
+   → logs binding id + engram id + mirrored time; shows a short pointer line like  
+   `[bridge] attached pointer: b3.engrams["column01"] = <EID>`
+
+2. **3** inspect binding `b3`  
+   → see `Engrams: {"column01": {"id": "<EID>", "act": 1.0}}`
+
+3. **27** inspect `b3` (or paste `<EID>`)  
+   → see full Column record; `meta.attrs.epoch` matches the boundary you just took
+
+4. **28** list  
+   → rows like `EID=<…> src=b3 ticks=… epoch=… payload(shape=(3,), dtype=scene)`
+
+5. **29** search  
+   → filter by `silhouette` and/or `epoch`
+
+6. **30** delete `b3`  
+   → “Deleted. Pruned 1 pointer(s).” Now **27** on `b3` shows “No engrams on binding b3.”
+
+* * *
+
+#### 7) Test ideas (unit tests you can add/extend)
+
+* **Round-trip & meta:** `assert_fact → get` preserves `id/name/payload`, `meta.attrs["epoch"]` present when provided.
+
+* **CRUD:** `exists/try_get/delete/list_ids/count` behave as advertised.
+
+* **Find:** substring match on `name`, epoch filter, `has_attr` key present.
+
+* **Pointer pruning:** after delete, runner scan finds **0** pointers to the removed id.
+
+* * *
+
+#### 8) Roadmap (non-breaking extensions)
+
+* Optional persistence for Column (e.g., JSONL/SQLite sidecar).
+
+* Nearest-neighbor queries on payloads (similarity search) to bias policy arbitration.
+
+* Multi-column pointers per binding (vision/audio/touch) with light aggregation in UIs.
+
+* * *
+
+
 
 # Planner contract (for maintainers)
 

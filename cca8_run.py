@@ -60,6 +60,7 @@ from collections import defaultdict
 import cca8_world_graph
 from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict, HUNGER_HIGH, FATIGUE_HIGH
 from cca8_temporal import TemporalContext
+from cca8_column import mem as column_mem
 
 
 # --- Public API index, version, global variables and constants ----------------------------------------
@@ -366,6 +367,16 @@ def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Bod
     print("  6. Human-like one-agent multiple-brains simulation with combinatorial planning")
     print("  7. Super-Human-like machine simulation")
     print("  T. Tutorial (more information) on using and maintaining this program, references\n")
+
+def _snapshot_temporal_legend() -> list[str]:
+    return [
+        "LEGEND (temporal terms):",
+        "  epoch (event boundary count): increments when a boundary() is taken",
+        "  event boundary: the discrete jump performed by TemporalContext.boundary()",
+        "  last_boundary_vhash64: 64-bit sign-bit fingerprint of the boundary vector",
+        "  cos_to_last_boundary: cosine(current vector, last boundary vector)",
+        "",
+    ]
 
 def _parse_vector(text: str) -> list[float]:
     """
@@ -865,12 +876,15 @@ MENU = """\
 26) Temporal probe (epoch/hash/cos/hamming)
 27) Inspect engram by id
 28) List all engrams (id, source binding, time attrs, payload)
+29) Search engrams (by name / epoch)
+30) Delete engram by id (danger: leaves dangling pointers)
+31) Attach existing engram to a binding
 
 [S] Save session → path
 [L] Load session → path
 [D] Show drives (raw + tags)
 [R] Reset current saved session
-[T] Tutorial on using and maintaining this simulation
+[T] Tutorial and step-by-step demo
 
 Select: """
 
@@ -1203,6 +1217,221 @@ def _open_readme_tutorial() -> None:
     except Exception as e:
         print(f"[tutorial] Could not open the compendium document automatically: {e}\n"
               f"          You can open it manually at:\n  {path}")
+
+def run_new_user_tour(world, drives, ctx, policy_rt,autosave_cb: Optional[Callable[[], None]] = None):
+    """Quick, hands-on console tour for first-time users.
+    Runs a baseline snapshot, probe, capture scene, pointer/engram inspect, and list/search.
+    """
+
+    def _pause(step_label: str) -> bool:
+        try:
+            s = input(f"\n[Tour] {step_label} — press Enter to continue, or type * to finish the tour: ").strip()
+            return s == "*"
+        except Exception:
+            return False
+
+    print("\n=== CCA8 Quick Tour ===")
+    print("This tour will: (1) snapshot, (2) temporal probe, (3) capture a small engram,")
+    print("                (4) show the binding pointer, (5) inspect the engram, (6) list/search engrams.")
+
+    # 1) Baseline snapshot
+    print("\n[tour] 1/6 — Baseline snapshot")
+    try:
+        print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=policy_rt))
+    except Exception as e:
+        print(f"(tour) snapshot error: {e}")
+    if autosave_cb is not None:
+        try: autosave_cb()
+        except Exception: pass
+    if _pause("1/6"):
+        return
+
+    # 2) Temporal probe (same signals as menu 26)
+    print("\n[tour] 2/6 — Temporal probe")
+    try:
+        epoch = getattr(ctx, "boundary_no", 0)
+        vhash = ctx.tvec64() if hasattr(ctx, "tvec64") else None
+        lbvh  = getattr(ctx, "boundary_vhash64", None)
+        print(f"  epoch={epoch}")
+        print(f"  vhash64={vhash if vhash else '(n/a)'}")
+        print(f"  last_boundary_vhash64={lbvh if lbvh else '(n/a)'}")
+        cos = None
+        try: cos = ctx.cos_to_last_boundary()
+        except Exception: pass
+        if isinstance(cos, float):
+            print(f"  cos_to_last_boundary={cos:.4f}")
+        if vhash and lbvh:
+            try:
+                h = _hamming_hex64(vhash, lbvh)
+                if h >= 0:
+                    print(f"  hamming(vhash,last_boundary)={h} bits (0..64)")
+            except Exception:
+                pass
+        tv = getattr(ctx, "temporal", None)
+        if tv:
+            print(f"  dim={getattr(tv,'dim',0)} sigma={getattr(tv,'sigma',0.0):.4f} jump={getattr(tv,'jump',0.0):.4f}")
+        if isinstance(cos, float):
+            if cos >= 0.99:      status = "ON-EVENT BOUNDARY"
+            elif cos < 0.90:     status = "EVENT BOUNDARY-SOON"
+            else:                status = "DRIFTING slowly forward in time"
+            print(f"  status={status}")
+    except Exception as e:
+        print(f"(tour) probe error: {e}")
+    if autosave_cb is not None:
+        try: autosave_cb()
+        except Exception: pass
+    if _pause("2/6"):
+        return
+
+    # 3) Capture scene (pre-capture boundary so the engram mirrors a new epoch)
+    print("\n[tour] 3/6 — Capture a small scene as a CUE engram")
+    try:
+        # Boundary jump before capture
+        if ctx.temporal:
+            new_v = ctx.temporal.boundary()
+            ctx.tvec_last_boundary = list(new_v)
+            ctx.boundary_no = getattr(ctx, "boundary_no", 0) + 1
+            try:
+                ctx.boundary_vhash64 = ctx.tvec64()
+            except Exception:
+                ctx.boundary_vhash64 = None
+            print(f"[temporal] event/boundary (pre-capture) → epoch={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
+
+        from cca8_features import time_attrs_from_ctx  # local import OK
+        attrs = time_attrs_from_ctx(ctx)
+        vec = [0.10, 0.20, 0.30]
+        channel, token, family, attach = "vision", "silhouette:mom", "cue", "now"
+        bid, eid = world.capture_scene(channel, token, vec, attach=attach, family=family, attrs=attrs)
+
+        print(f"[bridge] created binding {bid} with tag {family}:{channel}:{token} and attached engram id={eid}")
+        # Fetch + summarize the engram record
+        try:
+            rec = world.get_engram(engram_id=eid)
+            meta = rec.get("meta", {}) if isinstance(rec, dict) else {}
+            tattrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
+            if tattrs:
+                print(f"[bridge] time on engram: ticks={tattrs.get('ticks')} tvec64={tattrs.get('tvec64')} "
+                      f"epoch={tattrs.get('epoch')} epoch_vhash64={tattrs.get('epoch_vhash64')}")
+        except Exception as e:
+            print(f"(tour) get_engram note: {e}")
+
+        # Print the exact pointer slot we attached
+        try:
+            slot = None
+            b = world._bindings.get(bid)
+            eng = getattr(b, "engrams", None)
+            if isinstance(eng, dict):
+                for s, v in eng.items():
+                    if isinstance(v, dict) and v.get("id") == eid:
+                        slot = s; break
+            if slot:
+                print(f'[bridge] attached pointer: {bid}.engrams["{slot}"] = {eid}')
+        except Exception:
+            pass
+
+        # Nudge controller once (pretty summary)
+        try:
+            res = action_center_step(world, ctx, drives)
+            if isinstance(res, dict) and res.get("status") != "noop":
+                policy  = res.get("policy"); status = res.get("status")
+                reward  = res.get("reward"); binding = res.get("binding")
+                rtxt = f"{reward:+.2f}" if isinstance(reward, (int, float)) else "n/a"
+                print(f"[executed] {policy} ({status}, reward={rtxt}) binding={binding}")
+                gate = next((p for p in policy_rt.loaded if p.name == policy), None)
+                explain_fn: Optional[Callable[[Any, Any, Any], str]] = getattr(gate, "explain", None) if gate else None
+                if explain_fn is not None:
+                    try:
+                        why = explain_fn(world, drives, ctx)
+                        print(f"[why {policy}] {why}")
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"(tour) controller step note: {e}")
+
+    except Exception as e:
+        print(f"(tour) capture error: {e}")
+
+    if autosave_cb is not None:
+        try: autosave_cb()
+        except Exception: pass
+    if _pause("3/6"):
+        return
+
+    # 4) Inspect the binding pointer and the engram
+    print("\n[tour] 4/6 — Inspect binding pointer and engram")
+    try:
+        b = world._bindings.get(bid)
+        print(f"Binding {bid} → Engrams:", b.engrams if getattr(b, "engrams", None) else "(none)")
+        rec = world.get_engram(engram_id=eid)
+        meta = rec.get("meta", {}) if isinstance(rec, dict) else {}
+        print("Engram meta:", json.dumps(meta, indent=2))
+        payload = rec.get("payload") if isinstance(rec, dict) else None
+        if hasattr(payload, "meta"):
+            pmeta = payload.meta()
+            print(f"Engram payload: shape={pmeta.get('shape')} kind={pmeta.get('kind')}")
+    except Exception as e:
+        print(f"(tour) inspect error: {e}")
+    if autosave_cb is not None:
+        try: autosave_cb()
+        except Exception: pass
+    if _pause("4/6"):
+        return
+
+    # 5) List all engrams (one-line summary)
+    print("\n[tour] 5/6 — List all engrams")
+    try:
+        seen = set()
+        any_found = False
+        for _bid in _sorted_bids(world):
+            for _eid in _engrams_on_binding(world, _bid):
+                if _eid in seen:
+                    continue
+                seen.add(_eid); any_found = True
+                rec = None
+                try: rec = world.get_engram(engram_id=_eid)
+                except Exception: rec = None
+                shape = dtype = None
+                if isinstance(rec, dict):
+                    pl = rec.get("payload")
+                    if hasattr(pl, "meta"):
+                        try:
+                            pm = pl.meta()
+                            shape, dtype = pm.get("shape"), pm.get("kind")
+                        except Exception:
+                            pass
+                print(f"EID={_eid} src={_bid} payload(shape={shape}, dtype={dtype})")
+        if not any_found:
+            print("(no engrams found)")
+    except Exception as e:
+        print(f"(tour) list error: {e}")
+    if autosave_cb is not None:
+        try: autosave_cb()
+        except Exception: pass
+    if _pause("5/6"):
+        return
+
+    # 6) Search demonstration (by name substring)
+    print("\n[tour] 6/6 — Search engrams by name (substring='silhouette')")
+    try:
+        found = False
+        seen = set()
+        for _bid in _sorted_bids(world):
+            for _eid in _engrams_on_binding(world, _bid):
+                if _eid in seen:
+                    continue
+                seen.add(_eid)
+                rec = world.get_engram(engram_id=_eid)
+                name = (rec.get("name") or "") if isinstance(rec, dict) else ""
+                if "silhouette" in name:
+                    attrs = rec.get("meta", {}).get("attrs", {}) if isinstance(rec, dict) else {}
+                    print(f"EID={_eid} src={_bid} name={name} epoch={attrs.get('epoch')} tvec64={attrs.get('tvec64')}")
+                    found = True
+        if not found:
+            print("(no matches)")
+    except Exception as e:
+        print(f"(tour) search error: {e}")
+
+    print("\n=== End of Quick Tour ===")
 
 # --------------------------------------------------------------------------------------
 # World/intro flows and preflight-lite stamp helpers
@@ -1768,11 +1997,14 @@ def _sorted_bids(world) -> list[str]:
     return sorted(world._bindings.keys(), key=key_fn)
 
 def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
-    """Return the same snapshot text that #16 writes to world_snapshot.txt."""
+    """Return the same snapshot text that #16 writes to world_snapshot.txt.
+
+    """
     lines: List[str] = []
     lines.append("\n--------------------------------------------------------------------------------------")
     lines.append(f"WorldGraph snapshot at {datetime.now()}")
     lines.append("--------------------------------------------------------------------------------------")
+    lines.extend(_snapshot_temporal_legend())
     body = getattr(ctx, "body", None) or getattr(getattr(ctx, "hal", None), "body", None) or "(none)"
     lines.append(f"EMBODIMENT: body={body}")
     now_id = _anchor_id(world, "NOW")
@@ -1824,7 +2056,7 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
             lines.append("  vhash64: (n/a)")
         # epoch info (optional, purely additive)
         try:
-            lines.append(f"  boundary_no: {getattr(ctx, 'boundary_no', 0)}")
+            lines.append(f"  event boundary_no: {getattr(ctx, 'boundary_no', 0)}")
             bvh = getattr(ctx, "boundary_vhash64", None)
             if bvh:
                 lines.append(f"  last_boundary_vhash64: {bvh}")
@@ -1857,7 +2089,8 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.append("")
 
     # POLICY GATES (availability)
-    lines.append("POLICIES LOADED (meet devpt requirements):")
+    lines.append("POLICIES ELIGIBLE (meet devpt requirements):")
+
     try:
         names = policy_rt.list_loaded_names() if policy_rt is not None else []
         if names:
@@ -1873,10 +2106,16 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.append("BINDINGS:")
     for bid in _sorted_bids(world):
         b = world._bindings[bid]
-        tags = ", ".join(getattr(b, "tags", []))
-        ek = ", ".join((b.engrams or {}).keys())
-        if ek:
-            lines.append(f"{bid}: [{tags}] engrams=[{ek}]")
+        tags = ", ".join(sorted(getattr(b, "tags", [])))
+
+        eng = getattr(b, "engrams", None)
+        if isinstance(eng, dict) and eng:
+            # Build "slot:shortid…" entries when we have an id; otherwise just "slot"
+            parts = []
+            for slot, val in eng.items():
+                eid = val.get("id") if isinstance(val, dict) else None
+                parts.append(f"{slot}:{eid[:8]}…" if isinstance(eid, str) else slot)
+            lines.append(f"{bid}: [{tags}] engrams=[{', '.join(parts)}]")
         else:
             lines.append(f"{bid}: [{tags}]")
 
@@ -2101,7 +2340,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
         "load": "l",
         "preflight": "20",
         "quit": "21", "exit": "21",  #no 'q' to avoid exit by mistake
-        "tutorial": "t", "help": "t",
+        "tutorial": "t", "help": "t", "tour": "t",
 
         # Tagging/policies help, engram scene
         "understanding": "23", "bindings-help": "23", "predicates-help": "23",
@@ -2111,6 +2350,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
         "temporal": "26", "tp": "26", "probe": "26",
         "engram": "27", "engr": "27", "ei": "27",
         "engrams-all": "28", "list-engrams": "28", "le": "28", "la": "28",
+        "search-engrams": "29", "find-engrams": "29", "se": "29",
+        "delete-engram": "30", "del-engram": "30", "de": "30",
+        "attach-engram": "31", "ae": "31",
 
     }
 
@@ -2144,8 +2386,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
         "26": "26",  # Temporal probe (epoch/hash/cos/hamming)
         "27": "27",  # Inspect engram by id
         "28": "28",  # List engrams
-
-
+        "29": "29",  # Search engrams
+        "30": "30",  # Delete engram
+        "31": "31",  # Attach engram
 
     }
 
@@ -2236,8 +2479,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Optional preflight-lite
     run_preflight_lite_maybe()
 
-    # Interactive menu loop
     pretty_scroll = True  #to see changes before terminal menu scrolls over screen
+
+    # Interactive menu loop  >>>>>>>>>>>>>>>>>>>
     while True:
         try:
             if pretty_scroll:
@@ -2513,9 +2757,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
             # WHY: show a human explanation tied to the executed policy
             label = result.get("policy") if isinstance(result, dict) and "policy" in result else "(controller)"
             gate  = next((p for p in POLICY_RT.loaded if p.name == label), None)
-            if gate and gate.explain:
+            explainer: Optional[Callable[[Any, Any, Any], str]] = getattr(gate, "explain", None) if gate else None
+            if explainer is not None:
                 try:
-                    why = gate.explain(world, drives, ctx)
+                    why = explainer(world, drives, ctx)
                     print(f"[why {label}] {why}")
                 except Exception:
                     pass
@@ -2537,7 +2782,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 except Exception:
                     ctx.boundary_vhash64 = None
                 print("[temporal] a new event occurred, thus not just a drift in the context vector but instead a jump to mark a temporal boundary (cos reset to ~1.000)")
-                print(f"[temporal] boundary==event changes -> epoch={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
+                print(f"[temporal] boundary==event changes -> event/boundary/epoch={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
 
             # [TEMPORAL] optional τ-cut (e.g., τ=0.90)
             if ctx.temporal and ctx.tvec_last_boundary:
@@ -2798,6 +3043,17 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
             vec = _parse_vector(vtext)
 
+            # Treat capture as a new event (pre-capture boundary) so time attrs reflect a new epoch
+            if ctx.temporal:
+                new_v = ctx.temporal.boundary()
+                ctx.tvec_last_boundary = list(new_v)
+                ctx.boundary_no = getattr(ctx, "boundary_no", 0) + 1
+                try:
+                    ctx.boundary_vhash64 = ctx.tvec64()
+                except Exception:
+                    ctx.boundary_vhash64 = None
+                print(f"[temporal] boundary (pre-capture) → epoch={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
+
             # Pass time attrs when creating an engram
             from cca8_features import time_attrs_from_ctx
             attrs = time_attrs_from_ctx(ctx)
@@ -2806,7 +3062,6 @@ def interactive_loop(args: argparse.Namespace) -> None:
             try:
                 print(f"[bridge] created binding {bid} with tag "
                       f"{family}:{channel}:{token} and attached engram id={eid}")
-
 
                 # Fetch and summarize the engram record (robust to different shapes)
                 try:
@@ -2830,17 +3085,57 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 except Exception as e:
                     print(f"[warn] could not retrieve engram record: {e}")
 
-                # optional: nudge controller once to see if anything reacts
+                # Print the actual slot and ids we just attached
+                slot = None
+                try:
+                    b = world._bindings.get(bid)
+                    eng = getattr(b, "engrams", None)
+                    if isinstance(eng, dict):
+                        # pick the slot that actually points to this engram id
+                        for s, v in eng.items():
+                            if isinstance(v, dict) and v.get("id") == eid:
+                                slot = s
+                                break
+                except Exception:
+                    slot = None
+
+                if slot:
+                    print(f'[bridge] attached pointer: {bid}.engrams["{slot}"] = {eid}')
+                else:
+                    # fallback: show all slots if we didn't find an exact match
+                    slots = ", ".join(eng.keys()) if isinstance(eng, dict) else "(none)"
+                    print(f'[bridge] {bid} engrams now include [{slots}] (attached id={eid})')
+
+                # optional: nudge controller once to see if anything reacts (pretty summary)
                 try:
                     res = action_center_step(world, ctx, drives)
-                    if res.get("status") != "noop":
-                        print(f"[controller] {res}")
+
+                    if isinstance(res, dict):
+                        # Skip printing if it's an explicit no-op
+                        if res.get("status") != "noop":
+                            policy  = res.get("policy")
+                            status  = res.get("status")
+                            reward  = res.get("reward")
+                            binding = res.get("binding")
+                            rtxt = f"{reward:+.2f}" if isinstance(reward, (int, float)) else "n/a"
+                            print(f"[executed] {policy} ({status}, reward={rtxt}) binding={binding}")
+
+                            # WHY line if the gate provides an explanation
+                            gate = next((p for p in POLICY_RT.loaded if p.name == policy), None)
+                            explain_fn: Optional[Callable[[Any, Any, Any], str]] = getattr(gate, "explain", None) if gate else None
+                            if explain_fn is not None:
+                                try:
+                                    why = explain_fn(world, drives, ctx)
+                                    print(f"[why {policy}] {why}")
+                                except Exception:
+                                    pass
+                    else:
+                        # Non-dict result: fall back to a generic print
+                        print("Action Center:", res)
                 except Exception as e:
                     print(f"[warn] controller step errored: {e}")
-
             except Exception as e:
                 print(f"[warn] capture_scene failed: {e}")
-
             loop_helper(args.autosave, world, drives)
 
         elif choice == "25":
@@ -2930,8 +3225,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     continue
                 if len(eids) > 1:
                     print(f"Binding {key} has multiple engrams:")
-                    for i, e in enumerate(eids, 1):
-                        print(f"  {i}) {e}")
+                    for i, ee in enumerate(eids, 1):
+                        print(f"  {i}) {ee}")
                     try:
                         sel = input("Pick one [number]: ").strip()
                         idx = int(sel) - 1
@@ -3021,6 +3316,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
                             tvec  = attrs.get("tvec64")
                             epoch = attrs.get("epoch")
                             evh   = attrs.get("epoch_vhash64")
+
+
                         payload = rec.get("payload")
                         if isinstance(payload, dict):
                             shape = payload.get("shape") or payload.get("meta", {}).get("shape")
@@ -3028,12 +3325,167 @@ def interactive_loop(args: argparse.Namespace) -> None:
                         else:
                             shape = rec.get("shape"); dtype = rec.get("kind") or rec.get("type")
 
+                        payload = rec.get("payload")
+                        if isinstance(payload, dict):
+                            shape = payload.get("shape") or payload.get("meta", {}).get("shape")
+                            dtype = payload.get("dtype") or payload.get("ftype") or payload.get("kind")
+                        elif hasattr(payload, "meta"):  # e.g., TensorPayload object
+                            try:
+                                pmeta = payload.meta()  # {'kind','fmt','shape','len'}
+                                shape = pmeta.get("shape")
+                                dtype = pmeta.get("kind")
+                            except Exception:
+                                shape = dtype = None
+                        else:
+                            shape = rec.get("shape")
+                            dtype = rec.get("kind") or rec.get("type")
+
                     print(f"EID={eid}  src={bid}  ticks={ticks} epoch={epoch} tvec64={tvec} "
                           f"payload(shape={shape}, dtype={dtype})")
             if not any_found:
                 print("(no engrams found)")
             print("-" * 78)
             loop_helper(args.autosave, world, drives)
+
+
+        elif choice == "29":
+            # Search engrams by name substring and/or epoch
+            try:
+                q = input("Name contains (substring, blank=any): ").strip()
+            except Exception:
+                q = ""
+            try:
+                e_in = input("Epoch equals (blank=any): ").strip()
+                epoch = int(e_in) if e_in else None
+            except Exception:
+                epoch = None
+
+            # Walk pointers so we only see engrams actually referenced by the graph
+            seen = set()
+            found = []
+            for bid in _sorted_bids(world):
+                for eid in _engrams_on_binding(world, bid):
+                    if eid in seen:
+                        continue
+                    seen.add(eid)
+                    rec = None
+                    try:
+                        rec = world.get_engram(engram_id=eid)
+                    except Exception:
+                        pass
+                    if not isinstance(rec, dict):
+                        continue
+                    name = (rec.get("name") or "")
+                    if q and q.lower() not in name.lower():
+                        continue
+                    if epoch is not None:
+                        attrs = rec.get("meta", {}).get("attrs", {})
+                        if not (isinstance(attrs, dict) and attrs.get("epoch") == epoch):
+                            continue
+                    found.append((eid, bid, name, rec.get("meta", {}).get("attrs", {})))
+            if not found:
+                print("(no matches)")
+            else:
+                for eid, bid, name, attrs in found:
+                    print(f"EID={eid}  src={bid}  name={name}  epoch={attrs.get('epoch')}  tvec64={attrs.get('tvec64')}")
+            print("-" * 78)
+            loop_helper(args.autosave, world, drives)
+
+
+        elif choice == "30":
+            # Delete engram by id OR by binding id; also prune any binding pointers to it
+            key = input("Engram id OR Binding id to delete: ").strip()
+            if not key:
+                print("No id provided.")
+                loop_helper(args.autosave, world, drives); continue
+
+            # Resolve binding → engram id(s) if needed
+            targets = []
+            if key.lower().startswith("b") and key[1:].isdigit():
+                eids = _engrams_on_binding(world, key)
+                if not eids:
+                    print(f"No engrams on binding {key}.")
+                    loop_helper(args.autosave, world, drives); continue
+                if len(eids) > 1:
+                    print(f"Binding {key} has multiple engrams:")
+                    for i, ee in enumerate(eids, 1):
+                        print(f"  {i}) {ee}")
+                    try:
+                        pick = int(input("Pick one [number]: ").strip()) - 1
+                        targets = [eids[pick]]
+                    except Exception:
+                        print("(cancelled)")
+                        loop_helper(args.autosave, world, drives); continue
+                else:
+                    targets = [eids[0]]
+            else:
+                targets = [key]
+
+            print("WARNING: this will delete the engram record from column memory,")
+            print("and will also prune any binding pointers that reference it.")
+            if input("Type DELETE to confirm: ").strip() != "DELETE":
+                print("(cancelled)")
+                loop_helper(args.autosave, world, drives); continue
+
+            deleted_any = False
+            for eid in targets:
+                ok = False
+                try:
+                    ok = column_mem.delete(eid)
+                except Exception as e:
+                    print(f"(error) {e}")
+                # prune pointers regardless — harmless if not present
+                pruned = 0
+                for bid, b in world._bindings.items():
+                    eng = getattr(b, "engrams", None)
+                    if not isinstance(eng, dict):
+                        continue
+                    for slot, val in list(eng.items()):
+                        if isinstance(val, dict) and val.get("id") == eid:
+                            try:
+                                del eng[slot]
+                                pruned += 1
+                            except Exception:
+                                pass
+                print(("Deleted" if ok else "Engram not found or not deleted") + f". Pruned {pruned} pointer(s).")
+                deleted_any = deleted_any or ok
+
+            loop_helper(args.autosave, world, drives)
+
+
+        elif choice == "31":
+            # Attach an existing engram id to a binding (creates/overwrites a slot)
+            bid = input("Binding id: ").strip()
+            if not (bid.lower().startswith("b") and bid[1:].isdigit()):
+                print("Please enter a binding id like b3.")
+                loop_helper(args.autosave, world, drives); continue
+            eid = input("Engram id to attach: ").strip()
+            if not eid:
+                print("No engram id provided.")
+                loop_helper(args.autosave, world, drives); continue
+
+            # Choose slot (column name)
+            slot = input("Column slot name (default: column01): ").strip() or "column01"
+
+            # Existence check is optional; we’ll warn but still allow.
+            try:
+                _ = world.get_engram(engram_id=eid)
+                exists = True
+            except Exception:
+                exists = False
+            if not exists:
+                print("(warn) engram id not found in column memory; attaching pointer anyway.")
+
+            b = world._bindings.get(bid)
+            if not b:
+                print(f"Unknown binding id: {bid}")
+                loop_helper(args.autosave, world, drives); continue
+            if getattr(b, "engrams", None) is None or not isinstance(b.engrams, dict):
+                b.engrams = {}
+            b.engrams[slot] = {"id": eid, "act": 1.0}
+            print(f"Attached engram {eid} to {bid} as {slot}.")
+            loop_helper(args.autosave, world, drives)
+
 
         elif choice.lower() == "s":
             # Save session
@@ -3103,29 +3555,65 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     print("Reset cancelled.")
             continue   # back to menu
 
-        elif choice.lower() == "t":
-            # Tutorial access: try to open the local compendium
-            comp = os.path.join(os.getcwd(), "README.md")
-            print(f"Tutorial file (README.md which acts as an all-in-one compendium): {comp}")
-            if os.path.exists(comp):
-                try:
-                    if sys.platform.startswith("win"):
-                        os.startfile(comp)  # type: ignore[attr-defined]
-                    elif sys.platform == "darwin":
-                        os.system(f'open "{comp}"')
-                    else:
-                        os.system(f'xdg-open "{comp}"')
-                    print("Opened the README.md/compendium in your default viewer.")
-                except Exception as e:
-                    print(f"[warn] Could not open automatically: {e}")
-                    print("Please open the file manually in your editor.")
-            else:
-                print("README.md not found in the current folder. Copy it here to open directly.")
-            # no autosave here
-            continue
 
-        else:
-            print("Input selection does not match any existing options. Please try again.")
+        elif choice.lower() == "t":
+            print("\nTutorial options:")
+            print("  1) Quick console tour (recommended)")
+            print("  2) Open README/compendium")
+            print("  3) Both")
+            print("  [Enter] Cancel")
+            try:
+                pick = input("Choose: ").strip()
+            except Exception:
+                pick = ""
+
+            #pylint:disable=no-else-continue
+            if pick == "1":
+                run_new_user_tour(world, drives, ctx, POLICY_RT, autosave_cb=lambda: loop_helper(args.autosave, world, drives))
+                continue
+            elif pick == "2":
+                comp = os.path.join(os.getcwd(), "README.md")
+                print(f"Tutorial file (README.md which acts as an all-in-one compendium): {comp}")
+                if os.path.exists(comp):
+                    try:
+                        if sys.platform.startswith("win"):
+                            os.startfile(comp)  # type: ignore[attr-defined]
+                        elif sys.platform == "darwin":
+                            os.system(f'open "{comp}"')
+                        else:
+                            os.system(f'xdg-open "{comp}"')
+                        print("Opened the README.md/compendium in your default viewer.")
+                    except Exception as e:
+                        print(f"[warn] Could not open automatically: {e}")
+                        print("Please open the file manually in your editor.")
+                else:
+                    print("README.md not found in the current folder. Copy it here to open directly.")
+                continue
+            elif pick == "3":
+                run_new_user_tour(world, drives, ctx, POLICY_RT, autosave_cb=lambda: loop_helper(args.autosave, world, drives))
+                # then open README
+                comp = os.path.join(os.getcwd(), "README.md")
+                if os.path.exists(comp):
+                    try:
+                        if sys.platform.startswith("win"):
+                            os.startfile(comp)  # type: ignore[attr-defined]
+                        elif sys.platform == "darwin":
+                            os.system(f'open "{comp}"')
+                        else:
+                            os.system(f'xdg-open "{comp}"')
+                        print("Opened the README.md/compendium in your default viewer.")
+                    except Exception as e:
+                        print(f"[warn] Could not open automatically: {e}")
+                        print("Please open the file manually in your editor.")
+                else:
+                    print("README.md not found in the current folder. Copy it here to open directly.")
+                continue
+            else:
+                print("(cancelled)")
+                continue
+            #pylint:enable=no-else-continue
+
+    # interactive_loop(...) while loop end  <<<<<<<<<<<<<<<<<<<
 
 # --------------------------------------------------------------------------------------
 # main()
