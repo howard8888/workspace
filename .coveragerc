@@ -1,0 +1,45 @@
+#pytest.ini -- settings for pytest
+#.coveragerc -- settings for the coverage library used by pytest to generate coverage reports
+# for console-heavy portions of the code, e.g., the Runner module, excluding the user interface strings
+#  is reasonable and pragmatic way to keep the reported percentage focused on actual logic
+
+[run]
+branch = True
+#enables branch coverage, i.e., not just which lines of code executed but which decision paths, i.e., branches
+#  in the code were taken
+disable_warnings = module-not-measured
+# to disable the warnings that occur about 'coveragewarnings' since we import some modules before measuring them
+
+
+
+[report]
+show_missing = True
+#lists line numbers in each file that were not executed by the tests
+skip_covered = False
+#do not skip files with 100% coverage (can use sometimes to ignore fully tested files)
+skip_empty = True
+#if files have no executable code in them then they are not counted for the report
+fail_under = 30
+#fail message if less than the <number shown> % coverage by pytest of the software
+#note -- does not consider docstrings
+
+
+# Ignore common non-behavioral lines
+# Thus will not count lines with print statements, input statements, logging
+# Also not count typing-only guard lines, overload decorators, stub guard lines, placeholder pass lines
+# Note -- comments # are not counted by default
+exclude_lines =
+    pragma: no cover
+    ^\s*if TYPE_CHECKING:
+    ^\s*@overload
+    ^\s*raise NotImplementedError
+    ^\s*pass$
+    ^\s*print\(
+    ^\s*input\(
+    ^\s*logger\.(debug|info|warning|error|critical)\(
+    ^\\s*(\"\"\"|''')
+
+
+# True docstrings are usually not counted, but this hides stray """ blocks too.
+exclude_also =
+    ^\s*("""|''')  # opening/closing triple-quote lines

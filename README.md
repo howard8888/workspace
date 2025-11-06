@@ -18,6 +18,8 @@ Entry point: `cca8_run.py`Primary modules: `cca8_run.py`, `cca8_world_graph.py`,
 
 <img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
 
+
+
 *Adult Mountain Goat with recently born Calf (walking within minutes
 of birth, and by one week can climb most places its mother can)*
 
@@ -78,6 +80,7 @@ verify with  plan NOW → `milk:drinking`.
 - [Persistence: Autosave/Load](#persistence-autosaveload)
 - [Runner, menus, and CLI](#runner-menus-and-cli)
 - [Logging & Unit Tests](#logging--unit-tests)
+- [Hardware Abstraction Layer (HAL)](#hardware-abstraction-layer-hal)
 - [How-To Guides](#how-to-guides)
 - [Data schemas (for contributors)](#data-schemas-for-contributors)
 - [Traceability (requirements to code)](#traceability-requirements-to-code)
@@ -462,6 +465,10 @@ A: Use `--plan pred:<token>` from the CLI for a one-shot plan.
 
 
 
+* * *
+
+
+
 ## Logging & Unit Tests
 
 ###### Logging (minimal, already enabled)
@@ -664,7 +671,41 @@ Q: How does this help planning? A: BFS over a sparse adjacency list gives shorte
 
 ---
 
-## Theory Primer
+## 
+
+# Hardware Abstraction Layer (HAL)
+
+A Hardware Abstraction Layer (HAL) separates *what* the cognitive system wants to do from *how* a specific robot makes it happen. In robotics, a HAL normalizes diverse sensors (camera, IMU, microphones, joint encoders) and actuators (motors, servos, grippers) behind a stable interface: perception enters the stack as time-stamped, unit-annotated measurements; actions leave as parameterized commands with feedback and safety guarantees. This indirection lets the same policy or planner run on simulation today and a very different platform tomorrow (e.g., a wheeled rover vs. a quadruped), without rewriting cognition. A good HAL also handles low-level concerns—synchronization, rate limiting, watchdogs/estops, and health reporting—so higher layers reason in task space, not device idiosyncrasies.
+
+In practice, a HAL defines a few consistent surfaces: **sense()** for bulk sensor pulls or event callbacks, **act(command, params)** for goals in actuator space, and **status()** for state, limits, and faults. It owns the mapping from device coordinates to canonical frames, applies calibration/units, enforces safety envelopes, and returns structured acknowledgements (accepted/Executing/Done/Error) with timestamps. With this contract, cognition can compose behaviors from predicates and policies, while the HAL translates to hardware-specific drivers and transport.
+
+
+
+###### **CCA8 and future HAL integration**
+
+The importance of embodiment in the generation and development to cognition is acknowledged. Embodiment shapes cognition—sensorimotor contingencies, action affordances, latency, noise, and body-centric frames all co-determine how an agent learns and reasons. CCA8’s HAL deliberately _abstracts_ embodiment during core development to decouple variables: it gives us reproducible experiments, deterministic tests, and portability across platforms without rewriting cognition. This isn’t a denial of embodiment; it’s a seam. We mitigate “embodiment debt” by (1) keeping time, units, frames, limits, and latencies explicit in the HAL manifest; (2) expressing actions as **intents** (e.g., move/gaze/manipulate) rather than device torques; (3) mirroring real timing into engrams (`ticks`, `tvec64`, `epoch`) so learning remains time-aware; and (4) swapping in realistic adapters (noise/latency/domain-randomization) when moving from headless runs to hardware. In short, HAL postpones _implementation details_ of a body while preserving the _constraints_ that matter, so embodiment can be reintroduced precisely—at the right layer—without entangling the cognitive core.
+
+While the importance of embodiment to cognition is acknowledged, the CCA8 architecture is structured to drop in a HAL without disturbing cognition. The **Runner** already distinguishes the cognitive context (policies, temporal clock, world graph) from embodiment details; by default HAL is **OFF** and the system runs “headless.” The seams are intentional: (1) **perception bridge** — features/engrams can be filled from HAL sensor streams with time linkage (`ticks`, `tvec64`, `epoch`); (2) **action bridge** — controller **primitives/policies** can emit normalized action intents (e.g., `move_base(dx,dy,theta)`, `gaze(target)`, `manip(grasp=open/close)`), which a HAL adapter maps to device commands; (3) **timing** — the cognitive **TemporalContext** stays procedural and device-agnostic, while the HAL can expose a wall-clock/rt clock when needed.
+
+When a HAL is enabled, CCA8 will load an *embodiment manifest* (sensors, frames, capabilities, limits), bind HAL streams to the **Features** module (creating engrams with temporal fingerprints), and route controller outputs to **act()** with safety interlocks (dead-man, estop, limit checks). This keeps the **WorldGraph** an episodic index (lightweight, device-neutral), lets **policies** remain portable, and confines hardware specialization to HAL adapters. The same simulation you run today can, with a manifest and a driver pack, target different robots with minimal code changes—exactly the portability a HAL is meant to provide.
+
+
+
+<img title="Goat Embodiment" src="./robot_goat.jpg" alt="robot_goat" style="zoom:33%;" data-align="center">
+
+
+
+
+
+
+
+
+
+* * *
+
+## 
+
+# Theory Primer
 
 - **Weak causality:** Mammalian episodes often encode **soft** chains (“this happened, then that”), sufficient for immediate action without formal causal inference. In CCA8, edges labeled `"then"` capture this episode flow.
 - **Two-store economy:** Keep the **symbolic graph small** (~5%): tags & edges for **recall and planning**. Keep the **heavy content** (~95%) in engrams (features, traces, sensory payloads). This avoids the brittleness of “all knowledge in a graph.”
@@ -3701,9 +3742,11 @@ The Column record stores `{id, name, payload, meta}`, where `meta.attrs` carries
    
    
 
+* * *
 
+#### 
 
-### Tutorial on Column Module Technical Features
+# Tutorial on Column Module Technical Features
 
 This section explains **`cca8_column.py`** — the in-memory engram store (“Column”) that holds **rich payloads** outside the WorldGraph. Bindings keep **only pointers** to these engrams, preserving a fast, compact episode index while still giving you traceability to perceptual/feature data.
 

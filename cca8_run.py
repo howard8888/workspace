@@ -51,6 +51,9 @@ from dataclasses import dataclass
 from typing import Optional, Any, Dict, List, Callable
 from typing import DefaultDict
 from collections import defaultdict
+import subprocess
+import shutil
+
 
 # PyPI and Third-Party Imports
 # --none at this time at program startup --
@@ -375,8 +378,97 @@ def _snapshot_temporal_legend() -> list[str]:
         "  event boundary: the discrete jump performed by TemporalContext.boundary()",
         "  last_boundary_vhash64: 64-bit sign-bit fingerprint of the boundary vector",
         "  cos_to_last_boundary: cosine(current vector, last boundary vector)",
+        "  binding (== node): holds tags, pointers to engrams, directed edges (==links)",
         "",
     ]
+
+
+def _compute_loc_by_dir(suffixes=(".py",),skip_folders=(".git", ".venv", "build", "dist", ".pytest_cache", "__pycache__")):
+    """
+    Compute SLOC per top-level directory using the pygount CLI.
+
+    Returns:
+        rows: list[(topdir, sloc, files_count)] sorted by sloc desc
+        total_sloc: int
+        errtext: Optional[str]
+    """
+    exe = shutil.which("pygount") or shutil.which("pygount.exe")
+    if not exe:
+        return [], 0, (
+            "pygount not found on PATH.\n"
+            "Install with:  py -m pip install --user pygount\n"
+            "Then restart your terminal so the Scripts directory is on PATH."
+        )
+
+    cmd = [
+        exe, ".",
+        "--suffix=py",
+        "--folders-to-skip=" + ",".join(skip_folders),
+        "--format=json",
+    ]
+    #proc = subprocess.run(cmd, text=True, capture_output=True)  # pylint: disable=subprocess-run-check
+    try:
+        proc = subprocess.run(cmd, text=True, capture_output=True, check=True, timeout=15)
+        #will timeout in 15 seconds if hung process
+    except subprocess.CalledProcessError as e:
+        msg = (e.stderr or e.stdout or str(e)).strip()
+        return [], 0, f"pygount failed (exit={e.returncode}): {msg}\nTry: py -m pip install --user pygount"
+
+    if proc.returncode != 0:
+        msg = proc.stderr.strip() or proc.stdout.strip() or "unknown error"
+        return [], 0, f"pygount failed (exit={proc.returncode}): {msg}\nTry: py -m pip install --user pygount"
+
+    try:
+        doc = json.loads(proc.stdout)
+    except Exception as e:
+        return [], 0, f"pygount JSON parse error: {e}"
+
+    items = doc.get("files") if isinstance(doc, dict) else (doc if isinstance(doc, list) else [])
+
+    sloc_by_top = defaultdict(int)
+    files_by_top = defaultdict(int)
+
+    for it in items:
+        if it.get("state") != "analyzed":
+            continue
+        if (it.get("language") or "").lower() not in ("python", ""):
+            continue
+        path = it.get("path") or ""
+        if not path.endswith(suffixes):
+            continue
+
+        rel = os.path.relpath(path, ".")
+        top = rel.split(os.sep, 1)[0] if os.sep in rel else "."
+        if top in skip_folders or not top:
+            continue
+
+        sloc = int(it.get("sourceCount") or it.get("codeCount") or 0)
+        sloc_by_top[top] += sloc
+        files_by_top[top] += 1
+
+    rows = sorted(sloc_by_top.items(), key=lambda kv: (-kv[1], kv[0]))
+    rows = [(k, v, files_by_top[k]) for k, v in rows]
+    total = sum(sloc_by_top.values())
+    return rows, total, None
+
+def _render_loc_by_dir_table(rows, total):
+    """
+    Pretty-print the LOC table. Returns a string for testability, caller prints it.  # pragma: no cover
+    """
+    if not rows:
+        return "No Python files (.py) found under the current directory.\n"
+    # column widths
+    name_w = max(25, max(len(k) for k, _, _ in rows))
+    lines = []
+    lines.append("Selection LOC by Directory (Python)")
+    lines.append("Counts SLOC (pygount sourceCount) per top-level folder. Includes tests/ and root files under '.'.\n")
+    lines.append(f"{'directory'.ljust(name_w)}  {'files':>7}  {'SLOC':>10}")
+    lines.append(f"{'-'*name_w}  {'-'*7}  {'-'*10}")
+    for k, sloc, nfiles in rows:
+        lines.append(f"{k.ljust(name_w)}  {nfiles:7d}  {sloc:10,d}")
+    lines.append(f"{'-'*name_w}  {'-'*7}  {'-'*10}")
+    lines.append(f"{'TOTAL'.ljust(name_w)}  {sum(n for _,_,n in rows):7d}  {total:10,d}\n")
+    return "\n".join(lines)
 
 def _parse_vector(text: str) -> list[float]:
     """
@@ -798,7 +890,7 @@ def print_tagging_and_policies_help(policy_rt=None) -> None:
     print("  • Goal test: a popped binding whose tags contain the target 'pred:<token>'")
     print("  • Shortest hops: BFS with visited-on-enqueue; parent map reconstructs the path")
     print("  • Pretty paths show first pred:* as the node label (fallback to id) and --label--> between nodes")
-    print("  • Try: menu 12 'Plan from NOW', menu 7 'Display snapshot', menu 22 'Export interactive graph'\n")
+    print("  • Try: menu 25 'Plan from NOW', menu 7 'Display snapshot', menu 22 'Export interactive graph'\n")
 
     print("Policies (Action Center overview)")
     print("  • Policies live in cca8_controller and expose:")
@@ -841,44 +933,51 @@ def print_tagging_and_policies_help(policy_rt=None) -> None:
 
 MENU = """\
 [hints for text selection instead of numerical selection]
-# Inspect / View
-1) World stats
-2) Show last 5 bindings
-3) Inspect binding details
-4) List predicates
-5) Show drives (raw + tags)
-6) Show skill stats
-7) Display snapshot (bindings + edges + ctx + policies)
-8) Resolve engrams on a binding
 
-# Build / Edit
-9) [Add] predicate (creates column engram + binding with pointer)
-10) Connect two bindings (src, dst, relation)
-11) Delete edge (source, destn, relation)
+# Quick Start & Tutorial
+1) Understanding bindings, edges, predicates, cues, anchors, policies [understanding, tagging]
+2) Tutorial and step-by-step demo [tutorial, tour]
 
-# Plan / Act
-12) Plan from NOW -> <predicate>
-13) Input [sensory] cue (vision/smell/touch/sound)
-14) Instinct step (Action Center)
-15) Autonomic tick (emit interoceptive cues)
-16) Simulate fall (add state:posture_fallen and try recovery)
+# Quick Start / Overview
+3) Snapshot (bindings + edges + ctx + policies) [snapshot, display]
+4) World stats [world, stats]
+5) Recent bindings (last 5) [last, bindings]
+6) Drives & drive tags [drives]
+7) Skill ledger [skills]
+8) Temporal probe (epoch/hash/cos/hamming) [temporal, probe]
 
-# Save / Export / System
-17) Export snapshot (bindings + edges + ctx + policies)
-18) Save session → path   [S]
-19) Load session → path   [L]
-20) Run preflight now
-21) Quit
-22) Export and display interactive graph with options
-23) Understanding bindings, edges, predicates, cues, anchors, policies
-24) Capture scene → emit cue/predicate with tiny engram (signal bridge)
-25) Planner strategy (toggle BFS ↔ Dijkstra)
-26) Temporal probe (epoch/hash/cos/hamming)
-27) Inspect engram by id
-28) List all engrams (id, source binding, time attrs, payload)
-29) Search engrams (by name / epoch)
-30) Delete engram by id (danger: leaves dangling pointers)
-31) Attach existing engram to a binding
+# Act / Simulate
+9) Instinct step (Action Center) [instinct, act]
+10) Autonomic tick (emit interoceptive cues) [autonomic, tick]
+11) Simulate fall (add state:posture_fallen and try recovery) [fall, simulate]
+
+# Perception & Memory (Cues & Engrams)
+12) Input [sensory] cue [sensory, cue]
+13) Capture scene → tiny engram (signal bridge) [capture, scene]
+14) Resolve engrams on a binding [resolve, engrams]
+15) Inspect engram by id (or binding) [engram, ei]
+16) List all engrams [engrams-all, list-engrams]
+17) Search engrams (by name / epoch) [search-engrams, find-engrams]
+18) Delete engram by id (danger: leaves dangling pointers) [delete-engram, del-engram]
+19) Attach existing engram to a binding [attach-engram, ae]
+
+# Graph Inspect / Build / Plan
+20) Inspect binding details [inspect, details]
+21) List predicates [listpredicates, listpreds]
+22) [Add] predicate [add, predicate]
+23) Connect two bindings (src, dst, relation) [connect, link]
+24) Delete edge (source, destn, relation) [delete, rm]
+25) Plan from NOW -> <predicate> [plan]
+26) Planner strategy (toggle BFS ↔ Dijkstra) [planner, strategy]
+27) Export and display interactive graph with options [pyvis, graph]
+
+# Save / System / Help
+28) Export snapshot (text only) [export snapshot]
+29) Save session → path [save]
+30) Load session → path [load]
+31) Run preflight now [preflight]
+32) Quit [quit, exit]
+33) Lines of Python code LOC by directory [loc, sloc]
 
 [S] Save session → path
 [L] Load session → path
@@ -887,7 +986,6 @@ MENU = """\
 [T] Tutorial and step-by-step demo
 
 Select: """
-
 
 # --------------------------------------------------------------------------------------
 # Profile stubs (experimental profiles print info and fall back to Mountain Goat)
@@ -1574,6 +1672,8 @@ def run_preflight_full(args) -> int:
                     _args = ["-v", "--maxfail=1"]
                     for _pkg in _cov_pkgs:
                         _args += ["--cov", _pkg]
+                    if _os.path.exists(".coveragerc"):
+                        _args += ["--cov-config", ".coveragerc"]
 
                     # Human-friendly console and a machine-friendly XML for CI/tools
                     _args += ["--cov-report=term-missing", "--cov-report=xml:.coverage/coverage.xml", "tests"]
@@ -2311,86 +2411,102 @@ def interactive_loop(args: argparse.Namespace) -> None:
     #intentionally keep here so easier for development visualization than up at top with constants
     MIN_PREFIX = 3 #if not perfect match then this specifies how many letters to match
     _ALIASES = {
-        # Inspect / View
-        "world": "1", "stats": "1",
-        "last": "2", "bindings": "2",
-        "inspect": "3", "details": "3", "id": "3",
-        "listpredicates": "4", "listpreds": "4", "listp": "4",
-        "drives": "d",
-        "skills": "6",
-        "snapshot": "7", "display": "7",
+    # Quick Start & Tutorial
+    "understanding": "1", "tagging": "1",
+    "tutorial": "2", "tour": "2", "help": "2",
 
-        # Build / Edit
-        "resolve": "8", "engrams": "8",
-        "add": "9", "predicate": "9",
-        "connect": "10", "link": "10",
-        "delete": "11", "del": "11", "rm": "11",
+    # Quick Start / Overview
+    "snapshot": "3", "display": "3",
+    "world": "4", "stats": "4",
+    "last": "5", "bindings": "5",
+    "drives": "6",
+    "skills": "7",
+    "temporal": "8", "tp": "8", "probe": "8",
 
-        # Plan / Act
-        "plan": "12",
-        "sensory": "13", "cue": "13",
-        "instinct": "14", "act": "14",
-        "autonomic": "15", "tick": "15",
-        "fall": "16", "simulate": "16",
+    # Act / Simulate
+    "instinct": "9", "act": "9",
+    "autonomic": "10", "tick": "10",
+    "fall": "11", "simulate": "11",
 
-        # Save / Export / System
-        "export snapshot": "17",
-        "pyvis": "22", "graph": "22", "viz": "22", "html": "22", "interactive": "22", "export and display": "22",
-        "save": "s",
-        "load": "l",
-        "preflight": "20",
-        "quit": "21", "exit": "21",  #no 'q' to avoid exit by mistake
-        "tutorial": "t", "help": "t", "tour": "t",
+    # Perception & Memory
+    "sensory": "12", "cue": "12",
+    "capture": "13", "cap": "13", "scene": "13",
+    "resolve": "14", "engrams": "14",
+    "engram": "15", "engr": "15", "ei": "15",
+    "engrams-all": "16", "list-engrams": "16", "le": "16", "la": "16",
+    "search-engrams": "17", "find-engrams": "17", "se": "17",
+    "delete-engram": "18", "del-engram": "18", "de": "18",
+    "attach-engram": "19", "ae": "19",
 
-        # Tagging/policies help, engram scene
-        "understanding": "23", "bindings-help": "23", "predicates-help": "23",
-        "cues-help": "23", "policies-help": "23", "tagging": "23", "standard": "23",
-        "capture": "24", "cap": "24", "scene": "24",
-        "planner": "25", "strategy": "25", "dijkstra": "25", "bfs": "25", "toggle planner": "25",
-        "temporal": "26", "tp": "26", "probe": "26",
-        "engram": "27", "engr": "27", "ei": "27",
-        "engrams-all": "28", "list-engrams": "28", "le": "28", "la": "28",
-        "search-engrams": "29", "find-engrams": "29", "se": "29",
-        "delete-engram": "30", "del-engram": "30", "de": "30",
-        "attach-engram": "31", "ae": "31",
+    # Graph Inspect / Build / Plan
+    "inspect": "20", "details": "20", "id": "20",
+    "listpredicates": "21", "listpreds": "21", "listp": "21",
+    "add": "22", "predicate": "22",
+    "connect": "23", "link": "23",
+    "delete": "24", "del": "24", "rm": "24",
+    "plan": "25",
+    "planner": "26", "strategy": "26", "dijkstra": "26", "bfs": "26",
+    "pyvis": "27", "graph": "27", "viz": "27", "html": "27", "interactive": "27", "export and display": "27",
 
-    }
+    # Save / System / Help
+    "export snapshot": "28",
+    "save": "29",
+    "load": "30",
+    "preflight": "31",
+    "quit": "32", "exit": "32",
+    "loc": "33", "sloc": "33", "pygount": "33",
+
+    # Keep letter shortcuts working too
+    "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
+}
 
     # NEW MENU compatibility: accept new grouped numbers and legacy ones.
     NEW_TO_OLD = {
-        "1": "1",    # World stats
-        "2": "7",    # Show last 5 bindings
-        "3": "10",   # Inspect binding details
-        "4": "2",    # List predicates
-        "5": "d",    # Show drives (raw + tags)
-        "6": "13",   # Show skill stats
-        "7": "17",   # Display snapshot
-        "8": "6",    # Resolve engrams on a binding
-        "9": "3",    # Add predicate
-        "10": "4",   # Connect two bindings
-        "11": "15",  # Delete edge
-        "12": "5",   # Plan from NOW -> <predicate>
-        "13": "11",  # Add sensory cue
-        "14": "12",  # Instinct step
-        "15": "14",  # Autonomic tick
-        "16": "18",  # Simulate fall
-        "17": "16",  # Export snapshot
-        "18": "s",   # Save session
-        "19": "l",   # Load session
-        "20": "9",   # Run preflight now
-        "21": "8",   # Quit
-        "22": "22",  # Export and display interactive graph (Pyvis HTML)
-        "23": "23",  # Understanding bindings/edges/predicates/cues/anchors/policies
-        "24": "24",  # Capture scene → emit cue/predicate + tiny engram (signal bridge demo)
-        "25": "25",  # Planner strategy toggle
-        "26": "26",  # Temporal probe (epoch/hash/cos/hamming)
-        "27": "27",  # Inspect engram by id
-        "28": "28",  # List engrams
-        "29": "29",  # Search engrams
-        "30": "30",  # Delete engram
-        "31": "31",  # Attach engram
+    # Quick Start & Tutorial
+    "1": "23",  # Understanding (help pane)
+    "2": "t",   # Tutorial (letter branch)
 
-    }
+    # Quick Start / Overview
+    "3": "17",  # Snapshot (display)
+    "4": "1",   # World stats
+    "5": "7",   # Recent bindings (last 5)
+    "6": "d",   # Drives & tags (letter branch)
+    "7": "13",  # Skill ledger
+    "8": "26",  # Temporal probe
+
+    # Act / Simulate
+    "9": "12",   # Instinct step
+    "10": "14",  # Autonomic tick
+    "11": "18",  # Simulate fall
+
+    # Perception & Memory
+    "12": "11",  # Input sensory cue
+    "13": "24",  # Capture scene → engram
+    "14": "6",   # Resolve engrams on a binding
+    "15": "27",  # Inspect engram by id
+    "16": "28",  # List all engrams
+    "17": "29",  # Search engrams
+    "18": "30",  # Delete engram by id
+    "19": "31",  # Attach existing engram
+
+    # Graph Inspect / Build / Plan
+    "20": "10",  # Inspect binding details
+    "21": "2",   # List predicates
+    "22": "3",   # Add predicate
+    "23": "4",   # Connect two bindings
+    "24": "15",  # Delete edge
+    "25": "5",   # Plan from NOW -> <predicate>
+    "26": "25",  # Planner strategy (toggle)
+    "27": "22",  # Export interactive graph
+
+    # Save / System / Help
+    "28": "16",  # Export snapshot (text)
+    "29": "s",   # Save session
+    "30": "l",   # Load session
+    "31": "9",   # Run preflight now
+    "32": "8",   # Quit
+    "33": "33",  # Lines of Count
+}
 
     # Attempt to load a prior session if requested
     if args.load:
@@ -2526,7 +2642,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
         if ckey in NEW_TO_OLD:
             routed = NEW_TO_OLD[ckey]
             if pretty_scroll:
-                print(f"[[menu numbering auto-compatibility] processed input entry routed to old value: {ckey} → {routed}]")
+                if ckey != routed:
+                    print(f"[[menu numbering auto-compatibility] processed input entry routed to old value: {ckey} → {routed}]\n")
             choice = routed
         else:
             choice = ckey
@@ -2534,6 +2651,18 @@ def interactive_loop(args: argparse.Namespace) -> None:
         if choice == "1":
             # World stats
             now_id = _anchor_id(world, "NOW")
+            print("Selection World Graph Statistics\n")
+            print("The CCA8 architecture holds symbolic declarative memory (i.e., episodic and semantic memory) in the WorldGraph.")
+            print("There are bindings (i.e., nodes) in the WorldGraph, each of which holds directed edges to other bindings (i.e., nodes), concise semantic")
+            print("  and episodic information, metadata, and pointers to engrams in the cortical-like Columns which is the rich store of knowledge.")
+            print("  e.g., 'b1' means binding 1, 'b2' means binding 2, and so on")
+            print("As mentioned, the bindings (i.e., nodes) are linked to each other by directed edges.")
+            print("An 'anchor' is a binding which we use to start the WorldGraph as well as a starting point somewhere in the middle of the graph.")
+            print("Symbolic procedural knowledge is held in the Policies which currently are held in the Controller Module.")
+            print("  A policy (i.e., same as primitive in the CCA8 published papers) is a simple set of conditional actions.")
+            print("  In order to execute, a policy must be loaded (e.g., meets development requirements) and then it must be triggered.")
+            print("Note we are showing the symbolic statistics here. The distributed, rich information of the CCA8, i.e., its engrams, are held in the Columns.\n")
+            print("Below we show some general WorldGraph and Policy statistics. See Snapshot and other menu selections for more details on the system.\n")
             print(f"Bindings: {len(world._bindings)}  Anchors: NOW={now_id}  Latest: {world._latest_binding_id}")
             try:
                 print(f"Policies loaded: {len(POLICY_RT.loaded)} -> {', '.join(POLICY_RT.list_loaded_names()) or '(none)'}")
@@ -2543,6 +2672,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "2":
             # List predicates
+            print("Selection List Predicates\n")
+            print("Groups all pred:* tokens and shows which bindings (bN) carry each token.")
+            print("Planner targets are predicates; cues are evidence only and won’t appear here.\n")
+
             idx: Dict[str, List[str]] = {}
             for bid, b in world._bindings.items():
                 for t in getattr(b, "tags", []):
@@ -2559,6 +2692,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "3":
             # Add predicate
+            print("Selection Add Predicate\n")
+            print("Creates a new binding tagged pred:<token>, attached to LATEST (keeps episodes readable).")
+            print("Examples: state:posture_standing, nipple:latched. Lexicon may warn in strict modes.\n")
+
             token = input("Enter predicate token (e.g., state:posture_standing): ").strip()
             if token:
                 bid = world.add_predicate(token, attach="latest", meta={"added_by": "user"})
@@ -2567,6 +2704,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "4":
             # Connect two bindings (with duplicate warning)
+            print("Selection Connect Bindings\n")
+            print("Adds a directed edge src --label--> dst (default label: 'then'). Duplicate edges are skipped.")
+            print("Use labels for readability (‘fall’, ‘latch’, …); BFS planning follows structure, not labels.\n")
+
             src = input("Source binding id (e.g., b12): ").strip()
             dst = input("Dest binding id (e.g., b13): ").strip()
             label = input('Relation label (e.g., "then"): ').strip() or "then"
@@ -2597,6 +2738,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "5":
             # Plan from NOW -> <predicate>
+            print("Selection Plan to Predicate\n")
+            print("BFS from anchor:NOW to a binding with pred:<token>. Prints raw id path and a pretty path.")
+            print("No path means the goal isn’t reachable with current edges—add links or adjust targets.\n")
+
             token = input("Target predicate (e.g., state:posture_standing): ").strip()
             if not token:
                 loop_helper(args.autosave, world, drives)
@@ -2621,6 +2766,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "6":
             # Resolve engrams on a binding
+            print("Selection Resolve Engrams\n")
+            print("Shows engram slots on a binding (pointers into Column memory).")
+            print("Use 'Inspect engram by id' for payload/meta details.\n")
+
             bid = input("Binding id to resolve engrams: ").strip()
             b = world._bindings.get(bid)
             if not b:
@@ -2631,6 +2780,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "7":
             # Show last 5 bindings
+            print("Selection Recent Bindings\n")
+            print("Shows the 5 most recent bindings (bN). For each: tags and any engram slots attached.")
+            print("Tip: use 'Inspect binding details' for full meta/edges on a specific id.\n")
+
             #last_ids = sorted(world._bindings.keys(), key=lambda x: int(x[1:]))[-5:]
             last_ids = _sorted_bids(world)[-5:]
             for bid in last_ids:
@@ -2645,6 +2798,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "8":
             # Quit
+            print("Selection Quit\n")
+            print("Exits the simulation. If you launched with --save, a final save occurs on exit.\n")
+
             print("Goodbye.")
             if args.save:
                 save_session(args.save, world, drives)
@@ -2652,12 +2808,20 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "9":
             # Run preflight now
+            print("Selection Preflight\n")
+            print("Runs pytest (unit tests) and coverage, then a series of sanity probes. See PASS/FAIL lines above.")
+            print("Note: pytest coverage percentage (and line totals) excludes lines with docstrings, comments, prints, and logging.\n")
+
             #rc = run_preflight_full(args)
             run_preflight_full(args)
             loop_helper(args.autosave, world, drives)
 
         elif choice == "10":
             # Inspect binding details (accepts a single id, or ALL/* to dump everything)
+            print("Selection Inspect Binding Details\n")
+            print("Enter a binding id (e.g., b3) or 'ALL'. Displays tags, meta, engrams, and outgoing edges.")
+            print("Use this to audit provenance (meta.policy/created_by) and attached engrams on one binding.\n")
+
             bid = input("Binding id to inspect (or 'ALL'): ").strip()
 
             def _print_one(_bid: str) -> None:
@@ -2693,6 +2857,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "11":
             # Add sensory cue
+            print("Selection Input Sensory Cue\n")
+            print("Adds cue:<channel>:<token> (evidence, not a goal) at NOW and may nudge a policy.")
+            print("Examples: vision:silhouette:mom, sound:bleat:mom, scent:milk.\n")
+
             ch = input("Channel (vision/scent/touch/sound): ").strip().lower()
             tok = input("Cue token (e.g., silhouette:mom): ").strip()
             if ch and tok:
@@ -2707,6 +2875,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "12":
             # Instinct step
+            print("Selection Instinct Step\n")
+
             before_n = len(world._bindings)
 
             # [TEMPORAL] drift once per instinct step
@@ -2804,11 +2974,18 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "13":
             # Show skill stats
+            print("Selection Skill Ledger\n")
+            print("Per-policy counts, success rate, and quality ‘q’. Read this as a quick controller health check.\n")
+
             print(skill_readout())
             loop_helper(args.autosave, world, drives)
 
         elif choice == "14":
             # Autonomic tick
+            print("Selection Autonomic Tick\n")
+            print("Simulates internal drift: fatigue↑, ticks/age_days advance, optional temporal step/boundary.")
+            print("Often followed by a controller check to see if any policy should act.\n")
+
             drives.fatigue = min(1.0, drives.fatigue + 0.01)
             # advance developmental clock
             try:
@@ -2848,7 +3025,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "15":
-            # Delete edge and autosave (if --autosave is active).
+            # Delete edge and autosave (if --autosave is active)
+            print("Selection Delete Edge\n")
+            print("Removes edge(s) matching src --> dst [relation]. Leave relation blank to remove any label.\n")
+
             try:
                 delete_edge_flow(world, autosave_cb=lambda: loop_helper(args.autosave, world, drives))
             except NameError:
@@ -2858,11 +3038,18 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "16":
             # Export snapshot
+            print("Selection Export Snapshot (Text)\n")
+            print("Writes the same snapshot you see on-screen to world_snapshot.txt for sharing/debugging.\n")
+
             export_snapshot(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT)
             loop_helper(args.autosave, world, drives)
 
         elif choice == "17":
             # Display snapshot
+            print("Selection Snapshot (WorldGraph + CTX + Policies)\n")
+            print("A full, human-readable dump. The LEGEND explains temporal fields; anchors and edges follow.")
+            print("Tip: after this, you can optionally generate an interactive HTML graph.\n")
+
             print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT))
 
             # Optional: generate an interactive Pyvis HTML view
@@ -2903,6 +3090,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "18":
             # Simulate a fall event and try a recovery attempt immediately
+            print("Selection Simulate Fall\n")
+            print("Creates state:posture_fallen and relabels the linking edge to 'fall', then attempts recovery.")
+            print("Use this to demo safety gates (recover_fall / stand_up).\n")
+
             prev_latest = world._latest_binding_id
             # Create a 'fallen' state as a new binding attached to latest
             fallen_bid = world.add_predicate(
@@ -3486,9 +3677,20 @@ def interactive_loop(args: argparse.Namespace) -> None:
             print(f"Attached engram {eid} to {bid} as {slot}.")
             loop_helper(args.autosave, world, drives)
 
+        elif choice == "33":
+            print("Selection LOC by Directory (Python)")
+            print("Prints total lines of Python source code")
+            rows, total, err = _compute_loc_by_dir()
+            if err:
+                print(err)  # pragma: no cover
+            else:
+                print(_render_loc_by_dir_table(rows, total))  # pragma: no cover
 
         elif choice.lower() == "s":
             # Save session
+            print("Selection Save Session\n")
+            print("Saves world+drives+skills to JSON (atomic write). Use this to checkpoint progress.\n")
+
             path = input("Save to file (e.g., session.json): ").strip()
             if path:
                 ts = save_session(path, world, drives)
@@ -3496,6 +3698,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice.lower() == "l":
             # Load session
+            print("Selection Load Session\n")
+            print("Loads a prior JSON snapshot (world, drives, skills). The new state replaces the current one.\n")
+
             path = input("Load from file: ").strip()
             if path and os.path.exists(path):
                 try:
@@ -3514,6 +3719,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice.lower() == "d":
             # Show drives (raw + tags), robust across Drives variants
+            print("Selection Drives & Drive Tags\n")
+            print("Raw: hunger/fatigue/warmth. Tags summarize thresholds (e.g., drive:hunger_high).")
+            print("Policies may trigger on tags; autonomic ticks slowly change these values.\n")
+
             print(f"hunger={drives.hunger:.2f}, fatigue={drives.fatigue:.2f}, warmth={drives.warmth:.2f}")
             tags = _drive_tags(drives)
             print("drive tags:", ", ".join(tags) if tags else "(none)")
@@ -3557,6 +3766,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
 
         elif choice.lower() == "t":
+            #Tutorial selection that gives a tour through several common menu functions
+            print("Selection Tutorial\n")
+            print("1) Quick console tour (recommended), 2) Open README/compendium, 3) Both. Enter cancels.\n")
+
             print("\nTutorial options:")
             print("  1) Quick console tour (recommended)")
             print("  2) Open README/compendium")
