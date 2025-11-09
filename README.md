@@ -1,10 +1,10 @@
-# # CCA8  — Project Compendium (README)
+# CCA8  — Project Compendium (README)
 
 # CCA8 Compendium (All-in-One)
 
 The CCA8 Compendium is an all-in-one ongoing document that captures the design, rationale, and practical know-how for the CCA8 simulation project. It is intended to function as a user manual how to use the software as well as provide technical details to persons with an interest in the project.
 
-**1 minute summary:**
+# **1-minute summary**
 
 The CCA8 Project is the simulation of the brain of a mountain goat through the lifecycle with hooks for different robotic embodiments. 
 
@@ -12,7 +12,8 @@ Scaffolding in place (partially operational) for simulation of a chimpanzee-like
 
 This single document is the canonical “compendium” for the Causal Cognitive Architecture 8 (CCA8).It serves as: README, user guide, architecture notes, design decisions, and maintainer reference.
 
-Entry point: `cca8_run.py`Primary modules: `cca8_run.py`, `cca8_world_graph.py`, `cca8_controller.py`, `cca8_column.py`, `cca8_features.py`, `cca8_temporal.py`
+Entry point: `>python cca8_run.py`
+Primary modules: `cca8_run.py`, `cca8_world_graph.py`, `cca8_controller.py`, `cca8_column.py`, `cca8_features.py`, `cca8_temporal.py`
 
 
 
@@ -35,28 +36,90 @@ of birth, and by one week can climb most places its mother can)*
 
 
 
-**5 minute summary:**
+# **5-minute summary**
 
-**Entry point:** `cca8_run.py`  
-**Repo:** `github.com/howard8888/workspace`
+###### **Startup:**
 
-**Quickstart:**
+**Entry point:** `>python cca8_run.py`  
+**Repo:** `https://github.com/howard8888/workspace`
 
-1) `py -3.11 -m venv .venv && .\.venv\Scripts\activate && python -V`
-2) `python cca8_run.py --about`
-3) `python cca8_run.py --autosave session.json`  (or `--load session.json`)
 
-**CCA8 Python Modules:**`cca8_run.py, cca8_world_graph.py, cca8_column.py, cca8_controller.py, cca8_features.py, cca8_temporal.py` 
+
+**Useful Command-line Quickstarts:**
+
+Start a new simulation: *>python cca8_run.py*
+
+Start a new simulation and autosave it:  *>python cca8_run.py --autosave mysession.json*
+
+Resume a previous simulation and autosave it to the same file:
+         *>python cca8_run.py  --load mysession.json --autosave mysession.json*
+
+Resume a previous simulation and autosave it to a new file:
+         *>python cca8_run.py  --load mysession.json --autosave newfile.json*
+
+(Note: the order of --load and --autosave doesn't matter )
+
+Version info (all components): *>python cca8_run.py --about*
+
+Runner (main program) Version only: *>python cca8_run.py --version*
+
+Preflight self-testing (four parts):   *>python cca8_run.py --preflight*
+
+Use with robotic embodiment: *>python cca8_run.py --hal --body myrobot*
+
+***Notes:***
+
+-Versions of Python that will work with code:  check docstring of cca8_run.py or requirements.txt
+   *(at time of writing, tested on Windows 11 Pro with Python 3.11.4)*
+
+-Dependencies required:  check docstring of cca8_run.py or requirements.txt
+     -*-> Software should be able to run on most systems without any issues (GPU and LLM API requirements, if used, are very fail-safe)*
+
+-Windows:  py.exe automatically runs script with the version of Python specified in the shebang line (or latest installed version):
+      *>py cca8_run.py*       (or you can specify the Python version, e.g.,  *>py -3.11 cca8_run.py* )
+( *>python cca8_run.py*   will also usually work, depending on Python setup; will igore shebang line)
+(*>cca8_run.py* may work if Windows file associations set up for Python version)
+
+-Mac, Linux:  *>python3 cca8_run.py*
+
+-Virtual environment Venv (*must activate*) (Windows, Mac or Linux):  *>python cca8_run.py*
+
+-Graphical User Interface (GUI): No versions available at this time. Due to ongoing software development, the CCA8 Simulation is Command-Line Interface (CLI) only.  (Tkinter Windows GUI-based cca8_run.pyw module is available but not supported at this time.)
+
+-Robotics real-world environment: You need to run the Python environment version of cca8_run.py as shown above, and specify the robotics embodiment as shown above. (Ensure that the correct hardware abstraction layer (HAL) exists and is installed for the robotics equipment version you are using.)
+
+
+
+**CCA8 Python Major Modules:**
+
+cca8_run.py (informal name: "Runner module" or "Main module")
+
+cca8_world_graph.py (informal name: "WorldGraph module")
+
+cca8_column.py  (informal name: "Column module")
+
+cca8_controller.py  (informal name: "Controller module")
+
+cca8_features.py  (informal name: "Features module")
+
+cca8_temporal.py (informal name: "Temporal module")
+
+
 
 **Purpose of Program:** Simulation of the brain of a mountain goat through the lifecycle with hooks for different robotic embodiments.
 
 Scaffolding in place (partially operational) for simulation of a chimpanzee-like brain, human-like brain, human-like brain with five brains operating in parallel in the same agent, human-like brain with multiple agents interacting, human-like brain with five brains operating in parallel with combinatorial planning ability.
+
+
 
 **Newborn mountain goat demo (fast path):**  
 Menu →  add `stand`, connect NOW→stand (`stand_up`), then add and connect  
 `mom:close` (`approach`) → `nipple:found` (`search`) → `nipple:latched` (`latch`) → `milk:drinking` (`suckle`),  
 verify with  plan NOW → `milk:drinking`.  
 **Glossary:** predicates, bindings, edges, policies, drives (hunger/warmth/fatigue), and search knobs (`k`, `sigma`, `jump`).
+*--> See Glossary and Tutorial Sections for more information*
+
+
 
 ---
 
@@ -80,7 +143,9 @@ verify with  plan NOW → `milk:drinking`.
 - [Persistence: Autosave/Load](#persistence-autosaveload)
 - [Runner, menus, and CLI](#runner-menus-and-cli)
 - [Logging & Unit Tests](#logging--unit-tests)
+- [Preflight (four-part self-test)](#preflight-four-part-self-test)
 - [Hardware Abstraction Layer (HAL)](#hardware-abstraction-layer-hal)
+- [Hardware preflight lane (status stub)](#hardware-preflight-lane-status-stub)
 - [How-To Guides](#how-to-guides)
 - [Data schemas (for contributors)](#data-schemas-for-contributors)
 - [Traceability (requirements to code)](#traceability-requirements-to-code)
@@ -521,6 +586,65 @@ tests/test_boot_prime_stand.py — seeds stand near NOW andasserts a path NOW �
 
 
 
+* * *
+
+
+
+## Preflight (four-part self-test)
+
+Run all checks and exit:
+
+`> python cca8_run.py --preflight`
+
+**What runs**
+
+1) **Unit tests (pytest + coverage).**  
+   Prints a normal pytest summary. Coverage is percent of **executable** lines
+   (comments/docstrings ignored). Ordinary code—including `print(...)` /
+   `input(...)`—counts toward coverage. Target ≥30%.  
+   *Note: console vs footer may differ by ~1% due to reporter rounding.*  
+
+2) **Scenario checks (whole-flow).**  
+   Deterministic probes that catch issues unit tests miss:
+   
+   - Core imports & symbols present; version printouts
+   - Fresh-world invariants and NOW anchor
+   - `set_now` tag housekeeping (old NOW tag removed, new NOW tagged)
+   - Accessory files exist (e.g., README, images)
+   - Optional PyVis availability
+   - Planner probes (BFS/Dijkstra toggle), attach semantics (now/latest)
+   - Cue normalization, action metrics aggregation
+   - Lexicon strictness (neonate stage rejects off-vocab), engram bridge
+   - Action helpers summary is printable
+
+3) **Robotics hardware preflight (stub).**  
+   Reports HAL/body flag status. Example line:  
+   `[preflight hardware] PASS  - NO-TEST: HAL=OFF (no embodiment); body=0.0.0 : none specified — pending integration`
+   Note: Pending integration of HALs.
+
+4) **System-functionality fitness (stub).**  
+   Placeholder for end-to-end task demos (will exercise cognitive + HAL paths).
+   Note: Pending integration of HALS.
+
+**Footer format & exit code**
+
+The last line gives a compact verdict and returns a process exit code:
+
+[preflight] RESULT: PASS | tests=118/118 | coverage=33% (≥30) |  
+probes=41/41 | hardware_checks=0 | system_fitness_assessments=0 | elapsed=00:02
+
+- `PASS/FAIL` reflects both pytest and probe results.  
+- `probes` counts scenario checks (part 2).  
+- `hardware_checks` / `system_fitness_assessments` are **0** until those lanes are implemented.
+
+**Artifacts**
+
+- JUnit XML: `.coverage/junit.xml`  
+- Coverage XML: `.coverage/coverage.xml` (console prints a human summary)
+
+**Tip:** a lightweight *startup* check can be toggled with
+`CCA8_PREFLIGHT=off` (disables the “lite” banner probe at launch).
+
 ---
 
 ## Executive Overview
@@ -691,15 +815,22 @@ When a HAL is enabled, CCA8 will load an *embodiment manifest* (sensors, frames,
 
 
 
-<img title="Goat Embodiment" src="./robot_goat.jpg" alt="robot_goat" style="zoom:33%;" data-align="center">
+### Hardware preflight lane (status stub)
 
+When you run `--preflight`, CCA8 reports HAL/body flags in a dedicated lane.
+This is a **status stub**—no hardware I/O yet.
 
+Example:
+`[preflight hardware] PASS  - NO-TEST: HAL=ON (...); body=0.1.1 hapty — pending integration`
 
+Enable it via CLI:
+`> python cca8_run.py --hal --body hapty`
 
+Future checks will cover: transport handshake (USB/serial/network), sensor
+enumeration, actuator enable/disable, estop/limits, and simple round-trip
+commands (with timestamps and unit checks).
 
-
-
-
+<img title="Goat Embodiment" src="./robot_goat.jpg" alt="robot_goat" style="zoom:25%;" data-align="left">
 
 * * *
 
@@ -2021,6 +2152,108 @@ This tutorial teaches you how to **build, inspect, and reason about the WorldGra
 ***Note: Code changes will occur over time,  but the main ideas below should remain stable with the project***
 
 * * *
+
+
+
+### 0. Variables/Attributes Holding Values Shown in Snapshot Display
+
+#### Header / anchors
+
+* **EMBODIMENT: body=(none)** → `ctx.body` (string or `(none)` if falsy)
+
+* **NOW=b1** → `_anchor_id(world, "NOW")` (typically `world._anchors["NOW"]`)
+
+* **LATEST=b5** → `_anchor_id(world, "LATEST")` (typically `world._anchors["LATEST"]`)
+
+#### CTX (Context)
+
+* **age_days** → `ctx.age_days` (float)
+
+* **body** → `ctx.body`
+
+* **hal** → `ctx.hal` (bool/None; we normalize to `OFF` if falsy)
+
+* **profile** → `ctx.profile` (e.g., `"Mountain Goat"`)
+
+* **ticks** → `ctx.ticks` (int)
+
+* **winners_k** → `ctx.winners_k` (int)
+
+* **vhash64(now)** → `ctx.tvec64()` (helper that fingerprints the current temporal vector)
+
+* **epoch_vhash64** → `ctx.boundary_vhash64` (hash of the vector at last boundary)
+
+* **epoch** → `ctx.boundary_no` (count of event boundaries taken so far)
+
+#### TEMPORAL
+
+* **dim** → `ctx.temporal.dim`
+
+* **sigma** → `ctx.temporal.sigma`
+
+* **jump** → `ctx.temporal.jump`
+
+* **cos_to_last_boundary** → `ctx.cos_to_last_boundary()` (helper comparing current vector vs boundary vector)
+
+* **vhash64(now)** → `ctx.tvec64()` (same as CTX)
+
+* **epoch** → `ctx.boundary_no` (same as CTX)
+
+* **epoch_vhash64** → `ctx.boundary_vhash64` (same as CTX)
+
+> Notes:
+> 
+> * The **current vector** itself lives in `ctx.temporal` (a `TemporalContext`); we don’t print the 128-D vector, only its hash and cosine to keep output readable.
+> 
+> * We harmonized names so CTX and TEMPORAL show the **same trio**: `vhash64(now)`, `epoch`, `epoch_vhash64`.
+
+#### DRIVES
+
+* **hunger, fatigue, warmth** → `drives.hunger`, `drives.fatigue`, `drives.warmth` (from `cca8_controller.Drives`)
+
+#### POLICIES (executed this session—telemetry)
+
+* **Header** is shown if we have any stats recorded (i.e., at least one policy ran).
+
+* **Line format:** `policy:<name>: n=…, succ=…, rate=…, q=…, last=…`
+  
+  * `n` → `SkillStat.n` (executions)
+  
+  * `succ` → `SkillStat.successes`
+  
+  * `rate` → computed `successes / n`
+  
+  * `q` → `SkillStat.mean_reward` (running mean; simple average in current code)
+  
+  * `last` → `SkillStat.last_reward`
+
+* **Data source:** a runtime dict keyed by policy name (e.g., `SKILLS["policy:stand_up"] → SkillStat(...)`), managed by the controller runtime (`POLICY_RT`) and updated when `execute(...)` returns.
+
+#### POLICIES ELIGIBLE (meet devpt requirements)
+
+* **List contents** → policies where `policy.dev_gate(ctx)` is `True` **right now**.  
+  They may or may not already have telemetry (i.e., may appear in both sections).
+
+#### BINDINGS
+
+* **b# lines** → iterate `world._bindings` (ordered by `_sorted_bids(world)`), print each binding’s `tags` list in brackets.  
+  Source: `world._bindings[bid].tags` (plus any normalization you apply).
+
+#### EDGES
+
+* **Collapsed duplicates** → we gather edges by scanning each binding’s outgoing list:
+  
+  * edge list (first found of): `binding.edges` | `binding.out` | `binding.links` | `binding.outgoing` (all are lists of dicts)
+  
+  * **label** → `e["label"]` | `e["rel"]` | `e["relation"]` | default `"then"`
+  
+  * **dst** → `e["to"]` | `e["dst"]` | `e["dst_id"]` | `e["id"]`
+
+* We render `"{src} --{label}--> {dst}"` and then `Counter(...)` them to show `×N` for duplicates.
+
+* * *
+
+
 
 ### 1. Purpose of `cca8_world_graph.py`
 

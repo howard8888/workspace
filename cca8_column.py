@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
 import uuid
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["ColumnMemory", "mem", "__version__"]
 
 

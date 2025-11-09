@@ -1,5 +1,5 @@
-# -*- coding: utf-8 -*-
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 CCA8 World Runner, i.e. the module that runs the CCA8 project
 
@@ -90,6 +90,21 @@ __all__ = [
 ]
 
 PLACEHOLDER_EMBODIMENT = '0.0.0 : none specified'
+
+ASCII_LOGOS = {
+    "badge": r"""
++--------------------------------------------------------------+
+|  C C A 8  —  Causal Cognitive Architecture                   |
++--------------------------------------------------------------+""".strip("\n"),
+    "goat": r"""
+    ____            CCA8
+ .'    `-.       mountain goat
+/  _  _   \
+| (o)(o)  |
+\    __  /
+ `'-.____'""".strip("\n"),
+}
+
 
 # --- Runtime Context (ENGINE↔CLI seam) --------------------------------------------
 @dataclass(slots=True)
@@ -354,6 +369,7 @@ def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Bod
     print('# --------------------------------------------------------------------------------------')
     print("\nA Warm Welcome to the CCA8 Mammalian Brain Simulation")
     print(f"(cca8_run.py v{__version__})\n")
+    print_ascii_logo(style="goat", color=True)
     print(f"Entry point program being run: {os.path.abspath(sys.argv[0])}")
     print(f"OS: {sys.platform} (see system-dependent utilities for more detailed system/simulation info)")
     print('(for non-interactive execution, ">python cca8_run.py --help" to see optional flags you can set)')
@@ -371,17 +387,42 @@ def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Bod
     print("  7. Super-Human-like machine simulation")
     print("  T. Tutorial (more information) on using and maintaining this program, references\n")
 
+def print_ascii_logo(style: str = None, color: bool = True) -> None:  # pragma: no cover
+    """
+    Print a small ASCII logo once at program start.
+    Env overrides:
+      CCA8_LOGO=badge|goat|off   (off disables)
+      NO_COLOR (set to disable ANSI colors)
+    """
+    style = (style or os.getenv("CCA8_LOGO", "badge")).lower()
+    if style == "off":
+        return
+    art = ASCII_LOGOS.get(style, ASCII_LOGOS["badge"])
+
+    # Optional ANSI color (Windows Terminal supports ANSI; NO_COLOR disables)
+    want_color = color and sys.stdout.isatty() and not os.getenv("NO_COLOR")
+    if want_color:
+        CYAN = "\033[36m"; YEL = "\033[33m"; B = "\033[1m"; R = "\033[0m"
+        if style == "badge":
+            art = art.replace("C C A 8", f"{B}{CYAN}C C A 8{R}")
+        elif style == "goat":
+            art = f"{YEL}{art}{R}"
+
+    print(art)  # pragma: no cover
+    print()     # spacer  # pragma: no cover
+
 def _snapshot_temporal_legend() -> list[str]:
     return [
         "LEGEND (temporal terms):",
-        "  epoch (event boundary count): increments when a boundary() is taken",
-        "  event boundary: the discrete jump performed by TemporalContext.boundary()",
-        "  last_boundary_vhash64: 64-bit sign-bit fingerprint of the boundary vector",
+        "  epoch: event boundary count; increments when boundary() is taken",
+        "  vhash64(now): 64-bit sign-bit fingerprint of the current context vector",
+        "  epoch_vhash64: 64-bit fingerprint of the vector at the last boundary",
+        "  last_boundary_vhash64: alias of epoch_vhash64 (kept for back-compat)",
         "  cos_to_last_boundary: cosine(current vector, last boundary vector)",
-        "  binding (== node): holds tags, pointers to engrams, directed edges (==links)",
-        "",
+        "  binding (== node): holds tags, pointers to engrams, and directed edges",
+        "  **see menu tutorials for more about these terms**",
+        "\n",
     ]
-
 
 def _compute_loc_by_dir(suffixes=(".py",),skip_folders=(".git", ".venv", "build", "dist", ".pytest_cache", "__pycache__")):
     """
@@ -889,8 +930,12 @@ def print_tagging_and_policies_help(policy_rt=None) -> None:
     print("Planner (BFS) Basics")
     print("  • Goal test: a popped binding whose tags contain the target 'pred:<token>'")
     print("  • Shortest hops: BFS with visited-on-enqueue; parent map reconstructs the path")
+    print("  • BFS → fewest hops (unweighted).")
+    print("  • Dijkstra → lowest total edge weight; weights come from edge.meta keys in this order:")
+    print("      'weight' → 'cost' → 'distance' → 'duration_s' (default 1.0 if none present).")
+    print("  • Toggle strategy via the 'Planner strategy' menu item, then run 'Plan from NOW'.")
     print("  • Pretty paths show first pred:* as the node label (fallback to id) and --label--> between nodes")
-    print("  • Try: menu 25 'Plan from NOW', menu 7 'Display snapshot', menu 22 'Export interactive graph'\n")
+    print("  • Try: menu 'Plan from NOW', menu 'Display snapshot', menu 'Export interactive graph'\n")
 
     print("Policies (Action Center overview)")
     print("  • Policies live in cca8_controller and expose:")
@@ -901,7 +946,7 @@ def print_tagging_and_policies_help(policy_rt=None) -> None:
     print("  • After execute, you may see:")
     print("      - new bindings (with meta.policy)")
     print("      - new edges (with edge.meta.created_by)")
-    print("      - skill ledger updates (menu 13 'Show skill stats')\n")
+    print("      - skill ledger updates ('Show skill stats')\n")
 
     # If we can read the currently loaded policy names, show them:
     try:
@@ -924,7 +969,7 @@ def print_tagging_and_policies_help(policy_rt=None) -> None:
     print("\nExamples")
     print("  born --then--> wobble --stabilize--> posture:standing --suckle--> milk:drinking")
     print("  stand --search--> nipple:found --latch--> nipple:latched --suckle--> milk:drinking")
-    print("\n(See README.md → Tagging Standard for the full write-up.)\n")
+    print("\n(See README.md → Tagging Standard for more information.)\n")
 
 
 # --------------------------------------------------------------------------------------
@@ -1328,9 +1373,62 @@ def run_new_user_tour(world, drives, ctx, policy_rt,autosave_cb: Optional[Callab
         except Exception:
             return False
 
-    print("\n=== CCA8 Quick Tour ===")
-    print("This tour will: (1) snapshot, (2) temporal probe, (3) capture a small engram,")
-    print("                (4) show the binding pointer, (5) inspect the engram, (6) list/search engrams.")
+    print("""
+           === CCA8 Quick Tour ===
+        This tour will do the following and show the following displays:
+                       (1) snapshot, (2) temporal context probe, (3) capture a small
+                       engram, (4) show the binding pointer (b#), (5) inspect that
+                       engram, (6) list/search engrams.
+        Hints: Press Enter to accept defaults. Type Q to exit.
+
+        **The tutorial portion of the tour is still under construction. All components shown here are available
+            as individual menu selections also -- see those and the README.md file for more details.**
+
+        [tour] 1/6 — Baseline snapshot
+        Shows CTX and TEMPORAL (dim/sigma/jump; cosine; hash). Next: temporal probe.
+          • CTX shows agent counters (profile, age_days, ticks) and run context.
+          • TEMPORAL is a soft clock (dim/sigma/jump), not wall time.
+          • cosine≈1.000 → same event; <0.90 → “new event soon.”
+          • vhash64 is a compact fingerprint for quick comparisons.
+
+        [tour] 2/6 — Temporal context probe
+        Updates the soft clock; prints dim/sigma/jump and cosine to last boundary.
+        Next: capture a tiny engram.
+          • boundary() jumps the vector and increments the epoch (event count).
+          • vhash64 vs last_boundary_vhash64 → Hamming bits changed (0..64).
+          • Cosine compares “now” vs last boundary; drift lowers cosine.
+          • Status line summarizes phase (ON-BOUNDARY / DRIFTING / BOUNDARY-SOON).
+
+        [tour] 3/6 — Capture a tiny engram
+        Adds a memory item with time/provenance; visible in Snapshot. Next: show b#.
+          • capture_scene creates a binding (cue/pred) and a Column engram.
+          • The binding gets a pointer slot (e.g., column01 → EID).
+          • Time attrs (ticks, epoch, tvec64) come from ctx at capture time.
+          • binding.meta['policy'] records provenance when created by a policy.
+
+        [tour] 4/6 — Show binding pointer (b#)
+        Displays the new binding id and its attach target. Next: inspect that engram.
+          • A binding is the symbolic “memory link”; engram is the rich payload.
+          • The pointer (b#.engrams['slot']=EID) glues symbol ↔ rich memory.
+          • Attaching near NOW/LATEST keeps episodes readable for planning.
+          • Follow the pointer via Snapshot or “Inspect engram by id.”
+
+        [tour] 5/6 — Inspect engram
+        Shows engram fields (channel, token, attrs). Next: list/search engrams.
+          • meta → attrs (ticks, epoch, tvec64, epoch_vhash64) for time context.
+          • payload → kind/shape/bytes (varies by Column implementation).
+          • Use this to verify data shape and provenance after capture.
+          • Engrams persist across saves; pointers can be re-attached later.
+
+
+        [tour] 6/6 — List/search engrams
+        Lists and filters engrams by token/family.
+          • Deduped EIDs with source binding (b#) for quick auditing.
+          • Search by name substring and/or by epoch number.
+          • Useful to confirm capture cadence across boundaries/epochs.
+          • Pair with “Plan from NOW” to see if memory supports behavior.
+
+    """)
 
     # 1) Baseline snapshot
     print("\n[tour] 1/6 — Baseline snapshot")
@@ -1641,13 +1739,125 @@ def run_preflight_full(args) -> int:
     calls pytest to run whatever unit tests are present in the /tests subdirectory from the main working directory.
 
     """
+    print("\nPreflight running....")
+    print("Like an aircraft pre-flight, this check verifies the critical parts of")
+    print("the CCA8 architecture and simulation before you “fly” the system.\n")
+    print("There are four main parts. The first part runs a variety of unit tests,")
+    print("currently pytest-based. Coverage reports the percent of EXECUTABLE lines")
+    print("exercised. Comments and docstrings are ignored; ordinary code lines—")
+    print("including print(...) and input(...)—COUNT toward coverage, but not always. We")
+    print("generally aim for ≥30% line coverage as a useful signal, focusing on critical paths")
+    print("over raw percentage (diminishing returns with higher percentages unless mission critical).")
+    print("(Due to where results are read from, the percentage may differ by one or two percent")
+    print("in the body and summary line of the report.)\n")
+    print("The second part of preflight runs scenario checks to catch issues which the unit")
+    print("tests can miss, particularly whole-flow behavior (CLI → persistence →")
+    print("relaunch).\n")
+    print("The third part of the preflight runs the robotics hardware checks. In this section")
+    print("the checks actually resemble more closely their aviation counterparts.\n")
+    print("The fourth part of the preflight runs the system integration checks. In this section")
+    print("the checks actually resemble more closely a pilot's medical and mental fitness assessment")
+    print("plus the pilot's flight assessment. In this fourth part the ability of the CCA8 architecture")
+    print("to functionally carry out small tasks representative of its abilities are tested.\n")
     # pylint: disable=reimported
     import os as _os  #required for running pyvis in browswer if os being used elsewhere
     print("[preflight] Running full preflight...")
 
     failures = 0
-    def ok(msg):   print(f"[preflight] PASS  - {msg}")
-    def bad(msg):  nonlocal failures; failures += 1; print(f"[preflight] FAIL  - {msg}")
+    checks = 0
+
+    import time as _time
+    t0 = _time.perf_counter()
+
+    def ok(msg):
+        nonlocal checks
+        checks += 1
+        print(f"[preflight] PASS  - {msg}")
+
+    def bad(msg):
+        nonlocal failures, checks
+        failures += 1
+        checks += 1
+        print(f"[preflight] FAIL  - {msg}")
+
+    # helpers for the footer
+    def _fmt_hms(seconds: float) -> str:
+        m, s = divmod(int(round(seconds)), 60)
+        h, m = divmod(m, 60)
+        return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+    def _parse_junit_xml(path: str) -> dict:
+        try:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(path)
+            root = tree.getroot()
+            if root.tag == "testsuite":
+                return {
+                    "tests":   int(root.attrib.get("tests", 0)),
+                    "failures":int(root.attrib.get("failures", 0)),
+                    "errors":  int(root.attrib.get("errors", 0)),
+                    "skipped": int(root.attrib.get("skipped", 0)),
+                }
+            elif root.tag == "testsuites":
+                total = {"tests":0,"failures":0,"errors":0,"skipped":0}
+                for ts in root.findall("testsuite"):
+                    for k in total:
+                        total[k] += int(ts.attrib.get(k, 0))
+                return total
+        except Exception:
+            pass
+        return {}
+
+    def _parse_coverage_pct(path: str) -> float | None:
+        try:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(path)
+            root = tree.getroot()  # coverage.py: <coverage line-rate="0.87" ...>
+            lr = root.attrib.get("line-rate")
+            if lr is not None:
+                return float(lr) * 100.0
+            # fallback from totals if present
+            lv = root.attrib.get("lines-valid")
+            lc = root.attrib.get("lines-covered")
+            if lv and lc:
+                lvf, lcf = float(lv), float(lc)
+                return (lcf / lvf) * 100.0 if lvf else None
+        except Exception:
+            return None
+        return None
+
+    # --- color helpers (Windows-safe, no third-party deps) ---
+    import sys as _sys
+
+    def _is_tty() -> bool:
+        try:
+            return _sys.stdout.isatty()
+        except Exception:
+            return False
+
+    def _ansi_enable() -> bool:
+        # POSIX terminals usually support ANSI out of the box
+        if not _sys.platform.startswith("win"):
+            return True
+        # Windows: enable Virtual Terminal Processing on stdout
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            h = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(h, ctypes.byref(mode)):
+                new_mode = mode.value | 0x0004  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+                if kernel32.SetConsoleMode(h, new_mode):
+                    return True
+        except Exception:
+            pass
+        return False
+
+    _ANSI_OK = _is_tty() and _ansi_enable()
+
+    def _paint_fail(line: str) -> str:
+        # red
+        return f"\x1b[31m{line}\x1b[0m" if _ANSI_OK else line
 
     # --- Unit tests (pytest) — run first ------------------------------------------------
     try:
@@ -1663,23 +1873,25 @@ def run_preflight_full(args) -> int:
                 except Exception:
                     _have_cov = False
 
+                # Always ensure artifacts dir exists (for JUnit/coverage outputs)
+                _os.makedirs(".coverage", exist_ok=True)
+
                 if _have_cov:
-                    # Where to store coverage artifacts during preflight
-                    _os.makedirs(".coverage", exist_ok=True)
                     _os.environ.setdefault("COVERAGE_FILE", ".coverage/.coverage.preflight")
-                    #ensure preflight coverage statistics cover only active codebase
-                    _cov_pkgs = ["cca8_world_graph", "cca8_controller", "cca8_run", "cca8_temporal", "cca8_features", "cca8_column"]
-                    _args = ["-v", "--maxfail=1"]
+                    _cov_pkgs = ["cca8_world_graph", "cca8_controller", "cca8_run",
+                                 "cca8_temporal", "cca8_features", "cca8_column"]
+                    _args = ["-v", "--maxfail=1", "--junitxml=.coverage/junit.xml"]
                     for _pkg in _cov_pkgs:
                         _args += ["--cov", _pkg]
                     if _os.path.exists(".coveragerc"):
                         _args += ["--cov-config", ".coveragerc"]
-
-                    # Human-friendly console and a machine-friendly XML for CI/tools
-                    _args += ["--cov-report=term-missing", "--cov-report=xml:.coverage/coverage.xml", "tests"]
+                    # human + machine readable reports
+                    _args += ["--cov-report=term-missing",
+                              "--cov-report=xml:.coverage/coverage.xml",
+                              "tests"]
                 else:
-                    # Fallback: run tests without coverage
-                    _args = ["-v", "--maxfail=1", "tests"]
+                    # Fallback: no coverage plugin, but still produce JUnit for counts
+                    _args = ["-v", "--maxfail=1", "--junitxml=.coverage/junit.xml", "tests"]
 
                 _rc = _pytest.main(_args)
                 if _rc == 0:
@@ -2058,13 +2270,53 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"action helpers failed: {e}")
 
-    # Summary
-    if failures == 0:
-        print("[preflight] ok\n\n")
-        return 0
+    # Summary footer
+    elapsed = _fmt_hms(_time.perf_counter() - t0)
+
+    # Try to read pytest results (may not exist if tests dir missing)
+    junit = _parse_junit_xml(".coverage/junit.xml")
+    tests_total = junit.get("tests")
+    tests_fail  = (junit.get("failures", 0) or 0) + (junit.get("errors", 0) or 0)
+    tests_skip  = junit.get("skipped", 0) or 0
+    tests_pass  = (tests_total - tests_fail - tests_skip) if isinstance(tests_total, int) else None
+
+    cov_pct = _parse_coverage_pct(".coverage/coverage.xml")
+
+    parts = []
+    parts.append(f"tests={tests_pass}/{tests_total}" if isinstance(tests_total, int)
+                 else "tests=—")
+    if cov_pct is not None:
+        parts.append(f"coverage={cov_pct:.0f}% ({'≥30' if cov_pct >= 30.0 else '<30'})")
     else:
-        print(f"[preflight] completed with {failures} failure(s). See lines above.")
-        return 1
+        parts.append("coverage=—")
+
+    # part 3 -- robotics hardware preflight
+    #stubs pending HAL integration
+    hal_str  = getattr(args, "hal_status_str", "OFF (no embodiment)")
+    body_str = getattr(args, "body_status_str", PLACEHOLDER_EMBODIMENT)
+    print(f"\n[preflight hardware] PASS  - NO-TEST: HAL={hal_str}; body={body_str} — pending integration\n")
+    hal_check = 0
+
+    # part 3 -- integrated system preflight
+    #stubs pending HAL integration
+    print(f"[preflight system functionality] PASS  - NO-TEST: HAL={hal_str}; body={body_str} — pending integration")
+    assessment_check = 0
+
+    # count every PASS/FAIL print as a 'probe' for section 2, hardware_checks for section 3, assessment for section 4
+    probes_pass = max(0, checks - failures)
+    parts.append(f"probes={probes_pass}/{checks}")
+    parts.append(f"hardware_checks = {hal_check}")
+    parts.append(f"system_fitness_assessments = {assessment_check}")
+    parts.append(f"elapsed={elapsed}")
+
+    # summary line
+    status_ok = (failures == 0) and (tests_fail == 0 if isinstance(tests_total, int) else True)
+    line = f"\n[preflight] RESULT: {'PASS' if status_ok else 'FAIL'} | " + " | ".join(parts)
+    print(_paint_fail(line) if not status_ok else line)
+    if status_ok:
+        print_ascii_logo(style="goat", color=True)
+    return 0 if status_ok else 1
+
 
 def run_preflight_lite_maybe():
     """Optional 'lite' preflight on startup (controlled by CCA8_PREFLIGHT)."""
@@ -2097,78 +2349,124 @@ def _sorted_bids(world) -> list[str]:
     return sorted(world._bindings.keys(), key=key_fn)
 
 def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
-    """Return the same snapshot text that #16 writes to world_snapshot.txt.
-
     """
+    Render a human-readable snapshot of the runtime state.
+    Each value also shows its source attribute for maintainers, e.g., "[src=ctx.ticks]".
+
+    Sections:
+    - Header/anchors: EMBODIMENT (ctx.body), NOW/LATEST from world anchors.
+    - CTX (Context): agent state (profile, age_days, ticks, winners_k) +
+      temporal breadcrumbs: vhash64(now)=ctx.tvec64(), epoch=ctx.boundary_no,
+      epoch_vhash64=ctx.boundary_vhash64.
+    - TEMPORAL: params from ctx.temporal (dim, sigma, jump), cos_to_last_boundary;
+      repeats vhash64(now)/epoch/epoch_vhash64; prints a back-compat alias "vhash64:".
+    - DRIVES: drives.hunger/fatigue/warmth.
+    - POLICIES (executed this session): per-policy SkillStat telemetry (from skill_readout()).
+    - ELIGIBLE NOW: policies with dev_gate(ctx) == True (policy_rt.list_loaded_names()).
+    - BINDINGS/EDGES: symbolic nodes/links with their raw sources noted.
+    - Footer: nodes/edges count summary.
+    """
+
+    def _safe(getter, default=None):
+        try:
+            return getter()
+        except Exception:
+            return default
+
     lines: List[str] = []
     lines.append("\n--------------------------------------------------------------------------------------")
     lines.append(f"WorldGraph snapshot at {datetime.now()}")
     lines.append("--------------------------------------------------------------------------------------")
     lines.extend(_snapshot_temporal_legend())
-    body = getattr(ctx, "body", None) or getattr(getattr(ctx, "hal", None), "body", None) or "(none)"
-    lines.append(f"EMBODIMENT: body={body}")
+
+    # Header / anchors
+    body = (getattr(ctx, "body", None)
+            or getattr(getattr(ctx, "hal", None), "body", None)
+            or "(none)")
+    lines.append(f"EMBODIMENT: body={body}  [src=ctx.body or ctx.hal.body]")
+
     now_id = _anchor_id(world, "NOW")
-    lines.append(f"NOW={now_id}  LATEST={world._latest_binding_id}")
+    latest = getattr(world, "_latest_binding_id", "?")
+    lines.append(f"NOW={now_id}  [src=_anchor_id('NOW')]  LATEST={latest}  [src=world._latest_binding_id]")
     lines.append("")
 
-    # CTX
-    lines.append("CTX:")
+    # CTX (Context)
+    lines.append("CTX (Context):")
+    lines.append("(runtime agent state (profile/age/ticks) + TemporalContext soft clock)")
     if ctx is not None:
-        try:
-            from dataclasses import is_dataclass, asdict
-            if is_dataclass(ctx):
-                ctx_dict = asdict(ctx)
-            else:
-                ctx_dict = dict(vars(ctx))
-            #  avoid dumping a huge 128-D vector and a long list
-            ctx_dict.pop("temporal", None)
-            ctx_dict.pop("tvec_last_boundary", None)
-        except Exception:
-            ctx_dict = {}
+        # Print scalar-ish fields explicitly so we can annotate their sources.
+        def _add_ctx_scalar(name: str, src: str, fmt="{v}"):
+            v = getattr(ctx, name, None)
+            if isinstance(v, float):
+                lines.append(f"  {name}: {v:.4f}  [src={src}]")
+            elif v is not None:
+                lines.append(f"  {name}: {fmt.format(v=v)}  [src={src}]")
 
-        if ctx_dict:
-            for k in sorted(ctx_dict.keys()):
-                v = ctx_dict[k]
-                if isinstance(v, float):
-                    lines.append(f"  {k}: {v:.4f}")
-                else:
-                    lines.append(f"  {k}: {v}")
-        else:
-            lines.append("  (none)")
+        _add_ctx_scalar("age_days", "ctx.age_days", "{v:.4f}")
+        _add_ctx_scalar("body", "ctx.body")
+        _add_ctx_scalar("hal", "ctx.hal")
+        _add_ctx_scalar("profile", "ctx.profile")
+        _add_ctx_scalar("ticks", "ctx.ticks")
+        _add_ctx_scalar("winners_k", "ctx.winners_k")
+
+        # Harmonized temporal breadcrumbs in CTX
+        vhash_now = _safe(ctx.tvec64)
+        lines.append(f"  vhash64(now): {vhash_now if vhash_now else '(n/a)'}  [src=ctx.tvec64()]")
+        epoch_vh = getattr(ctx, "boundary_vhash64", None)
+        lines.append(f"  epoch_vhash64: {epoch_vh if epoch_vh else '(n/a)'}  [src=ctx.boundary_vhash64]")
+        epoch_no = getattr(ctx, "boundary_no", 0)
+        lines.append(f"  epoch: {epoch_no}  [src=ctx.boundary_no]")
     else:
         lines.append("  (none)")
     lines.append("")
 
-    # TEMPORAL (added)
+    # TEMPORAL
     tv = getattr(ctx, "temporal", None)
     if tv:
         lines.append("TEMPORAL:")
-        lines.append(f"  context vector: dim setting={getattr(tv,'dim',0)}, time drift setting(sigma)={getattr(tv,'sigma',0.0):.4f}, time event boundary setting(jump)={getattr(tv,'jump',0.0):.4f}")
-        c = None
-        try:
-            c = ctx.cos_to_last_boundary()
-        except Exception:
-            pass
-        lines.append(f"  cos_to_last_boundary (context vector similarity to the last event): {c:.4f}" if isinstance(c, float) else "  cos_to_last_boundary: (n/a)")
-        try:
-            lines.append(f"  context vector vhash64: {ctx.tvec64()}")
-        except Exception:
-            lines.append("  vhash64: (n/a)")
-        # epoch info (optional, purely additive)
-        try:
-            lines.append(f"  event boundary_no: {getattr(ctx, 'boundary_no', 0)}")
-            bvh = getattr(ctx, "boundary_vhash64", None)
-            if bvh:
-                lines.append(f"  last_boundary_vhash64: {bvh}")
-        except Exception:
-            pass
+        dim   = getattr(tv, "dim", 0)
+        sigma = getattr(tv, "sigma", 0.0)
+        jump  = getattr(tv, "jump", 0.0)
+        lines.append(f"  dim={dim}  [src=ctx.temporal.dim]")
+        lines.append(f"  sigma={sigma:.4f}  [src=ctx.temporal.sigma]")
+        lines.append(f"  jump={jump:.4f}  [src=ctx.temporal.jump]")
+
+        c = _safe(ctx.cos_to_last_boundary)
+        lines.append(
+            f"  cos_to_last_boundary: {c:.4f}  [src=ctx.cos_to_last_boundary()]"
+            if isinstance(c, float) else
+            "  cos_to_last_boundary: (n/a)  [src=ctx.cos_to_last_boundary()]"
+        )
+
+        vhash_now = _safe(ctx.tvec64)
+        if vhash_now:
+            lines.append(f"  vhash64(now): {vhash_now}  [src=ctx.tvec64()]")
+            # Back-compat alias for tests expecting plain 'vhash64:'
+            lines.append(f"  vhash64: {vhash_now}  [alias of vhash64(now)]")
+        else:
+            lines.append("  vhash64(now): (n/a)  [src=ctx.tvec64()]")
+            lines.append("  vhash64: (n/a)  [alias of vhash64(now)]")
+
+        epoch_no = getattr(ctx, "boundary_no", 0)
+        lines.append(f"  epoch: {epoch_no}  [src=ctx.boundary_no]")
+        epoch_vh = getattr(ctx, "boundary_vhash64", None)
+        if epoch_vh:
+            lines.append(f"  epoch_vhash64: {epoch_vh}  [src=ctx.boundary_vhash64]")
+            lines.append(f"  last_boundary_vhash64: {epoch_vh}  [alias of epoch_vhash64]")
+
+        lines.append("")
+    else:
+        lines.append("TEMPORAL: (none)")
         lines.append("")
 
     # DRIVES
     lines.append("DRIVES:")
     if drives is not None:
         try:
-            lines.append(f"  hunger={drives.hunger:.2f}, fatigue={drives.fatigue:.2f}, warmth={drives.warmth:.2f}")
+            lines.append(
+                f"  hunger={drives.hunger:.2f}, fatigue={drives.fatigue:.2f}, warmth={drives.warmth:.2f}  "
+                "[src=drives.hunger; drives.fatigue; drives.warmth]"
+            )
         except Exception:
             lines.append("  (unavailable)")
     else:
@@ -2176,7 +2474,7 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.append("")
 
     # POLICIES (skills readout)
-    lines.append("POLICIES:")
+    lines.append("POLICIES:\n (already run at least once, with their SkillStat statistics)  [src=skill_readout()]")
     try:
         sr = skill_readout()
         if sr.strip():
@@ -2189,8 +2487,7 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.append("")
 
     # POLICY GATES (availability)
-    lines.append("POLICIES ELIGIBLE (meet devpt requirements):")
-
+    lines.append("POLICIES ELIGIBLE (meet devpt requirements):  [src=policy_rt.list_loaded_names()]")
     try:
         names = policy_rt.list_loaded_names() if policy_rt is not None else []
         if names:
@@ -2207,38 +2504,53 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     for bid in _sorted_bids(world):
         b = world._bindings[bid]
         tags = ", ".join(sorted(getattr(b, "tags", [])))
-
         eng = getattr(b, "engrams", None)
         if isinstance(eng, dict) and eng:
-            # Build "slot:shortid…" entries when we have an id; otherwise just "slot"
             parts = []
             for slot, val in eng.items():
                 eid = val.get("id") if isinstance(val, dict) else None
                 parts.append(f"{slot}:{eid[:8]}…" if isinstance(eid, str) else slot)
-            lines.append(f"{bid}: [{tags}] engrams=[{', '.join(parts)}]")
+            lines.append(f"{bid}: [{tags}] engrams=[{', '.join(parts)}]  [src=world._bindings['{bid}'].tags/engrams]")
         else:
-            lines.append(f"{bid}: [{tags}]")
+            lines.append(f"{bid}: [{tags}]  [src=world._bindings['{bid}'].tags]")
 
-    # EDGES
+    # EDGES (collapsed duplicates)
     lines.append("")
     lines.append("EDGES:")
-    for bid in _sorted_bids(world):
+    from collections import Counter
+    def _edge_lines_for(bid: str) -> list[str]:
         b = world._bindings[bid]
-        edges = getattr(b, "edges", []) or getattr(b, "out", []) or getattr(b, "links", []) or getattr(b, "outgoing", [])
+        edges = (getattr(b, "edges", []) or getattr(b, "out", []) or
+                 getattr(b, "links", []) or getattr(b, "outgoing", []))
+        out: list[str] = []
         if isinstance(edges, list):
             for e in edges:
                 rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
                 dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
                 if dst:
-                    lines.append(f"{bid} --{rel}--> {dst}")
+                    out.append(f"{bid} --{rel}--> {dst}  [src=world._bindings['{bid}'].edges]")
+        return out
 
-    #return  text to display
+    all_edge_lines: list[str] = []
+    for bid in _sorted_bids(world):
+        all_edge_lines.extend(_edge_lines_for(bid))
+
+    if not all_edge_lines:
+        lines.append("(none)")
+    else:
+        for line, n in Counter(all_edge_lines).items():
+            lines.append(line if n == 1 else f"{line}  ×{n}")
+
+    # Summary footer
+    edges_total = len(all_edge_lines)
+    lines.append(f"Summary: nodes={len(world._bindings)} edges={edges_total}")
     lines.append("--------------------------------------------------------------------------------------\n")
     return "\n".join(lines)
 
 def export_snapshot(world, drives=None, ctx=None, policy_rt=None,
                     path_txt="world_snapshot.txt", _path_dot=None) -> None:
-    """Write a complete snapshot of bindings + edges to a text file (no DOT)."""
+    """Write a complete snapshot of bindings + edges to a text file (no DOT).
+    """
     text_blob = snapshot_text(world, drives=drives, ctx=ctx, policy_rt=policy_rt)
     with open(path_txt, "w", encoding="utf-8") as f:
         f.write(text_blob + "\n")
@@ -2248,6 +2560,173 @@ def export_snapshot(world, drives=None, ctx=None, policy_rt=None,
     print("Exported snapshot (text only):")
     print(f"  {path_txt_abs}")
     print(f"Directory: {out_dir}")
+
+def recent_bindings_text(world, limit: int = 5) -> str:
+    """
+    Build a short, source-annotated list of the last `limit` bindings.
+    For each binding, show tags, engram slots, a tiny edge preview, and key meta.
+    """
+    lines = []
+    last_ids = _sorted_bids(world)[-limit:]
+    if not last_ids:
+        return "(no bindings yet)\n"
+
+    for bid in last_ids:
+        b = world._bindings.get(bid)
+        # tags
+        tags = ", ".join(sorted(getattr(b, "tags", []))) if b else ""
+        lines.append(f"  {bid}: tags=[{tags}]  [src=world._bindings['{bid}'].tags]")
+
+        # engrams
+        eng = getattr(b, "engrams", None) if b else None
+        if isinstance(eng, dict) and eng:
+            parts = []
+            for slot, val in eng.items():
+                eid = val.get("id") if isinstance(val, dict) else None
+                parts.append(f"{slot}:{(eid[:8] + '…') if isinstance(eid, str) else '(id?)'}")
+            lines.append(f"      engrams=[{', '.join(parts)}]  [src=world._bindings['{bid}'].engrams]")
+        else:
+            lines.append(f"      engrams=(none)  [src=world._bindings['{bid}'].engrams]")
+
+        # edges (preview up to 3)
+        edges = (getattr(b, "edges", []) or getattr(b, "out", []) or
+                 getattr(b, "links", []) or getattr(b, "outgoing", [])) if b else []
+        if isinstance(edges, list) and edges:
+            preview = []
+            for e in edges[:3]:
+                rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
+                dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                if dst:
+                    preview.append(f"{rel}:{dst}")
+            more = f" (+{len(edges)-3} more)" if len(edges) > 3 else ""
+            lines.append(
+                f"      outdeg={len(edges)} preview=[{', '.join(preview)}]{more}  "
+                f"[src=world._bindings['{bid}'].edges]"
+            )
+        else:
+            lines.append(f"      outdeg=0  [src=world._bindings['{bid}'].edges]")
+
+        # meta highlights (best-effort)
+        meta = getattr(b, "meta", {}) if b else {}
+        if isinstance(meta, dict) and meta:
+            pol = meta.get("policy") or meta.get("created_by")
+            created = meta.get("created_at") or meta.get("time") or meta.get("ts")
+            extras = []
+            if pol:     extras.append(f"policy={pol}")
+            if created: extras.append(f"created_at={created}")
+            if extras:
+                lines.append(f"      meta: {' '.join(extras)}  [src=world._bindings['{bid}'].meta]")
+
+    return "\n".join(lines) + "\n"
+
+def drives_and_tags_text(drives) -> str:
+    """
+    Human-readable drives panel with source annotations and a concise explainer.
+    """
+    lines = []
+    lines.append("Raw drives (0..1). Policies can read raw values or threshold flags.")
+    lines.append(
+        f"  hunger={drives.hunger:.2f}  [src=drives.hunger]  "
+        f"HUNGER_HIGH={HUNGER_HIGH:.2f}  [src=cca8_controller.HUNGER_HIGH]"
+    )
+    lines.append(
+        f"  fatigue={drives.fatigue:.2f}  [src=drives.fatigue]  "
+        f"FATIGUE_HIGH={FATIGUE_HIGH:.2f}  [src=cca8_controller.FATIGUE_HIGH]"
+    )
+    lines.append(
+        f"  warmth={drives.warmth:.2f}  [src=drives.warmth]  "
+        f"rule:cold if warmth<0.30  [src=_drive_tags (derived)]"
+    )
+
+    # Compute the tags + show where they came from (flags/predicates/derived)
+    if hasattr(drives, "flags") and callable(getattr(drives, "flags")):
+        tag_source = "drives.flags()"
+    elif hasattr(drives, "predicates") and callable(getattr(drives, "predicates")):
+        tag_source = "drives.predicates()"
+    else:
+        tag_source = "derived thresholds (hunger>0.60, fatigue>0.70, warmth<0.30)"
+
+    tags = _drive_tags(drives)
+    lines.append(
+        "Drive tags: " +
+        (", ".join(tags) if tags else "(none)") +
+        f"  [src=_drive_tags → {tag_source}]"
+    )
+
+    lines.append("")
+    lines.append("Where these live:")
+    lines.append("  • Drives object: cca8_controller.Drives  [src=cca8_controller.Drives]")
+    lines.append("  • Updated by: autonomic ticks, policies, or direct code.")
+    lines.append("  • Drive tags here are ephemeral (not persisted unless you choose to).")
+
+    # === Integrated ~10-line explainer ===
+    lines.append("")
+    lines.append("Drive flags = thresholds from raw drives (e.g., hunger>=HUNGER_HIGH")
+    lines.append("  → drive:hunger_high). They are ephemeral and usually NOT written")
+    lines.append("  to the graph; used to gate/weight policies.")
+    lines.append("House style: use pred:drive:* only when you want a planner goal")
+    lines.append("  (e.g., pred:drive:warm_enough). Otherwise treat thresholds as")
+    lines.append("  evidence in triggers (conceptually cue:drive:*).")
+    lines.append("Combine flags with sensory cues (e.g., cue:silhouette:mom) in")
+    lines.append("  policy.trigger(...). Example: hunger>=HUNGER_HIGH AND cue:nipple:found.")
+    lines.append("Priority variant: cues gate; hunger over threshold scales reward/urgency.")
+    lines.append("We compute flags on-the-fly each tick; persist them only for demos/debug.")
+    lines.append("Sources: raw=drives.*, thresholds=HUNGER_HIGH/FATIGUE_HIGH (controller).")
+
+    return "\n".join(lines) + "\n"
+
+def skill_ledger_text(example_policy: str = "policy:stand_up") -> str:
+    """
+    Human-readable explainer for the Skill Ledger with a concrete example and sources.
+    """
+    from math import isfinite
+    lines = []
+    lines.append("The Skill Ledger is per-policy runtime telemetry (RL-flavored):")
+    lines.append("  n=executions, succ=successes, rate=succ/n, q=mean reward, last=last reward.")
+    lines.append("  Used as a quick controller health check and for tuning/diagnostics.")
+    lines.append("Sources: live in-memory ledger → cca8_controller.SKILLS;")
+    lines.append("         programmatic snapshot → cca8_controller.skills_to_dict();")
+    lines.append("         human-readable lines  → cca8_controller.skill_readout().")
+    lines.append("")
+
+    # Example row (policy:stand_up) pulled from skills_to_dict(), with fallbacks
+    try:
+        d = skills_to_dict() or {}
+    except Exception:
+        d = {}
+    row = d.get(example_policy, {}) if isinstance(d, dict) else {}
+
+    def _get(dd, *keys, default=None):
+        for k in keys:
+            if isinstance(dd, dict) and k in dd:
+                return dd[k]
+        return default
+
+    n     = _get(row, "n", "runs", "count", default=0) or 0
+    succ  = _get(row, "succ", "successes", "ok", default=0) or 0
+    rate  = _get(row, "rate", default=(succ / n if n else None))
+    q     = _get(row, "q", "mean_reward", "avg", default=None)
+    last  = _get(row, "last", "last_reward", default=None)
+
+    def _fmt(x, nd=2, plus=False):
+        if x is None:
+            return "n/a"
+        try:
+            val = float(x)
+            if not isfinite(val):
+                return "n/a"
+            s = f"{val:+.{nd}f}" if plus else f"{val:.{nd}f}"
+            return s
+        except Exception:
+            return str(x)
+
+    lines.append(f"Example ({example_policy}): "
+                 f"n={n}, succ={succ}, rate={_fmt(rate)}, q={_fmt(q)}, last={_fmt(last, plus=True)}  "
+                 f"[src=skills_to_dict()['{example_policy}']]")
+    lines.append("")
+    lines.append("Interpretation: higher n builds confidence; rate≈1.0 means it rarely fails;")
+    lines.append("q tracks average reward quality; last is the most recent reward sample.")
+    return "\n".join(lines) + "\n"
 
 def _io_banner(args, loaded_path: str | None, loaded_ok: bool) -> None:
     """Explain how load/autosave will behave for this run."""
@@ -2782,18 +3261,13 @@ def interactive_loop(args: argparse.Namespace) -> None:
             # Show last 5 bindings
             print("Selection Recent Bindings\n")
             print("Shows the 5 most recent bindings (bN). For each: tags and any engram slots attached.")
+            print(" 'outdeg' is the number of outgoing edges, e.g., outdeg=2 means there are 2 outgoing edges")
+            print(" 'preview' is a short sample of up to 3 these outgoing edges")
+            print("     e.g., outdeg=2 preview=[initiate_stand:b2, then:b3]")
+            print("     -this means 2 outgoing edges, 1 edge goes to b2 with action label 'initiate_stand', 1 edge goes to b3 with action label 'then'}")
             print("Tip: use 'Inspect binding details' for full meta/edges on a specific id.\n")
 
-            #last_ids = sorted(world._bindings.keys(), key=lambda x: int(x[1:]))[-5:]
-            last_ids = _sorted_bids(world)[-5:]
-            for bid in last_ids:
-                b = world._bindings[bid]
-                #tags = ", ".join(sorted(b.tags))
-                tags = ", ".join(sorted(getattr(b, "tags", []))) #in case bindings without a tags list
-                print(f"  {bid}: tags=[{tags}] engrams={list((b.engrams or {}).keys())}")
-            if not last_ids:
-                print("(no bindings yet)")
-            print()
+            print(recent_bindings_text(world, limit=5))
             loop_helper(args.autosave, world, drives)
 
         elif choice == "8":
@@ -2809,8 +3283,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
         elif choice == "9":
             # Run preflight now
             print("Selection Preflight\n")
-            print("Runs pytest (unit tests) and coverage, then a series of sanity probes. See PASS/FAIL lines above.")
-            print("Note: pytest coverage percentage (and line totals) excludes lines with docstrings, comments, prints, and logging.\n")
+            print("Runs pytest (unit tests framework) and coverage, then a series of whole-flow custom tests.\n")
 
             #rc = run_preflight_full(args)
             run_preflight_full(args)
@@ -2973,10 +3446,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "13":
-            # Show skill stats
+            # Skill Ledger
             print("Selection Skill Ledger\n")
-            print("Per-policy counts, success rate, and quality ‘q’. Read this as a quick controller health check.\n")
-
+            print(skill_ledger_text("policy:stand_up"))
+            print("Full ledger:  [src=cca8_controller.skill_readout()]")
             print(skill_readout())
             loop_helper(args.autosave, world, drives)
 
@@ -3047,8 +3520,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
         elif choice == "17":
             # Display snapshot
             print("Selection Snapshot (WorldGraph + CTX + Policies)\n")
-            print("A full, human-readable dump. The LEGEND explains temporal fields; anchors and edges follow.")
-            print("Tip: after this, you can optionally generate an interactive HTML graph.\n")
+            print("A full, human-readable dump. The LEGEND explains some of the terms.")
+            print("Note: Various tutorials and the README/Compendium file can help you understand the terms and functionality better.")
+            print("Note: At the end of the snapshot you have the option to generate an interactive HTML graph of WorldGraph.\n")
 
             print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT))
 
@@ -3352,37 +3826,53 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "26":
-            # Temporal probe (epoch/hash/cos/hamming)
-            print("[temporal probe]")
-            # Epoch + hashes
-            epoch = getattr(ctx, "boundary_no", 0)
-            vhash = ctx.tvec64() if hasattr(ctx, "tvec64") else None
-            lbvh  = getattr(ctx, "boundary_vhash64", None)
-            print(f"  epoch (i.e., event changes) ={epoch}")
-            print(f"  vhash64 (describes context vector)={vhash if vhash else '(n/a)'}")
-            print(f"  last_boundary_vhash64={lbvh if lbvh else '(n/a)'}")
+            # Temporal probe (harmonized with Snapshot naming)
+            print("Selection Temporal Probe\n")
+            print("Shows the temporal soft clock using the same names as Snapshot,")
+            print("with source attributes for each value.\n")
 
-            # Cosine to last boundary (if available)
+            # Epoch + hashes (same names as Snapshot)
+            epoch = getattr(ctx, "boundary_no", 0)
+            vhash_now = ctx.tvec64() if hasattr(ctx, "tvec64") else None
+            epoch_vh  = getattr(ctx, "boundary_vhash64", None)
+
+            print(f"  vhash64(now): {vhash_now if vhash_now else '(n/a)'}  [src=ctx.tvec64()]")
+            print(f"  vhash64: {vhash_now if vhash_now else '(n/a)'}  [alias of vhash64(now)]")
+            print(f"  epoch: {epoch}  [src=ctx.boundary_no]")
+            print(f"  epoch_vhash64: {epoch_vh if epoch_vh else '(n/a)'}  [src=ctx.boundary_vhash64]")
+            print(f"  last_boundary_vhash64: {epoch_vh if epoch_vh else '(n/a)'}  [alias of epoch_vhash64]")
+
+            # Cosine to last boundary (same name as Snapshot)
             cos = None
             try:
                 cos = ctx.cos_to_last_boundary()
             except Exception:
-                pass
+                cos = None
             if isinstance(cos, float):
-                print(f"  cos_to_last_boundary (cosine similarity with vector of event boundary)={cos:.4f}")
+                print(f"  cos_to_last_boundary: {cos:.4f}  [src=ctx.cos_to_last_boundary()]")
+            else:
+                print("  cos_to_last_boundary: (n/a)  [src=ctx.cos_to_last_boundary()]")
 
-            # Hamming distance (0..64) between current vhash and last boundary
-            if vhash and lbvh:
-                h = _hamming_hex64(vhash, lbvh)
-                if h >= 0:
-                    print(f"  hamming (differences in vectors: vhash,last_boundary)={h} bits (0..64)")
+            # Hamming distance between hashes (0..64), optional
+            if vhash_now and epoch_vh:
+                try:
+                    h = _hamming_hex64(vhash_now, epoch_vh)
+                    if h >= 0:
+                        print(f"  hamming(vhash64,epoch_vhash64): {h} bits (0..64)  [src=_hamming_hex64]")
+                except Exception:
+                    pass
 
-            # Temporal parameters
+            # Temporal parameters (same keys as Snapshot)
             tv = getattr(ctx, "temporal", None)
             if tv:
-                print(f"  dim (of context vector)={getattr(tv,'dim',0)}, sigma (time drift coefficient) ={getattr(tv,'sigma',0.0):.4f}, jump (boundary jump coefficient)={getattr(tv,'jump',0.0):.4f}")
+                dim   = getattr(tv, "dim", 0)
+                sigma = getattr(tv, "sigma", 0.0)
+                jump  = getattr(tv, "jump", 0.0)
+                print(f"  dim={dim}  [src=ctx.temporal.dim]")
+                print(f"  sigma={sigma:.4f}  [src=ctx.temporal.sigma]")
+                print(f"  jump={jump:.4f}  [src=ctx.temporal.jump]")
 
-            # Status based on cosine vs. last boundary
+            # Status derived from cosine, same thresholds as elsewhere
             if isinstance(cos, float):
                 if cos >= 0.99:
                     status = "ON-EVENT BOUNDARY"
@@ -3390,7 +3880,25 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     status = "EVENT BOUNDARY-SOON"
                 else:
                     status = "DRIFTING slowly forward in time"
-                print(f"  status={status}")
+                print(f"  status={status}  [derived from cos_to_last_boundary]")
+
+            # Explanation (matches Snapshot nomenclature)
+            print("\nExplanation:")
+            print("  The temporal soft clock keeps two fingerprints of a unit vector:")
+            print("    • vhash64(now) — current context vector fingerprint  [src=ctx.tvec64()]")
+            print("    • epoch_vhash64 — fingerprint captured at the last boundary  [src=ctx.boundary_vhash64]")
+            print("  Between boundaries the vector DRIFTS a little each tick (sigma). When a new")
+            print("  event occurs, boundary() applies a larger JUMP (jump), we record epoch_vhash64")
+            print("  to the new value, and vhash64(now) equals it immediately after.")
+            print("  Elapsed-within-epoch can be estimated by comparing now vs boundary:")
+            print("    • cos_to_last_boundary ≈ 1.000 at a boundary and decreases with drift;")
+            print("    • Hamming(vhash64(now), epoch_vhash64) counts bit flips (0..64).")
+
+            # Small legend (matches Snapshot legend terms)
+            print("\nLegend:")
+            print("  epoch = event boundary count; increments when boundary() is taken")
+            print("  vhash64(now) = fingerprint of current temporal vector")
+            print("  epoch_vhash64 = fingerprint at last boundary (alias: last_boundary_vhash64)")
 
             loop_helper(args.autosave, world, drives)
 
@@ -3720,12 +4228,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
         elif choice.lower() == "d":
             # Show drives (raw + tags), robust across Drives variants
             print("Selection Drives & Drive Tags\n")
-            print("Raw: hunger/fatigue/warmth. Tags summarize thresholds (e.g., drive:hunger_high).")
-            print("Policies may trigger on tags; autonomic ticks slowly change these values.\n")
-
-            print(f"hunger={drives.hunger:.2f}, fatigue={drives.fatigue:.2f}, warmth={drives.warmth:.2f}")
-            tags = _drive_tags(drives)
-            print("drive tags:", ", ".join(tags) if tags else "(none)")
+            print("Shows raw drive values and threshold flags with their sources.\n")
+            print(drives_and_tags_text(drives))
             loop_helper(args.autosave, world, drives)
 
         elif choice.lower() == "r":

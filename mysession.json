@@ -1,0 +1,47 @@
+{
+  "saved_at": "2025-11-08T06:10:36",
+  "world": {
+    "bindings": {
+      "b1": {
+        "id": "b1",
+        "tags": [
+          "anchor:NOW"
+        ],
+        "edges": [
+          {
+            "to": "b2",
+            "label": "initiate_stand",
+            "meta": {}
+          }
+        ],
+        "meta": {},
+        "engrams": {}
+      },
+      "b2": {
+        "id": "b2",
+        "tags": [
+          "pred:stand"
+        ],
+        "edges": [],
+        "meta": {
+          "boot": "init",
+          "added_by": "system"
+        },
+        "engrams": {}
+      }
+    },
+    "anchors": {
+      "NOW": "b1"
+    },
+    "latest": "b2",
+    "version": "0.1"
+  },
+  "drives": {
+    "hunger": 0.7,
+    "fatigue": 0.2,
+    "warmth": 0.6
+  },
+  "skills": {},
+  "app_version": "cca8_run/0.8.0",
+  "platform": "Windows-10-10.0.26200-SP0"
+}

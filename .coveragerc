@@ -23,11 +23,9 @@ fail_under = 30
 #fail message if less than the <number shown> % coverage by pytest of the software
 #note -- does not consider docstrings
 
-
 # Ignore common non-behavioral lines
-# Thus will not count lines with print statements, input statements, logging
-# Also not count typing-only guard lines, overload decorators, stub guard lines, placeholder pass lines
-# Note -- comments # are not counted by default
+# Comments/docstrings are already ignored by coverage’s parser;
+# these patterns remove obvious UI-only code from the denominator.
 exclude_lines =
     pragma: no cover
     ^\s*if TYPE_CHECKING:
@@ -37,9 +35,8 @@ exclude_lines =
     ^\s*print\(
     ^\s*input\(
     ^\s*logger\.(debug|info|warning|error|critical)\(
-    ^\\s*(\"\"\"|''')
 
-
-# True docstrings are usually not counted, but this hides stray """ blocks too.
+# Optional: also drop bare triple-quote lines that aren't docstrings
+# (docstrings are ignored anyway; this just hides stray """ lines)
 exclude_also =
-    ^\s*("""|''')  # opening/closing triple-quote lines
+    ^\s*("""|''')$
