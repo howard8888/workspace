@@ -22,7 +22,7 @@ Key ideas for readers and new collaborators
 - **Edge**: a directed link between bindings with a label (often "then") for **weak causality**.
 - **WorldGraph**: the small, fast *episode index* (~5% information). Rich content goes in engrams.
 - **Policy (primitive)**: behavior object with `trigger(world, drives)` and `execute(world, ctx, drives)`.
-  The Action Center scans the ordered list of policies and runs the first that triggers (one "tick").
+  The Action Center scans the ordered list of policies and runs the first that triggers (one "controller step").
 - **Autosave/Load**: JSON snapshot with `world`, `drives`, `skills`, plus a `saved_at` timestamp.
 
 This runner presents an interactive menu for inspecting the world, planning, adding predicates,
@@ -51,6 +51,8 @@ from dataclasses import dataclass
 from typing import Optional, Any, Dict, List, Callable
 from typing import DefaultDict
 from collections import defaultdict
+import random
+import time
 import subprocess
 import shutil
 
@@ -88,7 +90,7 @@ __all__ = [
     "__version__",
     "Ctx",
 ]
-
+NON_WIN_LINUX = False  #set if non-Win, non-macOS, non-Linux/like OS
 PLACEHOLDER_EMBODIMENT = '0.0.0 : none specified'
 
 ASCII_LOGOS = {
@@ -111,22 +113,58 @@ ASCII_LOGOS = {
 class Ctx:
     """Mutable runtime context for the agent (module-level, importable).
 
-    Boundary object passed between the engine and the CLI.
+    Timekeeping (soft clock + counters)
+    -----------------------------------
+    controller_steps : int
+        Count of Action Center decision/execution loops run in this session
+        (aka “instinct steps”). This is not wall-clock; it’s for analysis/debug.
+        Resettable.
+
+    cog_cycles : int
+        Count of completed “cognitive cycles” that produced an output
+        (sense→decide→act *and* a write occurred in the WorldGraph).
+        Resettable.
+
+    Temporal timekeeping (soft clock)
+    ---------------------------------
+    temporal : TemporalContext | None
+        Owner of the procedural “now” vector and step()/boundary() operations.
+    sigma : float
+        Drift noise magnitude applied each step() (larger → faster cosine decay within epoch).
+    jump : float
+        Boundary noise magnitude applied on boundary() (larger → deeper post-boundary separation).
+    tvec_last_boundary : list[float] | None
+        Copy of the vector at the last boundary; used for cosine(current, last_boundary).
+    boundary_no : int
+        Epoch counter; incremented on each boundary() call.
+    boundary_vhash64 : str | None
+        64-bit sign-bit fingerprint of the vector at the last boundary (readable hex).
     """
     sigma: float = 0.015
     jump: float = 0.2
     age_days: float = 0.0
     ticks: int = 0
     profile: str = "Mountain Goat"
-    winners_k: Optional[int] = None   # record profile’s selection fan-out (e.g., 2)
+    winners_k: Optional[int] = None
     hal: Optional[Any] = None
     body: str = "(none)"
     temporal: Optional[TemporalContext] = None
     tvec_last_boundary: Optional[list[float]] = None
-    # Boundary tracking (incremented on each boundary() call)
     boundary_no: int = 0
     boundary_vhash64: Optional[str] = None
+    controller_steps: int = 0   # resettable analysis counter
+    cog_cycles: int = 0         # resettable analysis counter
 
+
+    def reset_controller_steps(self) -> None:
+        """quick reset of Ctx.controller_steps counter
+        """
+        self.controller_steps = 0
+
+    def reset_cog_cycles(self) -> None:
+        """quick reset of Ctx.cog_cycles counter
+        """
+        self.cog_cycles = 0
 
     def tvec64(self) -> Optional[str]:
         """64-bit sign-bit fingerprint of the temporal vector (hex)."""
@@ -414,14 +452,21 @@ def print_ascii_logo(style: str = None, color: bool = True) -> None:  # pragma: 
 def _snapshot_temporal_legend() -> list[str]:
     return [
         "LEGEND (temporal terms):",
-        "  epoch: event boundary count; increments when boundary() is taken",
-        "  vhash64(now): 64-bit sign-bit fingerprint of the current context vector",
-        "  epoch_vhash64: 64-bit fingerprint of the vector at the last boundary",
-        "  last_boundary_vhash64: alias of epoch_vhash64 (kept for back-compat)",
-        "  cos_to_last_boundary: cosine(current vector, last boundary vector)",
+        "  epoch: event boundary count; increments when boundary() is taken  [src=ctx.boundary_no]",
+        "  vhash64(now): 64-bit sign-bit fingerprint of the current context vector  [src=ctx.tvec64()]",
+        "  epoch_vhash64: 64-bit fingerprint of the vector at the last boundary  [src=ctx.boundary_vhash64]",
+        "  last_boundary_vhash64: alias of epoch_vhash64 (kept for back-compat)  [alias of epoch_vhash64]",
+        "  cos_to_last_boundary: cosine(current vector, last boundary vector)  [src=ctx.cos_to_last_boundary()]",
         "  binding (== node): holds tags, pointers to engrams, and directed edges",
+        "",
+        "Five measures of time in the CCA8 system:",
+        "  1. controller steps — one Action Center decision/execution loop   [src=ctx.controller_steps]",
+        "  2. temporal drift — cos_to_last_boundary (cosine(current, last boundary))  [src=ctx.cos_to_last_boundary(); advanced by ctx.temporal.step()]",
+        "  3. autonomic ticks — heartbeat for physiology/IO (robotics integration)  [src=ctx.ticks]",
+        "  4. developmental age — age_days  [src=ctx.age_days]",
+        "  5. cognitive cycles — full sense->process->opt. action cycle  [src=ctx.cog_cycles]"
         "  **see menu tutorials for more about these terms**",
-        "\n",
+        "",
     ]
 
 def _compute_loc_by_dir(suffixes=(".py",),skip_folders=(".git", ".venv", "build", "dist", ".pytest_cache", "__pycache__")):
@@ -1096,7 +1141,6 @@ def profile_human_multi_brains(_ctx, world) -> tuple[str, float, float, int]:
     # Scaffolding (non-crashing; prints a trace and falls back)
     try:
         import copy
-        import random
         random.seed(42)  # deterministic demo
 
         print("[scaffold] Spawning 5 parallel 'brains' (sandbox worlds)...")
@@ -1173,7 +1217,6 @@ def profile_society_multi_agents(_ctx) -> tuple[str, float, float, int]:
 
     # Scaffolding: create 3 tiny agents, run one tick, pass a simple message
     try:
-        import random
         random.seed(7)  # deterministic print
 
         @dataclass
@@ -1245,7 +1288,6 @@ def profile_multi_brains_adv_planning(_ctx) -> tuple[str, float, float, int]:
 
     # Scaffolding: 5 brains × 256 processors → 1280 candidate plans; pick a champion (no world writes)
     try:
-        import random
         random.seed(20251)  # reproducible demo
 
         brain_count       = 5
@@ -1309,7 +1351,6 @@ def profile_superhuman(_ctx) -> tuple[str, float, float, int]:
 
     # Scaffolding: three-module meta-controller, pick best proposal (no world writes)
     try:
-        import random
         random.seed(123)
 
         modules = [
@@ -2270,49 +2311,208 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"action helpers failed: {e}")
 
-    # Summary footer
-    elapsed = _fmt_hms(_time.perf_counter() - t0)
 
-    # Try to read pytest results (may not exist if tests dir missing)
+    # part 3 -- hardware and robotics preflight
+    hal_str  = getattr(args, "hal_status_str", "OFF (no embodiment)")
+    body_str = getattr(args, "body_status_str", PLACEHOLDER_EMBODIMENT)
+    print(f"\n[preflight hardware_robotics] HAL={hal_str}; body={body_str}")
+
+    hal_checks = 0
+    hal_failures = 0
+
+    def ok_hw(msg: str) -> None:
+        nonlocal hal_checks
+        hal_checks += 1
+        print(f"[preflight hardware_robotics] PASS  - {msg}")
+
+    def bad_hw(msg: str) -> None:
+        nonlocal hal_checks, hal_failures
+        hal_checks += 1
+        hal_failures += 1
+        print(f"[preflight hardware_robotics] FAIL  - {msg}")
+
+    # 3a) CPU enumeration
+    try:
+        _n = os.cpu_count() or 0
+        if _n > 0:
+            ok_hw(f"cpu_count={_n}")
+        else:
+            bad_hw("cpu_count returned 0")
+    except Exception as e:
+        bad_hw(f"cpu_count error: {e}")
+
+    # 3b) High-resolution timer sanity (monotonic + resolution)
+    try:
+        import time as _time2
+        info = _time2.get_clock_info("perf_counter")
+        res  = getattr(info, "resolution", None)
+        a = _time2.perf_counter(); b = _time2.perf_counter(); c = _time2.perf_counter()
+        if a < b < c:
+            ok_hw(f"perf_counter monotonic (resolution≈{res:.9f}s)")
+        else:
+            bad_hw("perf_counter did not strictly increase")
+    except Exception as e:
+        bad_hw(f"perf_counter check error: {e}")
+
+    # 3c) Temp file write/read (4 KiB)
+    try:
+        import tempfile as _tempfile
+        with _tempfile.NamedTemporaryFile("wb", delete=True) as tf:
+            tf.write(b"\0" * 4096)
+            tf.flush()
+        ok_hw("temp file write (4 KiB)")
+    except Exception as e:
+        bad_hw(f"temp file write failed: {e}")
+
+    # 3d) System memory (GiB) ≥ MIN_RAM_GB (default 4 -- Nov 2025)
+    #adjust minimum RAM tested as makes sense for the hardware
+    #looks for RAM in this order: psutil (if available), then Windows, then Linux, then MacOS, then Linux-like
+    #if NON_WIN_LINUX=True for non-Win/macOS/Linux/like system, then test is bypassed
+    try:
+        if NON_WIN_LINUX:
+            MIN_RAM_GB = 0.0
+        else:
+            MIN_RAM_GB = float(os.getenv("CCA8_MIN_RAM_GB", "4"))
+        min_bytes = int(MIN_RAM_GB * (1024 ** 3))
+        #min_bytes = int(5000.0 * (1024 ** 3))  #for testing to trigger a hardware testing warning
+
+        def _total_ram_bytes() -> int:
+            # Optional: psutil if present
+            try:
+                import psutil  # type: ignore
+                return int(psutil.virtual_memory().total)
+            except Exception:
+                pass
+            # Windows: GlobalMemoryStatusEx
+            try:
+                import ctypes
+                class MEMORYSTATUSEX(ctypes.Structure): # pylint: disable=too-few-public-methods
+                    """from cytpes library to store system info"""
+                    _fields_ = [
+                        ("dwLength", ctypes.c_ulong),
+                        ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong),
+                        ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                    ]
+                stat = MEMORYSTATUSEX()
+                stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX) # pylint: disable=attribute-defined-outside-init
+                if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                    return int(stat.ullTotalPhys)
+            except Exception:
+                pass
+            # Linux: sysconf
+            try:
+                sysconf_fn: Optional[Callable[[str], int]] = getattr(os, "sysconf", None)  # type: ignore[attr-defined]
+                if sysconf_fn is not None:
+                    page = int(sysconf_fn("SC_PAGE_SIZE"))   # ok: Pylint sees a Callable
+                    phys = int(sysconf_fn("SC_PHYS_PAGES"))
+                    return page * phys
+            except Exception:
+                pass
+            # macOS: sysctl
+            try:
+                out = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True).strip()
+                return int(out)
+            except Exception:
+                pass
+            # Fallback: /proc/meminfo (Linux-like)
+            try:
+                with open("/proc/meminfo", "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.startswith("MemTotal:"):
+                            # value reported in kB
+                            return int(line.split()[1]) * 1024
+            except Exception:
+                pass
+            return 0
+
+        _total = _total_ram_bytes()
+        if _total >= min_bytes:
+            ok_hw(f"memory total={_total/(1024**3):.1f} GB -- (threshold RAM ≥{MIN_RAM_GB:.0f} GiB)")
+        else:
+            bad_hw(f"memory total={_total/(1024**3):.1f} GB -- below threshold RAM of {MIN_RAM_GB:.0f} GiB")
+    except Exception as e:
+        bad_hw(f"memory check error: {e}")
+
+    # 3e) Disk free space on current volume ≥ MIN_DISK_GB (default 1)
+    try:
+        MIN_DISK_GB = float(os.getenv("CCA8_MIN_DISK_GB", "1"))
+        _, _, free = shutil.disk_usage(".")
+        if free >= int(MIN_DISK_GB * (1024 ** 3)):
+            ok_hw(f"disk free={free/(1024**3):.1f} GiB (threshold≥{MIN_DISK_GB:.0f} GiB)")
+        else:
+            bad_hw(f"disk free={free/(1024**3):.1f} GiB below threshold {MIN_DISK_GB:.0f} GiB")
+    except Exception as e:
+        bad_hw(f"disk free check error: {e}")
+
+
+    # part 4 -- integrated system preflight (stub)
+    print(f"\n[preflight system functionality] PASS  - NO-TEST: HAL={hal_str}; body={body_str} — pending integration")
+    assessment_checks = 0
+    assessment_failures = 0
+
+
+    # Compute Summary Results
+    # ---- Summary footer (with denominators) ----
+    elapsed_total = _time.perf_counter() - t0
+    mm, ss = divmod(int(round(elapsed_total)), 60)
+    elapsed_mmss = f"{mm:02d}:{ss:02d}"
+
+    # Tests / coverage (Part 1)
     junit = _parse_junit_xml(".coverage/junit.xml")
     tests_total = junit.get("tests")
     tests_fail  = (junit.get("failures", 0) or 0) + (junit.get("errors", 0) or 0)
     tests_skip  = junit.get("skipped", 0) or 0
     tests_pass  = (tests_total - tests_fail - tests_skip) if isinstance(tests_total, int) else None
+    cov_pct     = _parse_coverage_pct(".coverage/coverage.xml")
 
-    cov_pct = _parse_coverage_pct(".coverage/coverage.xml")
+    tests_txt = (f"unit_tests={tests_pass}/{tests_total}"
+                 if isinstance(tests_total, int) else "unit_tests=—")
+    cov_txt   = (f"coverage={cov_pct:.0f}% ({'≥30' if (cov_pct or 0.0) >= 30.0 else '<30'})"
+                 if (cov_pct is not None) else "coverage=—")
 
-    parts = []
-    parts.append(f"tests={tests_pass}/{tests_total}" if isinstance(tests_total, int)
-                 else "tests=—")
-    if cov_pct is not None:
-        parts.append(f"coverage={cov_pct:.0f}% ({'≥30' if cov_pct >= 30.0 else '<30'})")
-    else:
-        parts.append("coverage=—")
-
-    # part 3 -- robotics hardware preflight
-    #stubs pending HAL integration
-    hal_str  = getattr(args, "hal_status_str", "OFF (no embodiment)")
-    body_str = getattr(args, "body_status_str", PLACEHOLDER_EMBODIMENT)
-    print(f"\n[preflight hardware] PASS  - NO-TEST: HAL={hal_str}; body={body_str} — pending integration\n")
-    hal_check = 0
-
-    # part 3 -- integrated system preflight
-    #stubs pending HAL integration
-    print(f"[preflight system functionality] PASS  - NO-TEST: HAL={hal_str}; body={body_str} — pending integration")
-    assessment_check = 0
-
-    # count every PASS/FAIL print as a 'probe' for section 2, hardware_checks for section 3, assessment for section 4
+    # Probes (Part 2) — counts come from your ok()/bad() probe counters
     probes_pass = max(0, checks - failures)
-    parts.append(f"probes={probes_pass}/{checks}")
-    parts.append(f"hardware_checks = {hal_check}")
-    parts.append(f"system_fitness_assessments = {assessment_check}")
-    parts.append(f"elapsed={elapsed}")
+    probes_txt  = f"probes={probes_pass}/{checks}"
 
-    # summary line
-    status_ok = (failures == 0) and (tests_fail == 0 if isinstance(tests_total, int) else True)
-    line = f"\n[preflight] RESULT: {'PASS' if status_ok else 'FAIL'} | " + " | ".join(parts)
-    print(_paint_fail(line) if not status_ok else line)
+    # Hardware (Part 3) — show pass/total
+    hardware_pass = max(0, hal_checks - hal_failures)
+
+    # System fitness (Part 4) — show pass/total (stub)
+    assessment_checks = locals().get("assessment_checks", 0)
+    assessment_failures = locals().get("assessment_failures", 0)
+    assess_pass = max(0, assessment_checks - assessment_failures)
+
+    # Overall status (fail if any part failed)
+    status_ok = (
+        (failures == 0) and
+        (hal_failures == 0) and
+        (assessment_failures == 0) and
+        (tests_fail == 0 if isinstance(tests_total, int) else True)
+    )
+
+    line1 = f"\n[preflight] RESULT: {'PASS' if status_ok else 'FAIL'} | PART 1: {tests_txt} | {cov_txt} | PART 2: {probes_txt} |"
+    line2 = (f"[preflight] PART 3: hardware_robotics_checks = {hardware_pass}/{hal_checks} | "
+             f"PART 4: system_fitness_assessments = {assess_pass}/{assessment_checks} |")
+    line3 = f"[preflight] elapsed_time (mm:ss) ={elapsed_mmss}"
+
+    print(_paint_fail(line1) if not status_ok else line1)
+
+    # If any non-test part failed, color line2 as well for quick scanning
+    if hal_failures or assessment_failures:
+        print(_paint_fail(line2))
+    else:
+        print(line2)
+    print(line3)
+    random.seed(time.perf_counter_ns())
+    if assessment_failures == 0 and status_ok and random.randint(1,10) in (2, 3, 4):  #silly humor
+        print("\nError!! ###$#$# !!  system_fitness_assessments has DIVIDE BY ZERO ERROR -- DANGER!! DANGER!!\n.... just kidding:)\n")
+
     if status_ok:
         print_ascii_logo(style="goat", color=True)
     return 0 if status_ok else 1
@@ -2406,8 +2606,13 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
         _add_ctx_scalar("body", "ctx.body")
         _add_ctx_scalar("hal", "ctx.hal")
         _add_ctx_scalar("profile", "ctx.profile")
-        _add_ctx_scalar("ticks", "ctx.ticks")
+        lines.append(f"  autonomic_ticks: {getattr(ctx,'ticks',0)}  [src=ctx.ticks]")
         _add_ctx_scalar("winners_k", "ctx.winners_k")
+
+        lines.append(
+            "  counts: controller_steps="
+            f"{getattr(ctx,'controller_steps',0)}, cog_cycles={getattr(ctx,'cog_cycles',0)}, "
+            f"temporal_epochs={getattr(ctx,'boundary_no',0)}, autonomic_ticks={getattr(ctx,'ticks',0)}" )
 
         # Harmonized temporal breadcrumbs in CTX
         vhash_now = _safe(ctx.tvec64)
@@ -2670,7 +2875,7 @@ def drives_and_tags_text(drives) -> str:
     lines.append("Combine flags with sensory cues (e.g., cue:silhouette:mom) in")
     lines.append("  policy.trigger(...). Example: hunger>=HUNGER_HIGH AND cue:nipple:found.")
     lines.append("Priority variant: cues gate; hunger over threshold scales reward/urgency.")
-    lines.append("We compute flags on-the-fly each tick; persist them only for demos/debug.")
+    lines.append("We compute flags on-the-fly each controller step or autonomic tick; persist them only for demos/debug.")
     lines.append("Sources: raw=drives.*, thresholds=HUNGER_HIGH/FATIGUE_HIGH (controller).")
 
     return "\n".join(lines) + "\n"
@@ -3345,10 +3550,51 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     print(fired)
             loop_helper(args.autosave, world, drives)
 
-
         elif choice == "12":
             # Instinct step
             print("Selection Instinct Step\n")
+            # Quick explainer for the user before the step runs
+            print(
+    '''Purpose:
+      • Run ONE controller step ("instinct step") which will:
+       i.   Advance the soft temporal clock (temporal drift) (but not other measures of time)
+       ii.  Propose a write-base (base_suggestion): NEAREST_PRED(targets), then HERE, then NOW
+       iii. Build a small FOA (focus-of-attention): union of small neighborhoods around NOW, LATEST, cues
+       iv.  Evaluate loaded policies and execute the first that triggers (safety-first)
+       v.   If the controller wrote new facts, then boundary jump (epoch++)
+
+    Let's consider an example. Consider the Mountain Goat simulation at its start, just after
+        the goat calf is born.
+
+    There is by default a binding b1 with the tag "anchor:NOW" and the default bootup routines
+        will create a binding b2 with the tag "pred:stand" and a link from b1 to b2 -- this all exists.
+    Ok... then we run an "instinct step".
+
+    i.  -there is a small drift of the context vector via ctx.temporal.step()
+         (this will not usually matter since after a policy executes there is new event and vectors synchronize)
+
+    ii. -the Action Center has to decide where it link new bindings to
+        -base_suggestion = choose_contextual_base(..., targets=['state:posture_standing', 'stand'])
+        -it first looks for NEAREST_PRED(target) and success since b2 meets the target specified
+        -thus, base_suggestion = binding b2 is binding to link new bindings to
+        -the suggestion is not used since that link already exists
+        -base_suggestions can be used at different times to control write placement
+
+    iii. -FOA focus of attention -- size of 2 bindings near NOW/LATEST, cues (for lightweight planning)
+
+
+    iv. -policy:stand_up when considered can be triggered since age_days is <3.0 and stand near NOW is True
+        -thus, policy:stand_up runs and as result there new bindings b3, b4, b5, and bindings b2 through b5 are linked
+
+    v.  -a new event occurred, thus there is a temporal jump, with epoch++
+
+    ''')
+
+            # Count one controller step
+            try:
+                ctx.controller_steps += 1
+            except Exception:
+                pass
 
             before_n = len(world._bindings)
 
@@ -3382,6 +3628,13 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
             result = action_center_step(world, ctx, drives)
             after_n  = len(world._bindings)  # NEW: measure write delta for this path
+
+            # Count a cognitive cycle only if the step produced an output (a real write)
+            if isinstance(result, dict) and result.get("status") == "ok" and after_n > before_n:
+                try:
+                    ctx.cog_cycles += 1
+                except Exception:
+                    pass
 
             # Explicit summary of what executed
             if isinstance(result, dict):
@@ -3456,7 +3709,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
         elif choice == "14":
             # Autonomic tick
             print("Selection Autonomic Tick\n")
-            print("Simulates internal drift: fatigue↑, ticks/age_days advance, optional temporal step/boundary.")
+            print("Fixed-rate heartbeat: fatigue↑, autonomic_ticks/age_days advance, temporal drift here (with optional boundary).")
             print("Often followed by a controller check to see if any policy should act.\n")
 
             drives.fatigue = min(1.0, drives.fatigue + 0.01)
@@ -3887,7 +4140,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             print("  The temporal soft clock keeps two fingerprints of a unit vector:")
             print("    • vhash64(now) — current context vector fingerprint  [src=ctx.tvec64()]")
             print("    • epoch_vhash64 — fingerprint captured at the last boundary  [src=ctx.boundary_vhash64]")
-            print("  Between boundaries the vector DRIFTS a little each tick (sigma). When a new")
+            print("  Between boundaries the vector DRIFTS a little each drift step (sigma). When a new")
             print("  event occurs, boundary() applies a larger JUMP (jump), we record epoch_vhash64")
             print("  to the new value, and vhash64(now) equals it immediately after.")
             print("  Elapsed-within-epoch can be estimated by comparing now vs boundary:")

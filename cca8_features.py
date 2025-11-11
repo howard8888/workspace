@@ -288,7 +288,7 @@ def time_attrs_from_ctx(ctx: Any) -> dict[str, Any]:
 
     Notes
     -----
-    - ctx.ticks is an int tick counter in the runner.
+    - ctx.ticks is an int autonomic tick counter in the runner.
     - ctx.tvec64() is a 64-bit sign-bit hash of the TemporalContext vector.
     """
     out: dict[str, Any] = {}

@@ -136,7 +136,8 @@ verify with  plan NOW → `milk:drinking`.
 - [Signal Bridge (WorldGraph ↔ Engrams)](#signal-bridge-worldgraph--engrams)
 - [Architecture](#architecture)
   - [Modules (lean overview)](#modules-lean-overview)
-  - [Data flow (a tick)](#data-flow-a-tick)
+  - [Timekeeping in CCA8 (four measures)](#timekeeping-in-cca8-four-measures)
+  - [Data flow (a controller step)](#data-flow-a-controller-step)
 - [Action Selection: Drives, Policies, Action Center](#action-selection-drives-policies-action-center)
 - [Planner Contract](#planner-contract)
 - [Planner: BFS vs Dijkstra (weighted edges)](#planner-bfs-vs-dijkstra-weighted-edges)
@@ -1421,7 +1422,69 @@ Q: Where do engrams live?  A: cca8_column.py, referenced by bindings’ engrams.
 
 
 
-### Data flow (a tick)
+
+
+* * *
+
+#### Timekeeping in CCA8 (five measures)
+
+CCA8 uses four orthogonal time measures. They serve different purposes and are intentionally decoupled.
+
+**1) Controller steps** — one Action Center decision/execution loop (aka “instinct step”).  
+*Purpose:* cognition/behavior pacing (not wall-clock).  
+*Source:* a loop in the runner that evaluates policies once and may write to the WorldGraph. When that write occurs, we mark a **temporal boundary (epoch++)**. :contentReference[oaicite:0]{index=0}
+
+**2) Temporal drift** — the *soft clock* (unit vector) that drifts a bit each step and jumps at boundaries.  
+*Purpose:* similarity + episode segmentation that’s unitless and cheap (cosine of current vs last-boundary vector).  
+*Drift call:* `ctx.temporal.step()`; *Boundary call:* `ctx.temporal.boundary()`; vectors are re-normalized every time. See module notes on drift vs boundary. :contentReference[oaicite:1]{index=1}  
+*Runner usage:* we drift once per instinct step and once per autonomic tick in the current build; boundary is taken when an instinct step actually writes new facts. :contentReference[oaicite:2]{index=2}
+
+**3) Autonomic ticks** — a fixed-rate heartbeat (physiology/IO), independent of controller latency.  
+*Purpose:* hardware/robotics cadence; advancing drives; dev-age.  
+*Source variable:* `ctx.ticks` (int).  
+*Where incremented today:* the **Autonomic Tick** menu path increments `ticks`, nudges drives, and performs a drift; it can also trigger a thresholded boundary. :contentReference[oaicite:3]{index=3} :contentReference[oaicite:4]{index=4}
+
+**4) Developmental age (days)** — a coarse developmental measure used for stage gating.  
+*Source variable:* `ctx.age_days` (float), advanced along with autonomic ticks; used by `world.set_stage_from_ctx(ctx)`. :contentReference[oaicite:5]{index=5}
+
+**5) Cognitive cycles** — a derived counter for end-to-end loops that **produced an output**  
+(sense → decide → act that resulted in a write).
+
+*Purpose:* progress gating & timeouts (e.g., “if no success in N cycles, switch strategy”), analytics.
+
+*Source variable:* `ctx.cog_cycles` (int).  
+*Runner rule (current build):* increment when an Instinct step **returns `status=="ok"` and the graph grew** (bindings_after > bindings_before).  
+*Contrast with controller steps:* a controller **step** runs every time you invoke the Action Center once; a **cognitive cycle** only increments on steps that actually produced an output/write.
+
+*Recommended invariants:* `cog_cycles ≤ controller_steps`; epochs increment only on boundary jumps (writes or τ-cuts), never decrement.
+
+
+
+### Event boundaries & epochs
+
+When the controller **actually writes** (graph grew), we take a **boundary jump** and increment `ctx.boundary_no` (epoch). We also update a short fingerprint of the boundary vector (`ctx.boundary_vhash64`) for snapshot readability. :contentReference[oaicite:6]{index=6}  
+A thresholded segmentation (“τ-cut”) can also force a boundary when `cos_to_last_boundary` falls below τ (default shown in code). :contentReference[oaicite:7]{index=7}
+
+### Source fields & helpers at a glance
+
+- **autonomic ticks:** `ctx.ticks` (runner increments) :contentReference[oaicite:8]{index=8}  
+- **developmental age:** `ctx.age_days` (runner increments) & `world.set_stage_from_ctx(ctx)` :contentReference[oaicite:9]{index=9}  
+- **temporal drift:** `ctx.temporal.step()`; **boundary:** `ctx.temporal.boundary()`; **epoch:** `ctx.boundary_no++` :contentReference[oaicite:10]{index=10}  
+- **soft-clock fingerprints:** current `ctx.tvec64()`; last boundary `ctx.boundary_vhash64`; cosine via `ctx.cos_to_last_boundary()` (shown in snapshot/probe UIs). :contentReference[oaicite:11]{index=11}
+
+### Recommended invariants
+
+- Controller-driven mode (today): each instinct **controller step** performs one **temporal drift**; boundary (epoch++) only on a real write. :contentReference[oaicite:12]{index=12}  
+- Autonomic-driven mode (future HAL): **drift** belongs to the heartbeat; controller step reads time but does not drift.  
+- Epochs never decrement; `cos_to_last_boundary` resets ≈1.000 on boundary. :contentReference[oaicite:13]{index=13} 
+  
+  
+
+* * *
+
+## 
+
+### Data flow (a controller step)
 
 1. Action Center computes active **drive flags**.  
 2. Scans **policies** in order, first `trigger()` that returns True **fires**.  
@@ -3060,7 +3123,7 @@ Interactive menu: the 10 you’ll press most
 
 * **11 Add sensory cue** — adds `cue:*` and nudges controller once.
 
-* **12 Instinct step** — Action Center tick with pre/post “why” text.
+* **12 Instinct step** — Action Center --one controller step with pre/post “why” text.
 
 * **16 Export snapshot** — writes `world_snapshot.txt`.
 
@@ -4266,7 +4329,7 @@ Q: IDE workflow?  A: VS Code launch config + gutter breakpoints.
 
 ## FAQ / Pitfalls
 
-- **“No path found to state:posture_standing”** — You planned before creating the state. Run one instinct tick (menu **12**) first or `--load` a session that already has it.
+- **“No path found to state:posture_standing”** — You planned before creating the state. Run one instinct step (menu **12**) first or `--load` a session that already has it.
 - **Repeated “standing” nodes** — Tightened `StandUp.trigger()` prevents refiring when a standing binding exists. If you see repeats, ensure you’re on the updated controller.
 - **Autosave overwrote my old run** — Use a new filename for autosave (e.g., `--autosave session_YYYYMMDD.json`) or keep read-only load + new autosave path.
 - **Loading says file not found** — We continue with a fresh session, the file will be created on your first autosave event.
@@ -4275,7 +4338,7 @@ Q: IDE workflow?  A: VS Code launch config + gutter breakpoints.
 
 ***Q&A to help you learn this section***
 
-Q: Why “No path found …” on a new session?  A: You planned before adding the predicate, run one instinct tick.
+Q: Why “No path found …” on a new session?  A: You planned before adding the predicate, run one instinct step.
 
 Q: Why duplicate “standing” nodes?  A: Old controller, update to guarded StandUp.trigger().
 
@@ -4305,7 +4368,7 @@ Note -- ADR's are paused at present. Instead new material is integrated directly
 - **Edge** — directed relation labeled `"then"`, encoding episode flow.  
 - **WorldGraph** — the episode index graph.  
 - **Policy** — primitive behavior with `trigger` + `execute`.  
-- **Action Center** — ordered scan of policies, runs first match per tick.  
+- **Action Center** — ordered scan of policies, runs first match per controller step  
 - **Drives** — homeostatic variables (hunger/fatigue/warmth) that generate drive flags for triggers.  
 - **Engram** — pointer to heavy content (features/sensory/temporal traces) stored outside the graph.  
 - **Provenance** — `meta.policy` stamp recording which policy created a binding.

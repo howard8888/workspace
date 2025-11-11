@@ -16,7 +16,7 @@ Concepts
         [e.g., plannable drive condition, then yes, can create a node with e.g., "pred:drive:hunger_high", or evidence, e.g., cue:drive:hunger_high]
         -policies use drive tags in triggering (e.g., SeekNipple needs hunger), while execute may update drives (e.g., Rest reduces fatigue a bit)
     -parameter 'ctx' represents runtime context
-        -includes age_days, sigma and jump (tie-breaking, exploration settings), ticks (i.e., how many steps have passed), profile (e.g., "goat", "chimp", etc),
+        -includes age_days, sigma and jump (tie-breaking, exploration settings), ticks (i.e., how many autonomic 'heartbeats' have passed), profile (e.g., "goat", "chimp", etc),
            winners_k, hal and body (for multi-brain scaffolding and embodiment stub)
         -policies don't really require ctx but useful for gating behavior by age/profile, calling into HAL stubs, writing provenance, e.g., ticks, to meta
     -trigger(world, drives)
@@ -128,7 +128,7 @@ Action loop
 -permissive fallback (e.g., FollowMom) (i.e., a policy whose trigger(...) is basically always True or at least in most normal states)
   -the action center returns {"status":"noop"} only when no policy triggers
   -if FollowMom.trigger(...) is nearly always True, then never see a "noop" because the fallback will always fire and produce an "ok" step instead
-  -if ever want occasional no-ops (i.e., do nothing ticks) then tighten FollowMom(...) trigger (e.g., return False if tired/hungry/just acted) or
+  -if ever want occasional no-ops (i.e., do nothing controller steps) then tighten FollowMom(...) trigger (e.g., return False if tired/hungry/just acted) or
      move FollowMom even further down or add a timer/debounce so it doesn't constantly fire
 -when multiple policies trigger, selection defaults to deficit scoring with legacy-order fallback
 -selection defaults to deficit scoring; to integrate an external adviser, pass preferred='policy:...' (controller remains the safety gate)
@@ -765,7 +765,7 @@ class FollowMom(Primitive):
     Trigger
     -------
     Returns True unconditionally (permissive). If you want occasional 'noop'
-    ticks from the Action Center, tighten this trigger (e.g., skip when the
+    controller step from the Action Center, tighten this trigger (e.g., skip when the
     agent just acted, is very fatigued, or strong cues are present).
 
     Execution
@@ -821,7 +821,7 @@ class ExploreCheck(Primitive):
     Trigger
     -------
     Returns False (off). You can convert this into a timed/stochastic gate later
-    (e.g., every N ticks, or with small probability when the world is quiet).
+    (e.g., every N autonomic ticks, or with small probability when the world is quiet).
 
     Execution
     ---------
@@ -921,7 +921,7 @@ class Rest(Primitive):
 #   • Rest         — Homeostatic recovery when very fatigued; placed before the permissive fallback.
 #   • FollowMom    — Permissive fallback (trigger is usually True); keeps the loop producing 'ok' steps
 #                    instead of 'noop' when nothing else is pressing. Tighten its trigger if you want
-#                    occasional no-op ticks.
+#                    occasional no-op controller steps.
 #   • ExploreCheck — Diagnostic placeholder; disabled stub for future exploration logic.
 #
 # **Important**

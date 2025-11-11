@@ -54,7 +54,7 @@ cos(v0, v2) after boundary(): 0.9303704646916311
 -What do the contents of the TemporalContext vector really mean?
 -Note from the code that effectively, as shown below, when we initialize in __post_init__  we are sampling each
  coordinate from a standard normal and then normalizing -- that is why components don't have human meaning.
--Then each tick we can add small Gaussian noise to every coordinate and re-normalize to make a tiny change in direction == a drift step.
+-Then each drfit step we can add small Gaussian noise to every coordinate and re-normalize to make a tiny change in direction == a drift step.
   For larger boundary jumps we add a bigger noise which produces a larger change in direction which we exploit for episode segmentation.
 -A unit vector in R^n-dim acts as a time fingerprint for "NOW".
 -We update it with tiny drift steps and bigger boundary jumps.
@@ -73,7 +73,7 @@ cos(v0, v2) after boundary(): 0.9303704646916311
 -Note that our context vector is not a learned embedding, but is a procedural “soft clock” we control.
 -A learned embedding is a vector produced by a trained model -- its geometry emerges from training.
 -However, our vector is produced by a fixed algorithm, no training, i.e., a procedural soft clock effectively.
--As noted above, when we initialize a context vector in __post_init__ , each tick we add tiny Gaussian noise==drift and renormalize.
+-As noted above, when we initialize a context vector in __post_init__ , each drift step we add tiny Gaussian noise==drift and renormalize.
 -We can adjust how fast time moves via sigma==drift and how hard a chapter break feels via jump==boundary strength.
 -It will be reproducible in theory if we set the same seed.
 -It is content-agnostic -- it doesn't encode what happened, only when/near what it happened in the run's flow
