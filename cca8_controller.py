@@ -236,6 +236,22 @@ def _add_pred(world, token: str, **kwargs):
     """
     return world.add_predicate(_canon(token), **kwargs)
 
+
+# ==== Base-aware write STUB (NO-OP) =========================================
+#pylint: disable=unused-argument
+def _add_pred_base_aware(world, token: str, ctx, *, default_attach="latest", meta=None):
+    """
+    STUB: Later, if a suggested write-base exists on ctx, write unattached and
+    manual-link base->new. Today this is identical to _add_pred(...).
+    Note: -We already compute a "write base" suggestion via choose_contextual_base(...)
+        e.g., as seen in the Instinct Step menu selection.
+      -these stubs give a single place to switch from attach="latest" to
+        base-anchored placement later.
+      - _maybe_anchor_attach(...) and add_spatial_relation stubs are in Runner module
+    """
+    return _add_pred(world, token, attach=default_attach, meta=meta)
+#pylint: enable=unused-argument
+
 # -----------------------------------------------------------------------------
 # Drives
 # -----------------------------------------------------------------------------

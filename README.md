@@ -136,7 +136,7 @@ verify with  plan NOW → `milk:drinking`.
 - [Signal Bridge (WorldGraph ↔ Engrams)](#signal-bridge-worldgraph--engrams)
 - [Architecture](#architecture)
   - [Modules (lean overview)](#modules-lean-overview)
-  - [Timekeeping in CCA8 (four measures)](#timekeeping-in-cca8-four-measures)
+  - [Timekeeping in CCA8 (five measures)](#timekeeping-in-cca8-five-measures)
   - [Data flow (a controller step)](#data-flow-a-controller-step)
 - [Action Selection: Drives, Policies, Action Center](#action-selection-drives-policies-action-center)
 - [Planner Contract](#planner-contract)
@@ -4464,6 +4464,18 @@ Q: Provenance?  A: meta.policy records which policy created the node.
 
 # Work in Progress
 
---
 
---
+
+### December 2025 -- Spatial Intelligence Roadmap (stubs)
+
+CCA8’s WorldGraph is already a compact scene graph over time: bindings carry predicates/cues; edges carry weakly-causal transitions. Our next step is to **encode more spatial structure** while keeping the graph small and fast:
+
+1. **Scene-graph relations (labelled edges):** use short labels like `near`, `on`, `under`, `left_of`, `inside`. These remain **readable metadata** for planning today; later we can map them to costs/filters (e.g., Dijkstra/A*).
+
+2. **Base-aware write placement (stubbed):** when a policy writes, optionally anchor new nodes near a suggested “write base” (nearest target predicate → HERE → NOW). This keeps micro-timelines **semantically local** for planning/inspection.
+
+3. **3D hints in engrams:** when capturing scenes, attach tiny 1D tensors (pose/landmark cues) via the Column and stamp temporal attrs (`ticks`, `epoch`, `tvec64`) for correlation; the **graph only holds pointers**, not heavy data.
+
+4. **FOA weighting by spatial priors:** seed FOA from NOW/LATEST/cues (already shipped) and later bias searches toward spatially plausible neighbors (e.g., `near` before `far`).
+
+These are **no-regret extensions**: they retain CCA8’s split (small symbolic index + rich engrams) which is mammalian brain inspired and follows the published Causal Cognitive Architecture stratgegy. Note that recently non-biological AI researchers have started to advocate spatial and more world model designs, e.g., “spatial intelligence” trajectory advocated by Fei-Fei Li and others. We’ll grow vocabulary gradually under the existing lexicon and keep planning semantics unchanged until weights/filters justify a switch.

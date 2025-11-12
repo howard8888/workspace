@@ -152,8 +152,9 @@ class Ctx:
     tvec_last_boundary: Optional[list[float]] = None
     boundary_no: int = 0
     boundary_vhash64: Optional[str] = None
-    controller_steps: int = 0   # resettable analysis counter
-    cog_cycles: int = 0         # resettable analysis counter
+    controller_steps: int = 0
+    cog_cycles: int = 0
+    last_drive_flags: Optional[set[str]] = None
 
 
     def reset_controller_steps(self) -> None:
@@ -287,6 +288,32 @@ def delete_edge_flow(world: Any, autosave_cb=None) -> None:
         except Exception:
             pass
 
+# ==== Spatial anchoring stubs (NO-OP) =======================================
+#pylint: disable=unused-argument
+def _maybe_anchor_attach(default_attach: str, base: dict | None) -> str:
+    """
+    STUB: When we enable base-aware write placement, change attach semantics here.
+    For now, returns default_attach unchanged.
+    Example (future):
+      if isinstance(base, dict) and base.get("bid"):
+          return "none"   # create unattached, then connect base['bid'] -> new
+
+    Note: -We already compute a "write base" suggestion via choose_contextual_base(...)
+            e.g., as seen in the Instinct Step menu selection.
+          -these stubs give a single place to switch from attach="latest" to
+            base-anchored placement later.
+          - _add_pred_base_aware(...) stub is in Controller module
+    """
+    return default_attach
+
+
+def add_spatial_relation(world, src_bid: str, rel: str, dst_bid: str, meta: dict | None = None) -> None:
+    """
+    STUB: Sugar for scene-graph style relations (left_of, on, inside, supports, near).
+    Today this is just an alias of world.add_edge(...).
+    """
+    world.add_edge(src_bid, dst_bid, rel, meta or {})
+#pylint: enable=unused-argument
 
 # --------------------------------------------------------------------------------------
 # Utility: atomic JSON autosave
@@ -624,6 +651,28 @@ def _drive_tags(drives) -> list[str]:
         pass
     return tags
 
+def _emit_interoceptive_cues(world, drives, ctx, attach: str = "latest") -> set[str]:
+    """
+    Emit `cue:drive:*` on rising-edge transitions (e.g., hunger crosses HUNGER_HIGH).
+    Returns the set of flags that started this tick, e.g., {"drive:hunger_high"}.
+    House style: treat drive thresholds as *evidence* (cue:*), not planner goals.
+    """
+    try:
+        flags_now = set(_drive_tags(drives))         # e.g., {"drive:hunger_high", "drive:fatigue_high"}
+        flags_prev = getattr(ctx, "last_drive_flags", set()) or set()
+        started = flags_now - flags_prev #perhaps, e.g., {"drive:hunger_high"}
+        for f in sorted(started):
+            # world.add_cue normalizes to tag "cue:<token>"
+            world.add_cue(f, attach=attach, meta={"created_by": "autonomic", "ticks": getattr(ctx, "ticks", 0)})
+            #e.g., creates a new binding whose tag will inlcude f, perhaps e.g., "cue:drive:hunger_high"
+        ctx.last_drive_flags = flags_now
+        #return rising-edge drive thresholds that occurred here, e.g., "drive:hunger_high"
+        #remember... cues can function as policy triggers focus of attention, but we *do not* write all the sensory cues streaming
+        #  into the architecture -- we capture some of this as engrams; again, cues are part of a lightweight symbolic layer
+        return started
+    except Exception:
+        return set()
+
 def _normalize_pred(tok: str) -> str:
     """Ensure a token is 'pred:<x>' form (idempotent).
     """
@@ -846,6 +895,20 @@ CATALOG_GATES: List[PolicyGate] = [
             f"and hunger={getattr(D,'hunger',0.0):.2f}>0.60 and cues={present_cue_bids(W)} "
             f"and not seeking={not has_pred_near_now(W,'state:seeking_mom')} "
             f"and not fallen={not has_pred_near_now(W,'state:posture_fallen')}"
+        ),
+    ),
+
+    PolicyGate(
+        name="policy:rest",
+        dev_gate=lambda ctx: True,  # available at all stages; selection is by trigger/deficit
+        trigger=lambda W, D, ctx: (
+            # fire when raw fatigue is high, or when the rising-edge cue exists
+            float(getattr(D, "fatigue", 0.0)) > float(FATIGUE_HIGH)
+            or any_cue_tokens_present(W, ["drive:fatigue_high"])
+        ),
+        explain=lambda W, D, ctx: (
+            f"dev_gate: True, trigger: fatigue={getattr(D,'fatigue',0.0):.2f}>{float(FATIGUE_HIGH):.2f} "
+            f"or cue:drive:fatigue_high present={any_cue_tokens_present(W, ['drive:fatigue_high'])}"
         ),
     ),
 
@@ -3074,10 +3137,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
     """Main interactive loop."""
     # Build initial world/drives fresh
     world = cca8_world_graph.WorldGraph()
-    drives = Drives()
+    drives = Drives()  #Drives(hunger=0.7, fatigue=0.2, warmth=0.6) at time of writing comment
+    #drives.fatigue = 0.85 #for devp't testing --> Drives(hunger=0.7, fatigue=0.85, warmth=0.6)
     ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
-    # temporal soft clock (added)
-    ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump)
+    ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump) # temporal soft clock (added)
     ctx.tvec_last_boundary = ctx.temporal.vector()  # seed “last boundary”
     try:
         ctx.boundary_vhash64 = ctx.tvec64()
@@ -3557,7 +3620,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             print(
     '''Purpose:
       • Run ONE controller step ("instinct step") which will:
-       i.   Advance the soft temporal clock (temporal drift) (but not other measures of time)
+       i.   Advance the soft temporal clock (temporal drift) (no autonomic tick or age_days change)
        ii.  Propose a write-base (base_suggestion): NEAREST_PRED(targets), then HERE, then NOW
        iii. Build a small FOA (focus-of-attention): union of small neighborhoods around NOW, LATEST, cues
        iv.  Evaluate loaded policies and execute the first that triggers (safety-first)
@@ -3571,20 +3634,20 @@ def interactive_loop(args: argparse.Namespace) -> None:
     Ok... then we run an "instinct step".
 
     i.  -there is a small drift of the context vector via ctx.temporal.step()
-         (this will not usually matter since after a policy executes there is new event and vectors synchronize)
+         (this may not matter if a policy writes a new event and there is a temporal jump later)
 
-    ii. -the Action Center has to decide where it link new bindings to
+    ii. -the Action Center has to decide where to link new bindings to -- base_suggestions provides suggestions
         -base_suggestion = choose_contextual_base(..., targets=['state:posture_standing', 'stand'])
         -it first looks for NEAREST_PRED(target) and success since b2 meets the target specified
-        -thus, base_suggestion = binding b2 is binding to link new bindings to
+        -thus, base_suggestion = binding b2 is recommended as the "write base", i.e. to link to
         -the suggestion is not used since that link already exists
         -base_suggestions can be used at different times to control write placement
 
-    iii. -FOA focus of attention -- size of 2 bindings near NOW/LATEST, cues (for lightweight planning)
+    iii. -FOA focus of attention -- a small set of nearby nodes around NOW/LATEST, cues (for lightweight planning)
 
 
     iv. -policy:stand_up when considered can be triggered since age_days is <3.0 and stand near NOW is True
-        -thus, policy:stand_up runs and as result there new bindings b3, b4, b5, and bindings b2 through b5 are linked
+        -thus, policy:stand_up runs and as creates one mor more new nodes/edges (e.g., b5), and bindings b2 through b5 are linked
 
     v.  -a new event occurred, thus there is a temporal jump, with epoch++
 
@@ -3708,44 +3771,101 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "14":
             # Autonomic tick
+            print('''
+            The autonomic tick is like a fixed-rate heartbeat in the background, particularly important for hardware and robotics.
+            (To learn more about the different time systems in the architecture see the Snapshot or Instinct Step menu selections.)
+
+            The result of this menu autonomic tick may cause (if conditions exist):
+              i.   increment ticks, age_days, temporal drift, fatigue
+              ii.  emit rising-edge interoceptive cues
+              iii. recompute which policies are unlocked at this age/stage via dev_gate(ctx) before evaluating triggers
+              iv.  try one controller step (Action Center): collect triggered policies, apply safety override if needed,
+              tie-break by priority, and execute one policy (same engine as Instinct Step, just less verbose here)
+
+            The Mountain Goat calf is born. At this time by default (note: might change as software is modified):
+            - default -- binding b1 with the tag "anchor:NOW", b2 with tag "pred:stand", link b1--> b2
+            - controller_steps=0, cog_cycles=0, temporal_epochs=0, autonomic_ticks=0, age_days: 0.0000
+            - hunger=0.70, fatigue=0.20, warmth=0.60  [src=drives.hunger; drives.fatigue; drives.warmth]
+
+            Ok... then we run this menu "autonomic tick" (and look at Snapshot display also):
+            i.   ticks -> 1, age_day -> .01, cosine -> .98, fatigue -> .21
+
+            ii.  HUNGER_HIGH = 0.60 (Controller Module), thus hunger drive at 0.70 will trigger and thus
+             be present now and thus written to WorldGraph as an interoceptive cue --
+             b1: [anchor:NOW], b2: [pred:stand], b3 LATEST: [cue:drive:hunger_high], with b2-->b3 now also
+
+            iii. POLICY_RT.refresh_loaded(ctx) causes the Action Center to recompute and rebuild the set of
+            stage-appropriate policies (via dev_gate(ctx)) so only developmentally unlocked policies can trigger
+            -- these are loaded and are ready for step iv
+
+            iv.  try one controller step to react if anything is now actionable:
+                    fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx); if fired != "no_match": print(fired)
+                    (similar to Instinct Step menu but less verbose and instead more runtime version: refresh-->triggers-->pick--execute)
+               -looks at all the loaded policies re trigger(world, drives, ctx)
+                  e.g., policy:stand_up wants nearby pred:stand, that you are not already standing, and young age
+               -choose best candidate triggered policy and call policy's execute(...)
+                  e.g., policy:stand_up (added 3 bindings)
+                        b4: [pred:action:push_up], b5: [pred:action:extend_legs], b6: [pred:posture:standing, pred:state:posture_standing]
+               -the extra lines below: base is the same as Instinct Step base suggestion, and again for humans not passed into action_center step;
+               foa seeds foa with LATEST and NOW, adds cue nodes, union of neighborhoods with max_hops of 2; cands are candidate anchors which could be
+               potential start anchors for planning/attachement
+            ''')
             print("Selection Autonomic Tick\n")
             print("Fixed-rate heartbeat: fatigue↑, autonomic_ticks/age_days advance, temporal drift here (with optional boundary).")
-            print("Often followed by a controller check to see if any policy should act.\n")
-
-            drives.fatigue = min(1.0, drives.fatigue + 0.01)
+            print("Often followed by a controller check to see if any policy should act, gather triggered policies, apply safety override,")
+            print("pick by priority, and execute one policy (similar to menu Instinct Step but less verbose)")
+            drives.fatigue = min(1.0, drives.fatigue + 0.01) #ceiling clamp, never exceed 1.0
             # advance developmental clock
             try:
                 ctx.ticks = getattr(ctx, "ticks", 0) + 1
-                ctx.age_days = getattr(ctx, "age_days", 0.0) + 0.01   # tune step as   like
+                ctx.age_days = getattr(ctx, "age_days", 0.0) + 0.01   # tune step as like
                 if ctx.temporal:
                     ctx.temporal.step()
                 world.set_stage_from_ctx(ctx)           # keep the stage in sync as age changes
                 print(f"Autonomic: fatigue +0.01 | ticks={ctx.ticks} age_days={ctx.age_days:.2f}")
 
+                # Interoception: write cues only on threshold rising-edges to avoid clutter
+                started = _emit_interoceptive_cues(world, drives, ctx, attach="latest")
+                if started:
+                    print("[autonomic] interoceptive cues asserted: " + ", ".join(f"cue:{s}" for s in sorted(started)))
+
                 # [TEMPORAL] optional τ-cut
-                if ctx.temporal and ctx.tvec_last_boundary:
+                if ctx.temporal:
+                    # Initialize boundary state once, on first tick with a temporal context
+                    if getattr(ctx, "tvec_last_boundary", None) is None:
+                        ctx.tvec_last_boundary = list(ctx.temporal.vector())
+                        ctx.boundary_no = getattr(ctx, "boundary_no", 0)
+                        try:
+                            ctx.boundary_vhash64 = ctx.tvec64()
+                        except Exception:
+                            ctx.boundary_vhash64 = None
+
                     v_now = ctx.temporal.vector()
-                    cos_now = sum(a*b for a,b in zip(v_now, ctx.tvec_last_boundary))
+                    cos_now = sum(a * b for a, b in zip(v_now, ctx.tvec_last_boundary))
+
                     if cos_now < 0.90:
-                        new_v = ctx.temporal.boundary()
+                        new_v = ctx.temporal.boundary()  # re-seed & renormalize
                         ctx.tvec_last_boundary = list(new_v)
-                        # epoch++
                         ctx.boundary_no = getattr(ctx, "boundary_no", 0) + 1
                         try:
                             ctx.boundary_vhash64 = ctx.tvec64()
                         except Exception:
                             ctx.boundary_vhash64 = None
-                        print(f"[temporal] boundary -> epoch (event changes) ={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
-                        print(f"[temporal] boundary: cos_to_last_boundary {cos_now:.3f} < 0.90")
-                        print(f"[temporal] boundary (event change) → epoch={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
-                        print("note: writes in the same controller step belong to the previous epoch; the epoch increments after the boundary.")
-
-            except Exception:
-                print("Autonomic: fatigue +0.01")
+                        print(f"[temporal] τ-cut: cos_to_last_boundary={cos_now:.3f} < 0.90 → epoch={ctx.boundary_no}, last_boundary_vhash64={ctx.boundary_vhash64}")
+                        print("[temporal] note: writes after this boundary belong to the NEW epoch.")
+            except Exception as e:
+                print(f"Autonomic: fatigue +0.01 (exception: {type(e).__name__}: {e})")
 
             # Refresh availability and consider firing regardless
             POLICY_RT.refresh_loaded(ctx)
+            #rebuilds the set of eligible policies by applying each gate's dev_gate(ctx) to the current context
+            #  e.g., age-->stage, etc  -- only those that pass are "loaded"=="eligible" for triggering
             fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
+            #runs the Action Center once:
+            # -collects policies whose trigger(world, drives, ctx) is True, i.e., eligible policy that has triggered
+            # -safety override -- e.g., if state:posture_fallen is near NOW then restricts policy to only policy:recover_fall, policy:stand_up
+            # -tie-break/priority -- computes a simple drive-deficit score (e.g., hunger for policy:seek_nipple, etc) and picks the max policy
+            # -executes the chosen policy via action_center_step(...) and returns a human-readable summary
             if fired != "no_match":
                 print(fired)
             loop_helper(args.autosave, world, drives)
