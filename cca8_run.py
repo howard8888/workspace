@@ -153,7 +153,7 @@ class Ctx:
     boundary_no: int = 0
     boundary_vhash64: Optional[str] = None
     controller_steps: int = 0
-    cog_cycles: int = 0
+    cog_cycles: int = 0  # 'productive' cycles: incremented only in Instinct Step when the step wrote new facts, to modify in future when full cog cycle implemented
     last_drive_flags: Optional[set[str]] = None
 
 
@@ -476,7 +476,59 @@ def print_ascii_logo(style: str = None, color: bool = True) -> None:  # pragma: 
     print(art)  # pragma: no cover
     print()     # spacer  # pragma: no cover
 
+
+# --- WorldGraph and Engram Helpers ------------------------------------------------
+
+def _resolve_engrams_pretty(world, bid: str) -> None:
+    """used with resolve engrams menu selection
+    -from bid gets column01: {"id": eid, "act": 1.0}
+    -prints these out as, e.g., Engrams on b3; column01: 34c406dd…  OK
+    """
+
+    b = world._bindings.get(bid)
+    # e.g., Binding(id='b3', tags={'cue:vision:silhouette:mom'}, edges=[], meta={}, engrams={'column01': {'id': '302ca8b28d0c4e03b501c2d1d23ffa76', 'act': 1.0}})
+    # -world is the live WorldGraph instance created at runner start inside interactive_loop
+    if not b:
+        print("Unknown binding id.")
+        return
+    eng = getattr(b, "engrams", None)
+    # e.g., {'column01': {'id': '34c406dd346f4a6fb8bd356d01da9f79', 'act': 1.0}}
+    #  -{"id": eid, "act": 1.0} (id = engram id, act = activation weight)
+    if not isinstance(eng, dict) or not eng:
+        print("Engrams: (none)")
+        return
+    print("Engrams on", bid)
+
+    for slot, val in sorted(eng.items()):
+        eid = val.get("id") if isinstance(val, dict) else None
+        ok = False
+        try:
+            rec = world.get_engram(engram_id=eid) if isinstance(eid, str) else None
+            ok = bool(rec and isinstance(rec, dict) and rec.get("id") == eid)
+        except Exception:
+            ok = False
+        status = "OK" if ok else "(dangling)"
+        short = (eid[:8] + "…") if isinstance(eid, str) else "(id?)"
+        print(f"  {slot}: {short}  {status}")
+
+
+def _bindings_pointing_to_eid(world, eid: str):
+    """allows inspect engrams to tell which bindings
+    reference the eid
+    """
+    refs = []
+    for bid, b in world._bindings.items():
+        eng = getattr(b, "engrams", None)
+        if isinstance(eng, dict):
+            for slot, val in eng.items():
+                if isinstance(val, dict) and val.get("id") == eid:
+                    refs.append((bid, slot))
+    return refs
+
+# ==== Timekeeping info ================================================
 def _snapshot_temporal_legend() -> list[str]:
+    """info about temporal timekeeping in the CCA8
+    """
     return [
         "LEGEND (temporal terms):",
         "  epoch: event boundary count; increments when boundary() is taken  [src=ctx.boundary_no]",
@@ -496,6 +548,31 @@ def _snapshot_temporal_legend() -> list[str]:
         "",
     ]
 
+def timekeeping_line(ctx) -> str:
+    """Compact summary of the 5 time measures + cosine (robust if any piece is missing).
+    """
+    cs = getattr(ctx, "controller_steps", 0)
+    te = getattr(ctx, "boundary_no", 0)        # temporal epochs
+    at = getattr(ctx, "ticks", 0)              # autonomic ticks
+    ad = getattr(ctx, "age_days", 0.0)
+    cc = getattr(ctx, "cog_cycles", 0)
+    try:
+        c = ctx.cos_to_last_boundary()
+        cos_txt = f"{c:.4f}" if isinstance(c, float) else "(n/a)"
+    except Exception:
+        cos_txt = "(n/a)"
+    return (f"controller_steps={cs}, cos_to_last_boundary={cos_txt}, "
+            f"temporal_epochs={te}, autonomic_ticks={at}, age_days={ad:.4f}, cog_cycles={cc}")
+
+def print_timekeeping_line(ctx, prefix: str = "[time] ") -> None:
+    """Console helper for menus.
+    """
+    try:
+        print(prefix + timekeeping_line(ctx))
+    except Exception:
+        pass
+
+# ==== helpers ================================================
 def _compute_loc_by_dir(suffixes=(".py",),skip_folders=(".git", ".venv", "build", "dist", ".pytest_cache", "__pycache__")):
     """
     Compute SLOC per top-level directory using the pygount CLI.
@@ -694,16 +771,27 @@ def _neighbors(world, bid: str) -> List[str]:
     return out
 
 def _engrams_on_binding(world, bid: str) -> list[str]:
-    """Return engram ids attached to a binding (via binding.engrams)."""
+    """Return engram ids attached to a binding (via binding.engrams).
+    -in world instance of class World -- self._bindings={}, i.e., in the instance world, world_bindings.keys() is a
+
+    """
     b = world._bindings.get(bid)
+    #-nodes in world instance of WorldGraph are dataclass Binding
+    #-fields of dataclass Binding -- id, tags {set}, edges [list of TypedDict Edges {to:xxx, label:xxx, meta:xxx}, {}...], meta {dict}, engrams {dict}
+    #-b=Binding below is an instance of dataclass Binding corresponding to, e.g., node b3
+    #   nb. Python objects don't have an intrinsic 'instance name' -- just have variables point at them
+    # e.g., b= Binding(id='b3', tags={'cue:vision:silhouette:mom'}, edges=[], meta={},
+    #          engrams={'column01': {'id': '9e48b29cb0614f71b8435e4cab01082a', 'act': 1.0}})
     if not b:
         return []
     eng = getattr(b, "engrams", None) or {}
+    # e.g., eng = {'column01': {'id': '9e48b29cb0614f71b8435e4cab01082a', 'act': 1.0}}
     out: list[str] = []
     if isinstance(eng, dict):
         for v in eng.values():
             if isinstance(v, dict):
                 eid = v.get("id")
+                #e.g., eid = 9e48b29cb0614f71b8435e4cab01082a
                 if isinstance(eid, str):
                     out.append(eid)
     return out
@@ -1111,7 +1199,7 @@ MENU = """\
 15) Inspect engram by id (or binding) [engram, ei]
 16) List all engrams [engrams-all, list-engrams]
 17) Search engrams (by name / epoch) [search-engrams, find-engrams]
-18) Delete engram by id (danger: leaves dangling pointers) [delete-engram, del-engram]
+18) Delete engram by bid or eid [delete-engram, del-engram]
 19) Attach existing engram to a binding [attach-engram, ae]
 
 # Graph Inspect / Build / Plan
@@ -2410,7 +2498,8 @@ def run_preflight_full(args) -> int:
         info = _time2.get_clock_info("perf_counter")
         res  = getattr(info, "resolution", None)
         a = _time2.perf_counter(); b = _time2.perf_counter(); c = _time2.perf_counter()
-        if a < b < c:
+        if (b > a) or (c > b):  # any forward progress is enough
+        #if a < b < c:  #occasionally samples land in the same clock tick
             ok_hw(f"perf_counter monotonic (resolution≈{res:.9f}s)")
         else:
             bad_hw("perf_counter did not strictly increase")
@@ -2605,10 +2694,21 @@ def _anchor_id(world, name="NOW") -> str:
     return "?"
 
 def _sorted_bids(world) -> list[str]:
-    """Return binding ids sorted numerically (b1, b2, ...), with non-numeric ids last."""
+    """Return binding ids sorted numerically (b1, b2, ...), with non-numeric ids last.
+    -in class World self._bindings={}, i.e., in the instance world, world_bindings.keys() is a
+    dict_keys view of all the keys  e.g., dict_keys(['b1', 'b2', 'b3', 'b4'.....])
+    nb. Python 3.7+ dicts preserve insertion order, so that is what will be obtained before sorting
+    """
     def key_fn(bid: str):
-        try: return int(bid[1:])  # sort b1,b2,... numerically
-        except: return 10**9
+        """
+        -strip out the 'b' for sorting bindings, and alphabetical bindings, e.g., NOW,
+            sort after the 'b' numerical ones
+        -in Python the key= value can be any comparable object, including tuples
+        -thus, (0,n) where 'n' is from bn will be sorted ahead of (1, abc) where abc is an alpha binding, e.g., "NOW"
+        """
+        if bid.startswith("b") and bid[1:].isdigit():
+            return (0, int(bid[1:]))   # group 0: numeric, sorted by number
+        return (1, bid)                # group 1: non-numeric, sorted by string
     return sorted(world._bindings.keys(), key=key_fn)
 
 def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
@@ -2721,6 +2821,9 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
         if epoch_vh:
             lines.append(f"  epoch_vhash64: {epoch_vh}  [src=ctx.boundary_vhash64]")
             lines.append(f"  last_boundary_vhash64: {epoch_vh}  [alias of epoch_vhash64]")
+        # One-line timekeeping summary (compact view)
+        if ctx is not None:
+            lines.append("TIMEKEEPING: " + timekeeping_line(ctx))
 
         lines.append("")
     else:
@@ -3415,6 +3518,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print(f"Policies loaded: {len(POLICY_RT.loaded)} -> {', '.join(POLICY_RT.list_loaded_names()) or '(none)'}")
             except Exception:
                 pass
+            print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives)
 
         elif choice == "2":
@@ -3512,17 +3616,31 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "6":
-            # Resolve engrams on a binding
             print("Selection Resolve Engrams\n")
-            print("Shows engram slots on a binding (pointers into Column memory).")
-            print("Use 'Inspect engram by id' for payload/meta details.\n")
+            print('''
+    Shows engram slots on a binding.
+    Note: For payload/meta details use menu selection "Inspect engram by id"
 
+    -a "slot name" is the key used in a binding's engrams dict to label a particular engram pointer
+         e.g, b3: [cue:vision:silhouette:mom] engrams={'column01': {'id': 'b3001752abc946769b8c182f38cf0232', 'act': 1.0}}
+           -- 'column01' is the slot name, i.e., binding.engrams['column01'] = {id:eid, act:1.0, ...} where id = engram id, act = activation weight
+           -- 'b3001752a…' is the human-readable summary of that pointer== eid
+    -system defaults with a single column in RAM    mem =ColumnMemory(name='column01')  but can set up for multiple columns
+
+            ''')
             bid = input("Binding id to resolve engrams: ").strip()
-            b = world._bindings.get(bid)
-            if not b:
-                print("Unknown binding id.")
+            #user input is the bid
+            if not bid:
+                print("No id entered.")
             else:
-                print("Engrams:", b.engrams if b.engrams else "(none)")
+                _resolve_engrams_pretty(world, bid)
+                #from bid gets column01: {"id": eid, "act": 1.0}
+                #prints these out as, e.g., Engrams on b3; column01: 34c406dd…  OK
+                b = world._bindings.get(bid)
+                #e.g. Binding(id='b3', tags={'cue:vision:silhouette:mom'}, edges=[], meta={}, engrams={'column01': {'id': '05a6dfba0e7b4aef8ca116485efc5ad8', 'act': 1.0}})
+                if b and getattr(b, "engrams", None):
+                    print("Raw pointers:", b.engrams)
+
             loop_helper(args.autosave, world, drives)
 
         elif choice == "7":
@@ -3598,9 +3716,45 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "11":
             # Add sensory cue
-            print("Selection Input Sensory Cue\n")
-            print("Adds cue:<channel>:<token> (evidence, not a goal) at NOW and may nudge a policy.")
-            print("Examples: vision:silhouette:mom, sound:bleat:mom, scent:milk.\n")
+            print("Selection Input Sensory Cue")
+            print('''
+    Adds cue:<channel>:<token> (evidence, not a goal) at NOW and may nudge a policy.
+      e.g., vision:silhouette:mom, sound:bleat:mom, scent:milk
+
+    This menu selection asks you for the channel and then the token, and writes the resulting cue,
+      e.g., "cue:vision:silhouette:mom", to a new binding attached to NOW.
+    A controller step==Action Center step will run and if any policies are capable of triggering,
+      the best one will be chosen and will execute.
+    In addition to triggering and executing a policy (if possible) the controller step will also:
+      controller_steps ++,  temporal_drift ++  (no effect on autonomic ticks, cognitive cycles, age_days)
+
+    Consider the example where the Mountain Goat calf has just been born and stands up.
+    At this point these bindings, drives, and timekeeping exist:
+    b1: [anchor:NOW] -> b2: [pred:stand] -> b3: [pred:action:push_up] -> b4: [pred:action:extend_legs]
+        -> b5: [pred:posture:standing, pred:state:posture_standing]
+    hunger=0.70, fatigue=0.20, warmth=0.60
+    controller_steps=1, cog_cycles=1, temporal_epochs=1, autonomic_ticks=0,  age_days: 0.0000, cos_to_last_boundary: 1.0000
+    These policies are eligible:  policy:stand_up, policy:seek_nipple, policy:rest, policy:suckle,
+           policy:recover_miss, policy:recover_fall
+
+    Now add a sensory cue -- bid = world.add_cue(cue_token, attach="now", meta={"channel": ch, "user": True})
+     e.g., "cue:vision:silhouette:mom" and we see a message added to b6
+     note: "attach=now" means add link from NOW->new node
+    Now a controller step will run -- fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx, tie_break="first")
+    We see in the message displayed that policy seek_nipple executed and added 2 bindings.
+    "pre" explains why it triggered including the cue provided by new binding b6; "post" shows still triggerable after
+      after policy executed; base suggestion, focus of attention and candidates for linking (see Instinct Step or README).
+
+    If we look at Snapshot we now see:
+    -Timekeeping (controller_steps ++,  temporal_drift ++ ):
+      controller_steps=2, cog_cycles=1, temporal_epochs=1, autonomic_ticks=0, cos_to_last_boundary: 0.9857,  age_days: 0.0000
+    -New binding b6  [cue:vision:silhouette:mom]
+    -SkillStats -- new "policy:seek_nipple" statistics  ("policy:stand_up" ran before during the Instinct Step)
+    -New bindings created by "policy:seek_nipple" : b7: [pred:action:orient_to_mom], b8: [pred:seeking_mom, pred:state:seeking_mom]
+    (Note: If we run this Menu Step in a newborn calf then policy:stand_up will run since it is executionable with or without a cue and
+       will have priority.)
+
+            ''')
 
             ch = input("Channel (vision/scent/touch/sound): ").strip().lower()
             tok = input("Cue token (e.g., silhouette:mom): ").strip()
@@ -3611,7 +3765,15 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx, tie_break="first")
                 if fired != "no_match":
                     print(fired)
+                try:
+                    ctx.controller_steps = getattr(ctx, "controller_steps", 0) + 1
+                except Exception:
+                    pass
+                if getattr(ctx, "temporal", None):
+                    ctx.temporal.step()   # one soft-clock drift to reflect that the action took time
+                    print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives)
+
 
         elif choice == "12":
             # Instinct step
@@ -3659,6 +3821,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             except Exception:
                 pass
 
+
             before_n = len(world._bindings)
 
             # [TEMPORAL] drift once per instinct step
@@ -3693,6 +3856,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
             after_n  = len(world._bindings)  # NEW: measure write delta for this path
 
             # Count a cognitive cycle only if the step produced an output (a real write)
+            # [Cognitive cycles — current definition]
+            # We count a *cognitive cycle* only when this controller step PRODUCED WRITES.
+            # Rationale: today, a “cycle” = perception/decision that changed working memory (WorldGraph).
+            # Waiting/no-op decisions do not increment; those are still controller steps but not cycles.
+            # This is intentionally conservative until we implement an explicit sense→process→act loop.
             if isinstance(result, dict) and result.get("status") == "ok" and after_n > before_n:
                 try:
                     ctx.cog_cycles += 1
@@ -3759,6 +3927,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     print(f"[temporal] boundary: cos_to_last_boundary {cos_now:.3f} < 0.90")
                     print(f"[temporal] boundary -> epoch (event changes) ={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
 
+            print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives)
 
         elif choice == "13":
@@ -3782,7 +3951,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
               iv.  try one controller step (Action Center): collect triggered policies, apply safety override if needed,
               tie-break by priority, and execute one policy (same engine as Instinct Step, just less verbose here)
 
-            The Mountain Goat calf is born. At this time by default (note: might change as software is modified):
+            Consider this example -- the Mountain Goat calf has just been born.
+            At this time by default (note -- this might change with future software updates):
             - default -- binding b1 with the tag "anchor:NOW", b2 with tag "pred:stand", link b1--> b2
             - controller_steps=0, cog_cycles=0, temporal_epochs=0, autonomic_ticks=0, age_days: 0.0000
             - hunger=0.70, fatigue=0.20, warmth=0.60  [src=drives.hunger; drives.fatigue; drives.warmth]
@@ -3853,6 +4023,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
                             ctx.boundary_vhash64 = None
                         print(f"[temporal] τ-cut: cos_to_last_boundary={cos_now:.3f} < 0.90 → epoch={ctx.boundary_no}, last_boundary_vhash64={ctx.boundary_vhash64}")
                         print("[temporal] note: writes after this boundary belong to the NEW epoch.")
+
+                    print_timekeeping_line(ctx)
             except Exception as e:
                 print(f"Autonomic: fatigue +0.01 (exception: {type(e).__name__}: {e})")
 
@@ -3861,6 +4033,17 @@ def interactive_loop(args: argparse.Namespace) -> None:
             #rebuilds the set of eligible policies by applying each gate's dev_gate(ctx) to the current context
             #  e.g., age-->stage, etc  -- only those that pass are "loaded"=="eligible" for triggering
             fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
+            # Controller step bookkeeping for this path:
+            try:
+                ctx.controller_steps = getattr(ctx, "controller_steps", 0) + 1
+            except Exception:
+                pass
+            #if getattr(ctx, "temporal", None):  #already did a temporal drift above, so don't run here (same code as pasted in for few blocks of code)
+            #   ctx.temporal.step()   # one soft-clock drift to reflect that the action took time
+            # Note: we do NOT increment cog_cycles here by design.
+            # Autonomic Tick is physiology + one controller step; cycles are counted only in Instinct Step (see comment there).
+
+
             #runs the Action Center once:
             # -collects policies whose trigger(world, drives, ctx) is True, i.e., eligible policy that has triggered
             # -safety override -- e.g., if state:posture_fallen is near NOW then restricts policy to only policy:recover_fall, policy:stand_up
@@ -3937,9 +4120,61 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "18":
             # Simulate a fall event and try a recovery attempt immediately
-            print("Selection Simulate Fall\n")
-            print("Creates state:posture_fallen and relabels the linking edge to 'fall', then attempts recovery.")
-            print("Use this to demo safety gates (recover_fall / stand_up).\n")
+            print("Simulate a fall event\n")
+            print('''
+    Summary: -Creates state:posture_fallen and relabels the linking edge to 'fall', then attempts recovery.
+             -Use this to demo safety gates (recover_fall / stand_up).
+
+    --background primer and terminology--
+    Controller steps  — one Action Center decision/execution loop (aka “instinct step”).
+     -a loop in the runner that evaluates policies once and may write to the WorldGraph.
+     -if that step wrote new facts, we mark a  temporal boundary (epoch++) .
+     -With regards to its effects on timekeeping,  when a Controller Step occurs :
+         i)  controller_steps : ++ once per controller step
+         ii)  temporal drift : ++ (one soft-clock drift) per controller step
+         iii)  autonomic ticks : no direct change (may increase but independent heartbeat-like clock)
+         iv)  developmental age : no direct change (may increase but must be calculated elsewhere)
+         v)   cognitive cycles : ++ if there is a write to the graph (nb. need to change in the future)
+               Note: we do NOT increment cog_cycles here by design.
+               This menu is 'event injector + one controller step'; cognitive cycles are counted only in Instinct Step.
+
+
+     -With regards to terminology and operations that affect controller steps:
+      “Action Center”  = the engine (`PolicyRuntime`).
+      “Controller step”  = one invocation of that engine.
+      “Instinct step”  = diagnostics +  one controller step .
+      “Autonomic tick”  = physiology +  one controller step .
+      ----
+
+    Consider the example where the Mountain Goat calf has just been born.
+    Thus, by default there will be b1 NOW --> b2 pred:stand
+    Note: "pred:stand" is not a state but an intent (if standing we would say,
+       e.g., "pred:posture:standing" or legacy alias "pred:state:posture_standing")
+    As shown below, this menu item creates a new binding b3 with "state:posture_fallen"
+    (it does it via world.add_predicate with attach="latest", i.e., link to b2).
+    The previous LATEST → fallen edge is relabeled to 'fall' for semantic readability.
+    It then calls a controller step. As shown above, this will cause the Action Center to
+      evaluate policies via PolicyRuntime.consider_and_maybe_fire(...) --> since there is
+      "posture_fallen" the safety override restricts candidate policies to {recover_fall, stand_up}
+      and given that equally priority/deficit, stand_up is earlier and will be triggered.
+    The base suggestion, focus of attention, and candidates for binding are discussed in Instinct Step
+      as well as in the README.md. They are largely diagnostic. Similarly the 'post' message simply re-evalutes
+      the gate/trigger after execution; it's normal that it can still read True.
+    However the line "policy:stand_up (added 3 bindings)" tells us that the policy executed and added
+    3 bindings.
+    If we go to Snapshot we see:
+        b1: [anchor:NOW]  [src=world._bindings['b1'].tags]
+        b2: [pred:stand]  [src=world._bindings['b2'].tags]
+        b3: [pred:state:posture_fallen]  [src=world._bindings['b3'].tags]
+        b4: [pred:action:push_up]  [src=world._bindings['b4'].tags]
+        b5: [pred:action:extend_legs]  [src=world._bindings['b5'].tags]
+        b6: [pred:posture:standing, pred:state:posture_standing]  [src=world._bindings['b6'].tags]
+    Bindings b4, b5 and b6 were added and various actions occurred (or is being executed now). We see
+       that at b6 there is the predicate "pred:posture:standing".
+    Also, of interest with regard to timekeeping:
+       controller_steps=1, cog_cycles=0, temporal_epochs=0, autonomic_ticks=0, vhash64()==epoch_vhash64, age_days =0.000
+
+            ''')
 
             prev_latest = world._latest_binding_id
             # Create a 'fallen' state as a new binding attached to latest
@@ -3967,6 +4202,14 @@ def interactive_loop(args: argparse.Namespace) -> None:
             fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
             if fired != "no_match":
                 print(fired)
+            # Controller step bookkeeping for this path:
+            try:
+                ctx.controller_steps = getattr(ctx, "controller_steps", 0) + 1
+            except Exception:
+                pass
+            if getattr(ctx, "temporal", None):
+                ctx.temporal.step()   # one soft-clock drift to reflect that the action took time
+                print_timekeeping_line(ctx)
 
             loop_helper(args.autosave, world, drives)
 
@@ -4059,8 +4302,28 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "24":
             # Capture scene → emit cue/predicate + tiny engram (signal bridge demo)
-            print("\nCapture scene — this will create a binding (cue/pred), assert a tiny engram in the column,")
-            print("and attach the engram pointer to the binding. You can see the pointer in the snapshot/HTML.")
+            print("\n Capture scene\n")
+            print('''
+    Capture scene -- creates a binding, stores an engram of some scene in one of the columns,
+      and then stores a pointer to that engram in the binding.
+
+    -the user is prompted to enter channel, token, family, attach (NOW->new, advance LATEST; oldLATEST -> new, advance LATEST;
+       "none" -- create node unlinked, can manually add edges later) and a tiny scene vector(e.g., ".5,.5,.5")
+    -there is a temporal boundary jump so that the new engram starts a fresh epoch
+       e.g., [temporal] boundary (pre-capture) → epoch=1 last_boundary_vhash64=23636ff46c39b1c5 (cos≈1.000)
+    -time attributes are passed in creating the engram
+    -then -- bid, eid = world.capture_scene(channel, token, vec, attach=attach, family=family, attrs=attrs)
+    -this creates a new binding --  b3 with tag cue:vision:silhouette:mom and attached engram id=80ac0bc7b6624b538db354c9d5aa4a17
+    -as noted it creates a tiny engram in one of the Columns, and stamps it with the time from attrs  e.g., time on engram: ticks....
+    -it then writes a pointer on the binding so that the binding points to the engram
+         -e.g.,  b3.engrams["column01"] = 80ac0....
+         -sets bN.engrams["column01"] = <eid>
+    -it then returns the binding id bid and the engram id eid
+    -then there is a controller==Action Center step -- in the example with a newborn calf the gate and trigger conditions for
+        policy:stand_up are met, and this policy is executed
+
+            ''')
+
             try:
                 channel = input("Channel [vision/scent/sound/touch] (default: vision): ").strip().lower() or "vision"
                 token   = input("Token   (e.g., silhouette:mom) (default: silhouette:mom): ").strip() or "silhouette:mom"
@@ -4094,23 +4357,40 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
             # Pass time attrs when creating an engram
             from cca8_features import time_attrs_from_ctx
-            attrs = time_attrs_from_ctx(ctx)
+            attrs = time_attrs_from_ctx(ctx) # e.g., {'ticks': 0, 'tvec64': '009afff54358ce3b', 'epoch': 1, 'epoch_vhash64': '009afff54358ce3b'}
             bid, eid = world.capture_scene(channel, token, vec, attach=attach, family=family, attrs=attrs)
+            #family ("cue" or "pred"), channel (e.g., "vision"), token (e.g., "silhouette:mom") create binding tag and name/label engrame record
+            #attach controls how binding placed in the episode -- NOW -> new, <old LATEST> -> new, "none" -> unlinked
+            #vec is a vector that becomes the engram payload
+            #attrs -- built from ctx, e.g., ticks/epoch/tvec64, stored in the engram's meta["attrs"] so can correlate time without decoding the payload
+            #the binding stores a pointer to the engram -- binding.engrams["columon01"] = {id: <eid>}
+            #the call returns the binding id bid and engram id eid
 
             try:
                 print(f"[bridge] created binding {bid} with tag "
                       f"{family}:{channel}:{token} and attached engram id={eid}")
+                #e.g., [bridge] created binding b3 with tag cue:vision:sdf:dfd and attached engram id=d39f3e7959ef47c481a809e9471183e7
 
                 # Fetch and summarize the engram record (robust to different shapes)
                 try:
                     rec = world.get_engram(engram_id=eid)
+                     #e.g., {'id': '65cde6b019eb4559b1251d67e064f142', 'name': 'scene:vision:silhouette:mom', 'payload': TensorPayload(data=[0.0, 0.0, 0.0],
+                     #   shape=(3,), kind='scene', fmt='tensor/list-f32'), 'meta': {'name': 'scene:vision:silhouette:mom', 'links': ['cue:vision:silhouette:mom'],
+                     #   'attrs': {'ticks': 0, 'tvec64': 'f7954a60a3af1be1', 'epoch': 1, 'epoch_vhash64': 'f7954a60a3af1be1', 'column': 'column01'},
+                     #   created_at': '2025-11-15T08:29:05'}, 'v': '1'}
+                     # id -- engram's unique id in the Column store -- matches the eid returned by capture_scene(....)
+                     # name -- descriptive label
+                     # payload -- e.g., tiny scene vector user entered, wrapped as a TensorPayload (it carries data, shape, kind -- like tensor/list-f32)
+                     #   -TensorPayload is a tiny, no dependency (we don't use NumPy at present) dataclass -- data: list[float], shape: tuple[int,...],
+                     #      kind (default "embedding", or e.g., kind="scene", etc), fmt (default "tensor/list-f32")
                     meta = rec.get("meta", {})
                     attrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
                     if attrs:
                         print(f"[bridge] time on engram: ticks={attrs.get('ticks')} "
                               f"tvec64={attrs.get('tvec64')} epoch={attrs.get('epoch')} "
                               f"epoch_vhash64={attrs.get('epoch_vhash64')}")
-                    rid   = rec.get("id", eid)
+                              # e.g., [bridge] time on engram: ticks=0 tvec64=f7954a60a3af1be1 epoch=1 epoch_vhash64=f7954a60a3af1be1
+                    rid   = rec.get("id", eid)  #rec dictionary.get(key, default)  e.g., 65cde6b019eb4559b1251d67e064f142
                     # payload can be nested or flat
                     payload = rec.get("payload") if isinstance(rec, dict) else None
                     if isinstance(payload, dict):
@@ -4120,34 +4400,43 @@ def interactive_loop(args: argparse.Namespace) -> None:
                         kind  = rec.get("kind")
                         shape = rec.get("shape")
                     print(f"[bridge] column record ok: id={rid} kind={kind} shape={shape} keys={list(rec.keys()) if isinstance(rec, dict) else type(rec)}")
+                    #e.g., [bridge] column record ok: id=65cde6b019eb4559b1251d67e064f142 kind=None shape=None keys=['id', 'name', 'payload', 'meta', 'v']
                 except Exception as e:
                     print(f"[warn] could not retrieve engram record: {e}")
 
                 # Print the actual slot and ids we just attached
-                slot = None
+                # "slot name" is the key used in a binding's engrams dict to label a particular engram pinter
+                # think of each binding as having little "ports" where engrames can plug in, with ports named "column1", "column2",...   <-- "slot name"
+                # e.g., b3: [cue:vision:silhouette:mom] engrams=[column01:65cde6b0…]
+                #      thus, b3.engrams = "column01":{"id": "65cde6b0…"}  <-- "column01" is the slot name
+                slot = None  #nb. dataclass usage different @some_dataclass(slots=True) -- slots here is named argument to @dataclass
                 try:
                     b = world._bindings.get(bid)
-                    eng = getattr(b, "engrams", None)
+                    eng = getattr(b, "engrams", None)  #e.g.,  {'column01': {'id': 'ff2478655259424cb9f1d5fff6328f22', 'act': 1.0}}
                     if isinstance(eng, dict):
                         # pick the slot that actually points to this engram id
                         for s, v in eng.items():
                             if isinstance(v, dict) and v.get("id") == eid:
-                                slot = s
+                                slot = s #"column01"
                                 break
                 except Exception:
                     slot = None
-
                 if slot:
                     print(f'[bridge] attached pointer: {bid}.engrams["{slot}"] = {eid}')
+                    #e.g., [bridge] attached pointer: b3.engrams["column01"] = b5ede08953714e7ab8a8ca4537971dd1
                 else:
                     # fallback: show all slots if we didn't find an exact match
                     slots = ", ".join(eng.keys()) if isinstance(eng, dict) else "(none)"
                     print(f'[bridge] {bid} engrams now include [{slots}] (attached id={eid})')
 
-                # optional: nudge controller once to see if anything reacts (pretty summary)
+                # main purpose of this menu selection item is to create a binding and an engram
+                # we now also perform one controller step==Action Center step
+                # however, this part is optional and could be commented out for this menu selection block to run in a sense-only functional mode
                 try:
-                    res = action_center_step(world, ctx, drives)
-
+                    res = action_center_step(world, ctx, drives)  #{'policy': 'policy:stand_up', 'status': 'ok', 'reward': 1.0, 'notes': 'stood up', 'binding': 'b6'}
+                    #scans the ordered list of policies and runs the first that triggers
+                    #note that Policy_Runtime.consider_and_maybe_fire(...) does a bit more in first recomputing dev-eligibility, applies the safety override (e.g., fallen),
+                    #  tie-breaks by a simple deficit score, then calls action_center_step(....)
                     if isinstance(res, dict):
                         # Skip printing if it's an explicit no-op
                         if res.get("status") != "noop":
@@ -4157,6 +4446,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                             binding = res.get("binding")
                             rtxt = f"{reward:+.2f}" if isinstance(reward, (int, float)) else "n/a"
                             print(f"[executed] {policy} ({status}, reward={rtxt}) binding={binding}")
+                            # e.g., [executed] policy:stand_up (ok, reward=+1.00) binding=b6
 
                             # WHY line if the gate provides an explanation
                             gate = next((p for p in POLICY_RT.loaded if p.name == policy), None)
@@ -4165,6 +4455,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                                 try:
                                     why = explain_fn(world, drives, ctx)
                                     print(f"[why {policy}] {why}")
+                                    #e.g., [why policy:stand_up] dev_gate: age_days=0.00≤3.0, trigger: stand near NOW=True
                                 except Exception:
                                     pass
                     else:
@@ -4174,6 +4465,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     print(f"[warn] controller step errored: {e}")
             except Exception as e:
                 print(f"[warn] capture_scene failed: {e}")
+
+            print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives)
 
         elif choice == "25":
@@ -4255,6 +4548,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     status = "DRIFTING slowly forward in time"
                 print(f"  status={status}  [derived from cos_to_last_boundary]")
 
+            print_timekeeping_line(ctx)
+
             # Explanation (matches Snapshot nomenclature)
             print("\nExplanation:")
             print("  The temporal soft clock keeps two fingerprints of a unit vector:")
@@ -4275,18 +4570,23 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
             loop_helper(args.autosave, world, drives)
 
+
         elif choice == "27":
             # Inspect engram by id OR by binding id
+            print("Inspect engram by id or by binding id")
+            print('''
+    From the eid (engram id) or bid (binding id) this selection will display
+    the human-readable portions of the engram record.
+
+            ''')
             try:
                 key = input("Engram id OR Binding id: ").strip()
             except Exception:
                 key = ""
-
             if not key:
                 print("No id provided.")
                 loop_helper(args.autosave, world, drives)
                 continue
-
             # Resolve binding → engram(s) if the user passed bN
             eid = key
             if key.lower().startswith("b") and key[1:].isdigit():
@@ -4309,23 +4609,26 @@ def interactive_loop(args: argparse.Namespace) -> None:
                         continue
                 else:
                     eid = eids[0]
+            #at this point have eid, e.g., "9a55787783bc44fb9f5d3f5a49ec7b5d"
 
-            # Fetch and pretty-print the Column record
             rec = None
             try:
                 rec = world.get_engram(engram_id=eid)
+                #e.g., {'id': '9a55787783bc44fb9f5d3f5a49ec7b5d', 'name': 'scene:vision:silhouette:mom', 'payload': TensorPayload(......
             except Exception:
                 rec = None
-
             if not rec:
                 print(f"Engram not found: {eid}")
                 loop_helper(args.autosave, world, drives)
                 continue
-
+            refs = _bindings_pointing_to_eid(world, eid)
+            if refs:
+                print("  referenced by:", ", ".join(f"{bid}.{slot}" for bid, slot in refs))
             try:
                 kind = rec.get("kind") or rec.get("type") or "(unknown)"
                 print(f"Engram: {eid}")
                 print(f"  kind: {kind}")
+                #e.g., Engram: 9a55787783bc44fb9f5d3f5a49ec7b5d  \\ kind: (unknown)
 
                 meta = rec.get("meta", {}) if isinstance(rec, dict) else {}
                 print("  meta:", json.dumps(meta, indent=2))
@@ -4354,19 +4657,39 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     print(f"  payload: <{len(payload)} bytes>")
                 else:
                     print("  payload: (none)" if payload is None else f"  payload: {payload}")
-
             except Exception as e:
                 print(f"(error printing engram {eid}): {e!r}")
-
             print("-" * 78)
             loop_helper(args.autosave, world, drives)
 
+
         elif choice == "28":
             # List all engrams by scanning bindings; dedupe by id
-            seen: set[str] = set()
-            any_found = False
-            for bid in _sorted_bids(world):
-                eids = _engrams_on_binding(world, bid)
+            print("List all engrams")
+            print('''
+    This selection will list all engrams stored by scanning the bindings.
+    Any duplicated engram ID's in different bindings will not be shown twice.
+    EID -- the engram id (32 hex characters)
+    src -- the source binding==node where the pointer is stored
+           note: this is the first binding found that points to that EID but de-duplicated by EID
+    ticks, epoch -- when the engram was created, actually the value of these counters when it was captured
+    tvec64 -- human readable 64-bit fingerprint of the temporal vector ctx.tvec64 when the engram was captured
+    payload --  info from the payload's metadata TensorPayload holds data:list[float] and on serialization write contiguous float32's
+      -shape=(3,) -- 1-D vector of 3 elements
+      -kind=scene -- kind of field, not numeric dtype; "scene" kind comes from the payload's metadata
+      -fmt=tensor/list-f32  -- TensorPayload holds data:list[float] and on serialization writes contiguous float32's
+    name -- engram name  e.g., scene:vision:silhouette:mom
+
+    Note: the Column record stores {"id", "name", "payload", "meta"}; receives the time attrs + "created_at"
+    Note: the binding keeps the pointer engrams["column01"] = {"id":EID, "act":1.0}
+
+            ''')
+
+            seen: set[str] = set() #useful to annotate containers created empty so mypy finds unambiguous
+            any_found = False  #type is obvious from the literal, so don't type in cases like this
+            printed_header = False
+            for bid in _sorted_bids(world):  #[b1, b2,...]
+                eids = _engrams_on_binding(world, bid)  #[] if no engram, or if engram, e.g., ['15da3c55f02c4f7db6cf657367fc8e49']
                 for eid in eids:
                     if eid in seen:
                         continue
@@ -4376,9 +4699,13 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     rec = None
                     try:
                         rec = world.get_engram(engram_id=eid)
+                        #e.g.,  {'id': '15da3c55f02c4f7db6cf657367fc8e49', 'name': 'scene:vision:silhouette:mom',
+                        #  'payload': TensorPayload(data=[0.0, 0.0, 0.0], shape=(3,), kind='scene', fmt='tensor/list-f32'),
+                        #  'meta': {'name': 'scene:vision:silhouette:mom', 'links': ['cue:vision:silhouette:mom'],
+                        #  'attrs': {'ticks': 0, 'tvec64': '7ffe462732f60bd9', 'epoch': 1, epoch_vhash64': '7ffe462732f60bd9', 'column': 'column01'},
+                        #  'created_at': '2025-11-16T10:46:50'}, 'v': '1'}
                     except Exception:
                         rec = None
-
                     ticks = epoch = tvec = evh = shape = dtype = None
                     if isinstance(rec, dict):
                         meta = rec.get("meta", {})
@@ -4388,7 +4715,6 @@ def interactive_loop(args: argparse.Namespace) -> None:
                             tvec  = attrs.get("tvec64")
                             epoch = attrs.get("epoch")
                             evh   = attrs.get("epoch_vhash64")
-
 
                         payload = rec.get("payload")
                         if isinstance(payload, dict):
@@ -4411,17 +4737,31 @@ def interactive_loop(args: argparse.Namespace) -> None:
                         else:
                             shape = rec.get("shape")
                             dtype = rec.get("kind") or rec.get("type")
+                    name = (rec.get("name") or "") if isinstance(rec, dict) else ""
 
+                    if not printed_header:
+                        print("Engrams in the system:\n")
+                        printed_header = True
+
+                    fmt = (payload.meta().get("fmt") if hasattr(payload, "meta")
+                           else (payload.get("fmt") if isinstance(payload, dict) else None))
                     print(f"EID={eid}  src={bid}  ticks={ticks} epoch={epoch} tvec64={tvec} "
-                          f"payload(shape={shape}, dtype={dtype})")
+                          f"payload(shape={shape}, kind={dtype}{', fmt='+fmt if fmt else ''})"
+                          f"{'  name='+name if name else ''}")
             if not any_found:
-                print("(no engrams found)")
-            print("-" * 78)
+                print("no engrams were found")
             loop_helper(args.autosave, world, drives)
 
 
         elif choice == "29":
-            # Search engrams by name substring and/or epoch
+            # Search engrams
+            print("Selection Search Engrams\n")
+            print("Search referenced engrams by name substring (case-insensitive) and/or epoch.\n"
+                  "Optional filters: channel substring (e.g., 'vision'), payload kind (e.g., 'scene'), "
+                  "and EID prefix.\n"
+                  "Note: 'Name' is not bid but the given by the tag, e.g.,name=scene:vision:silhouette:mom ")
+
+            # --- inputs (all optional except 'q' which can be blank) ---
             try:
                 q = input("Name contains (substring, blank=any): ").strip()
             except Exception:
@@ -4431,41 +4771,101 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 epoch = int(e_in) if e_in else None
             except Exception:
                 epoch = None
+            try:
+                chan = input("Channel contains (e.g., vision, blank=any): ").strip().lower()
+            except Exception:
+                chan = ""
+            try:
+                kid = input("Payload kind equals (e.g., scene, blank=any): ").strip().lower()
+            except Exception:
+                kid = ""
+            try:
+                eid_prefix = input("EID starts with (hex prefix, blank=any): ").strip().lower()
+            except Exception:
+                eid_prefix = ""
 
-            # Walk pointers so we only see engrams actually referenced by the graph
+            # --- scan pointers on bindings, de-dupe by EID ---
             seen = set()
-            found = []
-            for bid in _sorted_bids(world):
-                for eid in _engrams_on_binding(world, bid):
+            found: list[tuple[str, str, str, dict]] = []  # (eid, src_bid, name, attrs)
+
+            for bid, b in world._bindings.items():
+                eng = getattr(b, "engrams", None)
+                if not isinstance(eng, dict):
+                    continue
+                for _slot, val in eng.items():
+                    if not (isinstance(val, dict) and "id" in val):
+                        continue
+                    eid = val["id"]
                     if eid in seen:
                         continue
                     seen.add(eid)
-                    rec = None
+
+                    # fetch column record
                     try:
                         rec = world.get_engram(engram_id=eid)
                     except Exception:
-                        pass
+                        continue
                     if not isinstance(rec, dict):
                         continue
-                    name = (rec.get("name") or "")
+
+                    name = rec.get("name") or ""
+                    meta = rec.get("meta", {})
+                    attrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
+
+                    # ---- filters ----
+                    if eid_prefix and not eid.lower().startswith(eid_prefix):
+                        continue
                     if q and q.lower() not in name.lower():
                         continue
+                    if chan and chan not in name.lower():
+                        continue
                     if epoch is not None:
-                        attrs = rec.get("meta", {}).get("attrs", {})
-                        if not (isinstance(attrs, dict) and attrs.get("epoch") == epoch):
+                        ep = attrs.get("epoch")
+                        if not (isinstance(ep, int) and ep == epoch):
                             continue
-                    found.append((eid, bid, name, rec.get("meta", {}).get("attrs", {})))
+                    if kid:
+                        # 'kind' comes from payload metadata
+                        pl = rec.get("payload")
+                        kind = None
+                        if hasattr(pl, "meta"):
+                            try:
+                                kind = pl.meta().get("kind")
+                            except Exception:
+                                kind = None
+                        elif isinstance(pl, dict):
+                            kind = pl.get("kind") or (pl.get("meta", {}) or {}).get("kind")
+                        if (kind or "").lower() != kid:
+                            continue
+
+                    found.append((eid, bid, name, attrs))
+
+            # --- print results (epoch desc, then name, then eid) ---
             if not found:
-                print("(no matches)")
+                print("\n(no matches)")
             else:
-                for eid, bid, name, attrs in found:
+                print("\nThe following matches were found:\n")
+                def _sort_key(t):
+                    eid, _bid, name, attrs = t
+                    ep = attrs.get("epoch")
+                    # sort by epoch desc (ints first), then name, then eid
+                    ep_key = -ep if isinstance(ep, int) else float("inf")
+                    return (ep_key, name or "", eid)
+
+                for eid, bid, name, attrs in sorted(found, key=_sort_key):
                     print(f"EID={eid}  src={bid}  name={name}  epoch={attrs.get('epoch')}  tvec64={attrs.get('tvec64')}")
-            print("-" * 78)
+
             loop_helper(args.autosave, world, drives)
 
 
         elif choice == "30":
             # Delete engram by id OR by binding id; also prune any binding pointers to it
+            print('''
+    Deletes engrams by bid (binding id) or by eid (engram id).
+    Every binding pointer that references this eid will be pruned.
+    -deletes the Column record via column.mem.delete(eid)
+    -then prunes every binding pointer that referenced that eid
+
+            ''')
             key = input("Engram id OR Binding id to delete: ").strip()
             if not key:
                 print("No id provided.")
@@ -4527,6 +4927,13 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         elif choice == "31":
             # Attach an existing engram id to a binding (creates/overwrites a slot)
+            print("Attach an existing engram id (eid) to a binding id (bid).")
+            print("-this will create a new slot for that eid or overwrite an existing slot with same eid")
+            print("-multiple slots and engram pointers possible, of course, on a given binding")
+            print("-it is possible to create dangling pointers that point to non-existing engrams that")
+            print("   you entered, but they can be removed via the Delete menu option")
+            print("")
+
             bid = input("Binding id: ").strip()
             if not (bid.lower().startswith("b") and bid[1:].isdigit()):
                 print("Please enter a binding id like b3.")

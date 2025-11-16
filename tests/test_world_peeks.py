@@ -3,11 +3,15 @@ import ast
 import pathlib
 
 # Files where peeking is allowed (trusted-friend seam + world internals + run script + example)
+# Note: If you make a copy of some python code that peeks in world internals, etc and that copy is lying around your working directory,
+#  then this unit test will find it and report an error -- you should move the file out of your working directory or else allow it below
 ALLOW_FILES = {
     "cca8_controller.py",
     "cca8_world_graph.py",
     "cca8_run.py",          # TEMP allow
     "example_test.py",      # TEMP allow
+    "temp.py",
+    "tester.py"
 }
 
 # Directories we don't scan
@@ -41,4 +45,4 @@ def test_world_bindings_peek_is_quarantined():
             continue
         offenders.extend(_offenders_in_file(p))
     offenders.sort()
-    assert not offenders, "Don't peek world._bindings outside controller: " + ", ".join(offenders)
+    assert not offenders, "See test_world_peeks.py. File with non-allowed peeks (move/delete please): " + ", ".join(offenders)

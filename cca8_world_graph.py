@@ -73,8 +73,12 @@ _ATTACH_OPTIONS: Set[str] = {"now", "latest", "none"}
 # -----------------------------------------------------------------------------
 
 class Edge(TypedDict):
-    '''more precise typing of edges in class Binding
-    '''
+    """more precise typing of edges in class Binding
+    -TypedDict therfore treat like a dictionary, not a dataclass
+    -thus, no instances, no dot attribute accesses
+    e.g., aa: Edge = {'to': 'Nodexxx', 'label': 'then', 'meta': {'created by':'me'}}
+          print(aa['to'])  --> 'Nodexxx'
+    """
     to: str
     label: str
     meta: dict

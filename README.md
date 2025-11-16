@@ -1434,6 +1434,21 @@ CCA8 uses four orthogonal time measures. They serve different purposes and are i
 *Purpose:* cognition/behavior pacing (not wall-clock).  
 *Source:* a loop in the runner that evaluates policies once and may write to the WorldGraph. When that write occurs, we mark a **temporal boundary (epoch++)**. :contentReference[oaicite:0]{index=0}
 
+With regards to its effects on timekeeping, **when a Controller Step occurs**:
+i) **controller_steps**: ++ once per controller step  
+ii) **temporal drift**: ++ (one soft-clock drift) per controller step  
+iii) **autonomic ticks**: no change  
+iv) **developmental age**: no change  
+v) **cognitive cycles**: ++ if there is a write to the graph (nb. need to change in the future)
+                               Cognitive cycles are currenlty counted only in Instinct Step (productive writes) (to change in future)
+
+With regards to terminology and operations that affect controller steps:
+**“Action Center”** = the engine (`PolicyRuntime`).
+**“Controller step”** = one invocation of that engine.
+**“Instinct step”** = diagnostics + **one controller step**.
+**“Autonomic tick”** = physiology + **one controller step**.
+**“Simulate fall”** = inject fallen + **one controller step** (no drift) (but no cognitive cycle increment)
+
 **2) Temporal drift** — the *soft clock* (unit vector) that drifts a bit each step and jumps at boundaries.  
 *Purpose:* similarity + episode segmentation that’s unitless and cheap (cosine of current vs last-boundary vector).  
 *Drift call:* `ctx.temporal.step()`; *Boundary call:* `ctx.temporal.boundary()`; vectors are re-normalized every time. See module notes on drift vs boundary. :contentReference[oaicite:1]{index=1}  
@@ -4478,4 +4493,280 @@ CCA8’s WorldGraph is already a compact scene graph over time: bindings carry p
 
 4. **FOA weighting by spatial priors:** seed FOA from NOW/LATEST/cues (already shipped) and later bias searches toward spatially plausible neighbors (e.g., `near` before `far`).
 
-These are **no-regret extensions**: they retain CCA8’s split (small symbolic index + rich engrams) which is mammalian brain inspired and follows the published Causal Cognitive Architecture stratgegy. Note that recently non-biological AI researchers have started to advocate spatial and more world model designs, e.g., “spatial intelligence” trajectory advocated by Fei-Fei Li and others. We’ll grow vocabulary gradually under the existing lexicon and keep planning semantics unchanged until weights/filters justify a switch.
+These are **no-regret extensions**: they retain CCA8’s split (small symbolic index + rich engrams) which is mammalian brain inspired and follows the published Causal Cognitive Architecture strategy. Note that recently, non-biological AI researchers have started to advocate spatial and more world model designs, e.g., “spatial intelligence” trajectory advocated by Fei-Fei Li and others. We’ll grow vocabulary gradually under the existing lexicon and keep planning semantics unchanged until weights/filters justify a switch.
+
+
+
+
+
+
+
+### December 2025 -- Representations within the Architecture
+
+CCA8 Tagging & Cognitive Cycle Roadmap (v0.1)
+=============================================
+
+> This is a living design note that standardizes how we represent **sense → process → act** in the WorldGraph, and how tags, edges, and timekeeping map onto that loop.
+
+* * *
+
+1) Purpose & scope
+
+------------------
+
+* Provide a consistent **predicate and cue taxonomy** for the CCA8 newborn–goat simulation (and future profiles).
+
+* Clarify how evidence, intent, actions, and states appear in the graph.
+
+* Define minimal invariants that keep planning readable while leaving room for later embodiment/HAL.
+
+* * *
+
+2) Core namespaces & their roles
+
+--------------------------------
+
+### A. Cues (evidence — _not_ goals)
+
+* **Prefix:** `cue:*` (always normalized on write).
+
+* **Examples:** `cue:vision:silhouette:mom`, `cue:drive:hunger_high`, `cue:sound:bleat:mom`.
+
+* **Semantics:** Evidence that something is _perceived or inferred now_.
+
+* **Persistence style:** We **emit on rising-edges** (to keep the graph sparse) and keep the node for auditability.
+
+* **Use:** Policy triggers; seeds the **FOA** (focus of attention). We do **not** plan _to_ a cue.
+
+### B. States (relatively stable facts)
+
+* **Canonical prefixes (avoid `pred:state:*`):**
+  
+  * `pred:posture:*` → `pred:posture:standing`, `pred:posture:fallen`
+  
+  * `pred:proximity:*` → `pred:proximity:mom:close`
+  
+  * `pred:motion:*` → `pred:motion:walking`, `pred:motion:climbing`, `pred:motion:still`
+
+* **Semantics:** Facts about the agent/world that can hold for some duration.
+
+* **Use:** Planner goals, safety checks, policy triggers.
+
+### C. Actions (events that happened during execution)
+
+* **Prefix:** `pred:action:*` → micro-steps such as `pred:action:push_up`, `pred:action:extend_legs`.
+
+* **Semantics:** _Occurred_ (or is being executed now) sub-steps recorded as event nodes.
+
+* **Provenance:** action nodes carry `meta.policy`, time attrs, and may have an engram pointer.
+
+* **Status notation (minimal):** Prefer **`meta.status ∈ {executing, completed, aborted}`** on the action node rather than creating separate tag families for pending/ongoing. (Keeps vocabulary small while allowing monitors.)
+
+### D. Intent / working memory (optional, lightweight)
+
+* **Intent (optional):** `pred:intent:*` for explicit planner targets (e.g., `pred:intent:stand`). In many cases, the existing `pred:stand` token already serves this affordance role; use `intent` only when disambiguation is helpful.
+
+* **Scratch / intermediate results (optional):** `pred:wm:*` for temporary, human-visible intermediates; or keep truly ephemeral values in `ctx` (e.g., `ctx.scratch = {…}`) without writing to the graph.
+
+* * *
+
+3) Edges & attach semantics (placement)
+
+---------------------------------------
+
+* **Edge label = transition/action** for readability: `then`, `fall`, `suckle`, `stabilize`, etc.
+
+* **Attach modes:**
+  
+  * `attach="now"` → `NOW → new` and update **LATEST**.
+  
+  * `attach="latest"` → `LATEST → new` and update **LATEST**.
+  
+  * `attach="none"` → create node without auto-edge; caller may add labeled edges manually.
+
+* **Default guidance:**
+  
+  * Cues: `attach=now` (exteroceptive) or `attach=latest` (interoceptive rising-edge) to keep the episode readable.
+  
+  * Actions & states from policies: `attach=latest` (readable chains).
+  
+  * WM/scratch: consider `attach=none` to avoid shifting LATEST.
+
+* **Future (stubbed today, no behavior change):** a **base-aware attach** that anchors new writes near the _contextual base_ (e.g., nearest target predicate → HERE → NOW). This keeps micro-timelines local without cluttering `NOW`.
+
+* * *
+
+4) Sense → Process → Act mapping
+
+--------------------------------
+
+* **Sense** → write a `cue:*` node (plus optional tiny engram) and seed FOA.
+
+* **Process** → FOA around `NOW/LATEST` + cues; evaluate policy gates (`dev_gate`, `trigger`); optional explicit `pred:intent:*` or `pred:wm:*` scratch.
+
+* **Act** → execute one policy; emit `pred:action:*` nodes (micro-steps) and resulting state (e.g., `pred:posture:standing`); stamp provenance & time attrs.
+
+**Two reference flows**
+
+1. _Simulated fall → stand up_: `NOW → stand` … `fall` → `posture:fallen` → `action:push_up` → `action:extend_legs` → `posture:standing`.
+
+2. _Mom cue + hunger → seek nipple_ (later): `cue:vision:silhouette:mom` + `drive:hunger_high` → choose `seek_nipple` → emit action nodes and a new proximity/feeding state.
+
+* * *
+
+5) Timekeeping & counters (five measures)
+
+-----------------------------------------
+
+1. **Controller steps** — increment **once per Action Center invocation** (each menu path that runs it).
+
+2. **Temporal drift** — apply one soft-clock drift per controller step (except where the menu already drifted earlier in the same step, e.g., Autonomic Tick).
+
+3. **Autonomic ticks** — **independent heartbeat** that also drifts and advances age.
+
+4. **Developmental age (`age_days`)** — advanced by Autonomic Tick (or profile-specific rules).
+
+5. **Cognitive cycles (`cog_cycles`)** — **current definition**: increment **only in Instinct Step** when the controller step _produced writes_. (Conservative until an explicit sense→process→act loop is formalized.)
+
+**Boundary rule:** if a controller step **wrote** new facts, perform a temporal **boundary jump** (epoch++) and record fingerprints.
+
+* * *
+
+6) Naming & lexicon
+
+-------------------
+
+* Lowercase tokens, `:`-separated namespaces: `family:subcategory:atom`.
+
+* Prefer canonical families (`posture`, `proximity`, `motion`, `action`, `nipple`, `milk`, …). Keep `state:*` only as a **legacy alias**.
+
+* Cue naming: `cue:<channel>:<token>` where `<channel> ∈ {vision, sound, touch, scent, drive, vestibular, …}`.
+
+* Keep the lexicon **stage-aware** (e.g., `neonate` warns on out-of-scope tokens).
+
+* * *
+
+7) Invariants (graph hygiene)
+
+-----------------------------
+
+* Cues are **evidence**, never planner goals.
+
+* States encode **facts**; actions encode **events**; intents/WM are **optional** and lightweight.
+
+* Keep chains **short and local**: new nodes attach near the current episode (`NOW/LATEST`), or to a base anchor when that feature is enabled.
+
+* All policy writes stamp **provenance** (`meta.policy`) and **time attrs** (ticks, epoch, `tvec64`, `epoch_vhash64`).
+
+* * *
+
+8) Roadmap items (no behavior change yet)
+
+-----------------------------------------
+
+* **Base-aware attach:** flip the stubs so actions/states anchor near the suggested base.
+
+* **Action status:** standardize `meta.status` and minimal monitors for long-running actions.
+
+* **FOA biasing:** prioritize neighbors with `near/on/inside` relations once those edges appear.
+
+* **Present windows:** optional TTL for cues/WM (e.g., present if `ticks - created_at_ticks < N`).
+
+* **Embodiment:** wire HAL hooks so actions can optionally touch actuators/sensors without changing graph semantics.
+
+* * *
+
+9) Examples (pattern snippets)
+
+------------------------------
+
+* **Cue (vision):** `cue:vision:silhouette:mom` (attach=now)
+
+* **Interoceptive cue (rising-edge):** `cue:drive:hunger_high` (attach=latest)
+
+* **Action micro-step:** `pred:action:push_up` with `meta.status='completed'`
+
+* **State (posture):** `pred:posture:standing`
+
+* **Motion state:** `pred:motion:walking` (vs. `pred:motion:still`)
+
+* **Intent (optional):** `pred:intent:stand`
+
+* **WM scratch (optional):** `pred:wm:target_path_ready`
+
+* * *
+
+* * *
+
+CCA8 Development Plan — WIP (Winter ’25-'26)
+========================================
+
+Objectives
+----------
+
+1. Walk the runner menus end-to-end; 2) tighten behavior/testing where needed; 3) stage a **newborn-goat, first-hours** demo; 4) bring in a minimal **ToM-bias** consistent with our architecture/paper; 5) only then reconsider representation tweaks (scene-graph relations, base-aware attach, motion states) and engram usage.
+
+Phase I — Menu pass-through
+---------------------------
+
+* Work through each menu in order; capture any mismatches between comments, UI, and behavior; add a unit test when a fix lands.
+
+* Outputs: short commit notes + tests that exercise the new behavior (keep coverage ≥30%).
+
+Phase II — Per-menu adjustments & tests
+---------------------------------------
+
+* Apply the “small, obvious fix” rule: interoceptive rising-edge cues, one drift per controller step, safety override traces, etc.
+
+* Outputs: green preflight, quiet logs, and readable traces that match the docs.
+
+Phase III — Newborn goat: **first hours** storyboard
+----------------------------------------------------
+
+Sequence to stage (bindings/edges only, no learning yet):
+
+1. born → wobble; 2) **stand-up** recovery path; 3) orient to mom; 4) mom:close; 5) nipple:found → latched; 6) milk:drinking; 7) rest/warmth.  
+   Timekeeping: controller_steps++, drift per step; developmental age via autonomic ticks only.  
+   Metrics: time-to-stand, time-to-latch, milk episodes, falls → recovery count. (Use existing tag families and the restricted lexicon.)
+
+Phase IV — The “800-lb gorilla”: minimal ToM bias
+-------------------------------------------------
+
+* Rationale: In the paper, ToM is not just a test—it **directs behavior** and improved survival in simulation (97 vs 6 cycles, p<.001). We’ll reflect that as a light **selection bias**, not a new heavy module.
+
+* Mechanism (stub, toggleable):  
+  Add a single **ToM-bias scalar** in the controller step that (when enabled) slightly upweights policies that respond to **social cues** (e.g., `vision:silhouette:mom`, `sound:bleat:mom`) when hunger is high—mirroring the paper’s “Goal Module balances social vs energy signals” without changing graph format.
+
+* Guardrails: keep the bias small, report it in the trace, and ensure behavior stays explainable (dev-gate + trigger still rule).
+
+Phase V — Representation & tagging (no-behavior-change pass)
+------------------------------------------------------------
+
+* Keep the **canonical families**: cues (evidence), **pred:posture*** & **pred:proximity*** (states), **pred:action*** (events). Prefer motion states (`pred:motion:*`) for ongoing movement. (Legacy `pred:state:*` accepted with warnings.)
+
+* Optional, later: **base-aware attach** and labelled relations (`near/on/under/inside`) for readability—kept as stubs until Phase III is stable.
+
+Phase VI — Columns/engrams (lightweight)
+----------------------------------------
+
+* Keep WorldGraph as the symbolic index; attach tiny engrams only where it clarifies a cue or milestone (e.g., a short scene vector for `silhouette:mom`). Revisit once the first-hours demo is stable.
+
+Acceptance checks
+-----------------
+
+* Preflight: **PASS**; coverage ≥30%.
+
+* First-hours storyboard plays through with readable traces and no duplicate edges.
+
+* With ToM-bias **off** vs **on**, the demo shows the same structural path; with **on**, social-driven choices are selected slightly earlier given the same drives and cues (trace reports bias). This echoes the paper’s framing of ToM as a directing mechanism, not just inference.
+
+Next up (immediate)
+-------------------
+
+* Proceed to **Menu #12 – Input cue** as the “Sense → Process → Act” segue: write `cue:<channel>:<token>`, drift once, and run **one controller step** to observe the reaction (seek mom vs rest, etc.). Then capture any deltas needed in triggers and tests.
+
+* * *
+
+
+
+
