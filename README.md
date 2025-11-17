@@ -504,16 +504,23 @@ A: JSON keeps sessions portable and debuggable, binary would be smaller but opaq
 
 **Runner, menus, and CLI:**
 
+
+
 You can explore the graph via an interactive menu. Relevant items:
 
-* Display snapshot (prints bindings, edges, drives, optionally exports an interactive graph).
-* Add predicate (creates a node with a `pred:*` tag, you can attach it to NOW or LATEST to auto‑link chronology).
+* Display snapshot (prints bindings, edges, drives, ctx, and eligible policies; optionally export an interactive graph).
+* Inspect binding details (menu **20**) — given a binding id (or `ALL`), shows its tags, meta, a short Provenance: summary (`meta.policy/created_by/boot/ticks/epoch`), any attached engrams, and both outgoing and incoming edges with degree counts.
+* Add predicate (creates a node with a `pred:*` tag, you can attach it to NOW or LATEST to auto-link chronology).
 * Connect two bindings (adds a directed edge, the UI warns if the same labeled edge already exists).
 * Plan from NOW to a predicate (prints ids and a pretty path).
+  
+  
 
-Design decision (ADR-0004 folded in): The runner offers a quick‑exit `--plan <token>` flag when you only need to compute a plan once and exit. The menu shows a short “drives” view because drives are central to policy triggers.
+Design decision (folded in): The runner offers a quick‑exit `--plan <token>` flag when you only need to compute a plan once and exit. The menu shows a short “drives” view because drives are central to policy triggers.
 
-Design decision (ADR-0007 folded in): Attachment semantics are explicit and lowercase: `attach="now"`, `attach="latest"`, or `"none"`. This removes ambiguity when auto‑wiring the newest binding into the episode chain.
+Design decision (folded in): Attachment semantics are explicit and lowercase: `attach="now"`, `attach="latest"`, or `"none"`. This removes ambiguity when auto‑wiring the newest binding into the episode chain.
+
+
 
 ***Q&A to help you learn this section***
 
@@ -581,9 +588,15 @@ pytest -q -s
 
 Included starter tests:
 
-tests/test_smoke.py — basic sanity (asserts True).
+Included starter tests:
 
-tests/test_boot_prime_stand.py — seeds stand near NOW andasserts a path NOW → pred:stand exists.
+- `tests/test_smoke.py` — basic sanity (asserts True).
+- `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → pred:stand exists.
+- `tests/test_inspect_binding_details.py` — uses a small demo world to exercise binding shape, provenance (`meta.policy/created_by/...`), engram pointers, and incoming/outgoing edge degrees as expected by the “Inspect binding details” menu.
+
+The demo world for these tests is built via `cca8_test_worlds.build_demo_world_for_inspect()`, which creates a tiny, deterministic WorldGraph (anchors NOW/HERE, stand/fallen/cue_mom/rest predicates, and a single engram pointer) that you can also use interactively via `--demo-world`.
+
+
 
 
 
@@ -1754,6 +1767,30 @@ Note: menu **11** adds a **cue** not a pred.
 ### Show drives (raw + tags)
 
 Menu → **D** → prints numeric drives and active **drive flags** (`drive:*`, ephemeral)
+
+
+
+### Start with a preloaded demo world (for graph/menu testing)
+
+Sometimes you want a small, deterministic graph to test the graph menus without building everything via instincts first.
+
+cca8_run.py --demo-world
+
+--This:
+
+* Seeds a tiny WorldGraph with 6 bindings and 7 edges (anchors `NOW`/`HERE`, a `stand` predicate, a `fallen` state, a cue-like `vision:silhouette:mom`, and a `state:resting` node with provenance and an engram pointer).
+
+* Prints a short banner such as `[demo_world] Preloaded demo world (NOW=b1, bindings=6)` at startup.
+
+* Lets you immediately use:
+  
+  * `3` Snapshot to see the prewired edges.
+  
+  * `20` Inspect binding details (e.g., on the “resting” node) to inspect tags/meta/provenance/engrams and incoming/outgoing edges.
+  
+  * `21` List predicates, `23/24` Connect/Delete edges, and `25` Plan from NOW, all against the same stable mini-world.
+
+The same demo builder is used by `tests/test_inspect_binding_details.py` via `cca8_test_worlds.build_demo_world_for_inspect()`, so interactive experiments and unit tests share the same graph shape.
 
 
 
@@ -3118,8 +3155,13 @@ CLI quick reference
     
     # Full preflight (runs pytest + checks) and exit
     python cca8_run.py --preflight
+    
+    # Start with a small preloaded demo world (for graph/menu testing)
+    python cca8_run.py --demo-world
+    
+    Flags you’ll actually use: `--about`, `--version`, `--load`, `--autosave`, `--plan`, `--preflight`, `--no-intro`, `--no-boot-prime`, `--profile {goat,chimp,human,super}`, `--hal`, `--body`, `--demo-world`.
 
-Flags you’ll actually use: `--about`, `--version`, `--load`, `--autosave`, `--plan`, `--preflight`, `--no-intro`, `--no-boot-prime`, `--profile {goat,chimp,human,super}`, `--hal`, `--body`.
+
 
 * * *
 
@@ -4766,7 +4808,5 @@ Next up (immediate)
 * Proceed to **Menu #12 – Input cue** as the “Sense → Process → Act” segue: write `cue:<channel>:<token>`, drift once, and run **one controller step** to observe the reaction (seek mom vs rest, etc.). Then capture any deltas needed in triggers and tests.
 
 * * *
-
-
 
 

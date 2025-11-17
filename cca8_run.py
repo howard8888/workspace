@@ -2450,6 +2450,40 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"engram bridge failed: {e}")
 
+    # Z7) Timekeeping one-liner sanity
+    try:
+        _w = cca8_world_graph.WorldGraph(); _w.ensure_anchor("NOW")
+        _d = Drives(); _ctx = Ctx()
+        # Instinct-like: drift once then one controller step
+        if _ctx.temporal is None:
+            _ctx.temporal = TemporalContext(dim=8, sigma=_ctx.sigma, jump=_ctx.jump)
+            _ctx.tvec_last_boundary = _ctx.temporal.vector()
+            _ctx.boundary_vhash64 = _ctx.tvec64()
+        _rt = PolicyRuntime(CATALOG_GATES); _rt.refresh_loaded(_ctx)
+        if _ctx.temporal:
+            _ctx.temporal.step()
+        _ = action_center_step(_w, _ctx, _d)
+        line = timekeeping_line(_ctx)
+        if ("controller_steps=" in line) and ("age_days=" in line):
+            ok("timekeeping one-liner produced")
+        else:
+            bad("timekeeping one-liner missing fields")
+    except Exception as e:
+        bad(f"timekeeping one-liner error: {e}")
+
+    # Z8) Resolve Engrams pretty (smoke)
+    try:
+        _wk = cca8_world_graph.WorldGraph(); _wk.ensure_anchor("NOW")
+        bid, eid = _wk.capture_scene("vision", "silhouette:mom", [0.1], attach="now", family="cue")
+        _resolve_engrams_pretty(_wk, bid)  # prints; OK if non-crashing
+        # add a dangling pointer
+        b = _wk._bindings[bid]; b.engrams["column09"] = {"id": "a"*32, "act": 1.0}
+        _resolve_engrams_pretty(_wk, bid)  # should still print; no assert
+        ok("resolve-engrams pretty printed")
+    except Exception as e:
+        bad(f"resolve-engrams pretty error: {e}")
+
+
     # 7) Action helpers sanity
     try:
         _wa = cca8_world_graph.WorldGraph()
@@ -3251,6 +3285,24 @@ def interactive_loop(args: argparse.Namespace) -> None:
         ctx.boundary_vhash64 = None
     print_startup_notices(world)
 
+    # Optional: start session with a preloaded demo/test world to exercise graph menus.
+    # Driven by --demo-world; ignored when --load is used (load takes precedence).
+    if getattr(args, "demo_world", False) and not args.load:
+        try:
+            from cca8_test_worlds import build_demo_world_for_inspect  # type: ignore
+            demo_world, demo_ids = build_demo_world_for_inspect()
+            world = demo_world
+            try:
+                now_demo = demo_ids.get("NOW") if isinstance(demo_ids, dict) else _anchor_id(world, "NOW")
+                print(f"[demo_world] Preloaded demo world (NOW={now_demo}, bindings={len(world._bindings)})")
+            except Exception:
+                print(f"[demo_world] Preloaded demo world (bindings={len(world._bindings)})")
+        except Exception as e:
+            print(f"[demo_world] Could not preload demo world: {e}")
+    elif getattr(args, "demo_world", False) and args.load:
+        # Both flags given: be explicit that --load wins.
+        print("[demo_world] --demo-world ignored because --load was also provided.")
+
     POLICY_RT = PolicyRuntime(CATALOG_GATES)
     POLICY_RT.refresh_loaded(ctx)
     loaded_ok = False
@@ -3676,43 +3728,187 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
         elif choice == "10":
-            # Inspect binding details (accepts a single id, or ALL/* to dump everything)
-            print("Selection Inspect Binding Details\n")
-            print("Enter a binding id (e.g., b3) or 'ALL'. Displays tags, meta, engrams, and outgoing edges.")
-            print("Use this to audit provenance (meta.policy/created_by) and attached engrams on one binding.\n")
+            # Inspect binding details and user input (accepts a single id, or ALL/* to dump everything)
+            print('''
+    Selection Inspect Binding Details
 
-            bid = input("Binding id to inspect (or 'ALL'): ").strip()
+    -Enter a binding id (bid) (e.g., 'b3') or 'ALL' (or '*').
+         Note: not case sensitive -- e.g., 'B3' or 'b3' treated the same
+         Note: if case-sensitivity in your WorldGraph labeling, then comment out case insensitivity line of code
+
+    -This selection will then display the binding's tags, meta, engrams,
+       and its outgoing and incoming edges.
+    -Note that you can inspect provenance, meta.policy/created_by/boot, attached engrams,
+       and graph degree on one or more bindings.
+       Note: each binding has a meta dictionary that stores provenance, i.e., a record of where and when this binding comes from
+       Note: a binding created by a policy at runtime might have key:value pair inside of meta dict
+       Note: a typical Provenance summary is, e.g., meta.policy, meta.created_by, meta.boot, meta.ticks, etc.
+
+    -Internally the code block calls _print_one(bid) and prints out the information about that binding
+    -if "ALL" chosen then _sorted_bids(world) returns the WorldGraph's bid's in sorted order, e.g., (b1, b2, ...)
+        and loop through bid's with a _print_one(bid) for each one
+
+            ''')
+            bid = input("Binding id to inspect (or 'ALL'): ").strip().lower() #case insensitive
+            #bid = input("Binding id to inspect (or 'ALL'): ").strip() #case sensitive
+            print("\n Binding details for the requested binding(s):\n")
+
+            # Inspect binding internal helper functions
+            def _edge_rel(e: dict) -> str:
+                return e.get("label") or e.get("rel") or e.get("relation") or "then"
+
+            def _edge_dst(e: dict) -> str | None:
+                return e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+
+            def _families_from_tags(tags) -> list[str]:
+                fams: list[str] = []
+                tags = tags or []
+                if any(isinstance(t, str) and t.startswith("anchor:") for t in tags):
+                    fams.append("anchor")
+                if any(isinstance(t, str) and t.startswith("pred:") for t in tags):
+                    fams.append("pred")
+                if any(isinstance(t, str) and t.startswith("cue:") for t in tags):
+                    fams.append("cue")
+                return fams
+
+            def _anchors_from_tags(tags) -> list[str]:
+                out: list[str] = []
+                for t in tags or []:
+                    if isinstance(t, str) and t.startswith("anchor:"):
+                        out.append(t.split(":", 1)[1])
+                return out
+
+            def _provenance_summary(meta: dict) -> str | None:
+                if not isinstance(meta, dict) or not meta:
+                    return None
+                policy = meta.get("policy")
+                creator = meta.get("created_by") or meta.get("boot") or meta.get("added_by")
+                created_at = meta.get("created_at") or meta.get("time") or meta.get("ts")
+                ticks = meta.get("ticks")
+                epoch = meta.get("epoch")
+                bits: list[str] = []
+                if policy:
+                    bits.append(f"policy={policy}")
+                if creator:
+                    bits.append(f"created_by={creator}")
+                if created_at:
+                    bits.append(f"created_at={created_at}")
+                if isinstance(ticks, int):
+                    bits.append(f"ticks={ticks}")
+                if isinstance(epoch, int):
+                    bits.append(f"epoch={epoch}")
+                return ", ".join(bits) if bits else None
+
+            def _engrams_pretty(_bid: str, b) -> None:
+                eng = getattr(b, "engrams", None) or {}
+                if not isinstance(eng, dict) or not eng:
+                    print("Engrams: (none)")
+                    return
+                print("Engrams:")
+                for slot, val in sorted(eng.items()):
+                    if isinstance(val, dict):
+                        eid = val.get("id")
+                        act = val.get("act")
+                    else:
+                        eid = None
+                        act = None
+                    status = ""
+                    short = "(id?)"
+                    if isinstance(eid, str):
+                        short = eid[:8] + "…"
+                        try:
+                            rec = world.get_engram(engram_id=eid)
+                            ok = bool(rec and isinstance(rec, dict) and rec.get("id") == eid)
+                            status = "OK" if ok else "(dangling)"
+                        except Exception:
+                            status = "(error)"
+                    act_txt = f" act={act:.3f}" if isinstance(act, (int, float)) else ""
+                    print(f"  {slot}: {short}{act_txt} {status}".rstrip())
+
+            def _incoming_edges_for(_bid: str) -> list[tuple[str, str]]:
+                inc: list[tuple[str, str]] = []
+                for src_id, other in world._bindings.items():
+                    edges = (getattr(other, "edges", []) or getattr(other, "out", []) or
+                             getattr(other, "links", []) or getattr(other, "outgoing", []))
+                    if not isinstance(edges, list):
+                        continue
+                    for e in edges:
+                        dst = _edge_dst(e)
+                        if dst == _bid:
+                            inc.append((src_id, _edge_rel(e)))
+                return inc
+
+            def _outgoing_edges_for(b) -> list[tuple[str, str]]:
+                edges = (getattr(b, "edges", []) or getattr(b, "out", []) or
+                         getattr(b, "links", []) or getattr(b, "outgoing", []))
+                out: list[tuple[str, str]] = []
+                if isinstance(edges, list):
+                    for e in edges:
+                        dst = _edge_dst(e)
+                        if dst:
+                            out.append((dst, _edge_rel(e)))
+                return out
 
             def _print_one(_bid: str) -> None:
                 b = world._bindings.get(_bid)
                 if not b:
                     print(f"Unknown binding id: {_bid}")
+                    print("Returning to main menu....\n")
                     return
-                print(f"ID: {_bid}")
-                print("Tags:", ", ".join(sorted(getattr(b, "tags", []))))
-                print("Meta:", json.dumps(getattr(b, "meta", {}), indent=2))
-                if getattr(b, "engrams", None):
-                    print("Engrams:", json.dumps(b.engrams, indent=2))
-                else:
-                    print("Engrams: (none)")
-                edges = getattr(b, "edges", []) or getattr(b, "out", []) \
-                        or getattr(b, "links", []) or getattr(b, "outgoing", [])
-                if isinstance(edges, list) and edges:
-                    print("Edges:")
-                    for ee in edges:
-                        rel = ee.get("label") or ee.get("rel") or ee.get("relation") or "then"
-                        dst = ee.get("to") or ee.get("dst") or ee.get("dst_id") or ee.get("id")
-                        print(f"  -- {rel} --> {dst}")
-                else:
-                    print("Edges: (none)")
-                print("-" * 78)
 
-            if bid.lower() in ("all", "*"):
+                tags = sorted(getattr(b, "tags", []))
+                families = _families_from_tags(tags)
+                anchors = _anchors_from_tags(tags)
+
+                print(f"ID: {_bid}")
+                if families or anchors:
+                    kind_parts: list[str] = []
+                    if families:
+                        kind_parts.append("kind=" + "/".join(families))
+                    if anchors:
+                        kind_parts.append("anchor=" + ",".join(anchors))
+                    print("Role:", "; ".join(kind_parts))
+                print("Tags:", ", ".join(tags) if tags else "(none)")
+
+                meta = getattr(b, "meta", {})
+                print("Meta:", json.dumps(meta if isinstance(meta, dict) else {}, indent=2))
+                prov = _provenance_summary(meta if isinstance(meta, dict) else {})
+                if prov:
+                    print("Provenance:", prov)
+
+                _engrams_pretty(_bid, b)
+
+                # Edges
+                outgoing = _outgoing_edges_for(b)
+                incoming = _incoming_edges_for(_bid)
+                print(f"Degree: out={len(outgoing)} in={len(incoming)}")
+
+                if outgoing:
+                    print("Outgoing edges:")
+                    for dst, rel in outgoing:
+                        print(f"  {_bid} --{rel}--> {dst}")
+                else:
+                    print("Outgoing edges: (none)")
+
+                if incoming:
+                    print("Incoming edges:")
+                    for src, rel in incoming:
+                        print(f"  {src} --{rel}--> {_bid}")
+                else:
+                    print("Incoming edges: (none)")
+
+                print("\n", "-" * 28, "\n")
+
+            #main code of the Inspect Binding code block
+            if bid in ("all", "*"):
                 for _bid in _sorted_bids(world):
                     _print_one(_bid)
             else:
                 _print_one(bid)
+
+            #code block complete and return back to main menu
             loop_helper(args.autosave, world, drives)
+
 
         elif choice == "11":
             # Add sensory cue
@@ -5149,6 +5345,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--autosave", help="Autosave session to JSON file after each action")
     p.add_argument("--plan", metavar="PRED", help="Plan from NOW to predicate and exit")
     p.add_argument("--no-boot-prime", action="store_true", help="Disable boot/default intent for calf to stand")
+    p.add_argument("--demo-world", action="store_true", help="Start with a small preloaded demo world for graph/menu testing")
+
     try:
         args = p.parse_args(argv)
     except SystemExit as e:
