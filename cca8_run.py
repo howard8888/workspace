@@ -32,6 +32,15 @@ non-interactive utility flags for scripting, like `--about`, `--version`, and `-
 
 # --- Pragmas and Imports -------------------------------------------------------------
 
+# Style:Display notes:
+#  -assume Windows default 120 column x 30+ line terminal display for displayed messages; translates well to macOS and Linux
+#  -Main Menu limit to 80 column display but all other messages assume 120 columns
+#  -code lines and docstrings -- try to respect 120 columns but ok to go over, generally try to keep under 200 columns
+#  -ANSI colors ok but do not rely on them alone
+#  -alert user visually if a task will take longer than 2 seconds
+#  -if an error message can occur, then the user should see a human-readable, readily comprehensible error message
+
+
 # pylint: disable=protected-access
 #   we treat the cca8_runner module as a trusted friend module and thus silence warnings for acces to _objects
 # pylint: disable=import-outside-toplevel
@@ -261,27 +270,32 @@ def world_delete_edge(world: Any, src: str, dst: str, rel: str | None) -> int:
 # This is part of the CLI layer; it calls engine helper `world_delete_edge()`.
 def delete_edge_flow(world: Any, autosave_cb=None) -> None:
     """delete edge
+
     """
+    #messages and input values
     print("Delete edge (src -> dst [relation])")
+    print("src -- enter the source binding, e.g., b1")
+    print("dst -- enter the destination binding, e.g., b5")
+    print("[relation] -- if multiple links between the two bindings you can optionally specify which one to delete")
+    print("           -- you need to specify the exact label, not a substring\n")
     src = input("Source binding id (e.g., b1): ").strip()
-    dst = input("Dest binding id (e.g., b3): ").strip()
+    dst = input("Dest binding id (e.g., b5): ").strip()
     rel = input("Relation label (optional; blank = ANY): ").strip() or None
 
-    # Prefer a first-party method if present
+    #removal of link
     removed = 0
-    for method in ("remove_edge", "delete_edge"):
-        if hasattr(world, method):
+    for method in ("remove_edge", "delete_edge"):  #remove_edge() is an old alias for delete_edge, both here for compatibility
+        if hasattr(world, method): #does the world object have this method?
             try:
-                removed = getattr(world, method)(src, dst, rel)
+                removed = getattr(world, method)(src, dst, rel) #fetches the bound method and calls it
                 break
             except Exception:
-                removed = 0
-
-    if removed == 0:
+                removed = 0 #any error then we will try world_delete_edge(...)
+    if removed == 0: #if neither of remove_edge() nor delete_edge() existed/worked
         removed = world_delete_edge(world, src, dst, rel)
 
+    #print message and autosave file
     print(f"Removed {removed} edge(s) {src} -> {dst}{(' (rel='+rel+')' if rel else '')}")
-
     if autosave_cb:
         try:
             autosave_cb()
@@ -540,7 +554,8 @@ def _snapshot_temporal_legend() -> list[str]:
         "",
         "Five measures of time in the CCA8 system:",
         "  1. controller steps — one Action Center decision/execution loop   [src=ctx.controller_steps]",
-        "  2. temporal drift — cos_to_last_boundary (cosine(current, last boundary))  [src=ctx.cos_to_last_boundary(); advanced by ctx.temporal.step()]",
+        "  2. temporal drift — cos_to_last_boundary (cosine(current, last boundary))  [src=ctx.cos_to_last_boundary();"
+        "     advanced by ctx.temporal.step()]",
         "  3. autonomic ticks — heartbeat for physiology/IO (robotics integration)  [src=ctx.ticks]",
         "  4. developmental age — age_days  [src=ctx.age_days]",
         "  5. cognitive cycles — full sense->process->opt. action cycle  [src=ctx.cog_cycles]"
@@ -650,7 +665,7 @@ def _render_loc_by_dir_table(rows, total):
     # column widths
     name_w = max(25, max(len(k) for k, _, _ in rows))
     lines = []
-    lines.append("Selection LOC by Directory (Python)")
+    lines.append("Selection:  LOC by Directory (Python)")
     lines.append("Counts SLOC (pygount sourceCount) per top-level folder. Includes tests/ and root files under '.'.\n")
     lines.append(f"{'directory'.ljust(name_w)}  {'files':>7}  {'SLOC':>10}")
     lines.append(f"{'-'*name_w}  {'-'*7}  {'-'*10}")
@@ -1100,7 +1115,8 @@ def print_tagging_and_policies_help(policy_rt=None) -> None:
 
     print("Tag Families (use these prefixes)")
     print("  • pred:*   → states/goals/events you might plan TO")
-    print("      examples: pred:born, pred:posture:standing, pred:nipple:latched, pred:milk:drinking, pred:event:fall_detected")
+    print("      examples: pred:born, pred:posture:standing, pred:nipple:latched, pred:milk:drinking,")
+    print("            pred:event:fall_detected")
     print("  • cue:*    → evidence/context you NOTICE (policy triggers); not planner goals")
     print("      examples: cue:scent:milk, cue:sound:bleat:mom, cue:silhouette:mom, cue:terrain:rocky")
     print("  • anchor:* → orientation markers (e.g., anchor:NOW); also mapped in engine anchors {'NOW': 'b1'}")
@@ -1109,7 +1125,8 @@ def print_tagging_and_policies_help(policy_rt=None) -> None:
     print("      alt:     cue:drive:hunger_high   (trigger/evidence only)\n")
 
     print("Edges = Actions/Transitions")
-    print("  • Edge label is the action (string): 'then', 'search', 'latch', 'suckle', 'approach', 'recover_fall', 'run', 'stabilize'")
+    print("  • Edge label is the action (string): 'then', 'search', 'latch', 'suckle', 'approach', 'recover_fall',")
+    print("       'run', 'stabilize'")
     print("  • Quantities about the action live in edge.meta (e.g., meters, duration_s, created_by)")
     print("  • Planner behavior today: labels are for readability; BFS follows structure (not names)")
     print("  • Duplicate protection: the UI warns on exact duplicates of (src, label, dst)\n")
@@ -1138,7 +1155,8 @@ def print_tagging_and_policies_help(policy_rt=None) -> None:
     print("      - dev_gate(ctx)       → True/False (availability by development stage/context)")
     print("      - trigger(world, drives, ctx) → True/False (should we act now?)")
     print("      - execute(world, ctx, drives) → adds bindings/edges; stamps provenance")
-    print("  • Action Center scans loaded policies in order each tick; first match runs (with safety priority for recovery)")
+    print("  • Action Center scans loaded policies in order each tick; first match runs (with safety priority for")
+    print("             recovery)")
     print("  • After execute, you may see:")
     print("      - new bindings (with meta.policy)")
     print("      - new edges (with edge.meta.created_by)")
@@ -1176,8 +1194,8 @@ MENU = """\
 [hints for text selection instead of numerical selection]
 
 # Quick Start & Tutorial
-1) Understanding bindings, edges, predicates, cues, anchors, policies [understanding, tagging]
-2) Tutorial and step-by-step demo [tutorial, tour]
+1) Understanding bindings, edges, predicates, policies [understanding, tagging]
+2) Help: System Docs and/or Tutorial with demo tour [help, tutorial, demo]
 
 # Quick Start / Overview
 3) Snapshot (bindings + edges + ctx + policies) [snapshot, display]
@@ -1219,14 +1237,10 @@ MENU = """\
 31) Run preflight now [preflight]
 32) Quit [quit, exit]
 33) Lines of Python code LOC by directory [loc, sloc]
-
-[S] Save session → path
-[L] Load session → path
-[D] Show drives (raw + tags)
-[R] Reset current saved session
-[T] Tutorial and step-by-step demo
+34) Reset current saved session [reset]
 
 Select: """
+
 
 # --------------------------------------------------------------------------------------
 # Profile stubs (experimental profiles print info and fall back to Mountain Goat)
@@ -1238,46 +1252,52 @@ def _goat_defaults():
 
 def _print_goat_fallback():
     """Explain that the chosen profile is not implemented and we fall back to Mountain Goat."""
-    print("Although scaffolding is in place for its implementation, this evolutionary-like configuration is not currently available. "
+    print("Although scaffolding is in place, currently this evolutionary-like configuration is not available. "
           "Profile will be set to mountain goat-like brain simulation.\n")
 
 def profile_chimpanzee(_ctx) -> tuple[str, float, float, int]:
     """Print a narrative about the chimpanzee profile; fall back to Mountain Goat defaults."""
-    print(
-        "\nChimpanzee-like brain simulation"
-        "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
-        "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
-        '"similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language.\n'
-    )
+    print('''
+Chimpanzee-like brain simulation
+\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
+The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
+    "similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better
+    combinatorial language.\n
+    ''')
     _print_goat_fallback()
     return _goat_defaults()
 
 def profile_human(_ctx) -> tuple[str, float, float, int]:
     """Print a narrative about the human profile; fall back to Mountain Goat defaults."""
-    print(
-        "\nHuman-like brain simulation"
-        "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
-        "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
-        '"similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
-        "The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.\n"
-    )
+    print('''
+\nHuman-like brain simulation
+\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
+The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
+    "similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better
+    combinatorial language.
+The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning
+    and compositional reasoning/language.\n
+    ''')
     _print_goat_fallback()
     return _goat_defaults()
 
 def profile_human_multi_brains(_ctx, world) -> tuple[str, float, float, int]:
     """Dry-run multi-brain sandbox (no writes); print trace; fall back to Mountain Goat defaults."""
     # Narrative
-    print(
-        "\nHuman-like one-agent multiple-brains simulation"
-        "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
-        "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
-        '"similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
-        "The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.\n"
-        "\nIn this model each agent has multiple brains operating in parallel. There is an intelligent voting mechanism to decide on a response whereby "
-        "each of the 5 processes running in parallel can give a response with an indication of how certain they are this is the best response, and the most "
-        "certain + most popular response is chosen. As well, all 5 symbolic maps along with their rich store of information in their engrams is continually learning "
-        "and updated.\n"
-    )
+    print('''
+\nHuman-like one-agent multiple-brains simulation
+\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
+The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
+    "similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better
+    combinatorial language.
+The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning
+    and compositional reasoning/language.\n"
+In this model each agent has multiple brains operating in parallel. There is an intelligent voting mechanism to
+    decide on a response whereby each of the 5 processes running in parallel can give a response with an indication
+    of how certain they are this is the best response, and the most certain + most popular response is chosen.
+As well, all 5 symbolic maps along with their rich store of information in their engrams are continually learning
+    and constantly updated.\n"
+    ''')
     print(
         "Implementation scaffolding for multiple-brains in one agent:"
         "\n  • Representation: 5 symbolic hippocampal-like maps (5 sandbox WorldGraphs) running in parallel."
@@ -1349,14 +1369,16 @@ def profile_human_multi_brains(_ctx, world) -> tuple[str, float, float, int]:
 
 def profile_society_multi_agents(_ctx) -> tuple[str, float, float, int]:
     """Dry-run 3-agent society (no writes); print trace; fall back to Mountain Goat defaults."""
-    print(
-        "\nHuman-like one-brain simulation × multiple-agents society"
-        "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
-        "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
-        '"similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
-        "The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.\n"
-        "\nIn this simulation we have multiple agents each with one human-like brain, all interacting with each other.\n"
-    )
+    print('''
+\nHuman-like one-brain simulation × multiple-agents society
+\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
+The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
+    "similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better
+    combinatorial language.
+The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning
+    and compositional reasoning/language.\n
+\nIn this simulation we have multiple agents each with one human-like brain, all interacting with each other.\n
+    ''')
     print(
         "Implementation scaffolding for multiple agents (one brain per agent):"
         "\n  • Representation: each agent has its own WorldGraph, Drives, and policy set; no shared mutable state."
@@ -1413,29 +1435,31 @@ def profile_society_multi_agents(_ctx) -> tuple[str, float, float, int]:
 
 def profile_multi_brains_adv_planning(_ctx) -> tuple[str, float, float, int]:
     """Dry-run 5x256 combinatorial planning stub (no writes); print trace; fall back to Mountain Goat defaults."""
-    print(
-        "\nHuman-like one-agent multiple-brains simulation with combinatorial planning"
-        "\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning. "
-        "The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these "
-        '"similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better combinatorial language. '
-        "The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning and compositional reasoning/language.\n"
-        "\nIn this model there are multiple brains, e.g., 5 at the time of this writing, in one agent."
-        "There is an intelligent voting mechanism to decide on a response whereby each of the 5 processes running in parallel can give a response with an "
-        "indication of how certain they are this is the best response, and the most certain + most popular response is chosen. As well, all 5 "
-        "symbolic maps along with their rich store of information in their engrams is continually learning and updated.\n"
-        "\nIn addition, in this model each brain has multiple von Neumann processors to independently explore different possible routes to take "
-        "or different possible decisions to make.\n"
-    )
-    print(
-        "Implementation scaffolding (this stub does not commit changes to the live world):"
-        "\n  • Brains: 5 symbolic hippocampal-like maps (conceptual ‘brains’) exploring in parallel."
-        "\n  • Processors: each brain has 256 von Neumann processors that independently explore candidate plans."
-        "\n  • Rollouts: each processor tries a short action sequence (horizon H=3) from a small discrete action set."
-        "\n  • Scoring: utility(plan) = Σ reward(action) − cost_per_step·len(plan) (simple, deterministic toy scoring)."
-        "\n  • Selection: within a brain, keep the best plan; across brains, pick the champion by best score, then avg score."
-        "\n  • Commit rule: in a real system we would commit only the FIRST action of the winning plan after a safety check."
-        "\n  • Parallelism note: this stub runs sequentially; a real build would farm processors to separate OS processes.\n"
-    )
+    print('''
+\nHuman-like one-agent multiple-brains simulation with combinatorial planning
+\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
+The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
+"similar" structures) but hanced feedback pathways allowing better causal reasoning. Also better
+combinatorial language. "
+The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning
+ and compositional reasoning/language.\n
+\nIn this model there are multiple brains, e.g., 5 at the time of this writing, in one agent.
+There is an intelligent voting mechanism to decide on a response whereby each of the 5 processes running in
+ parallel can give a response with an indication of how certain they are this is the best response, and the most
+ certain + most popular response is chosen. As well, all 5 symbolic maps along with their rich store of
+ information in their engrams are continually learning and updated.\n
+\nIn addition, in this model each brain has multiple von Neumann processors to independently explore different
+ possible routes to take or different possible decisions to make.\n
+
+Implementation scaffolding (this stub does not commit changes to the live world):
+\n  • Brains: 5 symbolic hippocampal-like maps (conceptual ‘brains’) exploring in parallel.
+\n  • Processors: each brain has 256 von Neumann processors that independently explore candidate plans.
+\n  • Rollouts: each processor tries a short action sequence (horizon H=3) from a small discrete action set.
+\n  • Scoring: utility(plan) = Σ reward(action) − cost_per_step·len(plan) (simple, deterministic toy scoring).
+\n  • Selection: within a brain, keep the best plan; across brains, pick the champion by best score, then avg score.
+\n  • Commit rule: in a real system we would commit only the FIRST action of the winning plan after a safety check.
+\n  • Parallelism note: this stub runs sequentially; a real build would farm processors to separate OS processes.\n
+    ''')
 
     # Scaffolding: 5 brains × 256 processors → 1280 candidate plans; pick a champion (no world writes)
     try:
@@ -1488,17 +1512,17 @@ def profile_multi_brains_adv_planning(_ctx) -> tuple[str, float, float, int]:
 
 def profile_superhuman(_ctx) -> tuple[str, float, float, int]:
     """Dry-run ‘ASI’ meta-controller stub (no writes); print trace; fall back to Mountain Goat defaults."""
-    print(
-        "\nSuper-human-like machine simulation"
-        "\n\nFeatures scaffolding for an ASI-grade architecture:"
-        "\n  • Hierarchical memory: massive multi-modal engrams (vision/sound/touch/text) linked to a compact symbolic index."
-        "\n  • Weighted graph planning: edges carry costs/uncertainty; A*/landmarks for long-range navigation in concept space."
-        "\n  • Meta-controller: blends proposals from symbolic search, neural value estimation, and program-synthesis planning."
-        "\n  • Self-healing & explanation: detect/repair inconsistent states; produce human-readable rationales for actions."
-        "\n  • Tool-use & embodiment: external tools (math/vision/robots) wrapped as policies with provenances and safeguards."
-        "\n  • Safety envelope: constraint-checking policies that can veto/redirect unsafe plans."
-        "\n\nThis stub prints a dry-run of the meta-controller triage and falls back to the current==Mountain Goat profile.\n"
-    )
+    print('''
+\nSuper-human-like machine simulation
+\n\nFeatures scaffolding for an ASI-grade architecture:
+\n  • Hierarchical memory: massive multi-modal engrams (vision/sound/touch/text) linked to a compact symbolic index.
+\n  • Weighted graph planning: edges carry costs/uncertainty; A*/landmarks for long-range navigation in concept space.
+\n  • Meta-controller: blends proposals from symbolic search, neural value estimation, and program-synthesis planning.
+\n  • Self-healing & explanation: detect/repair inconsistent states; produce human-readable rationales for actions.
+\n  • Tool-use & embodiment: external tools (math/vision/robots) wrapped as policies with provenances and safeguards.
+\n  • Safety envelope: constraint-checking policies that can veto/redirect unsafe plans.
+\n\nThis stub prints a dry-run of the meta-controller triage and falls back to the current==Mountain Goat profile.\n
+    ''')
 
     # Scaffolding: three-module meta-controller, pick best proposal (no world writes)
     try:
@@ -1566,59 +1590,59 @@ def run_new_user_tour(world, drives, ctx, policy_rt,autosave_cb: Optional[Callab
             return False
 
     print("""
-           === CCA8 Quick Tour ===
-        This tour will do the following and show the following displays:
-                       (1) snapshot, (2) temporal context probe, (3) capture a small
-                       engram, (4) show the binding pointer (b#), (5) inspect that
-                       engram, (6) list/search engrams.
-        Hints: Press Enter to accept defaults. Type Q to exit.
+   === CCA8 Quick Tour ===
+This tour will do the following and show the following displays:
+               (1) snapshot, (2) temporal context probe, (3) capture a small
+               engram, (4) show the binding pointer (b#), (5) inspect that
+               engram, (6) list/search engrams.
+Hints: Press Enter to accept defaults. Type Q to exit.
 
-        **The tutorial portion of the tour is still under construction. All components shown here are available
-            as individual menu selections also -- see those and the README.md file for more details.**
+**The tutorial portion of the tour is still under construction. All components shown here are available
+    as individual menu selections also -- see those and the README.md file for more details.**
 
-        [tour] 1/6 — Baseline snapshot
-        Shows CTX and TEMPORAL (dim/sigma/jump; cosine; hash). Next: temporal probe.
-          • CTX shows agent counters (profile, age_days, ticks) and run context.
-          • TEMPORAL is a soft clock (dim/sigma/jump), not wall time.
-          • cosine≈1.000 → same event; <0.90 → “new event soon.”
-          • vhash64 is a compact fingerprint for quick comparisons.
+[tour] 1/6 — Baseline snapshot
+Shows CTX and TEMPORAL (dim/sigma/jump; cosine; hash). Next: temporal probe.
+  • CTX shows agent counters (profile, age_days, ticks) and run context.
+  • TEMPORAL is a soft clock (dim/sigma/jump), not wall time.
+  • cosine≈1.000 → same event; <0.90 → “new event soon.”
+  • vhash64 is a compact fingerprint for quick comparisons.
 
-        [tour] 2/6 — Temporal context probe
-        Updates the soft clock; prints dim/sigma/jump and cosine to last boundary.
-        Next: capture a tiny engram.
-          • boundary() jumps the vector and increments the epoch (event count).
-          • vhash64 vs last_boundary_vhash64 → Hamming bits changed (0..64).
-          • Cosine compares “now” vs last boundary; drift lowers cosine.
-          • Status line summarizes phase (ON-BOUNDARY / DRIFTING / BOUNDARY-SOON).
+[tour] 2/6 — Temporal context probe
+Updates the soft clock; prints dim/sigma/jump and cosine to last boundary.
+Next: capture a tiny engram.
+  • boundary() jumps the vector and increments the epoch (event count).
+  • vhash64 vs last_boundary_vhash64 → Hamming bits changed (0..64).
+  • Cosine compares “now” vs last boundary; drift lowers cosine.
+  • Status line summarizes phase (ON-BOUNDARY / DRIFTING / BOUNDARY-SOON).
 
-        [tour] 3/6 — Capture a tiny engram
-        Adds a memory item with time/provenance; visible in Snapshot. Next: show b#.
-          • capture_scene creates a binding (cue/pred) and a Column engram.
-          • The binding gets a pointer slot (e.g., column01 → EID).
-          • Time attrs (ticks, epoch, tvec64) come from ctx at capture time.
-          • binding.meta['policy'] records provenance when created by a policy.
+[tour] 3/6 — Capture a tiny engram
+Adds a memory item with time/provenance; visible in Snapshot. Next: show b#.
+  • capture_scene creates a binding (cue/pred) and a Column engram.
+  • The binding gets a pointer slot (e.g., column01 → EID).
+  • Time attrs (ticks, epoch, tvec64) come from ctx at capture time.
+  • binding.meta['policy'] records provenance when created by a policy.
 
-        [tour] 4/6 — Show binding pointer (b#)
-        Displays the new binding id and its attach target. Next: inspect that engram.
-          • A binding is the symbolic “memory link”; engram is the rich payload.
-          • The pointer (b#.engrams['slot']=EID) glues symbol ↔ rich memory.
-          • Attaching near NOW/LATEST keeps episodes readable for planning.
-          • Follow the pointer via Snapshot or “Inspect engram by id.”
+[tour] 4/6 — Show binding pointer (b#)
+Displays the new binding id and its attach target. Next: inspect that engram.
+  • A binding is the symbolic “memory link”; engram is the rich payload.
+  • The pointer (b#.engrams['slot']=EID) glues symbol ↔ rich memory.
+  • Attaching near NOW/LATEST keeps episodes readable for planning.
+  • Follow the pointer via Snapshot or “Inspect engram by id.”
 
-        [tour] 5/6 — Inspect engram
-        Shows engram fields (channel, token, attrs). Next: list/search engrams.
-          • meta → attrs (ticks, epoch, tvec64, epoch_vhash64) for time context.
-          • payload → kind/shape/bytes (varies by Column implementation).
-          • Use this to verify data shape and provenance after capture.
-          • Engrams persist across saves; pointers can be re-attached later.
+[tour] 5/6 — Inspect engram
+Shows engram fields (channel, token, attrs). Next: list/search engrams.
+  • meta → attrs (ticks, epoch, tvec64, epoch_vhash64) for time context.
+  • payload → kind/shape/bytes (varies by Column implementation).
+  • Use this to verify data shape and provenance after capture.
+  • Engrams persist across saves; pointers can be re-attached later.
 
 
-        [tour] 6/6 — List/search engrams
-        Lists and filters engrams by token/family.
-          • Deduped EIDs with source binding (b#) for quick auditing.
-          • Search by name substring and/or by epoch number.
-          • Useful to confirm capture cadence across boundaries/epochs.
-          • Pair with “Plan from NOW” to see if memory supports behavior.
+[tour] 6/6 — List/search engrams
+Lists and filters engrams by token/family.
+  • Deduped EIDs with source binding (b#) for quick auditing.
+  • Search by name substring and/or by epoch number.
+  • Useful to confirm capture cadence across boundaries/epochs.
+  • Pair with “Plan from NOW” to see if memory supports behavior.
 
     """)
 
@@ -3134,7 +3158,8 @@ def skill_ledger_text(example_policy: str = "policy:stand_up") -> str:
     return "\n".join(lines) + "\n"
 
 def _io_banner(args, loaded_path: str | None, loaded_ok: bool) -> None:
-    """Explain how load/autosave will behave for this run."""
+    """Explain how load/autosave will behave for this run.
+    """
     ap = (args.autosave or "").strip() if hasattr(args, "autosave") else ""
     lp = (loaded_path or "").strip() if loaded_path else ""
     def _same(a, b):  # robust path compare
@@ -3148,11 +3173,11 @@ def _io_banner(args, loaded_path: str | None, loaded_ok: bool) -> None:
         print(f"[io] Loaded '{lp}'. Autosave ON to '{ap}' — new steps will be written to the autosave file; "
               f"the original load file remains unchanged.")
     elif loaded_ok and not ap:
-        print(f"[io] Loaded '{lp}'. Autosave OFF — use menu [S] to save or relaunch with --autosave <path>.")
+        print(f"[io] Loaded '{lp}'. Autosave OFF — use menu 29 (Save session) to save or relaunch with --autosave <path>.")
     elif (not loaded_ok) and ap:
         print(f"[io] Started a NEW session. Autosave ON to '{ap}'.")
     else:
-        print("[io] Started a NEW session. Autosave OFF — use [S] to save or pass --autosave <path>.")
+        print("[io] Started a NEW session. Autosave OFF — use menu 29 (Save session) or pass --autosave <path>.")
 
 
 # ---------- Contextual base selection (skeleton) ----------
@@ -3315,7 +3340,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     _ALIASES = {
     # Quick Start & Tutorial
     "understanding": "1", "tagging": "1",
-    "tutorial": "2", "tour": "2", "help": "2",
+    "help": "2", "tutorial": "2", "tour": "2", "demo": "2",
 
     # Quick Start / Overview
     "snapshot": "3", "display": "3",
@@ -3357,6 +3382,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "preflight": "31",
     "quit": "32", "exit": "32",
     "loc": "33", "sloc": "33", "pygount": "33",
+    "reset": "34",
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -3408,6 +3434,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "31": "9",   # Run preflight now
     "32": "8",   # Quit
     "33": "33",  # Lines of Count
+    "34": "r",   # Reset current saved session
 }
 
     # Attempt to load a prior session if requested
@@ -3550,21 +3577,34 @@ def interactive_loop(args: argparse.Namespace) -> None:
         else:
             choice = ckey
 
+
+
+        #FIRST MENU SELECTION CODE BLOCK.... WITHIN interactive menu while loop >>>>>> of interactive_menu()
+        #----Menu Selection Code Block------------------------
         if choice == "1":
             # World stats
             now_id = _anchor_id(world, "NOW")
-            print("Selection World Graph Statistics\n")
-            print("The CCA8 architecture holds symbolic declarative memory (i.e., episodic and semantic memory) in the WorldGraph.")
-            print("There are bindings (i.e., nodes) in the WorldGraph, each of which holds directed edges to other bindings (i.e., nodes), concise semantic")
-            print("  and episodic information, metadata, and pointers to engrams in the cortical-like Columns which is the rich store of knowledge.")
-            print("  e.g., 'b1' means binding 1, 'b2' means binding 2, and so on")
-            print("As mentioned, the bindings (i.e., nodes) are linked to each other by directed edges.")
-            print("An 'anchor' is a binding which we use to start the WorldGraph as well as a starting point somewhere in the middle of the graph.")
-            print("Symbolic procedural knowledge is held in the Policies which currently are held in the Controller Module.")
-            print("  A policy (i.e., same as primitive in the CCA8 published papers) is a simple set of conditional actions.")
-            print("  In order to execute, a policy must be loaded (e.g., meets development requirements) and then it must be triggered.")
-            print("Note we are showing the symbolic statistics here. The distributed, rich information of the CCA8, i.e., its engrams, are held in the Columns.\n")
-            print("Below we show some general WorldGraph and Policy statistics. See Snapshot and other menu selections for more details on the system.\n")
+            print("Selection:  World Graph Statistics\n")
+            print('''
+The CCA8 architecture holds symbolic declarative memory (i.e., episodic and semantic memory) in the WorldGraph.
+
+There are bindings (i.e., nodes) in the WorldGraph, each of which holds directed edges to other bindings (i.e., nodes),
+ concise semantic and episodic information, metadata, and pointers to engrams in the cortical-like Columns which
+ is the rich store of knowledge.
+e.g., 'b1' means binding 1, 'b2' means binding 2, and so on
+
+As mentioned, the bindings (i.e., nodes) are linked to each other by directed edges.
+An 'anchor' is a binding which we use to start the WorldGraph as well as a starting point somewhere in the middle
+  of the graph. Symbolic procedural knowledge is held in the Policies which currently are held in the
+  Controller Module.
+A policy (i.e., same as primitive in the CCA8 published papers) is a simple set of conditional actions.
+In order to execute, a policy must be loaded (e.g., meets development requirements) and then it must be triggered.
+
+Note we are showing the symbolic statistics here. The distributed, rich information of the CCA8, i.e., its engrams,
+  are held in the Columns.\n
+Below we show some general WorldGraph and Policy statistics. See Snapshot and other menu selections for more details
+  on the system.\n
+            ''')
             print(f"Bindings: {len(world._bindings)}  Anchors: NOW={now_id}  Latest: {world._latest_binding_id}")
             try:
                 print(f"Policies loaded: {len(POLICY_RT.loaded)} -> {', '.join(POLICY_RT.list_loaded_names()) or '(none)'}")
@@ -3573,82 +3613,194 @@ def interactive_loop(args: argparse.Namespace) -> None:
             print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "2":
             # List predicates
-            print("Selection List Predicates\n")
-            print("Groups all pred:* tokens and shows which bindings (bN) carry each token.")
-            print("Planner targets are predicates; cues are evidence only and won’t appear here.\n")
+            print("Selection:  List Predicates\n")
+            print('''
+This selection will gather all the predicate tokens, i.e., "pred:*" , and show which bindings bN
+  store teach token.
 
+Note that in the current WorldGraph planner, the target is always a predicate. Cues, on the other hand, are
+  not used a planning targets but indirectly they can still influence planning via policies.
+  (essentially, only pred:* is used as a goal condition)
+
+You can filter results by entering the string of the desired token, or even a partial substring of it, and
+   the code will automatically find the bindings.
+            ''')
+            #flt is the substring of the predicate token to search for, if flt="" then we simply list all predicate tokens
+            try:
+                flt = input("Optional filter (substring in token, blank=all): ").strip().lower()
+            except Exception:
+                flt = ""
             idx: Dict[str, List[str]] = {}
+            total_tags = 0
             for bid, b in world._bindings.items():
+                #world._bindings is a dict and thus .items() returning (bid=key, b=value) pairs
+                #  bid=key -- e.g., "b5"
+                #  b=value -- a dataclass Binding instance representing one node
+                #  i.e., iterate over, e.g., {"b1": Binding(id="b1", tags={...}, edges=[...], meta={...}, engrams={...}), "b2": Binding(...),  ...}
+                #  dataclass Binding defined in WorldGraph -- id str, (tags), [Edge], {meta}, {engrams}
+                #cca8_world_graph.class WorldGraph:  def __init__(self): self._bindings: {str, Binding} = {}
                 for t in getattr(b, "tags", []):
+                    #t gets that node's tags  e.g., for bid="b2", t= "tags={'pred:stand'}, edges=[], meta={'boot': 'init', 'added_by': 'system'}, engrams={})"
                     if isinstance(t, str) and t.startswith("pred:"):
-                        key = t.replace("pred:", "", 1)
+                        key = t.replace("pred:", "", 1)  # strip 'pred:' e.g., in above example key = "pred"
+                        if flt and flt not in key.lower(): #if substring, check if matches, else try next value
+                            continue
                         idx.setdefault(key, []).append(bid)
+                        total_tags += 1
+                        #e.g., total_tags = 1, idx = {'stand':[b2']} <-- will list later by predicate
             if not idx:
-                print("(no predicates yet)")
+                if flt:
+                    print(f"(no predicates matched filter substring {flt!r})")
+                else:
+                    print("(no predicates to list yet)")
             else:
+                #e.g., idx = {'stand':[b2']}
+                def _bid_sort(bid: str) -> tuple[int, str]:
+                    # group 0: numeric ids (b1, b2, ...), sorted by number with zero-padding
+                    # group 1: non-numeric ids (e.g., 'NOW'), sorted lexicographically
+                    if len(bid) > 1 and bid[1:].isdigit():
+                        return (0, f"{int(bid[1:]):09d}")
+                    return (1, bid)
                 for key in sorted(idx.keys()):
-                    bids = sorted(idx[key], key=lambda x: int(x[1:]) if x[1:].isdigit() else x)
-                    print(f"  {key:<22} -> {', '.join(bids)}")
+                    bids = sorted(idx[key], key=_bid_sort)
+                    print(f"  {key:<30} -> {', '.join(bids)}")
+                print(
+                    f"\nSummary: {len(idx)} unique predicate token(s), "
+                    f"{total_tags} predicate tag(s) across {len(world._bindings)} binding(s)."
+                )
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "3":
-            # Add predicate
-            print("Selection Add Predicate\n")
-            print("Creates a new binding tagged pred:<token>, attached to LATEST (keeps episodes readable).")
-            print("Examples: state:posture_standing, nipple:latched. Lexicon may warn in strict modes.\n")
+            # Selection:  Add Predicate
+            # input predicate token, attach and meta for the new binding
+            print("Selection:  Add Predicate\n")
+            print('Creates a new binding which will be tagged with "pred:<token>" .')
+            print("'Attach' vlaue will effect where this new binding is linked in the episode:")
+            print("  now    → NOW -> new, new becomes LATEST")
+            print("  latest → LATEST -> new, new becomes LATEST (default)")
+            print("  none   → create unlinked node (no automatic edge)\n")
+            print("Examples: posture_standing, nipple:latched, etc.  Lexicon may warn in strict modes.\n")
 
-            token = input("Enter predicate token (e.g., state:posture_standing): ").strip()
-            if token:
-                bid = world.add_predicate(token, attach="latest", meta={"added_by": "user"})
-                print(f"Added binding {bid} with pred:{token}")
+            print("Please enter the predicate token")
+            print("  e.g., vision:silhouette:mom")
+            print("  don't enter, e.g., 'pred:vision:silhouette:mom' -- just enter the token portion of the predicate")
+            print("  nb. no default value for predicate -- if you just click ENTER for predicate with no input, return to menu")
+            print("  nb. however, there is a default value of 'latest' for attachment option")
+            token = input("\nEnter predicate token (e.g., vision:silhouette:mom)   ").strip()
+            if not token:
+                print("No token entered -- no default values -- return back to menu....")
+                loop_helper(args.autosave, world, drives)
+                continue
+            attach = input("Attach [now/latest/none] (default: latest): ").strip().lower() or "latest"
+            if attach not in ("now", "latest", "none"):
+                print("[info] unknown attach; defaulting to 'latest'")
+                attach = "latest"
+            meta = {"added_by": "user", "created_by": "menu:add_predicate", "created_at": datetime.now().isoformat(timespec="seconds")}
+
+            #via add_predicates() create a new predicate binding and auto-link to it
+            try:
+                #in cca8_world_graph: def add_predicates(token, attach, meta, engrams) -> bid
+                #add_predicates() creates a new predicate binding and auto-links to it
+                before = len(world._bindings)  #e.g., 6
+                print(before)
+                bid = world.add_predicate(token, attach=attach, meta=meta)  #e.g., bid=b7
+                after = len(world._bindings) #e.g., 7
+                print(f"Added binding {bid} with pred:{token} (attach={attach})")
+
+                # Small confirmation of the attach semantics when we can cheaply infer the source
+                if after > before:
+                    src = None
+                    if attach == "now":
+                        src = _anchor_id(world, "NOW")
+                    # For 'latest' we don't know the previous LATEST cheaply here, so just skip the edge echo.
+                    if src and src in world._bindings:
+                        edges = getattr(world._bindings[src], "edges", []) or []
+                        def _dst(e):  # tolerant of edge layouts
+                            return e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                        def _rel(e):
+                            return e.get("label") or e.get("rel") or e.get("relation") or "then"
+                        rels = [_rel(e) for e in edges if _dst(e) == bid]
+                        if rels:
+                            print(f"[attach] {src} --{rels[0]}--> {bid}")
+            except ValueError as e:
+                print(f"[guard] add_predicate rejected token {token!r}: {e}")
+            except Exception as e:
+                print(f"[error] add_predicate failed: {e}")
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "4":
             # Connect two bindings (with duplicate warning)
-            print("Selection Connect Bindings\n")
+            # Input bindings and edge label
+            print("Selection:  Connect Bindings\n")
             print("Adds a directed edge src --label--> dst (default label: 'then'). Duplicate edges are skipped.")
-            print("Use labels for readability (‘fall’, ‘latch’, …); BFS planning follows structure, not labels.\n")
-
-            src = input("Source binding id (e.g., b12): ").strip()
-            dst = input("Dest binding id (e.g., b13): ").strip()
-            label = input('Relation label (e.g., "then"): ').strip() or "then"
-
+            print("Use labels for readability ('fall', 'latch', 'approach'); planner today follows structure, not labels.\n")
+            print('Do not use quotes, e.g., enter: fall not:"fall" unless you want quotes in the stored label')
+            print('Similarly, do not use quotes for the bid, e.g., enter: b14, not "b14"\n')
+            src = input("Enter the source binding id (bid) (e.g., b12) NO QUOTES :").strip()
+            dst = input("Enter the destination binding id (bid) (e.g., b14) NO QUOTES : ").strip()
+            if not src or not dst:
+                print("Source or destination bindings entered are missing -- return back to menu....")
+                loop_helper(args.autosave, world, drives)
+                continue
+            label = input('Edge relation label (default via ENTER is "then") NO QUOTES : ').strip() or "then"
             try:
                 b = world._bindings.get(src)
                 if not b:
-                    print("Invalid id: unknown source binding.")
+                    print("Invalid id: unknown source binding bid -- return back to menu....")
                 elif dst not in world._bindings:
-                    print("Invalid id: unknown destination binding.")
+                    print("Invalid id: unknown destination binding bid -- return back to menu....")
                 else:
-                    edges = getattr(b, "edges", []) or []
-                    # Treat missing/alt keys the same as our stored "label"/"to"
-                    def _rel(e): return e.get("label") or e.get("rel") or e.get("relation") or "then"
-                    duplicate = any((e.get("to") == dst) and (_rel(e) == label) for e in edges)
-
+                    edges = (getattr(b, "edges", []) or getattr(b, "out", []) or
+                             getattr(b, "links", []) or getattr(b, "outgoing", []))
+                    def _rel(e):  # normalize edge label
+                        return e.get("label") or e.get("rel") or e.get("relation") or "then"
+                    def _dst(e):  # normalize edge dst
+                        return e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                    duplicate = any((_dst(e) == dst) and (_rel(e) == label) for e in edges)
                     if duplicate:
                         print(f"[info] Edge already exists: {src} --{label}--> {dst} (skipping)")
                     else:
-                        world.add_edge(src, dst, label)  # this is the real write
+                        meta = {
+                            "created_by": "menu:connect",
+                            "created_at": datetime.now().isoformat(timespec="seconds"),
+                        }
+                        #adds a directed edge from source bid to destination bid with label input, meta input
+                        world.add_edge(src, dst, label, meta=meta)
                         print(f"Linked {src} --{label}--> {dst}")
             except KeyError as e:
                 print("Invalid id:", e)
             except ValueError as e:
                 print(f"[guard] {e}")
-
+            except Exception as e:
+                print(f"[error] add_edge failed: {e}")
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "5":
             # Plan from NOW -> <predicate>
-            print("Selection Plan to Predicate\n")
-            print("BFS from anchor:NOW to a binding with pred:<token>. Prints raw id path and a pretty path.")
-            print("No path means the goal isn’t reachable with current edges—add links or adjust targets.\n")
+            current_planner = getattr(world, "get_planner", lambda: "bfs")()
+            print("Selection:  Plan to Predicate\n")
+            print(f"Current planner strategy: {current_planner.upper()}")
+            if current_planner == "dijkstra":
+                print("Dijkstra search from anchor:NOW to a binding with pred:<token>.")
+                print("With all edges currently weight=1, this is effectively the same path as BFS.\n")
+            else:
+                print("BFS from anchor:NOW to a binding with pred:<token>. Prints raw id path and a pretty path.\n")
 
             token = input("Target predicate (e.g., state:posture_standing): ").strip()
             if not token:
                 loop_helper(args.autosave, world, drives)
                 continue
+
             src_id = world.ensure_anchor("NOW")
             path = world.plan_to_predicate(src_id, token)
             if path:
@@ -3667,17 +3819,20 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print("No path found.")
             loop_helper(args.autosave, world, drives)
 
-        elif choice == "6":
-            print("Selection Resolve Engrams\n")
-            print('''
-    Shows engram slots on a binding.
-    Note: For payload/meta details use menu selection "Inspect engram by id"
 
-    -a "slot name" is the key used in a binding's engrams dict to label a particular engram pointer
-         e.g, b3: [cue:vision:silhouette:mom] engrams={'column01': {'id': 'b3001752abc946769b8c182f38cf0232', 'act': 1.0}}
-           -- 'column01' is the slot name, i.e., binding.engrams['column01'] = {id:eid, act:1.0, ...} where id = engram id, act = activation weight
-           -- 'b3001752a…' is the human-readable summary of that pointer== eid
-    -system defaults with a single column in RAM    mem =ColumnMemory(name='column01')  but can set up for multiple columns
+        #----Menu Selection Code Block------------------------
+        elif choice == "6":
+            print("Selection:  Resolve Engrams\n")
+            print('''
+Shows engram slots on a binding.
+Note: For payload/meta details use menu selection "Inspect engram by id"
+
+-a "slot name" is the key used in a binding's engrams dict to label a particular engram pointer
+     e.g, b3: [cue:vision:silhouette:mom] engrams={'column01': {'id': 'b3001752abc946769b8c182f38cf0232', 'act': 1.0}}
+       -- 'column01' is the slot name, i.e., binding.engrams['column01'] = {id:eid, act:1.0, ...} where id = engram id,
+              act = activation weight
+       -- 'b3001752a…' is the human-readable summary of that pointer== eid
+-system defaults with a single column in RAM    mem =ColumnMemory(name='column01')  but can set up for multiple columns
 
             ''')
             bid = input("Binding id to resolve engrams: ").strip()
@@ -3695,61 +3850,71 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "7":
             # Show last 5 bindings
-            print("Selection Recent Bindings\n")
+            print("Selection:  Recent Bindings\n")
             print("Shows the 5 most recent bindings (bN). For each: tags and any engram slots attached.")
             print(" 'outdeg' is the number of outgoing edges, e.g., outdeg=2 means there are 2 outgoing edges")
             print(" 'preview' is a short sample of up to 3 these outgoing edges")
             print("     e.g., outdeg=2 preview=[initiate_stand:b2, then:b3]")
-            print("     -this means 2 outgoing edges, 1 edge goes to b2 with action label 'initiate_stand', 1 edge goes to b3 with action label 'then'}")
+            print("     -this means 2 outgoing edges, 1 edge goes to b2 with action label 'initiate_stand', 1 edge ")
+            print("          goes to b3 with action label 'then'")
             print("Tip: use 'Inspect binding details' for full meta/edges on a specific id.\n")
 
             print(recent_bindings_text(world, limit=5))
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "8":
             # Quit
-            print("Selection Quit\n")
+            print("Selection:  Quit\n")
             print("Exits the simulation. If you launched with --save, a final save occurs on exit.\n")
-
             print("Goodbye.")
             if args.save:
                 save_session(args.save, world, drives)
+            #return from main() which will then immediately exedcute return 0
+            #after main() is: if __name__ == "__main__": sys.exit(main()) --> sys.exit(0) thus occurs
             return
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "9":
             # Run preflight now
-            print("Selection Preflight\n")
+            print("Selection:  Preflight\n")
             print("Runs pytest (unit tests framework) and coverage, then a series of whole-flow custom tests.\n")
 
             #rc = run_preflight_full(args)
             run_preflight_full(args)
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "10":
             # Inspect binding details and user input (accepts a single id, or ALL/* to dump everything)
             print('''
-    Selection Inspect Binding Details
+Selection:  Inspect Binding Details
 
-    -Enter a binding id (bid) (e.g., 'b3') or 'ALL' (or '*').
-         Note: not case sensitive -- e.g., 'B3' or 'b3' treated the same
-         Note: if case-sensitivity in your WorldGraph labeling, then comment out case insensitivity line of code
+-Enter a binding id (bid) (e.g., 'b3') or 'ALL' (or '*').
+     Note: not case sensitive -- e.g., 'B3' or 'b3' treated the same
+     Note: if case-sensitivity exists in your WorldGraph labeling, then comment out case insensitivity line of code
 
-    -This selection will then display the binding's tags, meta, engrams,
-       and its outgoing and incoming edges.
-    -Note that you can inspect provenance, meta.policy/created_by/boot, attached engrams,
-       and graph degree on one or more bindings.
-       Note: each binding has a meta dictionary that stores provenance, i.e., a record of where and when this binding comes from
-       Note: a binding created by a policy at runtime might have key:value pair inside of meta dict
-       Note: a typical Provenance summary is, e.g., meta.policy, meta.created_by, meta.boot, meta.ticks, etc.
+-This selection will then display the binding's tags, meta, engrams,
+   and its outgoing and incoming edges.
+-Note that you can inspect provenance, meta.policy/created_by/boot, attached engrams,
+   and graph degree on one or more bindings.
+   Note: each binding has a meta dictionary that stores provenance, i.e., a record of where and when this binding comes
+   Note: from a binding created by a policy at runtime might have key:value pair inside of meta dict
+   Note: a typical Provenance summary is, e.g., meta.policy, meta.created_by, meta.boot, meta.ticks, etc.
 
-    -Internally the code block calls _print_one(bid) and prints out the information about that binding
-    -if "ALL" chosen then _sorted_bids(world) returns the WorldGraph's bid's in sorted order, e.g., (b1, b2, ...)
-        and loop through bid's with a _print_one(bid) for each one
+-Internally the code block calls _print_one(bid) and prints out the information about that binding
+-if "ALL" chosen then _sorted_bids(world) returns the WorldGraph's bid's in sorted order, e.g., (b1, b2, ...)
+    and loop through bid's with a _print_one(bid) for each one
 
             ''')
-            bid = input("Binding id to inspect (or 'ALL'): ").strip().lower() #case insensitive
+            bid = input("Binding id to inspect (or 'ALL'/ENTER): ").strip().lower() #case insensitive
             #bid = input("Binding id to inspect (or 'ALL'): ").strip() #case sensitive
             print("\n Binding details for the requested binding(s):\n")
 
@@ -3900,7 +4065,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print("\n", "-" * 28, "\n")
 
             #main code of the Inspect Binding code block
-            if bid in ("all", "*"):
+            if bid in ("all", "*", ""):
                 for _bid in _sorted_bids(world):
                     _print_one(_bid)
             else:
@@ -3910,45 +4075,47 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
 
+        #----Menu Selection Code Block------------------------
         elif choice == "11":
             # Add sensory cue
-            print("Selection Input Sensory Cue")
+            print("Selection:  Input Sensory Cue")
             print('''
-    Adds cue:<channel>:<token> (evidence, not a goal) at NOW and may nudge a policy.
-      e.g., vision:silhouette:mom, sound:bleat:mom, scent:milk
+Adds cue:<channel>:<token> (evidence, not a goal) at NOW and may nudge a policy.
+  e.g., vision:silhouette:mom, sound:bleat:mom, scent:milk
 
-    This menu selection asks you for the channel and then the token, and writes the resulting cue,
-      e.g., "cue:vision:silhouette:mom", to a new binding attached to NOW.
-    A controller step==Action Center step will run and if any policies are capable of triggering,
-      the best one will be chosen and will execute.
-    In addition to triggering and executing a policy (if possible) the controller step will also:
-      controller_steps ++,  temporal_drift ++  (no effect on autonomic ticks, cognitive cycles, age_days)
+This menu selection asks you for the channel and then the token, and writes the resulting cue,
+  e.g., "cue:vision:silhouette:mom", to a new binding attached to NOW.
+A controller step==Action Center step will run and if any policies are capable of triggering,
+  the best one will be chosen and will execute.
+In addition to triggering and executing a policy (if possible) the controller step will also:
+  controller_steps ++,  temporal_drift ++  (no effect on autonomic ticks, cognitive cycles, age_days)
 
-    Consider the example where the Mountain Goat calf has just been born and stands up.
-    At this point these bindings, drives, and timekeeping exist:
-    b1: [anchor:NOW] -> b2: [pred:stand] -> b3: [pred:action:push_up] -> b4: [pred:action:extend_legs]
-        -> b5: [pred:posture:standing, pred:state:posture_standing]
-    hunger=0.70, fatigue=0.20, warmth=0.60
-    controller_steps=1, cog_cycles=1, temporal_epochs=1, autonomic_ticks=0,  age_days: 0.0000, cos_to_last_boundary: 1.0000
-    These policies are eligible:  policy:stand_up, policy:seek_nipple, policy:rest, policy:suckle,
-           policy:recover_miss, policy:recover_fall
+Consider the example where the Mountain Goat calf has just been born and stands up.
+At this point these bindings, drives, and timekeeping exist:
+b1: [anchor:NOW] -> b2: [pred:stand] -> b3: [pred:action:push_up] -> b4: [pred:action:extend_legs]
+    -> b5: [pred:posture:standing, pred:state:posture_standing]
+hunger=0.70, fatigue=0.20, warmth=0.60
+controller_steps=1, cog_cycles=1, temporal_epochs=1, autonomic_ticks=0,  age_days: 0.0000, cos_to_last_boundary: 1.0000
+These policies are eligible:  policy:stand_up, policy:seek_nipple, policy:rest, policy:suckle,
+       policy:recover_miss, policy:recover_fall
 
-    Now add a sensory cue -- bid = world.add_cue(cue_token, attach="now", meta={"channel": ch, "user": True})
-     e.g., "cue:vision:silhouette:mom" and we see a message added to b6
-     note: "attach=now" means add link from NOW->new node
-    Now a controller step will run -- fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx, tie_break="first")
-    We see in the message displayed that policy seek_nipple executed and added 2 bindings.
-    "pre" explains why it triggered including the cue provided by new binding b6; "post" shows still triggerable after
-      after policy executed; base suggestion, focus of attention and candidates for linking (see Instinct Step or README).
+Now add a sensory cue -- bid = world.add_cue(cue_token, attach="now", meta={"channel": ch, "user": True})
+ e.g., "cue:vision:silhouette:mom" and we see a message added to b6
+ note: "attach=now" means add link from NOW->new node
+Now a controller step will run -- fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx, tie_break="first")
+We see in the message displayed that policy seek_nipple executed and added 2 bindings.
+"pre" explains why it triggered including the cue provided by new binding b6; "post" shows still triggerable after
+  after policy executed; base suggestion, focus of attention and candidates for linking (see Instinct Step or README).
 
-    If we look at Snapshot we now see:
-    -Timekeeping (controller_steps ++,  temporal_drift ++ ):
-      controller_steps=2, cog_cycles=1, temporal_epochs=1, autonomic_ticks=0, cos_to_last_boundary: 0.9857,  age_days: 0.0000
-    -New binding b6  [cue:vision:silhouette:mom]
-    -SkillStats -- new "policy:seek_nipple" statistics  ("policy:stand_up" ran before during the Instinct Step)
-    -New bindings created by "policy:seek_nipple" : b7: [pred:action:orient_to_mom], b8: [pred:seeking_mom, pred:state:seeking_mom]
-    (Note: If we run this Menu Step in a newborn calf then policy:stand_up will run since it is executionable with or without a cue and
-       will have priority.)
+If we look at Snapshot we now see:
+-Timekeeping (controller_steps ++,  temporal_drift ++ ):
+  controller_steps=2, cog_cycles=1, temporal_epochs=1, autonomic_ticks=0, cos_to_last_boundary: 0.9857,  age_days: 0.0000
+-New binding b6  [cue:vision:silhouette:mom]
+-SkillStats -- new "policy:seek_nipple" statistics  ("policy:stand_up" ran before during the Instinct Step)
+-New bindings created by "policy:seek_nipple" : b7: [pred:action:orient_to_mom],
+    b8: [pred:seeking_mom, pred:state:seeking_mom]
+(Note: If we run this Menu Step in a newborn calf then policy:stand_up will run since it is executionable with
+ or without a cue and will have priority.)
 
             ''')
 
@@ -3971,43 +4138,45 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
 
+        #----Menu Selection Code Block------------------------
         elif choice == "12":
             # Instinct step
-            print("Selection Instinct Step\n")
+            print("Selection:  Instinct Step\n")
             # Quick explainer for the user before the step runs
-            print(
-    '''Purpose:
-      • Run ONE controller step ("instinct step") which will:
-       i.   Advance the soft temporal clock (temporal drift) (no autonomic tick or age_days change)
-       ii.  Propose a write-base (base_suggestion): NEAREST_PRED(targets), then HERE, then NOW
-       iii. Build a small FOA (focus-of-attention): union of small neighborhoods around NOW, LATEST, cues
-       iv.  Evaluate loaded policies and execute the first that triggers (safety-first)
-       v.   If the controller wrote new facts, then boundary jump (epoch++)
+            print('''
+Purpose:
+  • Run ONE controller step ("instinct step") which will:
+   i.   Advance the soft temporal clock (temporal drift) (no autonomic tick or age_days change)
+   ii.  Propose a write-base (base_suggestion): NEAREST_PRED(targets), then HERE, then NOW
+   iii. Build a small FOA (focus-of-attention): union of small neighborhoods around NOW, LATEST, cues
+   iv.  Evaluate loaded policies and execute the first that triggers (safety-first)
+   v.   If the controller wrote new facts, then boundary jump (epoch++)
 
-    Let's consider an example. Consider the Mountain Goat simulation at its start, just after
-        the goat calf is born.
+Let's consider an example. Consider the Mountain Goat simulation at its start, just after
+    the goat calf is born.
 
-    There is by default a binding b1 with the tag "anchor:NOW" and the default bootup routines
-        will create a binding b2 with the tag "pred:stand" and a link from b1 to b2 -- this all exists.
-    Ok... then we run an "instinct step".
+There is by default a binding b1 with the tag "anchor:NOW" and the default bootup routines
+    will create a binding b2 with the tag "pred:stand" and a link from b1 to b2 -- this all exists.
+Ok... then we run an "instinct step".
 
-    i.  -there is a small drift of the context vector via ctx.temporal.step()
-         (this may not matter if a policy writes a new event and there is a temporal jump later)
+i.  -there is a small drift of the context vector via ctx.temporal.step()
+     (this may not matter if a policy writes a new event and there is a temporal jump later)
 
-    ii. -the Action Center has to decide where to link new bindings to -- base_suggestions provides suggestions
-        -base_suggestion = choose_contextual_base(..., targets=['state:posture_standing', 'stand'])
-        -it first looks for NEAREST_PRED(target) and success since b2 meets the target specified
-        -thus, base_suggestion = binding b2 is recommended as the "write base", i.e. to link to
-        -the suggestion is not used since that link already exists
-        -base_suggestions can be used at different times to control write placement
+ii. -the Action Center has to decide where to link new bindings to -- base_suggestions provides suggestions
+    -base_suggestion = choose_contextual_base(..., targets=['state:posture_standing', 'stand'])
+    -it first looks for NEAREST_PRED(target) and success since b2 meets the target specified
+    -thus, base_suggestion = binding b2 is recommended as the "write base", i.e. to link to
+    -the suggestion is not used since that link already exists
+    -base_suggestions can be used at different times to control write placement
 
-    iii. -FOA focus of attention -- a small set of nearby nodes around NOW/LATEST, cues (for lightweight planning)
+iii. -FOA focus of attention -- a small set of nearby nodes around NOW/LATEST, cues (for lightweight planning)
 
 
-    iv. -policy:stand_up when considered can be triggered since age_days is <3.0 and stand near NOW is True
-        -thus, policy:stand_up runs and as creates one mor more new nodes/edges (e.g., b5), and bindings b2 through b5 are linked
+iv. -policy:stand_up when considered can be triggered since age_days is <3.0 and stand near NOW is True
+    -thus, policy:stand_up runs and as creates one mor more new nodes/edges (e.g., b5), and
+            bindings b2 through b5 are linked
 
-    v.  -a new event occurred, thus there is a temporal jump, with epoch++
+v.  -a new event occurred, thus there is a temporal jump, with epoch++
 
     ''')
 
@@ -4039,8 +4208,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
             print(f"[instinct] base_suggestion={base}, anchors={[ _ann(x) for x in cands ]}, foa_size={foa['size']}")
             print("Note: A base_suggestion is a proposal for where to attach writes this step. It is not a policy pick.")
-            print("      Anchors give us a write base (where to attach new preds/edges). Where we attach the new fact matters for searching paths and planning later.")
-
+            print("      Anchors give us a write base (where to attach new preds/edges). Where we attach the ")
+            print("         new fact matters for searching paths and planning later.")
             print(f"[context] write-base: {_fmt_base(base)}")
             print(f"[context] anchors: {', '.join(_ann(x) for x in cands)}")
             print(f"[context] foa: size={foa['size']} (ids near NOW/LATEST + cues)")
@@ -4104,8 +4273,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     ctx.boundary_vhash64 = ctx.tvec64()
                 except Exception:
                     ctx.boundary_vhash64 = None
-                print("[temporal] a new event occurred, thus not just a drift in the context vector but instead a jump to mark a temporal boundary (cos reset to ~1.000)")
-                print(f"[temporal] boundary==event changes -> event/boundary/epoch={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
+                print("[temporal] a new event occurred, thus not just a drift in the context vector but ")
+                print("     instead a jump to mark a temporal boundary (cos reset to ~1.000)")
+                print(f"[temporal] boundary==event changes -> event/boundary/epoch={ctx.boundary_no}")
+                print("     last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
 
             # [TEMPORAL] optional τ-cut (e.g., τ=0.90)
             if ctx.temporal and ctx.tvec_last_boundary:
@@ -4121,11 +4292,14 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     except Exception:
                         ctx.boundary_vhash64 = None
                     print(f"[temporal] boundary: cos_to_last_boundary {cos_now:.3f} < 0.90")
-                    print(f"[temporal] boundary -> epoch (event changes) ={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
+                    print(f"[temporal] boundary -> epoch (event changes) ={ctx.boundary_no} ")
+                    print("     last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
 
             print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "13":
             # Skill Ledger
             print("Selection Skill Ledger\n")
@@ -4134,49 +4308,51 @@ def interactive_loop(args: argparse.Namespace) -> None:
             print(skill_readout())
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "14":
             # Autonomic tick
             print('''
-            The autonomic tick is like a fixed-rate heartbeat in the background, particularly important for hardware and robotics.
-            (To learn more about the different time systems in the architecture see the Snapshot or Instinct Step menu selections.)
+The autonomic tick is like a fixed-rate heartbeat in the background, particularly important for hardware and robotics.
+(To learn more about the different time systems in the architecture see the Snapshot or Instinct Step menu selections.)
 
-            The result of this menu autonomic tick may cause (if conditions exist):
-              i.   increment ticks, age_days, temporal drift, fatigue
-              ii.  emit rising-edge interoceptive cues
-              iii. recompute which policies are unlocked at this age/stage via dev_gate(ctx) before evaluating triggers
-              iv.  try one controller step (Action Center): collect triggered policies, apply safety override if needed,
-              tie-break by priority, and execute one policy (same engine as Instinct Step, just less verbose here)
+The result of this menu autonomic tick may cause (if conditions exist):
+  i.   increment ticks, age_days, temporal drift, fatigue
+  ii.  emit rising-edge interoceptive cues
+  iii. recompute which policies are unlocked at this age/stage via dev_gate(ctx) before evaluating triggers
+  iv.  try one controller step (Action Center): collect triggered policies, apply safety override if needed,
+  tie-break by priority, and execute one policy (same engine as Instinct Step, just less verbose here)
 
-            Consider this example -- the Mountain Goat calf has just been born.
-            At this time by default (note -- this might change with future software updates):
-            - default -- binding b1 with the tag "anchor:NOW", b2 with tag "pred:stand", link b1--> b2
-            - controller_steps=0, cog_cycles=0, temporal_epochs=0, autonomic_ticks=0, age_days: 0.0000
-            - hunger=0.70, fatigue=0.20, warmth=0.60  [src=drives.hunger; drives.fatigue; drives.warmth]
+Consider this example -- the Mountain Goat calf has just been born.
+At this time by default (note -- this might change with future software updates):
+- default -- binding b1 with the tag "anchor:NOW", b2 with tag "pred:stand", link b1--> b2
+- controller_steps=0, cog_cycles=0, temporal_epochs=0, autonomic_ticks=0, age_days: 0.0000
+- hunger=0.70, fatigue=0.20, warmth=0.60  [src=drives.hunger; drives.fatigue; drives.warmth]
 
-            Ok... then we run this menu "autonomic tick" (and look at Snapshot display also):
-            i.   ticks -> 1, age_day -> .01, cosine -> .98, fatigue -> .21
+Ok... then we run this menu "autonomic tick" (and look at Snapshot display also):
+i.   ticks -> 1, age_day -> .01, cosine -> .98, fatigue -> .21
 
-            ii.  HUNGER_HIGH = 0.60 (Controller Module), thus hunger drive at 0.70 will trigger and thus
-             be present now and thus written to WorldGraph as an interoceptive cue --
-             b1: [anchor:NOW], b2: [pred:stand], b3 LATEST: [cue:drive:hunger_high], with b2-->b3 now also
+ii.  HUNGER_HIGH = 0.60 (Controller Module), thus hunger drive at 0.70 will trigger and thus
+ be present now and thus written to WorldGraph as an interoceptive cue --
+ b1: [anchor:NOW], b2: [pred:stand], b3 LATEST: [cue:drive:hunger_high], with b2-->b3 now also
 
-            iii. POLICY_RT.refresh_loaded(ctx) causes the Action Center to recompute and rebuild the set of
-            stage-appropriate policies (via dev_gate(ctx)) so only developmentally unlocked policies can trigger
-            -- these are loaded and are ready for step iv
+iii. POLICY_RT.refresh_loaded(ctx) causes the Action Center to recompute and rebuild the set of
+stage-appropriate policies (via dev_gate(ctx)) so only developmentally unlocked policies can trigger
+-- these are loaded and are ready for step iv
 
-            iv.  try one controller step to react if anything is now actionable:
-                    fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx); if fired != "no_match": print(fired)
-                    (similar to Instinct Step menu but less verbose and instead more runtime version: refresh-->triggers-->pick--execute)
-               -looks at all the loaded policies re trigger(world, drives, ctx)
-                  e.g., policy:stand_up wants nearby pred:stand, that you are not already standing, and young age
-               -choose best candidate triggered policy and call policy's execute(...)
-                  e.g., policy:stand_up (added 3 bindings)
-                        b4: [pred:action:push_up], b5: [pred:action:extend_legs], b6: [pred:posture:standing, pred:state:posture_standing]
-               -the extra lines below: base is the same as Instinct Step base suggestion, and again for humans not passed into action_center step;
-               foa seeds foa with LATEST and NOW, adds cue nodes, union of neighborhoods with max_hops of 2; cands are candidate anchors which could be
-               potential start anchors for planning/attachement
+iv.  try one controller step to react if anything is now actionable:
+        fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx); if fired != "no_match": print(fired)
+        (similar to Instinct Step menu but less verbose and instead more runtime version: refresh-->triggers-->pick--execute)
+   -looks at all the loaded policies re trigger(world, drives, ctx)
+      e.g., policy:stand_up wants nearby pred:stand, that you are not already standing, and young age
+   -choose best candidate triggered policy and call policy's execute(...)
+      e.g., policy:stand_up (added 3 bindings)
+            b4: [pred:action:push_up], b5: [pred:action:extend_legs], b6: [pred:posture:standing, pred:state:posture_standing]
+   -the extra lines below: base is the same as Instinct Step base suggestion, and again for humans not passed into action_center step;
+   foa seeds foa with LATEST and NOW, adds cue nodes, union of neighborhoods with max_hops of 2; cands are candidate anchors which could be
+   potential start anchors for planning/attachement
             ''')
-            print("Selection Autonomic Tick\n")
+            print("Selection:  Autonomic Tick\n")
             print("Fixed-rate heartbeat: fatigue↑, autonomic_ticks/age_days advance, temporal drift here (with optional boundary).")
             print("Often followed by a controller check to see if any policy should act, gather triggered policies, apply safety override,")
             print("pick by priority, and execute one policy (similar to menu Instinct Step but less verbose)")
@@ -4249,29 +4425,29 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print(fired)
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "15":
             # Delete edge and autosave (if --autosave is active)
-            print("Selection Delete Edge\n")
+            print("Selection:  Delete Edge\n")
             print("Removes edge(s) matching src --> dst [relation]. Leave relation blank to remove any label.\n")
+            #function contains inputs, logic,messages, autosave
+            delete_edge_flow(world, autosave_cb=lambda: loop_helper(args.autosave, world, drives))
 
-            try:
-                delete_edge_flow(world, autosave_cb=lambda: loop_helper(args.autosave, world, drives))
-            except NameError:
-                # Older builds: no helper available for callback style—do a simple save after.
-                delete_edge_flow(world, autosave_cb=None)
-                loop_helper(args.autosave, world, drives)
-
+        #----Menu Selection Code Block------------------------
         elif choice == "16":
             # Export snapshot
-            print("Selection Export Snapshot (Text)\n")
+            print("Selection:  Export Snapshot (Text)\n")
             print("Writes the same snapshot you see on-screen to world_snapshot.txt for sharing/debugging.\n")
 
             export_snapshot(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT)
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "17":
             # Display snapshot
-            print("Selection Snapshot (WorldGraph + CTX + Policies)\n")
+            print("Selection:  Snapshot (WorldGraph + CTX + Policies)\n")
             print("A full, human-readable dump. The LEGEND explains some of the terms.")
             print("Note: Various tutorials and the README/Compendium file can help you understand the terms and functionality better.")
             print("Note: At the end of the snapshot you have the option to generate an interactive HTML graph of WorldGraph.\n")
@@ -4314,61 +4490,63 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "18":
             # Simulate a fall event and try a recovery attempt immediately
             print("Simulate a fall event\n")
             print('''
-    Summary: -Creates state:posture_fallen and relabels the linking edge to 'fall', then attempts recovery.
-             -Use this to demo safety gates (recover_fall / stand_up).
+Summary: -Creates state:posture_fallen and relabels the linking edge to 'fall', then attempts recovery.
+         -Use this to demo safety gates (recover_fall / stand_up).
 
-    --background primer and terminology--
-    Controller steps  — one Action Center decision/execution loop (aka “instinct step”).
-     -a loop in the runner that evaluates policies once and may write to the WorldGraph.
-     -if that step wrote new facts, we mark a  temporal boundary (epoch++) .
-     -With regards to its effects on timekeeping,  when a Controller Step occurs :
-         i)  controller_steps : ++ once per controller step
-         ii)  temporal drift : ++ (one soft-clock drift) per controller step
-         iii)  autonomic ticks : no direct change (may increase but independent heartbeat-like clock)
-         iv)  developmental age : no direct change (may increase but must be calculated elsewhere)
-         v)   cognitive cycles : ++ if there is a write to the graph (nb. need to change in the future)
-               Note: we do NOT increment cog_cycles here by design.
-               This menu is 'event injector + one controller step'; cognitive cycles are counted only in Instinct Step.
+--background primer and terminology--
+Controller steps  — one Action Center decision/execution loop (aka “instinct step”).
+ -a loop in the runner that evaluates policies once and may write to the WorldGraph.
+ -if that step wrote new facts, we mark a  temporal boundary (epoch++) .
+ -With regards to its effects on timekeeping,  when a Controller Step occurs :
+     i)  controller_steps : ++ once per controller step
+     ii)  temporal drift : ++ (one soft-clock drift) per controller step
+     iii)  autonomic ticks : no direct change (may increase but independent heartbeat-like clock)
+     iv)  developmental age : no direct change (may increase but must be calculated elsewhere)
+     v)   cognitive cycles : ++ if there is a write to the graph (nb. need to change in the future)
+           Note: we do NOT increment cog_cycles here by design.
+           This menu is 'event injector + one controller step'; cognitive cycles are counted only in Instinct Step.
 
 
-     -With regards to terminology and operations that affect controller steps:
-      “Action Center”  = the engine (`PolicyRuntime`).
-      “Controller step”  = one invocation of that engine.
-      “Instinct step”  = diagnostics +  one controller step .
-      “Autonomic tick”  = physiology +  one controller step .
-      ----
+ -With regards to terminology and operations that affect controller steps:
+  “Action Center”  = the engine (`PolicyRuntime`).
+  “Controller step”  = one invocation of that engine.
+  “Instinct step”  = diagnostics +  one controller step .
+  “Autonomic tick”  = physiology +  one controller step .
+  ----
 
-    Consider the example where the Mountain Goat calf has just been born.
-    Thus, by default there will be b1 NOW --> b2 pred:stand
-    Note: "pred:stand" is not a state but an intent (if standing we would say,
-       e.g., "pred:posture:standing" or legacy alias "pred:state:posture_standing")
-    As shown below, this menu item creates a new binding b3 with "state:posture_fallen"
-    (it does it via world.add_predicate with attach="latest", i.e., link to b2).
-    The previous LATEST → fallen edge is relabeled to 'fall' for semantic readability.
-    It then calls a controller step. As shown above, this will cause the Action Center to
-      evaluate policies via PolicyRuntime.consider_and_maybe_fire(...) --> since there is
-      "posture_fallen" the safety override restricts candidate policies to {recover_fall, stand_up}
-      and given that equally priority/deficit, stand_up is earlier and will be triggered.
-    The base suggestion, focus of attention, and candidates for binding are discussed in Instinct Step
-      as well as in the README.md. They are largely diagnostic. Similarly the 'post' message simply re-evalutes
-      the gate/trigger after execution; it's normal that it can still read True.
-    However the line "policy:stand_up (added 3 bindings)" tells us that the policy executed and added
-    3 bindings.
-    If we go to Snapshot we see:
-        b1: [anchor:NOW]  [src=world._bindings['b1'].tags]
-        b2: [pred:stand]  [src=world._bindings['b2'].tags]
-        b3: [pred:state:posture_fallen]  [src=world._bindings['b3'].tags]
-        b4: [pred:action:push_up]  [src=world._bindings['b4'].tags]
-        b5: [pred:action:extend_legs]  [src=world._bindings['b5'].tags]
-        b6: [pred:posture:standing, pred:state:posture_standing]  [src=world._bindings['b6'].tags]
-    Bindings b4, b5 and b6 were added and various actions occurred (or is being executed now). We see
-       that at b6 there is the predicate "pred:posture:standing".
-    Also, of interest with regard to timekeeping:
-       controller_steps=1, cog_cycles=0, temporal_epochs=0, autonomic_ticks=0, vhash64()==epoch_vhash64, age_days =0.000
+Consider the example where the Mountain Goat calf has just been born.
+Thus, by default there will be b1 NOW --> b2 pred:stand
+Note: "pred:stand" is not a state but an intent (if standing we would say,
+   e.g., "pred:posture:standing" or legacy alias "pred:state:posture_standing")
+As shown below, this menu item creates a new binding b3 with "state:posture_fallen"
+(it does it via world.add_predicate with attach="latest", i.e., link to b2).
+The previous LATEST → fallen edge is relabeled to 'fall' for semantic readability.
+It then calls a controller step. As shown above, this will cause the Action Center to
+  evaluate policies via PolicyRuntime.consider_and_maybe_fire(...) --> since there is
+  "posture_fallen" the safety override restricts candidate policies to {recover_fall, stand_up}
+  and given that equally priority/deficit, stand_up is earlier and will be triggered.
+The base suggestion, focus of attention, and candidates for binding are discussed in Instinct Step
+  as well as in the README.md. They are largely diagnostic. Similarly the 'post' message simply re-evalutes
+  the gate/trigger after execution; it's normal that it can still read True.
+However the line "policy:stand_up (added 3 bindings)" tells us that the policy executed and added
+3 bindings.
+If we go to Snapshot we see:
+    b1: [anchor:NOW]  [src=world._bindings['b1'].tags]
+    b2: [pred:stand]  [src=world._bindings['b2'].tags]
+    b3: [pred:state:posture_fallen]  [src=world._bindings['b3'].tags]
+    b4: [pred:action:push_up]  [src=world._bindings['b4'].tags]
+    b5: [pred:action:extend_legs]  [src=world._bindings['b5'].tags]
+    b6: [pred:posture:standing, pred:state:posture_standing]  [src=world._bindings['b6'].tags]
+Bindings b4, b5 and b6 were added and various actions occurred (or is being executed now). We see
+   that at b6 there is the predicate "pred:posture:standing".
+Also, of interest with regard to timekeeping:
+   controller_steps=1, cog_cycles=0, temporal_epochs=0, autonomic_ticks=0, vhash64()==epoch_vhash64, age_days =0.000
 
             ''')
 
@@ -4410,10 +4588,19 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
 
+        #----Menu Selection Code Block------------------------
         #elif "19"  see new_to_old compatibility map
+
+
+        #----Menu Selection Code Block------------------------
         #elif "20"  see new_to_old compatibility map
+
+
+        #----Menu Selection Code Block------------------------
         #elif "21"  see new_to_old compatibility map
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "22":
             # Export and display interactive graph (Pyvis HTML) with options
             print("\nExport and display graph of nodes and links with more options (Pyvis HTML)")
@@ -4491,32 +4678,36 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print("       Tip: install with  pip install pyvis")
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "23":
             # Understanding bindings/edges/predicates/cues/anchors/policies (terminal help)
             print_tagging_and_policies_help(POLICY_RT)
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "24":
             # Capture scene → emit cue/predicate + tiny engram (signal bridge demo)
             print("\n Capture scene\n")
             print('''
-    Capture scene -- creates a binding, stores an engram of some scene in one of the columns,
-      and then stores a pointer to that engram in the binding.
+Capture scene -- creates a binding, stores an engram of some scene in one of the columns,
+  and then stores a pointer to that engram in the binding.
 
-    -the user is prompted to enter channel, token, family, attach (NOW->new, advance LATEST; oldLATEST -> new, advance LATEST;
-       "none" -- create node unlinked, can manually add edges later) and a tiny scene vector(e.g., ".5,.5,.5")
-    -there is a temporal boundary jump so that the new engram starts a fresh epoch
-       e.g., [temporal] boundary (pre-capture) → epoch=1 last_boundary_vhash64=23636ff46c39b1c5 (cos≈1.000)
-    -time attributes are passed in creating the engram
-    -then -- bid, eid = world.capture_scene(channel, token, vec, attach=attach, family=family, attrs=attrs)
-    -this creates a new binding --  b3 with tag cue:vision:silhouette:mom and attached engram id=80ac0bc7b6624b538db354c9d5aa4a17
-    -as noted it creates a tiny engram in one of the Columns, and stamps it with the time from attrs  e.g., time on engram: ticks....
-    -it then writes a pointer on the binding so that the binding points to the engram
-         -e.g.,  b3.engrams["column01"] = 80ac0....
-         -sets bN.engrams["column01"] = <eid>
-    -it then returns the binding id bid and the engram id eid
-    -then there is a controller==Action Center step -- in the example with a newborn calf the gate and trigger conditions for
-        policy:stand_up are met, and this policy is executed
+-the user is prompted to enter channel, token, family, attach (NOW->new, advance LATEST; oldLATEST -> new, advance LATEST;
+   "none" -- create node unlinked, can manually add edges later) and a tiny scene vector(e.g., ".5,.5,.5")
+-there is a temporal boundary jump so that the new engram starts a fresh epoch
+   e.g., [temporal] boundary (pre-capture) → epoch=1 last_boundary_vhash64=23636ff46c39b1c5 (cos≈1.000)
+-time attributes are passed in creating the engram
+-then -- bid, eid = world.capture_scene(channel, token, vec, attach=attach, family=family, attrs=attrs)
+-this creates a new binding --  b3 with tag cue:vision:silhouette:mom and attached engram id=80ac0bc7b6624b538db354c9d5aa4a17
+-as noted it creates a tiny engram in one of the Columns, and stamps it with the time from attrs  e.g., time on engram: ticks....
+-it then writes a pointer on the binding so that the binding points to the engram
+     -e.g.,  b3.engrams["column01"] = 80ac0....
+     -sets bN.engrams["column01"] = <eid>
+-it then returns the binding id bid and the engram id eid
+-then there is a controller==Action Center step -- in the example with a newborn calf the gate and trigger conditions for
+    policy:stand_up are met, and this policy is executed
 
             ''')
 
@@ -4665,6 +4856,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
             print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "25":
             # Planner strategy toggle
             try:
@@ -4687,9 +4880,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 print("Planner unchanged.")
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice == "26":
             # Temporal probe (harmonized with Snapshot naming)
-            print("Selection Temporal Probe\n")
+            print("Selection:  Temporal Probe\n")
             print("Shows the temporal soft clock using the same names as Snapshot,")
             print("with source attributes for each value.\n")
 
@@ -4767,12 +4962,13 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
 
+        #----Menu Selection Code Block------------------------
         elif choice == "27":
             # Inspect engram by id OR by binding id
             print("Inspect engram by id or by binding id")
             print('''
-    From the eid (engram id) or bid (binding id) this selection will display
-    the human-readable portions of the engram record.
+From the eid (engram id) or bid (binding id) this selection will display
+the human-readable portions of the engram record.
 
             ''')
             try:
@@ -4859,25 +5055,26 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
 
+        #----Menu Selection Code Block------------------------
         elif choice == "28":
             # List all engrams by scanning bindings; dedupe by id
             print("List all engrams")
             print('''
-    This selection will list all engrams stored by scanning the bindings.
-    Any duplicated engram ID's in different bindings will not be shown twice.
-    EID -- the engram id (32 hex characters)
-    src -- the source binding==node where the pointer is stored
-           note: this is the first binding found that points to that EID but de-duplicated by EID
-    ticks, epoch -- when the engram was created, actually the value of these counters when it was captured
-    tvec64 -- human readable 64-bit fingerprint of the temporal vector ctx.tvec64 when the engram was captured
-    payload --  info from the payload's metadata TensorPayload holds data:list[float] and on serialization write contiguous float32's
-      -shape=(3,) -- 1-D vector of 3 elements
-      -kind=scene -- kind of field, not numeric dtype; "scene" kind comes from the payload's metadata
-      -fmt=tensor/list-f32  -- TensorPayload holds data:list[float] and on serialization writes contiguous float32's
-    name -- engram name  e.g., scene:vision:silhouette:mom
+This selection will list all engrams stored by scanning the bindings.
+Any duplicated engram ID's in different bindings will not be shown twice.
+EID -- the engram id (32 hex characters)
+src -- the source binding==node where the pointer is stored
+       note: this is the first binding found that points to that EID but de-duplicated by EID
+ticks, epoch -- when the engram was created, actually the value of these counters when it was captured
+tvec64 -- human readable 64-bit fingerprint of the temporal vector ctx.tvec64 when the engram was captured
+payload --  info from the payload's metadata TensorPayload holds data:list[float] and on serialization write contiguous float32's
+  -shape=(3,) -- 1-D vector of 3 elements
+  -kind=scene -- kind of field, not numeric dtype; "scene" kind comes from the payload's metadata
+  -fmt=tensor/list-f32  -- TensorPayload holds data:list[float] and on serialization writes contiguous float32's
+name -- engram name  e.g., scene:vision:silhouette:mom
 
-    Note: the Column record stores {"id", "name", "payload", "meta"}; receives the time attrs + "created_at"
-    Note: the binding keeps the pointer engrams["column01"] = {"id":EID, "act":1.0}
+Note: the Column record stores {"id", "name", "payload", "meta"}; receives the time attrs + "created_at"
+Note: the binding keeps the pointer engrams["column01"] = {"id":EID, "act":1.0}
 
             ''')
 
@@ -4949,9 +5146,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
 
+        #----Menu Selection  Code Block------------------------
         elif choice == "29":
             # Search engrams
-            print("Selection Search Engrams\n")
+            print("Selection:  Search Engrams\n")
             print("Search referenced engrams by name substring (case-insensitive) and/or epoch.\n"
                   "Optional filters: channel substring (e.g., 'vision'), payload kind (e.g., 'scene'), "
                   "and EID prefix.\n"
@@ -5053,13 +5251,14 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
 
+        #----Menu Selection Code Block------------------------
         elif choice == "30":
             # Delete engram by id OR by binding id; also prune any binding pointers to it
             print('''
-    Deletes engrams by bid (binding id) or by eid (engram id).
-    Every binding pointer that references this eid will be pruned.
-    -deletes the Column record via column.mem.delete(eid)
-    -then prunes every binding pointer that referenced that eid
+Deletes engrams by bid (binding id) or by eid (engram id).
+Every binding pointer that references this eid will be pruned.
+-deletes the Column record via column.mem.delete(eid)
+-then prunes every binding pointer that referenced that eid
 
             ''')
             key = input("Engram id OR Binding id to delete: ").strip()
@@ -5121,6 +5320,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
             loop_helper(args.autosave, world, drives)
 
 
+        #----Menu Selection Code Block------------------------
         elif choice == "31":
             # Attach an existing engram id to a binding (creates/overwrites a slot)
             print("Attach an existing engram id (eid) to a binding id (bid).")
@@ -5161,8 +5361,14 @@ def interactive_loop(args: argparse.Namespace) -> None:
             print(f"Attached engram {eid} to {bid} as {slot}.")
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
+        #elif "32"  see new_to_old compatibility map
+
+
+        #----Menu Selection Code Block------------------------
         elif choice == "33":
-            print("Selection LOC by Directory (Python)")
+            print("Selection:  LOC by Directory (Python)")
             print("Prints total lines of Python source code")
             rows, total, err = _compute_loc_by_dir()
             if err:
@@ -5170,9 +5376,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
             else:
                 print(_render_loc_by_dir_table(rows, total))  # pragma: no cover
 
+
+        #----Menu Selection Code Block------------------------
         elif choice.lower() == "s":
             # Save session
-            print("Selection Save Session\n")
+            print("Selection:  Save Session\n")
             print("Saves world+drives+skills to JSON (atomic write). Use this to checkpoint progress.\n")
 
             path = input("Save to file (e.g., session.json): ").strip()
@@ -5180,9 +5388,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 ts = save_session(path, world, drives)
                 print(f"Saved to {path} at {ts}")
 
+
+        #----Menu Selection Code Block------------------------
         elif choice.lower() == "l":
             # Load session
-            print("Selection Load Session\n")
+            print("Selection: Load Session\n")
             print("Loads a prior JSON snapshot (world, drives, skills). The new state replaces the current one.\n")
 
             path = input("Load from file: ").strip()
@@ -5201,15 +5411,99 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 except Exception as e:
                     print(f"[warn] could not load {path}: {e}")
 
+
+        #----Menu Selection Code Block------------------------
         elif choice.lower() == "d":
             # Show drives (raw + tags), robust across Drives variants
-            print("Selection Drives & Drive Tags\n")
+            print("Selection: Drives & Drive Tags\n")
             print("Shows raw drive values and threshold flags with their sources.\n")
             print(drives_and_tags_text(drives))
             loop_helper(args.autosave, world, drives)
 
+
+        #----Menu Selection Code Block------------------------
         elif choice.lower() == "r":
             # Reset current saved session: explicit confirmation
+            print("Selection: Reset current save session\n")
+            print('''
+1. If you did NOT start with --autosave
+First, it checks:
+if not args.autosave:
+    print("No current saved json file to reset (you did not pass --autosave <path>).")
+So if you launched like:
+python cca8_run.py
+# or
+python cca8_run.py --load some_old_session.json
+(without --autosave), then Reset just prints that message and returns to the menu. Nothing is deleted or reinitialized.
+So: Reset is really about “reset the autosave-backed session,” and it refuses to run if there is no autosave configured.
+
+2. If you did start with --autosave
+If args.autosave is set, e.g.:
+python cca8_run.py --autosave session.json
+then Reset becomes a big hammer:
+2.1. It warns you what will happen
+path = os.path.abspath(args.autosave)
+cwd  = os.path.abspath(os.getcwd())
+print("\n[RESET] This will:")
+print("  • Delete the autosave file shown below (if it exists), and")
+print("  • Re-initialize an empty world, drives, and skill ledger in memory.\n")
+print(f"Autosave file: {path}")
+if not path.startswith(cwd):
+    print(f"[CAUTION] The file is outside the current directory: {cwd}")
+So it:
+Resolves the autosave file to an absolute path.
+Says explicitly:
+It will delete that file.
+It will create a fresh world/drives/skills in memory.
+Warns you if the file is outside your current working directory.
+
+2.2. It requires a strong confirmation
+reply = input("Type DELETE in uppercase to confirm, or press Enter to cancel: ").strip()
+...
+if reply == "DELETE":
+    ...
+else:
+    print("Reset cancelled.")
+Only if you type exactly DELETE will it proceed.
+Any other input (including empty Enter) cancels the reset and leaves everything unchanged.
+
+2.3. If confirmed, it deletes the autosave file
+if os.path.exists(path):
+    os.remove(path)
+    print(f"Deleted {path}.")
+else:
+    print(f"No file at {path} (nothing to delete).")
+So your autosave JSON is physically removed from disk (if it exists).
+
+2.4. Then it creates a fresh episode in memory
+world = cca8_world_graph.WorldGraph()
+drives = Drives()
+skills_from_dict({})  # clear skill ledger
+world.ensure_anchor("NOW")
+print("Initialized a fresh episode in memory. Next action will autosave a new snapshot.")
+This:
+Replaces your current world with a brand-new empty WorldGraph.
+Replaces your drives with a fresh Drives() object.
+Clears the skill ledger (via skills_from_dict({})).
+Ensures there is a NOW anchor in the new world.
+Leaves args.autosave unchanged, so the next menu action that triggers autosave will write a new JSON file at that same path.
+So after a successful reset, you’re essentially in the same state as:
+python cca8_run.py --autosave session.json
+right after startup, with no prior content.
+
+3. Summary in plain language
+Reset current saved session (menu 34 / r):
+Only does anything meaningful if you launched with --autosave <path>.
+When confirmed, it:
+Deletes the autosave JSON file at that path.
+Reinitializes a completely fresh world, drives, and skill ledger in memory.
+Keeps --autosave in effect, so subsequent actions will start a new autosave file.
+It’s basically your “wipe this notebook clean and start over” button for the autosaved session, with a
+pretty strong “type DELETE” guard so you don’t accidentally nuke a session you care about.
+
+            ''')
+
+
             if not args.autosave:
                 print("No current saved json file to reset (you did not pass --autosave <path>).")
             else:
@@ -5245,9 +5539,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
             continue   # back to menu
 
 
+        #----Menu Selection Code Block------------------------
         elif choice.lower() == "t":
-            #Tutorial selection that gives a tour through several common menu functions
-            print("Selection Tutorial\n")
+            #Help and Tutorial selection that gives a tour through several common menu functions
+            print("Selection:  Help -- System Docs, Tutorial, Demo Tour\n")
             print("1) Quick console tour (recommended), 2) Open README/compendium, 3) Both. Enter cancels.\n")
 
             print("\nTutorial options:")
@@ -5259,7 +5554,6 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 pick = input("Choose: ").strip()
             except Exception:
                 pick = ""
-
             #pylint:disable=no-else-continue
             if pick == "1":
                 run_new_user_tour(world, drives, ctx, POLICY_RT, autosave_cb=lambda: loop_helper(args.autosave, world, drives))
@@ -5306,7 +5600,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 continue
             #pylint:enable=no-else-continue
 
+        #----Menu Selection Code Block------------------------
+            ##END OF MENU SELECTION BLOCKS
+
     # interactive_loop(...) while loop end  <<<<<<<<<<<<<<<<<<<
+
 
 # --------------------------------------------------------------------------------------
 # main()
