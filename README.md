@@ -506,19 +506,77 @@ A: JSON keeps sessions portable and debuggable, binary would be smaller but opaq
 
 
 
-You can explore the graph via an interactive menu. Relevant items:
+You can explore the graph via an interactive menu. The most useful items while learning are:
 
-* Display snapshot (prints bindings, edges, drives, ctx, and eligible policies; optionally export an interactive graph).
-* Inspect binding details (menu **20**) — given a binding id (or `ALL`), shows its tags, meta, a short Provenance: summary (`meta.policy/created_by/boot/ticks/epoch`), any attached engrams, and both outgoing and incoming edges with degree counts.
-* Add predicate (creates a node with a `pred:*` tag, you can attach it to NOW or LATEST to auto-link chronology).
-* Connect two bindings (adds a directed edge, the UI warns if the same labeled edge already exists).
-* Plan from NOW to a predicate (prints ids and a pretty path).
+* The **“Snapshot”** entry  
+  Prints bindings, edges, drives, CTX, TEMPORAL, and policy telemetry. Shows NOW/LATEST, event boundary (epoch), soft-clock cosine, and which policies are eligible at the current developmental stage. This is your “state of the world and controller” dashboard.
+
+* The **“Drives & drive tags”** entry  
+  Shows numeric drives (`hunger`, `fatigue`, `warmth`) and the derived **drive flags** (`drive:*`) that policies use in `trigger()`. These flags are ephemeral, not written into the graph unless you explicitly create `pred:drive:*` or `cue:drive:*` tags.
+
+* The **“Input [sensory] cue”** entry  
+  Writes a `cue:<channel>:<token>` binding (e.g., `cue:vision:silhouette:mom`) and runs one controller step so you can see how policies respond to evidence. This is the “Sense → Process → Act” entry point.
+
+* The **“Instinct step (Action Center)”** entry  
+  Runs the policy runtime once, with explanatory pre/post text. If a policy fires, you get a small chain of bindings/edges (e.g., the standing chain) and a status dict (`policy, status, reward, notes`).
+
+* The **“Inspect binding details”** entry  
+  Given a binding id (or `ALL`), shows:
   
+  - tags (families: `pred:*`, `cue:*`, `anchor:*`),
+  - `meta` as JSON,
+  - a short **Provenance:** summary (`meta.policy/created_by/boot/ticks/epoch`),
+  - attached engrams (slot → short id + act + OK/dangling),
+  - both **outgoing and incoming** edges and a degree line (`out=N in=M`).
+    Use this to audit where a node came from and how it is connected.
+
+* The **“List predicates”** entry  
+  Groups all `pred:*` tokens and shows which bindings carry each token. You can optionally filter by substring (e.g., `rest` or `posture`) to reduce clutter. This is a good way to see which planner targets exist.
+
+* The **“Add predicate”** entry  
+  Prompts for a token (e.g., `state:posture_standing`, without the `pred:` prefix) and an attach mode (`now/latest/none` – default `latest`). It:
   
+  - creates a new binding tagged `pred:<token>`,
+  - optionally auto-links it from NOW/LATEST with a `"then"` edge,
+  - stamps provenance (`meta.added_by="user"`, `meta.created_by="menu:add_predicate"`, `meta.created_at=ISO-8601`).
+    It’s your primary way to “teach” the graph new states by hand.
 
-Design decision (folded in): The runner offers a quick‑exit `--plan <token>` flag when you only need to compute a plan once and exit. The menu shows a short “drives” view because drives are central to policy triggers.
+* The **“Connect bindings”** entry  
+  Adds a directed edge `src --label--> dst` (default label `then`), with a simple duplicate guard that skips an exact `(src, label, dst)` edge if it already exists. Edges created here carry `meta.created_by="menu:connect"` and a timestamp. Use this to wire episodes with meaningful labels such as `approach`, `search`, `latch`, `suckle`.
 
-Design decision (folded in): Attachment semantics are explicit and lowercase: `attach="now"`, `attach="latest"`, or `"none"`. This removes ambiguity when auto‑wiring the newest binding into the episode chain.
+* The **“Delete Edge”** entry  
+  Interactive helper for removing edges. It handles different legacy edge layouts and prints how many edges were removed between `src` and `dst` (with an optional label filter). This is the safest way to repair a mistaken link without editing JSON by hand.
+
+* The **“Plan to predicate”** entry  
+  Asks for a target predicate token (e.g., `state:posture_standing`) and:
+  
+  - prints the **current planner strategy** (`BFS` or `DIJKSTRA`),
+  - calls `WorldGraph.plan_to_predicate` from the NOW anchor,
+  - prints both the raw id path and a **pretty path** (`b3[posture:standing] --then--> b4[milk:drinking] ...`).
+    With all edges weight=1, BFS and Dijkstra produce the same paths; once you assign weights, Dijkstra uses `edge.meta['weight'/'cost'/'distance'/'duration_s']` as the cost.
+
+* The **“Export and display interactive graph”** entry  
+  Writes a Pyvis HTML file for the current graph, with options for label mode (`id`, `first_pred`, or `id+first_pred`), edge label display, and physics. Open the HTML in your browser to hover nodes/edges and orient yourself visually.
+
+* The **“Save session”** entry  
+  Manual one-shot snapshot to a JSON file you specify. It writes the same shape as autosave (`saved_at`, `world`, `drives`, `skills`) via atomic replace. It does **not** change your `--autosave` setting and is ideal for named checkpoints (e.g., `session_after_first_hours.json`).
+
+* The **“Load session”** entry  
+  Loads a prior JSON snapshot (world, drives, skills) and replaces the current in-memory state. It never overwrites the file on load. After loading, the I/O banner explains whether autosave is ON/OFF and where the next autosaves will go.
+
+* The **“Reset current saved session”** entry  
+  Available only when you started with `--autosave <path>`. After an explicit confirmation (`DELETE` in uppercase), it:
+  
+  - deletes the autosave file at that path,
+  - re-initializes a fresh WorldGraph, Drives, and skill ledger in memory,
+  - keeps `--autosave` pointing at the same path.  
+    From the simulation’s point of view you are now in essentially the same state as a fresh run with `--autosave` set; the **next** action that triggers autosave will create a new snapshot at that path.
+
+Design decision (folded in): The runner offers a quick-exit `--plan <token>` flag when you only need to compute a plan once and exit. In interactive mode, the menu shows a small drives panel because drives are central to policy triggers.
+
+Design decision (folded in): Attachment semantics are explicit and lowercase: `attach="now"`, `attach="latest"`, or `"none"`. This removes ambiguity when auto-wiring the newest binding into the episode chain.
+
+
 
 
 
@@ -544,27 +602,23 @@ A: Use `--plan pred:<token>` from the CLI for a one-shot plan.
 
 ## Logging & Unit Tests
 
+###### 
+
 ###### Logging (minimal, already enabled)
 
 The runner initializes logging once at startup:
 
-Version:1.0StartHTML:0000000105EndHTML:0000040966StartFragment:0000038726EndFragment:0000040926<style></style>
-
-The runner initializes logging once at startup:
-
-- Writes to **`cca8_run.log`** (UTF-8) and also echoes tothe console.
-
-- One INFO line per run (version, Python, platform).
-
-- You can expand logging later by sprinkling`logging.info(...)` / `warning(...)` where useful.
+- Writes to **`cca8_run.log`** (UTF-8) and also echoes to the console.
+- One INFO line per run (runner version, Python, platform).
+- You can expand logging later by sprinkling `logging.info(...)` / `warning(...)` where useful.
 
 **Change level or file:**
 
-Edit `cca8_run.py` in `main(...)` where`logging.basicConfig(...)` is called.
+Edit `cca8_run.py` in `main(...)` where `logging.basicConfig(...)` is called.
 
-**Tail the log while you run (Windows PowerShell):**
+###### Tail the log while you run (Windows PowerShell):
 
-Get-Content .\cca8_run.log -Wait
+Get-Content .\cca8_run.log -Wait**
 
 Unit tests (pytest)
 
@@ -598,7 +652,32 @@ The demo world for these tests is built via `cca8_test_worlds.build_demo_world_f
 
 
 
+Unit tests (pytest)
+-------------------
 
+We keep tests under `tests/`.
+
+Preflight runs pytest first (so failures stop you early).
+
+Run preflight (runs tests first):
+
+`python cca8_run.py --preflight`
+
+Run tests directly (show prints):
+
+`pytest -q -s`
+
+Included tests (non-exhaustive):
+
+* `tests/test_smoke.py` — basic sanity (asserts True).
+
+* `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → `pred:stand` exists.
+
+* `tests/test_inspect_binding_details.py` — uses a small demo world to exercise binding shape, provenance (`meta.policy/created_by/...`), engram pointers, and incoming/outgoing edge degrees as expected by the “Inspect binding details” menu.
+
+* Additional suites exercise Column/engram behavior, features & temporal context, the Dijkstra planner, and runner helpers (drive tags, interoceptive cue emission, timekeeping line, I/O banner).
+
+The demo world for several of these is built via `cca8_test_worlds.build_demo_world_for_inspect()`, which you can also use interactively via `--demo-world`.
 
 * * *
 
@@ -844,7 +923,7 @@ Future checks will cover: transport handshake (USB/serial/network), sensor
 enumeration, actuator enable/disable, estop/limits, and simple round-trip
 commands (with timestamps and unit checks).
 
-<img title="Goat Embodiment" src="./robot_goat.jpg" alt="robot_goat" style="zoom:25%;" data-align="left">
+<img title="Goat Embodiment" src="./robot_goat.jpg" alt="robot_goat" style="zoom:25%;" data-align="center">
 
 * * *
 
@@ -1691,7 +1770,30 @@ Q: How do we avoid id collisions after load?  A: from_dict() advances the intern
 Q: Missing --load file?  A: Continue fresh, file created on first autosave.
 Q: Why atomic replace on save?  A: Prevents partial/corrupt snapshots.
 
+
+
 ---
+
+## Menu-based Save/Load/Reset
+
+In addition to CLI flags, the runner exposes three menu items for managing sessions:
+
+* **“Save session”**  
+  Prompts for a filename and writes a full JSON snapshot (`saved_at`, `world`, `drives`, `skills`) using the same atomic replace strategy as autosave. This is a **manual one-shot checkpoint** and does **not** change your `--autosave` setting. It’s useful for named milestones (e.g., `session_after_first_hours.json`) even when autosave is active.
+
+* **“Load session”**  
+  Prompts for a JSON snapshot file, parses it, and reconstructs a fresh `WorldGraph`, `Drives`, and skill ledger in memory. The current in-memory state is replaced. Load never overwrites the file; autosave (if configured) will only start writing again after subsequent actions. After a successful load, the I/O banner explains whether autosave is ON/OFF and which file will be written on the next autosave.
+
+* **“Reset current saved session”**  
+  Only meaningful when you launched with `--autosave <path>`. After a strong confirmation (`DELETE` in uppercase), it:
+  
+  - Deletes the autosave file at that path (if it exists).
+  - Re-initializes a fresh world, drives, and skill ledger in memory.
+  - Leaves `--autosave` pointing to the same path.
+  
+  From the simulation’s perspective, you are now in essentially the same state as a fresh run with `cca8_run.py --autosave <path>`. The difference is that reset **deletes** the old autosave file immediately; a restart with `--autosave` only **overwrites** it when the first autosave occurs. In both cases, the next autosave event will write a new JSON snapshot at that path.
+  
+  
 
 ## Tutorial: Newborn Mountain Goat — First Minutes
 
@@ -1766,7 +1868,8 @@ Note: menu **11** adds a **cue** not a pred.
 
 ### Show drives (raw + tags)
 
-Menu → **D** → prints numeric drives and active **drive flags** (`drive:*`, ephemeral)
+In the menu, choose **“Drives & drive tags”** (you can also type `drives` or `d` at the prompt).  
+This prints numeric drives and active **drive flags** (`drive:*`, ephemeral). These flags are computed by the controller (`Drives.flags()` / `Drives.predicates()`) and used in policy `trigger()` logic; they are **not persisted** in the WorldGraph unless you explicitly create `pred:drive:*` or `cue:drive:*` tags.
 
 
 
@@ -1776,19 +1879,23 @@ Sometimes you want a small, deterministic graph to test the graph menus without 
 
 cca8_run.py --demo-world
 
---This:
+
+
+This:
 
 * Seeds a tiny WorldGraph with 6 bindings and 7 edges (anchors `NOW`/`HERE`, a `stand` predicate, a `fallen` state, a cue-like `vision:silhouette:mom`, and a `state:resting` node with provenance and an engram pointer).
 
-* Prints a short banner such as `[demo_world] Preloaded demo world (NOW=b1, bindings=6)` at startup.
+* Prints a short banner such as:
+  `[demo_world] Preloaded demo world (NOW=b1, bindings=6)`
+  at startup.
 
 * Lets you immediately use:
   
-  * `3` Snapshot to see the prewired edges.
+  * the **“Snapshot”** entry to see the pre-wired edges and tags,
   
-  * `20` Inspect binding details (e.g., on the “resting” node) to inspect tags/meta/provenance/engrams and incoming/outgoing edges.
+  * the **“Inspect binding details”** entry (e.g., on the “resting” node) to inspect tags/meta/provenance/engrams and incoming/outgoing edges,
   
-  * `21` List predicates, `23/24` Connect/Delete edges, and `25` Plan from NOW, all against the same stable mini-world.
+  * the **“List predicates”**, **“Connect bindings” / “Delete Edge”**, and **“Plan to predicate”** entries, all against the same stable mini-world.
 
 The same demo builder is used by `tests/test_inspect_binding_details.py` via `cca8_test_worlds.build_demo_world_for_inspect()`, so interactive experiments and unit tests share the same graph shape.
 
@@ -1796,7 +1903,7 @@ The same demo builder is used by `tests/test_inspect_binding_details.py` via `cc
 
 ##### Export an interactive graph with readable labels
 
-From the main menu choose **22) Export interactive graph (Pyvis HTML)**, then:
+From the main menu choose **Export and display interactive graph (Pyvis HTML)**, then:
 
 * **Node label mode** → `id+first_pred` (shows both `bN` and the first predicate).
 

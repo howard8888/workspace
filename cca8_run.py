@@ -40,12 +40,10 @@ non-interactive utility flags for scripting, like `--about`, `--version`, and `-
 #  -alert user visually if a task will take longer than 2 seconds
 #  -if an error message can occur, then the user should see a human-readable, readily comprehensible error message
 
-
 # pylint: disable=protected-access
 #   we treat the cca8_runner module as a trusted friend module and thus silence warnings for acces to _objects
 # pylint: disable=import-outside-toplevel
 #   a number of the imports in profile/preflight stubs are by design and leave for now
-
 
 # Standard Library Imports
 from __future__ import annotations
@@ -64,7 +62,6 @@ import random
 import time
 import subprocess
 import shutil
-
 
 # PyPI and Third-Party Imports
 # --none at this time at program startup --
@@ -118,6 +115,8 @@ ASCII_LOGOS = {
 
 
 # --- Runtime Context (ENGINE↔CLI seam) --------------------------------------------
+
+
 @dataclass(slots=True)
 class Ctx:
     """Mutable runtime context for the agent (module-level, importable).
@@ -165,7 +164,6 @@ class Ctx:
     cog_cycles: int = 0  # 'productive' cycles: incremented only in Instinct Step when the step wrote new facts, to modify in future when full cog cycle implemented
     last_drive_flags: Optional[set[str]] = None
 
-
     def reset_controller_steps(self) -> None:
         """quick reset of Ctx.controller_steps counter
         """
@@ -199,11 +197,54 @@ class Ctx:
         return sum(a*b for a, b in zip(v, lb))
 
 
-# Module layout/seam:
-#   ENGINE (pure helpers; import-safe; no user I/O)  → can be reused by other front-ends
-#   CLI    (printing/input; menus; argparse)        → terminal user experience
+# Module layout / roadmap
+# -----------------------
+# ENGINE (import-safe, no direct user I/O) – reusable from tests or other front-ends:
+#   • Runtime context:
+#       - Ctx: mutable runtime state (soft temporal clock, ticks, age_days, controller_steps, cog_cycles, etc.).
+#   • Graph / edge helpers:
+#       - world_delete_edge(...), delete_edge_flow(...): engine + CLI helpers for removing edges.
+#       - Spatial stubs: _maybe_anchor_attach(...), add_spatial_relation(...).
+#   • Persistence & versioning:
+#       - save_session(...): atomic JSON snapshot of (world, drives, skills).
+#       - _module_version_and_path(...), versions_dict(), versions_text(): component versions + paths.
+#   • Embodiment stub:
+#       - HAL: hardware abstraction layer skeleton for future robot embodiments.
+#   • Policy runtime:
+#       - PolicyGate, PolicyRuntime, CATALOG_GATES: controller gate catalog and runtime gate evaluation.
+#       - boot_prime_stand(...): boot-time seeding of a “stand” intent reachable from NOW.
+#   • Tagging / help text:
+#       - print_tagging_and_policies_help(...): console explainer for bindings, edges, tags, and policies.
+#   • Profiles & tutorials:
+#       - profile_* functions: chimpanzee / human / multi-brain / society / ASI stubs (dry-run, no writes).
+#       - choose_profile(...): profile picker at startup.
+#       - run_new_user_tour(...), _open_readme_tutorial(...): quick tour + README/compendium helpers.
+#   • Preflight:
+#       - run_preflight_full(...): full pytest + probes + hardware checks.
+#       - run_preflight_lite_maybe(): optional startup “lite” preflight banner.
+#   • WorldGraph helpers for the runner:
+#       - _anchor_id(...), _sorted_bids(...): anchor and binding id helpers.
+#       - snapshot_text(...), export_snapshot(...), recent_bindings_text(...):
+#           snapshot and export of the live WorldGraph, CTX, and policies.
+#       - timekeeping_line(...), print_timekeeping_line(...), _snapshot_temporal_legend(...):
+#           soft-clock / epoch / cosine one-line summaries and legend.
+#       - drives_and_tags_text(...), skill_ledger_text(...): drives panel + skill ledger explainers.
+#       - _resolve_engrams_pretty(...), _bindings_pointing_to_eid(...), _engrams_on_binding(...):
+#           engram pointer inspection utilities.
+#   • Planning / FOA / contextual helpers:
+#       - _neighbors(...), _bfs_reachable(...), *_with_pred/cue(...): small graph utilities.
+#       - _first_binding_with_pred(...), choose_contextual_base(...): write-base suggestions.
+#       - present_cue_bids(...), neighbors_k(...), compute_foa(...), candidate_anchors(...):
+#           focus-of-attention and candidate anchor selection.
+#
+# CLI (printing/input; menus; argparse) – terminal user experience:
+#   • interactive_loop(args): main menu + per-selection code blocks.
+#   • main(argv): argument parsing, logging, “one-shot” flags (about/version/preflight/plan), and then interactive_loop.
+#   • if __name__ == "__main__": sys.exit(main()): standard Python script entry point.
 
-# --- Edge delete helpers (self-contained) ------------------------------------
+
+# --- Graph edge deletion helpers (engine-level, import-safe) -----------------
+
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
     return edge.get("dst") or edge.get("to") or edge.get("dst_id") or edge.get("id")
 
@@ -262,12 +303,12 @@ def world_delete_edge(world: Any, src: str, dst: str, rel: str | None) -> int:
         lst = gl.get(src)
         if isinstance(lst, list):
             removed += _rm_from_list(lst, dst, rel)
-
     return removed
 
 
-# --- CLI flow: delete edge -------------------------------------------------------
-# This is part of the CLI layer; it calls engine helper `world_delete_edge()`.
+# --- CLI flow: delete edge (menu 24) ---------------------------------------------
+# CLI helper that wraps world_delete_edge() and engine-level delete_edge(), plus autosave.
+
 def delete_edge_flow(world: Any, autosave_cb=None) -> None:
     """delete edge
 
@@ -302,7 +343,9 @@ def delete_edge_flow(world: Any, autosave_cb=None) -> None:
         except Exception:
             pass
 
-# ==== Spatial anchoring stubs (NO-OP) =======================================
+
+# ==== Spatial anchoring stubs (NO-OP placeholders for future attach semantics) ====
+
 #pylint: disable=unused-argument
 def _maybe_anchor_attach(default_attach: str, base: dict | None) -> str:
     """
@@ -329,8 +372,9 @@ def add_spatial_relation(world, src_bid: str, rel: str, dst_bid: str, meta: dict
     world.add_edge(src_bid, dst_bid, rel, meta or {})
 #pylint: enable=unused-argument
 
+
 # --------------------------------------------------------------------------------------
-# Utility: atomic JSON autosave
+# Persistence: atomic JSON autosave (world, drives, skills)
 # --------------------------------------------------------------------------------------
 
 def save_session(path: str, world, drives) -> str:
@@ -371,12 +415,10 @@ def _module_version_and_path(modname: str) -> tuple[str, str]:
     return ver_str, path
 
 
-
-
-
 # --------------------------------------------------------------------------------------
-# Embodiment
+# Embodiment / HAL skeleton (no real robotics yet)
 # --------------------------------------------------------------------------------------
+
 class HAL:
     """Hardware abstraction layer (HAL) skeleton for future usage
     """
@@ -407,9 +449,11 @@ class HAL:
         """Return True if fall is detected (stub)."""
         return False
 
+
 # --------------------------------------------------------------------------------------
-# Two-gate policy and helpers and console helpers
+# Policy runtime: gates, Action Center, and console helpers
 # --------------------------------------------------------------------------------------
+
 
 def _hamming_hex64(a: str, b: str) -> int:
     """Hamming distance between two hex strings (intended for 64-bit vhashes).
@@ -491,7 +535,8 @@ def print_ascii_logo(style: str = None, color: bool = True) -> None:  # pragma: 
     print()     # spacer  # pragma: no cover
 
 
-# --- WorldGraph and Engram Helpers ------------------------------------------------
+# --- WorldGraph snapshot + engram helpers (runner-facing) ------------------------
+
 
 def _resolve_engrams_pretty(world, bid: str) -> None:
     """used with resolve engrams menu selection
@@ -539,7 +584,9 @@ def _bindings_pointing_to_eid(world, eid: str):
                     refs.append((bid, slot))
     return refs
 
-# ==== Timekeeping info ================================================
+
+# ==== Temporal / timekeeping legend and one-line summary helpers ==================
+
 def _snapshot_temporal_legend() -> list[str]:
     """info about temporal timekeeping in the CCA8
     """
@@ -587,7 +634,9 @@ def print_timekeeping_line(ctx, prefix: str = "[time] ") -> None:
     except Exception:
         pass
 
-# ==== helpers ================================================
+
+# ==== Developer utilities: LOC, vector parsing, and loop helper ===================
+
 def _compute_loc_by_dir(suffixes=(".py",),skip_folders=(".git", ".venv", "build", "dist", ".pytest_cache", "__pycache__")):
     """
     Compute SLOC per top-level directory using the pygount CLI.
@@ -700,13 +749,14 @@ def loop_helper(autosave_from_args: Optional[str], world, drives, time_limited: 
     Currently: autosave (if enabled). Future: time-limited bypasses for real-world ops.
     """
     if time_limited:
-        return
+        return #from the loop_helper (not menu loop), i.e., just return without doing anything
     if autosave_from_args:
         save_session(autosave_from_args, world, drives)
         # Quiet by default; uncomment for debugging:
         # print(f"[autosaved {ts}] {autosave_from_args}")
     print("\n-----\n") #visual spacer before menu prints again
-
+    #this is usually the end of the elif branch of a menu selection block
+    #thus, control now falls to the bottom of the while loop and then back to top where while True starts its next iteration
 
 def _drive_tags(drives) -> list[str]:
     """Robustly compute drive:* tags even if Drives.flags()/predicates() is missing.
@@ -949,7 +999,6 @@ class PolicyRuntime:
 
         gate_for_label = next((p for p in self.loaded if p.name == label), chosen)
         post_expl = gate_for_label.explain(world, drives, ctx) if gate_for_label.explain else "explain: (not provided)"
-
         return (
             f"{label} (added {delta_n} bindings)\n"
             f"pre:  {pre_expl}\n"
@@ -958,7 +1007,6 @@ class PolicyRuntime:
             f"cands:{cands}\n"
             f"post: {post_expl}"
         )
-
 
 def _safe(fn, *args):
     """Invoke a predicate defensively (exceptions → False).
@@ -1187,64 +1235,9 @@ def print_tagging_and_policies_help(policy_rt=None) -> None:
 
 
 # --------------------------------------------------------------------------------------
-# Menu text
+# Profiles & tutorials: experimental profiles (dry-run) + narrative fallbacks
 # --------------------------------------------------------------------------------------
 
-MENU = """\
-[hints for text selection instead of numerical selection]
-
-# Quick Start & Tutorial
-1) Understanding bindings, edges, predicates, policies [understanding, tagging]
-2) Help: System Docs and/or Tutorial with demo tour [help, tutorial, demo]
-
-# Quick Start / Overview
-3) Snapshot (bindings + edges + ctx + policies) [snapshot, display]
-4) World stats [world, stats]
-5) Recent bindings (last 5) [last, bindings]
-6) Drives & drive tags [drives]
-7) Skill ledger [skills]
-8) Temporal probe (epoch/hash/cos/hamming) [temporal, probe]
-
-# Act / Simulate
-9) Instinct step (Action Center) [instinct, act]
-10) Autonomic tick (emit interoceptive cues) [autonomic, tick]
-11) Simulate fall (add state:posture_fallen and try recovery) [fall, simulate]
-
-# Perception & Memory (Cues & Engrams)
-12) Input [sensory] cue [sensory, cue]
-13) Capture scene → tiny engram (signal bridge) [capture, scene]
-14) Resolve engrams on a binding [resolve, engrams]
-15) Inspect engram by id (or binding) [engram, ei]
-16) List all engrams [engrams-all, list-engrams]
-17) Search engrams (by name / epoch) [search-engrams, find-engrams]
-18) Delete engram by bid or eid [delete-engram, del-engram]
-19) Attach existing engram to a binding [attach-engram, ae]
-
-# Graph Inspect / Build / Plan
-20) Inspect binding details [inspect, details]
-21) List predicates [listpredicates, listpreds]
-22) [Add] predicate [add, predicate]
-23) Connect two bindings (src, dst, relation) [connect, link]
-24) Delete edge (source, destn, relation) [delete, rm]
-25) Plan from NOW -> <predicate> [plan]
-26) Planner strategy (toggle BFS ↔ Dijkstra) [planner, strategy]
-27) Export and display interactive graph with options [pyvis, graph]
-
-# Save / System / Help
-28) Export snapshot (text only) [export snapshot]
-29) Save session → path [save]
-30) Load session → path [load]
-31) Run preflight now [preflight]
-32) Quit [quit, exit]
-33) Lines of Python code LOC by directory [loc, sloc]
-34) Reset current saved session [reset]
-
-Select: """
-
-
-# --------------------------------------------------------------------------------------
-# Profile stubs (experimental profiles print info and fall back to Mountain Goat)
-# --------------------------------------------------------------------------------------
 
 def _goat_defaults():
     """Return the Mountain Goat default profile tuple: (name, sigma, jump, winners_k)."""
@@ -1845,10 +1838,10 @@ Lists and filters engrams by token/family.
 
     print("\n=== End of Quick Tour ===")
 
-# --------------------------------------------------------------------------------------
-# World/intro flows and preflight-lite stamp helpers
-# --------------------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------------------
+# World/intro flows: profile selection, startup notices, preflight-lite
+# --------------------------------------------------------------------------------------
 
 def choose_profile(ctx, world) -> dict:
     """Prompt for a profile. 'T' opens the README tutorial, then re-prompts.
@@ -2506,6 +2499,19 @@ def run_preflight_full(args) -> int:
         ok("resolve-engrams pretty printed")
     except Exception as e:
         bad(f"resolve-engrams pretty error: {e}")
+
+    # Z9) Demo-world builder smoke (graph shape and provenance)
+    try:
+        from cca8_test_worlds import build_demo_world_for_inspect
+        _wd, _ids = build_demo_world_for_inspect()
+        _now = _ids.get("NOW")
+        _rest = _ids.get("rest")
+        if (_now in _wd._bindings) and (_rest in _wd._bindings):
+            ok("demo world: NOW/rest bindings present")
+        else:
+            bad("demo world: NOW/rest bindings missing")
+    except Exception as e:
+        bad(f"demo world builder failed: {e}")
 
 
     # 7) Action helpers sanity
@@ -3173,11 +3179,12 @@ def _io_banner(args, loaded_path: str | None, loaded_ok: bool) -> None:
         print(f"[io] Loaded '{lp}'. Autosave ON to '{ap}' — new steps will be written to the autosave file; "
               f"the original load file remains unchanged.")
     elif loaded_ok and not ap:
-        print(f"[io] Loaded '{lp}'. Autosave OFF — use menu 29 (Save session) to save or relaunch with --autosave <path>.")
+        print(f"[io] Loaded '{lp}'. Autosave OFF")
+        print("[io] Tip: You can use menu selection 'Save session' for one-shot save or relaunch with --autosave <path>.")
     elif (not loaded_ok) and ap:
         print(f"[io] Started a NEW session. Autosave ON to '{ap}'.")
     else:
-        print("[io] Started a NEW session. Autosave OFF — use menu 29 (Save session) or pass --autosave <path>.")
+        print("[io] Started a NEW session. Autosave OFF — use menu selection Save Session or relaunch with --autosave <path>.")
 
 
 # ---------- Contextual base selection (skeleton) ----------
@@ -3333,6 +3340,58 @@ def interactive_loop(args: argparse.Namespace) -> None:
     loaded_ok = False
     loaded_src = None
 
+    # ---- Menu text ----
+    MENU = """\
+    [hints for text selection instead of numerical selection]
+
+    # Quick Start & Tutorial
+    1) Understanding bindings, edges, predicates, policies [understanding, tagging]
+    2) Help: System Docs and/or Tutorial with demo tour [help, tutorial, demo]
+
+    # Quick Start / Overview
+    3) Snapshot (bindings + edges + ctx + policies) [snapshot, display]
+    4) World stats [world, stats]
+    5) Recent bindings (last 5) [last, bindings]
+    6) Drives & drive tags [drives]
+    7) Skill ledger [skills]
+    8) Temporal probe (epoch/hash/cos/hamming) [temporal, probe]
+
+    # Act / Simulate
+    9) Instinct step (Action Center) [instinct, act]
+    10) Autonomic tick (emit interoceptive cues) [autonomic, tick]
+    11) Simulate fall (add state:posture_fallen and try recovery) [fall, simulate]
+
+    # Perception & Memory (Cues & Engrams)
+    12) Input [sensory] cue [sensory, cue]
+    13) Capture scene → tiny engram (signal bridge) [capture, scene]
+    14) Resolve engrams on a binding [resolve, engrams]
+    15) Inspect engram by id (or binding) [engram, ei]
+    16) List all engrams [engrams-all, list-engrams]
+    17) Search engrams (by name / epoch) [search-engrams, find-engrams]
+    18) Delete engram by bid or eid [delete-engram, del-engram]
+    19) Attach existing engram to a binding [attach-engram, ae]
+
+    # Graph Inspect / Build / Plan
+    20) Inspect binding details [inspect, details]
+    21) List predicates [listpredicates, listpreds]
+    22) [Add] predicate [add, predicate]
+    23) Connect two bindings (src, dst, relation) [connect, link]
+    24) Delete edge (source, destn, relation) [delete, rm]
+    25) Plan from NOW -> <predicate> [plan]
+    26) Planner strategy (toggle BFS ↔ Dijkstra) [planner, strategy]
+    27) Export and display interactive graph with options [pyvis, graph]
+
+    # Save / System / Help
+    28) Export snapshot (text only) [export snapshot]
+    29) Save session → path [save]
+    30) Load session → path [load]
+    31) Run preflight now [preflight]
+    32) Quit [quit, exit]
+    33) Lines of Python code LOC by directory [loc, sloc]
+    34) Reset current saved session [reset]
+
+    Select: """
+
     # ---- Text command aliases (words + 3-letter prefixes → legacy actions) -----
     #will map to current menu which then must be mapped to original menu numbers
     #intentionally keep here so easier for development visualization than up at top with constants
@@ -3387,7 +3446,6 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
 }
-
     # NEW MENU compatibility: accept new grouped numbers and legacy ones.
     NEW_TO_OLD = {
     # Quick Start & Tutorial
@@ -3436,7 +3494,6 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "33": "33",  # Lines of Count
     "34": "r",   # Reset current saved session
 }
-
     # Attempt to load a prior session if requested
     if args.load:
         try:
@@ -3577,8 +3634,6 @@ def interactive_loop(args: argparse.Namespace) -> None:
         else:
             choice = ckey
 
-
-
         #FIRST MENU SELECTION CODE BLOCK.... WITHIN interactive menu while loop >>>>>> of interactive_menu()
         #----Menu Selection Code Block------------------------
         if choice == "1":
@@ -3603,7 +3658,8 @@ In order to execute, a policy must be loaded (e.g., meets development requiremen
 Note we are showing the symbolic statistics here. The distributed, rich information of the CCA8, i.e., its engrams,
   are held in the Columns.\n
 Below we show some general WorldGraph and Policy statistics. See Snapshot and other menu selections for more details
-  on the system.\n
+  on the system.
+
             ''')
             print(f"Bindings: {len(world._bindings)}  Anchors: NOW={now_id}  Latest: {world._latest_binding_id}")
             try:
@@ -3679,19 +3735,23 @@ You can filter results by entering the string of the desired token, or even a pa
         elif choice == "3":
             # Selection:  Add Predicate
             # input predicate token, attach and meta for the new binding
-            print("Selection:  Add Predicate\n")
-            print('Creates a new binding which will be tagged with "pred:<token>" .')
-            print("'Attach' vlaue will effect where this new binding is linked in the episode:")
-            print("  now    → NOW -> new, new becomes LATEST")
-            print("  latest → LATEST -> new, new becomes LATEST (default)")
-            print("  none   → create unlinked node (no automatic edge)\n")
-            print("Examples: posture_standing, nipple:latched, etc.  Lexicon may warn in strict modes.\n")
+            print("Selection: Add Predicate\n")
+            print('''
 
-            print("Please enter the predicate token")
-            print("  e.g., vision:silhouette:mom")
-            print("  don't enter, e.g., 'pred:vision:silhouette:mom' -- just enter the token portion of the predicate")
-            print("  nb. no default value for predicate -- if you just click ENTER for predicate with no input, return to menu")
-            print("  nb. however, there is a default value of 'latest' for attachment option")
+Creates a new binding which will be tagged with "pred:<token>"
+'Attach' value will effect where this new binding is linked in the episode:
+  now    → NOW -> new, new becomes LATEST
+  latest → LATEST -> new, new becomes LATEST (default)
+  none   → create unlinked node (no automatic edge)\n
+Examples: posture_standing, nipple:latched, etc.  Lexicon may warn in strict modes.\n
+
+Please enter the predicate token
+  e.g., vision:silhouette:mom
+  don't enter, e.g., 'pred:vision:silhouette:mom' -- just enter the token portion of the predicate
+  nb. no default value for predicate -- if you just click ENTER for predicate with no input, return to menu
+  nb. however, there is a default value of 'latest' for attachment option
+            ''')
+
             token = input("\nEnter predicate token (e.g., vision:silhouette:mom)   ").strip()
             if not token:
                 print("No token entered -- no default values -- return back to menu....")
@@ -3708,7 +3768,6 @@ You can filter results by entering the string of the desired token, or even a pa
                 #in cca8_world_graph: def add_predicates(token, attach, meta, engrams) -> bid
                 #add_predicates() creates a new predicate binding and auto-links to it
                 before = len(world._bindings)  #e.g., 6
-                print(before)
                 bid = world.add_predicate(token, attach=attach, meta=meta)  #e.g., bid=b7
                 after = len(world._bindings) #e.g., 7
                 print(f"Added binding {bid} with pred:{token} (attach={attach})")
@@ -3740,10 +3799,12 @@ You can filter results by entering the string of the desired token, or even a pa
             # Connect two bindings (with duplicate warning)
             # Input bindings and edge label
             print("Selection:  Connect Bindings\n")
+
             print("Adds a directed edge src --label--> dst (default label: 'then'). Duplicate edges are skipped.")
             print("Use labels for readability ('fall', 'latch', 'approach'); planner today follows structure, not labels.\n")
             print('Do not use quotes, e.g., enter: fall not:"fall" unless you want quotes in the stored label')
             print('Similarly, do not use quotes for the bid, e.g., enter: b14, not "b14"\n')
+
             src = input("Enter the source binding id (bid) (e.g., b12) NO QUOTES :").strip()
             dst = input("Enter the destination binding id (bid) (e.g., b14) NO QUOTES : ").strip()
             if not src or not dst:
@@ -3894,8 +3955,8 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
         #----Menu Selection Code Block------------------------
         elif choice == "10":
             # Inspect binding details and user input (accepts a single id, or ALL/* to dump everything)
+            print("Selection:  Inspect Binding Details")
             print('''
-Selection:  Inspect Binding Details
 
 -Enter a binding id (bid) (e.g., 'b3') or 'ALL' (or '*').
      Note: not case sensitive -- e.g., 'B3' or 'b3' treated the same
@@ -4276,7 +4337,7 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
                 print("[temporal] a new event occurred, thus not just a drift in the context vector but ")
                 print("     instead a jump to mark a temporal boundary (cos reset to ~1.000)")
                 print(f"[temporal] boundary==event changes -> event/boundary/epoch={ctx.boundary_no}")
-                print("     last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
+                print(f"     last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
 
             # [TEMPORAL] optional τ-cut (e.g., τ=0.90)
             if ctx.temporal and ctx.tvec_last_boundary:
@@ -4293,7 +4354,7 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
                         ctx.boundary_vhash64 = None
                     print(f"[temporal] boundary: cos_to_last_boundary {cos_now:.3f} < 0.90")
                     print(f"[temporal] boundary -> epoch (event changes) ={ctx.boundary_no} ")
-                    print("     last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
+                    print(f"     last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
 
             print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives)
@@ -4302,7 +4363,7 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
         #----Menu Selection Code Block------------------------
         elif choice == "13":
             # Skill Ledger
-            print("Selection Skill Ledger\n")
+            print("Selection: Skill Ledger\n")
             print(skill_ledger_text("policy:stand_up"))
             print("Full ledger:  [src=cca8_controller.skill_readout()]")
             print(skill_readout())
@@ -4312,7 +4373,9 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
         #----Menu Selection Code Block------------------------
         elif choice == "14":
             # Autonomic tick
+            print("Selection: Autonomic Tick")
             print('''
+
 The autonomic tick is like a fixed-rate heartbeat in the background, particularly important for hardware and robotics.
 (To learn more about the different time systems in the architecture see the Snapshot or Instinct Step menu selections.)
 
@@ -4351,11 +4414,12 @@ iv.  try one controller step to react if anything is now actionable:
    -the extra lines below: base is the same as Instinct Step base suggestion, and again for humans not passed into action_center step;
    foa seeds foa with LATEST and NOW, adds cue nodes, union of neighborhoods with max_hops of 2; cands are candidate anchors which could be
    potential start anchors for planning/attachement
+
+Fixed-rate heartbeat: fatigue↑, autonomic_ticks/age_days advance, temporal drift here (with optional boundary).
+Often followed by a controller check to see if any policy should act, gather triggered policies, apply safety override,
+pick by priority, and execute one policy (similar to menu Instinct Step but less verbose)
+
             ''')
-            print("Selection:  Autonomic Tick\n")
-            print("Fixed-rate heartbeat: fatigue↑, autonomic_ticks/age_days advance, temporal drift here (with optional boundary).")
-            print("Often followed by a controller check to see if any policy should act, gather triggered policies, apply safety override,")
-            print("pick by priority, and execute one policy (similar to menu Instinct Step but less verbose)")
             drives.fatigue = min(1.0, drives.fatigue + 0.01) #ceiling clamp, never exceed 1.0
             # advance developmental clock
             try:
@@ -4433,6 +4497,7 @@ iv.  try one controller step to react if anything is now actionable:
             print("Removes edge(s) matching src --> dst [relation]. Leave relation blank to remove any label.\n")
             #function contains inputs, logic,messages, autosave
             delete_edge_flow(world, autosave_cb=lambda: loop_helper(args.autosave, world, drives))
+            #does not call loop_helper(...) since delete_edge_flow(...) does much of the same, including optional autosave
 
         #----Menu Selection Code Block------------------------
         elif choice == "16":
@@ -4494,7 +4559,7 @@ iv.  try one controller step to react if anything is now actionable:
         #----Menu Selection Code Block------------------------
         elif choice == "18":
             # Simulate a fall event and try a recovery attempt immediately
-            print("Simulate a fall event\n")
+            print("Selection: Simulate a fall event\n")
             print('''
 Summary: -Creates state:posture_fallen and relabels the linking edge to 'fall', then attempts recovery.
          -Use this to demo safety gates (recover_fall / stand_up).
@@ -4603,26 +4668,30 @@ Also, of interest with regard to timekeeping:
         #----Menu Selection Code Block------------------------
         elif choice == "22":
             # Export and display interactive graph (Pyvis HTML) with options
-            print("\nExport and display graph of nodes and links with more options (Pyvis HTML)")
-            print("   Note: the graph opened in your web browser is interactive -- even if you don't show")
-            print("       edge labels to save space, put the mouse on them and the labels appear")
-            print("   Note: the graph HTML file will be saved in your current directory\n")
-            print(" — Edge labels: draw text on the links, e.g.,'then' or 'initiate_stand'")
-            print("    On = label printed on the arrow (and still a tooltip). Off = only tooltip.")
-            print("    -->Recommend Y on small graphs, n on larger ones to reduce clutter")
-            print(" — Node label mode:")
-            print("    'id'           → show binding ids only (e.g., b5)")
-            print("    'first_pred'   → show first pred:* token (e.g., stand, nurse)")
-            print("    'id+first_pred'→ show both (two-line label)")
-            print("     -->Recommend id+first_pred if enough space")
-            print(" — Physics: enable force-directed layout; turn off for very large graphs.")
-            print("      (We model the graph as a physical system and then try to achieve a minimal")
-            print("       energy state by simulating the movement of the nodes into this minimal state. The result is a")
-            print("       graph which many people find easier to read. This option uses Barnes-Hut physics which is an")
-            print("       algorithm originally for the N-body problem in astrophysics and which speeds up the layout calculations.")
-            print("       Nonetheless, for very large graphs may not be computationally feasible.")
-            print("      -->Recommend physics ON unless issues with very large graphs\n")
+            print("Selection: Export and display interactive graph (Pyvis HTML) with options")
+            print('''
 
+Export and display graph of nodes and links with more options (Pyvis HTML)
+Note: the graph opened in your web browser is interactive -- even if you don't show
+       edge labels to save space, put the mouse on them and the labels appear
+Note: the graph HTML file will be saved in your current directory\n
+— Edge labels: draw text on the links, e.g.,'then' or 'initiate_stand'
+    On = label printed on the arrow (and still a tooltip). Off = only tooltip.
+    -->Recommend Y on small graphs, n on larger ones to reduce clutter
+— Node label mode:
+    'id'           → show binding ids only (e.g., b5)
+    'first_pred'   → show first pred:* token (e.g., stand, nurse)
+    'id+first_pred'→ show both (two-line label)
+     -->Recommend id+first_pred if enough space
+— Physics: enable force-directed layout; turn off for very large graphs.
+      (We model the graph as a physical system and then try to achieve a minimal
+       energy state by simulating the movement of the nodes into this minimal state. The result is a
+       graph which many people find easier to read. This option uses Barnes-Hut physics which is an
+       algorithm originally for the N-body problem in astrophysics and which speeds up the layout calculations.
+       Nonetheless, for very large graphs may not be computationally feasible.
+      -->Recommend physics ON unless issues with very large graphs
+
+            ''')
             # Collect options
             try:
                 label_mode = input("Node label mode [id / first_pred / id+first_pred] (default: id+first_pred): ").strip().lower()
@@ -4682,6 +4751,7 @@ Also, of interest with regard to timekeeping:
         #----Menu Selection Code Block------------------------
         elif choice == "23":
             # Understanding bindings/edges/predicates/cues/anchors/policies (terminal help)
+            print("Selection: Understanding bindings, edges, predicates, cues, anchors, policies")
             print_tagging_and_policies_help(POLICY_RT)
             loop_helper(args.autosave, world, drives)
 
@@ -4689,7 +4759,7 @@ Also, of interest with regard to timekeeping:
         #----Menu Selection Code Block------------------------
         elif choice == "24":
             # Capture scene → emit cue/predicate + tiny engram (signal bridge demo)
-            print("\n Capture scene\n")
+            print("Selection: Capture scene\n")
             print('''
 Capture scene -- creates a binding, stores an engram of some scene in one of the columns,
   and then stores a pointer to that engram in the binding.
@@ -4860,6 +4930,7 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
         #----Menu Selection Code Block------------------------
         elif choice == "25":
             # Planner strategy toggle
+            print("Selection: Planner Strategy Toggle")
             try:
                 current = getattr(world, "get_planner", lambda: "bfs")()
             except Exception:
@@ -4965,7 +5036,7 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
         #----Menu Selection Code Block------------------------
         elif choice == "27":
             # Inspect engram by id OR by binding id
-            print("Inspect engram by id or by binding id")
+            print("Selection: Inspect engram by id or by binding id")
             print('''
 From the eid (engram id) or bid (binding id) this selection will display
 the human-readable portions of the engram record.
@@ -5058,7 +5129,7 @@ the human-readable portions of the engram record.
         #----Menu Selection Code Block------------------------
         elif choice == "28":
             # List all engrams by scanning bindings; dedupe by id
-            print("List all engrams")
+            print("Selection: List all engrams")
             print('''
 This selection will list all engrams stored by scanning the bindings.
 Any duplicated engram ID's in different bindings will not be shown twice.
@@ -5254,6 +5325,7 @@ Note: the binding keeps the pointer engrams["column01"] = {"id":EID, "act":1.0}
         #----Menu Selection Code Block------------------------
         elif choice == "30":
             # Delete engram by id OR by binding id; also prune any binding pointers to it
+            print("Selection: Delete engram\n")
             print('''
 Deletes engrams by bid (binding id) or by eid (engram id).
 Every binding pointer that references this eid will be pruned.
@@ -5323,12 +5395,16 @@ Every binding pointer that references this eid will be pruned.
         #----Menu Selection Code Block------------------------
         elif choice == "31":
             # Attach an existing engram id to a binding (creates/overwrites a slot)
-            print("Attach an existing engram id (eid) to a binding id (bid).")
-            print("-this will create a new slot for that eid or overwrite an existing slot with same eid")
-            print("-multiple slots and engram pointers possible, of course, on a given binding")
-            print("-it is possible to create dangling pointers that point to non-existing engrams that")
-            print("   you entered, but they can be removed via the Delete menu option")
-            print("")
+            print("Selection: Attach an existing engram id to a binding (creates/overwrites a slot) ")
+            print('''
+
+Attach an existing engram id (eid) to a binding id (bid).
+-this will create a new slot for that eid or overwrite an existing slot with same eid
+-multiple slots and engram pointers possible, of course, on a given binding
+-it is possible to create dangling pointers that point to non-existing engrams that
+   you entered, but they can be removed via the Delete menu option
+
+            ''')
 
             bid = input("Binding id: ").strip()
             if not (bid.lower().startswith("b") and bid[1:].isdigit()):
@@ -5369,23 +5445,150 @@ Every binding pointer that references this eid will be pruned.
         #----Menu Selection Code Block------------------------
         elif choice == "33":
             print("Selection:  LOC by Directory (Python)")
-            print("Prints total lines of Python source code")
+            print("\nPrints total lines of Python source code (SLOC)")
+            print("-current settings are for all lines of actual code (includes print() )")
+            print("-will not count docstrings or comments or blank lines")
+            print("-will not count code in .bak files, configuration files, typedown docs, etc. ")
+            print("-will search through current working directory and all of its subdirectories")
+            print("-'tests' is the subdirectory of pytest unit tests")
+            print("\nPlease wait.... searching through directories and counting lines of code....\n")
+
             rows, total, err = _compute_loc_by_dir()
             if err:
                 print(err)  # pragma: no cover
             else:
                 print(_render_loc_by_dir_table(rows, total))  # pragma: no cover
+            # also show the .py files in the *current* working directory (not subdirectories)
+            try:
+                entries = os.listdir(".")
+                py_files = [
+                    name for name in entries
+                    if name.endswith(".py") and os.path.isfile(name)
+                ]
+                if py_files:
+                    py_files_sorted = sorted(py_files)
+                    print("\nThe following Python .py files are in the current working directory:")
+                    print("  " + ", ".join(py_files_sorted))
+                else:
+                    print("\nNo Python .py files were found in the current working directory.")
+            except Exception as e:
+                print(f"\n[warn] Could not list .py files in current directory: {e}")
+            #does not call loop_helper(...) since no autosave here, it is a read-only menu selection
 
 
         #----Menu Selection Code Block------------------------
         elif choice.lower() == "s":
             # Save session
             print("Selection:  Save Session\n")
-            print("Saves world+drives+skills to JSON (atomic write). Use this to checkpoint progress.\n")
+            print('''
+This "save session" is a manual one-shot snapshot, i.e., you are saving the session to
+  a .json file you specify.
+
+It saves the world, drives and skill data of the session to the JSON file.
+-writes world.to_dict(), drives.to_dict(), skills_to_dict() along with a timestamp and version
+
+This menu selection does not change args.autosave or anything about autosave behavior.
+
+It is useful to checkpoint your development progress in running a simulation -- you can save the
+  current session to disk at a moment you choose. Even if you have --autosave session.json option
+  already set (which indeed provides robust, frequent autosaves) this manual one-shot
+  save session is useful to checkpoint your simulation run at a certain point where autosave
+  has not occurred at that moment yet, or if you want a save to a different file location without
+  changing your autosave setup.
+
+
+Brief Recap of --autosave session.json (i.e., NOT this current menu selection)
+-------------------------------------------------------------------------------
+-the flag "--autosave" should work with Windows, Linux and macOS since we use the argparse library,
+    with the OS just passing the flag as text to Python and Python handling the rest
+>python cca8_run.py --autosave session.json
+    -see on display: "[io] Started a NEW session. Autosave ON to 'session.json'."
+    -new empty WorldGraph and Drives are created
+    -after most menu actions, loop_helper(args.autosave, world, drives) calls
+      save_session("session.json", world, drives)
+    -the session.json is fully rewritten each time, i.e., a current state snapshot is written
+    -if you crash or ctl-C you can later restart from session.json using --load
+    -reset menu option only works if --autosave was used, in which case it will delete the current
+      autosave file and reinitialize a fresh one
+-if "--autosave mysession.json"is being used, you really don't need this menu option "save session"
+    unless special case such as obtaining specific checkpoint, writing to a different file, etc.
+-note: file saving is via JSON so .json file extension should be used, but any extension will actually work as long
+    as the file is json format and load in using the same file extension name
+-IMPORTANT - note that each time an "autosave session.json" occurs the contents of the "session.json" file are
+  not appended with new information, but overwritten, i.e., the old "session.json" file is effectively deleted
+
+
+Brief Recap of --load session.json (i.e., NOT this current menu selection)
+--------------------------------------------------------------------------
+-the flag "--load" should work with Windows, Linux and macOS since we use the argparse library,
+  with the OS just passing the flag as text to Python and Python handling the rest
+>python cca8_run.py --load session.json
+    -see on display:
+        "[io] Loaded 'session1.json'. Autosave OFF"
+        "[io] Tip: You can use menu selection 'Save session' for one-shot save or relaunch with --autosave <path>."
+    -it reads session1.json (world, drives, skills) and reconstructs that state
+    -no autosave is automatically active unless you also specify --autosave file_to_save.json
+    -after loading a saved file, you can modify it in memory -- it will not be written back, i.e., saved,
+        unless you specifically used a --save session.json flag or else use this menu selection "Save Session"
+-make changes and select: "Save session"  --> newer_session.json
+-then quit
+-then load session1.json and examine, then quit; then load newer_session.json -- changes in appropriate json files
+
+>python cca8_run.py --load nonexistent.json
+    -see on display: "[io] Started a NEW session. Autosave OFF — use menu selection Save Session"
+                               "or relaunch with --autosave <path>."
+-can load a session while in the middle of another one; if no one-shot save or autosave then lose that session
+    -in middle of a session and then menu select "Load Session"
+    -will see on the display:
+        "Loads a prior JSON snapshot (world, drives, skills). The new state replaces the current one."
+        "Load from file: session1.json"
+        "Loaded session1.json (saved_at=2025-11-20T05:35:45)"
+        "[io] Loaded 'session1.json'. Autosave OFF"
+        "[io] Tip: You can use menu selection 'Save session' for one-shot save or relaunch with --autosave <path>."
+
+
+Brief Recap of Using Both Together (i.e., NOT this current menu selection)
+--------------------------------------------------------------------------
+>python cca8_run.py --load session2.json --autosave session2.json
+    -effectively load from session.json and keep autosaving back to same file session.json
+    -if session2.json does not exist yet you will see on the display:
+            "[io] Started a NEW session. Autosave ON to 'session2.json'."
+    -if session2.json exists from saving a previous time, you will see on the display:
+            "[io] Loaded 'session2.json'. Autosave ON to the same file — state will be saved in-place "
+            "  after each action. (the file is fully rewritten on each autosave)."
+
+>python cca8_run.py --load session2.json --autosave new_session5.json
+    -effectively start from this saved snapshot but then autosave new work to another file new_session5.json
+    -see on display:
+        "[io] Loaded 'session2.json'. Autosave ON to 'new_session5.json' — new steps will be written to the autosave file;"
+           "the original load file remains unchanged."
+-continue with this example; quit and then restart as:
+>python cca8_run.py --autosave new_session5.json --load session2.json
+    -order of --autosave and --load does not matter
+    -new_session5.json is not a new file but an existing one, thus will be overwritten
+    -see on display:
+        "[io] Loaded 'session2.json'. Autosave ON to 'new_session5.json' — new steps will be written to the autosave file;"
+           "the original load file remains unchanged."
+
+
+Brief Recap of this current Menu Selection: "Save Session"
+----------------------------------------------------------
+-Again, this current menu selection "save session" is a manual one-shot snapshot, i.e., you are
+    saving the session to a .json file you specify.
+
+            ''')
 
             path = input("Save to file (e.g., session.json): ").strip()
+            #input file name to pass to save_session(...)
             if path:
                 ts = save_session(path, world, drives)
+                #inside save_session(...):
+                #with open(tmp, "w", encoding="utf-8") as f:
+                #        json.dump(data, f, indent=2, ensure_ascii=False)
+                #-ts is datetime.now()
+                #-data =dict {ts, world.to_dict(), drives.to_dict(), skills_to_dict(), version, platform}
+                #-note: don't write "open(path, "w"...)" since "w" will truncate the existing file to length 0 and then start writing
+                #       thus write to a temporary file, make sure no crashes, and then os.replace(tmp, path)
                 print(f"Saved to {path} at {ts}")
 
 
@@ -5393,9 +5596,29 @@ Every binding pointer that references this eid will be pruned.
         elif choice.lower() == "l":
             # Load session
             print("Selection: Load Session\n")
-            print("Loads a prior JSON snapshot (world, drives, skills). The new state replaces the current one.\n")
+            print('''
+[Note: If you don't have knowledge of what --load, --autosave, Load, Save selections do, then see
+  Menu Selection "Save Session" or else see README.md Documentation for a quick recap of these. ]
 
-            path = input("Load from file: ").strip()
+This "load session" is a manual one-shot load snapshot, i.e., you are retrieving the
+  session from a .json file you specify. It will overwrite whatever current session you are running.
+
+"Load Session" does not automatically write back to the file -- it just loads it.
+
+-prompted for a filename and path
+-opens and parses the JSON
+-reconstructs a fresh WorldGraph and Drives from the blob via WorldGraph.from_dict(...), Drives.from_dict(...)
+-restores the skills ledger via skills_from_dict(...)
+-replaces the current simulation state with the loaded one -- whatever was in memory is discarded
+-no autosave is triggered immediately since don't want to overwrite a file as soon as it is loaded
+-next menu actions will autosave as usual if --autosave option, otherwise can use Save Session for one-shot save
+
+            ''')
+
+            print("Loads a prior JSON snapshot (world, drives, skills).")
+            print("The current simulation in memory will be discarded so make sure it is being autosaved or else manually")
+            print("  save it, if you want to preserve the current program state.\n")
+            path = input("Load from file (ENTER to exit back to the menu): ").strip()
             if path and os.path.exists(path):
                 try:
                     with open(path, "r", encoding="utf-8") as f:
@@ -5410,6 +5633,7 @@ Every binding pointer that references this eid will be pruned.
                     _io_banner(args, loaded_src, loaded_ok)
                 except Exception as e:
                     print(f"[warn] could not load {path}: {e}")
+            #does not call loop_helper(...) since you might not want to overwrite a file immediately after loading it
 
 
         #----Menu Selection Code Block------------------------
@@ -5424,94 +5648,35 @@ Every binding pointer that references this eid will be pruned.
         #----Menu Selection Code Block------------------------
         elif choice.lower() == "r":
             # Reset current saved session: explicit confirmation
-            print("Selection: Reset current save session\n")
+            print("Selection: Reset current save session")
             print('''
-1. If you did NOT start with --autosave
-First, it checks:
-if not args.autosave:
-    print("No current saved json file to reset (you did not pass --autosave <path>).")
-So if you launched like:
-python cca8_run.py
-# or
-python cca8_run.py --load some_old_session.json
-(without --autosave), then Reset just prints that message and returns to the menu. Nothing is deleted or reinitialized.
-So: Reset is really about “reset the autosave-backed session,” and it refuses to run if there is no autosave configured.
+This menu selection code will reset the current autosave-backed up session
+ -Note that --autosave must be used (or else code will alert you to this and exit back to the menu)
+This selection will delete the autosave file (if it still exists) and re-initialize new but empty WorldGraph,
+  drives and skill ledger in memory.
+-world = cca8_world_graph.WorldGraph()
+-drives = Drives()
+-skills_from_dict({}) #clear skill ledger
 
-2. If you did start with --autosave
-If args.autosave is set, e.g.:
-python cca8_run.py --autosave session.json
-then Reset becomes a big hammer:
-2.1. It warns you what will happen
-path = os.path.abspath(args.autosave)
-cwd  = os.path.abspath(os.getcwd())
-print("\n[RESET] This will:")
-print("  • Delete the autosave file shown below (if it exists), and")
-print("  • Re-initialize an empty world, drives, and skill ledger in memory.\n")
-print(f"Autosave file: {path}")
-if not path.startswith(cwd):
-    print(f"[CAUTION] The file is outside the current directory: {cwd}")
-So it:
-Resolves the autosave file to an absolute path.
-Says explicitly:
-It will delete that file.
-It will create a fresh world/drives/skills in memory.
-Warns you if the file is outside your current working directory.
-
-2.2. It requires a strong confirmation
-reply = input("Type DELETE in uppercase to confirm, or press Enter to cancel: ").strip()
-...
-if reply == "DELETE":
-    ...
-else:
-    print("Reset cancelled.")
-Only if you type exactly DELETE will it proceed.
-Any other input (including empty Enter) cancels the reset and leaves everything unchanged.
-
-2.3. If confirmed, it deletes the autosave file
-if os.path.exists(path):
-    os.remove(path)
-    print(f"Deleted {path}.")
-else:
-    print(f"No file at {path} (nothing to delete).")
-So your autosave JSON is physically removed from disk (if it exists).
-
-2.4. Then it creates a fresh episode in memory
-world = cca8_world_graph.WorldGraph()
-drives = Drives()
-skills_from_dict({})  # clear skill ledger
-world.ensure_anchor("NOW")
-print("Initialized a fresh episode in memory. Next action will autosave a new snapshot.")
-This:
-Replaces your current world with a brand-new empty WorldGraph.
-Replaces your drives with a fresh Drives() object.
-Clears the skill ledger (via skills_from_dict({})).
-Ensures there is a NOW anchor in the new world.
-Leaves args.autosave unchanged, so the next menu action that triggers autosave will write a new JSON file at that same path.
-So after a successful reset, you’re essentially in the same state as:
-python cca8_run.py --autosave session.json
-right after startup, with no prior content.
-
-3. Summary in plain language
-Reset current saved session (menu 34 / r):
-Only does anything meaningful if you launched with --autosave <path>.
-When confirmed, it:
-Deletes the autosave JSON file at that path.
-Reinitializes a completely fresh world, drives, and skill ledger in memory.
-Keeps --autosave in effect, so subsequent actions will start a new autosave file.
-It’s basically your “wipe this notebook clean and start over” button for the autosaved session, with a
-pretty strong “type DELETE” guard so you don’t accidentally nuke a session you care about.
-
+What has happened is the current world has been replaced with a brand-new empty WorldGraph (and fresh drives and
+  skill ledger).
+There will be a NOW anchore in the new WorldGraph.
+Note that args.autosave is unchanged -- autosave's will still occur at the same path cca8_run.py was launched with.
+However, VERY IMPORTANT, note that the autosave session.json file will be deleted as part of this reset.
+By contrast, if you simply exit and later restart with >python cca8_run.py --autosave session.json, the existing file
+ is not deleted; it remains on disk until the first autosave of the new run, at which point its contents
+ are overwritten with the fresh session.
             ''')
 
-
             if not args.autosave:
-                print("No current saved json file to reset (you did not pass --autosave <path>).")
+                print("No current saved json file to reset (you did not launch with --autosave <path>).")
+                print("Returning back to menu....")
             else:
                 path = os.path.abspath(args.autosave)
                 cwd  = os.path.abspath(os.getcwd())
                 print("\n[RESET] This will:")
-                print("  • Delete the autosave file shown below (if it exists), and")
-                print("  • Re-initialize an empty world, drives, and skill ledger in memory.\n")
+                print("  -Delete the autosave file shown below (if it exists), and")
+                print("  -Re-initialize an empty world, drives, and skill ledger in memory.\n")
                 print(f"Autosave file: {path}")
                 if not path.startswith(cwd):
                     print(f"[CAUTION] The file is outside the current directory: {cwd}")
@@ -5523,9 +5688,9 @@ pretty strong “type DELETE” guard so you don’t accidentally nuke a session
                     try:
                         if os.path.exists(path):
                             os.remove(path)
-                            print(f"Deleted {path}.")
+                            print(f"\n1. Deleted {path}.")
                         else:
-                            print(f"No file at {path} (nothing to delete).")
+                            print(f"1. Hmmm... no file at {path} (nothing to delete).")
                     except Exception as e:
                         print(f"[warn] Could not delete {path}: {e}")
                     # Reinitialize episode state
@@ -5533,10 +5698,13 @@ pretty strong “type DELETE” guard so you don’t accidentally nuke a session
                     drives = Drives()
                     skills_from_dict({})  # clear skill ledger
                     world.ensure_anchor("NOW")
-                    print("Initialized a fresh episode in memory. Next action will autosave a new snapshot.")
+                    print("2. Initialized a fresh episode in memory -- fresh WorldGraph, drives and skill ledger.")
+                    print("   -this is in memory now but after your next action, it will be autosaved")
                 else:
-                    print("Reset cancelled.")
+                    print("Reset cancelled (nothing deleted)")
+                    print("Returning back to menu....")
             continue   # back to menu
+            #no loop_helper(...) -- it's a brand new WorldGraph created; autosaves will occur after next action
 
 
         #----Menu Selection Code Block------------------------
@@ -5599,11 +5767,12 @@ pretty strong “type DELETE” guard so you don’t accidentally nuke a session
                 print("(cancelled)")
                 continue
             #pylint:enable=no-else-continue
+            #no loop_helper(...) -- tour has it owns autosave, README does not need it
 
         #----Menu Selection Code Block------------------------
             ##END OF MENU SELECTION BLOCKS
 
-    # interactive_loop(...) while loop end  <<<<<<<<<<<<<<<<<<<
+    # interactive_loop(...): while loop:  END <<<<<<<<<<<<<<<<<<<  back to while loop
 
 
 # --------------------------------------------------------------------------------------
@@ -5611,7 +5780,25 @@ pretty strong “type DELETE” guard so you don’t accidentally nuke a session
 # --------------------------------------------------------------------------------------
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """argument parser and program entry
+    """
+    Command-line entry point for the CCA8 runner.
+
+    Responsibilities
+    ----------------
+    - Configure logging (file + console).
+    - Parse CLI flags (about/version/load/save/autosave/preflight/plan/profile/hal/body/demo-world/…).
+    - Handle one-shot modes:
+         --version / --about → print version/component info and exit.
+         --preflight         → run full unit tests + preflight probes and exit.
+    - For interactive mode:
+         Normalize HAL/body flags into human-readable status strings.
+         Call interactive_loop(args), which runs the menu-driven CCA8 simulation.
+
+    Args:
+        argv: Optional list of CLI arguments (defaults to sys.argv[1:] when None).
+
+    Returns:
+        0 on normal success, or a non-zero exit code (e.g., preflight failures).
     """
 
     # set up logging (one-time)
@@ -5650,7 +5837,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     except SystemExit as e:
         code = getattr(e, "code", 0)
         return 2 if code else 0  # pylint: disable=using-constant-test
-
 
     # process embodiment flags and continue with code
     try:
@@ -5704,6 +5890,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 # --------------------------------------------------------------------------------------
 # __main__
 # --------------------------------------------------------------------------------------
-
+# Standard Python entry point:
+# When this file is executed as a script (e.g., `python cca8_run.py`),
+# run main(...) and propagate its return code as the process exit status.
 if __name__ == "__main__":
     sys.exit(main())
