@@ -650,8 +650,8 @@ Included starter tests:
 - `tests/test_inspect_binding_details.py` — uses a small demo world to exercise binding shape, provenance (`meta.policy/created_by/...`), engram pointers, and incoming/outgoing edge degrees as expected by the “Inspect binding details” menu.
 
 The demo world for these tests is built via `cca8_test_worlds.build_demo_world_for_inspect()`, which creates a tiny, deterministic WorldGraph (anchors NOW/HERE, stand/fallen/cue_mom/rest predicates, and a single engram pointer) that you can also use interactively via `--demo-world`.
-
 Unit tests (pytest)
+
 -------------------
 
 We keep tests under `tests/`.
@@ -4492,9 +4492,9 @@ Q: IDE workflow?  A: VS Code launch config + gutter breakpoints.
 
 
 
-Version:1.0StartHTML:0000000173EndHTML:0000480278StartFragment:0000207977EndFragment:0000480238SourceURL:file:///C:/Users/howar/OneDrive/Desktop/temp%20copy.docx<style></style>
+# Tutorial on Approach to Simulation of the Environment
 
-**The Challenge of EnvironmentalSimulation for the CCA8 Architecture Simulations**
+
 
 * * *
 
@@ -4683,9 +4683,7 @@ o   Thatstored, structured stuff _is_ the agent’s internal perception/interp
 
 So you can picture the pipeline as threedistinct layers:
     Reality / EnvState         (world as it is, "God's-eye")
-
               ↓
-
     PerceptionAdapter
 
               ↓
@@ -4709,9 +4707,7 @@ i. The hard boundary in code
 
 There is **one clear architectural seam**:
     [Environment side]                 |            [Agent (CCA8) side]
-
     -----------------------------------+----------------------------------------
-
     HybridEnvironment.step(...)        | CCA8.ingest_observation(...)
 
     produces: EnvObservation, reward   | consumes: EnvObservation
@@ -4741,9 +4737,7 @@ Let’s name the three levels explicitly:
 
 Visually:
     Reality / EnvState                 (world as it is; God’s-eye)
-
               │
-
               │  PerceptionAdapter (env-side)
 
               ▼
@@ -4774,9 +4768,7 @@ This is where the boundary can feel fuzzy, because EnvObservation cancontain bot
 
 I’d define it like this:
     @dataclass
-
     class EnvObservation:
-
         raw_sensors: dict[str, Any]    # e.g. depth image, IMU, distances...
 
         predicates: list[Predicate]    # symbolic facts (posture, near, etc.)
@@ -4881,9 +4873,7 @@ Let’s walk a single tickend-to-end:
 
 From this, the environmentconstructs:
     raw_sensors:
-
       distance_to_mom = 0.7
-
       imu_accel       = [some vector indicating lying down]
 
     predicates:
@@ -4974,9 +4964,7 @@ What it does **not** control:
 
 Global control loop looks like:
     loop:
-
         action = CCA8.choose_action(last_observation, ctx)
-
         observation, reward, done, info = HybridEnvironment.step(action, ctx)
 
         CCA8.ingest_observation(observation, reward, done, info)
@@ -5354,9 +5342,7 @@ Inputs:
 
 Outputs: a fully populated `EnvObservation`,something like:
     EnvObservation:
-
         raw_sensors: dict[str, Any]   # numeric/tensor channels (e.g. images, distances, IMU)
-
         predicates:  list[Predicate]  # symbolic facts, ready to be written into WorldGraph
 
         cues:        list[str]        # tokens for Columns/features ("visual_mom", "cold_skin")
@@ -5402,9 +5388,7 @@ Example in the newborn-goat world
 
 Say EnvState this tick is:
     kid_posture      = fallen
-
     kid_position     = (0.0, 0.0)
-
     mom_position     = (0.7, 0.1)
 
     nipple_state     = hidden
@@ -5415,9 +5399,7 @@ Say EnvState this tick is:
 
 PerceptionAdapter might produce:
     raw_sensors:
-
       distance_to_mom = 0.71
-
       skin_temp       = 0.45
 
     predicates:
