@@ -72,6 +72,7 @@ import cca8_world_graph
 from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict, HUNGER_HIGH, FATIGUE_HIGH
 from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
+from cca8_env import HybridEnvironment  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
 
 
 # --- Public API index, version, global variables and constants ----------------------------------------
@@ -101,6 +102,8 @@ PLACEHOLDER_EMBODIMENT = '0.0.0 : none specified'
 
 ASCII_LOGOS = {
     "badge": r"""
+
+
 +--------------------------------------------------------------+
 |  C C A 8  —  Causal Cognitive Architecture                   |
 +--------------------------------------------------------------+""".strip("\n"),
@@ -163,6 +166,8 @@ class Ctx:
     controller_steps: int = 0
     cog_cycles: int = 0  # 'productive' cycles: incremented only in Instinct Step when the step wrote new facts, to modify in future when full cog cycle implemented
     last_drive_flags: Optional[set[str]] = None
+    env_episode_started: bool = False       # Environment / HybridEnvironment integration
+    env_last_action: Optional[str] = None  # last fired policy name for env.step(...)
 
     def reset_controller_steps(self) -> None:
         """quick reset of Ctx.controller_steps counter
@@ -3303,7 +3308,8 @@ def candidate_anchors(world, ctx) -> list[str]:  # pylint: disable=unused-argume
 # --------------------------------------------------------------------------------------
 
 def interactive_loop(args: argparse.Namespace) -> None:
-    """Main interactive loop."""
+    """Main interactive loop.
+    """
     # Build initial world/drives fresh
     world = cca8_world_graph.WorldGraph()
     drives = Drives()  #Drives(hunger=0.7, fatigue=0.2, warmth=0.6) at time of writing comment
@@ -3316,6 +3322,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     except Exception:
         ctx.boundary_vhash64 = None
     print_startup_notices(world)
+    env = HybridEnvironment()     # Environment simulation: newborn-goat scenario (HybridEnvironment)
 
     # Optional: start session with a preloaded demo/test world to exercise graph menus.
     # Driven by --demo-world; ignored when --load is used (load takes precedence).
@@ -3360,6 +3367,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
     9) Instinct step (Action Center) [instinct, act]
     10) Autonomic tick (emit interoceptive cues) [autonomic, tick]
     11) Simulate fall (add state:posture_fallen and try recovery) [fall, simulate]
+
+    # Simulation of the Environment (HybridEnvironment demo)
+    35) Environment step (HybridEnvironment → WorldGraph demo) [env, hybrid]
 
     # Perception & Memory (Cues & Engrams)
     12) Input [sensory] cue [sensory, cue]
@@ -3442,6 +3452,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "quit": "32", "exit": "32",
     "loc": "33", "sloc": "33", "pygount": "33",
     "reset": "34",
+    "env": "35", "environment": "35", "hybrid": "35",
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -3493,6 +3504,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "32": "8",   # Quit
     "33": "33",  # Lines of Count
     "34": "r",   # Reset current saved session
+    "35": "35",  # environment simulation
 }
     # Attempt to load a prior session if requested
     if args.load:
@@ -5474,6 +5486,84 @@ Attach an existing engram id (eid) to a binding id (bid).
             except Exception as e:
                 print(f"\n[warn] Could not list .py files in current directory: {e}")
             #does not call loop_helper(...) since no autosave here, it is a read-only menu selection
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "35":
+            # Environment step (HybridEnvironment → WorldGraph demo)
+            print("Selection: Environment step (HybridEnvironment → WorldGraph demo)\n")
+
+            # First call: start a fresh newborn-goat episode in the environment
+            if not ctx.env_episode_started:
+                env_obs, env_info = env.reset()
+                ctx.env_episode_started = True
+                ctx.env_last_action = None  # no action yet on the very first tick
+                print(
+                    f"[env] Reset newborn_goat scenario: "
+                    f"episode_index={env_info.get('episode_index')} "
+                    f"scenario={env_info.get('scenario_name')}"
+                )
+            else:
+                # On subsequent calls, feed the last fired policy back to env.step(...)
+                action_for_env = ctx.env_last_action
+                env_obs, _env_reward, _env_done, env_info = env.step(
+                    action=action_for_env,
+                    ctx=ctx,
+                )
+                # Consume the action so it only affects one environment tick
+                ctx.env_last_action = None
+
+                st = env.state
+                print(
+                    f"[env] step={env_info.get('step_index')} "
+                    f"stage={st.scenario_stage} posture={st.kid_posture} "
+                    f"mom_distance={st.mom_distance} nipple_state={st.nipple_state} "
+                    f"action={action_for_env!r}"
+                )
+
+            # Map env predicates into the CCA8 WorldGraph as pred:* tokens
+            try:
+                attach = "now"
+                for token in env_obs.predicates:
+                    bid = world.add_predicate(
+                        token,
+                        attach=attach,
+                        meta={"created_by": "env_step", "source": "HybridEnvironment"}
+                    )
+                    print(f"[env→world] pred:{token} → {bid} (attach={attach})")
+                    # After the first predicate, hang subsequent ones off LATEST
+                    attach = "latest"
+            except Exception as e:
+                print(f"[env→world] predicate injection error: {e}")
+
+            # Map env cues into the WorldGraph as cue:* tokens
+            try:
+                attach_c = "now"
+                for cue_token in env_obs.cues:
+                    bid_c = world.add_cue(
+                        cue_token,
+                        attach=attach_c,
+                        meta={"created_by": "env_step", "source": "HybridEnvironment"}
+                    )
+                    print(f"[env→world] cue:{cue_token} → {bid_c} (attach={attach_c})")
+                    attach_c = "latest"
+            except Exception as e:
+                print(f"[env→world] cue injection error: {e}")
+
+            # Let the controller see the new facts and maybe act once
+            try:
+                POLICY_RT.refresh_loaded(ctx)
+                fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
+                if fired != "no_match":
+                    print(f"[env→controller] {fired}")
+                    # Remember this so the environment can react on the *next* env.step(...)
+                    ctx.env_last_action = fired
+                else:
+                    ctx.env_last_action = None
+            except Exception as e:
+                print(f"[env→controller] controller step error: {e}")
+
+            loop_helper(args.autosave, world, drives)
 
 
         #----Menu Selection Code Block------------------------

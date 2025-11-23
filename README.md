@@ -4500,15 +4500,15 @@ Q: IDE workflow?  A: VS Code launch config + gutter breakpoints.
 
 **1 Introduction**
 
-Embodied AI and cognitiverobotics require agents that can perceive, act, and learn in environments whosecomplexity often far exceeds what can be modeled analytically. Simulation hastherefore become a central tool in robotics and embodied AI, enabling safe,scalable experimentation before deployment in the real world. In parallel,reinforcement learning (RL) communities have converged on standardizedenvironment interfaces (e.g., Gym/Gymnasium) that present agents withobservations, actions, and rewards, abstracting away simulator details.
+Embodied AI and cognitive robotics require agents that can perceive, act, and learn in environments whosecomplexity often far exceeds what can be modeled analytically. Simulation hastherefore become a central tool in robotics and embodied AI, enabling safe,scalable experimentation before deployment in the real world. In parallel,reinforcement learning (RL) communities have converged on standardizedenvironment interfaces (e.g., Gym/Gymnasium) that present agents withobservations, actions, and rewards, abstracting away simulator details.
 
-At the same time, cognitivearchitectures and semantic world models emphasize internal knowledgerepresentations—often graph-based—that support reasoning, planning, andepisodic memory. Examples include knowledge-graph world models in robotics andframeworks such as KnowRob, which integrate symbolic knowledge with perceptionand planning. More recently, large language models (LLMs) have been used assimulators and world models, generating agent behavior and environmentaldynamics in agent-based simulations.
+At the same time, cognitive architectures and semantic world models emphasize internal knowledgerepresentations—often graph-based—that support reasoning, planning, andepisodic memory. Examples include knowledge-graph world models in robotics andframeworks such as KnowRob, which integrate symbolic knowledge with perceptionand planning. More recently, large language models (LLMs) have been used assimulators and world models, generating agent behavior and environmentaldynamics in agent-based simulations.
 
 As noted above, the CCA8architecture is a columnar, graph-centric cognitive system intended to controlembodied agents (e.g., a newborn goat, and later a robot). Internally, itmaintains a **WorldGraph** reflecting its beliefs and memories about theenvironment. However, for the near future, CCA8 must operate in simulatedenvironments. The long-term goal is to transition to partial and eventuallyfull real-world sensing via a physical robot. This raises a design question:
 
 **How can we design a simulationsystem that starts as a tiny finite-state-scripted world and eventuallyincorporates physics simulation, RL-style reward modeling, LLM-driven events,and real sensor streams—without repeatedly rewriting the agent–environmentinterface?**
 
-In this section we imagine ahybrid environment architecture that addresses this question. The core idea isto fix a stable, agent-facing observation interface and a canonical environmentstate representation, and to treat different simulators (FSM, physics, LLM,etc.) as composable backends that update this state. The architecture isdesigned explicitly to:
+In this section we imagine a hybrid environment architecture that addresses this question. The core idea isto fix a stable, agent-facing observation interface and a canonical environmentstate representation, and to treat different simulators (FSM, physics, LLM,etc.) as composable backends that update this state. The architecture isdesigned explicitly to:
 
 1. Start with a purely finite-state machine (FSM) “storyboard” environment for a newborn-goat scenario.
 2. Grow to incorporate physics/robotics simulators and RL-style MDP reward models.
@@ -4525,7 +4525,7 @@ Robots require internalrepresentations of their environment to plan and act. Tra
 
 KnowRob is a prominent example,KnowRob, or Knowledge Processing for Robots, is a knowledge processing system thatcombines knowledge representation and reasoning methods with techniques foracquiring the knowledge and grounding the knowledge in a physical system.KnowRob has been developed at the University of Bremen, Germany. KnowRob providesa knowledge processing system where robot experience, environment structure,and task knowledge are encoded in a shared knowledge base, enabling symbolicreasoning about objects, actions, and their preconditions and effects. Otherwork proposes multi-layer environment models that link sensor-levelobservations to semantic knowledge graphs, explicitly bridging betweenlow-level data and high-level concepts.
 
-The CCA8 **WorldGraph** isconceptually aligned with these semantic/episodic knowledge graphs: itrepresents objects, agents, events, and relations as graph nodes and edges.However, in our design, WorldGraph is strictly an **internal construct** ofthe agent. The external environment is represented separately in **EnvState**,and only filtered, agent-relevant information is projected into WorldGraph.
+The CCA8 **WorldGraph** is conceptually aligned with these semantic/episodic knowledge graphs: itrepresents objects, agents, events, and relations as graph nodes and edges.However, in our design, WorldGraph is strictly an **internal construct** ofthe agent. The external environment is represented separately in **EnvState**,and only filtered, agent-relevant information is projected into WorldGraph.
 
 **2.2 Simulationin robotics and sim-to-real pipelines**
 
@@ -4685,7 +4685,6 @@ So you can picture the pipeline as threedistinct layers:
     Reality / EnvState         (world as it is, "God's-eye")
               ↓
     PerceptionAdapter
-
               ↓
 
     EnvObservation             (what hits CCA8 this tick: sensors + symbolic cues)
@@ -4709,7 +4708,6 @@ There is **one clear architectural seam**:
     [Environment side]                 |            [Agent (CCA8) side]
     -----------------------------------+----------------------------------------
     HybridEnvironment.step(...)        | CCA8.ingest_observation(...)
-
     produces: EnvObservation, reward   | consumes: EnvObservation
 
                                        | updates: WorldGraph, Columns, etc.
@@ -4739,7 +4737,6 @@ Visually:
     Reality / EnvState                 (world as it is; God’s-eye)
               │
               │  PerceptionAdapter (env-side)
-
               ▼
 
     EnvObservation                     (what the agent receives *this tick*)
@@ -4770,7 +4767,6 @@ I’d define it like this:
     @dataclass
     class EnvObservation:
         raw_sensors: dict[str, Any]    # e.g. depth image, IMU, distances...
-
         predicates: list[Predicate]    # symbolic facts (posture, near, etc.)
 
         cues: list[str]                # tokens that hint Columns/features
@@ -4875,7 +4871,6 @@ From this, the environmentconstructs:
     raw_sensors:
       distance_to_mom = 0.7
       imu_accel       = [some vector indicating lying down]
-
     predicates:
 
       posture(kid, fallen)
@@ -4966,7 +4961,6 @@ Global control loop looks like:
     loop:
         action = CCA8.choose_action(last_observation, ctx)
         observation, reward, done, info = HybridEnvironment.step(action, ctx)
-
         CCA8.ingest_observation(observation, reward, done, info)
 
 So:
@@ -5344,7 +5338,6 @@ Outputs: a fully populated `EnvObservation`,something like:
     EnvObservation:
         raw_sensors: dict[str, Any]   # numeric/tensor channels (e.g. images, distances, IMU)
         predicates:  list[Predicate]  # symbolic facts, ready to be written into WorldGraph
-
         cues:        list[str]        # tokens for Columns/features ("visual_mom", "cold_skin")
 
         env_meta:    dict[str, Any]   # extras: time, uncertainties, episode id, etc.
@@ -5390,7 +5383,6 @@ Say EnvState this tick is:
     kid_posture      = fallen
     kid_position     = (0.0, 0.0)
     mom_position     = (0.7, 0.1)
-
     nipple_state     = hidden
 
     kid_temperature  = 0.45
@@ -5401,7 +5393,6 @@ PerceptionAdapter might produce:
     raw_sensors:
       distance_to_mom = 0.71
       skin_temp       = 0.45
-
     predicates:
 
       posture(kid, fallen)
