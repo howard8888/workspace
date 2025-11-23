@@ -2,6 +2,33 @@
 """
 CCA8 Environment module (EnvState, EnvObservation, HybridEnvironment)
 
+
+High-level overview
+-------------------
+
+The CCA8 cognitive architecture simulates a mammalian brain that can control
+either a **virtual body** or a **robotic body**. Until CCA8 is attached to a
+real robot, it needs a **simulated world** to live in.
+
+This module provides that world == "environment":
+
+- The core CCA8 modules simulate the **brain + body** (agent / embodiment).
+- The Environment module simulates the **external world**: ground, 3D space,
+  time, the mother goat nearby, rocks, weather, etc.
+- HybridEnvironment and its backends advance a **world state** (EnvState).
+- PerceptionAdapter converts EnvState into **EnvObservation** (what the agent
+  senses each tick).
+- CCA8 sends actions back to HybridEnvironment, which updates EnvState; the
+  next EnvObservation reflects the consequences of those actions
+  (e.g. the kid tries to stand and gravity pulls it down).
+
+Terminology note
+----------------
+Here, “environment” always means the agent’s **task/world environment** in the
+RL/robotics sense (the world the agent acts in), not ecological politics,
+climate, or OS/runtime “environment variables”.
+
+
 Purpose
 -------
 Provide a small, well-defined seam between the external environment and the
@@ -132,7 +159,23 @@ __all__ = [
 ]
 
 # Global constants
-# --none at this time at program startup --
+
+ENV_LOGOS = {
+    "badge": r"""
++------------------------------------------------------------+
+|  C C A 8  ENV —  Environment Module                        |
++------------------------------------------------------------+""",
+    "goat_world": r"""
+
+      N
+     / \\
+    / | \\
+  W ----+---- E
+    \\ | /
+     \\ /
+      S
+""".strip("\n"),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +314,8 @@ class FsmBackend:
     _AUTO_LATCH: int = 13
     _AUTO_REST: int = 16
 
-    def reset(self, env_state: EnvState, config: EnvConfig) -> EnvState:
+    def reset( #pylint: disable=unused-argument
+        self, env_state: EnvState, config: EnvConfig) -> EnvState:
         """
         Prepare env_state for a new episode under the given scenario.
 
@@ -296,7 +340,9 @@ class FsmBackend:
             env_state.step_index = 0
         return env_state
 
-    def step(self, env_state: EnvState, action: Optional[str], ctx: Any) -> EnvState:
+
+    def step( #pylint: disable=unused-argument
+        self, env_state: EnvState, action: Optional[str], ctx: Any) -> EnvState:
         """
         Advance env_state one tick given the agent's last action and context.
 
@@ -332,6 +378,7 @@ class FsmBackend:
         state = env_state  # alias for readability
         stage = state.scenario_stage
         steps = state.step_index
+
 
         def _has_action(prefix: str) -> bool:
             """Return True if the action string starts with the given prefix."""
@@ -442,8 +489,7 @@ class FsmBackend:
         return state
 
 
-
-class PerceptionAdapter:            # pylint: disable=too-few-public-methods
+class PerceptionAdapter: #pylint: disable=too-few-public-methods
     """
     Adapter converting EnvState -> EnvObservation.
 
@@ -709,8 +755,7 @@ class HybridEnvironment:
         # future: physics_backend, robot_backend, llm_backend, mdp_backend
 
     # ----- Public API -----
-
-    def reset(
+    def reset(#pylint: disable=unused-argument
         self,
         seed: Optional[int] = None,
         config: Optional[EnvConfig] = None,
@@ -868,6 +913,10 @@ class HybridEnvironment:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    # Display message
+    print('\n', ENV_LOGOS["badge"])
+    print('\n', ENV_LOGOS["goat_world"], '\n')
+
     # Simple manual run to inspect the newborn-goat storyboard without CCA8.
     env = HybridEnvironment()
     dbg_obs, dbg_info = env.reset()
