@@ -1,7 +1,9 @@
 # CCA8  — Project Documentation -- Compendium (README.md)
 
 *If you are new to CCA8: read 1-minute + 5-minute summary, try the 5-step demo, then jump to ‘The WorldGraph in detail’ and ‘Action Selection’.*
+
 *The Tutorials below (see Table of Contents) are designed to teach you the practical aspects of the CCA8 as well as some of the theory behind it.*
+
 Questions?  Send me an email:  hschneidermd@alum.mit.edu
 
 
@@ -45,13 +47,19 @@ of birth, and by one week can climb most places its mother can)*
 
 -Versions of Python that will work with code:  check docstring of cca8_run.py or requirements.txt
    *(at time of writing, tested on Windows 11 Pro with Python 3.11.4)*
+   
 -Dependencies required:  check docstring of cca8_run.py or requirements.txt
      -*-> Software should be able to run on most systems without any issues (GPU and LLM API requirements, if used, are very fail-safe)*
+ 
 -Windows: *>python cca8_run.py*   will also usually work, depending on Python setup; it will ignore the shebang line
 (*>cca8_run.py* may work if Windows file associations set up for the Python version)
+
 -Mac, Linux:  *>python3 cca8_run.py*
+
 -Virtual environment Venv (*must activate*) (Windows, Mac or Linux):  *>python cca8_run.py*
+
 -Graphical User Interface (GUI): Due to ongoing software development, the CCA8 Simulation is Command-Line Interface (CLI) only.  (Tkinter Windows GUI-based cca8_run.pyw module is available but not supported at this time.)
+
 -Robotics real-world environment: You need to run the Python environment version of cca8_run.py as shown above, and specify the robotics embodiment as shown above. (Ensure that the correct hardware abstraction layer (HAL) exists and is installed for the robotics equipment version you are using.)
 
 
