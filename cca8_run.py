@@ -17,7 +17,7 @@ The program is run at the command line interface:
 
 Key ideas for readers and new collaborators
 ------------------------------------------
-- **Predicate**: a symbolic fact token (e.g., "state:posture_standing").
+- **Predicate**: a symbolic fact token (e.g., "posture:standing").
 - **Binding**: a node instance carrying a predicate tag (`pred:<token>`) plus meta/engrams.
 - **Edge**: a directed link between bindings with a label (often "then") for **weak causality**.
 - **WorldGraph**: the small, fast *episode index* (~5% information). Rich content goes in engrams.
@@ -168,16 +168,20 @@ class Ctx:
     last_drive_flags: Optional[set[str]] = None
     env_episode_started: bool = False       # Environment / HybridEnvironment integration
     env_last_action: Optional[str] = None  # last fired policy name for env.step(...)
+    mini_snapshot: bool = True  #mini-snapshot toggle starting value
+
 
     def reset_controller_steps(self) -> None:
         """quick reset of Ctx.controller_steps counter
         """
         self.controller_steps = 0
 
+
     def reset_cog_cycles(self) -> None:
         """quick reset of Ctx.cog_cycles counter
         """
         self.cog_cycles = 0
+
 
     def tvec64(self) -> Optional[str]:
         """64-bit sign-bit fingerprint of the temporal vector (hex)."""
@@ -191,6 +195,7 @@ class Ctx:
             if v[i] >= 0.0:
                 x |= (1 << i)
         return f"{x:016x}"
+
 
     def cos_to_last_boundary(self) -> Optional[float]:
         """Cosine(now, last_boundary); unit vectors → dot product."""
@@ -253,8 +258,10 @@ class Ctx:
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
     return edge.get("dst") or edge.get("to") or edge.get("dst_id") or edge.get("id")
 
+
 def _edge_get_rel(edge: Dict[str, Any]) -> str | None:
     return edge.get("rel") or edge.get("label") or edge.get("relation")
+
 
 def _rm_from_list(lst: List[Dict[str, Any]], dst: str, rel: str | None) -> int:
     before = len(lst)
@@ -264,6 +271,7 @@ def _rm_from_list(lst: List[Dict[str, Any]], dst: str, rel: str | None) -> int:
         return (rel is None) or (_edge_get_rel(e) == rel)
     lst[:] = [e for e in lst if not match(e)]
     return before - len(lst)
+
 
 def world_delete_edge(world: Any, src: str, dst: str, rel: str | None) -> int:
     """
@@ -432,23 +440,28 @@ class HAL:
         self.body = body or "(none)"
         # future usage: load body profile (motor map), open serial/network, etc.
 
+
     # Actuators
     def push_up(self):
         """Raise chest (stub)."""
         return False
 
+
     def extend_legs(self):
         """Extend legs (stub)."""
         return False
+
 
     def orient_to_mom(self):
         """Rotate toward maternal stimulus (stub)."""
         return False
 
+
     # Sensors
     def sense_vision_mom(self):
         """Return True if mother's silhouette is detected (stub)."""
         return False
+
 
     def sense_vestibular_fall(self):
         """Return True if fall is detected (stub)."""
@@ -471,6 +484,7 @@ def _hamming_hex64(a: str, b: str) -> int:
         return (xa ^ xb).bit_count()
     except Exception:
         return -1
+
 
 def _fmt_base(d: dict) -> str:
     """helper to print base suggestion info,
@@ -514,6 +528,7 @@ def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Bod
     print("  6. Human-like one-agent multiple-brains simulation with combinatorial planning")
     print("  7. Super-Human-like machine simulation")
     print("  T. Tutorial (more information) on using and maintaining this program, references\n")
+
 
 def print_ascii_logo(style: str = None, color: bool = True) -> None:  # pragma: no cover
     """
@@ -615,6 +630,7 @@ def _snapshot_temporal_legend() -> list[str]:
         "",
     ]
 
+
 def timekeeping_line(ctx) -> str:
     """Compact summary of the 5 time measures + cosine (robust if any piece is missing).
     """
@@ -630,6 +646,7 @@ def timekeeping_line(ctx) -> str:
         cos_txt = "(n/a)"
     return (f"controller_steps={cs}, cos_to_last_boundary={cos_txt}, "
             f"temporal_epochs={te}, autonomic_ticks={at}, age_days={ad:.4f}, cog_cycles={cc}")
+
 
 def print_timekeeping_line(ctx, prefix: str = "[time] ") -> None:
     """Console helper for menus.
@@ -710,6 +727,7 @@ def _compute_loc_by_dir(suffixes=(".py",),skip_folders=(".git", ".venv", "build"
     total = sum(sloc_by_top.values())
     return rows, total, None
 
+
 def _render_loc_by_dir_table(rows, total):
     """
     Pretty-print the LOC table. Returns a string for testability, caller prints it.  # pragma: no cover
@@ -728,6 +746,7 @@ def _render_loc_by_dir_table(rows, total):
     lines.append(f"{'-'*name_w}  {'-'*7}  {'-'*10}")
     lines.append(f"{'TOTAL'.ljust(name_w)}  {sum(n for _,_,n in rows):7d}  {total:10,d}\n")
     return "\n".join(lines)
+
 
 def _parse_vector(text: str) -> list[float]:
     """
@@ -748,10 +767,13 @@ def _parse_vector(text: str) -> list[float]:
             pass
     return vec or [0.0, 0.0, 0.0]
 
-def loop_helper(autosave_from_args: Optional[str], world, drives, time_limited: bool = False):
-    """Operations to run at the end of each menu branch before looping again.
 
-    Currently: autosave (if enabled). Future: time-limited bypasses for real-world ops.
+def loop_helper(autosave_from_args: Optional[str], world, drives, ctx=None, time_limited: bool = False):
+    """
+    Operations to run at the end of each menu branch before looping again.
+    Currently: autosave (if enabled), optional mini-snapshot, visual spacer.
+    Mini-snapshot -- print a compact binding/edge list plus one line of timekeeping values
+    Future: time-limited bypasses for real-world ops.
     """
     if time_limited:
         return #from the loop_helper (not menu loop), i.e., just return without doing anything
@@ -759,9 +781,16 @@ def loop_helper(autosave_from_args: Optional[str], world, drives, time_limited: 
         save_session(autosave_from_args, world, drives)
         # Quiet by default; uncomment for debugging:
         # print(f"[autosaved {ts}] {autosave_from_args}")
+    try:
+        if ctx is not None and getattr(ctx, "mini_snapshot", False):
+            print()
+            print_mini_snapshot(world, ctx, limit=20)
+    except Exception:
+        pass
     print("\n-----\n") #visual spacer before menu prints again
     #this is usually the end of the elif branch of a menu selection block
     #thus, control now falls to the bottom of the while loop and then back to top where while True starts its next iteration
+
 
 def _drive_tags(drives) -> list[str]:
     """Robustly compute drive:* tags even if Drives.flags()/predicates() is missing.
@@ -798,6 +827,7 @@ def _drive_tags(drives) -> list[str]:
         pass
     return tags
 
+
 def _emit_interoceptive_cues(world, drives, ctx, attach: str = "latest") -> set[str]:
     """
     Emit `cue:drive:*` on rising-edge transitions (e.g., hunger crosses HUNGER_HIGH).
@@ -820,10 +850,12 @@ def _emit_interoceptive_cues(world, drives, ctx, attach: str = "latest") -> set[
     except Exception:
         return set()
 
+
 def _normalize_pred(tok: str) -> str:
     """Ensure a token is 'pred:<x>' form (idempotent).
     """
     return tok if tok.startswith("pred:") else f"pred:{tok}"
+
 
 def _neighbors(world, bid: str) -> List[str]:
     """Return outgoing neighbor ids from a binding, being tolerant of alternative edge
@@ -839,6 +871,7 @@ def _neighbors(world, bid: str) -> List[str]:
             if dst:
                 out.append(dst)
     return out
+
 
 def _engrams_on_binding(world, bid: str) -> list[str]:
     """Return engram ids attached to a binding (via binding.engrams).
@@ -866,6 +899,7 @@ def _engrams_on_binding(world, bid: str) -> list[str]:
                     out.append(eid)
     return out
 
+
 def _bfs_reachable(world, src: str, dst: str, max_hops: int = 3) -> bool:
     """Light BFS reachability within `max_hops` hops; early exit on first match.
     """
@@ -887,6 +921,7 @@ def _bfs_reachable(world, src: str, dst: str, max_hops: int = 3) -> bool:
             q.append(v)
     return False
 
+
 def _bindings_with_pred(world, token: str) -> List[str]:
     """Return binding ids whose tags contain pred:<token> (exact match)."""
     want = _normalize_pred(token)
@@ -897,6 +932,7 @@ def _bindings_with_pred(world, token: str) -> List[str]:
                 out.append(bid)
                 break
     return out
+
 
 def _bindings_with_cue(world, token: str) -> List[str]:
     """Return binding ids whose tags contain cue:<token> (exact match)."""
@@ -909,10 +945,12 @@ def _bindings_with_cue(world, token: str) -> List[str]:
                 break
     return out
 
+
 def any_cue_tokens_present(world, tokens: List[str]) -> bool:
     """Return True if **any** `cue:<token>` exists anywhere in the graph.
     """
     return any(_bindings_with_cue(world, tok) for tok in tokens)
+
 
 def has_pred_near_now(world, token: str, hops: int = 3) -> bool:
     """Return True if any pred:<token> is reachable from NOW in ≤ `hops` edges."""
@@ -922,9 +960,11 @@ def has_pred_near_now(world, token: str, hops: int = 3) -> bool:
             return True
     return False
 
+
 def any_pred_present(world, tokens: List[str]) -> bool:
     """Return True if any pred:<token> in `tokens` exists anywhere in the graph."""
     return any(_bindings_with_pred(world, tok) for tok in tokens)
+
 
 @dataclass
 class PolicyGate:
@@ -935,6 +975,7 @@ class PolicyGate:
     trigger: Callable[[Any, Any, Any], bool]             # (world, drives, ctx) -> bool
     explain: Optional[Callable[[Any, Any, Any], str]] = None
 
+
 class PolicyRuntime:
     """Runtime wrapper around a gate catalog that filters by dev gating, evaluates
          triggers, and executes one step."""
@@ -944,10 +985,12 @@ class PolicyRuntime:
         self.catalog = list(catalog)
         self.loaded: List[PolicyGate] = []
 
+
     def refresh_loaded(self, ctx) -> None:
         """Recompute `self.loaded` by applying each gate's dev_gating predicate to `ctx`.
         """
         self.loaded = [p for p in self.catalog if _safe(p.dev_gate, ctx)]
+
 
     def list_loaded_names(self) -> List[str]:
         """Return names of currently loaded (dev-eligible) gates.
@@ -963,11 +1006,12 @@ class PolicyRuntime:
             return "no_match"
 
         # If fallen, force safety-only gates
-        if has_pred_near_now(world, "state:posture_fallen"):
+        if has_pred_near_now(world, "posture:fallen"):
             safety_only = {"policy:recover_fall", "policy:stand_up"}
             matches = [p for p in matches if p.name in safety_only]
             if not matches:
                 return "no_match"
+
 
         # Choose by drive-deficit
         def deficit(name: str) -> float:
@@ -978,6 +1022,7 @@ class PolicyRuntime:
                 d += max(0.0, float(getattr(drives, "fatigue", 0.0)) - float(FATIGUE_HIGH)) * 0.7
             return d
 
+
         def stable_idx(p):
             try:
                 return [q.name for q in self.catalog].index(p.name)
@@ -987,7 +1032,7 @@ class PolicyRuntime:
         chosen = max(matches, key=lambda p: (deficit(p.name), -stable_idx(p)))
 
         # Context for logging
-        base  = choose_contextual_base(world, ctx, targets=["state:posture_standing", "stand"])
+        base  = choose_contextual_base(world, ctx, targets=["posture:standing", "stand"])
         foa   = compute_foa(world, ctx, max_hops=2)
         cands = candidate_anchors(world, ctx)
         pre_expl = chosen.explain(world, drives, ctx) if chosen.explain else "explain: (not provided)"
@@ -1013,6 +1058,7 @@ class PolicyRuntime:
             f"post: {post_expl}"
         )
 
+
 def _safe(fn, *args):
     """Invoke a predicate defensively (exceptions → False).
     """
@@ -1025,14 +1071,31 @@ def _safe(fn, *args):
 CATALOG_GATES: List[PolicyGate] = [
     PolicyGate(
         name="policy:stand_up",
+        # Neonatal only; later profiles/ages may choose a different gate.
         dev_gate=lambda ctx: getattr(ctx, "age_days", 0.0) <= 3.0,
         trigger=lambda W, D, ctx: (
-            has_pred_near_now(W, "stand")
-            and not has_pred_near_now(W, "state:posture_standing")  # don't stand twice
+            # (1) Safety-first: if explicitly fallen near NOW, stand up.
+            has_pred_near_now(W, "posture:fallen")
+            or
+            # (2) If there is an explicit stand intent near NOW, and we are not
+            # already standing, we may stand up.
+            (
+                has_pred_near_now(W, "stand")
+                and not has_pred_near_now(W, "posture:standing")
+            )
         ),
         explain=lambda W, D, ctx: (
-            f"dev_gate: age_days={getattr(ctx,'age_days',0.0):.2f}≤3.0, "
-            f"trigger: stand near NOW={has_pred_near_now(W,'stand')}"
+            f"dev_gate: age_days={getattr(ctx, 'age_days', 0.0):.2f}<=3.0, trigger: "
+            "fallen={fallen} or (stand_intent={stand_intent} and not standing={not_standing})"
+        ).format(
+            age=getattr(ctx, "age_days", 0.0),
+            fallen=(
+                has_pred_near_now(W, "posture:fallen")
+            ),
+            stand_intent=has_pred_near_now(W, "stand"),
+            not_standing=not (
+                has_pred_near_now(W, "posture:standing")
+            ),
         ),
     ),
 
@@ -1040,17 +1103,18 @@ CATALOG_GATES: List[PolicyGate] = [
         name="policy:seek_nipple",
         dev_gate=lambda ctx: True,
         trigger=lambda W, D, ctx: (
-            has_pred_near_now(W, "state:posture_standing")
+            has_pred_near_now(W, "posture:standing")
             and (getattr(D, "hunger", 0.0) > 0.6)
-            and any_cue_tokens_present(W, ["vision:silhouette:mom", "scent:milk", "sound:bleat:mom"])
-            and not has_pred_near_now(W, "state:seeking_mom")      # prevent repeats
-            and not has_pred_near_now(W, "state:posture_fallen")   # ineligible while fallen
+            # For now we do not require sensory cues in the gate; this keeps the
+            # integration tests simple (upright + hungry is enough to try seeking).
+            and not has_pred_near_now(W, "seeking_mom")      # prevent repeats
+            and not has_pred_near_now(W, "posture:fallen")   # ineligible while fallen
         ),
         explain=lambda W, D, ctx: (
-            f"dev_gate: True, trigger: posture_standing={has_pred_near_now(W,'state:posture_standing')} "
-            f"and hunger={getattr(D,'hunger',0.0):.2f}>0.60 and cues={present_cue_bids(W)} "
-            f"and not seeking={not has_pred_near_now(W,'state:seeking_mom')} "
-            f"and not fallen={not has_pred_near_now(W,'state:posture_fallen')}"
+            f"dev_gate: True, trigger: posture:standing={has_pred_near_now(W,'posture:standing')} "
+            f"and hunger={getattr(D,'hunger',0.0):.2f}>0.60 "
+            f"and not seeking={not has_pred_near_now(W,'seeking_mom')} "
+            f"and not fallen={not has_pred_near_now(W,'posture:fallen')}"
         ),
     ),
 
@@ -1090,16 +1154,17 @@ CATALOG_GATES: List[PolicyGate] = [
         name="policy:recover_fall",
         dev_gate=lambda ctx: True,
         trigger=lambda W, D, ctx: (
-            has_pred_near_now(W, "state:posture_fallen")
+            has_pred_near_now(W, "posture:fallen")
             or any_cue_tokens_present(W, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"])
             #or any_pred_present(W, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"])
         ),
         explain=lambda W, D, ctx: (
-            f"dev_gate: True, trigger: fallen={has_pred_near_now(W,'state:posture_fallen')} "
+            f"dev_gate: True, trigger: fallen={has_pred_near_now(W,'posture:fallen')} "
             f"or cues={present_cue_bids(W)}"
         ),
     ),
 ]
+
 
 def _first_binding_with_pred(world, token: str) -> str | None:
     """Return the first binding id that carries pred:<token>, else None."""
@@ -1110,110 +1175,117 @@ def _first_binding_with_pred(world, token: str) -> str | None:
                 return bid
     return None
 
+
 def boot_prime_stand(world, ctx) -> None:
     """
-    At birth (age_days == 0), ensure NOW can reach a stand intent.
-    - If a stand binding exists but isn't reachable from NOW, link NOW -> stand.
-    - Else create a new stand binding attached to NOW.
-    Idempotent: safe to run on fresh sessions.
+    At birth (age_days == 0), seed a simple initial posture state for the kid:
+
+    - Ensure there is a `posture:fallen` predicate reachable from NOW.
+    - If not present, create it attached to NOW.
+    - Use generic 'then' as the edge label (no special 'initiate_*' action label).
+
+    Idempotent and safe to call on a fresh session.
     """
+    # Only at birth
     try:
         if float(getattr(ctx, "age_days", 0.0)) != 0.0:
-            return  # only at birth
+            return
     except Exception:
-        pass
+        return
 
     now_id = _anchor_id(world, "NOW")
-    stand_bid = _first_binding_with_pred(world, "stand")
-    if stand_bid:
-        # If NOW can't reach it in 1 hop, add an edge
-        if not _bfs_reachable(world, now_id, stand_bid, max_hops=1):
-            try:
-                world.add_edge(now_id, stand_bid, "initiate_stand")
-                print(f"[boot] Linked {now_id} --initiate_stand--> {stand_bid}")
-            except Exception as e:
-                print(f"[boot] Could not link NOW->stand: {e}")
-    else:
-        try:
-            # attach="now" will add NOW -> <new> with default 'then' (fine for boot)
-            new_bid = world.add_predicate("stand", attach="now", meta={"boot": "init", "added_by": "system"})
-            print(f"[boot] Seeded stand (i.e., default value) as {new_bid} (NOW -> stand)")
-            # Optional: relabel auto 'then' to 'initiate_stand' for readability
-            try:
-                # remove any NOW->new edges regardless of label
-                try:
-                    world_delete_edge(world, now_id, new_bid, None)  # our helper, if present
-                except NameError:
-                    pass  # older build without the helper
 
-                world.add_edge(now_id, new_bid, "initiate_stand")
-                print(f"[boot] Relabeled NOW -> {new_bid} to 'initiate_stand'")
+    # Look for an existing fallen-posture predicate
+    fallen_bid = _first_binding_with_pred(world, "posture:fallen")
+    if fallen_bid:
+        # If NOW can't reach it in 1 hop, add a 'then' edge
+        if not _bfs_reachable(world, now_id, fallen_bid, max_hops=1):
+            try:
+                world.add_edge(now_id, fallen_bid, "then")
+                print(f"[boot] Linked {now_id} --then--> {fallen_bid} (posture:fallen)")
             except Exception as e:
-                print(f"[boot] Relabel skipped: {e}")
-        except Exception as e:
-            print(f"[boot] Could not seed stand: {e}")
+                print(f"[boot] Could not link NOW->posture:fallen: {e}")
+        return
+
+    # Otherwise, create a new fallen-posture binding attached to NOW
+    try:
+        fallen_bid = world.add_predicate(
+            "posture:fallen",
+            attach="now",
+            meta={"boot": "init", "added_by": "system"},
+        )
+        print(f"[boot] Seeded posture:fallen as {fallen_bid} (NOW -> fallen)")
+    except Exception as e:
+        print(f"[boot] Could not seed posture:fallen: {e}")
+
 
 def print_tagging_and_policies_help(policy_rt=None) -> None:
     """Terminal help: bindings, edges, predicates, cues, anchors, provenance/engrams, and policies."""
-    print("\n==================== Understanding Bindings, Edges, Predicates, Cues & Policies ====================\n")
+    print("""
 
-    print("What is a Binding?")
-    print("  • A small 'episode card' that binds together:")
-    print("      - tags (symbols: predicates / cues / anchors)")
-    print("      - engrams (pointers to rich memory outside WorldGraph)")
-    print("      - meta (provenance, timestamps, light notes)")
-    print("      - edges (directed links from this binding)\n")
-    print("  Structure (conceptual):")
-    print("      { id:'bN', tags:[...], engrams:{...}, meta:{...}, edges:[{'to': 'bK', 'label':'then', 'meta':{...}}, ...] }\n")
+==================== Understanding Bindings, Edges, Predicates, Cues & Policies ====================
 
-    print("Tag Families (use these prefixes)")
-    print("  • pred:*   → states/goals/events you might plan TO")
-    print("      examples: pred:born, pred:posture:standing, pred:nipple:latched, pred:milk:drinking,")
-    print("            pred:event:fall_detected")
-    print("  • cue:*    → evidence/context you NOTICE (policy triggers); not planner goals")
-    print("      examples: cue:scent:milk, cue:sound:bleat:mom, cue:silhouette:mom, cue:terrain:rocky")
-    print("  • anchor:* → orientation markers (e.g., anchor:NOW); also mapped in engine anchors {'NOW': 'b1'}")
-    print("  • drive thresholds (pick one convention and be consistent):")
-    print("      default: pred:drive:hunger_high  (plannable)")
-    print("      alt:     cue:drive:hunger_high   (trigger/evidence only)\n")
+What is a Binding?
+  • A small 'episode card' that binds together:
+      - tags (symbols: predicates / cues / anchors)
+      - engrams (pointers to rich memory outside WorldGraph)
+      - meta (provenance, timestamps, light notes)
+      - edges (directed links from this binding)\n
+  Structure (conceptual):
+      { id:'bN', tags:[...], engrams:{...}, meta:{...}, edges:[{'to': 'bK', 'label':'then', 'meta':{...}}, ...] }
 
-    print("Edges = Actions/Transitions")
-    print("  • Edge label is the action (string): 'then', 'search', 'latch', 'suckle', 'approach', 'recover_fall',")
-    print("       'run', 'stabilize'")
-    print("  • Quantities about the action live in edge.meta (e.g., meters, duration_s, created_by)")
-    print("  • Planner behavior today: labels are for readability; BFS follows structure (not names)")
-    print("  • Duplicate protection: the UI warns on exact duplicates of (src, label, dst)\n")
+Tag Families (use these prefixes)
+  • pred:*        → predicates (facts you might plan TO)
+      examples: pred:posture:standing, pred:posture:fallen, pred:nipple:latched, pred:milk:drinking,
+                pred:proximity:mom:close, pred:event:fall_detected
+  • pred:action:* → explicit action bindings (verbs in the map).
+      examples: pred:action:push_up, pred:action:extend_legs, pred:action:orient_to_mom
+  • cue:*         → evidence/context you NOTICE (policy triggers); not planner goals
+      examples: cue:vision:silhouette:mom, cue:scent:milk, cue:sound:bleat:mom, cue:terrain:rocky
+  • anchor:*      → orientation markers (e.g., anchor:NOW); also mapped in engine anchors {'NOW': 'b1'}
+  • drive thresholds (pick one convention and be consistent):
+      default: pred:drive:hunger_high  (plannable)
+      alt:     cue:drive:hunger_high   (trigger/evidence only)
 
-    print("Provenance & Engrams")
-    print("  • Who created a binding?   binding.meta['policy'] = 'policy:<name>'")
-    print("  • Who created an edge?     edge.meta['created_by'] = 'policy:<name>'")
-    print("  • Where is the rich data?  binding.engrams[...] → pointers (large payloads live outside WorldGraph)\n")
+Edges = Transitions
+  • We treat edge labels as weak episode links (often just 'then').
+  • Most semantics live in bindings (predicates and pred:action:*); edge labels are for readability and metrics.
+  • Quantities about the transition live in edge.meta (e.g., meters, duration_s, created_by).
+  • Planner behavior today: labels are for readability; BFS follows structure (node/edge graph), not names.
+  • Duplicate protection: the UI warns on exact duplicates of (src, label, dst)
 
-    print("Anchors")
-    print("  • anchor:NOW exists; used as the start for planning; may have no pred:*")
-    print("  • Other anchors (e.g., HERE) are allowed; anchors are just bindings with special meaning\n")
+Provenance & Engrams
+  • Who created a binding?   binding.meta['policy'] = 'policy:<name>'
+  • Who created an edge?     edge.meta['created_by'] = 'policy:<name>'
+  • Where is the rich data?  binding.engrams[...] → pointers (large payloads live outside WorldGraph)
 
-    print("Planner (BFS) Basics")
-    print("  • Goal test: a popped binding whose tags contain the target 'pred:<token>'")
-    print("  • Shortest hops: BFS with visited-on-enqueue; parent map reconstructs the path")
-    print("  • BFS → fewest hops (unweighted).")
-    print("  • Dijkstra → lowest total edge weight; weights come from edge.meta keys in this order:")
-    print("      'weight' → 'cost' → 'distance' → 'duration_s' (default 1.0 if none present).")
-    print("  • Toggle strategy via the 'Planner strategy' menu item, then run 'Plan from NOW'.")
-    print("  • Pretty paths show first pred:* as the node label (fallback to id) and --label--> between nodes")
-    print("  • Try: menu 'Plan from NOW', menu 'Display snapshot', menu 'Export interactive graph'\n")
+Anchors
+  • anchor:NOW exists; used as the start for planning; may have no pred:*
+  • Other anchors (e.g., HERE) are allowed; anchors are just bindings with special meaning
 
-    print("Policies (Action Center overview)")
-    print("  • Policies live in cca8_controller and expose:")
-    print("      - dev_gate(ctx)       → True/False (availability by development stage/context)")
-    print("      - trigger(world, drives, ctx) → True/False (should we act now?)")
-    print("      - execute(world, ctx, drives) → adds bindings/edges; stamps provenance")
-    print("  • Action Center scans loaded policies in order each tick; first match runs (with safety priority for")
-    print("             recovery)")
-    print("  • After execute, you may see:")
-    print("      - new bindings (with meta.policy)")
-    print("      - new edges (with edge.meta.created_by)")
-    print("      - skill ledger updates ('Show skill stats')\n")
+Planner (BFS) Basics
+  • Goal test: a popped binding whose tags contain the target 'pred:<token>'
+  • Shortest hops: BFS with visited-on-enqueue; parent map reconstructs the path
+  • BFS → fewest hops (unweighted).
+  • Dijkstra → lowest total edge weight; weights come from edge.meta keys in this order:
+      'weight' → 'cost' → 'distance' → 'duration_s' (default 1.0 if none present).
+  • Toggle strategy via the 'Planner strategy' menu item, then run 'Plan from NOW'.
+  • Pretty paths show first pred:* as the node label (fallback to id) and --label--> between nodes
+  • Try: menu 'Plan from NOW', menu 'Display snapshot', menu 'Export interactive graph'
+
+Policies (Action Center overview)
+  • Policies live in cca8_controller and expose:
+      - dev_gate(ctx)       → True/False (availability by development stage/context)
+      - trigger(world, drives, ctx) → True/False (should we act now?)
+      - execute(world, ctx, drives) → adds bindings/edges; stamps provenance
+  • Action Center scans loaded policies in order each tick; first match runs (with safety priority for
+             recovery)
+  • After execute, you may see:
+      - new bindings (with meta.policy)
+      - new edges (with edge.meta.created_by)
+     - skill ledger updates ('Show skill stats')
+
+    """)
 
     # If we can read the currently loaded policy names, show them:
     try:
@@ -1231,7 +1303,6 @@ def print_tagging_and_policies_help(policy_rt=None) -> None:
     print("  ✓ Use cue:* for evidence/conditions (not planning targets)")
     print("  ✓ Put creator/time/notes in meta; put action measurements in edge.meta")
     print("  ✓ Allow anchor-only bindings (e.g., anchor:NOW)")
-    print("  ✗ Don’t mix state:* with pred:* (pick pred:*)")
     print("  ✗ Don’t store large data in tags; put it in engrams")
     print("\nExamples")
     print("  born --then--> wobble --stabilize--> posture:standing --suckle--> milk:drinking")
@@ -1248,10 +1319,12 @@ def _goat_defaults():
     """Return the Mountain Goat default profile tuple: (name, sigma, jump, winners_k)."""
     return ("Mountain Goat", 0.015, 0.2, 2)
 
+
 def _print_goat_fallback():
     """Explain that the chosen profile is not implemented and we fall back to Mountain Goat."""
     print("Although scaffolding is in place, currently this evolutionary-like configuration is not available. "
           "Profile will be set to mountain goat-like brain simulation.\n")
+
 
 def profile_chimpanzee(_ctx) -> tuple[str, float, float, int]:
     """Print a narrative about the chimpanzee profile; fall back to Mountain Goat defaults."""
@@ -1264,6 +1337,7 @@ The chimpanzee has the main structures of the mountain goat brain (some differen
     ''')
     _print_goat_fallback()
     return _goat_defaults()
+
 
 def profile_human(_ctx) -> tuple[str, float, float, int]:
     """Print a narrative about the human profile; fall back to Mountain Goat defaults."""
@@ -1278,6 +1352,7 @@ The human simulation has further enhanced feedback pathways and full causal reas
     ''')
     _print_goat_fallback()
     return _goat_defaults()
+
 
 def profile_human_multi_brains(_ctx, world) -> tuple[str, float, float, int]:
     """Dry-run multi-brain sandbox (no writes); print trace; fall back to Mountain Goat defaults."""
@@ -1365,6 +1440,7 @@ As well, all 5 symbolic maps along with their rich store of information in their
     _print_goat_fallback()
     return _goat_defaults()
 
+
 def profile_society_multi_agents(_ctx) -> tuple[str, float, float, int]:
     """Dry-run 3-agent society (no writes); print trace; fall back to Mountain Goat defaults."""
     print('''
@@ -1430,6 +1506,7 @@ The human simulation has further enhanced feedback pathways and full causal reas
 
     _print_goat_fallback()
     return _goat_defaults()
+
 
 def profile_multi_brains_adv_planning(_ctx) -> tuple[str, float, float, int]:
     """Dry-run 5x256 combinatorial planning stub (no writes); print trace; fall back to Mountain Goat defaults."""
@@ -1508,6 +1585,7 @@ Implementation scaffolding (this stub does not commit changes to the live world)
     _print_goat_fallback()
     return _goat_defaults()
 
+
 def profile_superhuman(_ctx) -> tuple[str, float, float, int]:
     """Dry-run ‘ASI’ meta-controller stub (no writes); print trace; fall back to Mountain Goat defaults."""
     print('''
@@ -1556,6 +1634,7 @@ def profile_superhuman(_ctx) -> tuple[str, float, float, int]:
     _print_goat_fallback()
     return _goat_defaults()
 
+
 def _open_readme_tutorial() -> None:
     """Open README.md in the default viewer, then return.
     This may or may not have the same behavior as main-menu 'T'
@@ -1575,6 +1654,7 @@ def _open_readme_tutorial() -> None:
         print(f"[tutorial] Could not open the compendium document automatically: {e}\n"
               f"          You can open it manually at:\n  {path}")
 
+
 def run_new_user_tour(world, drives, ctx, policy_rt,autosave_cb: Optional[Callable[[], None]] = None):
     """Quick, hands-on console tour for first-time users.
     Runs a baseline snapshot, probe, capture scene, pointer/engram inspect, and list/search.
@@ -1589,6 +1669,12 @@ def run_new_user_tour(world, drives, ctx, policy_rt,autosave_cb: Optional[Callab
 
     print("""
    === CCA8 Quick Tour ===
+
+Note:   Pending more tutorial-like upgrade.
+        Currently this 'tour' really just runs some of the menu routines without much explanation.
+        New version to be more interactive and provide better explanations.
+
+
 This tour will do the following and show the following displays:
                (1) snapshot, (2) temporal context probe, (3) capture a small
                engram, (4) show the binding pointer (b#), (5) inspect that
@@ -1909,6 +1995,7 @@ def choose_profile(ctx, world) -> dict:
     ctx.profile = name
     return {"name": name, "ctx_sigma": sigma, "ctx_jump": jump, "winners_k": k}
 
+
 def versions_dict() -> dict:
     """Collect versions/paths for core CCA8 components and environment."""
     mods = ["cca8_world_graph", "cca8_controller", "cca8_column", "cca8_features", "cca8_temporal"]
@@ -1919,6 +2006,7 @@ def versions_dict() -> dict:
         info[key] = ver
         info[key + "_path"] = path
     return info
+
 
 def versions_text() -> str:
     """
@@ -1932,6 +2020,7 @@ def versions_text() -> str:
     lines = [f"{k}: {d.get(k, 'n/a')}" for k in keys]
     return "\n".join(lines)
 
+
 def print_startup_notices(world) -> None:
     '''print active planner and other statuses at
     startup of the runner
@@ -1941,6 +2030,7 @@ def print_startup_notices(world) -> None:
     except Exception as e:
         print(f"unable to retrieve which active planner is running: {e}")
         logging.error(f"Unable to retrieve startup active planner status: {e}", exc_info=True)
+
 
 def run_preflight_full(args) -> int:
     """
@@ -1983,10 +2073,12 @@ def run_preflight_full(args) -> int:
     import time as _time
     t0 = _time.perf_counter()
 
+
     def ok(msg):
         nonlocal checks
         checks += 1
         print(f"[preflight] PASS  - {msg}")
+
 
     def bad(msg):
         nonlocal failures, checks
@@ -1994,11 +2086,13 @@ def run_preflight_full(args) -> int:
         checks += 1
         print(f"[preflight] FAIL  - {msg}")
 
+
     # helpers for the footer
     def _fmt_hms(seconds: float) -> str:
         m, s = divmod(int(round(seconds)), 60)
         h, m = divmod(m, 60)
         return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
 
     def _parse_junit_xml(path: str) -> dict:
         try:
@@ -2021,6 +2115,7 @@ def run_preflight_full(args) -> int:
         except Exception:
             pass
         return {}
+
 
     def _parse_coverage_pct(path: str) -> float | None:
         try:
@@ -2049,6 +2144,7 @@ def run_preflight_full(args) -> int:
         except Exception:
             return False
 
+
     def _ansi_enable() -> bool:
         # POSIX terminals usually support ANSI out of the box
         if not _sys.platform.startswith("win"):
@@ -2068,6 +2164,7 @@ def run_preflight_full(args) -> int:
         return False
 
     _ANSI_OK = _is_tty() and _ansi_enable()
+
 
     def _paint_fail(line: str) -> str:
         # red
@@ -2121,12 +2218,14 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"pytest not available or other error: {e}\n")
 
+
     # 1) Python & platform
     try:
         pyver = sys.version.split()[0]
         ok(f"python={pyver} platform={platform.platform()}")
     except Exception as e:
         bad(f"could not read python/platform: {e}")
+
 
     # 2a) CCA8 modules present & importable (plus key symbols)
     try:
@@ -2163,6 +2262,7 @@ def run_preflight_full(args) -> int:
                 bad(f"import {_name} failed: {e}")
     except Exception as e:
         bad(f"module import checks failed: {e}")
+
 
         # 2b) Explicit invariant check on a tiny fresh world
     try:
@@ -2202,6 +2302,7 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         ok(f"pyvis not installed (export still optional): {e}")
 
+
     # 2) WorldGraph sanity
     try:
         w = cca8_world_graph.WorldGraph()
@@ -2230,15 +2331,18 @@ def run_preflight_full(args) -> int:
                 ts = b.tags
             return ts
 
+
         def _has_tag(bid_: str, t: str) -> bool:
             ts = getattr(_w2._bindings[bid_], "tags", None)
             return bool(ts) and (t in ts)
+
 
         def _tag_add(bid_: str, t: str):
             ts = _tags_of(bid_)
             try: ts.add(t)
             except AttributeError:
                 if t not in ts: ts.append(t)
+
 
         def _tag_discard(bid_: str, t: str):
             ts = getattr(_w2._bindings[bid_], "tags", None)
@@ -2288,6 +2392,7 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"set_now test failed: {e}")
 
+
     # 3) Controller primitives
     try:
         from cca8_controller import PRIMITIVES, Drives as _Drv, __version__ as _CTRL_VER
@@ -2318,6 +2423,7 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"HAL/body flag read error: {e}")
 
+
     # 5) Read/write snapshot (tmp)
     try:
         tmp = "_preflight_session.json"
@@ -2340,6 +2446,7 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"snapshot write failed: {e}")
 
+
     # 6) Planning stub
     try:
         w = cca8_world_graph.WorldGraph()
@@ -2349,6 +2456,7 @@ def run_preflight_full(args) -> int:
         ok(f"planner probes (path_found={bool(p)})")
     except Exception as e:
         bad(f"planner probe failed: {e}")
+
 
     # Z1) Attach semantics (NOW/latest → new binding) — no warnings
     try:
@@ -2385,6 +2493,7 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"attach semantics failed: {e}")
 
+
     # Z2) Cue normalization & family check
     try:
         _w3 = cca8_world_graph.WorldGraph()
@@ -2402,6 +2511,7 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"cue normalization failed: {e}")
 
+
     # Z3) Action metrics aggregator — no warnings
     try:
         _w4 = cca8_world_graph.WorldGraph()
@@ -2417,6 +2527,7 @@ def run_preflight_full(args) -> int:
             bad(f"action metrics: unexpected aggregate { _met }")
     except Exception as e:
         bad(f"action metrics failed: {e}")
+
 
     # Z4) BFS sanity (shortest-hop path found) — no warnings
     try:
@@ -2434,6 +2545,7 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"planner (BFS) sanity failed: {e}")
 
+
     # Z5) Lexicon strictness: reject out-of-lexicon pred at neonate
     try:
         _w6 = cca8_world_graph.WorldGraph()
@@ -2445,6 +2557,7 @@ def run_preflight_full(args) -> int:
             ok("lexicon: strict rejects out-of-lexicon token at neonate")
     except Exception as e:
         bad(f"lexicon strictness failed: {e}")
+
 
     # Z6) Engram bridge: capture_scene → engram asserted, pointer attached
     try:
@@ -2472,6 +2585,7 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"engram bridge failed: {e}")
 
+
     # Z7) Timekeeping one-liner sanity
     try:
         _w = cca8_world_graph.WorldGraph(); _w.ensure_anchor("NOW")
@@ -2493,6 +2607,7 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"timekeeping one-liner error: {e}")
 
+
     # Z8) Resolve Engrams pretty (smoke)
     try:
         _wk = cca8_world_graph.WorldGraph(); _wk.ensure_anchor("NOW")
@@ -2504,6 +2619,7 @@ def run_preflight_full(args) -> int:
         ok("resolve-engrams pretty printed")
     except Exception as e:
         bad(f"resolve-engrams pretty error: {e}")
+
 
     # Z9) Demo-world builder smoke (graph shape and provenance)
     try:
@@ -2517,6 +2633,44 @@ def run_preflight_full(args) -> int:
             bad("demo world: NOW/rest bindings missing")
     except Exception as e:
         bad(f"demo world builder failed: {e}")
+
+
+    # Z10) Tag hygiene: no 'state:' or 'pred:action:' tags in a simple S–A–P episode
+    try:
+        _w = cca8_world_graph.WorldGraph()
+        _w.set_tag_policy("allow")
+        _w.ensure_anchor("NOW")
+        # Minimal S–A–P chain
+        _w.add_predicate("posture:fallen", attach="now")
+        _w.add_action("action:push_up", attach="latest")
+        _w.add_action("action:extend_legs", attach="latest")
+        _w.add_predicate("posture:standing", attach="latest")
+        bad_tags = []
+        for bid, b in _w._bindings.items():
+            for t in getattr(b, "tags", []):
+                if isinstance(t, str) and (t.startswith("state:") or t.startswith("pred:action:")):
+                    bad_tags.append((bid, t))
+        if bad_tags:
+            bad(f"tag hygiene: found legacy tags {bad_tags}")
+        else:
+            ok("tag hygiene: no 'state:*' or 'pred:action:*' tags on fresh S–A–P episode")
+    except Exception as e:
+        bad(f"tag hygiene check failed: {e}")
+
+
+    # Z11) NOW_ORIGIN anchor semantics
+    try:
+        _w = cca8_world_graph.WorldGraph()
+        _w.ensure_anchor("NOW")
+        ensure_now_origin(_w)
+        origin = _anchor_id(_w, "NOW_ORIGIN")
+        now = _anchor_id(_w, "NOW")
+        if origin != "?" and origin == now:
+            ok("NOW_ORIGIN: pinned to initial NOW on fresh world")
+        else:
+            bad(f"NOW_ORIGIN: unexpected (origin={origin}, now={now})")
+    except Exception as e:
+        bad(f"NOW_ORIGIN check failed: {e}")
 
 
     # 7) Action helpers sanity
@@ -2551,6 +2705,7 @@ def run_preflight_full(args) -> int:
         hal_failures += 1
         print(f"[preflight hardware_robotics] FAIL  - {msg}")
 
+
     # 3a) CPU enumeration
     try:
         _n = os.cpu_count() or 0
@@ -2560,6 +2715,7 @@ def run_preflight_full(args) -> int:
             bad_hw("cpu_count returned 0")
     except Exception as e:
         bad_hw(f"cpu_count error: {e}")
+
 
     # 3b) High-resolution timer sanity (monotonic + resolution)
     try:
@@ -2575,6 +2731,7 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad_hw(f"perf_counter check error: {e}")
 
+
     # 3c) Temp file write/read (4 KiB)
     try:
         import tempfile as _tempfile
@@ -2584,6 +2741,7 @@ def run_preflight_full(args) -> int:
         ok_hw("temp file write (4 KiB)")
     except Exception as e:
         bad_hw(f"temp file write failed: {e}")
+
 
     # 3d) System memory (GiB) ≥ MIN_RAM_GB (default 4 -- Nov 2025)
     #adjust minimum RAM tested as makes sense for the hardware
@@ -2659,6 +2817,7 @@ def run_preflight_full(args) -> int:
             bad_hw(f"memory total={_total/(1024**3):.1f} GB -- below threshold RAM of {MIN_RAM_GB:.0f} GiB")
     except Exception as e:
         bad_hw(f"memory check error: {e}")
+
 
     # 3e) Disk free space on current volume ≥ MIN_DISK_GB (default 1)
     try:
@@ -2746,6 +2905,7 @@ def run_preflight_lite_maybe():
         return
     print("[preflight-lite] checks ok\n\n")
 
+
 def _anchor_id(world, name="NOW") -> str:
     """Return the binding id for anchor:<name>, scanning internals or tags; '?' if not found."""
     # Try a direct lookup if available
@@ -2762,12 +2922,14 @@ def _anchor_id(world, name="NOW") -> str:
             return bid
     return "?"
 
+
 def _sorted_bids(world) -> list[str]:
     """Return binding ids sorted numerically (b1, b2, ...), with non-numeric ids last.
     -in class World self._bindings={}, i.e., in the instance world, world_bindings.keys() is a
     dict_keys view of all the keys  e.g., dict_keys(['b1', 'b2', 'b3', 'b4'.....])
     nb. Python 3.7+ dicts preserve insertion order, so that is what will be obtained before sorting
     """
+
     def key_fn(bid: str):
         """
         -strip out the 'b' for sorting bindings, and alphabetical bindings, e.g., NOW,
@@ -2779,6 +2941,7 @@ def _sorted_bids(world) -> list[str]:
             return (0, int(bid[1:]))   # group 0: numeric, sorted by number
         return (1, bid)                # group 1: non-numeric, sorted by string
     return sorted(world._bindings.keys(), key=key_fn)
+
 
 def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     """
@@ -2820,6 +2983,9 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     now_id = _anchor_id(world, "NOW")
     latest = getattr(world, "_latest_binding_id", "?")
     lines.append(f"NOW={now_id}  [src=_anchor_id('NOW')]  LATEST={latest}  [src=world._latest_binding_id]")
+    origin_id = _anchor_id(world, "NOW_ORIGIN")
+    lines.append(f"NOW_ORIGIN={origin_id}  [src=_anchor_id('NOW_ORIGIN')]")
+    lines.append(f"NOW_LATEST={latest}  [alias for LATEST/world._latest_binding_id]")
     lines.append("")
 
     # CTX (Context)
@@ -2987,6 +3153,7 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.append("--------------------------------------------------------------------------------------\n")
     return "\n".join(lines)
 
+
 def export_snapshot(world, drives=None, ctx=None, policy_rt=None,
                     path_txt="world_snapshot.txt", _path_dot=None) -> None:
     """Write a complete snapshot of bindings + edges to a text file (no DOT).
@@ -3000,6 +3167,7 @@ def export_snapshot(world, drives=None, ctx=None, policy_rt=None,
     print("Exported snapshot (text only):")
     print(f"  {path_txt_abs}")
     print(f"Directory: {out_dir}")
+
 
 def recent_bindings_text(world, limit: int = 5) -> str:
     """
@@ -3059,6 +3227,67 @@ def recent_bindings_text(world, limit: int = 5) -> str:
 
     return "\n".join(lines) + "\n"
 
+
+def mini_snapshot_text(world, ctx=None, limit: int = 20) -> str:
+    """
+    Compact mini-snapshot: one timekeeping line + a short list of recent bindings
+    with their outgoing edges.
+
+    Intentionally omits [src=...] annotations so readers see only the conceptual
+    structure (bindings/tags/edges) without internal implementation details.
+    """
+    lines: list[str] = []
+
+    # Timekeeping line (if ctx is available)
+    if ctx is not None:
+        try:
+            lines.append("[time] " + timekeeping_line(ctx))
+        except Exception:
+            lines.append("[time] (unavailable)")
+    else:
+        lines.append("[time] (ctx unavailable)")
+
+    # Compact world view: last `limit` bindings with their outgoing edges
+    bids = _sorted_bids(world)
+    if not bids:
+        lines.append("[world] no bindings yet")
+        return "\n".join(lines)
+
+    n = min(limit, len(bids))
+    lines.append(f"[world] last {n} binding(s):")
+    for bid in bids[-n:]:
+        b = world._bindings.get(bid)
+        tags = ", ".join(sorted(getattr(b, "tags", []))) if b else ""
+        lines.append(f"  {bid}: [{tags}]")
+
+        edges = (getattr(b, "edges", []) or getattr(b, "out", []) or
+                 getattr(b, "links", []) or getattr(b, "outgoing", [])) if b else []
+        if isinstance(edges, list) and edges:
+            parts: list[str] = []
+            for e in edges:
+                rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
+                dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                if dst:
+                    parts.append(f"{rel}:{dst}")
+            if parts:
+                lines.append(f"      edges: {', '.join(parts)}")
+            else:
+                lines.append("      edges: (none)")
+        else:
+            lines.append("      edges: (none)")
+
+    return "\n".join(lines)
+
+
+def print_mini_snapshot(world, ctx=None, limit: int = 20) -> None:
+    """Print the compact mini-snapshot (safe to call from menu flow)."""
+    try:
+        print("Values of time measures, nodes and links at this point:")
+        print(mini_snapshot_text(world, ctx, limit))
+    except Exception:
+        pass
+
+
 def drives_and_tags_text(drives) -> str:
     """
     Human-readable drives panel with source annotations and a concise explainer.
@@ -3095,9 +3324,9 @@ def drives_and_tags_text(drives) -> str:
 
     lines.append("")
     lines.append("Where these live:")
-    lines.append("  • Drives object: cca8_controller.Drives  [src=cca8_controller.Drives]")
-    lines.append("  • Updated by: autonomic ticks, policies, or direct code.")
-    lines.append("  • Drive tags here are ephemeral (not persisted unless you choose to).")
+    lines.append("  - Drives object: cca8_controller.Drives  [src=cca8_controller.Drives]")
+    lines.append("  - Updated by: autonomic ticks, policies, or direct code.")
+    lines.append("  - Drive tags here are ephemeral (not persisted unless you choose to).")
 
     # === Integrated ~10-line explainer ===
     lines.append("")
@@ -3114,6 +3343,7 @@ def drives_and_tags_text(drives) -> str:
     lines.append("Sources: raw=drives.*, thresholds=HUNGER_HIGH/FATIGUE_HIGH (controller).")
 
     return "\n".join(lines) + "\n"
+
 
 def skill_ledger_text(example_policy: str = "policy:stand_up") -> str:
     """
@@ -3168,6 +3398,7 @@ def skill_ledger_text(example_policy: str = "policy:stand_up") -> str:
     lines.append("q tracks average reward quality; last is the most recent reward sample.")
     return "\n".join(lines) + "\n"
 
+
 def _io_banner(args, loaded_path: str | None, loaded_ok: bool) -> None:
     """Explain how load/autosave will behave for this run.
     """
@@ -3214,13 +3445,14 @@ def _nearest_binding_with_pred(world, token: str, from_bid: str, max_hops: int =
                     seen.add(v); depth[v] = depth[u] + 1; q.append(v)
     return None
 
+
 def choose_contextual_base(world, ctx, targets: list[str] | None = None) -> dict: # pylint: disable=unused-argument
     """
     Skeleton: pick where a primitive *should* anchor writes.
     Order: nearest target predicate -> HERE (if exists) -> NOW.
     We only *suggest* the base here; controller may ignore it today.
     """
-    targets = targets or ["state:posture_standing", "stand"]
+    targets = targets or ["posture:standing", "stand"]
     now_id  = _anchor_id(world, "NOW")
     here_id = _anchor_id(world, "HERE") if hasattr(world, "_anchors") else None
     # try each target nearest to NOW
@@ -3232,7 +3464,8 @@ def choose_contextual_base(world, ctx, targets: list[str] | None = None) -> dict
         return {"base": "HERE", "bid": here_id}
     return {"base": "NOW", "bid": now_id}
 
-# ---------- FOA (Focus of Attention) skeleton ----------
+
+# ---------- FOA (Focus of Attention), NOW skeleton ----------
 def present_cue_bids(world) -> list[str]:
     """Return binding ids that carry any `cue:*` tag (unordered)
     """
@@ -3242,6 +3475,7 @@ def present_cue_bids(world) -> list[str]:
         if any(isinstance(t, str) and t.startswith("cue:") for t in ts):
             bids.append(bid)
     return bids
+
 
 def neighbors_k(world, start_bid: str, max_hops: int = 2) -> set[str]:
     """Return the set of nodes within `max_hops` hops of `start_bid` (inclusive).
@@ -3263,6 +3497,7 @@ def neighbors_k(world, start_bid: str, max_hops: int = 2) -> set[str]:
                 if v and v not in seen:
                     seen.add(v); q.append((v, d+1))
     return out
+
 
 def compute_foa(world, ctx, max_hops: int = 2) -> dict: # pylint: disable=unused-argument
     """
@@ -3286,6 +3521,31 @@ def compute_foa(world, ctx, max_hops: int = 2) -> dict: # pylint: disable=unused
         foa_ids |= neighbors_k(world, s, max_hops=max_hops)
     return {"seeds": seeds, "size": len(foa_ids), "ids": foa_ids}
 
+
+def ensure_now_origin(world):
+    """
+    to set NOW_ORIGIN once
+    """
+    origin_id = _anchor_id(world, "NOW")
+    if origin_id and origin_id != "?":
+        # Set in anchors map if available
+        if hasattr(world, "_anchors") and isinstance(world._anchors, dict):
+            world._anchors["NOW_ORIGIN"] = origin_id
+        # Also tag the binding
+        b = world._bindings.get(origin_id)
+        if b is not None:
+            tags = getattr(b, "tags", None)
+            if tags is None:
+                b.tags = set()
+                tags = b.tags
+            # robust: handle set or list
+            try:
+                tags.add("anchor:NOW_ORIGIN")
+            except AttributeError:
+                if "anchor:NOW_ORIGIN" not in tags:
+                    tags.append("anchor:NOW_ORIGIN")
+
+
 # ---------- Multi-anchor candidates (skeleton) ----------
 def candidate_anchors(world, ctx) -> list[str]:  # pylint: disable=unused-argument
     """
@@ -3296,7 +3556,7 @@ def candidate_anchors(world, ctx) -> list[str]:  # pylint: disable=unused-argume
     here_id  = _anchor_id(world, "HERE") if hasattr(world, "_anchors") else None
     picks    = [now_id]
     if here_id and here_id not in picks: picks.append(here_id)
-    for tok in ("state:posture_standing", "stand", "mom:close"):
+    for tok in ("posture:standing", "stand", "mom:close"):
         bid = _nearest_binding_with_pred(world, tok, from_bid=now_id, max_hops=3)
         if bid and bid not in picks:
             picks.append(bid)
@@ -3366,7 +3626,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Act / Simulate
     9) Instinct step (Action Center) [instinct, act]
     10) Autonomic tick (emit interoceptive cues) [autonomic, tick]
-    11) Simulate fall (add state:posture_fallen and try recovery) [fall, simulate]
+    11) Simulate fall (add posture:fallen and try recovery) [fall, simulate]
 
     # Simulation of the Environment (HybridEnvironment demo)
     35) Environment step (HybridEnvironment → WorldGraph demo) [env, hybrid]
@@ -3399,6 +3659,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     32) Quit [quit, exit]
     33) Lines of Python code LOC by directory [loc, sloc]
     34) Reset current saved session [reset]
+    36) Toggle mini-snapshot after each menu selection [mini, msnap]
+
 
     Select: """
 
@@ -3453,6 +3715,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "loc": "33", "sloc": "33", "pygount": "33",
     "reset": "34",
     "env": "35", "environment": "35", "hybrid": "35",
+    "mini": "36", "msnap": "36",
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -3505,7 +3768,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "33": "33",  # Lines of Count
     "34": "r",   # Reset current saved session
     "35": "35",  # environment simulation
+   "36": "36",  # mini-snapshot toggle
 }
+
     # Attempt to load a prior session if requested
     if args.load:
         try:
@@ -3576,9 +3841,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
     # Ensure NOW anchor exists for the episode (so attachments from "now" resolve)
     world.ensure_anchor("NOW")
-    #boot policy, e.g., mountain goat should stand up
+    # boot policy, e.g., mountain goat should stand up
     if not args.no_boot_prime:
         boot_prime_stand(world, ctx)
+    # Pin NOW_ORIGIN to this initial NOW (episode root)
+    ensure_now_origin(world)
 
     # Non-interactive plan flag (one-shot planning and exit)
     if args.plan:
@@ -3679,7 +3946,7 @@ Below we show some general WorldGraph and Policy statistics. See Snapshot and ot
             except Exception:
                 pass
             print_timekeeping_line(ctx)
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -3740,7 +4007,7 @@ You can filter results by entering the string of the desired token, or even a pa
                     f"\nSummary: {len(idx)} unique predicate token(s), "
                     f"{total_tags} predicate tag(s) across {len(world._bindings)} binding(s)."
                 )
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -3755,7 +4022,7 @@ Creates a new binding which will be tagged with "pred:<token>"
   now    → NOW -> new, new becomes LATEST
   latest → LATEST -> new, new becomes LATEST (default)
   none   → create unlinked node (no automatic edge)\n
-Examples: posture_standing, nipple:latched, etc.  Lexicon may warn in strict modes.\n
+Examples: posture:standing, nipple:latched, etc.  Lexicon may warn in strict modes.\n
 
 Please enter the predicate token
   e.g., vision:silhouette:mom
@@ -3767,7 +4034,7 @@ Please enter the predicate token
             token = input("\nEnter predicate token (e.g., vision:silhouette:mom)   ").strip()
             if not token:
                 print("No token entered -- no default values -- return back to menu....")
-                loop_helper(args.autosave, world, drives)
+                loop_helper(args.autosave, world, drives, ctx)
                 continue
             attach = input("Attach [now/latest/none] (default: latest): ").strip().lower() or "latest"
             if attach not in ("now", "latest", "none"):
@@ -3803,7 +4070,7 @@ Please enter the predicate token
                 print(f"[guard] add_predicate rejected token {token!r}: {e}")
             except Exception as e:
                 print(f"[error] add_predicate failed: {e}")
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -3821,7 +4088,7 @@ Please enter the predicate token
             dst = input("Enter the destination binding id (bid) (e.g., b14) NO QUOTES : ").strip()
             if not src or not dst:
                 print("Source or destination bindings entered are missing -- return back to menu....")
-                loop_helper(args.autosave, world, drives)
+                loop_helper(args.autosave, world, drives, ctx)
                 continue
             label = input('Edge relation label (default via ENTER is "then") NO QUOTES : ').strip() or "then"
             try:
@@ -3854,7 +4121,7 @@ Please enter the predicate token
                 print(f"[guard] {e}")
             except Exception as e:
                 print(f"[error] add_edge failed: {e}")
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -3862,6 +4129,43 @@ Please enter the predicate token
             # Plan from NOW -> <predicate>
             current_planner = getattr(world, "get_planner", lambda: "bfs")()
             print("Selection:  Plan to Predicate\n")
+            print("""
+Note the use of S-A-S segments in learning and planning within the architecture:
+S-A-S  State-Action-State which we consider in the CCA8 as Predicate-Action-Predicate (since we
+    avoid the brain labeling things as 'states', something scientists do more so than brains)
+Conceptually it is the pattern:
+   [what the world/agent is like] --> [what the agent does] --> [what the world/agent is like after]
+S = predicate binding, e.g., pred:posture:standing")
+A = action binding, e.g., pred:action:push_up or action:push_up (depends on version)
+e.g., posture:fallen --> push_up, extend_legs --> posture:standing
+A whole episode becomes a chain of S-A-S segments. This becomes a natural unit for learning and planning, i.e.,
+  'if I'm in predicate S want predicate S', then what action chain A should I consider?'
+
+Note the use of the anchor bindings NOW, NOW_ORIGIN, and LATEST in WorldGraph:
+NOW_ORIGIN --   where NOW was when the session (or episode) began
+                birth / episode root; stable, episode-level anchor
+                world._anchors["NOW_ORIGIN"]
+                should not move once set (unless deliberately start a new episode)
+                #todo -- add an explicit 'start new episode' and reset NOW_ORIGIN to a new binding
+NOW --  where the agent is now in the map
+        world._anchors["NOW"]
+        e.g., start at birth/fallen → StandUp moves NOW to standing → SeekNipple moves NOW to seeking_mom, etc.
+        good for local FOA and 'what should I do from here?'
+        a moving, local-state anchor
+LATEST --   the most recently created binding by any operation
+            world._latest_binding_id
+            useful in debugging and FOA
+            note that not semantically 'the agent’s current state' -- for example, can create a cue or perhaps an
+                engram binding that’s not the stable state of the body
+            note that we do not tag the latest binding each time with anchor:LATEST as it would move on every single
+                write, i.e., end up spamming tags and making graph harder to read, and this is not necessary as
+                it is always available via world._latest_binding_id, and only printed in the header
+
+You will be asked to choose the determination of a path from NOW or from a node of your choosing, to a
+    predicate of your choosing  -- be aware of what the default 'NOW' actually represents.
+
+            """)
+
             print(f"Current planner strategy: {current_planner.upper()}")
             if current_planner == "dijkstra":
                 print("Dijkstra search from anchor:NOW to a binding with pred:<token>.")
@@ -3869,29 +4173,96 @@ Please enter the predicate token
             else:
                 print("BFS from anchor:NOW to a binding with pred:<token>. Prints raw id path and a pretty path.\n")
 
-            token = input("Target predicate (e.g., state:posture_standing): ").strip()
+            token = input("Target predicate (e.g., posture:standing): ").strip()
             if not token:
-                loop_helper(args.autosave, world, drives)
+                loop_helper(args.autosave, world, drives, ctx)
                 continue
+            # convenience: allow posture:standing → posture:standing, etc.
+            if ":" not in token and "_" in token:
+                parts = token.split("_", 1)
+                if len(parts) == 2:
+                    token = f"{parts[0]}:{parts[1]}"
 
-            src_id = world.ensure_anchor("NOW")
+            # allow planning from any binding, default NOW; special token ORIGIN → NOW_ORIGIN
+            try:
+                start_bid = input("Start from binding id (blank = NOW, ORIGIN = NOW_ORIGIN): ").strip()
+            except Exception:
+                start_bid = ""
+            if start_bid:
+                key = start_bid.lower()
+                if key in ("origin", "now_origin"):
+                    src_id = _anchor_id(world, "NOW_ORIGIN")
+                    if src_id == "?":
+                        print("[info] NOW_ORIGIN not set; falling back to NOW.")
+                        src_id = world.ensure_anchor("NOW")
+                elif start_bid in world._bindings:
+                    src_id = start_bid
+                else:
+                    print(f"[info] Unknown binding id {start_bid!r}; falling back to NOW.")
+                    src_id = world.ensure_anchor("NOW")
+            else:
+                src_id = world.ensure_anchor("NOW")
+
             path = world.plan_to_predicate(src_id, token)
             if path:
-                print("Path (ids):", " -> ".join(path))
+                print("\nPath (ids):", " -> ".join(path))
                 try:
                     pretty = world.pretty_path(
                         path,
-                        node_mode="id+pred",       # try 'pred' if   prefer only tokens
+                        node_mode="id+pred",       # try 'pred' if prefer only tokens
                         show_edge_labels=True,
                         annotate_anchors=True
                     )
                     print("Pretty printing of path:\n", pretty)
                 except Exception as e:
                     print(f"(pretty-path error: {e})")
+
+                def _typed_label(bid: str) -> str:
+                    """
+                    Typed view: show each node with its primary role (anchor/pred/action/cue)
+                    """
+                    b = world._bindings.get(bid)
+                    if not b:
+                        return bid
+                    tags = getattr(b, "tags", []) or []
+
+                    goal_pred_full = f"pred:{token}"
+                    if any(isinstance(t, str) and (t in (goal_pred_full, token)) for t in tags):
+                        return token
+
+                    for t in tags:
+                        if isinstance(t, str) and t.startswith("anchor:"):
+                            return t
+                    for t in tags:
+                        if isinstance(t, str) and t.startswith("action:"):
+                            return t
+                    for t in tags:
+                        if isinstance(t, str) and t.startswith("pred:"):
+                            return t[5:]
+                    for t in tags:
+                        if isinstance(t, str) and t.startswith("cue:"):
+                            return t
+                    return "(no-tags)"
+
+                # Reverse typed view: from goal back to start (useful for "backwards" intuition).
+                rev_parts: list[str] = []
+                rev_path = list(reversed(path))
+                for i, bid in enumerate(rev_path):
+                    rev_parts.append(f"[{bid}:{_typed_label(bid)}]")
+                    if i + 1 < len(rev_path):
+                        rev_parts.append(" -> ")
+                print("Reverse typed path:", "".join(rev_parts))
+
+                # Forward typed view: from start to goal
+                typed_parts: list[str] = []
+                for i, bid in enumerate(path):
+                    typed_parts.append(f"[{bid}:{_typed_label(bid)}]")
+                    if i + 1 < len(path):
+                        typed_parts.append(" -> ")
+                print("Typed path:", "".join(typed_parts))
             else:
                 print("No path found.")
-            loop_helper(args.autosave, world, drives)
-
+            loop_helper(args.autosave, world, drives, ctx)
 
         #----Menu Selection Code Block------------------------
         elif choice == "6":
@@ -3921,7 +4292,7 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
                 if b and getattr(b, "engrams", None):
                     print("Raw pointers:", b.engrams)
 
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -3937,7 +4308,7 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
             print("Tip: use 'Inspect binding details' for full meta/edges on a specific id.\n")
 
             print(recent_bindings_text(world, limit=5))
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -3961,7 +4332,8 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
 
             #rc = run_preflight_full(args)
             run_preflight_full(args)
-            loop_helper(args.autosave, world, drives)
+            # no autosave or mini-snapshot after preflight; just return to menu.
+            # loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -3995,8 +4367,10 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
             def _edge_rel(e: dict) -> str:
                 return e.get("label") or e.get("rel") or e.get("relation") or "then"
 
+
             def _edge_dst(e: dict) -> str | None:
                 return e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+
 
             def _families_from_tags(tags) -> list[str]:
                 fams: list[str] = []
@@ -4005,9 +4379,12 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
                     fams.append("anchor")
                 if any(isinstance(t, str) and t.startswith("pred:") for t in tags):
                     fams.append("pred")
+                if any(isinstance(t, str) and t.startswith("action:") for t in tags):
+                    fams.append("action")
                 if any(isinstance(t, str) and t.startswith("cue:") for t in tags):
                     fams.append("cue")
                 return fams
+
 
             def _anchors_from_tags(tags) -> list[str]:
                 out: list[str] = []
@@ -4015,6 +4392,7 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
                     if isinstance(t, str) and t.startswith("anchor:"):
                         out.append(t.split(":", 1)[1])
                 return out
+
 
             def _provenance_summary(meta: dict) -> str | None:
                 if not isinstance(meta, dict) or not meta:
@@ -4036,6 +4414,7 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
                 if isinstance(epoch, int):
                     bits.append(f"epoch={epoch}")
                 return ", ".join(bits) if bits else None
+
 
             def _engrams_pretty(_bid: str, b) -> None:
                 eng = getattr(b, "engrams", None) or {}
@@ -4063,6 +4442,7 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
                     act_txt = f" act={act:.3f}" if isinstance(act, (int, float)) else ""
                     print(f"  {slot}: {short}{act_txt} {status}".rstrip())
 
+
             def _incoming_edges_for(_bid: str) -> list[tuple[str, str]]:
                 inc: list[tuple[str, str]] = []
                 for src_id, other in world._bindings.items():
@@ -4076,6 +4456,7 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
                             inc.append((src_id, _edge_rel(e)))
                 return inc
 
+
             def _outgoing_edges_for(b) -> list[tuple[str, str]]:
                 edges = (getattr(b, "edges", []) or getattr(b, "out", []) or
                          getattr(b, "links", []) or getattr(b, "outgoing", []))
@@ -4086,6 +4467,7 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
                         if dst:
                             out.append((dst, _edge_rel(e)))
                 return out
+
 
             def _print_one(_bid: str) -> None:
                 b = world._bindings.get(_bid)
@@ -4137,15 +4519,75 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
 
                 print("\n", "-" * 28, "\n")
 
+
+            from collections import deque
+            def _concept_neighborhood_layers(start_bid: str, max_hops: int = 2) -> dict[int, list[str]]:
+                """
+                Return a dict {distance: [binding ids]} for nodes reachable from start_bid
+                within `max_hops` hops (outgoing edges only).
+                distance=0 contains start_bid itself.
+                """
+                layers: dict[int, list[str]] = {0: [start_bid]}
+                seen: set[str] = {start_bid}
+                q = deque([(start_bid, 0)])
+
+                while q:
+                    u, d = q.popleft()
+                    if d >= max_hops:
+                        continue
+                    b = world._bindings.get(u)
+                    if not b:
+                        continue
+                    edges = (getattr(b, "edges", []) or getattr(b, "out", []) or
+                             getattr(b, "links", []) or getattr(b, "outgoing", []))
+                    if not isinstance(edges, list):
+                        continue
+                    for e in edges:
+                        v = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                        if not v or v in seen or v not in world._bindings:
+                            continue
+                        seen.add(v)
+                        layers.setdefault(d+1, []).append(v)
+                        q.append((v, d+1))
+                return layers
+
+
+            def _print_neighborhood(start_bid: str, max_hops: int = 2) -> None:
+                if start_bid not in world._bindings:
+                    print(f"(neighborhood) Unknown start binding {start_bid!r}")
+                    return
+                layers = _concept_neighborhood_layers(start_bid, max_hops=max_hops)
+                print(f"\nConcept neighborhood around {start_bid} (max_hops={max_hops}):")
+                for dist in sorted(layers.keys()):
+                    print(f"  distance {dist}:")
+                    for nid in layers[dist]:
+                        nb = world._bindings.get(nid)
+                        tags = ", ".join(sorted(getattr(nb, 'tags', []))) if nb else ""
+                        print(f"    {nid}: [{tags}]")
+                print()
+
+
             #main code of the Inspect Binding code block
             if bid in ("all", "*", ""):
                 for _bid in _sorted_bids(world):
                     _print_one(_bid)
             else:
                 _print_one(bid)
+                # Optional: concept neighborhood around this binding
+                try:
+                    ans = input("Show concept neighborhood around this binding? [y/N]: ").strip().lower()
+                except Exception:
+                    ans = ""
+                if ans in ("y", "yes"):
+                    try:
+                        htxt = input("Max hops (default 2): ").strip()
+                        max_hops = int(htxt) if htxt.isdigit() else 2
+                    except Exception:
+                        max_hops = 2
+                    _print_neighborhood(bid, max_hops=max_hops)
 
             #code block complete and return back to main menu
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -4166,7 +4608,7 @@ In addition to triggering and executing a policy (if possible) the controller st
 Consider the example where the Mountain Goat calf has just been born and stands up.
 At this point these bindings, drives, and timekeeping exist:
 b1: [anchor:NOW] -> b2: [pred:stand] -> b3: [pred:action:push_up] -> b4: [pred:action:extend_legs]
-    -> b5: [pred:posture:standing, pred:state:posture_standing]
+    -> b5: [pred:posture:standing, pred:posture:standing]
 hunger=0.70, fatigue=0.20, warmth=0.60
 controller_steps=1, cog_cycles=1, temporal_epochs=1, autonomic_ticks=0,  age_days: 0.0000, cos_to_last_boundary: 1.0000
 These policies are eligible:  policy:stand_up, policy:seek_nipple, policy:rest, policy:suckle,
@@ -4186,7 +4628,7 @@ If we look at Snapshot we now see:
 -New binding b6  [cue:vision:silhouette:mom]
 -SkillStats -- new "policy:seek_nipple" statistics  ("policy:stand_up" ran before during the Instinct Step)
 -New bindings created by "policy:seek_nipple" : b7: [pred:action:orient_to_mom],
-    b8: [pred:seeking_mom, pred:state:seeking_mom]
+    b8: [pred:seeking_mom, pred:seeking_mom]
 (Note: If we run this Menu Step in a newborn calf then policy:stand_up will run since it is executionable with
  or without a cue and will have priority.)
 
@@ -4208,7 +4650,7 @@ If we look at Snapshot we now see:
                 if getattr(ctx, "temporal", None):
                     ctx.temporal.step()   # one soft-clock drift to reflect that the action took time
                     print_timekeeping_line(ctx)
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -4236,13 +4678,14 @@ i.  -there is a small drift of the context vector via ctx.temporal.step()
      (this may not matter if a policy writes a new event and there is a temporal jump later)
 
 ii. -the Action Center has to decide where to link new bindings to -- base_suggestions provides suggestions
-    -base_suggestion = choose_contextual_base(..., targets=['state:posture_standing', 'stand'])
+    -base_suggestion = choose_contextual_base(..., targets=['posture:standing', 'stand'])
     -it first looks for NEAREST_PRED(target) and success since b2 meets the target specified
     -thus, base_suggestion = binding b2 is recommended as the "write base", i.e. to link to
     -the suggestion is not used since that link already exists
     -base_suggestions can be used at different times to control write placement
 
 iii. -FOA focus of attention -- a small set of nearby nodes around NOW/LATEST, cues (for lightweight planning)
+     -NOW will also point to the new state binding created
 
 
 iv. -policy:stand_up when considered can be triggered since age_days is <3.0 and stand near NOW is True
@@ -4267,7 +4710,7 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
                 ctx.temporal.step()
 
             # --- context (for teaching / debugging) ---
-            base  = choose_contextual_base(world, ctx, targets=["state:posture_standing", "stand"])
+            base  = choose_contextual_base(world, ctx, targets=["posture:standing", "stand"])
             foa   = compute_foa(world, ctx, max_hops=2)
             cands = candidate_anchors(world, ctx)
 
@@ -4319,6 +4762,16 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
             else:
                 print("Action Center:", result)
 
+            # Move NOW anchor to the latest stable binding when we wrote new facts
+            if isinstance(result, dict) and result.get("status") == "ok" and after_n > before_n:
+                new_bid = result.get("binding")
+                if isinstance(new_bid, str):
+                    try:
+                        world.set_now(new_bid, tag=True, clean_previous=True)
+                    except Exception:
+                        # If anything goes wrong, ignore and keep the old NOW
+                        pass
+
             # WHY: show a human explanation tied to the executed policy
             label = result.get("policy") if isinstance(result, dict) and "policy" in result else "(controller)"
             gate  = next((p for p in POLICY_RT.loaded if p.name == label), None)
@@ -4369,7 +4822,7 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
                     print(f"     last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
 
             print_timekeeping_line(ctx)
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -4379,7 +4832,7 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
             print(skill_ledger_text("policy:stand_up"))
             print("Full ledger:  [src=cca8_controller.skill_readout()]")
             print(skill_readout())
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -4422,7 +4875,7 @@ iv.  try one controller step to react if anything is now actionable:
       e.g., policy:stand_up wants nearby pred:stand, that you are not already standing, and young age
    -choose best candidate triggered policy and call policy's execute(...)
       e.g., policy:stand_up (added 3 bindings)
-            b4: [pred:action:push_up], b5: [pred:action:extend_legs], b6: [pred:posture:standing, pred:state:posture_standing]
+            b4: [pred:action:push_up], b5: [pred:action:extend_legs], b6: [pred:posture:standing, pred:posture:standing]
    -the extra lines below: base is the same as Instinct Step base suggestion, and again for humans not passed into action_center step;
    foa seeds foa with LATEST and NOW, adds cue nodes, union of neighborhoods with max_hops of 2; cands are candidate anchors which could be
    potential start anchors for planning/attachement
@@ -4494,12 +4947,12 @@ pick by priority, and execute one policy (similar to menu Instinct Step but less
 
             #runs the Action Center once:
             # -collects policies whose trigger(world, drives, ctx) is True, i.e., eligible policy that has triggered
-            # -safety override -- e.g., if state:posture_fallen is near NOW then restricts policy to only policy:recover_fall, policy:stand_up
+            # -safety override -- e.g., if posture:fallen is near NOW then restricts policy to only policy:recover_fall, policy:stand_up
             # -tie-break/priority -- computes a simple drive-deficit score (e.g., hunger for policy:seek_nipple, etc) and picks the max policy
             # -executes the chosen policy via action_center_step(...) and returns a human-readable summary
             if fired != "no_match":
                 print(fired)
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -4508,7 +4961,7 @@ pick by priority, and execute one policy (similar to menu Instinct Step but less
             print("Selection:  Delete Edge\n")
             print("Removes edge(s) matching src --> dst [relation]. Leave relation blank to remove any label.\n")
             #function contains inputs, logic,messages, autosave
-            delete_edge_flow(world, autosave_cb=lambda: loop_helper(args.autosave, world, drives))
+            delete_edge_flow(world, autosave_cb=lambda: loop_helper(args.autosave, world, drives, ctx))
             #does not call loop_helper(...) since delete_edge_flow(...) does much of the same, including optional autosave
 
         #----Menu Selection Code Block------------------------
@@ -4518,7 +4971,7 @@ pick by priority, and execute one policy (similar to menu Instinct Step but less
             print("Writes the same snapshot you see on-screen to world_snapshot.txt for sharing/debugging.\n")
 
             export_snapshot(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT)
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -4565,7 +5018,7 @@ pick by priority, and execute one policy (similar to menu Instinct Step but less
                     print(f"[warn] Could not generate Pyvis HTML: {e}")
                     print("       Tip: install with  pip install pyvis")
 
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -4573,7 +5026,7 @@ pick by priority, and execute one policy (similar to menu Instinct Step but less
             # Simulate a fall event and try a recovery attempt immediately
             print("Selection: Simulate a fall event\n")
             print('''
-Summary: -Creates state:posture_fallen and relabels the linking edge to 'fall', then attempts recovery.
+Summary: -Creates posture:fallen and relabels the linking edge to 'fall', then attempts recovery.
          -Use this to demo safety gates (recover_fall / stand_up).
 
 --background primer and terminology--
@@ -4600,13 +5053,13 @@ Controller steps  — one Action Center decision/execution loop (aka “instinct
 Consider the example where the Mountain Goat calf has just been born.
 Thus, by default there will be b1 NOW --> b2 pred:stand
 Note: "pred:stand" is not a state but an intent (if standing we would say,
-   e.g., "pred:posture:standing" or legacy alias "pred:state:posture_standing")
-As shown below, this menu item creates a new binding b3 with "state:posture_fallen"
+   e.g., "pred:posture:standing" or legacy alias pred:posture:standing")
+As shown below, this menu item creates a new binding b3 with "posture:fallen"
 (it does it via world.add_predicate with attach="latest", i.e., link to b2).
 The previous LATEST → fallen edge is relabeled to 'fall' for semantic readability.
 It then calls a controller step. As shown above, this will cause the Action Center to
   evaluate policies via PolicyRuntime.consider_and_maybe_fire(...) --> since there is
-  "posture_fallen" the safety override restricts candidate policies to {recover_fall, stand_up}
+  "posture:fallen" the safety override restricts candidate policies to {recover_fall, stand_up}
   and given that equally priority/deficit, stand_up is earlier and will be triggered.
 The base suggestion, focus of attention, and candidates for binding are discussed in Instinct Step
   as well as in the README.md. They are largely diagnostic. Similarly the 'post' message simply re-evalutes
@@ -4616,10 +5069,10 @@ However the line "policy:stand_up (added 3 bindings)" tells us that the policy e
 If we go to Snapshot we see:
     b1: [anchor:NOW]  [src=world._bindings['b1'].tags]
     b2: [pred:stand]  [src=world._bindings['b2'].tags]
-    b3: [pred:state:posture_fallen]  [src=world._bindings['b3'].tags]
+    b3: [pred:posture:fallen]  [src=world._bindings['b3'].tags]
     b4: [pred:action:push_up]  [src=world._bindings['b4'].tags]
     b5: [pred:action:extend_legs]  [src=world._bindings['b5'].tags]
-    b6: [pred:posture:standing, pred:state:posture_standing]  [src=world._bindings['b6'].tags]
+    b6: [pred:posture:standing, pred:posture:standing]  [src=world._bindings['b6'].tags]
 Bindings b4, b5 and b6 were added and various actions occurred (or is being executed now). We see
    that at b6 there is the predicate "pred:posture:standing".
 Also, of interest with regard to timekeeping:
@@ -4630,7 +5083,7 @@ Also, of interest with regard to timekeeping:
             prev_latest = world._latest_binding_id
             # Create a 'fallen' state as a new binding attached to latest
             fallen_bid = world.add_predicate(
-                "state:posture_fallen",
+                "posture:fallen",
                 attach="latest",
                 meta={"event": "fall", "added_by": "user"}
             )
@@ -4662,7 +5115,7 @@ Also, of interest with regard to timekeeping:
                 ctx.temporal.step()   # one soft-clock drift to reflect that the action took time
                 print_timekeeping_line(ctx)
 
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -4757,7 +5210,7 @@ Note: the graph HTML file will be saved in your current directory\n
             except Exception as e:
                 print(f"[warn] Could not generate Pyvis HTML: {e}")
                 print("       Tip: install with  pip install pyvis")
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -4765,7 +5218,7 @@ Note: the graph HTML file will be saved in your current directory\n
             # Understanding bindings/edges/predicates/cues/anchors/policies (terminal help)
             print("Selection: Understanding bindings, edges, predicates, cues, anchors, policies")
             print_tagging_and_policies_help(POLICY_RT)
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -4801,7 +5254,7 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
                 vtext   = input("Vector  (comma/space floats; default: 0.0,0.0,0.0): ").strip()
             except (EOFError, KeyboardInterrupt):
                 print("\n(cancelled)")
-                loop_helper(args.autosave, world, drives)
+                loop_helper(args.autosave, world, drives, ctx)
                 continue
 
             if family not in ("cue", "pred"):
@@ -4936,7 +5389,7 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
                 print(f"[warn] capture_scene failed: {e}")
 
             print_timekeeping_line(ctx)
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -4961,7 +5414,7 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
                 print("Planner set to Dijkstra (weighted; defaults to 1 per edge when unspecified).")
             else:
                 print("Planner unchanged.")
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -5042,7 +5495,7 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
             print("  vhash64(now) = fingerprint of current temporal vector")
             print("  epoch_vhash64 = fingerprint at last boundary (alias: last_boundary_vhash64)")
 
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -5060,7 +5513,7 @@ the human-readable portions of the engram record.
                 key = ""
             if not key:
                 print("No id provided.")
-                loop_helper(args.autosave, world, drives)
+                loop_helper(args.autosave, world, drives, ctx)
                 continue
             # Resolve binding → engram(s) if the user passed bN
             eid = key
@@ -5068,7 +5521,7 @@ the human-readable portions of the engram record.
                 eids = _engrams_on_binding(world, key)
                 if not eids:
                     print(f"No engrams on binding {key}.")
-                    loop_helper(args.autosave, world, drives)
+                    loop_helper(args.autosave, world, drives, ctx)
                     continue
                 if len(eids) > 1:
                     print(f"Binding {key} has multiple engrams:")
@@ -5080,7 +5533,7 @@ the human-readable portions of the engram record.
                         eid = eids[idx]
                     except Exception:
                         print("Cancelled.")
-                        loop_helper(args.autosave, world, drives)
+                        loop_helper(args.autosave, world, drives, ctx)
                         continue
                 else:
                     eid = eids[0]
@@ -5094,7 +5547,7 @@ the human-readable portions of the engram record.
                 rec = None
             if not rec:
                 print(f"Engram not found: {eid}")
-                loop_helper(args.autosave, world, drives)
+                loop_helper(args.autosave, world, drives, ctx)
                 continue
             refs = _bindings_pointing_to_eid(world, eid)
             if refs:
@@ -5135,7 +5588,7 @@ the human-readable portions of the engram record.
             except Exception as e:
                 print(f"(error printing engram {eid}): {e!r}")
             print("-" * 78)
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -5226,7 +5679,7 @@ Note: the binding keeps the pointer engrams["column01"] = {"id":EID, "act":1.0}
                           f"{'  name='+name if name else ''}")
             if not any_found:
                 print("no engrams were found")
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection  Code Block------------------------
@@ -5331,7 +5784,7 @@ Note: the binding keeps the pointer engrams["column01"] = {"id":EID, "act":1.0}
                 for eid, bid, name, attrs in sorted(found, key=_sort_key):
                     print(f"EID={eid}  src={bid}  name={name}  epoch={attrs.get('epoch')}  tvec64={attrs.get('tvec64')}")
 
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -5348,7 +5801,7 @@ Every binding pointer that references this eid will be pruned.
             key = input("Engram id OR Binding id to delete: ").strip()
             if not key:
                 print("No id provided.")
-                loop_helper(args.autosave, world, drives); continue
+                loop_helper(args.autosave, world, drives, ctx); continue
 
             # Resolve binding → engram id(s) if needed
             targets = []
@@ -5356,7 +5809,7 @@ Every binding pointer that references this eid will be pruned.
                 eids = _engrams_on_binding(world, key)
                 if not eids:
                     print(f"No engrams on binding {key}.")
-                    loop_helper(args.autosave, world, drives); continue
+                    loop_helper(args.autosave, world, drives, ctx); continue
                 if len(eids) > 1:
                     print(f"Binding {key} has multiple engrams:")
                     for i, ee in enumerate(eids, 1):
@@ -5366,7 +5819,7 @@ Every binding pointer that references this eid will be pruned.
                         targets = [eids[pick]]
                     except Exception:
                         print("(cancelled)")
-                        loop_helper(args.autosave, world, drives); continue
+                        loop_helper(args.autosave, world, drives, ctx); continue
                 else:
                     targets = [eids[0]]
             else:
@@ -5376,7 +5829,7 @@ Every binding pointer that references this eid will be pruned.
             print("and will also prune any binding pointers that reference it.")
             if input("Type DELETE to confirm: ").strip() != "DELETE":
                 print("(cancelled)")
-                loop_helper(args.autosave, world, drives); continue
+                loop_helper(args.autosave, world, drives, ctx); continue
 
             deleted_any = False
             for eid in targets:
@@ -5401,7 +5854,7 @@ Every binding pointer that references this eid will be pruned.
                 print(("Deleted" if ok else "Engram not found or not deleted") + f". Pruned {pruned} pointer(s).")
                 deleted_any = deleted_any or ok
 
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -5421,11 +5874,11 @@ Attach an existing engram id (eid) to a binding id (bid).
             bid = input("Binding id: ").strip()
             if not (bid.lower().startswith("b") and bid[1:].isdigit()):
                 print("Please enter a binding id like b3.")
-                loop_helper(args.autosave, world, drives); continue
+                loop_helper(args.autosave, world, drives, ctx); continue
             eid = input("Engram id to attach: ").strip()
             if not eid:
                 print("No engram id provided.")
-                loop_helper(args.autosave, world, drives); continue
+                loop_helper(args.autosave, world, drives, ctx); continue
 
             # Choose slot (column name)
             slot = input("Column slot name (default: column01): ").strip() or "column01"
@@ -5442,12 +5895,12 @@ Attach an existing engram id (eid) to a binding id (bid).
             b = world._bindings.get(bid)
             if not b:
                 print(f"Unknown binding id: {bid}")
-                loop_helper(args.autosave, world, drives); continue
+                loop_helper(args.autosave, world, drives, ctx); continue
             if getattr(b, "engrams", None) is None or not isinstance(b.engrams, dict):
                 b.engrams = {}
             b.engrams[slot] = {"id": eid, "act": 1.0}
             print(f"Attached engram {eid} to {bid} as {slot}.")
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -5563,7 +6016,18 @@ Attach an existing engram id (eid) to a binding id (bid).
             except Exception as e:
                 print(f"[env→controller] controller step error: {e}")
 
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "36":
+            # Toggle mini-snapshot on/off
+            ctx.mini_snapshot = not getattr(ctx, "mini_snapshot", False)
+            state = "ON" if ctx.mini_snapshot else "OFF"
+            print(f"Selection: Toggle ON/OFF mini-snapshot switch to a new position of: {state}")
+            print("(if ON: will print a mini-snapshot after running the code of most menu selections, including this one)")
+            print("(if OFF: will not print a mini-snapshot after each menu selection)\n")
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -5594,7 +6058,7 @@ Brief Recap of --autosave session.json (i.e., NOT this current menu selection)
 >python cca8_run.py --autosave session.json
     -see on display: "[io] Started a NEW session. Autosave ON to 'session.json'."
     -new empty WorldGraph and Drives are created
-    -after most menu actions, loop_helper(args.autosave, world, drives) calls
+    -after most menu actions, loop_helper(args.autosave, world, drives, ctx) calls
       save_session("session.json", world, drives)
     -the session.json is fully rewritten each time, i.e., a current state snapshot is written
     -if you crash or ctl-C you can later restart from session.json using --load
@@ -5732,7 +6196,7 @@ This "load session" is a manual one-shot load snapshot, i.e., you are retrieving
             print("Selection: Drives & Drive Tags\n")
             print("Shows raw drive values and threshold flags with their sources.\n")
             print(drives_and_tags_text(drives))
-            loop_helper(args.autosave, world, drives)
+            loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
@@ -5799,14 +6263,12 @@ By contrast, if you simply exit and later restart with >python cca8_run.py --aut
 
         #----Menu Selection Code Block------------------------
         elif choice.lower() == "t":
-            #Help and Tutorial selection that gives a tour through several common menu functions
-            print("Selection:  Help -- System Docs, Tutorial, Demo Tour\n")
-            print("1) Quick console tour (recommended), 2) Open README/compendium, 3) Both. Enter cancels.\n")
+            # Help and Tutorial selection that opens project documentation
+            print("Selection:  Help -- System Docs and Tutorial\n")
 
             print("\nTutorial options:")
-            print("  1) Quick console tour (recommended)")
-            print("  2) Open README/compendium")
-            print("  3) Both")
+            print("  1) README/compendium System Documentation")
+            print("  2) Console Tour (pending)")
             print("  [Enter] Cancel")
             try:
                 pick = input("Choose: ").strip()
@@ -5814,9 +6276,6 @@ By contrast, if you simply exit and later restart with >python cca8_run.py --aut
                 pick = ""
             #pylint:disable=no-else-continue
             if pick == "1":
-                run_new_user_tour(world, drives, ctx, POLICY_RT, autosave_cb=lambda: loop_helper(args.autosave, world, drives))
-                continue
-            elif pick == "2":
                 comp = os.path.join(os.getcwd(), "README.md")
                 print(f"Tutorial file (README.md which acts as an all-in-one compendium): {comp}")
                 if os.path.exists(comp):
@@ -5834,30 +6293,14 @@ By contrast, if you simply exit and later restart with >python cca8_run.py --aut
                 else:
                     print("README.md not found in the current folder. Copy it here to open directly.")
                 continue
-            elif pick == "3":
-                run_new_user_tour(world, drives, ctx, POLICY_RT, autosave_cb=lambda: loop_helper(args.autosave, world, drives))
-                # then open README
-                comp = os.path.join(os.getcwd(), "README.md")
-                if os.path.exists(comp):
-                    try:
-                        if sys.platform.startswith("win"):
-                            os.startfile(comp)  # type: ignore[attr-defined]
-                        elif sys.platform == "darwin":
-                            os.system(f'open "{comp}"')
-                        else:
-                            os.system(f'xdg-open "{comp}"')
-                        print("Opened the README.md/compendium in your default viewer.")
-                    except Exception as e:
-                        print(f"[warn] Could not open automatically: {e}")
-                        print("Please open the file manually in your editor.")
-                else:
-                    print("README.md not found in the current folder. Copy it here to open directly.")
+            elif pick == "2":
+                print("Console tour is pending; please use the README/compendium for now.")
                 continue
             else:
                 print("(cancelled)")
                 continue
-            #pylint:enable=no-else-continue
-            #no loop_helper(...) -- tour has it owns autosave, README does not need it
+        #pylint:enable=no-else-continue
+        #no loop_helper(...) -- tutorial/help returns to main menu
 
         #----Menu Selection Code Block------------------------
             ##END OF MENU SELECTION BLOCKS
@@ -5952,7 +6395,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         comps = [  # (label, version, path)
             ("cca8_run.py", __version__, os.path.abspath(__file__)),
         ]
-        for name in ["cca8_world_graph", "cca8_controller", "cca8_column", "cca8_features", "cca8_temporal"]:
+        for name in ["cca8_world_graph", "cca8_controller", "cca8_column", "cca8_features", "cca8_temporal", "cca8_env", "cca8_test_worlds"]:
             ver, path = _module_version_and_path(name)
             comps.append((name, ver, path))
 
@@ -5963,7 +6406,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         # additionally show primitive count if the controller is importable
         try:
             from cca8_controller import PRIMITIVES
-            print(f"    [controller primitives: {len(PRIMITIVES)}]")
+            print(f"\n    [controller primitives: {len(PRIMITIVES)}]")
         except Exception:
             pass
 
@@ -5976,6 +6419,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     ##main operations of program via interactive_loop()
     interactive_loop(args); return 0
+
 
 # --------------------------------------------------------------------------------------
 # __main__

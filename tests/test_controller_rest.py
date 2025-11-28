@@ -11,4 +11,4 @@ def test_rest_fires_and_reduces_fatigue():
     res = action_center_step(g, ctx=None, drives=d)
     assert res["policy"] == "policy:rest"
     assert d.fatigue < 0.9  # reduced
-    assert g.plan_to_predicate(now, "state:resting") is not None
+    assert g.plan_to_predicate(now, "resting") is not None

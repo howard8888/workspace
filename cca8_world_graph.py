@@ -22,12 +22,15 @@ graph topology
     -see code below for structure of a binding, note that it stores id, tags, engrams, metadata, source edge data
 - "Provenance" -- it documents the history or lineage of the data who/what/why, lives within metadata of binding
 - "Metadata" -- characteristics including admin features of the data, and in our code actually includes the provenance
-- "Edge" -- a standard term for link; note that we use directed edges expressing weak causality "then"
-         - actions -- we usually encode as edge labels rather than as predicates
-           e.g., pred:stand:alone --run-->pred:stand:mom
+- "Edge" -- a standard term for link; we use directed edges expressing weak, generic
+            causality "then" (this came after that in an episode).
+            Actions are represented as bindings tagged "action:*" (with a legacy
+            "pred:action:*" alias on the same binding for back-compat); edges are
+            primarily temporal/relational glue rather than the main carrier of
+            action semantics.
 - "WorldGraph" -- our graph made up of bindings + directed edges
 - "Tags" -- bindings have predicate and/or cue and/or anchor tags:
-  "Predicate: a symbolic fact token, e.g., "state:posture_standing"
+  "Predicate: a symbolic fact token, e.g., "pred:posture_standing"
      -the reason we use this term with logic/AI heritage rather than a term like "fact" is because a fact
      implies a ground truth while a "predicate" is a symbolic claim
         e.g., "pred:standing"
@@ -83,6 +86,7 @@ class Edge(TypedDict):
     label: str
     meta: dict
 
+
 @dataclass(slots=True)
 class Binding:
     """One node in the episode graph.
@@ -101,6 +105,7 @@ class Binding:
     meta: dict
     engrams: dict
 
+
     def to_dict(self) -> dict:
         """JSON-safe representation for persistence."""
         return {
@@ -110,6 +115,7 @@ class Binding:
             "meta": dict(self.meta),
             "engrams": dict(self.engrams),
         }
+
 
     @staticmethod
     def from_dict(d: dict) -> "Binding":
@@ -148,51 +154,69 @@ class TagLexicon:
     BASE: dict[str, dict[str, set[str]]] = {
         "neonate": {
             "pred": {
-                # posture / proximity
-                "posture:standing", "posture:fallen",
-                "proximity:mom:close", "proximity:mom:far",
-                # feeding milestones
-                "nipple:found", "nipple:latched", "milk:drinking",
+                # Posture / body facts
+                "posture:standing",
+                "posture:fallen",
+                # Spatial / proximity
+                "proximity:mom:close",
+                "proximity:mom:far",
+                # Feeding / episode facts
+                "nipple:found",
+                "nipple:latched",
+                "milk:drinking",
+                "resting",
+                "alert",
                 "seeking_mom",
-                # action-like states we currently model as predicates
-                "action:push_up", "action:extend_legs", "action:orient_to_mom",
-                "stand", "action:look_around", "state:alert",
-                # drives as *plannable* states, if ever used that way
-                "drive:hunger_high",
+                # Intent predicates (if you still use these)
+                "stand",
+            },
+            "action": {
+                "push_up",
+                "extend_legs",
+                "look_around",
+                "orient_to_mom",
             },
             "cue": {
-                "vision:silhouette:mom", "scent:milk", "sound:bleat:mom",
-                "vestibular:fall", "touch:flank_on_ground", "balance:lost",
-                # optional cue form for drives (if used only as triggers)
-                "drive:hunger_high",
+                "vision:silhouette:mom",
+                "scent:milk",
+                "sound:bleat:mom",
+                "terrain:rocky",
+                "vestibular:fall",
+                "touch:flank_on_ground",
+                "drive:hunger_high",   # if you treat this as a cue
             },
-            "anchor": {"NOW", "HERE"},
+            "anchor": {
+                "NOW",
+                "NOW_ORIGIN",
+                "HERE",
+            },
         },
-        #   can extend these as   grow the task space
-        "infant":  {"pred": set(), "cue": set(), "anchor": set()},
-        "juvenile":{"pred": set(), "cue": set(), "anchor": set()},
-        "adult":   {"pred": set(), "cue": set(), "anchor": set()},
+        # Other stages can be empty for now.
+        "juvenile": {"pred": set(), "action": set(), "cue": set(), "anchor": set()},
+        "adult":    {"pred": set(), "action": set(), "cue": set(), "anchor": set()},
     }
 
-    # class attribute -- legacy → preferred (we accept the legacy but suggest the preferred)
-    LEGACY_MAP = {
-        "state:posture_standing": "posture:standing",
-        "state:posture_fallen":   "posture:fallen",
-        "state:seeking_mom":      "seeking_mom",
-        # can add more renames each time migrate vocabulary
-    }
+    # Legacy map: currently unused (no state:* tokens left).
+    LEGACY_MAP: dict[str, str] = {}
+
 
     def __init__(self):
-        # Build cumulative sets per stage, i.e., allowed[stage][family] -> set of permitted tokens (cumulative by stage)
-        #   self.allowed: structure is dict[str, dict[str, set[str]]], i.e., { "<stage>": { "pred": {...}, "cue": {...}, "anchor": {...} }, ... }
-        #   e.g.,  {'neonate': {'pred': {'nipple:latched', 'milk:drinking'.....
+        """
+         Build cumulative sets per stage, i.e.,
+            allowed[stage][family] -> set of permitted tokens (cumulative by stage)
+            { "<stage>": { "pred": {...}, "cue": {...}, "anchor": {...}, "action": {...} }, ... }
+        """
         self.allowed: dict[str, dict[str, set[str]]] = {}
-        acc = {"pred": set(), "cue": set(), "anchor": set()}
+        # Start accumulators for all families we support
+        acc = {"pred": set(), "cue": set(), "anchor": set(), "action": set()}
+
         for stage in self.STAGE_ORDER:
-            # accumulate
-            for fam in ("pred", "cue", "anchor"):
-                acc[fam] |= set(self.BASE.get(stage, {}).get(fam, set()))
+            stage_base = self.BASE.get(stage, {})
+            for fam in ("pred", "cue", "anchor", "action"):
+                acc[fam] |= set(stage_base.get(fam, set()))
+            # Freeze a snapshot for this stage (copy the sets)
             self.allowed[stage] = {fam: set(vals) for fam, vals in acc.items()}
+
 
     def is_allowed(self, family: str, token: str, stage: str) -> bool:
         """Return True if 'token' is permitted (preferred or legacy) at 'stage'."""
@@ -204,16 +228,18 @@ class TagLexicon:
             return True
         return False
 
+
     def preferred_of(self, token: str) -> str | None:
         """If 'token' is legacy, return its preferred canonical form, else None."""
         return self.LEGACY_MAP.get(token)
+
 
     def normalize_family_and_token(self, family: str, raw: str) -> tuple[str, str]:
         """
         Ensure the *family-local* token is returned (strip 'pred:'/'cue:' prefix if present).
         e.g., lex = TagLexicon
-              family, local = lex.normalize_family_and_token("pred", "pred:state:posture_standing")
-              Example: ('pred', 'pred:state:posture_standing') -> ('pred', 'state:posture_standing')
+              family, local = lex.normalize_family_and_token("pred", "pred:posture_standing")
+              Example: ('pred', 'pred:posture_standing') -> ('pred', 'pred:posture_standing')
         """
         tok = (raw or "").strip()
         prefix = family + ":"
@@ -256,10 +282,11 @@ class WorldGraph:
     # --- tag policy / developmental stage -----------------------------------
 
     def _init_lexicon(self):
-        """Initialize stage/tag-lexicon state and default tag policy."""
+        """Initialize stage/tag-lexicon and default tag policy."""
         self._lexicon = TagLexicon()
         self._stage: str = "neonate"         # default
         self._tag_policy: str = "warn"       # 'allow' | 'warn' | 'strict'
+
 
     def set_stage(self, stage: str) -> None:
         """Set developmental stage for tag constraints ('neonate'|'infant'|'juvenile'|'adult')."""
@@ -267,17 +294,20 @@ class WorldGraph:
             raise ValueError(f"Unknown stage: {stage!r}")
         self._stage = stage
 
+
     def set_stage_from_ctx(self, ctx) -> None:
         """Derive stage from ctx.age_days (toy thresholds; adjust as desired)."""
         age = float(getattr(ctx, "age_days", 0.0) or 0.0)
         stage = "neonate" if age <= 3.0 else "infant"
         self.set_stage(stage)
 
+
     def set_tag_policy(self, policy: str) -> None:
         """Set enforcement: 'allow' (off), 'warn' (default), or 'strict' (raise on out-of-lexicon)."""
         if policy not in ("allow", "warn", "strict"):
             raise ValueError("policy must be 'allow' | 'warn' | 'strict'")
         self._tag_policy = policy
+
 
     def _enforce_tag(self, family: str, token_local: str) -> str:
         """
@@ -299,6 +329,7 @@ class WorldGraph:
                     print(f"WARN [tags] legacy '{family}:{token_local}' — prefer '{family}:{preferred}' (kept legacy to avoid breakage)")
         return token_local
 
+
     def set_planner(self, strategy: str = "bfs") -> None:
         """
         Set the path planner used by plan_to_predicate().
@@ -308,6 +339,7 @@ class WorldGraph:
         if s not in {"bfs", "dijkstra"}:
             raise ValueError("strategy must be 'bfs' or 'dijkstra'")
         self._plan_strategy = s
+
 
     def get_planner(self) -> str:
         """Return the current planner strategy ('bfs' or 'dijkstra')."""
@@ -334,6 +366,7 @@ class WorldGraph:
         self._anchors[name] = bid
         # latest may remain whatever last predicate node was; anchor creation doesn't change latest
         return bid
+
 
     def set_now(self, bid: str, *, tag: bool = True, clean_previous: bool = True) -> str | None:
         """
@@ -369,6 +402,7 @@ class WorldGraph:
         if bid not in self._bindings:
             raise KeyError(f"Unknown binding id for NOW: {bid!r}")
 
+
         def _tags_of(bid_: str):
             b = self._bindings[bid_]
             ts = getattr(b, "tags", None)
@@ -380,6 +414,7 @@ class WorldGraph:
             # now guaranteed a set
             return b.tags
 
+
         def _tag_add(ts, t: str):
             # works for set or list
             try:
@@ -387,6 +422,7 @@ class WorldGraph:
             except AttributeError:
                 if t not in ts:  # list
                     ts.append(t)
+
 
         def _tag_discard(ts, t: str):
             # works for set or list
@@ -436,13 +472,14 @@ class WorldGraph:
         self._latest_binding_id = bid
         return bid
 
+
     def add_predicate(self, token: str, *, attach: Optional[str] = None, meta: Optional[dict] = None, engrams: Optional[dict] = None) -> str:
         """Create a new predicate binding and optionally auto-link it.
 
         Args:
             token: Predicate token. Accepts either "<token>" or "pred:<token>".
                    We normalize so the stored tag is always "pred:<token>" (no double "pred:").
-                   Examples: "state:posture_standing", "action:push_up", "vision:silhouette:mom".
+                   Examples: "pred:posture_standing", "action:push_up", "vision:silhouette:mom".
             attach: If "now", link NOW → new. If "latest", link <previous latest> → new.
                     If None or "none", no auto-link is added.
             meta:   Optional provenance dictionary to store on the binding.
@@ -522,7 +559,6 @@ class WorldGraph:
         return bid
 
 
-
     # ------------------------- engram / signal bridge -------------------------
 
     def attach_engram(self, bid: str, *, column: str = "column01",
@@ -566,6 +602,7 @@ class WorldGraph:
             payload["meta"] = dict(extra_meta)
         b.engrams[column] = payload
 
+
     def get_engram(self, *, column: str = "column01", engram_id: str) -> dict:
         """
         Fetch a full engram record from the column. Read-only convenience.
@@ -580,6 +617,7 @@ class WorldGraph:
         _ = column  #to mark used and keep for future multi-column routing
         from cca8_column import mem as _mem   # column memory (RAM)  :contentReference[oaicite:3]{index=3}
         return _mem.get(engram_id)
+
 
     def emit_pred_with_engram(self, token: str, *, payload=None, name: str | None = None,
                               column: str = "column01", attach: str | None = "now",
@@ -621,6 +659,7 @@ class WorldGraph:
 
         return bid, engram_id
 
+
     def emit_cue_with_engram(self, cue_token: str, *, payload=None, name: str | None = None,
                              column: str = "column01", attach: str | None = "now",
                              links: list[str] | None = None, attrs: dict | None = None,
@@ -657,6 +696,7 @@ class WorldGraph:
         self.attach_engram(bid, column=column, engram_id=engram_id, act=1.0)
 
         return bid, engram_id
+
 
     def capture_scene(self, channel: str, token: str, vector: list[float],
                       *, shape: tuple[int, ...] | None = None, attach: str = "now",
@@ -722,6 +762,7 @@ class WorldGraph:
             raise ValueError("self-loop rejected (pass allow_self_loop=True to permit)")
         self._bindings[src_id].edges.append({"to": dst_id, "label": label, "meta": dict(meta or {})})
 
+
     def delete_edge(self, src_id: str, dst_id: str, label: str | None = None) -> int:
         """
         Remove edges matching (src_id -> dst_id [label]) from the per-binding adjacency list.
@@ -740,6 +781,7 @@ class WorldGraph:
         if not isinstance(edges, list):
             return 0
 
+
         def _rel(e: dict) -> str:
             return e.get("label") or e.get("rel") or e.get("relation") or "then"
 
@@ -753,13 +795,67 @@ class WorldGraph:
     # alias (older callers may still use remove_edge() )
     remove_edge = delete_edge
 
+    def add_action(self, token: str, attach: str = "latest", meta: Optional[dict] = None, engrams: Optional[dict] = None) -> str:
+        """
+        Create an action binding carrying 'action:<token>'.
+        Accepts either 'push_up' or 'action:push_up'; normalizes to 'action:push_up'.
+        ----
+        Prev docstring:
+        Create a new action binding and optionally auto-link it.
+        Args:
+        token:
+            Action token. Accepts either "<token>" (e.g., "push_up") or
+            "action:<token>" (e.g., "action:push_up").
 
-    def add_action(self, src_id: str, dst_id: str, action: str, meta: dict | None = None):
+            Stored tags include both:
+                • "action:<token>"      (new action-family tag)
+                • "pred:action:<token>" (legacy alias for back-compat)
+        attach:
+            If "now", link NOW → new (label 'then').
+            If "latest", link <previous latest> → new.
+            If None or "none", no auto-link is added.
+        meta:
+            Optional provenance dictionary to store on the binding.
+        engrams:
+            Optional engram attachments (small dict).
+        Returns:
+        bid : str
+            The new binding id (e.g., "b42").
+        ----
         """
-        Syntactic sugar for adding an action-labeled edge: src --action--> dst.
-        Equivalent to add_edge(src_id, dst_id, label=action, meta=meta).
-        """
-        return self.add_edge(src_id, dst_id, label=action, meta=meta)
+
+        # Normalize to family 'action' / local token
+        tok = (token or "").strip()
+        if tok.startswith("action:"):
+            local = tok.split(":", 1)[1]
+        else:
+            local = tok
+        # Lexicon enforcement (no auto-rewrite; just warn or raise)
+        local = self._enforce_tag("action", local)
+        full_tag = f"action:{local}"
+        # Validate attach option
+        att = (attach or "none").lower()
+        if att not in _ATTACH_OPTIONS:  # {"now", "latest", "none"}
+            raise ValueError(f"attach must be one of {_ATTACH_OPTIONS!r}")
+        # Allocate binding id and create the node
+        prev_latest = self._latest_binding_id
+        bid = self._next_id()
+        b = Binding(
+            id=bid,
+            tags={full_tag},
+            edges=[],
+            meta=dict(meta or {}),
+            engrams=dict(engrams or {}),
+        )
+        self._bindings[bid] = b
+        self._latest_binding_id = bid
+        # Optional auto-linking
+        if att == "now":
+            src = self.ensure_anchor("NOW")
+            self.add_edge(src, bid, "then", meta or {})
+        elif att == "latest" and prev_latest and prev_latest in self._bindings:
+            self.add_edge(prev_latest, bid, "then", meta or {})
+        return bid
 
 
     # -------------------------- planning -------------------------
@@ -773,6 +869,7 @@ class WorldGraph:
             cur = parent.get(cur)
         path.reverse()
         return path
+
 
     def plan_to_predicate(self, src_id: str, token: str) -> Optional[List[str]]:
         """Plan from src_id to first binding carrying 'pred:<token>'.
@@ -821,6 +918,7 @@ class WorldGraph:
         # No path found
         return None
 
+
     def _edge_cost(self, e: Edge) -> float:
         """
         Return numeric cost/weight for an edge.
@@ -832,6 +930,7 @@ class WorldGraph:
             if isinstance(v, (int, float)):
                 return float(v)
         return 1.0  # default infrastructure: unweighted edges
+
 
     def _plan_to_predicate_dijkstra(self, src_id: str, target_tag: str) -> Optional[List[str]]:
         """
@@ -881,7 +980,6 @@ class WorldGraph:
 
         return None
 
-
     # ------------------------- pretty path helpers -------------------------
 
     def _first_pred_of(self, bid: str) -> str | None:
@@ -894,6 +992,7 @@ class WorldGraph:
                 return t[5:]
         return None
 
+
     def _anchor_name_of(self, bid: str) -> str | None:
         b = self._bindings.get(bid)
         if not b:
@@ -903,6 +1002,7 @@ class WorldGraph:
                 return t.split(":", 1)[1]
         return None
 
+
     def _edge_label(self, src: str, dst: str) -> str | None:
         b = self._bindings.get(src)
         if not b or not b.edges:
@@ -911,6 +1011,7 @@ class WorldGraph:
             if e.get("to") == dst:
                 return e.get("label") or "then"
         return None
+
 
     def pretty_path(
         self,
@@ -923,6 +1024,7 @@ class WorldGraph:
         """Return a readable, single-line rendering of a path of binding IDs."""
         if not ids:
             return "(no path)"
+
         def node_label(bid: str) -> str:
             pred = self._first_pred_of(bid)
             anch = self._anchor_name_of(bid)
@@ -950,6 +1052,7 @@ class WorldGraph:
                 parts.append(f" --{lbl}--> " if lbl else " -> ")
         return "".join(parts)
 
+
     def plan_pretty(
         self, src_id: str, token: str, **kwargs
         ) -> str:
@@ -973,6 +1076,7 @@ class WorldGraph:
                     continue
                 yield src_id, dst, e
 
+
     def list_actions(self, *, include_then: bool = True) -> list[str]:
         """
         Return a sorted list of unique edge labels present in the graph.
@@ -985,6 +1089,7 @@ class WorldGraph:
                 continue
             labels.add(lab)
         return sorted(labels)
+
 
     def action_counts(self, *, include_then: bool = True) -> dict[str, int]:
         """
@@ -1001,6 +1106,7 @@ class WorldGraph:
             c[lab] += 1
         return dict(c)
 
+
     def edges_with_action(self, label: str):
         """
         Generator over edges that match a given action label.
@@ -1009,6 +1115,7 @@ class WorldGraph:
         for src, dst, e in self._iter_edges():
             if e.get("label", "then") == label:
                 yield (src, dst, e.get("meta", {}) or {})
+
 
     def action_metrics(self, label: str, *, numeric_keys: tuple[str, ...] = ("meters", "duration_s", "speed_mps")) -> dict:
         """
@@ -1042,6 +1149,7 @@ class WorldGraph:
                     "avg": d["sum"] / d["count"],
                 }
         return out
+
 
     def action_summary_text(self, *, include_then: bool = False, examples_per_action: int = 2) -> str:
         """
@@ -1100,7 +1208,7 @@ class WorldGraph:
         Node labels:
             - 'first_pred': use the first 'pred:*' tag if present; else anchor name; else the id (default)
             - 'id': just the binding id (e.g., b42)
-            - 'id+first_pred': 'b42\\nstate:posture_standing' (if present)
+            - 'id+first_pred': 'b42\\npred:posture_standing' (if present)
 
         Notes:
             - Highlights NOW (amber) and LATEST (green) to help navigation.
@@ -1125,17 +1233,20 @@ class WorldGraph:
         _here_id = self._anchors.get("HERE")  # currently unused; reserved for future highlighting
         latest_id = self._latest_binding_id
 
+
         def _first_pred(b) -> str | None:
             for t in b.tags:
                 if isinstance(t, str) and t.startswith("pred:"):
                     return t[5:]
             return None
 
+
         def _anchor_name(b) -> str | None:
             for t in b.tags:
                 if isinstance(t, str) and t.startswith("anchor:"):
                     return t.split(":", 1)[1]
             return None
+
 
         def _first_cue(b) -> str | None:
             for t in getattr(b, "tags", []) or []:
@@ -1236,6 +1347,7 @@ class WorldGraph:
             g._id_counter = itertools.count(mx + 1)
 
         return g
+
 
     def check_invariants(self, *, raise_on_error: bool = True) -> list[str]:
         """Validate basic graph invariants. Return a list of human-readable issues.

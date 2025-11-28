@@ -544,7 +544,7 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
 
         # --- posture predicates (canonical neonate vocabulary) ---
         # See README: posture:standing / posture:fallen, etc.
-        # We use posture:* as the canonical form and leave state:* as legacy.
+        # We use posture:* as the canonical form (deprecated -- state:*)
         if env_state.kid_posture == "standing":
             preds.append("posture:standing")
         elif env_state.kid_posture == "fallen":
@@ -553,8 +553,7 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
             # Latched implies upright posture.
             preds.append("posture:standing")
         elif env_state.kid_posture == "resting":
-            # You may later want a dedicated "posture:resting".
-            preds.append("state:resting")
+            preds.append("resting")
 
         # --- proximity predicates ---
         # We currently trust the discrete mom_distance field; later we could derive

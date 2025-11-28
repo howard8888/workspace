@@ -9,9 +9,12 @@ Concepts
     -parameter 'world' represents the episode state, e.g., already standing? fallen?, cues present?, anchors/latest?
     -parameter 'drives' represent internal needs, i.e., homeostatic values (e.g., hunger, fatigue, etc)
         -drive tags are derived from numeric levels, e.g., hunger > 0.60 --> "drive:hunger_high"
-        [note: worldgraph has only 3 families: pred:*, cue:*, anchor:* -- drive:* are ephemeral controller flags, not graph tags]
-                   [action:* actually stored as "pred:action:*" although locally sometimes referred to as action:*]
-                   [we still encode actions primarily as edge labels]
+        [note: WorldGraph index layer uses four tag families: pred:*, action:*, cue:*, anchor:*.
+         drive:* are ephemeral controller flags, not graph tags.
+         On a real WorldGraph, action nodes carry both "action:*" and legacy "pred:action:*" tags
+         (for back-compat); edges are generic "then" links that encode weak temporal/causal
+         succession between bindings.]
+
         [created by Drives.flags() for trigger logic only and are never written to WorldGraph]
         [e.g., plannable drive condition, then yes, can create a node with e.g., "pred:drive:hunger_high", or evidence, e.g., cue:drive:hunger_high]
         -policies use drive tags in triggering (e.g., SeekNipple needs hunger), while execute may update drives (e.g., Rest reduces fatigue a bit)
@@ -56,13 +59,22 @@ Token quick-ref (canonicalization & usage)
 
 Families in the WorldGraph:
   • pred:*     — facts (assertions the reasoner can use)
+  • action:*   — action nodes (verbs in the navigation map)
   • cue:*      — observations/engram evidence (non-factual sensory tags)
-  • anchor:*   — structural anchors (NOW, LATEST, etc.)
+  • anchor:*   — structural anchors (NOW, NOW_ORIGIN, etc.)
 
 Canonical tokens (second-level namespaces under pred:*):
-  • state:*    — relatively stable facts about agent/world (e.g., state:posture_standing)
-  • action:*   — action semantics / provenance (e.g., action:look_around)
-    NOTE: prefer keeping actions on edges; assert pred:action:* only when a fact is needed.
+  • posture:*  — body posture facts (e.g., posture:standing, posture:fallen)
+  • proximity:*— spatial relations (e.g., proximity:mom:close, proximity:mom:far)
+  • nipple:*, milk:* — feeding milestones (e.g., nipple:latched, milk:drinking)
+
+Canonical tokens (second-level namespaces under action:*):
+  • <verb>     — action semantics / provenance (e.g., push_up, extend_legs, look_around, orient_to_mom)
+
+    NOTE:
+      - On a real WorldGraph, actions are stored as both "action:<verb>" and the legacy
+        "pred:action:<verb>" on the same binding (for back-compat).
+      - Edges carry generic "then" relations; actions are nodes, not edge labels.
 
 Controller-only flags (never written as pred:*):
   • drive:*    — ephemeral homeostatic flags derived from Drives (e.g., drive:hunger_high)
@@ -175,32 +187,36 @@ HUNGER_HIGH = 0.60
 FATIGUE_HIGH = 0.70
 WARMTH_COLD = 0.30
 
+
 # --- Canonical tokens ---------------------------------------------------------
-# We encode state/action semantics as a second-level namespace after "pred:".
-STATE_POSTURE_STANDING = "state:posture_standing"
-STATE_POSTURE_FALLEN   = "state:posture_fallen"
-STATE_RESTING          = "state:resting"
-STATE_ALERT            = "state:alert"
+# Canonical tokens (second-level namespaces under pred:*)
+# We treat "posture:*", "resting", "alert", "seeking_mom" as the canonical forms.
+# Legacy "state:*" forms are still recognized when *reading* so older snapshots/tests work.
+
+STATE_POSTURE_STANDING = "posture:standing"
+STATE_POSTURE_FALLEN   = "posture:fallen"
+STATE_RESTING          = "resting"
+STATE_ALERT            = "alert"
+STATE_SEEKING_MOM      = "seeking_mom"
 
 ACTION_PUSH_UP         = "action:push_up"
 ACTION_EXTEND_LEGS     = "action:extend_legs"
 ACTION_LOOK_AROUND     = "action:look_around"
 ACTION_ORIENT_TO_MOM   = "action:orient_to_mom"
 
-STATE_SEEKING_MOM      = "state:seeking_mom"
-
 # Back-compat synonyms we still recognize when *reading* from the graph.
-CANON_SYNONYMS = {
-    "posture:standing": STATE_POSTURE_STANDING,
-    "posture:fallen":   STATE_POSTURE_FALLEN,
-    "seeking_mom":      STATE_SEEKING_MOM,
-}
+# These map legacy state:* forms onto the new canonical tokens.
+CANON_SYNONYMS: dict[str, str] = {}
+def _canon(token: str) -> str:
+    return CANON_SYNONYMS.get(token, token)
+
 
 def _is_worldgraph(world) -> bool:
     """Heuristic: real WorldGraph exposes planning.
     True or False regarding if world.plan_to_predicate() exists
     """
     return hasattr(world, "plan_to_predicate") and callable(getattr(world, "plan_to_predicate"))
+
 
 def _add_tag_to_binding(world, bid: str, full_tag: str) -> None:
     """Best-effort: add a tag to an existing binding (works for WorldGraph and FakeWorld).
@@ -224,17 +240,33 @@ def _add_tag_to_binding(world, bid: str, full_tag: str) -> None:
     except Exception:
         pass
 
-def _canon(token: str) -> str:
-    """Map legacy tokens to canonical tokens; unknowns pass through unchanged.
-    -essentially returns a newer token if one exists, otherwise returns the token you are checking
-    """
-    return CANON_SYNONYMS.get(token, token)
 
 def _add_pred(world, token: str, **kwargs):
     """Wrapper to add a canonical predicate token. WorldGraph will add the 'pred:' family automatically.
     -calls in worldgraph module world.add_predicate but with token updated to any newer tokens should they existing
     """
     return world.add_predicate(_canon(token), **kwargs)
+
+
+def _add_action(world, token: str, **kwargs):
+    """Wrapper to add an action binding.
+
+    On a real WorldGraph, this calls `world.add_action(...)`, which writes
+    both "action:*" and legacy "pred:action:*" tags on the same binding.
+
+    On FakeWorld (tests) or other WorldGraph-like stubs that don't yet define
+    `add_action(...)`, we fall back to `_add_pred(...)`, which writes only
+    "pred:action:*" (preserving older test expectations).
+    """
+    # Apply canonical mapping (currently only used for state:*; action:* passes through)
+    tok = _canon(token)
+
+    if _is_worldgraph(world) and hasattr(world, "add_action") and callable(getattr(world, "add_action")):
+        # Real WorldGraph path: action-family binding
+        return world.add_action(tok, **kwargs)
+
+    # Fallback for FakeWorld or older stubs: treat actions as predicates
+    return _add_pred(world, token, **kwargs)
 
 
 # ==== Base-aware write STUB (NO-OP) =========================================
@@ -275,6 +307,7 @@ class Drives:
     fatigue: float = 0.2
     warmth: float = 0.6
 
+
     def flags(self) -> List[str]:
         """Return ephemeral 'drive:*' flags for policy triggers (not persisted in the graph)
         -note that above in constants section: HUNGER_HIGH = 0.60, FATIGUE_HIGH = 0.70, WARMTH_COLD = 0.30
@@ -290,16 +323,19 @@ class Drives:
             tags.append("drive:cold")
         return tags
 
+
     def predicates(self) -> List[str]:  # pragma: no cover (legacy alias)
         """DEPRECATED: use flags().
            Back-compat for older code/tests
         """
         return self.flags()
 
+
     def to_dict(self) -> dict:
         """Return a plain JSON-safe dict of drive values for autosave/snapshots.
         """
         return {"hunger": self.hunger, "fatigue": self.fatigue, "warmth": self.warmth}
+
 
     @classmethod
     def from_dict(cls, d: dict) -> "Drives":
@@ -338,6 +374,7 @@ SKILLS: Dict[str, SkillStat] = {}
 #e.g., StandUp.name = "policy:stand_up" (defined on the primitive)
 #e.g., SKILLS = {"policy:stand_up": SkillStat(n=3, succ=2, q=0.447, last_reward=1.0),...}
 
+
 def update_skill(name: str, reward: float, ok: bool = True, alpha: float = 0.3) -> None:
     """Update (or create) a SkillStat:
     - n += 1; succ += 1 if ok
@@ -366,17 +403,20 @@ def update_skill(name: str, reward: float, ok: bool = True, alpha: float = 0.3) 
     s.q = (1 - alpha) * s.q + alpha * float(reward)
     s.last_reward = float(reward)
 
+
 def reset_skills() -> None:
     """Clear the in-memory skill ledger(testing/demo convenience).
     SKILLS becomes {}
     """
     SKILLS.clear()
 
+
 def skills_to_dict() -> dict:
     """Return a JSON-safe mapping of skill stats:
     { "policy:stand_up": {"n": int, "succ": int, "q": float, "last_reward": float}, ...}
     """
     return {k: asdict(v) for k, v in SKILLS.items()}
+
 
 def skills_from_dict(d: dict) -> None:
     """Rebuild SKILLS dataclass values from plain dicts (robust to bad inputs).
@@ -393,6 +433,7 @@ def skills_from_dict(d: dict) -> None:
         except Exception:
             # Skip malformed rows rather than breaking session load.
             continue
+
 
 def skill_readout() -> str:
     """Human-readable policy stats: one line per policy (n/succ/rate/q/last)
@@ -433,13 +474,22 @@ def _any_tag(world, full_tag: str) -> bool:
         pass
     return False
 
+
 def _has(world, token: str) -> bool:
-    """True if either the canonical *or* raw token exists as a pred:* tag
+    """
+    Previously: True if either the canonical *or* raw token exists as a pred:* tag
     -recall from above that _canon(token: str) -> CANON_SYNONYMS.get(token, token)
     -then the argument token is fed into __any_tag(...)
+
+    New version: Return True if any binding has tag 'pred:<token>'.
+    -Thin wrapper over _any_tag(...), which is the only helper allowed
+    to peek at world._bindings (and is guarded with the appropriate
+    pylint pragma).
+
     """
-    canon = _canon(token)
-    return _any_tag(world, f"pred:{canon}") or _any_tag(world, f"pred:{token}")
+    target = f"pred:{token}"
+    return _any_tag(world, target)
+
 
 def _any_cue_present(world) -> bool:
     """Loose cue check: True if any tag starts with 'cue:' (no proximity semantics).
@@ -458,6 +508,7 @@ def _any_cue_present(world) -> bool:
     except (AttributeError, TypeError, KeyError):
         pass
     return False
+
 
 def _policy_deficit_score(name: str, drives: Drives) -> float:
     """
@@ -485,6 +536,7 @@ def _policy_deficit_score(name: str, drives: Drives) -> float:
     if name == "policy:rest":
         return max(0.0, float(drives.fatigue) - float(FATIGUE_HIGH)) * 0.7
     return 0.0
+
 
 def drives_summary(drives: Drives) -> dict:
     """
@@ -524,12 +576,14 @@ class Primitive:
     #as shown in docstring, set name = "policy:your_name"   e.g., "policy:stand_up"
     name: str = "policy:unknown"
 
+
     def trigger(self, world, drives: Drives) -> bool:  # pylint: disable=unused-argument
         """Return usually True if this policy should fire in a concrete subclass
         -however, in the base class, will return False
         -uses a → cheap gate; no world writes, returns True or False regarding triggering
         """
         return False
+
 
     def execute(self, world, ctx, drives: Drives) -> dict:  # pylint: disable=unused-argument
         """Return usually _success() if policy runs in a concrete subclasses
@@ -538,6 +592,7 @@ class Primitive:
         -perform one step; append bindings/edges and return a status dict (base = fail).
         """
         return self._fail("not implemented")
+
 
     def _success(self, reward: float, notes: str, **extra) -> dict:
         """Standard success payload + skill update; extra keys are merged (e.g., binding='b7')
@@ -549,6 +604,7 @@ class Primitive:
         if extra:
             payload.update(extra)
         return payload
+
 
     def _fail(self, notes: str, reward: float = 0.0, **extra) -> dict:
         """Standard fail payload + skill update; extra keys are merged
@@ -587,6 +643,7 @@ def _policy_meta(ctx, policy_name: str) -> dict:
         m["epoch_vhash64"] = bvh
     return m
 
+
 class StandUp(Primitive):
     """Primitive that creates a tiny posture chain and marks standing
     -see above for the division of work between the abstract base class (class Primitive) and the
@@ -616,6 +673,7 @@ class StandUp(Primitive):
     #policy name
     name = "policy:stand_up"
 
+
     def trigger(self, world, drives: Drives) -> bool:
         '''
          -each subclass must have its own trigger(...); if not as seen above the
@@ -643,6 +701,7 @@ class StandUp(Primitive):
         #otherwise the policy does not trigger
         return False
 
+
     def execute(self, world, ctx, drives):
         """
         Create a short 'stand up' sequence:
@@ -662,20 +721,12 @@ class StandUp(Primitive):
         """
         meta = _policy_meta(ctx, self.name)
         try:
-            a = _add_pred(world, ACTION_PUSH_UP,     attach="now",    meta=meta)
-            b = _add_pred(world, ACTION_EXTEND_LEGS, attach="latest", meta=meta)
+            _add_action(world, ACTION_PUSH_UP,     attach="now",    meta=meta)
+            _add_action(world, ACTION_EXTEND_LEGS, attach="latest", meta=meta)
 
-            if _is_worldgraph(world):
-                # Write alias as the FINAL node so planner to "posture:standing" finds *this* binding.
-                c = world.add_predicate("posture:standing", attach="latest", meta=meta)
-                # Also add the canonical tag on the SAME binding for new code paths.
-                _add_tag_to_binding(world, c, f"pred:{STATE_POSTURE_STANDING}")
-            else:
-                # In FakeWorld unit tests we keep only the canonical token.
-                c = _add_pred(world, STATE_POSTURE_STANDING, attach="latest", meta=meta)
+            # Final state: canonical posture:standing predicate
+            c = _add_pred(world, STATE_POSTURE_STANDING, attach="latest", meta=meta)
 
-            world.add_edge(a, b, "then")
-            world.add_edge(b, c, "then")
             return self._success(reward=1.0, notes="stood up", binding=c)
         except Exception as e:
             return self._fail(f"stand_up failed: {e}")
@@ -736,6 +787,7 @@ class SeekNipple(Primitive):
     """
     name = "policy:seek_nipple"
 
+
     def trigger(self, world, drives: Drives) -> bool:
         """Cheap gate (no writes). See class docstring for conditions. Returns True if eligible.
         """
@@ -750,22 +802,17 @@ class SeekNipple(Primitive):
             return False
         return True
 
+
     def execute(self, world, ctx, drives: Drives) -> dict:
         """
         Append an orientation→seeking chain, stamp provenance, and return success.
         See class docstring for exact write pattern and side effects.
         """
         meta = _policy_meta(ctx, self.name)
-        a = _add_pred(world, ACTION_ORIENT_TO_MOM, attach="now", meta=meta)
-
-        if _is_worldgraph(world):
-            b = world.add_predicate("seeking_mom", meta=meta)  # → pred:seeking_mom
-            _add_tag_to_binding(world, b, f"pred:{STATE_SEEKING_MOM}")  # also pred:state:seeking_mom
-        else:
-            b = _add_pred(world, STATE_SEEKING_MOM, meta=meta)
-
-        world.add_edge(a, b, "then")
-        return self._success(reward=0.5, notes="seeking mom")
+        _add_action(world, ACTION_ORIENT_TO_MOM, attach="now", meta=meta)
+        # Final state: canonical seeking_mom predicate
+        b = _add_pred(world, STATE_SEEKING_MOM, attach="latest", meta=meta)
+        return self._success(reward=0.5, notes="seeking mom", binding=b)
 
 
 class FollowMom(Primitive):
@@ -812,14 +859,17 @@ class FollowMom(Primitive):
     """
     name = "policy:follow_mom"
 
+
     def trigger(self, world, drives: Drives) -> bool:
         """Always True (permissive fallback). Tighten if you want occasional no-ops."""
         return True
 
+
     def execute(self, world, ctx, drives: Drives) -> dict:
-        """Append look_around→alert and return success (see class docstring)."""
+        """Append look_around→alert and return success (see class docstring).
+        """
         meta = _policy_meta(ctx, self.name)
-        a = _add_pred(world, ACTION_LOOK_AROUND, attach="now", meta=meta)
+        a = _add_action(world, ACTION_LOOK_AROUND, attach="now", meta=meta)
         b = _add_pred(world, STATE_ALERT, meta=meta)
         world.add_edge(a, b, "then")
         return self._success(reward=0.1, notes="idling/alert")
@@ -856,9 +906,11 @@ class ExploreCheck(Primitive):
     """
     name = "policy:explore_check"
 
+
     def trigger(self, world, drives: Drives) -> bool:
         """Disabled stub (always False)."""
         return False
+
 
     def execute(self, world, ctx, drives: Drives) -> dict:
         """Return a success sentinel without modifying the world."""
@@ -908,9 +960,11 @@ class Rest(Primitive):
     """
     name = "policy:rest"
 
+
     def trigger(self, world, drives: Drives) -> bool:
         """Return True when fatigue is above the hard threshold (> 0.8)."""
         return drives.fatigue > 0.8
+
 
     def execute(self, world, ctx, drives: Drives) -> dict:
         """Reduce fatigue, assert 'resting', and return success (see class docstring)."""

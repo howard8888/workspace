@@ -38,8 +38,11 @@ def test_standup_writes_canonical_state_tag():
     res = pol.execute(world, ctx, d)
     assert res["status"] == "ok"
     assert res["policy"] == "policy:stand_up"
+    # Canonical posture token should be present.
     assert _has_tag(world, ctrl.STATE_POSTURE_STANDING)
-    assert not _has_tag(world, "posture:standing")  # not newly created
+    # In FakeWorld we do not write any legacy alias; only the canonical posture:standing is present.
+    # (Any state:posture_standing tag, if written, would only appear in a real WorldGraph instance.)
+
 
 def test_preferred_policy_executes_selected():
     world = FakeWorld()
@@ -58,5 +61,6 @@ def test_seeknipple_uses_state_token():
     assert pol.trigger(world, d)
     res = pol.execute(world, ctx, d)
     assert res["status"] == "ok"
+    # Canonical seeking_mom token should be present.
     assert _has_tag(world, ctrl.STATE_SEEKING_MOM)
-    assert not _has_tag(world, "seeking_mom")  # legacy alias not written
+

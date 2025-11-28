@@ -1,28 +1,34 @@
-# CCA8  — Project Compendium (README)
+# CCA8  — Project Documentation -- Compendium (README.md)
 
-# CCA8 Compendium (All-in-One)
+*If you are new to CCA8: read 1-minute + 5-minute summary, try the 5-step demo, then jump to ‘The WorldGraph in detail’ and ‘Action Selection’.*
+*The Tutorials below (see Table of Contents) are designed to teach you the practical aspects of the CCA8 as well as some of the theory behind it.*
+Questions?  Send me an email:  hschneidermd@alum.mit.edu
 
-The CCA8 Compendium is an all-in-one ongoing document that captures the design, rationale, and practical know-how for the CCA8 simulation project. It is intended to function as a user manual how to use the software as well as provide technical details to persons with an interest in the project.
+
 
 # **1-minute summary**
+
 
 The CCA8 Project is the simulation of the brain of a mountain goat through the lifecycle with hooks for different robotic embodiments. 
 
 Scaffolding in place (partially operational) for simulation of a chimpanzee-like brain, human-like brain, human-like brain with five brains operating in parallel in the same agent, human-like brain with multiple agents interacting, human-like brain with five brains operating in parallel with combinatorial planning ability.
 
-This single document is the canonical “compendium” for the Causal Cognitive Architecture 8 (CCA8).It serves as: README, user guide, architecture notes, design decisions, and maintainer reference.
+This single document is the canonical “compendium” for the Causal Cognitive Architecture 8 (CCA8). It serves as: README, user guide, architecture notes, design decisions, and maintainer reference.
 
-Entry point: `>python cca8_run.py`
-Primary modules: `cca8_run.py`, `cca8_world_graph.py`, `cca8_controller.py`, `cca8_column.py`, `cca8_features.py`, `cca8_temporal.py`
+**Repo:** `https://github.com/howard8888/workspace`
+**Entry point:** `>python cca8_run.py`  
+
+*The program will run on most computers, although different sets of features (as well as embodiments, of course) will be available.*
 
 
 
-<img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
-
+<img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
 
 
 *Adult Mountain Goat with recently born Calf (walking within minutes
 of birth, and by one week can climb most places its mother can)*
+
+
 
 **CCA8** Simulation of a mountain goat through the lifecycle 
 **CCA8b** Simulation of a mountain goat-like brain with 5 brains within the same agent
@@ -30,18 +36,132 @@ of birth, and by one week can climb most places its mother can)*
 **CCA8d** Simulation of a mountain goat-like brain with 5 brains within the same agent with combinatorial planning
 **CCA9** Simulation of a chimpanzee through the lifecycle
 **CCA10** Simulation of a human through the lifecycle
+
 *See **References** Section for published peer reviewed articles on the **CCA7** and earlier versions*
 
 
+
+***Notes:***
+
+-Versions of Python that will work with code:  check docstring of cca8_run.py or requirements.txt
+   *(at time of writing, tested on Windows 11 Pro with Python 3.11.4)*
+-Dependencies required:  check docstring of cca8_run.py or requirements.txt
+     -*-> Software should be able to run on most systems without any issues (GPU and LLM API requirements, if used, are very fail-safe)*
+-Windows: *>python cca8_run.py*   will also usually work, depending on Python setup; it will ignore the shebang line
+(*>cca8_run.py* may work if Windows file associations set up for the Python version)
+-Mac, Linux:  *>python3 cca8_run.py*
+-Virtual environment Venv (*must activate*) (Windows, Mac or Linux):  *>python cca8_run.py*
+-Graphical User Interface (GUI): Due to ongoing software development, the CCA8 Simulation is Command-Line Interface (CLI) only.  (Tkinter Windows GUI-based cca8_run.pyw module is available but not supported at this time.)
+-Robotics real-world environment: You need to run the Python environment version of cca8_run.py as shown above, and specify the robotics embodiment as shown above. (Ensure that the correct hardware abstraction layer (HAL) exists and is installed for the robotics equipment version you are using.)
 
 
 
 # **5-minute summary**
 
-###### **Startup:**
 
-**Entry point:** `>python cca8_run.py`  
-**Repo:** `https://github.com/howard8888/workspace`
+
+## Executive Overview
+
+CCA8 aims to simulate early mammalian cognition with a **small symbolic episode index** (the *WorldGraph*) coordinating **rich engrams** (perceptual/temporal content) in a column provider. Symbols are used for **fast indexing & planning**, not as a full knowledge store.
+
+**Core model:**
+
+- **Binding** — a node instance that *carries* one or more tags, including `pred:<token>`, plus `meta` and optional `engrams`; bindings can hold predicates pred:<tag>, actions action:<tag>, anchors, cues
+- **Edge** — a directed link between bindings with a label (often `"then"`) representing **weak, episode-level causality** (“this led to that”).  
+- **WorldGraph** — the directed graph composed of these bindings and edges, supports **BFS planning**.  
+- **Policy (primitive)** — an instinctive behavior with `trigger()` + `execute()`. The **Action Center** scans policies in order and runs the first whose trigger matches current **drive** tags (hunger/fatigue/warmth).  
+- **Provenance** — when a policy creates a new binding, its name is stamped into `binding.meta["policy"]`.  
+- **Autosave/Load** — a JSON snapshot persists (world, drives, skills) with `saved_at`, written via atomic replace.
+  
+  *--> See Tutorial Sections below for more information*
+  
+
+
+## Newborn Mountain Goat: stand → mom → nipple → drink (5-step demo)
+
+
+Here is a concrete example of a short episode you can build by hand or through the menu.
+*(Note: Software may change in the future. If exact menu selections are not available, please choose similar items. Nov, 2025.)*
+
+1) Start or resume
+
+
+`python cca8_run.py --autosave session.json`
+
+Pick **Profile 1: Mountain Goat** when prompted.
+
+2) Note binding IDs you’ll need
+
+
+**Show last 5 bindings**  anytime to grab the newest IDs you create.
+
+3) (Optional) Prime drives and cues
+
+* Select 'Autonomic tick' once or twice, then `D` Show drives (aim for `drive:hunger_high`).
+
+* Select Add sensory cue a few times:
+  
+  * `vision` → `silhouette:mom`
+  
+  * `smell` → `milk:scent`
+  
+  * `sound` → `bleat:mom`
+  
+4) Create milestones (add predicates), then wire edges
+
+**A. Stand first**
+
+1.  Add predicate → `stand` → note ID, e.g., `b2`.
+
+2.  Connect two bindings:
+   
+   * Source: `<NOW_id>` (e.g., `b0`)
+   
+   * Destination: `<stand_id>` (e.g., `b2`)
+   
+   * Relation: `stand_up`
+
+**B. Approach mom**
+
+1. Add predicate → `mom:close` → note ID, e.g., `b3`.
+
+2. Connect:
+   
+   * Destination: `<mom_id>` (e.g., `b3`)
+   
+   * Relation: `approach`
+
+**C. Find nipple**
+   * Source: `<stand_id>` (e.g., `b2`)
+   
+
+1.  Add predicate → `nipple:found` → ID `b4`.
+
+2.  Connect `b3 → b4` with relation `search`.
+
+**D. Latch**
+
+1.  Add predicate → `nipple:latched` → ID `b5`.
+
+2.  Connect `b4 → b5` with relation `latch`.
+
+**E. Drink**
+
+1.  Add predicate → `milk:drinking` → ID `b6`.
+
+2.  Connect `b5 → b6` with relation `suckle`.
+
+
+5) Verify with planning
+
+*  Plan from NOW → `<predicate>`
+
+* Target: `milk:drinking`
+
+* Expect a path like: NOW (b0) → stand (b2) → mom:close (b3) → nipple:found (b4) → nipple:latched (b5) → milk:drinking (b6)
+ 
+
+----------------------------
 
 
 
@@ -67,27 +187,6 @@ Preflight self-testing (four parts):   *>python cca8_run.py --preflight*
 
 Use with robotic embodiment: *>python cca8_run.py --hal --body myrobot*
 
-***Notes:***
-
--Versions of Python that will work with code:  check docstring of cca8_run.py or requirements.txt
-   *(at time of writing, tested on Windows 11 Pro with Python 3.11.4)*
-
--Dependencies required:  check docstring of cca8_run.py or requirements.txt
-     -*-> Software should be able to run on most systems without any issues (GPU and LLM API requirements, if used, are very fail-safe)*
-
--Windows:  py.exe automatically runs script with the version of Python specified in the shebang line (or latest installed version):
-      *>py cca8_run.py*       (or you can specify the Python version, e.g.,  *>py -3.11 cca8_run.py* )
-( *>python cca8_run.py*   will also usually work, depending on Python setup; will igore shebang line)
-(*>cca8_run.py* may work if Windows file associations set up for Python version)
-
--Mac, Linux:  *>python3 cca8_run.py*
-
--Virtual environment Venv (*must activate*) (Windows, Mac or Linux):  *>python cca8_run.py*
-
--Graphical User Interface (GUI): No versions available at this time. Due to ongoing software development, the CCA8 Simulation is Command-Line Interface (CLI) only.  (Tkinter Windows GUI-based cca8_run.pyw module is available but not supported at this time.)
-
--Robotics real-world environment: You need to run the Python environment version of cca8_run.py as shown above, and specify the robotics embodiment as shown above. (Ensure that the correct hardware abstraction layer (HAL) exists and is installed for the robotics equipment version you are using.)
-
 
 
 **CCA8 Python Major Modules:**
@@ -104,28 +203,37 @@ cca8_features.py  (informal name: "Features module")
 
 cca8_temporal.py (informal name: "Temporal module")
 
+cca8_env.py (informal name: "Environment module")
+
+cca8_test_worlds.py (informal name: "Test Worlds module")
 
 
-**Purpose of Program:** Simulation of the brain of a mountain goat through the lifecycle with hooks for different robotic embodiments.
+ 
+  
+***Q&A to help you learn this section***
 
-Scaffolding in place (partially operational) for simulation of a chimpanzee-like brain, human-like brain, human-like brain with five brains operating in parallel in the same agent, human-like brain with multiple agents interacting, human-like brain with five brains operating in parallel with combinatorial planning ability.
+Q: Why keep the symbolic graph small?  A: For fast indexing/planning, heavy content lives in engrams.
+
+Q: Which primitives form “standing”?  
+A: `action:push_up`, `action:extend_legs`, and the predicate `pred:posture:standing` (based on the `posture:standing` tag).
+
+Q: Where is provenance stored?  A: binding.meta.policy = "policy:<name>".
+Q: What’s the planner algorithm?  A: BFS from NOW to the first pred:<token> match.
 
 
+Q: What’s the key separation in CCA8?  A: A compact symbolic episode index** (WorldGraph) for fast lookup/plan, and rich engrams** outside the graph for heavyweight content.
 
-**Newborn mountain goat demo (fast path):**  
-Menu →  add `stand`, connect NOW→stand (`stand_up`), then add and connect  
-`mom:close` (`approach`) → `nipple:found` (`search`) → `nipple:latched` (`latch`) → `milk:drinking` (`suckle`),  
-verify with  plan NOW → `milk:drinking`.  
-**Glossary:** predicates, bindings, edges, policies, drives (hunger/warmth/fatigue), and search knobs (`k`, `sigma`, `jump`).
-*--> See Glossary and Tutorial Sections for more information*
+Q: Are edges logical implications?  A: No—edges encode weak, episode-level causality** (“then”), good for action and recall without heavy inference.
 
+Q: Why not store everything in the graph? A: Keeping symbols small avoids brittleness and keeps planning fast, the heavy 95% lives in engrams referenced by bindings.
 
+Q: How does this help planning? A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph is shaped for that.
 
 ---
 
 
 
-## Table of Contents
+# Table of Contents
 
 - [Executive Overview](#executive-overview)
 - [Opening screen (banner) explained](#opening-screen-banner-explained)
@@ -158,9 +266,11 @@ verify with  plan NOW → `milk:drinking`.
 - [Session Notes (Living Log)](#session-notes-living-log)
 - [Work in Progress](#work-in-progress)
 
-<!-- Optional tutorial entries; include if you want them surfaced from the top -->
+**Tutorials and technical deep dives**
 
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
+- [Binding and Edge Representation](#binding-and-edge-representation)
+- [Tutorial on Drives](#tutorial-on-drives)
 - [Tutorial on WorldGraph Technical Features](#tutorial-on-worldgraph-technical-features)
 - [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
 - [Tutorial on Main (Runner) Module Technical Features](#tutorial-on-main-runner-module-technical-features)
@@ -175,105 +285,7 @@ verify with  plan NOW → `milk:drinking`.
   
   
   
-  
 
-**Summary Overview:**
-
-The CCA8 (Causal Cognitive Architecture version 8) is a cognitive architecture that simulates the mammalian brain based on the assumption that the declarative data is largely stored in spatial navigation maps. Simulations can be run virtually but there are hooks, i.e., an interface module, for it to control an actual robotic embodiment. The CCA8 is the simulation of the brain of a mountain goat through the lifecycle with hooks for robotic embodiment.
-
-
-
-**What CCA8 is (two-minute orientation):**
-
-CCA8 is a small, inspectable simulation of early mammalian cognition. It models a newborn mountain goat’s first minutes and extends toward richer lifelog episodes. The core idea is to separate:
-
-* a **fast symbolic index** of experience (the WorldGraph), and
-* **rich engrams** (perceptual/temporal detail) that live outside the graph in “columns.”
-
-The symbolic graph is not a full knowledge base. Its job is to index “what led to what” as simple, directed edges between small records called bindings. Planning is then just graph search over these edges.
-
-Design decision (formerly ADR-0001): We intentionally use a small episode graph with weak causality. Each edge means “this tended to follow that” rather than a logical implication. This keeps recall and planning fast and transparent, deeper causal reasoning can be layered on later.
-
-
-
-***Q&A to help you learn this section***
-
-Q: What exactly is a “binding”? A: A node that carries tags (at least one `pred:*`), optional engram pointers, and meta (e.g., provenance).
-
-Q: What does the graph represent day-to-day? A: Small, directed steps an agent experienced (“this led to that”), not a full world model.
-
-*Q: Why BFS and not Dijkstra/A*? A: Edges are unweighted, BFS guarantees fewest hops and is simpler to reason about. You can layer heuristics later if weights appear.
-
-Q: Are cycles allowed? A: Yes, the planner uses visited-on-enqueue to avoid re-enqueuing discovered nodes.
-
-
-
-**Quickstart:**
-
-1. Create a virtual environment (Windows):
-      py -3.11 -m venv .venv && .\.venv\Scripts\activate
-   Verify:
-      python -V
-
-2. Run the program banner:
-      python cca8_run.py --about
-
-3. Start an interactive session with autosave enabled:
-      python cca8_run.py --autosave session.json
-   At any time you can load a prior session:
-      python cca8_run.py --load session.json
-
-Tip: The session file is a plain JSON snapshot that includes the WorldGraph, drives, simple policy telemetry, and small bits of context. See “Persistence” below for the exact shape.
-
-
-
-**Q&A to help you learn this section**
-
-Q: Where does `--autosave` write and what’s in the file?   
-A: It writes a JSON snapshot in your working directory containing world (bindings/edges), drives, skills, and a timestamp.
-
-Q: How do I resume the same run later?   
-A: Launch with `--load session.json`, the runner restores the world and advances the id counter to avoid collisions.
-
-Q: What if I want a fresh run but keep history?   
-A: Use a new autosave filename or copy the old snapshot aside and start with `--autosave new_session.json`.
-
-Q: Any one-shot CLI for planning without entering the menu?   
-A: Use `--plan <pred:token>` on the command line.
-
-
-
-**Concepts you’ll see in the UI:**
-
-**Binding** (node). A tiny record that carries tags (at least one `pred:*`), optional engrams, and meta. Bindings act like episode index cards.
-
-**Edge**. A directed link with a small label, often `"then"`. Edges record that one binding led to another during an episode.
-
-**WorldGraph**. The directed graph of bindings and edges. It has a start anchor called NOW and uses breadth‑first search (BFS) to find routes from NOW to a goal predicate.
-
-**Drive**. A motive with a scalar level (e.g., hunger, fatigue, warmth). The controller exposes **ephemeral drive flags** via `Drives.flags()` (strings like `drive:hunger_high`) used only inside policy triggers; they are **not written** into WorldGraph. If you want a persisted/plannable drive condition, create a tag explicitly as **`pred:drive:*`** (plannable) or **`cue:drive:*`** (trigger-only).
-
-**Policy**. A small routine with `trigger()` and `execute()`. The Action Center scans policies in priority order, picks the first that triggers, and executes it once. Execution typically creates a new binding and connects it to whatever was most recent.
-
-**Provenance**. A policy stamps its name into the `meta` of any binding it creates. This makes behavior audit trails easy to read.
-
-Design decision (formerly ADR-0002): We use drives + policies instead of a heavy rule engine. Behavior for a newborn unfolds well as short triggered routines (“stand up if you are not already standing,” “seek nipple if hungry”). Guards inside `trigger()` prevent refiring when a state is already true.
-
-
-
-***Q&A to help you learn this section***
-
-Q: Binding vs. Predicate vs. Anchor—what’s the difference?   
-A: A **predicate** is a token (`pred:…`), a **binding** is the node that carries it (plus meta/engrams), an **anchor** (e.g., NOW) is a special binding used as a planning start.
-
-Q: Where do I see who created a node?   
-A: In `meta.policy`—policies stamp their names when they create bindings.
-
-Q: What are drive flags?   
-A: Derived flags like `drive:hunger_high` that make policy triggers straightforward.
-
-Q: Can I inspect an engram from the UI?   
-A: Yes—use the binding inspection flow to see engram pointers and meta.
 
 
 
@@ -393,17 +405,22 @@ The planner checks each popped node’s tags for a goal predicate (`pred:<token>
 
 ##### Edge-label conventions (house style)
 
-Use `"then"` for episode flow. Reserve domain labels when they clarify intent:
 
-* **`approach`**: locomote toward a target (`stand → mom:close`).
 
-* **`search`**: information-seeking (`mom:close → nipple:found`).
+* Operationally, **all edges mean “then”**: “this binding tended to be followed by that binding in this episode”.
 
-* **`latch`**: discrete state change with contact.
+* The **default label** is `"then"`. You may use **short domain labels** as human-facing aliases when helpful, but the engine treats them as “then”:
+  
+  * `approach`: locomote toward a target (`standing → mom:close`).
+  * `search`: information-seeking (`mom:close → nipple:found`).
+  * `latch`: discrete contact (`nipple:found → nipple:latched`).
+  * `suckle`: sustained feeding (`nipple:latched → milk:drinking`).
+  
+  Think of these as `"then (approach)"`, `"then (search)"` etc.
 
-* **`suckle`**: sustained action with reward.  
-  You can consider richer domain labels but keep them short and consistent so paths remain readable.
-  **Action-like predicates.** When it improves readability or you want an intermediate state, you may also record an action-like predicate such as `pred:action:push_up`. The project’s lexicon permits several `action:*` tokens **under the `pred` family**. Planner behavior is unchanged (planning is over structure), and the house style still favors **edge labels** for actions.
+* **Actions themselves live as `action:*` bindings** in the graph (e.g., `action:push_up`, `action:extend_legs`). Policies create small **predicate–action–predicate** chains by connecting predicate states and action bindings with `then` edges.
+  
+  
 
 ##### Consistency invariants (quick checklist)
 
@@ -419,11 +436,9 @@ Use `"then"` for episode flow. Reserve domain labels when they clarify intent:
 
 ##### Scale & performance notes
 
-For development scale (up to hundreds of thousands of bindings), the dict-of-lists adjacency plus a `deque` frontier is fast and transparent. If the graph grows toward tens of millions of edges, swap the backend (e.g., CSR or a KV store) behind the same interface without changing runner semantics or user-facing behavior.
+For development scale (up to hundreds of thousands of bindings), the dict-of-lists adjacency plus a `deque` frontier is fast and transparent. If the graph grows toward tens of millions of edges, swap the backend (e.g., CSR or a KV store) behind the same interface without changing runner semantics or user-facing behavior..
 
-**Families recap.** WorldGraph stores only `pred:*`, `cue:*`, and `anchor:*`. The controller may compute `drive:*` **flags** for triggers, but they are never written into the graph unless you explicitly add `pred:drive:*` or `cue:drive:*`.
-
-
+**Families recap.** WorldGraph stores only `pred:*`, `action:*`, `cue:*`, and `anchor:*`. The controller may compute `drive:*` **flags** for triggers, but they are never written into the graph unless you explicitly add `pred:drive:*` or `cue:drive:*`.
 
 
 
@@ -452,8 +467,12 @@ The controller tracks simple drives (hunger, fatigue, warmth). Policies consume 
 
 Example (stand up):
 
-* Trigger: standing is not already true, body is not severely fatigued.
-* Execute: create a `pred:stand` binding, connect from LATEST (or NOW) with label `initiate_stand`, then follow‑on edges `then` into chronological progression.
+Example (stand up):
+
+* Trigger: `posture:fallen` is near NOW and the body is not severely fatigued.
+* Execute: emit an `action:push_up` binding and an `action:extend_legs` binding, then a `pred:posture:standing` binding, linked in a short chain from NOW/LATEST with `then` edges.
+  
+  
 
 Design decision (ADR-0002 folded in): Policies are intentionally small and readable. We avoid global planning for every step to keep the code explainable and the UI responsive. Guards in `trigger()` prevent repeated firing (e.g., don’t stand up twice if standing exists).
 
@@ -536,12 +555,13 @@ You can explore the graph via an interactive menu. The most useful items while l
   Groups all `pred:*` tokens and shows which bindings carry each token. You can optionally filter by substring (e.g., `rest` or `posture`) to reduce clutter. This is a good way to see which planner targets exist.
 
 * The **“Add predicate”** entry  
-  Prompts for a token (e.g., `state:posture_standing`, without the `pred:` prefix) and an attach mode (`now/latest/none` – default `latest`). It:
-  
-  - creates a new binding tagged `pred:<token>`,
-  - optionally auto-links it from NOW/LATEST with a `"then"` edge,
-  - stamps provenance (`meta.added_by="user"`, `meta.created_by="menu:add_predicate"`, `meta.created_at=ISO-8601`).
-    It’s your primary way to “teach” the graph new states by hand.
+  Prompts for a token (e.g., `posture:standing`, without the `pred:` prefix) and an attach mode (`now/latest/none` – default `latest`). It:
+          creates a new binding tagged `pred:<token>`,
+
+        optionally auto-links it from NOW/LATEST with a `"then"` edge,
+
+        stamps provenance (`meta.added_by="user"`, `meta.created_by="menu:add_predicate"`, `meta.created_at=ISO-8601`).
+It’s your primary way to “teach” the graph new states by hand.
 
 * The **“Connect bindings”** entry  
   Adds a directed edge `src --label--> dst` (default label `then`), with a simple duplicate guard that skips an exact `(src, label, dst)` edge if it already exists. Edges created here carry `meta.created_by="menu:connect"` and a timestamp. Use this to wire episodes with meaningful labels such as `approach`, `search`, `latch`, `suckle`.
@@ -549,9 +569,8 @@ You can explore the graph via an interactive menu. The most useful items while l
 * The **“Delete Edge”** entry  
   Interactive helper for removing edges. It handles different legacy edge layouts and prints how many edges were removed between `src` and `dst` (with an optional label filter). This is the safest way to repair a mistaken link without editing JSON by hand.
 
-* The **“Plan to predicate”** entry  
-  Asks for a target predicate token (e.g., `state:posture_standing`) and:
-  
+* * The **“Plan to predicate”** entry  
+    Asks for a target predicate token (e.g., `posture:standing`) and:
   - prints the **current planner strategy** (`BFS` or `DIJKSTRA`),
   - calls `WorldGraph.plan_to_predicate` from the NOW anchor,
   - prints both the raw id path and a **pretty path** (`b3[posture:standing] --then--> b4[milk:drinking] ...`).
@@ -740,153 +759,6 @@ probes=41/41 | hardware_checks=0 | system_fitness_assessments=0 | elapsed=00:02
 
 ---
 
-## Executive Overview
-
-CCA8 aims to simulate early mammalian cognition with a **small symbolic episode index** (the *WorldGraph*) coordinating **rich engrams** (perceptual/temporal content) in a column provider. Symbols are used for **fast indexing & planning**, not as a full knowledge store.
-
-**Core mental model:**
-
-- **Predicate** — a symbolic fact token (e.g., `state:posture_standing`). Atomic.  
-- **Binding** — a node instance that *carries* one or more tags, including `pred:<token>`, plus `meta` and optional `engrams`.  
-- **Edge** — a directed link between bindings with a label (often `"then"`) representing **weak, episode-level causality** (“in this run, this led to that”).  
-- **WorldGraph** — the directed graph composed of these bindings and edges, supports **BFS planning**.  
-- **Policy (primitive)** — an instinctive behavior with `trigger()` + `execute()`. The **Action Center** scans policies in order and runs the first whose trigger matches current **drive** tags (hunger/fatigue/warmth).  
-- **Provenance** — when a policy creates a new binding, its name is stamped into `binding.meta["policy"]`.  
-- **Autosave/Load** — a JSON snapshot persists (world, drives, skills) with `saved_at`, written via atomic replace.
-  
-  
-  
-  
-
-Newborn Mountain Goat: stand → mom → nipple → drink (5-step demo)
-=================================================================
-
-This minimal demo creates a linear episode chain and verifies that planning finds it.
-
-1) Start or resume
-
-------------------
-
-`python cca8_run.py --autosave session.json`
-
-Pick **Profile 1: Mountain Goat** when prompted.
-
-2) Note IDs you’ll need
-
------------------------
-
-* **World stats** (menu `1`) → find the **NOW** anchor’s binding ID (e.g., `b0`).
-
-* **Show last 5 bindings** (menu `7`) anytime to grab the newest IDs you create.
-3) (Optional) Prime drives and cues
-
------------------------------------
-
-* `14` Autonomic tick once or twice, then `D` Show drives (aim for `drive:hunger_high`).
-
-* `11` Add sensory cue a few times:
-  
-  * `vision` → `silhouette:mom`
-  
-  * `smell` → `milk:scent`
-  
-  * `sound` → `bleat:mom`
-4) Create milestones (add predicates), then wire edges
-
-------------------------------------------------------
-
-**A. Stand first**
-
-1. `3` Add predicate → `stand` → note ID, e.g., `b2`.
-
-2. `4` Connect two bindings:
-   
-   * Source: `<NOW_id>` (e.g., `b0`)
-   
-   * Destination: `<stand_id>` (e.g., `b2`)
-   
-   * Relation: `stand_up`
-
-**B. Approach mom**
-
-1. `3` Add predicate → `mom:close` → note ID, e.g., `b3`.
-
-2. `4` Connect:
-   
-   * Source: `<stand_id>` (e.g., `b2`)
-   
-   * Destination: `<mom_id>` (e.g., `b3`)
-   
-   * Relation: `approach`
-
-**C. Find nipple**
-
-1. `3` Add predicate → `nipple:found` → ID `b4`.
-
-2. `4` Connect `b3 → b4` with relation `search`.
-
-**D. Latch**
-
-1. `3` Add predicate → `nipple:latched` → ID `b5`.
-
-2. `4` Connect `b4 → b5` with relation `latch`.
-
-**E. Drink**
-
-1. `3` Add predicate → `milk:drinking` → ID `b6`.
-
-2. `4` Connect `b5 → b6` with relation `suckle`.
-
-_(Tip: use `7` Show last 5 bindings as you go to copy the exact IDs.)_
-
-5) Verify with planning
-
------------------------
-
-* `5` Plan from NOW → `<predicate>`
-
-* Target: `milk:drinking`
-
-* Expect a path like: NOW (b0) → stand (b2) → mom:close (b3) → nipple:found (b4) → nipple:latched (b5) → milk:drinking (b6)
-6) (Optional) Inspect memory
-
-----------------------------
-
-* `7` Show last 5 bindings → copy the ID for `nipple:latched`.
-
-* `6` Resolve engrams on a binding → paste that ID to see its engram/meta.
-7) Save/Load
-
-------------
-
-* You started with `--autosave session.json`.
-
-* You can also press `S` to save or relaunch later with `--load session.json`.
-
-* 
-
-***Q&A to help you learn this section***
-
-Q: Why keep the symbolic graph small?  A: For fast indexing/planning, heavy content lives in engrams.
-
-Q: Which primitives form “standing”?  A: action:push_up, action:extend_legs, state:posture_standing.
-
-Q: Where is provenance stored?  A: binding.meta.policy = "policy:<name>".
-Q: What’s the planner algorithm?  A: BFS from NOW to the first pred:<token> match.
-
-
-
-***Q&A to help you learn the above sections:***
-
-Q: What’s the key separation in CCA8?  A: A compact symbolic episode index** (WorldGraph) for fast lookup/plan, and rich engrams** outside the graph for heavyweight content.
-
-Q: Are edges logical implications?  A: No—edges encode weak, episode-level causality** (“then”), good for action and recall without heavy inference.
-
-Q: Why not store everything in the graph? A: Keeping symbols small avoids brittleness and keeps planning fast, the heavy 95% lives in engrams referenced by bindings.
-
-Q: How does this help planning? A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph is shaped for that.
-
----
 
 ## 
 
@@ -978,61 +850,96 @@ A **binding** is a small “episode card” that _binds_ together:
 
 ### Tag families (use exactly these)
 
+### Tag families (use exactly these)
+
 Keep families distinct so humans (and the planner) never have to guess.
 
 1. **Predicates — states/goals/events you might plan _to_**
    
    * **Prefix:** `pred:`
-   
    * **Purpose:** targets for planning and state description.
-   
    * **Examples:**  
-     `pred:born`, `pred:posture:standing`, `pred:locomotion:running`,  
+     `pred:born`, `pred:posture:fallen`, `pred:posture:standing`,  
      `pred:mom:close`, `pred:nipple:found`, `pred:nipple:latched`, `pred:milk:drinking`,  
-     `pred:event:fall_detected`, `pred:goal:safe_standing`.
-
-> The planner looks for `pred:*`. The **first** `pred:*` (if present) is used as the human label in pretty paths/exports.
+     `pred:event:fall_detected`, `pred:goal:safe_standing`,  
+     `pred:drive:hunger_high` (if you want a plannable drive condition).
+   
+   > The planner looks for `pred:*`. The **first** `pred:*` (if present) is used as the human label in pretty paths/exports.
 
 2. **Cues — evidence/context you _notice_, not goals**
    
    * **Prefix:** `cue:`
-   
    * **Purpose:** sensory/context hints for policy `trigger()` logic.
-   
    * **Examples:**  
-     `cue:scent:milk`, `cue:sound:bleat:mom`, `cue:silhouette:mom`, `cue:terrain:rocky`, `cue:tilt:left`.
-
-> We **do not** plan to cues; they’re conditions that help decide which policy fires.
+     `cue:scent:milk`, `cue:sound:bleat:mom`, `cue:vision:silhouette:mom`,  
+     `cue:terrain:rocky`, `cue:vestibular:fall`, `cue:touch:flank_on_ground`,  
+     `cue:drive:hunger_high` (if used only as a trigger).
+   
+   > We **do not** plan to cues; they’re conditions that help decide which policy fires.
 
 3. **Anchors — orientation markers**
    
    * **Prefix:** `anchor:` (e.g., `anchor:NOW`).
-   
    * Also recorded in the engine’s `anchors` map, e.g., `{"NOW": "b1"}`.
-   
-   * A binding can be _only_ an anchor (no `pred:*`) — that’s fine.
-   
-   * 
+   * A binding can be only an anchor (no `pred:*`) — that’s fine.
 
-4. **Drive-derived tags — pred:drive:* or cue:drive:***  
-   **Only three stored families:** `pred:*`, `cue:*`, and `anchor:*`. Any bare `drive:*` you see is a **controller flag** (ephemeral) and is not stored in the graph.
-   We standardize as:
+4. **Actions — motor / behavioral steps**
    
-   * **Project default:** use **`pred:drive:*`** for drive conditions that matter to planning (e.g., `pred:drive:hunger_high`).
+   * **Prefix:** `action:`
+   * **Purpose:** explicit action/motor steps in **state–action–state** chains.
+   * **Examples:**  
+     `action:push_up`, `action:extend_legs`, `action:orient_to_mom`,  
+     `action:bleat_twice`, `action:look_around`.
    
-   * **Optional alternative (if you prefer purely as conditions):** use **`cue:drive:*`** when the drive threshold is only a trigger and never a plan target.
+   > Actions are **bindings**, not edge types. Policies create `action:*` bindings and connect them between predicate states with `then` edges.
+
+5. **Drive flags (controller-only)**
    
-   * **Do not** use bare `drive:*` in tags; prefer one of the two forms above.
+   * The controller computes ephemeral flags like `drive:hunger_high`, `drive:fatigue_high`, `drive:cold` from numeric levels.
+   * These bare `drive:*` strings are **not** stored in the WorldGraph.
+   * If you want a persisted/plannable drive condition, use `pred:drive:*` (pred) or `cue:drive:*` (trigger).
 
-### Actions = edge labels (transitions)
+### 
 
-* The **edge** from `src → dst` bears the action name in its `label`.  
-  Examples: `then`, `search`, `latch`, `suckle`, `approach`, `recover_fall`, `run`, `stabilize`.
+### Actions = bindings; edge labels are “then” (with optional history)
 
-* Put **quantities** about the action (e.g., meters, duration, success) in **`edge.meta`**, not in tags:
-  `{ "to": "b101", "label": "run", "meta": {"meters": 8.5, "duration_s": 3.2, "created_by": "policy:locomote"} }`
+* **Actions are their own bindings**: they carry `action:*` tags inside the same WorldGraph as predicates/cues/anchors.
+  Typical pattern for `policy:stand_up`:
+  
+  ```text
+  (state)  pred:posture:fallen
+     │
+     ├─then→  (action) action:push_up
+     │
+     ├─then→  (action) action:extend_legs
+     │
+     └─then→  (state)  pred:posture:standing
+  
+  ```
 
-* **Planner behavior today:** edge labels are **readability metadata**; BFS follows structure (not names). Labels may later inform costs/filters.
+* Edges are **conceptually all “then”** (episode flow). The `label` field is kept mainly for readability and history. The default label is `"then"`.
+
+* If you prefer, you can still use **domain labels** as _synonyms_ for “then” (e.g., `"approach"`, `"search"`, `"latch"`, `"suckle"`) when it helps humans read the path. The engine treats them as “then” for planning.
+
+* Put **quantities** about the transition (meters, duration, success, etc.) in **`edge.meta`**, not in tags:
+
+{
+"to": "b101",
+  "label": "then",        // or "search" as a human-facing alias
+  "meta": {
+    "meters":  8.5,
+    "duration_s": 3.2,
+    "created_by": "policy:seek_nipple"
+  }
+}
+
+
+
+The planner today is **structure-first**: it follows edges, ignores labels for correctness, and looks only at node tags to detect goals. Later, labels/meta can inform **costs** (Dijkstra/A*) or filters (“avoid transitions marked as recover_fall”).
+
+
+
+
 
 ### Provenance & engrams
 
@@ -1075,12 +982,21 @@ Keep families distinct so humans (and the planner) never have to guess.
 
 ### Vocabulary starter table
 
+
+
+```markdown
 | Family     | Examples                                                                                                                                                           | Purpose                              |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
 | `pred:`    | `pred:born`, `pred:posture:standing`, `pred:nipple:latched`, `pred:milk:drinking`, `pred:event:fall_detected`, `pred:goal:safe_standing`, `pred:drive:hunger_high` | planner targets; human labels        |
-| `cue:`     | `cue:scent:milk`, `cue:sound:bleat:mom`, `cue:silhouette:mom`, `cue:terrain:rocky`, `cue:tilt:left`                                                                | policy triggers; not planner goals   |
+| `cue:`     | `cue:scent:milk`, `cue:sound:bleat:mom`, `cue:vision:silhouette:mom`, `cue:terrain:rocky`, `cue:vestibular:fall`                                                  | policy triggers; not planner goals   |
 | `anchor:`  | `anchor:NOW`, `anchor:HERE`                                                                                                                                        | orientation; also in `anchors` map   |
-| Edge label | `then`, `search`, `latch`, `suckle`, `approach`, `recover_fall`, `run`                                                                                             | action/transition; metrics in `meta` |
+| `action:`  | `action:push_up`, `action:extend_legs`, `action:orient_to_mom`, `action:bleat_twice`                                                                              | explicit motor / behavioral steps    |
+| Edge label | `then` (default), and optional human aliases like `"approach"`, `"search"`, `"latch"`, `"suckle"`                                                                  | episode flow; semantics = “then”     |
+```
+
+
+
+
 
 ### Do / Don’t
 
@@ -1092,7 +1008,7 @@ Keep families distinct so humans (and the planner) never have to guess.
 
 * Allow anchor-only bindings (e.g., `anchor:NOW`).
 
-* Don’t mix `state:*` and `pred:*` (pick `pred:*`).
+* Don’t invent ad-hoc families like `state:*`; stick to the four canonical families: `pred:*`, `action:*`, `cue:*`, `anchor:*`.
 
 * Don’t encode rich data in tags; use **engrams** for large payloads.
 
@@ -1613,7 +1529,7 @@ A thresholded segmentation (“τ-cut”) can also force a boundary when `cos_to
 
 - **Action Center** runs the **first** policy whose `trigger` is True.  
 
-- **StandUp guard:** `StandUp.trigger()` checks for an existing `pred:state:posture_standing` to avoid “re-standing” every tick.
+- **StandUp guard:** `StandUp.trigger()` checks for an existing `pred:posture:standing` to avoid “re-standing” every tick.
 
 **Status dict convention:**  
 `{"policy": "policy:<name>" | None, "status": "ok|fail|noop|error", "reward": float, "notes": str}`
@@ -1651,7 +1567,7 @@ Q&A to help you learn this section
 
 Q: Two methods every policy must have?  A: trigger, execute.
 
-Q: What prevents “re-standing”?  A: Guard in StandUp.trigger() that checks for pred:state:posture_standing.
+Q: What prevents “re-standing”?  A: Guard in `StandUp.trigger()` that checks for `pred:posture:standing`.
 
 Q: What does a policy return?  A: A status dict (policy, status, reward, notes).
 
@@ -1858,7 +1774,7 @@ cca8_run.py --load session.json --autosave session_NEXT.json
 ### One-shot planning (no menu)
 
 ```
-cca8_run.py --load session.json --plan state:posture_standing
+cca8_run.py --load session.json --plan pred:posture:standing
 ```
 
 ### Add a sensory cue
@@ -1979,14 +1895,8 @@ Bindings are the atomic “episode cards” in the graph.
     {
       "id": "b42",
       "tags": [
-        "pred:state:posture_standing",
-        "cue:silhouette:mom"
-      ],
-      "edges": [
-        { "to": "b43", "label": "then", "meta": { "created_by": "policy:stand_up" } }
-      ],
-      "meta": { "policy": "policy:stand_up", "t": 123.4 },
-      "engrams": { "column01": { "id": "9d46...", "act": 1.0 } }
+        "pred:posture_standing",
+        "cue:vision:silhouette:mom"
     }
 
 **Invariants (binding):**
@@ -2086,284 +1996,1009 @@ Q: What is the “skill ledger”?A: Lightweight per-policy stats (counts, succe
 Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts
 ----------------------------------------------------------
 
-This tutorial introduces the mental model behind WorldGraph and shows how to encode experience in a way that stays simple for planning, clear for humans, and easy to maintain. It complements the “Tagging Standard” and “WorldGraph in detail” sections by walking through the why and how with concrete, domain-flavored examples.
+This tutorial introduces the mental model behind **WorldGraph** and shows how to encode experience in a way that is:
+
+- simple for **planning** (BFS / Dijkstra),
+- clear for **humans** (bindings are little episode cards),
+- and consistent with the **four binding kinds**: anchors, predicates, cues, and actions.
+
+It complements the “WorldGraph in detail” and “Tagging Standard” sections by walking through the *why* and *how* with newborn-goat flavored examples.
+
+---
 
 ### 1) Mental model at a glance
 
-WorldGraph is a compact, symbolic **episode index**. Each “moment” is captured as a small record (a **binding**) that carries tags and optional pointers to richer memory (**engrams**). **Edges** connect moments to show how one led to another. Planning is graph search over those edges from a temporal **anchor** called **NOW** toward a goal predicate.
+WorldGraph is a **compact, symbolic episode index**. Each “moment” is captured as a small record (a **binding**) that carries tags and optional pointers to richer memory (**engrams**). **Edges** connect moments to show how one led to another. Planning is graph search from a temporal **anchor** (usually `NOW`) toward a **goal predicate**.
 
 A readable example path:
-    born --then--> wobble --stabilize--> posture:standing --suckle--> milk:drinking
 
-Here the words on the nodes are **predicates** (states), and the words on the arrows are **actions** (edge labels). The generic label `then` just means “and then this happened.”
 
-* * *
+born --then--> wobble --then--> posture:standing --then--> nipple:latched --then--> milk:drinking
+In CCA8:
 
-### 2) Why “bindings” and not just “nodes”?
+the things on the nodes are tags (predicates, cues, anchors, actions),
 
-A binding is more than a vertex. It **binds** together:
+the things on the arrows are edge labels (often just "then").
 
-* lightweight symbols (**tags**) that describe the moment (predicates you can plan to, cues you noticed, and anchors),
+We now treat actions primarily as action:* nodes, not as special edge labels.
 
-* **engrams** that point to richer content stored outside WorldGraph (e.g., a column or feature store),
 
-* **provenance** in **meta** (who/when/why this binding was created),
+##2) Why “bindings” and not just “nodes”?
 
-* and outgoing **edges** that encode how we moved forward.
 
-“Binding” emphasizes that this is an episode card—a snapshot you can read and understand—rather than an abstract graph point.
 
-* * *
+A binding is more than a bare vertex. It binds together:
 
-### 3) What a binding contains (shape and invariants)
+lightweight symbols (tags: pred:*, action:*, cue:*, anchor:*),
 
-Every binding is identified by an id like `b42`. Conceptually it looks like:
-    id: "b42"
-    tags: [ ... ]                  # strings; families are pred:*, cue:*, anchor:*
-    engrams: { ... }               # pointers to rich memory outside WorldGraph
-    meta: { ... }                  # provenance and light notes (e.g., policy that created it)
-    edges: [                       # directed adjacency (stored on the source)
-      { "to": "b43", "label": "then", "meta": { "created_by": "policy:..." } },
-      ...
-    ]
+pointers to engrams (rich memory outside the graph),
 
+and provenance/meta (who created it, when, why),
+
+plus outgoing edges that capture “what happened next”.
+
+Think of each binding as a tiny episode card:
+
+“At this moment, the kid was posture:fallen, we saw vision:silhouette:mom, and the StandUp policy fired.”
+
+That’s why we call it a “binding”: it’s a coherent, inspectable snapshot.
+
+
+##3) What a binding contains (shape)
+
+
+   Every binding has a unique id like b42. Conceptually it looks like:
+
+jsonc
+Copy code
+{
+  "id": "b42",
+  "tags": [
+    "pred:posture:standing",
+    "cue:vision:silhouette:mom"
+  ],
+  "edges": [
+    { "to": "b43", "label": "then", "meta": {"created_by": "policy:seek_nipple"} }
+  ],
+  "meta": {
+    "policy": "policy:stand_up",
+    "created_at": "2025-11-27T10:09:56",
+    "ticks": 5,
+    "tvec64": "..."
+  },
+  "engrams": {
+    "column01": { "id": "<engram_id>", "act": 1.0 }
+  }
+}
 Invariants that keep the graph healthy:
 
-* ids are unique (`bN`);
+Ids are unique (bN).
 
-* edges are directed and live on the **source** binding (adjacency list);
+Edges are directed and live on the source binding (edges[] list).
 
-* a binding with no edges is a valid **sink**;
+A binding with no edges is a valid sink.
 
-* the **first** `pred:*` tag (if present) is used as the node label in pretty paths/exports; fallback is the id;
+The first pred:* tag (if present) is used as the node label in pretty paths/exports; fallback is the id.
 
-* the engine keeps a small `anchors` map, e.g., `{"NOW": "b1"}`.
+The engine keeps an anchors map (e.g. {"NOW": "b5", "NOW_ORIGIN": "b1"}); the corresponding anchor:* tags are for human readability.
+
+
+##4) Tag families (pred, cue, anchor, action)
+
+
+   We use exactly four families of tags in the WorldGraph:
+
+Predicates — what is true about body/world
+
+Prefix: pred:
+
+Examples:
+
+pred:posture:fallen, pred:posture:standing, pred:resting
+
+pred:mom:close, pred:nipple:latched, pred:milk:drinking
+
+pred:seeking_mom
+
+Purpose: planner goals and state descriptions.
+
+Cues — evidence, not goals
+
+Prefix: cue:
+
+Examples:
+
+cue:vision:silhouette:mom
+
+cue:scent:milk
+
+cue:drive:hunger_high
+
+Purpose: policy triggers and FOA seeds. We do not plan to cues.
+
+Anchors — orientation markers
+
+Prefix: anchor:
+
+Examples:
+
+anchor:NOW – current focus of attention / local time,
+
+anchor:NOW_ORIGIN – starting point of this episode.
+
+The anchors map is authoritative (anchors["NOW"] = "b5"); tags make them visible in UIs.
+
+Actions — motor / behavioral steps
+
+Prefix: action:
+
+Examples:
+
+action:push_up
+
+action:extend_legs
+
+action:orient_to_mom
+
+Purpose: explicit action nodes between predicate states.
+
+You can think of:
+
+pred:* = nouns/adjectives: what is (posture, proximity, feeding state),
+
+action:* = verbs: what the goat actually did,
+
+cue:* = sensory hints,
+
+anchor:* = index pegs.
+
+
+
+##5) Edges: “then” glue + optional labels
+   
+Edges are directed links between bindings:
+
+jsonc
+Copy code
+{ "to": "b4", "label": "then", "meta": {"created_by": "policy:stand_up"} }
+Design:
+
+Semantics: every edge is conceptually “then” — “this binding tended to be followed by that binding in this episode.”
+
+Label: defaults to "then"; you may use domain labels like "approach", "search", "latch", "suckle" as human-facing aliases ("then (approach)").
+
+Meta: numeric/action metrics belong in edge.meta:
+
+{"meters": 8.5, "duration_s": 3.2, "created_by": "policy:seek_nipple"}.
+
+Algorithms (planner, FOA) treat edges as structure-first:
+
+They look at which nodes are connected, not the exact label string.
+
+Labels can later inform costs (Dijkstra) or filters (“avoid edges marked recover_fall”), but are not required for correctness.
+
+
+##6) Anchors: NOW and NOW_ORIGIN
+
+   We use two important anchors in the neonate:
+
+anchor:NOW_ORIGIN
+
+Set once at the start of the episode (birth).
+
+Never moves; a natural starting point for “whole story” plans.
+
+anchor:NOW
+
+Follows the latest stable predicate state (e.g., posture:standing, seeking_mom, resting).
+
+Moved by the runner after successful policy executions.
+
+Common uses:
+
+Planning from NOW: “Given where I am, how do I reach X?”
+
+Planning from NOW_ORIGIN: “What path did I take from birth to X?”
+
+Resetting NOW in experiments (e.g. set NOW=b3 temporarily to explore a local neighborhood).
+
+
+##7) S–A–S in practice: a StandUp example
+
+
+   Consider the simplified StandUp episode:
+
+Start: goat is fallen near NOW_ORIGIN.
+
+StandUp fires:
+
+action:push_up
+
+action:extend_legs
+
+End: goat is standing; NOW moves to this new binding.
+
+WorldGraph after one StandUp:
+
+text
+Copy code
+b1: [anchor:NOW_ORIGIN]
+b2: [pred:posture:fallen]
+b3: [action:push_up]
+b4: [action:extend_legs]
+b5: [anchor:NOW, pred:posture:standing]
+Edges:
+
+text
+Copy code
+b1 --then--> b2    # NOW_ORIGIN → fallen
+b1 --then--> b3    # NOW_ORIGIN → push_up
+b3 --then--> b4    # push_up → extend_legs
+b4 --then--> b5    # extend_legs → standing (NOW)
+From a map perspective, the S–A–S segment is:
+
+text
+Copy code
+[pred:posture:fallen] 
+   → [action:push_up] → [action:extend_legs] 
+   → [pred:posture:standing]
+The standalone b1 anchor plus b2 predicate both represent the “fallen” situation; the actions attach off NOW and lead to a new predicate where NOW is finally placed.
+
+
+##8) Snapshot-style vs delta-style bindings
+
+   Two encoding styles exist; CCA8 uses a snapshot-of-state style by default:
+
+Snapshot-of-state (recommended):
+
+Each predicate binding carries the current body/world facts (posture, proximity, feeding state, etc.).
+
+Stable invariants (e.g., posture:standing) are repeated for a while, only changed when the fact changes.
+
+Transient milestones (nipple:found) are often dropped once a stable state (nipple:latched) is reached.
+
+Delta/minimal (not used today):
+
+Each binding only adds what changed (“found”, then “latched”) without repeating posture/proximity.
+
+Fewer tags per node, but harder to interpret a single binding in isolation.
+
+The snapshot style keeps planning and debugging simple: each pred:* binding is a self-contained “what is true now” card.
+
+9) Building small paths by hand (menu intuition)
+   Using the runner menus, you can manually build paths that match the tutorial diagrams:
+
+Add predicate (3)
+
+e.g., posture:standing, nipple:latched, milk:drinking.
+
+Connect two bindings (4)
+
+e.g., b2 --latch--> b3.
+
+A typical hand-built path:
+
+text
+Copy code
+NOW(b1) --then--> b2[pred:posture:standing] --latch--> b3[pred:nipple:latched] --suckle--> b4[pred:milk:drinking]
+The planner (Plan to predicate menu) will then find this path when you ask for milk:drinking as the goal.
+
+10) Common pitfalls and tips
+    “No path found”:
+    Check that:
+
+You spelled the goal token exactly (pred:posture:standing vs pred:posture_standing),
+
+There is a forward chain of edges from NOW (or your chosen start) to the target binding,
+
+Edges are not reversed (B→A when you meant A→B).
+
+Too many actions on edges:
+It’s tempting to encode everything as labels (--stand_up-->). Prefer to:
+
+make actions into action:* bindings (action:push_up), and
+
+use edge labels mainly as annotations ("then", "latch", "search").
+
+Tagless nodes:
+Bindings with no tags are hard to interpret. Give each meaningful binding at least one pred:*, cue:*, or anchor:* tag.
+
+11) Quick reference cheat sheet (WorldGraph concepts)
+    Binding: id + tags (pred/cue/anchor/action) + edges[] + meta + engrams.
+
+Edge: {"to": dst_id, "label": "then", "meta": {...}}; stored on source binding.
+
+Anchors: NOW, NOW_ORIGIN, HERE → map names to binding ids.
+
+Families: pred:*, action:*, cue:*, anchor:*.
+
+Planner goal: any binding whose tags include pred:<token>.
+
+Snapshot vs delta: we use snapshot-of-state by default.
+
+Source of truth for NOW/NOW_ORIGIN: world.anchors (tags are for readability).
+
+With this picture in mind, the later tutorials (“WorldGraph Technical Features”, “Controller”, “Environment”) should feel much more natural: they’re all just elaborations of this same map—bindings and edges, tagged with four families, driven by policies and the environment.
 
 * * *
 
-### 4) Tags: predicates, cues, anchors (and drive thresholds)
+Binding and Edge Representation
+=======================================
 
-Use exactly these families (see the Tagging Standard for full details):
+Note: Nov 2025 -- In other part of this README, you may still see the simpler “actions-as-edge-labels” pattern that has been deprecated at this time. This section describes a richer ontology (and one that better reflects the mammalian brain) where actions become explicit `action:*` bindings and edges are conceptually just “then”. 
 
-* **pred:** states/goals/events you may plan to  
-  Examples: `pred:posture:standing`, `pred:nipple:latched`, `pred:milk:drinking`, `pred:event:fall_detected`, `pred:goal:safe_standing`.
 
-* **cue:** evidence or context you noticed (conditions for policy triggers; not planning targets)  
-  Examples: `cue:scent:milk`, `cue:sound:bleat:mom`, `cue:terrain:rocky`, `cue:tilt:left`.
 
-* **anchor:** orientation markers (e.g., `anchor:NOW`, `anchor:HERE`)  
-  The anchors map is authoritative (`anchors["NOW"]=...`); the tag is recommended for readability.
+1. ### Motivation
 
-* **Drive thresholds:** pick one convention and be consistent  
-  Default in this project: `pred:drive:hunger_high` if the condition is plannable;  
-  Alternative: `cue:drive:hunger_high` if it is strictly a trigger for policies.
+CCA8 is intended to model a **mammalian‑style cognitive architecture**, not just a symbolic planner. The core hypothesis behind the project is that:
 
-Style tips:
+> Mammalian cortex is built from repeated **spatial / navigation maps** (cortical minicolumns), evolutionarily related to the hippocampal–entorhinal system.  
+> A “brain” is therefore a vast collection of overlapping maps, with hippocampal structures acting as higher‑level maps tying local maps together.
 
-* keep tokens lowercase and colon-separated (`pred:locomotion:running`);
+At the implementation level, CCA8 has two main representational layers:
 
-* keep depth to two or three segments when possible (`pred:mom:close` is usually better than a long chain);
+* A **representation layer** (Columns / engrams / payloads) – analogous to distributed neural ensembles and local maps.
 
-* if you might search by a broader class later, you can add a second umbrella tag (e.g., `pred:location:mom:northish`) alongside a specific one.
-
-* * *
-
-### 5) Edges: actions and transition metadata
-
-* The **edge label** is the action name (plain string): `then`, `search`, `latch`, `suckle`, `approach`, `recover_fall`, `run`, `stabilize`, etc.
-
-* **Quantities** about the action (e.g., distance, duration, success) belong in **`edge.meta`**, not in tags. For example:
+* An **index / map layer** (WorldGraph bindings and edges) – analogous to hippocampal / MTL maps over states, actions and episodes.
   
-      { "to": "b101", "label": "run",
-        "meta": {"meters": 12.0, "duration_s": 5.0, "speed_mps": 2.4, "created_by": "policy:locomote"} }
-
-* The planner today **ignores labels for correctness** (it follows structure), so labels serve readability and analytics. They can later inform costs (Dijkstra/A*) or filters (“avoid recover_fall”).
-
-* The runner warns if you try to add an **exact duplicate** `(src, label, dst)` edge.
-
-* * *
-
-### 6) Anchors and orientation (NOW, HERE, and housekeeping)
-
-* **NOW** is the temporal anchor used by the runner and planner as the default starting point. The **map** `anchors["NOW"]=...` is the source of truth; the tag `anchor:NOW` on the binding is for human-friendly display.
-
-* It is valid for a binding to be **anchor-only** (no predicate or cue). It is also valid for a binding to combine an anchor with predicates and/or cues.
-
-* You can “move” NOW by updating the anchors map. A helper like `set_now(bid, tag=True, clean_previous=True)` re-points the map, adds `anchor:NOW` to the new binding and removes it from the previous one (so you don’t end up with two bindings tagged as NOW).
-
-* Optional anchors (used if helpful): `HERE` (spatial rather than temporal), `SESSION_START`, `CHECKPOINT_*`. Only NOW has semantics in the current runner.
-
-* * *
-
-### 7) Planning (how goals are recognized; why BFS works well here)
-
-* Planning starts from the binding id referenced by **NOW**.
-
-* The algorithm is classic **Breadth-First Search** with **visited-on-enqueue** (don’t enqueue a node twice) and **stop-on-pop** (the first time you pop a goal, you have a shortest-hop path).
-
-* The **goal test** is: “do this binding’s tags contain the exact token `pred:<token>`?” If yes, reconstruct the path via the parent map and return it.
-
-* Because edges are unweighted, BFS is the right tool and guarantees fewest edges. If you later introduce costs, switch to Dijkstra/A*; labels and/or context can determine edge costs.
-
-Practical effect: when you type `pred:milk:drinking` as your goal, the planner will stop when it pops the first binding whose tags include that token, and return the shortest-hop path from NOW.
-
-* * *
-
-### 8) Adding new states and wiring them (attach semantics)
-
-When you add a new predicate, you can choose how to **attach** it:
-
-* `attach="latest"`: add a `then` edge from the current LATEST to the new binding, then update LATEST to the new binding.
-
-* `attach="now"`: add a `then` edge from NOW to the new binding, then update LATEST to the new binding.
-
-* `attach="none"`: create the binding with no auto-edge; LATEST still updates to the new binding.
-
-Nuances:
-
-* If NOW == LATEST, `attach="now"` and `attach="latest"` behave the same.
-
-* Auto-attachments help you build an episode spine quickly; you can name the transition (e.g., `search`, `latch`) instead of using the generic `then` when helpful.
-
-* * *
-
-### 9) Style choices for state: snapshot vs delta
-
-Two workable styles exist; pick one and stay consistent.
-
-* **Snapshot-of-state (recommended):** each binding is a full current state. Carry stable invariants forward (e.g., still standing, still close), and **replace** transient milestones (e.g., drop `pred:nipple:found` once `pred:nipple:latched` is true).  
-  Pros: every binding is self-describing; planning and debugging are easier.
-
-* **Delta/minimal:** each binding adds only what changed (e.g., add `found`, later add `latched`) and omits repeated invariants.  
-  Pros: fewer tags; cons: harder to interpret a single node without its history.
-
-* * *
-
-### 10) Worked examples (no code, just structure)
-
-#### 10.1 Smell of milk (policy trigger, not a plan target)
-
-* Current binding tags add: `cue:scent:milk`.
-
-* Rationale: cues are evidence for policies. Policies may then consider seeking mom or searching for nipple depending on other context. We do not plan to `cue:*`.
-
-#### 10.2 Running with measurements (action on the edge)
-
-* Source binding: `pred:posture:standing`, `pred:proximity:mom:far`.
-
-* Destination binding: `pred:posture:standing`, `pred:proximity:mom:close`.
-
-* Transition: `--run-->` with `edge.meta = {meters: 12.0, duration_s: 5.0, speed_mps: 2.4, created_by: ...}`.
-
-* Optional: if “running” is a state you sometimes plan to, insert an intermediate `pred:locomotion:running` node; otherwise keep it on the edge.
-
-#### 10.3 Nipple found → latched (milestone to state)
-
-* From standing/far to “found”:
   
-  * Add binding `pred:nipple:found`, `pred:posture:standing`, `pred:proximity:mom:close`.
+
+This is based on Schneider's work, e.g., [Frontiers | The emergence of enhanced intelligence in a brain-inspired cognitive architecture](https://www.frontiersin.org/journals/computational-neuroscience/articles/10.3389/fncom.2024.1367712/full) , 
+
+ [Navigation Map-Based Artificial Intelligence](https://www.mdpi.com/2673-2688/3/2/26)   . In the CCA8 we formalize a bit more and adopt more of the common terminology of the standard symbolic predicate and subsymbolic representation layer toolboxes. 
+
+](https://www.youtube.com/watch?v=Ld7I5EFpSYI&t=213s)
+
+The focus of this section is to nail down a **clean, consistent ontology** (i.e., formal specification of a conceptualization) for:
+
+* what a **binding** represents,
+
+* what an **edge** represents,
+
+* and how we represent **actions** and **state changes**,
+
+in a way that:
+
+1. Is neuro‑plausible relative to hippocampal/engram work, cognitive map theory, and the evolutionary minicolumn hypothesis our model uses;
+
+2. Is simple and consistent enough to scale (billions of bindings over long simulations);
+
+3. Gives the codebase a clean, minimal set of patterns that policies, FOA, planning and RL can rely on.
+
+* * *
+
+2. ### Neuroscience context (very briefly)
+
+Modern memory and navigation neuroscience gives us a few constraints and inspirations:
+
+* **Engrams**: memories are stored in **sparse ensembles of neurons** (“engram cells”) whose activity and connectivity change during learning and can later be reactivated to express the memory.
+
+* **Cognitive maps**: the hippocampus and related areas implement **map‑like representations** of space and, more broadly, structured task/concept spaces. Place cells, grid cells, and related populations support flexible navigation and episodic memory.
+
+* **Index vs representation layers**: The “Tensor Brain” model and related work argue for a distinction between:
   
-  * Edge: `--search-->` from the previous binding.
-
-* From “found” to “latched”:
+  * a **representation layer** (distributed activations in sensory and associative cortex), and
   
-  * Add binding `pred:nipple:latched`, keep posture/proximity as appropriate.
+  * an **index layer** that holds discrete symbols for entities, predicates, and episodic instances, with tensor‑like links between the two.
+
+CCA8 instantiates a similar distinction:
+
+* Columns / engrams = **representation layer** (what the “cortical minicolumns” are doing).
+
+* WorldGraph = **index/map layer** (what hippocampal‑like structures are doing).
+
+In that picture, **bindings** and **edges** are not neurons; they are **index‑layer nodes and links** that point into and organize the representation layer.
+
+* * *
+
+3. ### Binding ontology in CCA8: four binding “kinds”
+
+We standardize on four conceptual kinds of bindings:
+
+1. **Anchor bindings**
+
+2. **Predicate bindings**
+
+3. **Cue bindings**
+
+4. **Action bindings**
+
+In the implementation, a binding is still just a node with a set of tags, meta, and edges. The “kind” is given by the leading tag family:
+
+* `anchor:*`
+
+* `pred:*`
+
+* `cue:*`
+
+* `action:*`
+
+Bindings may carry multiple tags, but there is typically **one dominant “kind”** that determines how algorithms treat them.
+
+### 3.1 Anchor bindings (`anchor:*`)
+
+Anchor bindings are special, sparse nodes that **orient** the graph and FOA:
+
+* `anchor:NOW` – the current “moment” or temporal focus.
+
+* `anchor:HERE` – current spatial focus (if/when we add spatial anchors).
+
+* `anchor:EPISODE_ROOT` – optional roots for episodes or scenarios.
+
+These are not states or actions; they are **reference points** for:
+
+* FOA seeding (start expansion from NOW/HERE),
+
+* temporal / episode segmentation,
+
+* navigation over the graph (“where am I in this story?”).
+
+In practice, we want:
+
+* **one `anchor:NOW` binding pointing to the latest stable state** (see below),
+
+* and a small number of other anchors as needed.
+
+### 3.2 Predicate bindings (`pred:*`)
+
+Predicate bindings represent **semantic / state facts** about the agent and world:
+
+* Body / posture:
   
-  * Edge: `--latch-->` from the “found” binding.
+  * `pred:posture:fallen`
+  
+  * `pred:posture:standing`
+  
+  * `pred:posture:resting`
 
-* Style note: on the “latched” binding, you generally don’t need to keep `pred:nipple:found` unless you explicitly want milestone redundancy.
+* Proximity / relations:
+  
+  * `pred:mom:close`
+  
+  * `pred:nipple:latched`
+  
+  * `pred:milk:drinking`
 
-#### 10.4 Fall and recovery (two transitions)
+* Drives and internal conditions (optionally mirrored):
+  
+  * `pred:drive:hunger_high`
+  
+  * `pred:drive:fatigue_high`
 
-* Standing → Fallen: edge `--fall-->`, destination tags `pred:posture:fallen`.
+We deliberately prefer simple, brain‑like labels such as `pred:posture:standing` rather than more computer‑science‑ish `pred:state:posture:standing`. The extra “state” sub‑namespace may be useful for a formal ontology, but your modeling intuition (and probably the biological reality) is that the brain is concerned with **what is happening** (“standing”, “falling”, “predator near”), not with an abstract “state:” wrapper. The _meaning_ of “this is a state” is in how the predicate is _used_ – by policies, FOA, planner, etc. – not in the literal string.
 
-* Fallen → Recovered standing: edge `--stand_up-->` (or `recover_fall`), destination tags `pred:posture:standing`.
+Semantically:
 
-* If you record timing, use a standard key like `duration_s` in `edge.meta` (e.g., time to stand again).
+* **Predicate nodes** are the “noun / adjective world”: what is true about the body or environment at a particular moment.
 
-#### 10.5 Hunger high as a trigger (not a goal)
+### 3.3 Cue bindings (`cue:*`)
 
-* Add `cue:drive:hunger_high` to the current binding.
+Cue bindings are **pseudo‑nodes** for incoming sensory information in a form accessible to the maps:
 
-* Rationale: a trigger for policies to act (seek mom, search, etc.). If you ever want to plan to that condition instead, emit `pred:drive:hunger_high`—but avoid using both forms at the same time.
+* `cue:vision:silhouette:mom`
+
+* `cue:vestibular:tilt`
+
+* `cue:somatosensory:pressure:flank`
+
+* `cue:drive:cold_skin`
+
+These are **short‑lived, input‑facing** representations: they reflect what just hit the senses, not necessarily what the agent believes or remembers.
+
+The typical flow:
+
+* Sensors (or HybridEnvironment) produce `EnvObservation` → WorldGraph gets **cue bindings** attached near NOW.
+
+* Policies read cues + predicates + drives to decide what to do.
+
+* Later, “stable” interpretations of cues (e.g., `mom:close`, `nipple:found`) become **predicate bindings**.
+
+So:
+
+* **Cue nodes** = “what just came in”.
+
+* **Predicate nodes** = “what the agent believes / treats as facts”.
+
+### 3.4 Action bindings (`action:*`)
+
+Action bindings represent **motor / behavioral steps**:
+
+* Micro‑actions:
+  
+  * `action:push_up`
+  
+  * `action:extend_legs`
+  
+  * `action:bleat_twice`
+  
+  * `action:orient_to_mom`
+
+* Macro‑actions / policies (optional):
+  
+  * `action:stand_up` (if we want a macro node)
+  
+  * `action:suckle`
+
+These bindings live **in the same graph** as predicates and anchors. They are created when policies execute, and they show up in episode traces as the “verb” nodes between “noun” states.
+
+Each action binding typically carries meta such as:
+
+* `meta["policy"] = "policy:stand_up"` (which policy created it),
+
+* temporal stamps (`ticks`, `epoch`, `tvec64`, etc.),
+
+* optional links to motor commands sent to a robot or environment.
+
+Semantically:
+
+* **Action nodes** are the “verb world”: what the agent _did_ at that point along the path.
 
 * * *
 
-### 11) Isolated bindings and anchors (and when they’re useful)
+4. ### Edges as generic “then” links
 
-* It’s valid to create **isolated anchors** (e.g., NOW with no edges yet). Planning will fail until wiring exists; that’s expected during construction.
+--------------------------------
 
-* It’s valid to create **isolated bindings** with cues or predicates and wire them later (e.g., a received message as a cue).
+Edges in WorldGraph are **directed links between bindings**. In the early code and docs, we used edge labels both for:
 
-* Avoid long-lived **tagless** bindings: they’re hard to interpret. If you must create a placeholder, give it a minimal tag (`pred:event:placeholder` or `cue:import:pending`) or a clear meta note.
+* temporal/causal transitions (`then`, `fall`, `recovered_to`),
 
-* Reusing an old binding to “return to the same state” collapses time; generally prefer a fresh binding, even if the tags match, so the episode remains chronological.
+* and structural relations (`initiate_stand`, spatial relations, etc.).
 
-* * *
+To bring this closer to the “everything is a node on a map” picture and simplify algorithms, we standardize as follows:
 
-### 12) Inspecting and explaining the graph
+1. **Default edge semantics**:
+   
+   * All episode / transition edges are **conceptually “then”**:
+     
+     * “this binding came after / was derived from that binding in this story.”
+   
+   * Implementation may store the label as `"then"` (or leave label blank and treat it as `then`).
 
-* **Pretty paths:** the runner prints both a path of ids and a readable line like  
-  `b3[born] --then--> b4[wobble] --stabilize--> b5[posture:standing] --suckle--> b6[milk:drinking]`.  
-  Place the tag you want to show first in the binding’s tag list.
+2. **Edge labels are optional history annotations**:
+   
+   * We may keep a `label` field for readability and logging:
+     
+     * e.g. `fall`, `recovered_to`, `on`, `under`.
+   
+   * But algorithms (FOA, planner, policies) primarily treat these edges as **generic transitions**.
+   
+   * Special labels are only introduced when we have a **clear algorithmic reason** to treat those transitions differently.
 
-* **Interactive HTML (Pyvis):** export an HTML graph from the menu; choose label mode `id+first_pred` while developing so you see both id and the first predicate. NOW is highlighted as a box.
+3. **Semantics move to node tags and meta**:
+   
+   * “What happened” is determined by the **sequence of node types** (predicate, action, cue) and their tags, not by fancy edge labels.
+   
+   * Edges are the **glue**; nodes carry the semantics.
 
-* **Action summaries:** summarize action labels across the graph and (optionally) aggregate simple metrics like `duration_s` or `meters` to check data quality and get a quick feel for what happened.
+This matches your intuition that in the brain:
 
-* * *
-
-### 13) Common pitfalls and quick fixes
-
-* **“No path found”**: verify the exact goal token (`pred:...`), check that edges form a forward chain from NOW, watch for reversed edges (`B→A` when you meant `A→B`).
-
-* **Duplicate edges**: the UI warns on exact duplicate `(src,label,dst)`; accept different labels (`then` vs `search`) if intentional.
-
-* **Tagless bindings**: add at least one predicate, cue, or anchor so snapshots and exports stay readable.
-
-* **Two NOW tags**: if you move the anchor, remove `anchor:NOW` from the previous binding (the helper can do this).
-
-* * *
-
-### 14) Quick reference (cheat sheet)
-
-* Use `pred:*` for states/goals/events (and, by project default, plannable drive thresholds).
-
-* Use `cue:*` for evidence/conditions that policies react to; you do not plan to cues.
-
-* Use `anchor:*` for orientation markers; the anchors map is authoritative.
-
-* Edge labels are actions; keep measurements in `edge.meta`.
-
-* Prefer the **snapshot-of-state** style; drop stale milestones and carry stable invariants.
-
-* NOW is the default start for planning; LATEST updates when you add a new binding.
-
-* It’s okay to build the episode spine with `then` labels; add named actions where it improves clarity.
+* temporal sequence, causal flow, “pointer” relationships and even spatial adjacency are all different _uses_ of the same underlying connectivity, not different “edge types” at the synapse level.
 
 * * *
 
-### 15) Short FAQ
+5. ### State–Action–State patterns: `policy:stand_up` as a worked example
 
-**Q: Can a binding be only an anchor?**  
-Yes. `anchor:NOW` alone is valid; you can combine anchors with predicates/cues when helpful.
+---------------------------------------------------------------------
 
-**Q: Can a binding be only a cue?**  
-Yes. Useful for a “noticed” moment you may wire later. You cannot plan to a cue.
+When a policy executes, it leaves behind a simple **state–action–state** pattern in the graph.
 
-**Q: How do I record that “running happened” with distance/time?**  
-Label the edge `run` and put numbers in `edge.meta` (e.g., `meters`, `duration_s`, `speed_mps`). If you also want a plannable state, add `pred:locomotion:running`.
+Consider `policy:stand_up`.
 
-**Q: Do edge labels change planning outcomes today?**  
-No. They’re readability/analytics metadata. Planning follows structure. Later you can map labels to costs and use Dijkstra/A*.
+### 5.1 Pre‑condition
 
-**Q: Should I reuse an earlier binding when I return to the same state?**  
-Prefer a new binding (e.g., `standing` again) to preserve chronology. Reusing the old one collapses time.
+Before the policy fires, we want:
 
-**Q: Where are policies and learning kept?**  
-Policies live in the controller, not in WorldGraph. Provenance is stamped into `meta`. Learning hooks (skill ledger, edge costs) can be layered without changing the graph format.
+* An anchor:
+  
+      b_now: [anchor:NOW]
+
+* A predicate representing current posture:
+  
+      b_fallen: [pred:posture:fallen, ...]
+
+* A link so NOW’s FOA can “see” that state:
+  
+      b_now --then--> b_fallen
+  
+  
+
+In context, there may also be:
+
+* `pred:drive:hunger_high`,
+
+* cues like `cue:vestibular:tilt`,
+
+which all live in the FOA neighborhood of `b_now`.
+
+The dev gate for `policy:stand_up` looks at that **local map**:
+
+* posture fallen,
+
+* age in neonatal range,
+
+* drives not too extreme.
+
+If satisfied, the controller chooses `policy:stand_up`.
+
+### 5.2 Execution: graph write
+
+When `policy:stand_up` executes, it writes a short chain:
+    (anchor)    b_now
+                 |
+                 v (then)
+    (state)     b_fallen : [pred:posture:fallen]
+                 |
+                 v (then)
+    (action)    b_act1  : [action:push_up]
+                 |
+                 v (then)
+    (action)    b_act2  : [action:extend_legs]
+                 |
+                 v (then)
+    (state)     b_stand : [pred:posture:standing, ...]
+
+Implementation details:
+
+* `b_act1` and `b_act2` are **action bindings** with:
+  
+  * `tags = {"action:push_up"}` and `{"action:extend_legs"}` respectively,
+  
+  * meta `{"policy": "policy:stand_up", "created_by": "policy:stand_up", ...}`.
+
+* `b_stand` is a **predicate binding** with:
+  
+  * `tags` including `pred:posture:standing`,
+  
+  * meta `{"policy": "policy:stand_up", ...}`.
+
+Every edge is:
+    source --then--> target
+
+and may optionally record a label like `"then"` in its field for clarity.
+
+### 5.3 NOW and temporal anchoring
+
+After the stand sequence completes, we want `NOW` to **track the latest stable state**. Conceptually:
+
+* `anchor:NOW` should ultimately refer to `b_stand` (“right now, the goat is standing”).
+
+Implementation options:
+
+* Update an existing `anchor:NOW` binding to point (via a `then` or internal field) to `b_stand`, or
+
+* Create a fresh `anchor:NOW` binding `b_now2` with a `then` path from `b_fallen` → `b_act1` → `b_act2` → `b_stand` → `b_now2`.
+
+For navigation and FOA, the key invariant is:
+
+> **From `anchor:NOW`, FOA can quickly reach the binding(s) that encode current posture, proximity, drives, etc.**
+
+If we later add a `NOW_origin` or episode roots, they can be separate anchors; but for basic behavior we keep: **NOW points to the latest state**.
+
+### 5.4 Cues and drives in context
+
+During this whole process:
+
+* **Cue bindings** near NOW (e.g., `cue:vestibular:tilt`, `cue:somatosensory:pressure`) provide the sensory evidence that posture is fallen.
+
+* **Drives** live in a separate `Drives` object but can be mirrored as predicates (e.g., `pred:drive:hunger_high`) if needed.
+
+* Dev gates and policies read:
+  
+  * `pred:posture:fallen`,
+  
+  * cues,
+  
+  * drives,  
+    to decide when to fire.
+
+So the role split is:
+
+* **Bindings / edges**: “what the episode looked like” (states, actions, transitions).
+
+* **Drives / context / policies**: “why we decided to do that”.
+
+* * *
+
+6. ### How actions are invoked and stored
+
+-------------------------------------
+
+Critically:
+
+* **Actions are invoked by policies**, not by edges.
+
+* **Edges do not “tell the system what to do”**; they are records of what was done.
+
+Control flow:
+
+1. **FOA**:
+   
+   * starts from `anchor:NOW` and nearby bindings (predicates, cues),
+   
+   * builds a small subgraph (few hops) in focus.
+
+2. **Policy gating**:
+   
+   * sees patterns like “`pred:posture:fallen` near NOW + neonatal age + hunger”,
+   
+   * selects `policy:stand_up`.
+
+3. **Policy execution**:
+   
+   * calls motor controllers / environment (actuation),
+   
+   * writes **action bindings** (`action:*`) and final **predicate bindings** (new state) into WorldGraph, connected by `then`.
+
+4. **Graph as trace**:
+   
+   * Later, FOA, planner, and RL see a stored **state–action–state** path they can learn from or re‑use.
+
+This keeps the **architecture clean**:
+
+* Policies are the “spinal cord / motor programs”.
+
+* WorldGraph is the “notebook” where stories of state/action/state are written down.
+
+* * *
+
+7. ### Relationship to engrams and columns
+
+--------------------------------------
+
+In the full CCA8 picture:
+
+* Each binding may have **engram pointers** into column stores (representation layer):
+  
+  * a posture binding might have an engram for the proprioceptive/visual pattern of “standing”.
+  
+  * a cue binding might have an engram for a particular visual snapshot (“silhouette:mom”).
+  
+  * an action binding might have a motor‑related engram representing a learned action pattern (“push_up”).
+
+WorldGraph then plays the hippocampal role:
+
+* It links these local engrams into **episodic and semantic maps**, in line with engram and cognitive map theories.
+
+This is exactly the **index / representation layer** story:
+
+* Index layer (bindings + edges): discrete nodes for **anchors, predicates, cues, actions**, organized into a map.
+
+* Representation layer (columns/engrams): distributed neural‑style representations, pointed to by bindings.
+
+Your “cortical minicolumns are spatial maps” hypothesis fits here by treating each column as a local map over its feature space, with WorldGraph indexing and sequencing them at a higher level.
+
+* * *
+
+8. ### Implications for the CCA8 codebase
+
+-------------------------------------
+
+Adopting this scheme implies several concrete steps.
+
+1. **Standardize binding types**:
+   
+   * Ensure that:
+     
+     * anchors carry `anchor:*` tags,
+     
+     * semantic facts carry `pred:*` tags (e.g., `pred:posture:standing`),
+     
+     * cues carry `cue:*` tags,
+     
+     * actions carry `action:*` tags.
+   
+   * We can keep legacy tags like `pred:state:posture_standing` temporarily for compatibility, but the **canonical name** should be `pred:posture:standing`.
+
+2. **Refactor edge usage**:
+   
+   * Default edge label is conceptually `then`.
+   
+   * Extra labels like `fall`, `recovered_to` can be kept as optional annotations, but algorithms should mostly rely on:
+     
+     * graph structure,
+     
+     * node tags/meta.
+
+3. **Refactor policies to write S–A–S chains**:
+   
+   * `policy:stand_up`, `policy:recover_fall`, `policy:seek_nipple`, `policy:suckle`, etc., should:
+     
+     * create action bindings `action:*`,
+     
+     * connect them between predicate states with `then` edges,
+     
+     * update `anchor:NOW` so FOA can see the new state.
+
+4. **FOA and planning**:
+   
+   * FOA should treat all four binding types as nodes in the **same map**, but may:
+     
+     * weight anchors and predicates more strongly,
+     
+     * treat action nodes as transitory steps.
+   
+   * Planner should search over state–action–state trajectories to reach target predicates (e.g., `pred:nipple:latched`, `pred:milk:drinking`).
+
+5. **Documentation alignment**:
+   
+   * Docstrings in `cca8_world_graph.py`, `cca8_controller.py`, `cca8_run.py`, `cca8_env.py` should be updated to:
+     
+     * describe bindings as “anchor / predicate / cue / action” nodes,
+     
+     * describe edges as “then” transitions,
+     
+     * clarify that **actions are nodes**, not edges.
+
+6. **README / design docs**:
+   
+   * README sections on WorldGraph and policies should be updated to reflect this white‑paper view, so future readers see:
+     
+     * a **unified map story**,
+     
+     * a clear binding ontology,
+     
+     * and a clean separation between control (policies) and trace (WorldGraph).
+
+* * *
+
+9. ### Summary
+
+----------
+
+The central design decisions are:
+
+* **Four binding kinds**:
+  
+  * `anchor:*` – special nodes for NOW/HERE/origins.
+  
+  * `pred:*` – semantic/state facts.
+  
+  * `cue:*` – sensory/input postings.
+  
+  * `action:*` – motor/behavioral steps.
+
+* **Edges as generic “then”**:
+  
+  * Edges are primarily temporal/relational glue.
+  
+  * Labels are optional annotations, not the main source of semantics.
+
+* **Actions as nodes, not edges**:
+  
+  * Policies invoke actions.
+  
+  * WorldGraph stores those actions as `action:*` bindings in state–action–state chains.
+
+* **WorldGraph as hippocampal / index map**:
+  
+  * It ties Columns/engrams (representation layer) into a coherent cognitive map over episodes and semantics.
+
+This architecture:
+
+* aligns well with hippocampal / engram / cognitive‑map evidence,
+
+* matches your “minicolumns are spatial maps” hypothesis (everything is a node on a map),
+
+* gives us a clean base for later language work (nouns ↔ predicates, verbs ↔ actions, temporal connectives ↔ `then`),
+
+* and simplifies the code: fewer relation types, clearer patterns, easier refactoring.
+
+Once we’re both happy with this conceptual foundation, the next step is to:
+
+1. Implement this state–action–state pattern concretely for a few key policies (e.g., `stand_up`),
+
+2. propagate the pattern into the environment simulation,
+
+3. and then bring all docs (docstrings + README) into alignment with this binding/edge ontology. 
+   
+   
+   
+   
+
+   * * *
+
+# Tutorial on Drives
 
 
+
+### **“drive:*” tutorial**
+
+   drive:* as thenotation for internal flags, but by design they are:
+
+   **ephemeral controller-only flags** — _not_ stored as pred:* in the WorldGraph.
+
+   There are three layers to this:
+
+   **a) Drives →drive:* flags**
+
+   In Drives.flags() we turn raw numbers into **ephemeral flags**:
+
+   defflags(self) -> List[str]:
+
+       tags: List[str] = []
+
+       if self.hunger > HUNGER_HIGH:
+
+           tags.append("drive:hunger_high")
+
+       if self.fatigue > FATIGUE_HIGH:
+
+           tags.append("drive:fatigue_high")
+
+       if self.warmth < WARMTH_COLD:
+
+           tags.append("drive:cold")
+
+       return tags
+
+   These drive:* flags:
+
+* live **inside the Drives object**,
+
+* are recomputed on each controller step / autonomic tick,
+
+* are used by policies in trigger(...) and deficit scoring.
+  They are **not** automatically written to the WorldGraph.
+  The controller docstring saysthis explicitly:
+  “Drives: numeric homeostaticvalues (hunger, fatigue, warmth) → derive 'drive:_' flags (ephemeral tagsthat are not written to worldgraph)”  
+  “Controller-only flags (never written as pred:_): drive:* — ephemeral …”
+  **b)Runner-level helper** **_drive_tags(...)**
+  In cca8_run.py, _drive_tags(drives) is a robust helper that:
+
+* Preferentially uses drives.flags() (new API),
+
+* Falls back to drives.predicates() (legacy),
+
+* Or derives flags directly from hunger/fatigue/warmth if needed:
+  def_drive_tags(drives) -> list[str]:
+      ...
+      # Prefer the new API
+      if hasattr(drives, "flags"):
+          tags = list(drives.flags())
+          return [t for t in tags ifisinstance(t, str)]
+      ...
+      # Last-resort derived flags
+      tags = []
+      if drives.hunger > 0.6:tags.append("drive:hunger_high")
+      if drives.fatigue > 0.7:tags.append("drive:fatigue_high")
+      if drives.warmth < 0.3:tags.append("drive:cold")
+      return tags
+  These are still **internalflags**; at this point nothing is in the graph yet.
+  **c) How/whendo drive flags touch the WorldGraph?**
+  Two ways:
+1. **As cues** (our house style):_emit_interoceptive_cues converts _rising-edge_ drive flags into cue:drive:* bindings:
+   2.  started =flags_now - flags_prev  # e.g.{"drive:hunger_high"}
+   3.  for f insorted(started):
+   4.      world.add_cue(f, attach=attach,
+   5.                    meta={"created_by":"autonomic", "ticks": ctx.ticks})
+   6.      # → creates binding with tag"cue:drive:hunger_high"
+   7.  ctx.last_drive_flags= flags_now
+   8.  returnstarted
+   So ifhunger crosses HUNGER_HIGH on an autonomic tick, you get a binding like:
+   b6:[cue:drive:hunger_high]
+   That’s **evidence**,not a goal.
+
+2. **As predicates (rare, explicit)**:  
+   If we ever want a **plannable drive condition**, we explicitly use pred:drive:* (or cue:drive:* as evidence). The docstring hints at this:
+   “…controller-only flags … never written as pred:* …  
+   e.g., plannable drive condition → pred:drive:hunger_high, or evidence → cue:drive:hunger_high”
+   But bydefault, **we do not auto-write** **pred:drive:***; you’d only see that if you deliberately createdit (e.g., for a demo).
+   So the mental model:
+* drive:* = **ephemeral flags** on Drives (used by triggers/deficit scoring, not persisted).
+
+* cue:drive:* = **WorldGraph evidence** when drive thresholds _start_ (rising edge).
+
+* pred:drive:* = **explicit planner goals** (only if we choose to add them).
+
+* 
+
+* ###### **TL;DR:**
+
+* drive:* are still ephemeral controller flags; we use cue:drive:* and pred:drive:* only when we explicitly want them in WorldGraph.
+  
+  
 
 * * *
 
@@ -2371,330 +3006,321 @@ Policies live in the controller, not in WorldGraph. Provenance is stamped into `
 
 This tutorial teaches you how to **build, inspect, and reason about the WorldGraph**—the symbolic fast index that sits at the heart of CCA8. It’s written for developers new to the codebase.
 
+
+
+The module implements:
+
+- **Bindings** — nodes that carry tags, meta, optional engram pointers, and outgoing edges.
+- **Edges** — directed `"then"` links between bindings with optional human-readable labels.
+- **Anchors** — named bindings like NOW and NOW_ORIGIN.
+- **TagLexicon** — a restricted, stage-aware vocabulary for tags.
+- **Planner** — BFS (or Dijkstra) from a start binding to a `pred:<token>` goal.
+- **Persistence** — `to_dict()` / `from_dict()` for snapshots.
+  
+  
+
 ***Note: Code changes will occur over time,  but the main ideas below should remain stable with the project***
 
-* * *
 
 
+### 0. Snapshot header: where the numbers come from
 
-### 0. Variables/Attributes Holding Values Shown in Snapshot Display
+The **snapshot** shown in the Runner (menu: “Display snapshot”) pulls values directly from `WorldGraph`, `Drives`, and `Ctx`. It’s useful to know where they come from:
 
-#### Header / anchors
+- **NOW=b5** → `_anchor_id(world, "NOW")` (usually `world._anchors["NOW"]`)
 
-* **EMBODIMENT: body=(none)** → `ctx.body` (string or `(none)` if falsy)
+- **NOW_ORIGIN=b1** → `_anchor_id(world, "NOW_ORIGIN")`
 
-* **NOW=b1** → `_anchor_id(world, "NOW")` (typically `world._anchors["NOW"]`)
+- **LATEST=b9** → `world._latest_binding_id` (most recently created binding)
 
-* **LATEST=b5** → `_anchor_id(world, "LATEST")` (typically `world._anchors["LATEST"]`)
+- **NOW_LATEST=b9** → alias for `LATEST` for convenience
 
-#### CTX (Context)
-
-* **age_days** → `ctx.age_days` (float)
-
-* **body** → `ctx.body`
-
-* **hal** → `ctx.hal` (bool/None; we normalize to `OFF` if falsy)
-
-* **profile** → `ctx.profile` (e.g., `"Mountain Goat"`)
-
-* **ticks** → `ctx.ticks` (int)
-
-* **winners_k** → `ctx.winners_k` (int)
-
-* **vhash64(now)** → `ctx.tvec64()` (helper that fingerprints the current temporal vector)
-
-* **epoch_vhash64** → `ctx.boundary_vhash64` (hash of the vector at last boundary)
-
-* **epoch** → `ctx.boundary_no` (count of event boundaries taken so far)
-
-#### TEMPORAL
-
-* **dim** → `ctx.temporal.dim`
-
-* **sigma** → `ctx.temporal.sigma`
-
-* **jump** → `ctx.temporal.jump`
-
-* **cos_to_last_boundary** → `ctx.cos_to_last_boundary()` (helper comparing current vector vs boundary vector)
-
-* **vhash64(now)** → `ctx.tvec64()` (same as CTX)
-
-* **epoch** → `ctx.boundary_no` (same as CTX)
-
-* **epoch_vhash64** → `ctx.boundary_vhash64` (same as CTX)
-
-> Notes:
-> 
-> * The **current vector** itself lives in `ctx.temporal` (a `TemporalContext`); we don’t print the 128-D vector, only its hash and cosine to keep output readable.
-> 
-> * We harmonized names so CTX and TEMPORAL show the **same trio**: `vhash64(now)`, `epoch`, `epoch_vhash64`.
-
-#### DRIVES
-
-* **hunger, fatigue, warmth** → `drives.hunger`, `drives.fatigue`, `drives.warmth` (from `cca8_controller.Drives`)
-
-#### POLICIES (executed this session—telemetry)
-
-* **Header** is shown if we have any stats recorded (i.e., at least one policy ran).
-
-* **Line format:** `policy:<name>: n=…, succ=…, rate=…, q=…, last=…`
+- **CTX fields**:
   
-  * `n` → `SkillStat.n` (executions)
+  - `age_days` → `ctx.age_days`
+  - `ticks` → `ctx.ticks`
+  - `profile` → `ctx.profile`
+  - `winners_k` → `ctx.winners_k`
+  - `vhash64(now)` → `ctx.tvec64()` (temporal vector fingerprint)
+  - `epoch` → `ctx.boundary_no`
+  - `epoch_vhash64` → `ctx.boundary_vhash64`
+
+- **TEMPORAL**:
   
-  * `succ` → `SkillStat.successes`
+  - `dim` → `ctx.temporal.dim`
+  - `sigma` → `ctx.temporal.sigma`
+  - `jump`  → `ctx.temporal.jump`
+  - `cos_to_last_boundary` → `ctx.cos_to_last_boundary()`
+
+- **DRIVES**:
   
-  * `rate` → computed `successes / n`
+  - `hunger`, `fatigue`, `warmth` → `drives.hunger/fatigue/warmth`
+
+- **POLICIES telemetry**:
   
-  * `q` → `SkillStat.mean_reward` (running mean; simple average in current code)
+  - `n`, `succ`, `rate`, `q`, `last` → from the “skill ledger” per policy (updated when `execute()` returns).
+
+- **BINDINGS / EDGES**:
   
-  * `last` → `SkillStat.last_reward`
+  - BINDINGS: iterate `world._bindings` in id order and print `tags`.
+  - EDGES: scan each binding’s outgoing `edges` and print `src --label--> dst` (duplicates collapsed with `×N`).
 
-* **Data source:** a runtime dict keyed by policy name (e.g., `SKILLS["policy:stand_up"] → SkillStat(...)`), managed by the controller runtime (`POLICY_RT`) and updated when `execute(...)` returns.
+This is mostly convenience wiring around the core WorldGraph API.
 
-#### POLICIES ELIGIBLE (meet devpt requirements)
+---
 
-* **List contents** → policies where `policy.dev_gate(ctx)` is `True` **right now**.  
-  They may or may not already have telemetry (i.e., may appear in both sections).
+### 1. What `cca8_world_graph.py` is for
 
-#### BINDINGS
+At a high level, `cca8_world_graph.py` implements:
 
-* **b# lines** → iterate `world._bindings` (ordered by `_sorted_bids(world)`), print each binding’s `tags` list in brackets.  
-  Source: `world._bindings[bid].tags` (plus any normalization you apply).
+- A small **episode graph** (`WorldGraph`) where each binding is a time-slice,
+- **Edges** (`src → dst`) with labels (often `"then"`),
+- **Anchors** (NOW, NOW_ORIGIN, …) for orientation,
+- A **restricted lexicon** (`TagLexicon`) to keep tags clean,
+- **Planning** (BFS / Dijkstra) over that graph,
+- **Persistence** (JSON-friendly snapshots).
 
-#### EDGES
+The design is intentionally minimal: the graph is an **index**, not a full knowledge base. Heavy content lives in engrams; the graph just tells you what led to what.
 
-* **Collapsed duplicates** → we gather edges by scanning each binding’s outgoing list:
-  
-  * edge list (first found of): `binding.edges` | `binding.out` | `binding.links` | `binding.outgoing` (all are lists of dicts)
-  
-  * **label** → `e["label"]` | `e["rel"]` | `e["relation"]` | default `"then"`
-  
-  * **dst** → `e["to"]` | `e["dst"]` | `e["dst_id"]` | `e["id"]`
+---
 
-* We render `"{src} --{label}--> {dst}"` and then `Counter(...)` them to show `×N` for duplicates.
+### 2. Core classes
 
-* * *
+| Class        | Purpose                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------ |
+| `Binding`    | A node (episode card) with `id`, `tags`, `edges`, `meta`, `engrams`.                                         |
+| `Edge`       | A small dict describing a directed link: `{"to": dst_id, "label": str, "meta": dict}`.                       |
+| `TagLexicon` | Defines allowed tokens per **stage** and **family**; enforces allow/warn/strict policy.                      |
+| `WorldGraph` | Manages all bindings, edges, anchors, lexicon enforcement, planning, persistence, and simple action metrics. |
+
+Bindings and edges make up the graph; the lexicon and planner are the disciplines that keep it usable.
+
+---
+
+###### 3. Binding internals (shape and families)
+
+A `Binding` is a `@dataclass(slots=True)` with:
+
+```python
+@dataclass(slots=True)
+class Binding:
+    id: str
+    tags: set[str]
+    edges: list[Edge]
+    meta: dict
+    engrams: dict
+
+ 
+```
 
 
 
-### 1. Purpose of `cca8_world_graph.py`
+**Families** of tags we use:
 
-`cca8_world_graph.py` implements the **symbolic episode index**:
+* `pred:*` — predicates (facts/states), e.g. `pred:posture:standing`, `pred:nipple:latched`.
 
-* **Bindings** = nodes (episode cards) that hold tags, meta, and optional engram pointers.
+* `action:*` — actions (verbs), e.g. `action:push_up`, `action:extend_legs`.
 
-* **Edges** = directed links (`src → dst`) with labels like `"then"`, `"search"`, `"suckle"`.
+* `cue:*` — cues/evidence, e.g. `cue:vision:silhouette:mom`, `cue:drive:hunger_high`.
 
-* **Anchors** = named bindings (e.g., `NOW`) used as temporal reference points.
+* `anchor:*` — anchors, e.g. `anchor:NOW`, `anchor:NOW_ORIGIN`.
 
-* **Planner** = BFS (or Dijkstra) search from `NOW` to the first `pred:<token>` goal.
+_Invariants:_
 
-The file also enforces a **restricted developmental lexicon** (`TagLexicon`) and provides `to_dict()` / `from_dict()` for JSON persistence.
+* Each binding has a unique `id` (`"b1"`, `"b2"`, …).
 
-* * *
+* Edges live in `binding.edges` on the **source** node.
 
-### 2. Key Classes and What They Do
+* A binding with no tags is allowed but discouraged for long-term use (harder to interpret).
 
-| Class            | Purpose                                                                                                                 |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| **`Edge`**       | A `TypedDict` describing one outgoing link: `{"to": str, "label": str, "meta": dict}`                                   |
-| **`Binding`**    | A `dataclass(slots=True)` representing one node in the episode graph. Fields: `id`, `tags`, `edges`, `meta`, `engrams`. |
-| **`TagLexicon`** | Defines allowed tokens by developmental stage (neonate→adult). Enforces `allow/warn/strict` policy.                     |
-| **`WorldGraph`** | The main engine: manages all bindings, edges, anchors, planning, persistence, and lexicon enforcement.                  |
-
-* * *
-
-### 3. Simplifying the Type Hints
-
-You’ll often see:
-    self.allowed: dict[str, dict[str, set[str]]] = {}
-
-Read this **inside-out**:
-
-> mapping of `<stage>` → `<family>` → `<set of tokens>`
-
-Example:
-    {
-      "neonate": {
-         "pred": {"posture:standing", "milk:drinking"},
-         "cue":  {"vision:silhouette:mom"},
-         "anchor": {"NOW"}
-      }
-    }
-
-Use this mental model whenever you meet deeply nested hints.
+* The **first `pred:*` tag**, if present, is used as the default label in pretty paths and exports.
 
 * * *
 
-### 4. Creating Bindings (Nodes)
+### 4. Creating bindings (anchors, predicates, cues, actions)
 
-| Tag type                      | Method                                              | Example                                       |
-| ----------------------------- | --------------------------------------------------- | --------------------------------------------- |
-| **Anchor**                    | `ensure_anchor("NOW")`                              | creates or returns the NOW binding            |
-| **Predicate**                 | `add_predicate("posture:standing", attach="now")`   | auto-links from NOW                           |
-| **Cue**                       | `add_cue("vision:silhouette:mom", attach="latest")` | links from latest predicate                   |
-| **Tagless (not recommended)** | `add_binding(set())`                                | creates an unlabeled node; skip in normal use |
+The public API for node creation is:
 
-Each new predicate or cue updates the internal pointer `_latest_binding_id`.
+`world = WorldGraph()world.set_tag_policy("allow")  # or "warn"/"strict" now = world.ensure_anchor("NOW")`
 
-* * *
+**Anchors**
 
-### 5. Automatic vs Manual Linking
+`now = world.ensure_anchor("NOW")    # returns binding id for NOW`
 
-| Method                      | Effect                                 |
-| --------------------------- | -------------------------------------- |
-| `attach="now"`              | Adds edge `NOW → new` (`label="then"`) |
-| `attach="latest"`           | Adds edge `<previous latest> → new`    |
-| `attach="none"`             | Creates unlinked node                  |
-| `add_edge(src, dst, label)` | Manual link (e.g., `"stand"`)          |
+* If NOW exists → returns its id.
 
-**Example:**
-    g = WorldGraph()
-    now = g.ensure_anchor("NOW")
-    a = g.add_predicate("posture:fallen", attach="none")
-    b = g.add_predicate("posture:standing", attach="none")
-    g.add_edge(a, b, label="stand")
-    print(g.plan_pretty(a, "posture:standing"))
-    # → b3[posture:fallen] --stand--> b4[posture:standing]
+* If not → creates a binding with `tags={"anchor:NOW"}` and records it in `world._anchors`.
 
-* * *
+**Predicates**
 
-### 6. The Lexicon (Tag Enforcement)
+`b1 = world.add_predicate("posture:standing", attach="now") # writes pred:posture:standing; NOW -> b1 if attach="now"`
 
-The lexicon constrains vocabulary per developmental stage.
-    g.set_stage("neonate")
-    g.set_tag_policy("warn")  # allow, warn (default), or strict
+**Cues**
 
-* In `warn` mode, out-of-lexicon tokens print a one-line warning.
+`c1 = world.add_cue("vision:silhouette:mom", attach="latest") # writes cue:vision:silhouette:mom; LATEST -> c1 if attach="latest"`
 
-* In `strict` mode, they raise `ValueError`.
 
-* Later stages include all earlier tokens.
 
-**Quick test:**
-    g.add_predicate("posture:jumping", attach="latest")
-    # WARN [tags] pred:posture:jumping not allowed at stage=neonate (allowing)
+**Actions**
+
+`a1 = world.add_action("push_up", attach="now")a2 = world.add_action("extend_legs", attach="latest") # writes action:push_up, action:extend_legs; NOW -> a1 -> a2`
+
+All three of `add_predicate`, `add_cue`, `add_action` accept:
+
+* `attach="now"` — auto-edge `NOW --then--> new`.
+
+* `attach="latest"` — auto-edge `LATEST --then--> new`.
+
+* `attach=None` or `"none"` — no auto-edge; just create the binding and update `LATEST`.
+
+`world._latest_binding_id` is updated to the new binding each time.
 
 * * *
 
-### 7. Planning
+### 5. Edges and attach semantics
 
-The planner searches from a start node (usually NOW) to the first binding whose tags include `pred:<token>`.
-    path = g.plan_to_predicate(now, "posture:standing")
-    print(path)                     # ['b1','b2']
-    print(g.plan_pretty(now, "posture:standing"))
-    # b1(NOW) --then--> b2[posture:standing]
+Edges are stored **on the source binding**:
 
-Under the hood:
+`e = {"to": dst_id, "label": "then", "meta": {...}}binding.edges.append(e)`
 
-* BFS → unweighted (fewest edges)
+The `add_edge(...)` helper is:
 
-* Dijkstra → weighted (`meta["weight"]`, `cost`, `distance`, or `duration_s`)
+`world.add_edge(src_id, dst_id, label="then", meta=None)`
 
-Switch planners:
-    g.set_planner("dijkstra")
-    print(g.get_planner())  # 'dijkstra'
+Attach helpers (`attach="now"/"latest"`) just call `add_edge(...)` under the hood with `label="then"`.
 
-* * *
+**Conventions:**
 
-### 8. Exercises (with solutions)
+* **Semantics**: every edge is conceptually `"then"` — “this binding was followed by that one.”
 
-**Exercise 1 – Manual edge**
-    a = g.add_predicate("posture:fallen", attach="none")
-    b = g.add_predicate("posture:standing", attach="none")
-    g.add_edge(a, b, "stand")
-    print(g.plan_pretty(a, "posture:standing"))
+* **Labels**: you may use labels like `"approach"`, `"search"`, `"latch"`, `"suckle"` as **human-facing aliases**. The planner does not rely on them for correctness.
 
-✅ _Output:_ `b3[posture:fallen] --stand--> b4[posture:standing]`
+* **Metrics**: any numeric properties (distance, duration, speed, cost) belong in `edge.meta`, not in the tag name.
 
 * * *
 
-**Exercise 2 – Auto chain**
-    g = WorldGraph()
-    g.ensure_anchor("NOW")
-    g.add_predicate("posture:standing", attach="now")
-    g.add_predicate("posture:jumping", attach="latest")
-    print(g.plan_pretty("b1", "posture:jumping"))
+### 6. Lexicon: restricted vocabulary and enforcement
 
-✅ _Output:_ `b1(NOW) --then--> b2[posture:standing] --then--> b3[posture:jumping]`
+`TagLexicon` enforces a small, stage-aware vocabulary:
 
-* * *
+* `STAGE_ORDER = ("neonate", "juvenile", "adult")` (example).
 
-**Exercise 3 – Lexicon policy test**
-    g.set_stage("neonate")
-    g.set_tag_policy("strict")
-    try:
-        g.add_predicate("posture:jumping", attach="latest")
-    except ValueError as e:
-        print("Caught:", e)
+* `BASE[stage][family]` lists allowed tokens for each family/stage.
 
-✅ _Output:_ `Caught: [tags] pred:posture:jumping not allowed at stage=neonate`
+* `LEGACY_MAP` is now empty (we’ve removed `state:*` and `pred:action:*`).
 
-* * *
+`WorldGraph` wires this up:
 
-### 9. Engrams (Pointers to Rich Memory)
+`world.set_stage("neonate")world.set_tag_policy("warn")   # "allow" | "warn" (default) | "strict"`
 
-Bindings can reference “heavy” sensory or temporal data via a small pointer:
-    g.attach_engram("b2", column="column01", engram_id="engr_123", act=0.9)
-    eng = g.get_engram("b2", column="column01")
+When you call `add_predicate/add_cue/add_action`, the graph:
 
-Planner ignores engrams; they’re for analytics or linking perception.
+1. Normalizes family + token (e.g. `"pred", "posture:standing"`),
 
-* * *
+2. Uses `_enforce_tag(family, token_local)` to:
+   
+   * **allow** silently in `"allow"` mode,
+   
+   * **warn** (one-line log) and accept in `"warn"` mode,
+   
+   * **raise ValueError** in `"strict"` mode for off-lexicon tokens.
 
-### 10. Invariants & Best Practices
+This protects you from accidental tag drift (e.g. `posture_standing` vs `posture:standing`) and keeps the early neonate vocabulary small and meaningful.
 
-| Invariant                                      | Why it matters                          |
-| ---------------------------------------------- | --------------------------------------- |
-| Every binding has a unique id (`bN`).          | Keeps planning stable.                  |
-| Edges are stored on the **source** binding.    | Local adjacency = O(1) neighbor lookup. |
-| Anchors map names (`NOW`) to real ids.         | Planning start points.                  |
-| `latest` tracks the most recent predicate/cue. | Auto-attach works correctly.            |
-| The first `pred:*` tag is used as label.       | Keeps graph readable.                   |
 
-* * *
 
-### 11. Quick Reference Summary
+### 7. Anchors and NOW/NOW_ORIGIN behavior
 
-| Concept              | Code / Description                                    |
-| -------------------- | ----------------------------------------------------- |
-| **Create world**     | `g = WorldGraph()`                                    |
-| **Add anchor**       | `now = g.ensure_anchor("NOW")`                        |
-| **Add predicate**    | `g.add_predicate("posture:standing", attach="now")`   |
-| **Add cue**          | `g.add_cue("vision:silhouette:mom", attach="latest")` |
-| **Manual edge**      | `g.add_edge(src, dst, "search")`                      |
-| **Plan**             | `g.plan_pretty(now, "pred:milk:drinking")`            |
-| **Save**             | `snap = g.to_dict()`                                  |
-| **Load**             | `g2 = WorldGraph.from_dict(snap)`                     |
-| **Check invariants** | `g.check_invariants()`                                |
-| **Export HTML**      | `g.to_pyvis_html()`                                   |
+Anchors are managed via:
+
+`bid = world.ensure_anchor("NOW")`
+
+The runner also uses:
+
+* `world.set_now(bid, tag=True, clean_previous=True)`  
+  to move NOW when a policy completes (so NOW always points to the latest stable predicate state),
+
+* an `ensure_now_origin(world)` helper that sets `NOW_ORIGIN` once per episode.
+
+Snapshot header shows:
+
+`NOW=b5  LATEST=b9NOW_ORIGIN=b1NOW_LATEST=b9`
+
+* **NOW** — the main planning start.
+
+* **NOW_ORIGIN** — the root of this episode (birth).
+
+* **LATEST** / **NOW_LATEST** — the most recently created binding id.
 
 * * *
 
-### 12. Common Pitfalls
+### 8. Planning: BFS / Dijkstra over `pred:*` tags
 
-| Symptom           | Likely cause                                | Fix                                     |
-| ----------------- | ------------------------------------------- | --------------------------------------- |
-| `"No path"`       | predicate not created or disconnected       | check edges and direction               |
-| duplicate edges   | created manually _and_ by attach            | remove one or ignore warning            |
-| multiple NOW tags | forgot `clean_previous=True` in `set_now()` | use helper to tidy                      |
-| lexicon error     | `strict` mode, off-vocab token              | switch to `warn` or add token to `BASE` |
+The planner entrypoint is:
+
+`path = world.plan_to_predicate(src_id=now, token="posture:standing")`
+
+* **Goal test**: “Does this binding’s tags contain `pred:posture:standing`?”
+
+* **Algorithm**: BFS (default) or Dijkstra (if you call `set_planner("dijkstra")`).
+
+* **Return**: `list[str]` of binding ids (`["b1","b3","b4","b5"]`) or `None` if the goal can’t be reached.
+
+The Runner’s menu wraps this and prints:
+
+* `Path (ids): b1 -> b3 -> b4 -> b5`
+
+* A pretty path (with first `pred:*` tag per node).
+
+* A **typed path** and **reverse typed path** that show `[binding_id:label]` pairs (anchor, actions, predicates).
+
+Because edges are unweighted by default, BFS gives a shortest-hop path. If you later add costs in `edge.meta` (e.g. `weight`, `cost`, `duration_s`), Dijkstra uses those values.
 
 * * *
 
-### 13. Minimal Code Snippet
+### 9. Engrams: pointers, not payloads
 
-    from cca8_world_graph import WorldGraph
-    
-    g = WorldGraph()
-    g.set_tag_policy("allow")
-    
-    now = g.ensure_anchor("NOW")
-    g.add_predicate("posture:standing", attach="now")
-    g.add_predicate("posture:jumping", attach="latest")
-    
-    print(g.plan_pretty(now, "posture:jumping"))
-    # NOW --then--> standing --then--> jumping
+Bindings can carry **pointers** to external memory (columns):
+
+`binding.engrams = {    "column01": {"id": "<engram_id>", "act": 1.0, "meta": {...}}}`
+
+WorldGraph provides helpers (`attach_engram`, `get_engram`) but does not know what’s inside the engram payload. Heavy data is kept outside the graph for speed and simplicity.
+
+Planner ignores engrams entirely; they matter only for analysis or for advanced perception hooks.
+
+* * *
+
+### 10. Sanity checks and invariants
+
+`WorldGraph.check_invariants()` can be used to validate:
+
+* Every binding id is unique.
+
+* All edges’ `to` fields point to existing bindings.
+
+* Anchors in `world._anchors` point to valid bindings.
+
+* `latest` (if not `None`) points to a valid binding.
+
+* Optional: NOW has the `anchor:NOW` tag if `tag=True` was used in `set_now`.
+
+The Runner uses various preflight probes to assert attach semantics, planner behavior, and lexicon enforcement are all working as intended.
+
+* * *
+
+### 11. Minimal code crib (for quick experiments)
+
+`from cca8_world_graph import WorldGraph  # 1. Create world and anchors g = WorldGraph()g.set_tag_policy("allow")      # be permissive while experimenting now = g.ensure_anchor("NOW")  # 2. Build a tiny S–A–S episode: fallen → stand_up → standing fallen = g.add_predicate("posture:fallen", attach="now")a1 = g.add_action("push_up", attach="now")a2 = g.add_action("extend_legs", attach="latest")standing = g.add_predicate("posture:standing", attach="latest")  # 3. Plan and pretty-print path = g.plan_to_predicate(now, "posture:standing") print("Path:", path) print(g.plan_pretty(now, "posture:standing"))`
+
+Typical output:
+
+`Path: ['b1','b3','b4','b5']b1(NOW_ORIGIN) --then--> b3[action:push_up] --then--> b4[action:extend_legs] --then--> b5[posture:standing](NOW)`
+
+From here you can add cues, attach engrams, export to Pyvis HTML, and exercise the rest of the WorldGraph features with confidence.
+
+
+
+
 
 * * *
 
@@ -2705,55 +3331,105 @@ Core instance attributes and methods for WorldGraph Module
 
 
 
-* `_bindings: dict[str, Binding]` — all nodes by id (e.g., `"b7" → Binding(...)`).
+### Core instance attributes (`WorldGraph` internal state)
 
-* `_anchors: dict[str, str]` — anchor name → binding id (e.g., `"NOW" → "b1"`).
+These are the main internal fields of a `WorldGraph` instance:
 
-* `_latest_binding_id: str | None` — most recently created predicate/cue binding.
+- `_bindings: dict[str, Binding]`  
+  All bindings by id (e.g. `"b7" → Binding(...)`).
 
-* `_id_counter: itertools.count` — id generator for `"b<N>"`.
+- `_anchors: dict[str, str]`  
+  Anchor name → binding id (e.g. `"NOW" → "b5"`, `"NOW_ORIGIN" → "b1"`).
 
-* `_lexicon: TagLexicon` — stage/family vocab + legacy map.
+- `_latest_binding_id: str | None`  
+  Id of the **most recently created binding**, regardless of family (`pred`, `action`, `cue`, or `anchor`).
 
-* `_stage: str` — `"neonate" | "infant" | "juvenile" | "adult"`.
+- `_id_counter: itertools.count`  
+  Generator for `"b<N>"` ids (`b1`, `b2`, …).
 
-* `_tag_policy: str` — `"allow" | "warn" | "strict"`.
+- `_lexicon: TagLexicon`  
+  Restricted vocabulary for tags, per stage & family (`pred`, `action`, `cue`, `anchor`).
 
-* `_plan_strategy: str` — `"bfs" | "dijkstra"`.
+- `_stage: str`  
+  Current developmental stage (e.g. `"neonate"`, `"juvenile"`, `"adult"`).
 
-(Module constants you’ll see used: `_ATTACH_OPTIONS = {"now","latest","none"}`.)
-Public API (call these)
-=======================
+- `_tag_policy: str`  
+  Lexicon enforcement policy: `"allow"`, `"warn"` (default), or `"strict"`.
 
-| Method                    | Parameters (types)                                                                          | Returns                                                                                             | Purpose                                                                          |
-| ------------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `__init__`                | `()`                                                                                        | `None`                                                                                              | Initialize empty world; set counters, lexicon, defaults.                         |
-| `set_stage`               | `(stage: str)`                                                                              | `None`                                                                                              | Set developmental stage for lexicon checks.                                      |
-| `set_stage_from_ctx`      | `(ctx)`                                                                                     | `None`                                                                                              | Derive stage from `ctx.age_days` (toy thresholds).                               |
-| `set_tag_policy`          | `(policy: str)`                                                                             | `None`                                                                                              | Lexicon enforcement: allow/warn/strict.                                          |
-| `set_planner`             | `(strategy: str = "bfs")`                                                                   | `None`                                                                                              | Choose `"bfs"` or `"dijkstra"`.                                                  |
-| `get_planner`             | `()`                                                                                        | `str`                                                                                               | Current planner strategy.                                                        |
-| `ensure_anchor`           | `(name: str)`                                                                               | `str` (binding id)                                                                                  | Ensure anchor exists (e.g., `"NOW"`), return its id; tags node `anchor:<NAME>`.  |
-| `set_now`                 | `(bid: str, *, tag: bool = True, clean_previous: bool = True)`                              | `str                                                                                                | None`                                                                            |
-| `add_binding`             | `(tags: set[str], *, meta: dict                                                             | None = None, engrams: dict                                                                          | None = None)`                                                                    |
-| `add_predicate`           | `(token: str, *, attach: str                                                                | None = None, meta: dict                                                                             | None = None, engrams: dict                                                       |
-| `add_cue`                 | `(token: str, *, attach: str                                                                | None = None, meta: dict                                                                             | None = None, engrams: dict                                                       |
-| `attach_engram`           | `(bid: str, *, column: str = "column01", engram_id: str, act: float = 1.0, extra_meta: dict | None = None)`                                                                                       | `None`                                                                           |
-| `get_engram`              | `(bid: str, *, column: str = "column01")`                                                   | `dict                                                                                               | None`                                                                            |
-| `add_edge`                | `(src_id: str, dst_id: str, label: str, meta: dict                                          | None = None, *, allow_self_loop: bool = False)`                                                     | `None`                                                                           |
-| `delete_edge`             | `(src_id: str, dst_id: str, label: str                                                      | None = None)`                                                                                       | `int`                                                                            |
-| `plan_to_predicate`       | `(src_id: str, token: str)`                                                                 | `list[str]                                                                                          | None`                                                                            |
-| `plan_pretty`             | `(src_id: str, token: str, **kwargs)`                                                       | `str`                                                                                               | Convenience: plan then pretty-print (or `"(no path)"`).                          |
-| `pretty_path`             | `(ids: list[str]                                                                            | None, *, node_mode: str = "id+pred", show_edge_labels: bool = True, annotate_anchors: bool = True)` | `str`                                                                            |
-| `list_actions`            | `(*, include_then: bool = True)`                                                            | `list[str]`                                                                                         | All distinct edge labels (optionally excluding `"then"`).                        |
-| `action_counts`           | `(*, include_then: bool = True)`                                                            | `dict[str, int]`                                                                                    | Count of edges per label.                                                        |
-| `edges_with_action`       | `(label: str)`                                                                              | `list[tuple[str, str]]`                                                                             | (Src, dst) pairs whose edge label matches.                                       |
-| `action_metrics`          | `(label: str, *, numeric_keys: tuple[str, ...] = ("meters","duration_s","speed_mps"))`      | `dict`                                                                                              | Simple metrics from `edge.meta` for a given label.                               |
-| `action_summary_text`     | `(label: str                                                                                | None = None)`                                                                                       | `str`                                                                            |
-| `to_pyvis_html`           | `(*, physics: bool = True, node_mode: str = "id+pred")`                                     | `str` (HTML)                                                                                        | Quick visualization export.                                                      |
-| `to_dict`                 | `()`                                                                                        | `dict`                                                                                              | Snapshot of the episode (bindings, anchors, latest).                             |
-| `from_dict` (classmethod) | `(data: dict)`                                                                              | `WorldGraph`                                                                                        | Rehydrate; advances id-counter above max existing `"b<N>"`.                      |
-| `check_invariants`        | `(*, raise_on_error: bool = True)`                                                          | `list[str]`                                                                                         | Validate: NOW exists & tagged, latest exists, all edges point to existing nodes. |
+- `_plan_strategy: str`  
+  Planner choice: `"bfs"` (unweighted shortest-hop) or `"dijkstra"` (weighted edges).
+
+Module-level constant:
+
+- `_ATTACH_OPTIONS: set[str] = {"now", "latest", "none"}`  
+  Valid values for `attach=` in `add_predicate`, `add_cue`, and `add_action`.
+
+### Selected public methods (overview)
+
+This is a **quick overview** of the most important methods. The “Cheat-sheet: `WorldGraph` public API” section below contains a more detailed list.
+
+| Method                  | Purpose                                                                           |
+| ----------------------- | --------------------------------------------------------------------------------- |
+| `ensure_anchor`         | Create/get an anchor binding and tag it `anchor:<NAME>`.                          |
+| `set_now`               | Repoint the `NOW` anchor to a binding id; optionally clean old tags.              |
+| `add_predicate`         | Create a `pred:<token>` binding; optionally auto-attach from `NOW`/`LATEST`.      |
+| `add_cue`               | Create a `cue:<token>` binding; optionally auto-attach from `NOW`/`LATEST`.       |
+| `add_action`            | Create an `action:<token>` binding; optionally auto-attach from `NOW`/`LATEST`.   |
+| `add_edge`              | Add a directed edge `src --label--> dst` (label often `"then"`).                  |
+| `delete_edge`           | Remove one or more edges between `src` and `dst` (with optional label).           |
+| `plan_to_predicate`     | BFS/Dijkstra from a starting id to the first binding with `pred:<token>`.         |
+| `pretty_path`           | Format a list of ids into a human-readable path (ids + first `pred:*`).           |
+| `plan_pretty`           | Convenience: run `plan_to_predicate` and pretty-print the result.                 |
+| `to_dict` / `from_dict` | Snapshot/restore bindings, anchors, and id counters.                              |
+| `check_invariants`      | Validate basic graph invariants (anchors valid, edges point to real nodes, etc.). |
+|                         |                                                                                   |
+
+Cheat-sheet: `WorldGraph` public API
+====================================
+
+Lifecycle & config
+
+* `WorldGraph()` — empty graph, stage=`neonate`, policy=`warn`, planner from `CCA8_PLANNER` env (default `bfs`).
+
+* `set_stage(stage: str)` / `set_stage_from_ctx(ctx)`
+
+* `set_tag_policy(policy: str)` — `"allow"|"warn"|"strict"`
+
+* `set_planner(strategy: str = "bfs")` / `get_planner() -> str`
+
+Anchors & orientation
+
+* `ensure_anchor(name: str) -> str` — create/get anchor binding (tags it `anchor:<NAME>`).
+
+* `set_now(bid: str, *, tag=True, clean_previous=True)` — repoint the NOW anchor; tidy tags.
+
+
+
+Nodes
+
+* `add_predicate(token: str, *, attach: str|None = None, meta=None, engrams=None) -> str`
+  
+  * Creates `pred:<token>` node; updates `latest`.
+  
+  * `attach="now"|"latest"|"none"` → auto-edge (NOW→new) or (latest→new) or none.
+
+* `add_cue(token: str, *, attach: str|None = None, meta=None, engrams=None) -> str`
+  
+  * Same semantics; creates `cue:<token>`; updates `latest`.
+
+* `add_action(token: str, *, attach: str|None = None, meta=None, engrams=None) -> str`
+  
+  * Creates an `action:<token>` node; updates `latest`.
+  
+  * `attach="now"|"latest"|"none"` → auto-edge (NOW→new) or (latest→new) or none.
+
+* `add_binding(tags: set[str], *, meta=None, engrams=None) -> str`
+  
+  * Low-level constructor (prefer the helpers above).
+
+
+
+
 
 Internal helpers (private by convention)
 ========================================
@@ -2821,7 +3497,7 @@ Helpers:
     
     * `normalize_family_and_token(family, raw) -> (family, local_token)`
       
-      * E.g., `("pred", "pred:state:posture_standing") -> ("pred", "state:posture_standing")`
+      * E.g., `("pred", "pred:posture_standing") -> ("pred", "posture_standing")`
 
 Cheat-sheet: `WorldGraph` core state
 ====================================
@@ -2873,9 +3549,17 @@ Nodes
   
   * Same semantics; creates `cue:<token>`; updates `latest`.
 
+* `add_action(token: str, *, attach: str|None = None, meta=None, engrams=None) -> str`
+  
+  * Creates an `action:<token>` node; updates `latest`.
+  
+  * `attach="now"|"latest"|"none"` → auto-edge (NOW→new) or (latest→new) or none.
+
 * `add_binding(tags: set[str], *, meta=None, engrams=None) -> str`
   
   * Low-level constructor (prefer the helpers above).
+
+
 
 Edges & actions
 
@@ -2948,7 +3632,7 @@ Minimal usage crib (copy/paste friendly)
 
 ---------------------------------------------
 
-    a = g.add_predicate("state:alert", attach="latest")
+    a = g.add_predicate("alert", attach="latest")
     b = g.add_predicate("seeking_mom", attach="latest")
     c = g.add_predicate("nipple:found", attach="latest")
     print(g.plan_pretty(now, "nipple:found"))  # NOW -> ... -> c
@@ -2997,7 +3681,7 @@ Minimal usage crib (copy/paste friendly)
 
 --------------------------------------
 
-    bid = g.add_predicate("state:alert", attach="latest")
+    bid = g.add_predicate("alert", attach="latest")
     g.attach_engram(bid, column="column01", engram_id="engr_123", act=0.9, extra_meta={"note": "demo"})
     print(g.get_engram(bid, column="column01"))
 
@@ -3358,7 +4042,7 @@ Minimal usage crib (copy/paste)
     python cca8_run.py --autosave session.json
     
     # Add predicates / cues from the menu, then plan:
-    # 5 → "state:posture_standing"   # pretty path prints
+    # 5 → "posture_standing"   # pretty path prints
     
     # Export an interactive graph
     # 22 → choose label mode 'id+first_pred', edge labels Y, physics Y
@@ -3615,204 +4299,313 @@ What to scan in the code (orientation map)
 
 # Tutorial on Controller Module Technical Features
 
+This tutorial explains how the **Controller module** (`cca8_controller.py`) works, how it uses drives, policies, and the Action Center, and how it writes **predicate–action–predicate (S–A–S)** chains into the WorldGraph as the goat “thinks and acts.”
+
+The Controller is where the **“what should I do next?”** logic lives. It sits between:
+
+- the **WorldGraph** (what the agent believes/has experienced),
+- the **Drives** (hunger, fatigue, warmth, etc.),
+- the **TemporalContext** (soft clock, ticks/epochs),
+- and, eventually, the **HAL** (robot or simulated body).
+
+Its job is to:
+
+1. Read the current situation (predicates/cues near `NOW` + drives),
+2. Decide which **policy** (primitive behavior) should fire,
+3. Execute that policy, which:
+   - updates drives,
+   - writes new **action** and **predicate** bindings into the WorldGraph,
+   - and returns a small result to the Runner / Action Center.
+
+The Controller does *not* try to be a full planner; it provides a small set of hand-written “reflexive” policies (e.g., **StandUp**, **SeekNipple**, **Rest**) that form the core of the newborn’s first repertoire.
+
+---
+
+### 1. Drives and Drive Flags
+
+The controller maintains a small `Drives` object:
+
+```python
+@dataclass
+class Drives:
+    hunger:  float = 0.7
+    fatigue: float = 0.2
+    warmth:  float = 0.6
+    def flags(self) -> list[str]:
+        ...
+
+The numeric levels (hunger, fatigue, warmth) are the underlying homeostatic state. From these, the controller derives ephemeral flags:
+
+drive:hunger_high
+
+drive:fatigue_high
+
+drive:cold
+
+These drive:* flags are:
+
+controller-only: they are not stored as pred:* in the WorldGraph,
+
+used in trigger(...) logic for policies (e.g., “if drive:hunger_high then consider SeekNipple”),
+
+occasionally mirrored into the graph as cues (cue:drive:hunger_high) when we want the world model to “remember” that a drive was high at a particular moment.
+
+So:
+
+drive:* = internal, ephemeral.
+
+cue:drive:* = optional evidence in the WorldGraph.
+
+pred:drive:* = only if we explicitly want a drive threshold to be a planner goal (rare in the newborn stage).
 
 
-## cca8_controller.py : Usage & Mental Model (Part 1)
 
-**What this module does.**  
-It owns the **drives** (hunger/fatigue/warmth), the **policies** (a.k.a. primitives) that decide one step at a time, and the **Action Center** loop that picks the first policy whose `trigger(...)` is true and runs it.
+### 2. Binding Families and S–A–S in the Controller
 
-**Key ideas:**
+The Controller writes into the WorldGraph using four families of tags:
 
-* **Drives → ephemeral `drive:*` tags.** `Drives.flags()` returns strings like `drive:hunger_high`. These are **not** written into the graph; they’re only used inside policy `trigger(...)` logic.
-
-* **Policies (primitives).** Each policy has two methods:
+* `pred:*` – **predicates** (what is true of the body/world right now), e.g.:
   
-  * `trigger(world, drives) -> bool`
+  * `pred:posture:fallen`
   
-  * `execute(world, ctx, drives) -> dict`  
-    `execute` appends a _small chain_ of predicates/edges to the **WorldGraph** and returns a standard status dict (policy, status, reward, notes).
+  * `pred:posture:standing`
+  
+  * `pred:resting`
+  
+  * `pred:seeking_mom`
+  
+  * `pred:nipple:latched`, `pred:milk:drinking`
 
-* **Action Center.** Scans `PRIMITIVES` in order; runs the first policy whose `trigger(...)` returns `True`. Safety exception: if the agent is **fallen**, `StandUp` is run immediately.
+* `action:*` – **action bindings** (what the agent is doing / has just done), e.g.:
+  
+  * `action:push_up`
+  
+  * `action:extend_legs`
+  
+  * `action:orient_to_mom`
+  
+  * `action:look_around`
 
-* **Provenance & skill ledger.** Policies stamp `binding.meta["policy"]` (and edge `meta["created_by"]`) and update a small in-memory **SKILLS** ledger (n, succ, q, last_reward).
+* `cue:*` – **sensory or interoceptive cues**, e.g.:
+  
+  * `cue:vision:silhouette:mom`
+  
+  * `cue:scent:milk`
+  
+  * `cue:drive:hunger_high`
 
-### One-minute quickstart (copy/paste)
+* `anchor:*` – **special orientation nodes**, e.g.:
+  
+  * `anchor:NOW` – current focus of attention / local state,
+  
+  * `anchor:NOW_ORIGIN` – the binding where NOW started this episode.
 
-    from cca8_world_graph import WorldGraph
-    from cca8_controller import Drives, action_center_step
-    
-    g = WorldGraph()
-    now = g.ensure_anchor("NOW")
-    
-    # Neonate: hungry enough to act; fatigue moderate
-    dr = Drives(hunger=0.9, fatigue=0.2, warmth=0.6)
-    print("drive flags:", dr.predicates())   # e.g., ['drive:hunger_high']
-    
-    # One Action Center tick
-    status = action_center_step(g, ctx=None, drives=dr)
-    print(status)                            # {'policy': 'policy:stand_up', 'status': 'ok', ...}
-    print(g.plan_pretty(now, "posture:standing"))
+Each policy execution writes a short **predicate–action–predicate** chain into the graph:
 
-**Status dict contract (always):**
-    {
-      "policy": "policy:<name>" | None,
-      "status": "ok" | "fail" | "noop" | "error",
-      "reward": float,
-      "notes": str
-    }
+`[pred:posture:fallen]  --then-->  [action:push_up]  --then-->  [action:extend_legs]  --then-->  [pred:posture:standing]`
 
-**Drive thresholds (from `Drives` docstring):**
-
-* `hunger > 0.6 → 'drive:hunger_high'`
-
-* `fatigue > 0.7 → 'drive:fatigue_high'`
-
-* `warmth < 0.3 → 'drive:cold'`
-
-**Planner note.** Policies create/chain **predicates** with directed edges; planning remains BFS (or Dijkstra, if selected) on the episode graph you built in `cca8_world_graph.py`.
+We refer to these as **S–A–S segments** (State–Action–State), but in the implementation the “state” is always represented by one or more **predicates** (e.g., `pred:posture:fallen`, `pred:posture:standing`), not a separate `state:*` family.
 
 * * *
 
-## `cca8_controller.py` — API & Internals (Part 2)
+### 3. Policies and the Action Center
 
-Core data & module-level symbols
---------------------------------
+Each primitive behavior is represented by a small **policy class** in `cca8_controller.py`:
 
-* **`PRIMITIVES: list[Primitive]`** — ordered repertoire scanned by the Action Center (default order):  
-  `StandUp()`, `SeekNipple()`, `FollowMom()`, `ExploreCheck()`, `Rest()`.
+* `StandUp` – stand if fallen and not overly fatigued.
 
-* **`SKILLS: dict[str, SkillStat]`** — in-memory per-policy stats (n, succ, q, last_reward).
+* `SeekNipple` – orient toward mom and start seeking the nipple when upright and hungry.
 
-Classes
--------
+* `Rest` – reduce fatigue when very tired.
 
-### `Drives`
+* (plus a few others like `ExploreCheck` or recovery policies).
 
-Agent internal state + conversion to ephemeral drive flags.
+Each policy has two key methods:
 
-* **Attributes:**  
-  `hunger: float`, `fatigue: float`, `warmth: float`
+* `trigger(world, drives)` → `bool`  
+  Decide whether the policy _wants_ to fire given the current world predicates/cues and drives.
 
-* **Methods:**  
-  `predicates() -> list[str]` ⮕ returns `drive:*` tags by threshold  
-  `to_dict() -> dict` / `from_dict(d) -> Drives`
+* `execute(world, ctx, drives)` → `{ "policy": ..., "status": ..., "reward": ..., "binding": ... }`  
+  Actually perform the action: update drives, write bindings/edges, and return a small summary to the Action Center.
 
-### `SkillStat`
+The **Action Center** (inside `cca8_controller.action_center_step`) orchestrates one “controller step”:
 
-Tiny running stats structure for the skill ledger.  
-Fields: `n`, `succ`, `q`, `last_reward`.
+1. For each policy `P`:
+   
+   * Check `P.trigger(world, drives)`.
+   
+   * If true, compute a **score** using a small “deficit” function based on drives (e.g. hunger, fatigue).
 
-### `Primitive` (base class)
+2. Pick the policy with the best score.
 
-Policy interface + standardized return helpers.
+3. Call `P.execute(world, ctx, drives)`.
 
-* `name: str = "policy:unknown"`
+4. Return a small payload (so the Runner can log what happened and move `NOW` to the last predicate written).
 
-* `trigger(world, drives) -> bool`
-
-* `execute(world, ctx, drives) -> dict`
-
-* Helpers (update SKILLS + return dict):
-  
-  * `_success(reward: float, notes: str) -> dict`
-  
-  * `_fail(notes: str, reward: float = 0.0) -> dict`
-
-### Concrete policies (default set)
-
-#### `StandUp(Primitive)`
-
-* **Trigger:** true if **fallen**, or if **hunger high** and **not upright yet**.  
-  Accepts legacy & canonical posture tags (`state:posture_standing` / `posture:standing`).
-
-* **Execute:** append a tiny chain  
-  `action:push_up → action:extend_legs → state:posture_standing`  
-  Add `"then"` edges, stamp provenance, return reward `+1.0`.
-
-#### `SeekNipple(Primitive)`
-
-* **Trigger:** **hungry**, **upright**, **not fallen**, **not already seeking**.
-
-* **Execute:** `action:orient_to_mom → seeking_mom` with a `"then"` edge; reward `+0.5`.
-
-#### `FollowMom(Primitive)`
-
-* **Trigger:** permissive default (returns `True`).
-
-* **Execute:** `action:look_around → state:alert`; reward `+0.1`.
-
-#### `ExploreCheck(Primitive)`
-
-* **Trigger:** currently `False` (stub for periodic checks).
-
-* **Execute:** returns `_success("checked")` (no graph mutation).
-
-#### `Rest(Primitive)`
-
-* **Trigger:** `fatigue > 0.8`.
-
-* **Execute:** reduces `fatigue`, adds `state:resting` (attached to NOW), reward `+0.2`.
-
-Functions (helpers & Action Center)
------------------------------------
-
-* **`update_skill(name, reward, ok=True, alpha=0.3) -> None`**  
-  Get-or-create a `SkillStat`, bump counts, **exponential-avg** into `q`, set `last_reward`.
-
-* **`skills_to_dict() -> dict` / `skills_from_dict(d: dict) -> None`**  
-  Serialize/rehydrate the in-memory SKILLS ledger.
-
-* **`skill_readout() -> str`**  
-  Human-readable one-liner per policy: `n, succ, rate, q, last`.
-
-* **`_any_tag(world, full_tag: str) -> bool`**  
-  `True` if any binding carries the exact tag (used by triggers).
-
-* **`_has(world, token: str) -> bool`**  
-  Convenience: token like `"posture:fallen"` → checks for `pred:posture:fallen` anywhere.
-
-* **`_any_cue_present(world) -> bool`**  
-  `True` if any `cue:*` tag is present in the world (loose sensor check).
-
-* **`_run(policy, world, ctx, drives) -> dict`**  
-  Wrapper: call `execute`, update SKILLS; catch and report policy errors.
-
-* **`action_center_step(world, ctx, drives: Drives) -> dict`**  
-  **Contract:** scan `PRIMITIVES`; run the first whose `trigger(...)` returns `True`.  
-  **Safety short-circuit:** if fallen, immediately run `StandUp`.  
-  **Side-effects:** appends bindings/edges, may adjust drives, updates SKILLS.  
-  **Returns:** a status dict (`ok`/`fail`/`noop`/`error`).
+This keeps the controller logic simple and explainable: a handful of hand-authored primitives plus a light “who should go next?” scheduler.
 
 * * *
 
-Minimal usage crib (controller-focused)
----------------------------------------
+### 4. Example: StandUp (fallen → standing)
 
-    from cca8_world_graph import WorldGraph
-    from cca8_controller import Drives, action_center_step, skill_readout
-    
-    g = WorldGraph()
-    now = g.ensure_anchor("NOW")
-    
-    # 1) Hungry neonate → StandUp likely fires
-    dr = Drives(hunger=0.95, fatigue=0.2, warmth=0.6)
-    print(action_center_step(g, ctx=None, drives=dr))
-    print(g.plan_pretty(now, "posture:standing"))
-    
-    # 2) Fatigued agent → Rest fires next
-    dr.fatigue = 0.9
-    print(action_center_step(g, ctx=None, drives=dr))
-    
-    # 3) Ledger peek
-    print(skill_readout())
+**Goal:** If the newborn goat is fallen and not too fatigued, stand it up.
 
-**Style guidance:** keep **drive tags ephemeral (which is why they are called flags)** (policy triggers). If we want drive states visible to planning/paths, add **`pred:drive:*`** nodes (plannable) or **`cue:drive:*`** (trigger-only) deliberately in your controller logic.
+**Trigger:** roughly:
+
+* `posture:fallen` is near `NOW`, and
+
+* fatigue is below a threshold.
+
+In code, this is checked by a combination of:
+
+* a **safety override** in the runner (`action_center_step`) that fires StandUp when `posture:fallen` is near NOW, and
+
+* a `StandUp.trigger(world, drives)` check that ensures we aren’t already standing.
+
+**Execution:** `StandUp.execute(world, ctx, drives)` writes:
+
+`# (simplified) _add_action(world, ACTION_PUSH_UP,     attach="now",    meta=meta)    # action:push_up _add_action(world, ACTION_EXTEND_LEGS, attach="latest", meta=meta)    # action:extend_legs c = _add_pred(world, STATE_POSTURE_STANDING, attach="latest", meta=meta)  # pred:posture:standing`
+
+Structurally, after one StandUp execution, the graph looks like:
+
+`b1: [anchor:NOW_ORIGIN]b2: [pred:posture:fallen]b3: [action:push_up]b4: [action:extend_legs]b5: [anchor:NOW, pred:posture:standing]`
+
+Edges:
+
+`b1 --then--> b2b1 --then--> b3b3 --then--> b4b4 --then--> b5`
+
+So the S–A–S segment is:
+
+`[pred:posture:fallen]  (near NOW_ORIGIN)    → [action:push_up] → [action:extend_legs] → [pred:posture:standing]  (NOW)`
+
+After execution:
+
+* `ctx.controller_steps` is incremented,
+
+* NOW is moved to `b5` (the new standing state),
+
+* Drives are slightly adjusted (e.g., small fatigue cost, small reward credit).
 
 * * *
 
-Tutorial on Temporal Module Technical Features
-----------------------------------------------
+### 5. Example: SeekNipple (standing & hungry → seeking mom)
+
+**Goal:** When upright and hungry, start seeking mom’s nipple.
+
+**Trigger:** roughly:
+
+* `posture:standing` near NOW,
+
+* hunger is above a threshold,
+
+* **not** already seeking (`seeking_mom` not near NOW),
+
+* **not** fallen (safety override).
+
+**Execution:** `SeekNipple.execute(world, ctx, drives)` writes:
+
+`meta = _policy_meta(ctx, self.name)_add_action(world, ACTION_ORIENT_TO_MOM, attach="now",    meta=meta)       # action:orient_to_mom b = _add_pred(world, STATE_SEEKING_MOM,  attach="latest", meta=meta)       # pred:seeking_mom return self._success(reward=0.5, notes="seeking mom", binding=b)`
+
+Structurally, after a StandUp followed by SeekNipple, you might see:
+
+`b1: [anchor:NOW_ORIGIN]b2: [pred:posture:fallen]b3: [action:push_up]b4: [action:extend_legs]b5: [pred:posture:standing]b6: [cue:drive:hunger_high]b7: [action:orient_to_mom]b8: [anchor:NOW, pred:seeking_mom]`
+
+Edges:
+
+`b1 --then--> b2, b3b3 --then--> b4b4 --then--> b5b5 --then--> b6, b7b7 --then--> b8`
+
+Typed path from `NOW_ORIGIN` to `seeking_mom`:
+
+`[anchor:NOW_ORIGIN] -> [action:push_up] -> [action:extend_legs]                     -> [posture:standing] -> [action:orient_to_mom] -> [seeking_mom]`
+
+Reverse typed path:
+
+`[seeking_mom] -> [action:orient_to_mom] -> [posture:standing]               -> [action:extend_legs] -> [action:push_up] -> [anchor:NOW_ORIGIN]`
+
+Again, that’s a sequence of **predicate–action–predicate** segments.
+
+* * *
+
+### 6. Example: Rest (fatigued → resting)
+
+**Goal:** When the goat is very fatigued, let it rest and reduce fatigue.
+
+**Trigger:** roughly:
+
+* `drive:fatigue_high` flag is present (derived from `drives.fatigue`),
+
+* and no more urgent safety override is active.
+
+**Execution:** `Rest.execute(world, ctx, drives)`:
+
+* Decreases `drives.fatigue` by a fixed amount (e.g. −0.2, clamped at 0),
+
+* Writes a `pred:resting` binding attached near NOW (or latest) to capture that the goat entered a resting state.
+
+The S–A–S shape is simpler here:
+
+`[pred:posture:standing]  →  [pred:resting]`
+
+(Future versions can insert explicit `action:*` nodes for lying down; for now we keep the newborn rest primitive very simple.)
+
+* * *
+
+### 7. Interplay with NOW, NOW_ORIGIN, and LATEST
+
+The controller and runner cooperate to keep the anchors meaningful:
+
+* `NOW_ORIGIN` is set once per episode (birth / start of scenario). It never moves.
+
+* `NOW` is moved by the Action Center after each successful policy execution to follow the **latest stable predicate** (e.g., `posture:standing`, `seeking_mom`, `resting`).
+
+* `LATEST` (internal) is just the most recently created binding id, regardless of type.
+
+This leads to a natural interpretation:
+
+* Local planning: **from NOW** (“what do I do next?”),
+
+* Global episode summaries: **from NOW_ORIGIN** (“what was the whole story from birth to here?”),
+
+* Reverse reasoning: the **reverse typed path** from a predicate back to NOW_ORIGIN shows one of the many ways the agent arrived at its current state.
+
+* * *
+
+### 8. Q&A to help consolidate
+
+**Q: Where are actions stored — in edges or nodes?**  
+A: In **nodes**. Each action is a binding tagged `action:*` (e.g., `action:push_up`) with `then` edges linking it to predicates. Edge labels are mostly human-facing aliases (often just `"then"`).
+
+**Q: What happened to `state:*` and `pred:action:*`?**  
+A: We no longer use those as first-class families. Conceptual “states” are represented by `pred:*` bindings (e.g., `pred:posture:standing`, `pred:resting`, `pred:seeking_mom`), and actions by `action:*` bindings. Older snapshots may still contain `pred:action:*` or `pred:state:*` tags, but new code does not write them.
+
+**Q: How does StandUp avoid firing repeatedly?**  
+A: Its trigger (and the safety override in the runner) check for `pred:posture:standing` near NOW and skip if already standing.
+
+**Q: How does SeekNipple avoid firing when the kid is already seeking?**  
+A: The gate includes `not has_pred_near_now("seeking_mom")`, so once a `seeking_mom` predicate is near NOW, the policy will not re-trigger.
+
+**Q: How does this tie into planning?**  
+A: The planner is a BFS/Dijkstra over the WorldGraph. Given a start binding (NOW or NOW_ORIGIN) and a target predicate token (e.g., `posture:standing`, `milk:drinking`), it finds a path of bindings `[b_start, …, b_goal]`. The Runner then prints both a **typed path** and a **reverse typed path**, so you can see the S–A–S structure.
+
+* * *
+
+This concludes the Controller tutorial. At this point you should be comfortable reading the goat’s behavior in terms of **S–A–S segments**:
+
+* StandUp: `posture:fallen` → `push_up`, `extend_legs` → `posture:standing`
+
+* SeekNipple: `posture:standing` → `orient_to_mom` → `seeking_mom`
+
+* Rest: e.g. `posture:standing` → `resting`
+  
+  
+
+From here we’ll move on to the Temporal, Features, Column, and Environment tutorials to see how these controller-level decisions interact with time, engrams, and the outside world.
+
+
+
+
+
+# Tutorial on Temporal Module Technical Features
 
 This tutorial explains how **`cca8_temporal.py`** gives CCA8 a lightweight notion of time that complements wall-clock timestamps. It covers the **why**, the **math**, and the **wiring** added to the runner and controller.
 
@@ -4689,11 +5482,8 @@ So you can picture the pipeline as threedistinct layers:
               ↓
     EnvObservation             (what hits CCA8 this tick: sensors + symbolic cues)
               ↓
-
     CCA8 (WorldGraph, Columns)
-
               ↓
-
     Internal model / memory    (agent’s ongoing interpretation & storage)
 
 **EnvState = world;EnvObservation = what the agent “sees” now; WorldGraph = what the agent “thinksand remembers” about the world.**
@@ -4738,11 +5528,8 @@ Visually:
               ▼
     EnvObservation                     (what the agent receives *this tick*)
               │
-
               │  CCA8.ingest_observation(...)
-
               ▼
-
     WorldGraph + Columns               (agent’s internal, persistent model)
 
 So to your question:
@@ -4868,13 +5655,9 @@ From this, the environmentconstructs:
     predicates:
       posture(kid, fallen)
       near(mom, kid)        # because distance_to_mom < threshold_near
-
     cues:
-
       ["visual_mom_silhouette", "body_low_posture"]
-
     env_meta:
-
       {"time": 45.0}
 
 This full structure is **EnvObservation**. The environment then calls:
@@ -5385,13 +6168,9 @@ PerceptionAdapter might produce:
     predicates:
       posture(kid, fallen)
       near(mom, kid)           # because distance_to_mom < threshold_near
-
     cues:
-
       ["visual_mom_silhouette", "body_low_posture"]
-
     env_meta:
-
       {"time": 120.0, "distance_uncertainty": 0.05}
 
 Then:
@@ -6126,9 +6905,13 @@ Q: Provenance?  A: meta.policy records which policy created the node.
 
 ### 
 
-[Navigation Map-Based Artificial Intelligence](https://www.mdpi.com/2673-2688/3/2/26)
+Schneider, H., Navigation Map-Based Artificial Intelligence -- [Navigation Map-Based Artificial Intelligence](https://www.mdpi.com/2673-2688/3/2/26)
 
-[Frontiers | The emergence of enhanced intelligence in a brain-inspired cognitive architecture](https://www.frontiersin.org/journals/computational-neuroscience/articles/10.3389/fncom.2024.1367712/full)
+Schneider, H., The Emergence of Enhanced Intelligence in a Brain-Inspired Cognitive Architecture -- [Frontiers | The emergence of enhanced intelligence in a brain-inspired cognitive architecture](https://www.frontiersin.org/journals/computational-neuroscience/articles/10.3389/fncom.2024.1367712/full)
+
+
+
+Tresp, V. et al., Tensor Brain -- [[2109.13392] The Tensor Brain: A Unified Theory of Perception, Memory and Semantic Decoding](https://arxiv.org/abs/2109.13392)
 
 #### 
 

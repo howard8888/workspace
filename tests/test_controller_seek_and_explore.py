@@ -12,8 +12,9 @@ def test_seeknipple_trigger_and_execute():
     assert p.trigger(w, d) is True
     res = p.execute(w, ctx=type("C", (), {"ticks":0, "tvec64":lambda self: None})(), drives=d)
     assert res["status"] == "ok"
-    # canonical seeking-mom fact present
-    assert any("pred:state:seeking_mom" in (b.tags or set()) for b in w._bindings.values())
+    # canonical seeking-mom fact present (no state: prefix)
+    assert any("pred:seeking_mom" in (b.tags or set()) for b in w._bindings.values())
+
 
 def test_explorecheck_is_noop_success():
     w = wg.WorldGraph(); w.ensure_anchor("NOW")

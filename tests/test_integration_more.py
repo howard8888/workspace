@@ -96,7 +96,7 @@ def test_runner_world_delete_edge_helper_removes_per_binding_edges():
 
 def test_controller_action_center_safety_override_triggers_standup():
     world = wgmod.WorldGraph()
-    world.add_predicate("state:posture_fallen", attach="now")
+    world.add_predicate("posture:fallen", attach="now")
     drives = Drives()
     ctx = getattr(runmod, "Ctx", None)()
     payload = action_center_step(world, ctx, drives)
@@ -106,7 +106,7 @@ def test_controller_action_center_safety_override_triggers_standup():
 
 def test_controller_seeking_when_upright_and_hungry():
     world = wgmod.WorldGraph()
-    world.add_predicate("state:posture_standing", attach="now")
+    world.add_predicate("posture:standing", attach="now")
     drives = Drives()  # hunger=0.7 by default
     ctx = getattr(runmod, "Ctx", None)()
     payload = action_center_step(world, ctx, drives)
