@@ -54,7 +54,7 @@ import platform
 import sys
 import logging
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Any, Dict, List, Callable
 from typing import DefaultDict
 from collections import defaultdict
@@ -169,6 +169,7 @@ class Ctx:
     env_episode_started: bool = False       # Environment / HybridEnvironment integration
     env_last_action: Optional[str] = None  # last fired policy name for env.step(...)
     mini_snapshot: bool = True  #mini-snapshot toggle starting value
+    posture_discrepancy_history: list[str] = field(default_factory=list) #per-session list of discrepancies motor command vs what environment reports
 
 
     def reset_controller_steps(self) -> None:
@@ -784,7 +785,7 @@ def loop_helper(autosave_from_args: Optional[str], world, drives, ctx=None, time
     try:
         if ctx is not None and getattr(ctx, "mini_snapshot", False):
             print()
-            print_mini_snapshot(world, ctx, limit=20)
+            print_mini_snapshot(world, ctx, limit=50)
     except Exception:
         pass
     print("\n-----\n") #visual spacer before menu prints again
@@ -3228,7 +3229,57 @@ def recent_bindings_text(world, limit: int = 5) -> str:
     return "\n".join(lines) + "\n"
 
 
-def mini_snapshot_text(world, ctx=None, limit: int = 20) -> str:
+def _latest_posture_binding(world, *, source: Optional[str] = None, require_policy: bool = False):
+    """
+    Helper for mini-snapshots: find the most recent pred:posture:* binding.
+
+    Args:
+        source: if given, require binding.meta['source'] == source
+                (e.g., 'HybridEnvironment' for env-driven facts).
+        require_policy: if True, require binding.meta['policy'] to exist
+                (policy-written expected posture).
+
+    Returns:
+        (bid, posture_tag, meta) or (None, None, None).
+    """
+    try:
+        bids = _sorted_bids(world)
+    except Exception:
+        return None, None, None
+
+    for bid in reversed(bids):
+        b = world._bindings.get(bid)
+        if not b:
+            continue
+
+        tags = getattr(b, "tags", None)
+        if not tags:
+            continue
+
+        posture_tag = None
+        for t in tags:
+            if isinstance(t, str) and t.startswith("pred:posture:"):
+                posture_tag = t
+                break
+        if not posture_tag:
+            continue
+
+        meta = getattr(b, "meta", None)
+
+        if source is not None:
+            if not isinstance(meta, dict) or meta.get("source") != source:
+                continue
+
+        if require_policy:
+            if not isinstance(meta, dict) or "policy" not in meta:
+                continue
+
+        return bid, posture_tag, meta
+
+    return None, None, None
+
+
+def mini_snapshot_text(world, ctx=None, limit: int = 50) -> str:
     """
     Compact mini-snapshot: one timekeeping line + a short list of recent bindings
     with their outgoing edges.
@@ -3248,7 +3299,11 @@ def mini_snapshot_text(world, ctx=None, limit: int = 20) -> str:
         lines.append("[time] (ctx unavailable)")
 
     # Compact world view: last `limit` bindings with their outgoing edges
-    bids = _sorted_bids(world)
+    try:
+        bids = _sorted_bids(world)
+    except Exception:
+        bids = []
+
     if not bids:
         lines.append("[world] no bindings yet")
         return "\n".join(lines)
@@ -3260,9 +3315,19 @@ def mini_snapshot_text(world, ctx=None, limit: int = 20) -> str:
         tags = ", ".join(sorted(getattr(b, "tags", []))) if b else ""
         lines.append(f"  {bid}: [{tags}]")
 
-        edges = (getattr(b, "edges", []) or getattr(b, "out", []) or
-                 getattr(b, "links", []) or getattr(b, "outgoing", [])) if b else []
-        if isinstance(edges, list) and edges:
+        # Robust edge extraction with explicit typing (for mypy)
+        edges: list[dict[str, Any]] = []
+        if b is not None:
+            edges_raw = (
+                getattr(b, "edges", []) or
+                getattr(b, "out", []) or
+                getattr(b, "links", []) or
+                getattr(b, "outgoing", [])
+            )
+            if isinstance(edges_raw, list):
+                edges = [e for e in edges_raw if isinstance(e, dict)]
+
+        if edges:
             parts: list[str] = []
             for e in edges:
                 rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
@@ -3276,16 +3341,83 @@ def mini_snapshot_text(world, ctx=None, limit: int = 20) -> str:
         else:
             lines.append("      edges: (none)")
 
+    # Optional posture discrepancy note (env vs policy-expected posture).
+    # This is a *display-only* diagnostic: we do NOT create any bindings.
+    history_entry: Optional[str] = None
+    try:
+        env_bid, env_posture, _ = _latest_posture_binding(
+            world, source="HybridEnvironment"
+        )
+        pol_bid, pol_posture, pol_meta = _latest_posture_binding(
+            world, require_policy=True
+        )
+
+        if env_bid and pol_bid and env_posture and pol_posture and env_posture != pol_posture:
+            def _posture_suffix(tag: str) -> str:
+                parts = tag.split(":", 2)
+                return parts[-1] if parts else tag
+
+            env_state = _posture_suffix(env_posture)
+            pol_state = _posture_suffix(pol_posture)
+            pol_name = pol_meta.get("policy") if isinstance(pol_meta, dict) else None
+
+            if pol_name:
+                msg_main = (
+                    f"[discrepancy] env posture={env_state!r} at {env_bid} "
+                    f"vs policy-expected posture={pol_state!r} from {pol_name} at {pol_bid}"
+                )
+            else:
+                msg_main = (
+                    f"[discrepancy] env posture={env_state!r} at {env_bid} "
+                    f"vs policy-expected posture={pol_state!r} at {pol_bid}"
+                )
+
+            msg_hint = (
+                "[discrepancy] -often the motor system will attempt an action, "
+                "but it does not actually occur-"
+            )
+
+            lines.append(msg_main)
+            lines.append(msg_hint)
+            history_entry = msg_main
+
+    except Exception:
+        # Snapshot must never crash the runner.
+        pass
+
+    # Maintain and print discrepancy history (last ~50 events), if ctx supports it.
+    try:
+        if ctx is not None and hasattr(ctx, "posture_discrepancy_history"):
+            hist: list[str] = getattr(ctx, "posture_discrepancy_history", [])
+            # Append the newest entry if it exists and is not a duplicate of the last one
+            if history_entry:
+                if not hist or hist[-1] != history_entry:
+                    hist.append(history_entry)
+                    if len(hist) > 50:
+                        del hist[:-50]
+                ctx.posture_discrepancy_history = hist  # in case it was missing before
+
+            if hist:
+                lines.append("")
+                lines.append("[discrepancy history] recent posture discrepancies (most recent last):")
+                for h in hist:
+                    lines.append("  " + h)
+    except Exception:
+        # Again, history bookkeeping must never crash the runner.
+        pass
+
     return "\n".join(lines)
 
 
-def print_mini_snapshot(world, ctx=None, limit: int = 20) -> None:
-    """Print the compact mini-snapshot (safe to call from menu flow)."""
+def print_mini_snapshot(world, ctx=None, limit: int = 50) -> None:
+    """Print the compact mini-snapshot (safe to call from menu flow).
+    """
     try:
         print("Values of time measures, nodes and links at this point:")
         print(mini_snapshot_text(world, ctx, limit))
     except Exception:
         pass
+
 
 
 def drives_and_tags_text(drives) -> str:
@@ -5945,6 +6077,36 @@ Attach an existing engram id (eid) to a binding id (bid).
         elif choice == "35":
             # Environment step (HybridEnvironment → WorldGraph demo)
             print("Selection: Environment step (HybridEnvironment → WorldGraph demo)\n")
+            print("""[guide] This selection runs ONE closed-loop step between the newborn-goat environment and the CCA8 brain.
+
+  • [env] lines summarize what the environment simulation just did:
+      - on the first call we RESET the newborn_goat_first_hour storyboard
+      - on later calls we STEP the storyboard forward using the last policy action (if any)
+
+  • [env→world] lines show how EnvObservation is injected into the WorldGraph:
+      - predicates like posture:fallen or proximity:mom:far become pred:* facts (the agent's beliefs)
+      - cues (e.g., vision:silhouette:mom) become cue:* facts attached near NOW/LATEST
+
+  • [env→controller] lines show how the controller responds:
+      - after seeing the updated WorldGraph + drives, the Action Center chooses ONE policy to execute
+      - for example, policy:stand_up will assert a short motor chain and a final posture:standing fact
+        (this last fact represents the policy's expected outcome; the next [env] step will later confirm
+         or refute standing via new sensory evidence).
+""")
+
+            # Track bindings so we can show notes for any NEW bindings created during this step.
+            try:
+                before_ids = set(world._bindings.keys())
+            except Exception:
+                before_ids = set()
+
+            # Account for one controller decision loop worth of internal time (soft clock only).
+            try:
+                ctx.controller_steps = getattr(ctx, "controller_steps", 0) + 1
+            except Exception:
+                pass
+            if getattr(ctx, "temporal", None):
+                ctx.temporal.step()
 
             # First call: start a fresh newborn-goat episode in the environment
             if not ctx.env_episode_started:
@@ -5981,7 +6143,10 @@ Attach an existing engram id (eid) to a binding id (bid).
                     bid = world.add_predicate(
                         token,
                         attach=attach,
-                        meta={"created_by": "env_step", "source": "HybridEnvironment"}
+                        meta={
+                            "created_by": "env_step",
+                            "source": "HybridEnvironment",
+                        },
                     )
                     print(f"[env→world] pred:{token} → {bid} (attach={attach})")
                     # After the first predicate, hang subsequent ones off LATEST
@@ -5996,7 +6161,10 @@ Attach an existing engram id (eid) to a binding id (bid).
                     bid_c = world.add_cue(
                         cue_token,
                         attach=attach_c,
-                        meta={"created_by": "env_step", "source": "HybridEnvironment"}
+                        meta={
+                            "created_by": "env_step",
+                            "source": "HybridEnvironment",
+                        },
                     )
                     print(f"[env→world] cue:{cue_token} → {bid_c} (attach={attach_c})")
                     attach_c = "latest"
@@ -6009,13 +6177,51 @@ Attach an existing engram id (eid) to a binding id (bid).
                 fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
                 if fired != "no_match":
                     print(f"[env→controller] {fired}")
-                    # Remember this so the environment can react on the *next* env.step(...)
-                    ctx.env_last_action = fired
+
+                    # Extract the policy name (first token) so env.step(...) receives a clean action string,
+                    # e.g. "policy:stand_up" or "policy:seek_nipple".
+                    if isinstance(fired, str):
+                        first_token = fired.split()[0]
+                        if isinstance(first_token, str) and first_token.startswith("policy:"):
+                            ctx.env_last_action = first_token
+                        else:
+                            ctx.env_last_action = None
+                    else:
+                        ctx.env_last_action = None
                 else:
                     ctx.env_last_action = None
             except Exception as e:
                 print(f"[env→controller] controller step error: {e}")
+                ctx.env_last_action = None
 
+            # After env + controller, show any meta["note"] attached to NEW bindings.
+            try:
+                after_ids = set(world._bindings.keys())
+                new_ids = list(after_ids - before_ids)
+
+                def _id_key(bid: str) -> int:
+                    # Sort like b1, b2, ..., fall back to 0 for anything weird.
+                    try:
+                        if bid.startswith("b"):
+                            return int(bid[1:])
+                    except Exception:
+                        pass
+                    return 0
+
+                for bid in sorted(new_ids, key=_id_key):
+                    b = world._bindings.get(bid)
+                    if not b:
+                        continue
+                    meta = getattr(b, "meta", None)
+                    if isinstance(meta, dict):
+                        note = meta.get("note")
+                        if note:
+                            print(f"[note] {bid}: {note}")
+            except Exception as e:
+                print(f"[note] error while printing binding notes: {e}")
+
+            # Show a one-line timekeeping summary so users can see controller_steps advancing here too.
+            print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives, ctx)
 
 

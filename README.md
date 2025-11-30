@@ -1543,7 +1543,6 @@ Copy code
 
 pytest -q -s
 
-Included starter tests:
 
 Included starter tests:
 
@@ -5301,7 +5300,7 @@ CLI menus that help you see this:
 
 * * *
 
-**1 Introduction**
+**1 Introduction**
 
 Embodied AI and cognitive robotics require agents that can perceive, act, and learn in environments whosecomplexity often far exceeds what can be modeled analytically. Simulation hastherefore become a central tool in robotics and embodied AI, enabling safe,scalable experimentation before deployment in the real world. In parallel,reinforcement learning (RL) communities have converged on standardizedenvironment interfaces (e.g., Gym/Gymnasium) that present agents withobservations, actions, and rewards, abstracting away simulator details.
 
@@ -6430,349 +6429,370 @@ LLM-based environments and worldmodels are powerful but raise concerns around de
 
 
 
+
+
+
+
 # Tutorial on Environment Module Technical Features
 
-**Note:** Code will evolve over time, but the core ideas in this section should remain stable for the project. (Nov 25 - HS)
-
-
+> Note: Code will evolve over time, but the core ideas in this section should remain stable for the project. (Nov 2025 – HS)
 
 ## 1. Purpose and mental model
 
-The **Environment module** (`cca8_env.py`) is the “world side” of CCA8. It simulates the **external environment** the agent lives in (ground, 3D space, time, mom goat, weather, etc.), while the main CCA8 modules simulate the **brain + body** of the agent (WorldGraph, controller, columns, features, temporal context).
+The **Environment module** (`cca8_env.py`) is the *world side* of CCA8. It simulates the **external environment** the agent lives in (ground, 3D space, time, mom goat, weather), while the main CCA8 modules simulate the **brain + body** (WorldGraph, controller, columns, features, temporal context). 
 
 The key separation is:
 
-* **EnvState** = world as the environment subsystem believes it (“God’s-eye view”)
+* **EnvState** – “God’s-eye” world state as the environment subsystem believes it.
+* **EnvObservation** – the sensory/perceptual packet the world sends to the agent each tick.
+* **WorldGraph / Columns / Engrams** – the agent’s internal beliefs and memories. 
 
-* **EnvObservation** = what the world tells the agent this tick (sensory packet)
+CCA8 never reads `EnvState` directly. It only sees `EnvObservation` and then decides what to write into the WorldGraph and Columns.
 
-* **WorldGraph / Columns / Engrams** = what the agent _believes and remembers_ internally
-
-CCA8 never reads `EnvState` directly. It only ever sees `EnvObservation`, and then turns that into internal state and memory.
-
+---
 
 ## 2. Public API (what you import)
 
-From `cca8_env.py` you typically import:
-    from cca8_env import (
-        EnvState,
-        EnvObservation,
-        EnvConfig,
-        FsmBackend,
-        PerceptionAdapter,
-        HybridEnvironment,
-    )
+From `cca8_env.py` you typically import: 
 
-* **EnvState** — canonical environment state (posture, mom distance, nipple state, positions, fatigue, temperature, time_since_birth, etc.).
+```python
+from cca8_env import (
+    EnvState,
+    EnvObservation,
+    EnvConfig,
+    FsmBackend,
+    PerceptionAdapter,
+    HybridEnvironment,
+)
+```
 
-* **EnvObservation** — one-tick observation packet the agent receives (`raw_sensors`, `predicates`, `cues`, `env_meta`).
+* **EnvState** – canonical environment state (posture, mom distance, nipple state, positions, fatigue, temperature, time_since_birth, step_index).
+* **EnvObservation** – one-tick observation packet (`raw_sensors`, `predicates`, `cues`, `env_meta`).
+* **EnvConfig** – scenario/config knobs (`scenario_name`, `dt`, which backends are enabled). 
+* **FsmBackend** – finite-state / scripted backend implementing the newborn-goat storyboard over `EnvState`.
+* **PerceptionAdapter** – converts `EnvState → EnvObservation` (sensor interface).
+* **HybridEnvironment** – orchestrator that owns `EnvState`, calls backends, and exposes a Gym-like `reset`/`step` API.
 
-* **EnvConfig** — scenario/config knobs (`scenario_name`, `dt`, which backends are enabled).
-
-* **FsmBackend** — finite-state/scripted backend that implements the newborn-goat storyboard over `EnvState`.
-
-* **PerceptionAdapter** — converts `EnvState` → `EnvObservation` (sensor interface).
-
-* **HybridEnvironment** — orchestrator that owns `EnvState`, calls backends, and exposes a Gym-like `reset`/`step` API.
-
+---
 
 ## 3. EnvState and EnvObservation
 
-## 3.1 EnvState — canonical world state
+### 3.1 EnvState — canonical world state
 
-`EnvState` is a `@dataclass` that represents the **ground-truth state of the environment** for the newborn-goat vignette:
+`EnvState` is a `@dataclass` representing the **ground-truth environment state** for the newborn-goat vignette:
 
-* Discrete:
-  
+* **Discrete:**
+
   * `kid_posture ∈ {"fallen", "standing", "latched", "resting"}`
-  
   * `mom_distance ∈ {"far", "near", "touching"}`
-  
   * `nipple_state ∈ {"hidden", "visible", "reachable", "latched"}`
-  
   * `scenario_stage ∈ {"birth", "struggle", "first_stand", "first_latch", "rest"}`
 
-* Continuous-ish:
-  
+* **Continuous-ish:**
+
   * `kid_position: tuple[float, float]`
-  
   * `mom_position: tuple[float, float]`
-  
   * `kid_fatigue: float` (0..1)
-  
   * `kid_temperature: float` (0..1)
-  
-  * `time_since_birth: float` (seconds or ticks)
+  * `time_since_birth: float` (seconds or ticks, as long as consistent)
 
-* Bookkeeping:
-  
-  * `step_index: int` (environment steps in this episode)
+* **Bookkeeping:**
 
-CCA8 never sees `EnvState` directly; only `HybridEnvironment` and backends manipulate it.
+  * `step_index: int` – environment steps in this episode.
 
+Only `HybridEnvironment` and backends mutate `EnvState`; CCA8 never touches it directly.
 
-## 3.2 EnvObservation — one-tick sensory/perceptual packet
+---
 
-`EnvObservation` is what crosses the agent–environment boundary on each tick:
-    @dataclass
-    class EnvObservation:
-        raw_sensors: dict[str, Any]
-        predicates: list[str]
-        cues: list[str]
-        env_meta: dict[str, Any]
+### 3.2 EnvObservation — one-tick sensory/perceptual packet
 
-* `raw_sensors` — numeric/tensor channels (e.g., `distance_to_mom`, `kid_temperature`).
+`EnvObservation` is what crosses the agent–environment boundary each tick:
 
-* `predicates` — symbolic facts suited for WorldGraph (`posture:fallen`, `proximity:mom:close`, `nipple:latched`, `milk:drinking`).
+```python
+@dataclass
+class EnvObservation:
+    raw_sensors: dict[str, Any]
+    predicates: list[str]
+    cues: list[str]
+    env_meta: dict[str, Any]
+```
 
-* `cues` — cue tokens for features/columns (`vision:silhouette:mom`, `drive:cold_skin`).
+* **`raw_sensors`** – numeric/tensor channels (e.g., `distance_to_mom`, `kid_temperature`).
+* **`predicates`** – discrete tokens suitable for WorldGraph (e.g., `posture:fallen`, `proximity:mom:close`, `nipple:latched`, `milk:drinking`).
+* **`cues`** – cue tokens for features/columns (e.g., `vision:silhouette:mom`, `drive:cold_skin`).
+* **`env_meta`** – small metadata (e.g., `{"time_since_birth": ..., "scenario_stage": ...}`).
 
-* `env_meta` — small metadata (e.g., `{"time_since_birth": ..., "scenario_stage": ...}`).
+These are **observations**, not beliefs. WorldGraph and Columns are where CCA8 turns them into internal state and memory.
 
-These are **observations**, not beliefs. WorldGraph/Columns/Engrams are where CCA8 turns them into internal state and memory.
+---
 
+## 4. HybridEnvironment — orchestrator and RL-style seam
 
-## 4. HybridEnvironment — orchestrator and RL-style interface
+`HybridEnvironment` is the **central hub** on the environment side. It owns `EnvState` and presents a Gym-like API:
 
-`HybridEnvironment` is the **central hub** on the environment side. It owns the current `EnvState` and presents a Gym-like API:
-    env = HybridEnvironment(config=EnvConfig())
-    obs, info = env.reset(seed=None, config=None)
-    obs, reward, done, info = env.step(action, ctx)
+```python
+env = HybridEnvironment(config=EnvConfig())
+obs, info = env.reset(seed=None, config=None)
+obs, reward, done, info = env.step(action, ctx)
+```
 
-Responsibilities:
+**Reset**
 
-1. **Reset**:
-   
-   * Initialize a fresh `EnvState`.
-   
-   * Invoke `FsmBackend.reset(env_state, config)` to set starting posture, distances, scenario stage, etc.
-   
-   * Call `PerceptionAdapter.observe(env_state)` to produce the first `EnvObservation`.
-   
-   * Return `(EnvObservation, info)` to the caller.
+* Create a fresh `EnvState`.
+* Call `FsmBackend.reset(env_state, config)` to set initial posture, mom distance, nipple state, stage, fatigue, temperature, positions.
+* Call `PerceptionAdapter.observe(env_state)` to build the first `EnvObservation`.
+* Return `(obs, info)` to the caller.
 
-2. **Step**:
-   
-   * Increment `episode_steps` and `EnvState.step_index`.
-   
-   * Advance `time_since_birth` by `dt`.
-   
-   * Call `FsmBackend.step(env_state, action, ctx)` to update discrete state (birth→struggle→first_stand→first_latch→rest).
-   
-   * (Future) call other backends (physics, robot, LLM, MDP) in a defined order.
-   
-   * For now: return `reward=0.0`, `done=False` (RL slots are stubbed for later MdpBackend).
-   
-   * Call `PerceptionAdapter.observe(env_state)` to produce the new `EnvObservation`.
-   
-   * Return `(obs, reward, done, info)`.
+**Step**
 
-From CCA8’s point of view, **HybridEnvironment _is_ “the environment”**: there is only one object that speaks `reset`/`step` and returns `EnvObservation`.
+* Increment `episode_steps` and copy that into `EnvState.step_index`.
+* Advance `time_since_birth` by `config.dt`. 
+* Call `FsmBackend.step(env_state, action, ctx)` to update the discrete storyboard (birth → struggle → first_stand → first_latch → rest).
+* (Future) call physics/robot/LLM/MDP backends in a defined order.
+* For now, set `reward = 0.0`, `done = False` (RL slots are owned by a future `MdpBackend`). 
+* Call `PerceptionAdapter.observe(env_state)` again to produce the new `EnvObservation`.
+* Return `(obs, reward, done, info)`.
 
+From CCA8’s point of view, **HybridEnvironment *is* “the environment”**: there is one object that speaks `reset`/`step` and hands back observations, reward, and done.
+
+---
 
 ## 5. FsmBackend — newborn-goat storyboard
 
-`FsmBackend` is the first concrete backend. It implements a **tiny storyboard** over `EnvState` for the newborn goat’s first minutes:
+`FsmBackend` is the first concrete backend. It implements a tiny **hand-scripted storyboard** over `EnvState` for the newborn goat’s first minutes:
 
-* Stages:
-  
+* **Stages**
+
   * `"birth"` → `"struggle"` → `"first_stand"` → `"first_latch"` → `"rest"`.
 
-* Time thresholds (in environment steps) control the default progression:
-  
-  * e.g., `_BIRTH_TO_STRUGGLE = 3`, `_STRUGGLE_MOM_NEAR = 5`, `_AUTO_STAND_UP = 8`, `_AUTO_NIPPLE_REACHABLE = 11`, `_AUTO_LATCH = 13`, `_AUTO_REST = 16`.
+* **Time thresholds** (in environment steps) drive the default progression:
 
-* Within each stage, `step(env_state, action, ctx)`:
-  
-  * Sets posture, mom distance, nipple state, and `scenario_stage` according to the storyboard.
-  
-  * Optionally reacts to `action` strings like `"policy:stand_up"` and `"policy:seek_nipple"` to **accelerate** transitions (e.g., stand up earlier than the auto threshold).
-  
+  * `_BIRTH_TO_STRUGGLE = 3`
+  * `_STRUGGLE_MOM_NEAR = 5`
+  * `_AUTO_STAND_UP = 8`
+  * `_AUTO_NIPPLE_REACHABLE = 11`
+  * `_AUTO_LATCH = 13`
+  * `_AUTO_REST = 16`
+
+* **Within each stage**, `step(env_state, action, ctx)`:
+
+  * Sets `kid_posture`, `mom_distance`, `nipple_state`, and `scenario_stage` according to the storyboard.
+  * Treats actions like `"policy:stand_up"` and `"policy:seek_nipple"` as **accelerators** (e.g., standing earlier than the auto threshold, nipple reachable/latching earlier once seeking).
   * Applies small drifts to `kid_fatigue` and `kid_temperature` to give PerceptionAdapter interesting signals.
 
-FsmBackend **never** writes to WorldGraph; it only updates `EnvState`.
+FsmBackend **never** writes to the WorldGraph; it only updates `EnvState`.
 
+---
 
-## 6. PerceptionAdapter — world → sensor bridge
+## 6. PerceptionAdapter — world → EnvObservation
 
-`PerceptionAdapter` is the environment’s **sensor interface**. It looks at `EnvState` and decides:
+`PerceptionAdapter` is the environment’s **sensor interface**. It answers:
 
-> “What does the agent get to sense this tick, and how is it encoded?”
+> “Given this EnvState, what does the agent get to sense this tick, and how is it encoded?”
 
-Core mapping in `observe(env_state)`:
+In `observe(env_state)` it:
 
-* Compute `distance_to_mom` from positions; store in `raw_sensors`.
+* Computes `distance_to_mom` and other scalar channels, stores them in `raw_sensors`.
 
-* Map posture:
-  
+* Maps posture:
+
   * `"fallen"` → `posture:fallen`
-  
   * `"standing"` or `"latched"` → `posture:standing`
-  
-  * `"resting"` → `state:resting` (for now, with a note to possibly add `posture:resting` later).
+  * `"resting"` → `resting` (today; could later add `posture:resting`).
 
-* Map mom distance:
-  
-  * `"near"`/`"touching"` → `proximity:mom:close`
-  
+* Maps mom distance:
+
+  * `"near"` / `"touching"` → `proximity:mom:close`
   * `"far"` → `proximity:mom:far`.
 
-* Map nipple state:
-  
-  * `"visible"`/`"reachable"` → `nipple:found`
-  
+* Maps nipple state:
+
+  * `"visible"` / `"reachable"` → `nipple:found`
   * `"latched"` → `nipple:latched` + `milk:drinking`.
 
-* Cues:
-  
-  * if mom is near/touching → `vision:silhouette:mom`;
-  
-  * if `kid_temperature` is low → `drive:cold_skin`.
+* Emits simple **cues**:
 
-* Meta:
-  
-  * `env_meta["time_since_birth"] = env_state.time_since_birth`;
-  
-  * `env_meta["scenario_stage"] = env_state.scenario_stage`.
+  * mom near/touching → `vision:silhouette:mom`
+  * low temperature → `drive:cold_skin`.
 
-PerceptionAdapter knows nothing about WorldGraph or policies; it only builds `EnvObservation` from `EnvState`.
+* Populates `env_meta` with `time_since_birth` and `scenario_stage`.
 
+PerceptionAdapter knows nothing about WorldGraph or policies; it just turns `EnvState` into `EnvObservation`.
 
-## 7. Handshake with the Runner (cca8_run.py)
+---
 
+## 7. Runner handshake and Menu Selection Envr't Step (HybridEnvironment-->WorldGraph demo) closed-loop demo
 
-The **Runner module** (`cca8_run.py`) owns the _full_ simulation loop (menu, WorldGraph, controller, drives, Ctx). The environment module plugs in as one part of that loop.
-
+The **Runner module** (`cca8_run.py`) owns the *full* simulation loop (menu, WorldGraph, controller, drives, `Ctx`). The environment module plugs in as one component of that loop. 
 
 ### 7.1 Where HybridEnvironment is created
 
-In `interactive_loop(args)`, after `world`, `drives`, and `ctx` are created and timekeeping is initialized, the runner instantiates the environment:
-    world = cca8_world_graph.WorldGraph()
-    drives = Drives()
-    ctx = Ctx(...)
-    ctx.temporal = TemporalContext(...)
-    ...
-    env = HybridEnvironment()
+In `interactive_loop(args)`, after `world`, `drives`, and `ctx` are created and the temporal soft clock is initialized, the runner instantiates the environment:
 
-So `env` and `ctx` exist side-by-side in the main loop.
+```python
+world = cca8_world_graph.WorldGraph()
+drives = Drives()
+ctx = Ctx(...)
+ctx.temporal = TemporalContext(...)
+...
+env = HybridEnvironment()
+```
 
-### 7.2 Menu Selection — “Environment step” (demo handshake)
+So `env` and `ctx` sit side-by-side in the main loop.
 
-Menu entry Environment step (HybridEnvironment → WorldGraph demo) drives the handshake:
+---
 
-1. **Environment evolution:**
-   
-   * First call:
-     
-     * If `ctx.env_episode_started` is `False`, the runner calls:
-          env_obs, env_info = env.reset()
-          ctx.env_episode_started = True
-          ctx.env_last_action = None
-     
-     * This sets up a fresh newborn-goat episode.
-* Subsequent calls:
-  
-  * The runner passes the last fired policy (if any) back into the environment:
-    
-        action_for_env = ctx.env_last_action
-        env_obs, _reward, _done, env_info = env.step(
-            action=action_for_env,
-            ctx=ctx,
-        )
-        ctx.env_last_action = None    # action consumed for this tick
-    
-    * This is the **closed loop**: controller → env → controller.
-2. **Environment → WorldGraph (observation injection):**
-   
-   * For each `token` in `env_obs.predicates`, the runner calls:
-        bid = world.add_predicate(
-     
-            token,
-            attach=attach,
-            meta={"created_by": "env_step", "source": "HybridEnvironment"},
-     
-        )
-     starting with `attach="now"` then `attach="latest"` for subsequent tokens.
-* For each `cue_token` in `env_obs.cues`, it calls:
-  
-      bid_c = world.add_cue(
-          cue_token,
-          attach=attach_c,
-          meta={"created_by": "env_step", "source": "HybridEnvironment"},
-      )
+### 7.2 Menu Selection — “Environment step (HybridEnvironment → WorldGraph demo)”
 
-* This stamps the environment’s view (posture, proximity, nipple state, cues) into the WorldGraph as normal `pred:*` and `cue:*` bindings.
-3. **WorldGraph → Controller → Env (action feedback):**
-   
-   * After injecting predicates/cues, the Runner runs one controller step:
-        POLICY_RT.refresh_loaded(ctx)
-        fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
-        if fired != "no_match":
-     
-            print(f"[env→controller] {fired}")
-            ctx.env_last_action = ...  # extracted policy name, e.g. "policy:stand_up"
-     
-        else:
-     
-            ctx.env_last_action = None
-* The next time you choose menu 35, `ctx.env_last_action` is passed into `env.step(...)` as `action`, so `FsmBackend` can react (e.g., treat `policy:stand_up` as an early stand-up signal).
+This Menu Selection is a **one-step closed-loop demo** that ties together HybridEnvironment, WorldGraph, the controller, and timekeeping. 
 
-In pseudocode, the environment–runner loop looks like:
-    # first call
-    env_obs, _ = env.reset()
-    inject_obs_into_world(env_obs)
-    fired = controller_step(world, drives, ctx)
-    ctx.env_last_action = fired_policy_name_or_None
-    # subsequent calls
-    env_obs, _, _, _ = env.step(action=ctx.env_last_action, ctx=ctx)
-    ctx.env_last_action = None
-    inject_obs_into_world(env_obs)
-    fired = controller_step(world, drives, ctx)
-    ctx.env_last_action = fired_policy_name_or_None
+When you choose this menu selection, the runner:
 
-This implements a **minimal closed loop**:
+1. **Prints a guide**
 
- world dynamics (HybridEnvironment) → observation (EnvObservation) →  
- agent inference/action (WorldGraph + controller) → action string →  
- back into world dynamics on the next environment step.
+   Explains the meaning of `[env]`, `[env→world]`, and `[env→controller]` lines:
 
+   * `[env]` – summary of what the environment just did (reset vs step, stage, posture, mom distance, nipple state, action).
+   * `[env→world]` – how `EnvObservation` was injected into the WorldGraph as `pred:*` and `cue:*`.
+   * `[env→controller]` – which policy the controller fired in response (if any); a policy like `policy:stand_up` then writes its own S–A–S chain (actions and a standing predicate). 
 
+2. **Advances internal time (soft clock + controller_steps)**
+
+   * `ctx.controller_steps += 1`.
+   * If `ctx.temporal` exists, it calls `ctx.temporal.step()` once (soft temporal drift).
+   * Autonomic ticks (`ctx.ticks`) and `age_days` are **not** changed by this menu selection; they belong to the autonomic tick menu. 
+
+3. **Environment evolution**
+
+   * **First call** – if `ctx.env_episode_started` is `False`:
+
+     ````python
+     env_obs, env_info = env.reset()
+     ctx.env_episode_started = True
+     ctx.env_last_action = None
+     print(f"[env] Reset newborn_goat scenario: episode_index={...} scenario={...}")
+     ``` :contentReference[oaicite:35]{index=35}  
+
+     This starts a fresh newborn-goat episode at the `"birth"` stage with `kid_posture="fallen"`, `mom_distance="far"`, `nipple_state="hidden"`.   
+
+     ````
+   * **Subsequent calls** – feed the last fired policy back into the environment:
+
+     ```python
+     action_for_env = ctx.env_last_action   # e.g., "policy:stand_up" or None
+     env_obs, _reward, _done, env_info = env.step(action=action_for_env, ctx=ctx)
+     ctx.env_last_action = None
+     st = env.state
+     print(f"[env] step={env_info['step_index']} stage={st.scenario_stage} "
+           f"posture={st.kid_posture} mom_distance={st.mom_distance} "
+           f"nipple_state={st.nipple_state} action={action_for_env!r}")
+     ```
+
+     This is where `FsmBackend` can treat `policy:stand_up` or `policy:seek_nipple` as early hints and accelerate the storyboard.
+
+4. **Environment → WorldGraph (observation injection)**
+
+   For each predicate in `env_obs.predicates`:
+
+   ````python
+   bid = world.add_predicate(
+       token,
+       attach=attach,  # first "now", then "latest"
+       meta={"created_by": "env_step", "source": "HybridEnvironment"},
+   )
+   print(f"[env→world] pred:{token} → {bid} (attach={attach})")
+   attach = "latest"
+   ``` :contentReference[oaicite:39]{index=39}  
+
+   For each cue in `env_obs.cues`:
+
+   ```python
+   bid_c = world.add_cue(
+       cue_token,
+       attach=attach_c,  # first "now", then "latest"
+       meta={"created_by": "env_step", "source": "HybridEnvironment"},
+   )
+   print(f"[env→world] cue:{cue_token} → {bid_c} (attach={attach_c})")
+   attach_c = "latest"
+   ``` :contentReference[oaicite:40]{index=40}  
+
+   This stamps the environment’s current view (posture, proximity, nipple state, visual cue) into the WorldGraph as ordinary `pred:*` and `cue:*` bindings, tagged with `source="HybridEnvironment"` for provenance.
+
+   ````
+
+5. **WorldGraph → Controller → Env (action feedback)**
+
+   After injection, the runner gives the controller one decision step:
+
+   ````python
+   POLICY_RT.refresh_loaded(ctx)
+   fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
+   if fired != "no_match":
+       print(f"[env→controller] {fired}")
+       # extract "policy:..." from the first token of the summary string
+       ctx.env_last_action = first_token_if_policy(fired)
+   else:
+       ctx.env_last_action = None
+   ``` :contentReference[oaicite:41]{index=41}  
+
+   The next time you choose this menu selection, `ctx.env_last_action` is passed into `env.step(...)` as `action`, allowing `FsmBackend` to react (e.g., treat `policy:stand_up` as standing earlier during `"struggle"`).   
+
+   ````
+
+6. **Discrepancy diagnostics (posture expectation vs observation)**
+
+   The mini-snapshot printed after this menu selection includes a **diagnostic line** when the latest environment posture and the latest **policy-expected** posture disagree.
+
+   Internally, the runner:
+
+   * Finds the newest env-driven `pred:posture:*` (with `meta["source"] == "HybridEnvironment"`).
+
+   * Finds the newest policy-written `pred:posture:*` (with `meta["policy"]` set, e.g., by `policy:stand_up`). 
+
+   * If they differ (e.g., env says `fallen` but the last StandUp invocation wrote `standing`), it prints:
+
+     ```text
+     [discrepancy] env posture='fallen' at b18 vs policy-expected posture='standing'
+                  from policy:stand_up at b22
+     [discrepancy] -often the motor system will attempt an action, but it does not actually occur-
+     ```
+
+   * It also keeps a short **discrepancy history** (last ~50 entries) in `ctx.posture_discrepancy_history` and prints it under:
+
+     ````text
+     [discrepancy history] recent posture discrepancies (most recent last):
+       [discrepancy] ...
+     ``` :contentReference[oaicite:44]{index=44}  
+     ````
+
+   These lines are **display-only diagnostics**; they do not create additional bindings. They are meant to mirror a robotics / physiology intuition:
+
+   > *The motor system may “intend” standing, but sensors still report a fallen posture until the environment actually transitions.*
+
+Putting it all together, this menu selection implements a minimal closed loop:
+
+```text
+world dynamics (HybridEnvironment/FsmBackend)
+  → EnvObservation (predicates + cues)
+  → WorldGraph update + one controller step
+  → policy name (e.g., "policy:stand_up")
+  → fed back into HybridEnvironment.step(...) on the next call of this menu selection
+```
+
+---
 
 ## 8. Debugging and tests
 
-* Running `python cca8_env.py` exercises the environment module alone via a tiny debug driver under `if __name__ == "__main__":`. It prints a table of `step`, `scenario_stage`, `kid_posture`, `mom_distance`, `nipple_state`, `temperature`, `fatigue`, and the predicates generated each step.
+* Running `python cca8_env.py` exercises the **environment module alone** via a small debug driver under `if __name__ == "__main__":`. It prints a tabular trace of `step_index`, `scenario_stage`, `kid_posture`, `mom_distance`, `nipple_state`, `kid_temperature`, `kid_fatigue`, and the predicates PerceptionAdapter generated at each step. 
 
-* `tests/test_cca8_env.py` contains unit tests for:
-  
-  * Storyboard progression over multiple `env.step(action=None, ctx=None)` calls (check key milestones at steps 0, 3, 5, 8, 11, 13, 16).
-  
-  * PerceptionAdapter outputs (predicates/cues/raw_sensors/env_meta) for a constructed `EnvState`.
+* `tests/test_cca8_env.py` covers: 
 
-These tests are run automatically via `--preflight` and help keep the environment behavior consistent as the project evolves.
+  * storyboard progression over multiple `env.step(action=None, ctx=None)` calls (key milestones at steps 0, 3, 5, 8, 11, 13, 16);
+  * PerceptionAdapter outputs (`predicates`, `cues`, `raw_sensors`, `env_meta`) for a constructed `EnvState`.
 
+These tests make it easy to verify that changes to the storyboard or perception mapping do what you expect before you wire them through the full CCA8 loop.
 
-
-
-
-**Q&A to help you learn this section**
-
-* **Q:** Is `EnvState` the agent’s belief?  
-  **A:** No. `EnvState` is the environment’s canonical world state. The agent’s belief/memory lives in WorldGraph/Columns.
-
-* **Q:** What exactly crosses the boundary between environment and CCA8?  
-  **A:** Only `EnvObservation` (plus scalar `reward` and `done` flags). Everything else stays on the environment side.
-
-* **Q:** Where should I add more realism (e.g., proper distances, noise, multiple goats)?  
-  **A:** In `EnvState` + `FsmBackend` (or additional backends) and in `PerceptionAdapter`. The Runner and CCA8 should not need changes.
-
-* **Q:** How does the environment know what the agent did?  
-  **A:** The Runner records the last fired policy name in `ctx.env_last_action` and passes it into `env.step(action=..., ctx=ctx)` on the next environment step.
-
-* **Q:** Where will RL-specific reward and termination live later?  
-  **A:** In a dedicated `MdpBackend` that inspects `(old_state, action, new_state)` and returns `(reward, done)`. HybridEnvironment will call it and forward those scalars to the agent.
-  
-  
-
+---
 
 
 

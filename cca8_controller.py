@@ -710,8 +710,9 @@ class StandUp(Primitive):
         - recall that _add_pred(...) calls world.add_predicate(_canon(token), **kwargs)
         - recall that _add_tag_to_binding(....) calls tags.add(full_tag) where tags = tags from particular binding in world
         - recall that world.add_edge(...) adds an edge from binding where it is stored to specified binding
-        - adds ACTION_PUSH_UP predicate, adds ACTION_EXTEND_LEGS predicate, adds "posture:standing" predicate, adds tag to that binding
-            "pred:state:posture_standing", adds and edge from each predicate to the next and then returns self._success(...)
+        - adds ACTION_PUSH_UP predicate, adds ACTION_EXTEND_LEGS predicate, adds "posture:standing" predicate,
+            tags that binding with the canonical state:posture_standing, adds an edge from each predicate to the next,
+            and then returns self._success(...)
         - if these operations fail then returns self._fail(...)
 
         -node policy:
@@ -724,8 +725,18 @@ class StandUp(Primitive):
             _add_action(world, ACTION_PUSH_UP,     attach="now",    meta=meta)
             _add_action(world, ACTION_EXTEND_LEGS, attach="latest", meta=meta)
 
-            # Final state: canonical posture:standing predicate
-            c = _add_pred(world, STATE_POSTURE_STANDING, attach="latest", meta=meta)
+            # Final state: canonical posture:standing predicate.
+            # We clone meta and add a human-friendly note explaining that this fact encodes
+            # the policy's expected outcome (the agent believes it is now upright). The
+            # HybridEnvironment will later confirm or refute this via new sensory evidence.
+            standing_meta = dict(meta)
+            standing_meta["note"] = (
+                "StandUp wrote this posture:standing fact as its expected outcome: "
+                "after push_up and extend_legs the agent believes it is now upright. "
+                "A later environment step (HybridEnvironment) will confirm or refute standing "
+                "via new sensory evidence."
+            )
+            c = _add_pred(world, STATE_POSTURE_STANDING, attach="latest", meta=standing_meta)
 
             return self._success(reward=1.0, notes="stood up", binding=c)
         except Exception as e:
