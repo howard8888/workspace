@@ -4,7 +4,7 @@
 
 *The Tutorials below (see Table of Contents) are designed to teach you the practical aspects of the CCA8 as well as some of the theory behind it.*
 
-Questions?  Send me an email:  hschneidermd@alum.mit.edu
+Questions?  Send me an email: hschneidermd@alum.mit.edu
 
 
 
@@ -281,6 +281,7 @@ Q: How does this help planning? A: BFS over a sparse adjacency list gives shorte
 
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
 - [Binding and Edge Representation](#binding-and-edge-representation)
+- [Anchors, LATEST, and Base-Aware Writes](#anchors-latest-and-base-aware-writes)
 - [Tutorial on Drives](#tutorial-on-drives)
 - [Tutorial on WorldGraph Technical Features](#tutorial-on-worldgraph-technical-features)
 - [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
@@ -1546,7 +1547,7 @@ pytest -q -s
 
 Included starter tests:
 
-- `tests/test_smoke.py` — basic sanity (asserts True).
+- `tests/test_smoke.py` — basic reasonableness (asserts True).
 - `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → pred:stand exists.
 - `tests/test_inspect_binding_details.py` — uses a small demo world to exercise binding shape, provenance (`meta.policy/created_by/...`), engram pointers, and incoming/outgoing edge degrees as expected by the “Inspect binding details” menu.
 
@@ -1570,7 +1571,7 @@ Run tests directly (show prints):
 
 Included tests (non-exhaustive):
 
-* `tests/test_smoke.py` — basic sanity (asserts True).
+* `tests/test_smoke.py` — basic reasonableness (asserts True).
 
 * `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → `pred:stand` exists.
 
@@ -3051,8 +3052,347 @@ Once we’re both happy with this conceptual foundation, the next step is to:
 3. and then bring all docs (docstrings + README) into alignment with this binding/edge ontology. 
    
    
+
+   
+ 
    
    
+
+   
+
+   
+# Anchors, LATEST, and Base-Aware Writes
+
+
+
+## Anchors, LATEST, and Base-Aware Writes (NOW, base_suggestion)
+
+This section explains how the CCA8 runner uses **anchors**, the **LATEST** pointer, and the new **base-aware write** logic to keep episodes tidy and meaningful when adding new bindings.
+
+The goal is that when you say “hang this new fact off the current situation,” the system knows *where* in the WorldGraph that is — not just “whatever node happened to be written last.”
+
+### Anchors vs. LATEST: mental model
+
+The WorldGraph keeps two distinct orientation mechanisms: **anchors** and a **LATEST** pointer.
+
+* **Anchors** are bindings tagged `anchor:<NAME>` and tracked in `world._anchors` (e.g., `"NOW" → "b5"`).
+
+  * `anchor:NOW` – the current **situation** or **temporal orientation**: where planning and FOA usually start.
+  * `anchor:NOW_ORIGIN` – the **episode root**, pinned once on a fresh world (birth) and left alone later.
+  * `anchor:HERE` – reserved for **spatial orientation** (“where the body is in space”); currently a stub.
+
+* **LATEST** is *not* a binding tag; it’s an internal pointer `world._latest_binding_id` that always refers to the **most recently created binding**, regardless of whether it is a predicate, cue, or action.
+
+At any moment:
+
+* **NOW** answers: “Where am *I* in this story?”
+* **LATEST** answers: “What was the last node I wrote?”
+
+They often coincide right after a policy runs, but they are allowed (and expected) to diverge. For example, after a StandUp:
+
+```text
+b1: [anchor:NOW_ORIGIN]  →  episode root  
+b2: [pred:posture:fallen]  
+b3: [action:push_up]  
+b4: [action:extend_legs]  
+b5: [anchor:NOW, pred:posture:standing]
+```
+
+NOW and LATEST are both `b5` immediately after the StandUp policy executes. If you then add a cue:
+
+```text
+b6: [cue:vision:my_cue:mom]    # attached from NOW → b5 --then--> b6
+```
+
+* `NOW` remains `b5` (standing posture).
+* `LATEST` becomes `b6` (the cue).
+
+This separation is intentional: NOW reflects the **current state**, while LATEST simply tracks the last binding created (which might be a transient cue or helper node).
+
+### Attach semantics: `attach="now"` vs. `"latest"` vs `"none"`
+
+All node-creation helpers in `WorldGraph` accept an `attach=` parameter:
+
+* `attach="now"`
+
+  * Create a new binding and add an edge `NOW --then--> new`.
+  * Update `LATEST = new`.
+
+* `attach="latest"`
+
+  * Create a new binding and add an edge `LATEST --then--> new`.
+  * Update `LATEST = new`.
+
+* `attach="none"` / `None`
+
+  * Create a new binding **without** any auto-edge.
+  * Still updates `LATEST = new`.
+
+In other words:
+
+* `attach="now"` → “attach from the **NOW anchor**.”
+* `attach="latest"` → “attach from the **last node written**.”
+* `attach="none"` → “create a floating node; I’ll wire it manually.”
+
+### Why we needed “base” and base_suggestion
+
+In simple demos, `attach="latest"` is good enough. But once you start mixing predicates, cues, actions, and scene captures, “latest” can drift to a node that is *not* the right semantic parent.
+
+Example:
+
+1. Instinct step runs **StandUp** → NOW and LATEST both at `b5` (`pred:posture:standing`).
+2. You add a cue (`attach="now"`):
+
+   * `b5 --then--> b6` (`cue:vision:my_cue:mom`)
+   * `LATEST = b6`, NOW still `b5`.
+3. You add a new predicate or scene **with `attach="latest"`**.
+
+**Without** base-aware logic:
+
+* The new binding would hang off `b6` (the cue) simply because that’s LATEST, even though semantically it belongs with the standing posture node `b5`.
+
+To fix this, the runner now computes a **write base** each step — a suggested parent node for new writes that reflects the *current situation*, not just the last node touched.
+
+### Base and base_suggestion
+
+A **base** is “where should this new binding be linked so the episode stays tidy and meaningful?”
+
+`choose_contextual_base(world, ctx, targets=[...])` computes a **base_suggestion** as a small dict:
+
+```python
+{"base": "NEAREST_PRED", "pred": "posture:standing", "bid": "b5"}
+```
+
+or falls back to:
+
+```python
+{"base": "HERE", "bid": "?"}      # HERE stub, unresolved
+{"base": "NOW", "bid": "b_now"}   # if HERE and NEAREST_PRED aren’t available
+```
+
+In words:
+
+* **`base["base"]`** – the *strategy* we used:
+
+  * `"NEAREST_PRED"` – nearest binding (by BFS) around NOW carrying the target predicate (e.g., `posture:standing`, `stand`).
+  * `"HERE"` – a spatial anchor (stubbed for now).
+  * `"NOW"` – fallback to the NOW anchor.
+
+* **`base["bid"]`** – the concrete binding id we suggest as the parent (e.g., `b5`).
+
+* **`base["pred"]`** – the matching predicate token for diagnostics (e.g., `"posture:standing"`).
+
+This base_suggestion answers:
+
+> “Given the current situation (NOW + FOA), which binding is the best parent for new nodes this step?”
+
+### Base-aware attach logic in the Runner
+
+Some runner menus — notably **Add Predicate** and **Capture Scene** — now incorporate **base-aware logic** when you request `attach="latest"`.
+
+The pattern is:
+
+1. Compute a base suggestion:
+
+   ```python
+   base = choose_contextual_base(world, ctx, targets=["posture:standing", "stand"])
+   ```
+
+2. Decide an effective attach mode:
+
+   ```python
+   effective_attach = _maybe_anchor_attach("latest", base)
+   ```
+
+   * If `base["base"] == "NEAREST_PRED"` and you asked for `"latest"`, we return `"none"`.
+   * Otherwise, we leave attach unchanged.
+
+3. Create the new binding with `attach=effective_attach`.
+
+   * If `effective_attach == "none"`, the node is created **unattached** (no auto edge from LATEST).
+
+4. If we used a NEAREST_PRED base and suppressed auto-attach, we explicitly anchor the new node under the base:
+
+   ```python
+   _attach_via_base(world, base, new_bid, rel="then", meta={...})
+   # adds base['bid'] --then--> new_bid
+   ```
+
+In logs you’ll see:
+
+```text
+[base] write-base suggestion for this add_predicate: NEAREST_PRED(pred=posture:standing) -> b5
+[base] base-aware attach: new binding will be created unattached, then linked from the suggested NEAREST_PRED base instead of plain 'LATEST'.
+Added binding b9 with pred:vision:silhouette:mom (attach=none)
+[base] attached b9 under base b5 via then (NEAREST_PRED(pred=posture:standing) -> b5)
+```
+
+and in the mini-snapshot:
+
+```text
+b5: [anchor:NOW, pred:posture:standing]
+    edges: then:b6, then:b7, then:b9
+b6: [cue:vision:my_cue:mom]
+    edges: (none)
+b7: [action:orient_to_mom] -> b8
+b8: [pred:seeking_mom]
+    edges: (none)
+b9: [pred:vision:silhouette:mom]
+    edges: (none)
+```
+
+Here:
+
+* LATEST before the add was `b8` (`seeking_mom`).
+* `attach="latest"` *would* have made `b8 --then--> b9`.
+* Base-aware logic instead anchored `b9` under `b5` (standing/NOW), which is semantically cleaner.
+
+### Where base-aware logic is used today
+
+Base-aware writes currently apply to:
+
+* **Add Predicate** menu (manual predicates):
+
+  * When you choose `attach="latest"` (the default), the new `pred:*` is anchored under:
+
+    * the nearest `posture:standing` / `stand` near NOW (if available),
+    * otherwise behaves like a normal `attach="latest"`.
+
+* **Capture Scene → tiny engram** menu:
+
+  * When you choose `attach="latest"`, the new scene binding (cue or pred) is created unattached and then anchored under the same NEAREST_PRED base, so scene engrams cluster under the appropriate posture node (e.g., “scenes while standing”).
+
+Attach modes are still fully under your control:
+
+* If you explicitly pick `attach="now"` or `"none"`, base-aware logic only prints a small “[base] write-base suggestion skipped…” note and respects your choice.
+
+### Summary cheat-sheet
+
+* **NOW_ORIGIN**
+
+  * Episode root anchor; pinned once at startup, rarely used directly by policies.
+
+* **NOW**
+
+  * Semantic “current situation” anchor; planning and FOA start here.
+  * Moved by the runner after significant events (e.g., StandUp).
+
+* **HERE**
+
+  * Reserved for future spatial anchoring (“where the body is in space”).
+
+* **LATEST**
+
+  * Internal pointer to the last binding created; used by raw `attach="latest"` semantics.
+
+* **base**
+
+  * A suggested parent binding (`{"base": strategy, "bid": "bN", "pred": "…"}`) computed near NOW.
+
+* **base_suggestion / choose_contextual_base(...)**
+
+  * Given NOW + FOA and target predicates, returns a base dict; NEAREST_PRED is the typical case for posture.
+
+* **Base-aware logic**
+
+  * For `attach="latest"` in certain menus, `_maybe_anchor_attach(...)` and `_attach_via_base(...)` cooperate to:
+
+    * suppress naive auto-linking from LATEST,
+    * explicitly anchor the new binding under the semantically meaningful base node near NOW.
+
+The result is that this keeps the WorldGraph’s episode structure both **readable for the human reader** and **usable for planning**, even as cues and other small bindings proliferate around the current situation.
+
+   
+
+
+## Quick Q&A: Anchors, LATEST, and Base-Aware Writes
+
+**Q1. What’s the difference between `NOW` and `LATEST`?**
+**A.** `NOW` is an **anchor binding** (tagged `anchor:NOW`) that represents the *current situation* in the episode — planning and FOA start here. `LATEST` is just an **internal pointer** to the last binding created (`_latest_binding_id`). They often coincide right after a big event, but they can diverge: `NOW` stays on the meaningful situation node, while `LATEST` chases every new binding (including transient cues).
+
+---
+
+**Q2. What is `NOW_ORIGIN` used for?**
+**A.** `NOW_ORIGIN` is an anchor marking the **episode root** — the binding where `NOW` started on a fresh world. It’s a stable “start” marker. The runner doesn’t change it during normal operation; it’s mostly there for orientation and future algorithms that need a canonical start.
+
+---
+
+**Q3. What happens when I use `attach="now"` vs `attach="latest"`?**
+**A.**
+
+* `attach="now"`:
+  Creates a new binding and adds `NOW --then--> new`. The NOW anchor is the parent.
+* `attach="latest"`:
+  Creates a new binding and adds `LATEST --then--> new`. The last-created binding is the parent.
+
+Both modes update `LATEST = new`. Base-aware logic may intercept `"latest"` in some menus (see below), but `"now"` always attaches from the NOW anchor.
+
+---
+
+**Q4. What do we mean by a “base” or `base_suggestion`?**
+**A.** A **base** is the binding the system thinks is the **best parent** for new writes *this step*. `base_suggestion` is a small dict like:
+
+```python
+{"base": "NEAREST_PRED", "pred": "posture:standing", "bid": "b5"}
+```
+
+It means:
+
+> “Starting from NOW, the nearest binding with `pred:posture:standing` is `b5`; that’s the node we should probably hang new facts under.”
+
+If no such predicate is found, the strategy can fall back to HERE or NOW.
+
+---
+
+**Q5. Is a base the same thing as `NOW`?**
+**A.** No. `NOW` is the **starting point** for search. A base is the **chosen parent** within the neighborhood around NOW. In many simple cases NOW *is* the best base (e.g., NOW is the standing node), but in general:
+
+* `NOW` = “where we are in the episode.”
+* `base` = “which node under/around here should own this new fact.”
+
+---
+
+**Q6. What problem does base-aware logic solve for `attach="latest"`?**
+**A.** Without base-aware logic, `attach="latest"` blindly attaches new bindings from `_latest_binding_id`. If the last thing you wrote was a cue or a helper node, new predicates/scenes hang under that, even though they semantically belong under a posture or state node.
+
+Base-aware logic:
+
+1. Computes a base near NOW (e.g., nearest `posture:standing`).
+2. If you requested `attach="latest"` and the base is `NEAREST_PRED`, it:
+
+   * creates the new node with `attach="none"`,
+   * then explicitly adds `base_bid --then--> new`.
+
+So the new binding is anchored under the **meaningful state** (e.g., “standing at b5”) instead of some random “last node” (e.g., a cue at b6).
+
+---
+
+**Q7. Does base-aware logic affect `attach="now"` or `attach="none"`?**
+**A.** No. If you explicitly choose `attach="now"` or `"none"`:
+
+* The runner prints a small note that it has a base suggestion but “skips” it because the attach mode was user-specified.
+* The write behaves exactly as before:
+
+  * `"now"` attaches from the NOW anchor,
+  * `"none"` creates a floating node (you can wire it manually).
+
+Base-aware write behavior only kicks in when **you choose `attach="latest"`** in certain menus.
+
+---
+
+**Q8. Which menus currently use base-aware logic?**
+**A.** Today:
+
+* **Add Predicate** – default `attach="latest"` uses a NEAREST_PRED base near NOW (standing/stand) and anchors the new predicate under that node.
+* **Capture Scene** – default `attach="latest"` creates the scene binding unattached and anchors it under the NEAREST_PRED base (e.g., “scene while standing”).
+
+More menus (and maybe env injection) can be upgraded to use the same pattern in future phases.
+
+
+
+
+
+
 
 
 
@@ -3443,7 +3783,7 @@ Planner ignores engrams entirely; they matter only for analysis or for advanced 
 
 
 
-## 10. Sanity checks and invariants
+## 10. Reasonableness checks and invariants
 
 `WorldGraph.check_invariants()` can be used to validate:
 
@@ -3814,7 +4154,7 @@ Persistence / checks / viz
     # ... write to JSON if you like ...
     g2 = WorldGraph.from_dict(snap)       # id counter advanced above max b<N>
 
-### 7) Sanity checks
+### 7) Reasonableness checks
 
 
     issues = g.check_invariants(raise_on_error=False)
@@ -4151,7 +4491,7 @@ Preflight (what it actually checks)
 
 * Pyvis availability (optional).
 
-* Planner probes, **attach semantics**, **cue normalization**, **action metrics**, **BFS shortest-hop** sanity.
+* Planner probes, **attach semantics**, **cue normalization**, **action metrics**, **BFS shortest-hop** reasonableness.
 
 * **Lexicon strictness** (reject illegal tokens at neonate).
 

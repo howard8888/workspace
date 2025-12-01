@@ -21,6 +21,7 @@ coverage.xml
 
 # Code documentation for internal usage
 doc_*.*
+example_*.txt
 
 # Build/dist
 build/

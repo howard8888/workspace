@@ -151,6 +151,7 @@ Action loop
 # Standard Library Imports
 from __future__ import annotations
 from dataclasses import dataclass, asdict
+from collections import deque
 from datetime import datetime
 from typing import Dict, List
 
@@ -507,6 +508,74 @@ def _any_cue_present(world) -> bool:
                     return True
     except (AttributeError, TypeError, KeyError):
         pass
+    return False
+
+
+def _fallen_near_now(world, max_hops: int = 3) -> bool:
+    """
+    Return True if any pred:posture:fallen is reachable from the NOW anchor
+    within <= `max_hops` edges.
+
+    This is the safety check used by the Action Center. It is intentionally
+    local to the current NOW anchor so that old posture:fallen facts far in
+    the past do not keep StandUp firing forever.
+
+    Graph intuition:
+      - Edges encode a weak temporal/causal succession (e.g., b1 -> b2 -> b3).
+      - The NOW anchor points at the current "situation" node.
+      - We only want to treat the agent as "fallen" if a fallen posture is
+        reachable by a short forward walk from NOW (e.g., the next few steps).
+    """
+    try:
+        anchors = getattr(world, "_anchors", None)
+        if not isinstance(anchors, dict):
+            return False
+        now_id = anchors.get("NOW")
+        if not isinstance(now_id, str):
+            return False
+    except Exception:
+        return False
+
+    fallen_tags = {f"pred:{STATE_POSTURE_FALLEN}", "pred:posture:fallen"}
+    q = deque([now_id])
+    seen = {now_id}
+    depth: Dict[str, int] = {now_id: 0}
+
+    while q:
+        u = q.popleft()
+        b = world._bindings.get(u) #pylint: disable=protected-access
+
+        # Check this node's tags for a fallen posture
+        if b is not None:
+            tags = getattr(b, "tags", None) or []
+            for t in tags:
+                if isinstance(t, str) and t in fallen_tags:
+                    return True
+
+        # Respect hop limit
+        if depth.get(u, 0) >= max_hops:
+            continue
+
+        # Walk forward along outgoing edges; be tolerant to layout variants.
+        edges: list = []
+        if b is not None:
+            edges = (
+                getattr(b, "edges", []) or
+                getattr(b, "out", []) or
+                getattr(b, "links", []) or
+                getattr(b, "outgoing", [])
+            )
+
+        if isinstance(edges, list):
+            for e in edges:
+                if not isinstance(e, dict):
+                    continue
+                v = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                if isinstance(v, str) and v not in seen:
+                    seen.add(v)
+                    depth[v] = depth.get(u, 0) + 1
+                    q.append(v)
+
     return False
 
 
@@ -1096,8 +1165,13 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
         - This preserves a single source of truth for execution while allowing richer selection
           logic without coupling the controller to any specific agent/LLM.
     """
-    # (1) Safety-first: explicit fallen → StandUp
-    if _has(world, STATE_POSTURE_FALLEN) or _has(world, "posture:fallen"):
+    # (1) Safety-first: explicit fallen *near NOW* → StandUp
+    # We intentionally scope this to the neighborhood of the NOW anchor so that
+    # old posture:fallen facts (far behind NOW in the episode) do not keep
+    # StandUp firing forever. If the agent has just stood up and NOW was moved
+    # to the new standing node, _fallen_near_now(...) will return False until a
+    # new fallen posture appears near NOW.
+    if _fallen_near_now(world, max_hops=3):
         stand = None
         for p in PRIMITIVES:
             if p.name == "policy:stand_up":
@@ -1105,6 +1179,7 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
                 break
         assert stand is not None, "Action Center safety override: StandUp policy not registered"
         return _run(stand, world, ctx, drives)
+
 
     # (2) External advisory path (Option B-ready): honor exact 'preferred' if present
     #  e.g., preferred="policy:rest" as specified by the argument to the function

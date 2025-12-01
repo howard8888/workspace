@@ -360,22 +360,84 @@ def delete_edge_flow(world: Any, autosave_cb=None) -> None:
 
 # ==== Spatial anchoring stubs (NO-OP placeholders for future attach semantics) ====
 
-#pylint: disable=unused-argument
 def _maybe_anchor_attach(default_attach: str, base: dict | None) -> str:
     """
-    STUB: When we enable base-aware write placement, change attach semantics here.
-    For now, returns default_attach unchanged.
-    Example (future):
-      if isinstance(base, dict) and base.get("bid"):
-          return "none"   # create unattached, then connect base['bid'] -> new
+    Base-aware attach helper: adjust the attach mode based on a suggested write-base.
+
+    Today we keep the behavior very conservative:
+
+      • If base is a NEAREST_PRED suggestion with a concrete 'bid' and the caller
+        would have used attach="latest", we return "none". This signals that the
+        caller should create the new binding unattached and then explicitly add
+        base['bid'] --then--> new in a single, readable place.
+
+      • In all other cases we simply return default_attach unchanged.
+
+    This keeps the core WorldGraph attach semantics simple (now/latest/none) while
+    giving us a single knob to turn write placement from naive 'LATEST' to
+    base-anchored placement as the architecture evolves.
 
     Note: -We already compute a "write base" suggestion via choose_contextual_base(...)
             e.g., as seen in the Instinct Step menu selection.
-          -these stubs give a single place to switch from attach="latest" to
-            base-anchored placement later.
-          - _add_pred_base_aware(...) stub is in Controller module
+          -These helpers (together with _add_pred_base_aware(...) in the Controller)
+            provide a single choke point for future base-aware write semantics.
+    Note: Nov 2025 -- pylint:disable=unused-argument removed as stub now filled in
     """
+    if not isinstance(base, dict):
+        return default_attach
+    kind = base.get("base")
+    bid = base.get("bid")
+    if kind == "NEAREST_PRED" and isinstance(bid, str) and bid and default_attach == "latest":
+        # Create the node unattached; the caller will add base['bid'] --then--> new.
+        return "none"
     return default_attach
+
+
+def _attach_via_base(world, base: dict | None, new_bid: str, *, rel: str = "then", meta: dict | None = None) -> None:
+    """
+    Attach a newly-created binding under the suggested base, when appropriate.
+
+    This is intended to be used together with _maybe_anchor_attach(...):
+
+      • The caller first chooses a base via choose_contextual_base(...),
+        then calls _maybe_anchor_attach(default_attach, base) to decide the
+        attach mode to pass into world.add_predicate/add_cue/etc.
+
+      • If _maybe_anchor_attach(...) returned "none" for a NEAREST_PRED base,
+        the caller can then invoke _attach_via_base(...) to add an explicit
+        base['bid'] --rel--> new_bid edge for readability.
+
+    For now we only attach for NEAREST_PRED suggestions; HERE/NOW bases are
+    left to the default attach semantics to avoid duplicating edges.
+    """
+    if not isinstance(base, dict):
+        return
+    kind = base.get("base")
+    base_bid = base.get("bid")
+    if kind != "NEAREST_PRED" or not isinstance(base_bid, str) or not base_bid:
+        return
+    try:
+        if base_bid not in world._bindings or new_bid not in world._bindings:
+            return
+    except Exception:
+        return
+    edge_meta = meta or {
+        "created_by": "base_attach",
+        "base_kind": kind,
+        "base_pred": base.get("pred"),
+    }
+    try:
+        world.add_edge(base_bid, new_bid, rel, meta=edge_meta)
+        try:
+            print(f"[base] attached {new_bid} under base {base_bid} via {rel} ({_fmt_base(base)})")
+        except Exception:
+            # Printing is purely diagnostic; ignore errors here.
+            pass
+    except Exception as e:
+        try:
+            print(f"[base] error while attaching {new_bid} under {base_bid}: {e}")
+        except Exception:
+            pass
 
 
 def add_spatial_relation(world, src_bid: str, rel: str, dst_bid: str, meta: dict | None = None) -> None:
@@ -384,8 +446,6 @@ def add_spatial_relation(world, src_bid: str, rel: str, dst_bid: str, meta: dict
     Today this is just an alias of world.add_edge(...).
     """
     world.add_edge(src_bid, dst_bid, rel, meta or {})
-#pylint: enable=unused-argument
-
 
 # --------------------------------------------------------------------------------------
 # Persistence: atomic JSON autosave (world, drives, skills)
@@ -1013,7 +1073,6 @@ class PolicyRuntime:
             if not matches:
                 return "no_match"
 
-
         # Choose by drive-deficit
         def deficit(name: str) -> float:
             d = 0.0
@@ -1022,7 +1081,6 @@ class PolicyRuntime:
             if name == "policy:rest":
                 d += max(0.0, float(getattr(drives, "fatigue", 0.0)) - float(FATIGUE_HIGH)) * 0.7
             return d
-
 
         def stable_idx(p):
             try:
@@ -1048,10 +1106,21 @@ class PolicyRuntime:
         except Exception as e:
             return f"{chosen.name} (error: {e})"
 
+        # Build an explicit [executed] line from the result dict, if available
+        exec_line = ""
+        if isinstance(result, dict):
+            status  = result.get("status")
+            reward  = result.get("reward")
+            binding = result.get("binding")
+            if status and status != "noop":
+                rtxt = f"{reward:+.2f}" if isinstance(reward, (int, float)) else "n/a"
+                exec_line = f"[executed] {label} ({status}, reward={rtxt}) binding={binding}\n"
+
         gate_for_label = next((p for p in self.loaded if p.name == label), chosen)
         post_expl = gate_for_label.explain(world, drives, ctx) if gate_for_label.explain else "explain: (not provided)"
         return (
             f"{label} (added {delta_n} bindings)\n"
+            f"{exec_line}"
             f"pre:  {pre_expl}\n"
             f"base: {base}\n"
             f"foa:  {foa}\n"
@@ -3229,6 +3298,174 @@ def recent_bindings_text(world, limit: int = 5) -> str:
     return "\n".join(lines) + "\n"
 
 
+def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylint: disable=unused-argument
+    """
+    Map an EnvObservation into the WorldGraph as pred:* and cue:* bindings.
+
+    - world: live WorldGraph instance.
+    - ctx  : runtime context (currently unused here; reserved for future time/base-aware writes).
+    - env_obs: EnvObservation with .predicates and .cues lists.
+
+    Returns:
+        {"predicates": [binding ids], "cues": [binding ids]} for any created bindings.
+
+    Notes:
+        - Uses attach="now" for the first predicate/cue, then attach="latest" for subsequent ones.
+        - Stamps meta={"created_by": "env_step", "source": "HybridEnvironment"} on all injected bindings.
+        - Prints the same [env→world] lines as the inline version in menu 35.
+    """
+    created_preds: List[str] = []
+    created_cues: List[str] = []
+
+    # Map env predicates into the CCA8 WorldGraph as pred:* tokens
+    try:
+        attach = "now"
+        for token in getattr(env_obs, "predicates", []) or []:
+            bid = world.add_predicate(
+                token,
+                attach=attach,
+                meta={
+                    "created_by": "env_step",
+                    "source": "HybridEnvironment",
+                },
+            )
+            print(f"[env→world] pred:{token} → {bid} (attach={attach})")
+            created_preds.append(bid)
+            # After the first predicate, hang subsequent ones off LATEST
+            attach = "latest"
+    except Exception as e:
+        print(f"[env→world] predicate injection error: {e}")
+
+    # Map env cues into the WorldGraph as cue:* tokens
+    try:
+        attach_c = "now"
+        for cue_token in getattr(env_obs, "cues", []) or []:
+            bid_c = world.add_cue(
+                cue_token,
+                attach=attach_c,
+                meta={
+                    "created_by": "env_step",
+                    "source": "HybridEnvironment",
+                },
+            )
+            print(f"[env→world] cue:{cue_token} → {bid_c} (attach={attach_c})")
+            created_cues.append(bid_c)
+            attach_c = "latest"
+    except Exception as e:
+        print(f"[env→world] cue injection error: {e}")
+
+    return {"predicates": created_preds, "cues": created_cues}
+
+
+def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) -> None:
+    """
+    Run N closed-loop steps between the HybridEnvironment and the CCA8 brain
+    in a condensed, explanatory way.
+
+    Each step:
+      - advances controller_steps and the temporal soft clock (no autonomic ticks here),
+      - calls env.reset() once (if this is the first ever env step for this episode),
+        or env.step(last_policy_action, ctx) on later steps,
+      - injects EnvObservation into the WorldGraph via inject_obs_into_world(...),
+      - runs one controller step via PolicyRuntime.consider_and_maybe_fire(...),
+      - remembers the last fired policy name in ctx.env_last_action so the next
+        env.step(...) can react to it.
+    """
+    if n_steps <= 0:
+        print("[env-loop] N must be ≥ 1; nothing to do.")
+        return
+
+    print(f"[env-loop] Running {n_steps} closed-loop environment/controller step(s).")
+    print("[env-loop] Each step will:")
+    print("  1) Advance controller_steps and the temporal soft clock (one drift),")
+    print("  2) Call env.reset() (first time) or env.step(last policy action),")
+    print("  3) Inject EnvObservation into the WorldGraph as pred:/cue: facts,")
+    print("  4) Run ONE controller step (Action Center) and store the last policy name.\n")
+
+    if not getattr(ctx, "env_episode_started", False):
+        print("[env-loop] Note: environment episode has not started yet; "
+              "the first step will call env.reset().")
+
+    for i in range(n_steps):
+        print(f"\n[env-loop] Step {i+1}/{n_steps}")
+
+        # 1) Timekeeping for this controller loop (soft clock only)
+        try:
+            ctx.controller_steps = getattr(ctx, "controller_steps", 0) + 1
+        except Exception:
+            pass
+        if getattr(ctx, "temporal", None):
+            ctx.temporal.step()
+
+        # 2) Environment evolution (reset once, then step with last action)
+        if not getattr(ctx, "env_episode_started", False):
+            env_obs, env_info = env.reset()
+            ctx.env_episode_started = True
+            ctx.env_last_action = None
+            step_idx = env_info.get("step_index", 0)
+            print(
+                f"[env] Reset newborn_goat scenario: "
+                f"episode_index={env_info.get('episode_index')} "
+                f"scenario={env_info.get('scenario_name')}"
+            )
+        else:
+            action_for_env = ctx.env_last_action
+            env_obs, _env_reward, _env_done, env_info = env.step(
+                action=action_for_env,
+                ctx=ctx,
+            )
+            ctx.env_last_action = None
+            st = env.state
+            step_idx = env_info.get("step_index")
+            print(
+                f"[env] step={step_idx} "
+                f"stage={st.scenario_stage} posture={st.kid_posture} "
+                f"mom_distance={st.mom_distance} nipple_state={st.nipple_state} "
+                f"action={action_for_env!r}"
+            )
+
+        # 3) EnvObservation → WorldGraph
+        inject_obs_into_world(world, ctx, env_obs)
+
+        # 4) Controller response
+        policy_name = None
+        try:
+            policy_rt.refresh_loaded(ctx)
+            fired = policy_rt.consider_and_maybe_fire(world, drives, ctx)
+            if fired != "no_match":
+                print(f"[env→controller] {fired}")
+
+                # Extract clean "policy:..." for env.step(...) on the next loop.
+                if isinstance(fired, str):
+                    first_token = fired.split()[0]
+                    if isinstance(first_token, str) and first_token.startswith("policy:"):
+                        ctx.env_last_action = first_token
+                        policy_name = first_token
+                    else:
+                        ctx.env_last_action = None
+                else:
+                    ctx.env_last_action = None
+            else:
+                ctx.env_last_action = None
+        except Exception as e:
+            print(f"[env→controller] controller step error: {e}")
+            ctx.env_last_action = None
+
+        # Short summary for this step
+        try:
+            st = env.state
+            print(
+                f"[env-loop] summary step={step_idx} stage={st.scenario_stage} "
+                f"posture={st.kid_posture} mom={st.mom_distance} "
+                f"nipple={st.nipple_state} last_policy={policy_name!r}"
+            )
+        except Exception:
+            pass
+
+    print("\n[env-loop] Closed-loop run complete. "
+          "You can inspect details via Snapshot or the mini-snapshot that follows.")
+
+
 def _latest_posture_binding(world, *, source: Optional[str] = None, require_policy: bool = False):
     """
     Helper for mini-snapshots: find the most recent pred:posture:* binding.
@@ -3762,6 +3999,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
     # Simulation of the Environment (HybridEnvironment demo)
     35) Environment step (HybridEnvironment → WorldGraph demo) [env, hybrid]
+    37) Run n environment steps (closed-loop timeline) [envloop, envrun]
 
     # Perception & Memory (Cues & Engrams)
     12) Input [sensory] cue [sensory, cue]
@@ -3848,6 +4086,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "reset": "34",
     "env": "35", "environment": "35", "hybrid": "35",
     "mini": "36", "msnap": "36",
+    "envloop": "37", "envrun": "37", "envsteps": "37",
+
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -3900,7 +4140,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "33": "33",  # Lines of Count
     "34": "r",   # Reset current saved session
     "35": "35",  # environment simulation
-   "36": "36",  # mini-snapshot toggle
+    "36": "36",  # mini-snapshot toggle
+    "37": "37",  # envr't loop
 }
 
     # Attempt to load a prior session if requested
@@ -4147,8 +4388,7 @@ You can filter results by entering the string of the desired token, or even a pa
             # Selection:  Add Predicate
             # input predicate token, attach and meta for the new binding
             print("Selection: Add Predicate\n")
-            print('''
-
+            print("""
 Creates a new binding which will be tagged with "pred:<token>"
 'Attach' value will effect where this new binding is linked in the episode:
   now    → NOW -> new, new becomes LATEST
@@ -4161,7 +4401,7 @@ Please enter the predicate token
   don't enter, e.g., 'pred:vision:silhouette:mom' -- just enter the token portion of the predicate
   nb. no default value for predicate -- if you just click ENTER for predicate with no input, return to menu
   nb. however, there is a default value of 'latest' for attachment option
-            ''')
+""")
 
             token = input("\nEnter predicate token (e.g., vision:silhouette:mom)   ").strip()
             if not token:
@@ -4172,23 +4412,53 @@ Please enter the predicate token
             if attach not in ("now", "latest", "none"):
                 print("[info] unknown attach; defaulting to 'latest'")
                 attach = "latest"
-            meta = {"added_by": "user", "created_by": "menu:add_predicate", "created_at": datetime.now().isoformat(timespec="seconds")}
 
-            #via add_predicates() create a new predicate binding and auto-link to it
+            meta = {
+                "added_by": "user",
+                "created_by": "menu:add_predicate",
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            }
+
+            # Decide on a contextual write base for this manual predicate add.
+            base = None
+            effective_attach = attach
+            if attach == "latest":
+                base = choose_contextual_base(world, ctx, targets=["posture:standing", "stand"])
+                effective_attach = _maybe_anchor_attach(attach, base)
+                # Brief explanation for users seeing base-aware behavior for the first time.
+                print(f"[base] write-base suggestion for this add_predicate: {_fmt_base(base)}")
+                if effective_attach == "none" and isinstance(base, dict) and base.get("base") == "NEAREST_PRED":
+                    print("[base] base-aware attach: new binding will be created unattached, then "
+                          "linked from the suggested NEAREST_PRED base instead of plain 'LATEST'.")
+            else:
+                print("[base] write-base suggestion skipped: attach mode is not 'latest' (user-specified).")
+
+            # Create the new predicate binding and apply base-aware semantics if requested.
             try:
-                #in cca8_world_graph: def add_predicates(token, attach, meta, engrams) -> bid
-                #add_predicates() creates a new predicate binding and auto-links to it
-                before = len(world._bindings)  #e.g., 6
-                bid = world.add_predicate(token, attach=attach, meta=meta)  #e.g., bid=b7
-                after = len(world._bindings) #e.g., 7
-                print(f"Added binding {bid} with pred:{token} (attach={attach})")
+                before = len(world._bindings)
+                bid = world.add_predicate(token, attach=effective_attach, meta=meta)
+                after = len(world._bindings)
+                print(f"Added binding {bid} with pred:{token} (attach={effective_attach})")
 
-                # Small confirmation of the attach semantics when we can cheaply infer the source
+                # If we used a NEAREST_PRED base and suppressed auto-attach, add base->new edge explicitly.
+                if isinstance(base, dict) and base.get("base") == "NEAREST_PRED" and effective_attach == "none":
+                    _attach_via_base(
+                        world,
+                        base,
+                        bid,
+                        rel="then",
+                        meta={
+                            "created_by": "base_attach:menu:add_predicate",
+                            "base_kind": base.get("base"),
+                            "base_pred": base.get("pred"),
+                        },
+                    )
+
+                # Small confirmation of attach semantics when we can cheaply infer the source for attach="now".
                 if after > before:
                     src = None
-                    if attach == "now":
+                    if effective_attach == "now":
                         src = _anchor_id(world, "NOW")
-                    # For 'latest' we don't know the previous LATEST cheaply here, so just skip the edge echo.
                     if src and src in world._bindings:
                         edges = getattr(world._bindings[src], "edges", []) or []
                         def _dst(e):  # tolerant of edge layouts
@@ -5376,6 +5646,32 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
 -then there is a controller==Action Center step -- in the example with a newborn calf the gate and trigger conditions for
     policy:stand_up are met, and this policy is executed
 
+Phase 4B note:
+  - When attach='latest' (default in base-aware mode), this menu now consults a write-base suggestion:
+      base = NEAREST_PRED(pred=posture:standing/stand) near NOW → binding bN
+    and uses base-aware attach semantics so the captured scene anchors under a meaningful posture node
+    instead of blindly hanging off whatever LATEST happens to be.
+
+  - Brief tutorial on how to think of the terms above and below at this point in the software development:
+    NOW_ORIGIN anchor -- episode root binding, i.e., a stable 'start' marker, but not used much otherwise at this time
+    HERE anchor -- stub right now, in future use for 'where the body is in space' (vs NOW 'where we are in time')
+    LATEST -- a pointer, really _latest_binding_id, i.e., the last binding we created
+    NOW anchor -- after execution of a policy NOW is usually moved to latest binding of event, but tiny events and cue might not move NOW
+               -- used as default start for planning/search, time anchor, center of focus of attention FOA region
+    attach = 'latest' -- flag indicating that new binding for predicate/engram/etc should be linked to the latest binding
+    attach = 'now' -- flag indicating the new binding for predicate/engram/etc should be linked to the NOW anchor binding
+    base -- 'where should this new binding be linked in the graph so that the episode stays tidy and meaningful?'
+    base_suggestion -- system saying 'given the current situation (NOW + FOA) the best node to attach new nodes to is this binding'
+    choose_contextual_base(...) -- computes base_suggestion starting from NOW, within small radius of nodes looks for binding with
+        specified target predicate, if found returns, e.g., {'base':'NEAREST_PRED', 'pred':'posture:standing', 'bid':'b5'},
+        but if not found returns, e.g., {'base':'HERE', 'bid':'?'}, i.e., strategy of HERE rather than nearest predicate and if can't
+        use HERE then will use NOW/LATEST
+    base-aware logic -- see above Phase 4B note -- if attach='latest' and last node was a cue or some dev_gate, etc, the new predicate/scene
+        binding would normally link to those, even though they really belong under another node, then attach='effective_attach'=='none',
+        and have NEAREST_PRED base, then _attach_via_base(...) links under NEAREST_PRED base
+
+
+
             ''')
 
             try:
@@ -5398,6 +5694,19 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
 
             vec = _parse_vector(vtext)
 
+            # Phase 4B: decide on a contextual write base for this capture_scene.
+            base = None
+            effective_attach = attach
+            if attach == "latest":
+                base = choose_contextual_base(world, ctx, targets=["posture:standing", "stand"])
+                effective_attach = _maybe_anchor_attach(attach, base)
+                print(f"[base] write-base suggestion for this capture_scene: {_fmt_base(base)}")
+                if effective_attach == "none" and isinstance(base, dict) and base.get("base") == "NEAREST_PRED":
+                    print("[base] base-aware capture_scene: new binding will be created unattached, then "
+                          "anchored under the suggested NEAREST_PRED base instead of plain 'LATEST'.")
+            else:
+                print("[base] write-base suggestion skipped for capture_scene: attach mode is not 'latest' (user-specified).")
+
             # Treat capture as a new event (pre-capture boundary) so time attrs reflect a new epoch
             if ctx.temporal:
                 new_v = ctx.temporal.boundary()
@@ -5411,41 +5720,37 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
 
             # Pass time attrs when creating an engram
             from cca8_features import time_attrs_from_ctx
-            attrs = time_attrs_from_ctx(ctx) # e.g., {'ticks': 0, 'tvec64': '009afff54358ce3b', 'epoch': 1, 'epoch_vhash64': '009afff54358ce3b'}
-            bid, eid = world.capture_scene(channel, token, vec, attach=attach, family=family, attrs=attrs)
-            #family ("cue" or "pred"), channel (e.g., "vision"), token (e.g., "silhouette:mom") create binding tag and name/label engrame record
-            #attach controls how binding placed in the episode -- NOW -> new, <old LATEST> -> new, "none" -> unlinked
-            #vec is a vector that becomes the engram payload
-            #attrs -- built from ctx, e.g., ticks/epoch/tvec64, stored in the engram's meta["attrs"] so can correlate time without decoding the payload
-            #the binding stores a pointer to the engram -- binding.engrams["columon01"] = {id: <eid>}
-            #the call returns the binding id bid and engram id eid
+            attrs = time_attrs_from_ctx(ctx)
+            bid, eid = world.capture_scene(channel, token, vec, attach=effective_attach, family=family, attrs=attrs)
 
             try:
                 print(f"[bridge] created binding {bid} with tag "
                       f"{family}:{channel}:{token} and attached engram id={eid}")
-                #e.g., [bridge] created binding b3 with tag cue:vision:sdf:dfd and attached engram id=d39f3e7959ef47c481a809e9471183e7
+
+                # If we used a NEAREST_PRED base and suppressed auto-attach, anchor this scene under the base now.
+                if isinstance(base, dict) and base.get("base") == "NEAREST_PRED" and effective_attach == "none":
+                    _attach_via_base(
+                        world,
+                        base,
+                        bid,
+                        rel="then",
+                        meta={
+                            "created_by": "base_attach:menu:capture_scene",
+                            "base_kind": base.get("base"),
+                            "base_pred": base.get("pred"),
+                        },
+                    )
 
                 # Fetch and summarize the engram record (robust to different shapes)
                 try:
                     rec = world.get_engram(engram_id=eid)
-                     #e.g., {'id': '65cde6b019eb4559b1251d67e064f142', 'name': 'scene:vision:silhouette:mom', 'payload': TensorPayload(data=[0.0, 0.0, 0.0],
-                     #   shape=(3,), kind='scene', fmt='tensor/list-f32'), 'meta': {'name': 'scene:vision:silhouette:mom', 'links': ['cue:vision:silhouette:mom'],
-                     #   'attrs': {'ticks': 0, 'tvec64': 'f7954a60a3af1be1', 'epoch': 1, 'epoch_vhash64': 'f7954a60a3af1be1', 'column': 'column01'},
-                     #   created_at': '2025-11-15T08:29:05'}, 'v': '1'}
-                     # id -- engram's unique id in the Column store -- matches the eid returned by capture_scene(....)
-                     # name -- descriptive label
-                     # payload -- e.g., tiny scene vector user entered, wrapped as a TensorPayload (it carries data, shape, kind -- like tensor/list-f32)
-                     #   -TensorPayload is a tiny, no dependency (we don't use NumPy at present) dataclass -- data: list[float], shape: tuple[int,...],
-                     #      kind (default "embedding", or e.g., kind="scene", etc), fmt (default "tensor/list-f32")
                     meta = rec.get("meta", {})
                     attrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
                     if attrs:
                         print(f"[bridge] time on engram: ticks={attrs.get('ticks')} "
                               f"tvec64={attrs.get('tvec64')} epoch={attrs.get('epoch')} "
                               f"epoch_vhash64={attrs.get('epoch_vhash64')}")
-                              # e.g., [bridge] time on engram: ticks=0 tvec64=f7954a60a3af1be1 epoch=1 epoch_vhash64=f7954a60a3af1be1
-                    rid   = rec.get("id", eid)  #rec dictionary.get(key, default)  e.g., 65cde6b019eb4559b1251d67e064f142
-                    # payload can be nested or flat
+                    rid   = rec.get("id", eid)
                     payload = rec.get("payload") if isinstance(rec, dict) else None
                     if isinstance(payload, dict):
                         kind  = payload.get("kind") or payload.get("meta", {}).get("kind")
@@ -5453,46 +5758,33 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
                     else:
                         kind  = rec.get("kind")
                         shape = rec.get("shape")
-                    print(f"[bridge] column record ok: id={rid} kind={kind} shape={shape} keys={list(rec.keys()) if isinstance(rec, dict) else type(rec)}")
-                    #e.g., [bridge] column record ok: id=65cde6b019eb4559b1251d67e064f142 kind=None shape=None keys=['id', 'name', 'payload', 'meta', 'v']
+                    print(f"[bridge] column record ok: id={rid} kind={kind} shape={shape} "
+                          f"keys={list(rec.keys()) if isinstance(rec, dict) else type(rec)}")
                 except Exception as e:
                     print(f"[warn] could not retrieve engram record: {e}")
 
                 # Print the actual slot and ids we just attached
-                # "slot name" is the key used in a binding's engrams dict to label a particular engram pinter
-                # think of each binding as having little "ports" where engrames can plug in, with ports named "column1", "column2",...   <-- "slot name"
-                # e.g., b3: [cue:vision:silhouette:mom] engrams=[column01:65cde6b0…]
-                #      thus, b3.engrams = "column01":{"id": "65cde6b0…"}  <-- "column01" is the slot name
-                slot = None  #nb. dataclass usage different @some_dataclass(slots=True) -- slots here is named argument to @dataclass
+                slot = None
                 try:
                     b = world._bindings.get(bid)
-                    eng = getattr(b, "engrams", None)  #e.g.,  {'column01': {'id': 'ff2478655259424cb9f1d5fff6328f22', 'act': 1.0}}
+                    eng = getattr(b, "engrams", None)
                     if isinstance(eng, dict):
-                        # pick the slot that actually points to this engram id
                         for s, v in eng.items():
                             if isinstance(v, dict) and v.get("id") == eid:
-                                slot = s #"column01"
+                                slot = s
                                 break
                 except Exception:
                     slot = None
                 if slot:
                     print(f'[bridge] attached pointer: {bid}.engrams["{slot}"] = {eid}')
-                    #e.g., [bridge] attached pointer: b3.engrams["column01"] = b5ede08953714e7ab8a8ca4537971dd1
                 else:
-                    # fallback: show all slots if we didn't find an exact match
                     slots = ", ".join(eng.keys()) if isinstance(eng, dict) else "(none)"
                     print(f'[bridge] {bid} engrams now include [{slots}] (attached id={eid})')
 
-                # main purpose of this menu selection item is to create a binding and an engram
-                # we now also perform one controller step==Action Center step
-                # however, this part is optional and could be commented out for this menu selection block to run in a sense-only functional mode
+                # Optional: one controller step (Action Center) after capture
                 try:
-                    res = action_center_step(world, ctx, drives)  #{'policy': 'policy:stand_up', 'status': 'ok', 'reward': 1.0, 'notes': 'stood up', 'binding': 'b6'}
-                    #scans the ordered list of policies and runs the first that triggers
-                    #note that Policy_Runtime.consider_and_maybe_fire(...) does a bit more in first recomputing dev-eligibility, applies the safety override (e.g., fallen),
-                    #  tie-breaks by a simple deficit score, then calls action_center_step(....)
+                    res = action_center_step(world, ctx, drives)
                     if isinstance(res, dict):
-                        # Skip printing if it's an explicit no-op
                         if res.get("status") != "noop":
                             policy  = res.get("policy")
                             status  = res.get("status")
@@ -5500,25 +5792,20 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
                             binding = res.get("binding")
                             rtxt = f"{reward:+.2f}" if isinstance(reward, (int, float)) else "n/a"
                             print(f"[executed] {policy} ({status}, reward={rtxt}) binding={binding}")
-                            # e.g., [executed] policy:stand_up (ok, reward=+1.00) binding=b6
-
-                            # WHY line if the gate provides an explanation
                             gate = next((p for p in POLICY_RT.loaded if p.name == policy), None)
                             explain_fn: Optional[Callable[[Any, Any, Any], str]] = getattr(gate, "explain", None) if gate else None
                             if explain_fn is not None:
                                 try:
                                     why = explain_fn(world, drives, ctx)
                                     print(f"[why {policy}] {why}")
-                                    #e.g., [why policy:stand_up] dev_gate: age_days=0.00≤3.0, trigger: stand near NOW=True
                                 except Exception:
                                     pass
                     else:
-                        # Non-dict result: fall back to a generic print
                         print("Action Center:", res)
                 except Exception as e:
                     print(f"[warn] controller step errored: {e}")
             except Exception as e:
-                print(f"[warn] capture_scene failed: {e}")
+                print(f"[warn] capture_scene flow failed: {e}")
 
             print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives, ctx)
@@ -6136,40 +6423,9 @@ Attach an existing engram id (eid) to a binding id (bid).
                     f"action={action_for_env!r}"
                 )
 
-            # Map env predicates into the CCA8 WorldGraph as pred:* tokens
-            try:
-                attach = "now"
-                for token in env_obs.predicates:
-                    bid = world.add_predicate(
-                        token,
-                        attach=attach,
-                        meta={
-                            "created_by": "env_step",
-                            "source": "HybridEnvironment",
-                        },
-                    )
-                    print(f"[env→world] pred:{token} → {bid} (attach={attach})")
-                    # After the first predicate, hang subsequent ones off LATEST
-                    attach = "latest"
-            except Exception as e:
-                print(f"[env→world] predicate injection error: {e}")
-
-            # Map env cues into the WorldGraph as cue:* tokens
-            try:
-                attach_c = "now"
-                for cue_token in env_obs.cues:
-                    bid_c = world.add_cue(
-                        cue_token,
-                        attach=attach_c,
-                        meta={
-                            "created_by": "env_step",
-                            "source": "HybridEnvironment",
-                        },
-                    )
-                    print(f"[env→world] cue:{cue_token} → {bid_c} (attach={attach_c})")
-                    attach_c = "latest"
-            except Exception as e:
-                print(f"[env→world] cue injection error: {e}")
+            # Map EnvObservation into the CCA8 WorldGraph as pred:* / cue:* tokens.
+            # This uses the shared helper so other code paths can reuse the same semantics.
+            inject_obs_into_world(world, ctx, env_obs)
 
             # Let the controller see the new facts and maybe act once
             try:
@@ -6233,6 +6489,43 @@ Attach an existing engram id (eid) to a binding id (bid).
             print(f"Selection: Toggle ON/OFF mini-snapshot switch to a new position of: {state}")
             print("(if ON: will print a mini-snapshot after running the code of most menu selections, including this one)")
             print("(if OFF: will not print a mini-snapshot after each menu selection)\n")
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "37":
+            # Multi-step environment closed-loop run
+            print("Selection: Run n environment steps (closed-loop timeline)\n")
+            print("""This selection runs several consecutive closed-loop steps between the
+HybridEnvironment (newborn-goat world) and the CCA8 brain.
+
+For each step we will:
+  1) Advance controller_steps and the temporal soft clock once,
+  2) STEP the newborn-goat environment using the last policy action (if any),
+  3) Inject the resulting EnvObservation into the WorldGraph as pred:/cue: facts,
+  4) Run ONE controller step (Action Center) and remember the last fired policy.
+
+This is like pressing menu 35 multiple times, but with a more compact, per-step summary.
+You can still use menu 35 for detailed, single-step inspection.
+""")
+            # Ask the user for n
+            try:
+                n_text = input("How many closed-loop step(s) would you like to run? [default: 5]: ").strip()
+            except Exception:
+                n_text = ""
+            try:
+                n_steps = int(n_text) if n_text else 5
+            except ValueError:
+                n_steps = 5
+            if n_steps <= 0:
+                print("[env-loop] N must be ≥ 1; nothing to do.")
+                loop_helper(args.autosave, world, drives, ctx)
+                continue
+
+            run_env_closed_loop_steps(env, world, drives, ctx, POLICY_RT, n_steps)
+
+            # Show a one-line timekeeping summary after the run
+            print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives, ctx)
 
 
