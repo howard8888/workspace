@@ -579,6 +579,89 @@ def _fallen_near_now(world, max_hops: int = 3) -> bool:
     return False
 
 
+def _body_slot_tags(ctx, slot: str) -> set[str]:
+    """
+    Return the tag set for a given BodyMap slot ('posture', 'mom', 'nipple')
+    or an empty set if BodyMap is not available.
+
+    We treat BodyMap as a tiny, separate WorldGraph instance hanging off ctx.
+    """
+    try:
+        bw = getattr(ctx, "body_world", None)
+        body_ids = getattr(ctx, "body_ids", {}) or {}
+        if bw is None or not isinstance(body_ids, dict):
+            return set()
+        bid = body_ids.get(slot)
+        if not isinstance(bid, str):
+            return set()
+        b = getattr(bw, "_bindings", {}).get(bid)
+        if not b:
+            return set()
+        tags = getattr(b, "tags", None)
+        if isinstance(tags, set):
+            return set(tags)
+        if isinstance(tags, (list, tuple)):
+            return set(tags)
+    except Exception:
+        return set()
+    return set()
+
+
+def body_posture(ctx) -> str | None:
+    """
+    Read the BodyMap's posture slot and return a simple posture label:
+      'standing', 'fallen', 'resting', or None if unknown.
+
+    This is the preferred source of body posture for gating policies.
+    """
+    tags = _body_slot_tags(ctx, "posture")
+    if "pred:posture:standing" in tags:
+        return "standing"
+    if "pred:posture:fallen" in tags:
+        return "fallen"
+    if "pred:resting" in tags or "resting" in tags:
+        return "resting"
+    return None
+
+
+def body_mom_distance(ctx) -> str | None:
+    """
+    Read the BodyMap's mom-distance slot and return 'near'/'far' (or None).
+    """
+    tags = _body_slot_tags(ctx, "mom")
+    if "pred:proximity:mom:close" in tags:
+        return "near"
+    if "pred:proximity:mom:far" in tags:
+        return "far"
+    return None
+
+
+def body_nipple_state(ctx) -> str | None:
+    """
+    Read the BodyMap's nipple slot and return a simple nipple state label:
+      'latched', 'found', 'hidden', or None.
+
+    We also map milk:drinking to 'latched' if present.
+    """
+    tags = _body_slot_tags(ctx, "nipple")
+    if "pred:nipple:latched" in tags:
+        return "latched"
+    if "pred:milk:drinking" in tags:
+        return "latched"
+    if "pred:nipple:found" in tags:
+        return "found"
+    if "pred:nipple:hidden" in tags:
+        return "hidden"
+    return None
+
+
+
+
+
+
+
+
+
 def _policy_deficit_score(name: str, drives: Drives) -> float:
     """
     priority-by-deficit approach for policies:

@@ -218,26 +218,44 @@ cca8_test_worlds.py (informal name: "Test Worlds module")
 
 
 
- 
-  
-***Q&A to help you learn this section***
 
-Q: Why keep the symbolic graph small?  A: For fast indexing/planning, heavy content lives in engrams.
+
+### Q&A to help you learn the big picture
+
+Q: What is the core split in CCA8’s memory representation?
+A: A small symbolic WorldGraph (~5%) used for fast indexing and planning, and rich engrams (~95%) stored in Columns. The graph knows “what led to what”; the engrams hold heavy perceptual/temporal content.
+
+Q: In the 5-step newborn demo, what does the planner actually search over?
+A: It runs BFS from the NOW anchor over directed edges and looks for any binding whose tags contain the target pred:<token> (e.g., pred:milk:drinking). It doesn’t care about engram payloads; only tags and edges matter for planning.
+
+Q: Why is StandUp the first primitive in the newborn goat’s repertoire?
+A: Because standing up is a precondition for almost everything else in the newborn vignette (orienting to mom, seeking the nipple, moving to shelter). It’s both ethologically plausible and structurally convenient: it creates the first meaningful S–A–S pattern (fallen → actions → standing) in the WorldGraph.
+
+Q: Where is provenance recorded in step 5 (drink)?
+A: On each binding created by a policy, e.g.
+binding.meta["policy"] = "policy:seek_nipple" or "policy:suckle". This lets you reconstruct “which policy wrote this node” when reading graphs or debugging.
+
+Q: Why did you decide to keep control flow (policies) outside the graph instead of encoding everything as rules in the graph?
+A: To keep the system readable, testable, and flexible. Small, handwritten policies are easy to reason about and modify; the graph records what actually happened (episodes), not entire control logic. This follows the “index vs representation” and “program + data” split, rather than trying to cram cognition into a single giant graph.
+ 
 
 Q: Which primitives form “standing”?  
 A: `action:push_up`, `action:extend_legs`, and the predicate `pred:posture:standing` (based on the `posture:standing` tag).
 
-Q: Where is provenance stored?  A: binding.meta.policy = "policy:<name>".
-Q: What’s the planner algorithm?  A: BFS from NOW to the first pred:<token> match.
+Q: What’s the planner algorithm?  
+A: BFS from NOW to the first pred:<token> match.
 
+Q: What’s the key separation in CCA8?  
+A: A compact symbolic episode index** (WorldGraph) for fast lookup/plan, and rich engrams** outside the graph for heavyweight content.
 
-Q: What’s the key separation in CCA8?  A: A compact symbolic episode index** (WorldGraph) for fast lookup/plan, and rich engrams** outside the graph for heavyweight content.
+Q: Are edges logical implications?  
+A: No—edges encode weak, episode-level causality** (“then”), good for action and recall without heavy inference.
 
-Q: Are edges logical implications?  A: No—edges encode weak, episode-level causality** (“then”), good for action and recall without heavy inference.
+Q: Why not store everything in the graph? 
+A: Keeping symbols small avoids brittleness and keeps planning fast, the heavy 95% lives in engrams referenced by bindings.
 
-Q: Why not store everything in the graph? A: Keeping symbols small avoids brittleness and keeps planning fast, the heavy 95% lives in engrams referenced by bindings.
-
-Q: How does this help planning? A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph is shaped for that.
+Q: How does this help planning? 
+A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph is shaped for that.
 
 ---
 
@@ -285,6 +303,7 @@ Q: How does this help planning? A: BFS over a sparse adjacency list gives shorte
 - [Tutorial on Drives](#tutorial-on-drives)
 - [Tutorial on WorldGraph Technical Features](#tutorial-on-worldgraph-technical-features)
 - [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
+- [Tutorial on BodyMap](#tutorial-on-bodymap)
 - [Tutorial on Main (Runner) Module Technical Features](#tutorial-on-main-runner-module-technical-features)
 - [Tutorial on Controller Module Technical Features](#tutorial-on-controller-module-technical-features)
 - [Tutorial on Temporal Module Technical Features](#tutorial-on-temporal-module-technical-features)
@@ -350,6 +369,25 @@ Please make a choice [1-7]:*
 
 
 
+### Q&A to help you learn this section
+
+Q: Why does the banner show a full filesystem path to cca8_run.py?
+A: To make it obvious which file you actually launched (and from where). This avoids confusion if you have multiple checkouts or stale copies; you can confirm you’re running the expected entry point.
+
+Q: What is the practical use of the OS/flags line (win32, --help, etc.)?
+A: It reminds you that (1) you’re on a particular platform (Windows/macOS/Linux), which may affect file paths and HAL support, and (2) you can always run --help, --about, or --preflight from the CLI instead of entering the menu.
+
+Q: What does “HAL (hardware abstraction layer) setting: off” actually mean?
+A: It means the simulation is currently running headless: policies and WorldGraph are active, but no physical robot or real sensors are connected. When HAL is ON with a body profile, controller outputs can be forwarded to hardware via the HAL.
+
+
+ 
+ 
+ 
+ 
+ 
+ 
+
 # Profiles (1–7): overview and implementation notes
 
 This section documents what each profile intends to represent and how the current runner implements it. Items 2–7 are demonstration stubs that explain the idea, print a short trace, and then fall back to the Mountain Goat profile so today’s simulation continues unchanged.
@@ -374,11 +412,28 @@ This section documents what each profile intends to represent and how the curren
 
 7. Super-Human-like machine simulation  
    Implements a dry-run meta-controller. Three proposal sources (symbolic search, neural value, program synthesis) each provide an action and a utility, the meta-controller picks the winner by score with a fixed tie-break preference. The printout illustrates how a higher-level controller could arbitrate between heterogeneous planners. No state is modified.
-* 
 
-* * *
 
-#The WorldGraph in detail
+### Q&A to help you learn this section
+
+Q: Which profile should I use for real experiments right now?
+A: Use Profile 1 (mountain goat). At the time of this writing, it's the profile that is fully wired to drives, policies, the newborn storyboard environment, and the runner. The others are narrative/dry-run stubs that fall back to Profile 1.
+
+Q: Do the multi-brain / multi-agent profiles modify the live WorldGraph today?
+A: No. At present, they typically operate on sandbox copies of the world (or separate worlds) and print results, but they do not commit changes back to the live WorldGraph. That keeps the core goat simulation deterministic and easy to reason about.
+
+Q: What is the practical difference between “human-like” and “super-human-like” profiles today?
+A: At the time of writing, the difference is mainly in the story and trace they print: the “super-human-like” profile demonstrates a dry-run meta-controller that arbitrates between heterogeneous proposal sources. Neither profile currently runs a distinct, fully human-level cognitive architecture; they are scaffolds for future work.
+
+Q: How do profiles interact with the rest of the code?
+A: Each profile sets initial parameters in Ctx (sigma, jump, profile label), may run a stub/demo, and then hands control back to the same runner loop. The WorldGraph, controller, and environment interfaces remain the same; only initial configuration and demonstration traces change.
+
+
+
+
+
+
+# The WorldGraph in detail
 
 **Nodes (Bindings):**
 
@@ -1156,7 +1211,7 @@ Q: Where do engrams live?  A: cca8_column.py, referenced by bindings’ engrams.
 
 * * *
 
-##Timekeeping in CCA8 (five measures)
+## Timekeeping in CCA8 (five measures)
 
 CCA8 uses four orthogonal time measures. They serve different purposes and are intentionally decoupled.
 
@@ -1204,7 +1259,6 @@ With regards to terminology and operations that affect controller steps:
 *Recommended invariants:* `cog_cycles ≤ controller_steps`; epochs increment only on boundary jumps (writes or τ-cuts), never decrement.
 
 
-
 ### Event boundaries & epochs
 
 When the controller **actually writes** (graph grew), we take a **boundary jump** and increment `ctx.boundary_no` (epoch). We also update a short fingerprint of the boundary vector (`ctx.boundary_vhash64`) for snapshot readability. :contentReference[oaicite:6]{index=6}  
@@ -1225,7 +1279,6 @@ A thresholded segmentation (“τ-cut”) can also force a boundary when `cos_to
   
   
 
-
 ## Data flow (a controller step)
 
 1. Action Center computes active **drive flags**.  
@@ -1233,7 +1286,31 @@ A thresholded segmentation (“τ-cut”) can also force a boundary when `cos_to
 3. `execute()` appends a **small chain** of predicates + edges to the WorldGraph, stamps `meta.policy`, returns a status dict, and updates the skill ledger.  
 4. Planner (on demand) runs BFS from **NOW** to a target `pred:<token>`.  
 
+
+### Q&A to help you learn this section
+
+Q: What’s the difference between controller_steps and cog_cycles?
+A: controller_steps counts every invocation of the Action Center (each time we ask “what should I do?”). cog_cycles only increments when a controller step actually produced a write to the WorldGraph in the Instinct step. So cog_cycles ≤ controller_steps by design.
+
+Q: When do we increment ticks (autonomic ticks) versus controller_steps?
+A: ticks increment only in the Autonomic Tick path (heartbeat: physiology, drive updates, time-based age). controller_steps increment whenever a controller step runs (Instinct step, Autonomic tick, simulate fall, env-loop, etc.). They are orthogonal measures.
+
+Q: What is the semantic difference between age_days and ticks?
+A: age_days is a coarse developmental clock (used to set lexicon stage and developmental gates), while ticks is a fine-grained physiological heartbeat counter. Typically age_days advances in proportion to ticks but on a much slower scale.
+
+Q: What does a “temporal boundary” (epoch++) represent?
+A: A boundary is taken when a controller step writes new facts (or when a thresholded τ-cut triggers). It’s a way of saying “a new episode chapter started here” in the soft-clock vector space. We then jump the temporal vector, increment boundary_no (epoch), and reset cos_to_last_boundary to ~1.0.
+
+Q: Why do we maintain both wall-clock created_at timestamps and a soft temporal vector?
+A: Wall-clock is great for logs and cross-run inspection, but awkward for unitless similarity and segmentation. The soft temporal vector gives a cheap, unitless notion of “near in time” (via cosine) and supports operations like “time-aware similarity” and “episode segmentation” without relying on wall-clock units.
+
+
 ---
+
+
+
+
+
 
 # Action Selection: Drives, Policies, Action Center
 
@@ -1397,19 +1474,46 @@ Include a small `{"version": "0.7.x"}` under `world`. If you add fields later, b
 
 
 
-***Q&A to help you learn this section***
-
-Q: What does autosave write?  A: {saved_at, world, drives, skills}.
-
-Q: How do we avoid id collisions after load?  A: from_dict() advances the internal bNN counter.
-
-Q: Missing --load file?  A: Continue fresh, file created on first autosave.
-Q: Why atomic replace on save?  A: Prevents partial/corrupt snapshots.
 
 
+### Q&A to help you learn this section
+
+Q: When do I actually need Dijkstra instead of BFS?
+A: Use BFS when all edges are effectively equal-cost (e.g., neonatal episodes where each “then” step is similar). Use Dijkstra when you’ve started annotating edges with meaningful costs (distance, duration, risk, etc.) and you care about lowest total cost, not just fewest hops.
+
+Q: How does Dijkstra know what cost to use for an edge?
+A: It checks edge.meta in priority order: weight → cost → distance → duration_s → 1.0. If none are present, it falls back to 1.0, which makes Dijkstra behave like BFS.
+
+Q: If all my edges have weight=1.0, will BFS and Dijkstra give different paths?
+A: No. With equal weights, Dijkstra and BFS usually produce the same set of shortest paths (up to tie-breaking). Dijkstra is only useful once some edges have lower/higher costs than others.
+
+Q: How can I check which planner is currently active?
+A: Call world.get_planner() in code or use the Planner strategy (toggle BFS ↔ Dijkstra) menu item. The menu prints the current strategy before planning so you can see whether you’re on BFS or Dijkstra.
+
+Q: Does switching planner change how WorldGraph stores edges?
+A: No. Edges are stored the same way (adjacency list on the source binding). Only the search algorithm that walks those edges changes (BFS vs Dijkstra).
 
 
-#Runner, menus, and CLI
+Q: What does autosave write? 
+ A: {saved_at, world, drives, skills}.
+
+Q: How do we avoid id collisions after load?  
+A: from_dict() advances the internal bNN counter.
+
+Q: Missing --load file?  
+A: Continue fresh, file created on first autosave.
+
+Q: Why atomic replace on save?  
+A: Prevents partial/corrupt snapshots.
+
+
+
+
+
+
+
+
+# Runner, menus, and CLI
 
 
 You can explore the graph via an interactive menu. The most useful items while learning are:
@@ -1524,7 +1628,7 @@ Get-Content .\cca8_run.log -Wait
 
 
 
-##Unit tests (pytest)
+## Unit tests (pytest)
 
 We keep tests under tests/.
 
@@ -1553,34 +1657,6 @@ Included starter tests:
 
 The demo world for these tests is built via `cca8_test_worlds.build_demo_world_for_inspect()`, which creates a tiny, deterministic WorldGraph (anchors NOW/HERE, stand/fallen/cue_mom/rest predicates, and a single engram pointer) that you can also use interactively via `--demo-world`.
 Unit tests (pytest)
-
-
-
-
-We keep tests under `tests/`.
-
-Preflight runs pytest first (so failures stop you early).
-
-Run preflight (runs tests first):
-
-`python cca8_run.py --preflight`
-
-Run tests directly (show prints):
-
-`pytest -q -s`
-
-Included tests (non-exhaustive):
-
-* `tests/test_smoke.py` — basic reasonableness (asserts True).
-
-* `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → `pred:stand` exists.
-
-* `tests/test_inspect_binding_details.py` — uses a small demo world to exercise binding shape, provenance (`meta.policy/created_by/...`), engram pointers, and incoming/outgoing edge degrees as expected by the “Inspect binding details” menu.
-
-* Additional suites exercise Column/engram behavior, features & temporal context, the Dijkstra planner, and runner helpers (drive tags, interoceptive cue emission, timekeeping line, I/O banner).
-
-The demo world for several of these is built via `cca8_test_worlds.build_demo_world_for_inspect()`, which you can also use interactively via `--demo-world`.
-
 
 
 
@@ -1639,7 +1715,42 @@ probes=41/41 | hardware_checks=0 | system_fitness_assessments=0 | elapsed=00:02
 **Tip:** a lightweight *startup* check can be toggled with
 `CCA8_PREFLIGHT=off` (disables the “lite” banner probe at launch).
 
+
+
+### Q&A to help you learn this section
+
+Q: What does --preflight actually guarantee when it says PASS?
+A: It guarantees that:
+
+all unit tests passed,
+
+basic WorldGraph invariants hold (anchors valid, ids consistent),
+
+planner/attach/cue/engram probes behaved as expected,
+
+and the hardware and system-fitness lanes didn’t report critical issues.
+It’s not a proof of correctness, but it’s a strong “everything basic is wired up” signal.
+
+Q: Why is coverage only ~30% and not 100%?
+A: CCA8 is an evolving research codebase. The goal is to keep coverage high enough (≥30%) to catch regressions in the core engine, not to exhaustively test every UI/menu branch yet. As the code stabilizes, more tests can be added around new features.
+
+Q: If a probe fails but pytest is green, what should I suspect?
+A: Probe failures usually mean a behavioral contract was broken (e.g., NOW not tagged, attach semantics changed, lexicon enforcement drifted). Unit tests check small pieces; probes check whole-flow assumptions. Treat probe failures as “something important in the pipeline changed.”
+
+Q: Can I skip preflight for quick ad-hoc runs?
+A: Yes. Preflight only runs when you explicitly pass --preflight. Normal cca8_run.py runs don’t automatically run tests. There is also a lightweight startup check you can disable with CCA8_PREFLIGHT=off if needed.
+
+Q: Where do the preflight artifacts go, and why do I care?
+A: JUnit XML and coverage XML are written under .coverage/. They’re useful for CI integration, trend tracking (coverage drifting up/down), and investigating test failures without re-running everything interactively.
+
+
+
+
 ---
+
+
+
+
 
 
 
@@ -1651,13 +1762,51 @@ In practice, a HAL defines a few consistent surfaces: **sense()** for bulk senso
 
 
 
-##CCA8 and future HAL integration
+## CCA8 and future HAL integration
 
 The importance of embodiment in the generation and development to cognition is acknowledged. Embodiment shapes cognition—sensorimotor contingencies, action affordances, latency, noise, and body-centric frames all co-determine how an agent learns and reasons. CCA8’s HAL deliberately _abstracts_ embodiment during core development to decouple variables: it gives us reproducible experiments, deterministic tests, and portability across platforms without rewriting cognition. This isn’t a denial of embodiment; it’s a seam. We mitigate “embodiment debt” by (1) keeping time, units, frames, limits, and latencies explicit in the HAL manifest; (2) expressing actions as **intents** (e.g., move/gaze/manipulate) rather than device torques; (3) mirroring real timing into engrams (`ticks`, `tvec64`, `epoch`) so learning remains time-aware; and (4) swapping in realistic adapters (noise/latency/domain-randomization) when moving from headless runs to hardware. In short, HAL postpones _implementation details_ of a body while preserving the _constraints_ that matter, so embodiment can be reintroduced precisely—at the right layer—without entangling the cognitive core.
 
 While the importance of embodiment to cognition is acknowledged, the CCA8 architecture is structured to drop in a HAL without disturbing cognition. The **Runner** already distinguishes the cognitive context (policies, temporal clock, world graph) from embodiment details; by default HAL is **OFF** and the system runs “headless.” The seams are intentional: (1) **perception bridge** — features/engrams can be filled from HAL sensor streams with time linkage (`ticks`, `tvec64`, `epoch`); (2) **action bridge** — controller **primitives/policies** can emit normalized action intents (e.g., `move_base(dx,dy,theta)`, `gaze(target)`, `manip(grasp=open/close)`), which a HAL adapter maps to device commands; (3) **timing** — the cognitive **TemporalContext** stays procedural and device-agnostic, while the HAL can expose a wall-clock/rt clock when needed.
 
 When a HAL is enabled, CCA8 will load an *embodiment manifest* (sensors, frames, capabilities, limits), bind HAL streams to the **Features** module (creating engrams with temporal fingerprints), and route controller outputs to **act()** with safety interlocks (dead-man, estop, limit checks). This keeps the **WorldGraph** an episodic index (lightweight, device-neutral), lets **policies** remain portable, and confines hardware specialization to HAL adapters. The same simulation you run today can, with a manifest and a driver pack, target different robots with minimal code changes—exactly the portability a HAL is meant to provide.
+
+
+
+### Q&A to help you learn this section
+
+Q: Why is HAL kept separate from the cognitive architecture?
+A: To keep cognition portable and testable. The same WorldGraph/controller stack should run:
+
+in a pure simulation,
+
+on different robots,
+
+or in hybrid sim+sensor regimes
+without rewriting core cognitive logic. HAL localizes sensor/actuator quirks and safety constraints to one layer.
+
+Q: What changes in CCA8 when HAL is turned ON?
+A: Cognition (WorldGraph, controller, TemporalContext) stays the same. The difference is that:
+
+perception features/engrams can be fed from real sensors via the HAL, and
+
+policy actions can be turned into device commands (act()) with safety envelopes (limits, estops, etc.).
+
+Q: Does HAL know about predicates and policies?
+A: No. HAL deals in sensor streams and action intents (move/gaze/manipulate). Policies and predicates remain in CCA8. The runner/bridge is responsible for mapping action:* / policy decisions into HAL act(...) calls.
+
+Q: How does HAL help with sim-to-real transfer?
+A: It defines a stable contract:
+
+sense() → returns normalized, time-stamped sensor data,
+
+act(intent, params) → executes primitive actions in actuator space,
+
+status() → reports health/limits/faults.
+By adhering to this contract in both sim and real deployments, you can reuse cognitive code and gradually swap simulators for real hardware.
+
+
+
+
 
 
 
@@ -1677,6 +1826,42 @@ enumeration, actuator enable/disable, estop/limits, and simple round-trip
 commands (with timestamps and unit checks).
 
 <img title="Goat Embodiment" src="./robot_goat.jpg" alt="robot_goat" style="zoom:25%;" data-align="center">
+
+
+
+
+### Q&A to help you learn this section
+
+Q: What does it mean when hardware preflight prints “NO-TEST: HAL=OFF … pending integration”?
+A: It means the hardware lane ran, but there were no active hardware checks to perform:
+
+HAL is off, or
+
+no body profile is configured.
+It’s a reminder that the HAL lane is wired but not yet doing real transport/sensor tests.
+
+Q: How do I enable the hardware lane for future robots?
+A: Start the runner with --hal --body <name>, e.g.:
+python cca8_run.py --hal --body hapty.
+Once real HAL implementations exist, preflight will use that configuration to check connectivity, sensors, estops, etc.
+
+Q: Will hardware failures make --preflight return non-zero exit codes?
+A: Yes, once implemented. The intention is that:
+
+any serious hardware connectivity/safety issue
+
+should cause the hardware preflight lane to FAIL
+and thus make the overall --preflight exit code non-zero so CI or scripts can react.
+
+Q: Does HAL preflight change anything in the cognitive state?
+A: No. It should only probe transport, sensors, actuators and log health. WorldGraph, drives, and policies should remain unaffected by hardware preflight.
+
+Q: How should I read the “hardware_checks=0” field in the preflight footer today?
+A: Literally: there are currently zero implemented hardware checks. It’s a placeholder count that will increase as real HAL checks (sensor enumeration, estop status, etc.) are added.
+
+
+
+
 
 
 
@@ -2459,6 +2644,22 @@ With this picture in mind, the later tutorials (“WorldGraph Technical Features
 
 
 
+### Q&A to help you learn this section
+
+Q: What’s the difference between a “binding” and a generic graph node?
+A: A binding is a rich node: it carries tags (pred/cue/action/anchor), optional engram pointers, provenance (meta), and outgoing edges. It’s closer to an “episode card” than a bare vertex — it describes what was true, what happened next, and how to get to richer memory.
+
+Q: Why do we separate pred:*, cue:*, action:*, and anchor:* families?
+A: To keep semantics clear and algorithms simple. Predicates are facts/states, cues are evidence, actions are behavioral steps, and anchors are orientation points. This separation lets policies and the planner read tags without guessing what a string means.
+
+Q: Why do we treat actions as nodes (action:*) instead of edge labels?
+A: Because in the “everything is a map” view, actions are events in time, not just labels on edges. Recording them as nodes makes it easy to attach engrams, provenance, and additional structure (timing, cost) to actions, and to traverse state–action–state chains uniformly.
+
+Q: What does “snapshot-of-state” style mean here?
+A: It means each pred-binding is intended to be a self-contained state card (“what is true now”: posture, proximity, feeding state, etc.). We may repeat posture:standing across several bindings as the episode unfolds rather than only storing deltas. That makes planning and debugging much easier.
+
+Q: How does the planner know which label to show for a binding?
+A: The first pred:* tag (if present) is used as the node’s human label in pretty paths and exports. If there is no pred:* tag, we fall back to the binding id (bN).
 
 
 
@@ -3490,6 +3691,29 @@ More menus (and maybe env injection) can be upgraded to use the same pattern in 
 * drive:* are still ephemeral controller flags; we use cue:drive:* and pred:drive:* only when we explicitly want them in WorldGraph.
   
   
+  
+### Q&A to help you learn this section
+
+Q: Are drive:* flags stored in the WorldGraph by default?
+A: No. drive:* flags (e.g. drive:hunger_high, drive:fatigue_high, drive:cold) are ephemeral controller signals computed from numeric drives (hunger, fatigue, warmth) each tick. They live in the Drives object and are used by policy triggers and deficit scoring; they are not written as pred:* unless you explicitly create pred:drive:* or cue:drive:*.
+
+Q: When do drive flags become visible as WorldGraph tags?
+A: Only in two cases: (1) the autonomic path deliberately emits interoceptive cues (e.g. cue:drive:hunger_high on a rising edge via _emit_interoceptive_cues), or (2) you explicitly choose to represent a plannable drive condition as pred:drive:*. By default, drive flags stay out of the graph.
+
+Q: Why distinguish drive:* from pred:drive:* and cue:drive:*?
+A: drive:* flags are internal controller facts (“how hungry/fatigued/cold I am”) used by triggers. pred:drive:* would be a persisted fact you might plan toward, and cue:drive:* is evidence (“I just sensed cold skin”). Keeping these separate avoids cluttering the graph while still allowing you to model drive states explicitly when needed.
+
+Q: How do policies actually see the drive state?
+A: Policies call drives.flags() (or the runner helper _drive_tags(drives)) to get a list of drive:* flags. They then test for the presence/absence of these flags in trigger(...) and possibly in deficit scoring, without touching the WorldGraph.
+
+Q: If I want the agent to plan around hunger, what should I do?
+A: Decide whether you want hunger to be a goal or just evidence. Use pred:drive:hunger_high if you want planners to explicitly seek alleviation conditions; use cue:drive:hunger_high if it should only modulate which policies fire (e.g., SeekNipple) without becoming a planner target.
+
+
+
+
+
+
 
 
 
@@ -3875,7 +4099,7 @@ This is a **quick overview** of the most important methods. The “Cheat-sheet: 
 
 
 
-##Cheat-sheet: `WorldGraph` public API
+## Cheat-sheet: `WorldGraph` public API
 
 
 **Lifecycle & config**
@@ -4094,7 +4318,7 @@ Persistence / checks / viz
 * `to_pyvis_html(*, physics: bool = True, node_mode: str = "id+pred") -> str`
 
 
-##Minimal usage crib
+## Minimal usage crib
 
 
 ### 0) Start a world
@@ -4371,6 +4595,7 @@ CCA8 uses **stop-on-pop**.
 
 * * *
 
+
 ### Self-check (one minute)
 
 1. In the given adjacency, what is the **pop order** under stop-on-pop?  
@@ -4387,6 +4612,214 @@ CCA8 uses **stop-on-pop**.
 
 4. Distances from S?  
    **Answer:** `S:0, A:1, B:1, C:2, D:2, E:2, G:3`.
+
+
+
+
+
+
+
+
+
+
+# Tutorial on BodyMap
+
+
+## BodyMap: Tiny Body + Near-World Register
+
+The newborn goat doesn’t just have a world graph – it has a sense of its own body and the immediate world around it. In the current CCA8 build, this is captured by a small, separate graph called the BodyMap.
+
+BodyMap is implemented as a second WorldGraph instance (ctx.body_world) with a handful of fixed nodes (ctx.body_ids) that act like a structured register:
+
+**root** – the body as a whole (anchor:BODY_ROOT).
+
+**posture** – overall posture (pred:posture:fallen / pred:posture:standing / pred:resting).
+
+**mom** – mom’s distance relative to the body (pred:proximity:mom:far / pred:proximity:mom:close).
+
+**nipple** – nipple / latch state (pred:nipple:hidden / pred:nipple:found / pred:nipple:latched, plus pred:milk:drinking when latched and feeding).
+
+Edges encode a tiny body-centered scene graph:
+
+BODY_ROOT --body_state-->     POSTURE
+BODY_ROOT --body_relation-->  MOM
+MOM       --body_part-->      NIPPLE
+
+
+This is enough to express the core neonatal situation:
+“I am fallen or standing; mom is far/near; nipple is hidden/found/latched.”
+
+
+
+## How BodyMap is created and updated
+
+Initialization (Runner)
+
+At runner startup, interactive_loop(...) calls a helper:
+
+ctx.body_world, ctx.body_ids = init_body_world()
+
+
+init_body_world():
+
+creates a new WorldGraph() for the BodyMap,
+
+seeds four bindings: root, posture, mom, nipple,
+
+tags them with the default neonatal state:
+
+posture: pred:posture:fallen
+
+mom: pred:proximity:mom:far
+
+nipple: pred:nipple:hidden
+
+These are body-side defaults before any environment step runs.
+
+Update from EnvObservation
+
+Every time the environment produces a new observation (via HybridEnvironment.step(...)), the runner calls:
+
+inject_obs_into_world(world, ctx, env_obs)
+update_body_world_from_obs(ctx, env_obs)
+
+
+update_body_world_from_obs(...) mirrors discrete predicates from EnvObservation.predicates into the BodyMap slots:
+
+If posture:standing appears in env_obs.predicates, BodyMap’s posture node’s tags are rewritten to include pred:posture:standing (and drop old posture tags).
+
+If posture:fallen appears, it becomes pred:posture:fallen.
+
+If resting appears, BodyMap marks pred:resting.
+
+proximity:mom:close / proximity:mom:far update the mom slot.
+
+nipple:found / nipple:latched / milk:drinking update the nipple slot accordingly (with pred:milk:drinking added when latched+feeding).
+
+So on every env step we have:
+
+EnvState  →  PerceptionAdapter  →  EnvObservation
+                     │
+                     ├─→ main WorldGraph (pred:* / cue:*)
+                     └─→ BodyMap (posture / mom / nipple slots)
+
+
+Snapshot output includes a compact BODYMAP panel:
+
+BODYMAP (body + near-world):
+  (**different map than the larger WorldGraph**)
+  (same binding ids e.g., 'b1','b2', etc. but different map)
+  root   : b1: [anchor:BODY_ROOT]
+  posture: b2: [pred:posture:fallen]
+  mom    : b3: [pred:proximity:mom:far]
+  nipple : b4: [pred:nipple:hidden]
+
+
+Note: binding ids (b1, b2, …) in BodyMap are separate from the main WorldGraph; each graph instance has its own bN space.
+
+Reading BodyMap like a register (controller helpers)
+
+To make BodyMap feel like simple fields, the controller exposes three helpers:
+
+body_posture(ctx)       -> "fallen" | "standing" | "resting" | None
+body_mom_distance(ctx)  -> "far"    | "near"     | None
+body_nipple_state(ctx)  -> "hidden" | "found"    | "latched" | None
+
+
+Internally they:
+
+look up ctx.body_world and ctx.body_ids["posture" / "mom" / "nipple"],
+
+read tags on those bindings,
+
+return a simple string label so policies don’t need to know anything about the BodyMap’s internal structure.
+
+The runner also prints a small BodyMap summary on each environment step:
+
+[body] posture='fallen' mom_distance='far' nipple_state='hidden'
+
+
+This line comes directly from body_posture, body_mom_distance, body_nipple_state and is a quick check that BodyMap is tracking the environment.
+
+
+## How policies use BodyMap
+
+BodyMap is the preferred source of body state for gating policies:
+
+StandUp gate (BodyMap-first):
+
+bp = body_posture(ctx)
+if bp is not None:
+    fallen   = (bp == "fallen")
+    standing = (bp == "standing")
+else:
+    fallen   = has_pred_near_now(world, "posture:fallen")
+    standing = has_pred_near_now(world, "posture:standing")
+
+stand_intent = has_pred_near_now(world, "stand")
+trigger = fallen or (stand_intent and not standing)
+
+
+So when BodyMap posture flips from "fallen" to "standing", the StandUp gate naturally stops firing (except for the separate safety override, which will be updated in a future phase to also consult BodyMap).
+
+SeekNipple gate (BodyMap posture + nipple state):
+
+hunger = drives.hunger
+bp = body_posture(ctx)
+ns = body_nipple_state(ctx)
+
+ **roughly:**
+trigger = (
+    hunger > HUNGER_HIGH
+    and bp == "standing"
+    and ns != "latched"
+    and not has_pred_near_now(world, "seeking_mom")
+)
+
+
+Once BodyMap’s nipple slot reaches "latched" and milk:drinking is present, body_nipple_state(ctx) == "latched" and SeekNipple stops firing — a simple but realistic “don’t keep seeking when you’re already latched and drinking” rule.
+
+This pattern will extend naturally to future BodyMap fields (e.g., a “balance” or “contact” slot, or limb-specific posture) without forcing policies to change their call sites.
+
+
+
+## Role of BodyMap vs main WorldGraph
+
+WorldGraph: big, episode-level map over what happened (states, actions, cues, transitions). It accumulates all the posture:fallen and posture:standing bindings over time and is used for planning and discrepancy diagnostics.
+
+BodyMap: tiny, always-on body-centered map for what is true of my body right now (plus very small near-world: mom, nipple). It is updated from the latest EnvObservation, independent of how messy the episode graph has become.
+
+You can think of it as:
+
+WorldGraph = “story of my life”
+BodyMap = “how my body is configured right now (and where mom/nipple are relative to me)”
+
+Later phases will expand BodyMap and add a PeripersonalMap, but this v1 gives us a proper place for sensor-fused body state while keeping the main WorldGraph small and semantic.
+
+
+
+### Q&A – BodyMap (Body + Near-World)
+
+Q: Why use a separate WorldGraph for BodyMap instead of just tags in Ctx?
+A: Two reasons: (1) Conceptual honesty — BodyMap really is a tiny map, not just a flat struct, and we want that structure available when we’re ready to grow it (e.g., split posture into limbs, add contact nodes). (2) Uniform tools — by using WorldGraph again, we can reuse invariants, snapshot logic, and future graph tools (FOA, queries) without inventing a new mini-DSL.
+
+Q: Do BodyMap binding ids collide with the main WorldGraph ids?
+A: No. Each WorldGraph instance has its own bN counter. b3 in BodyMap is not the same as b3 in the main world. Snapshot clearly separates them: BODYMAP shows ctx.body_world, the BINDINGS/EDGES sections show the main world.
+
+Q: What is the relationship between BodyMap and EnvObservation?
+A: BodyMap is updated directly from EnvObservation.predicates via update_body_world_from_obs(ctx, env_obs). So at each env step, BodyMap mirrors the latest sensed posture/mom/nipple state. It is a per-step state estimate, not a long-term history; history lives in the main WorldGraph.
+
+Q: Which policies read BodyMap today?
+A: The StandUp and SeekNipple gates (via body_posture(ctx) and body_nipple_state(ctx)) prefer BodyMap when it’s available and only fall back to scanning the main WorldGraph when BodyMap is missing. This makes basic posture and latch decisions depend on the body schema, which is closer to how real animals (and robots with a state estimator) behave.
+
+Q: Does BodyMap affect planning or just gating?
+A: Today it affects policy gating and diagnostics, not planning: BFS/Dijkstra still operate over the main WorldGraph. In the future, we may add small queries over BodyMap (e.g., “which body parts are in contact?”) and integrate that into path selection or spatial reasoning, but the fast episode planner remains graph over the main world.
+
+
+
+
+
+
 
 
 
@@ -4559,7 +4992,7 @@ Look for “PASS” lines (pytest, invariants, attach semantics, BFS, engram bri
 
 
 
-## cca8_run.py` — Call Flow & Usage Cheat-Sheet
+## cca8_run.py — Call Flow & Usage Cheat-Sheet
 
 **What `main()` does (call flow)**
 
@@ -5071,18 +5504,25 @@ A: The gate includes `not has_pred_near_now("seeking_mom")`, so once a `seeking_
 **Q: How does this tie into planning?**  
 A: The planner is a BFS/Dijkstra over the WorldGraph. Given a start binding (NOW or NOW_ORIGIN) and a target predicate token (e.g., `posture:standing`, `milk:drinking`), it finds a path of bindings `[b_start, …, b_goal]`. The Runner then prints both a **typed path** and a **reverse typed path**, so you can see the S–A–S structure.
 
-* * *
+**More Q&A:**
 
-This concludes the Controller tutorial. At this point you should be comfortable reading the goat’s behavior in terms of **S–A–S segments**:
+Q: Are drive:* flags stored in the WorldGraph by default?
+A: No. drive:* flags (e.g. drive:hunger_high, drive:fatigue_high, drive:cold) are ephemeral controller signals computed from numeric drives (hunger, fatigue, warmth) each tick. They live in the Drives object and are used by policy triggers and deficit scoring; they are not written as pred:* unless you explicitly create pred:drive:* or cue:drive:*.
 
-* StandUp: `posture:fallen` → `push_up`, `extend_legs` → `posture:standing`
+Q: When do drive flags become visible as WorldGraph tags?
+A: Only in two cases: (1) the autonomic path deliberately emits interoceptive cues (e.g. cue:drive:hunger_high on a rising edge via _emit_interoceptive_cues), or (2) you explicitly choose to represent a plannable drive condition as pred:drive:*. By default, drive flags stay out of the graph.
 
-* SeekNipple: `posture:standing` → `orient_to_mom` → `seeking_mom`
+Q: Why distinguish drive:* from pred:drive:* and cue:drive:*?
+A: drive:* flags are internal controller facts (“how hungry/fatigued/cold I am”) used by triggers. pred:drive:* would be a persisted fact you might plan toward, and cue:drive:* is evidence (“I just sensed cold skin”). Keeping these separate avoids cluttering the graph while still allowing you to model drive states explicitly when needed.
 
-* Rest: e.g. `posture:standing` → `resting`
+Q: How do policies actually see the drive state?
+A: Policies call drives.flags() (or the runner helper _drive_tags(drives)) to get a list of drive:* flags. They then test for the presence/absence of these flags in trigger(...) and possibly in deficit scoring, without touching the WorldGraph.
+
+Q: If I want the agent to plan around hunger, what should I do?
+A: Decide whether you want hunger to be a goal or just evidence. Use pred:drive:hunger_high if you want planners to explicitly seek alleviation conditions; use cue:drive:hunger_high if it should only modulate which policies fire (e.g., SeekNipple) without becoming a planner target.
+
+
   
-  
-
 
 
 
@@ -5230,6 +5670,39 @@ Under the hood: `_normalize(vals)` returns a unit-norm copy and guards zero-norm
 3. If you enabled the τ-cut, a boundary triggers automatically once cosine drops below τ (you’ll see a console note).
 
 4. Saved JSON shows `meta.created_at`, `meta.ticks`, and `meta.tvec64` on new bindings.
+
+
+
+### Q&A to help you learn this section
+
+Q: Why do we need a TemporalContext vector if we already have created_at timestamps?
+A: ISO-8601 timestamps are great for logs and cross-run audit, but awkward for segmentation and similarity (“find things near this episode in time”). The TemporalContext is a procedural soft clock: a 128-D unit vector that drifts (small Gaussian noise per tick) and jumps (larger noise at boundaries). Cosine between two vectors gives a cheap, unitless “near in time vs far in time” measure without unit conversions or wall-clock parsing.
+
+Q: What do sigma and jump control?
+A: sigma controls drift noise added in each step() – how fast the soft clock wanders within an epoch. jump controls boundary noise added in boundary() – how far the vector moves when an event boundary is taken. Larger jump → more separation between episodes; larger sigma → faster within-episode decorrelation.
+
+Q: How does the runner actually use TemporalContext today?
+A: The runner:
+
+calls ctx.temporal.step() for each controller/autonomic tick (soft drift),
+
+calls ctx.temporal.boundary() when a controller step writes new facts (event boundary),
+
+caches the boundary vector and its hash in ctx.tvec_last_boundary / ctx.boundary_vhash64,
+
+exposes ctx.tvec64() and ctx.cos_to_last_boundary() so snapshots and engrams can carry time fingerprints.
+
+Q: What do tvec64 and epoch_vhash64 represent?
+A: tvec64 is a 64-bit sign-bit hash of the current TemporalContext vector (bit i encodes whether coordinate i is ≥0). epoch_vhash64 (and boundary_vhash64) is the same hash captured at the last boundary. Taken together, they let you:
+
+compare “now” vs last boundary in a compact way,
+
+annotate engrams/snapshots with a short, human-readable temporal fingerprint.
+
+Q: Can TemporalContext be used across different runs as an absolute timeline?
+A: No. It’s deliberately a relative, per-run construct. The vector is initialized from random noise and is only meaningful within a single run: high cosine ⇒ close in time in that run. Across runs, you should treat TemporalContext as local, not globally aligned.
+
+
 
 
 
@@ -5482,6 +5955,60 @@ The Column record stores `{id, name, payload, meta}`, where `meta.attrs` carries
 4. **28) List all engrams** → browse all engrams with their source binding and time attrs.
    
    
+### Q&A to help you learn this section
+
+Q: What is FeaturePayload and why is it a Protocol rather than a base class?
+A: FeaturePayload is a typing Protocol that describes the shape a payload must have (attributes kind, fmt, shape and methods to_bytes(), from_bytes(), meta()). It’s not meant to be instantiated; instead, any class that implements this interface (like TensorPayload) can be used as a payload. This keeps the column/bridge decoupled from a single concrete type.
+
+Q: What problem does TensorPayload solve?
+A: TensorPayload is a small, dependency-free way to package dense float tensors (often 1-D embeddings) for engrams. It supports:
+
+compact binary serialization (to_bytes()),
+
+reconstruction (from_bytes()),
+
+and a lightweight meta() description (kind, fmt, shape, len).
+This lets you store vectors in column memory, move them around, and describe them to UIs without pulling in NumPy.
+
+Q: What does FactMeta represent and why must it be JSON-safe?
+A: FactMeta is a compact descriptor for an engram: it gives a name (e.g., "vision:silhouette:mom"), optional links (binding ids or other engram ids), and free-form attrs (all JSON-safe). The Column stores {id, name, payload, meta} and the WorldGraph only needs the engram id. JSON-safety ensures we can put FactMeta.as_dict() directly into snapshots or logs without serialization issues.
+
+Q: How does time_attrs_from_ctx relate to TemporalContext?
+A: time_attrs_from_ctx(ctx) builds a tiny dict like {"ticks": ..., "tvec64": "...", "epoch": ..., "epoch_vhash64": "..."} by reading the runner’s Ctx. This is used to stamp engrams with temporal context at creation time, so later you can correlate engrams with episode boundaries and soft-clock similarity without decoding heavy payloads.
+
+Q: Do I have to use TensorPayload and FactMeta or can I provide my own payloads?
+A: You can provide any payload that satisfies the FeaturePayload protocol, and you can construct FactMeta (or equivalent) however you like as long as it’s JSON-safe. TensorPayload + FactMeta are just convenient, well-documented defaults that work nicely with the signal bridge and tests.
+
+
+
+### Q&A to help you learn this section
+
+Q: What exactly is stored inside ColumnMemory?
+A: ColumnMemory is a simple in-RAM engram store. Each call to assert_fact(name, payload, meta) creates a record:
+
+{
+  "id": engram_id,
+  "name": name,
+  "payload": payload,   # often a TensorPayload
+  "meta": meta_dict,    # includes attrs
+  "v": "1"
+}
+
+
+and keeps it in _store[engram_id]. The WorldGraph only keeps the engram_id on bindings; the Column holds the heavy data.
+
+Q: What does FactMeta.attrs["column"] represent?
+A: When you assert a fact, ColumnMemory.assert_fact(...) ensures there is an attrs dict and sets attrs["column"] = self.name (e.g., "column01"). This lets you track which column owns an engram and is useful if you later add multiple columns (vision, audio, etc.).
+
+Q: How do I safely fetch an engram without crashing?
+A: Use try_get(engram_id) to get a record or None (never raises), or exists(engram_id) to check presence. get(engram_id) is stricter and will raise if the id is missing. For UI/tools, try_get is usually the safest choice.
+
+Q: What is find(...) used for?
+A: find(name_contains=..., epoch=..., has_attr=..., limit=...) gives you a lightweight query over the in-memory store. It’s handy for debugging and analytics, e.g., “show me all engrams whose name contains silhouette and epoch==2,” without needing a full database.
+
+Q: Does ColumnMemory persist engrams across runs?
+A: Not yet. ColumnMemory lives in RAM only. Engram ids and pointers are serialized via WorldGraph snapshots, but the column payloads themselves are currently in-memory. A future persistence layer could dump column contents to disk if needed; for now this keeps the system simple and fast for development runs.
+
 
 
 
@@ -7132,7 +7659,49 @@ world dynamics (HybridEnvironment/FsmBackend)
 
 These tests make it easy to verify that changes to the storyboard or perception mapping do what you expect before you wire them through the full CCA8 loop.
 
+
+
+### Q&A to help you learn this section
+
+Q: What’s the difference between EnvState and EnvObservation?
+A: EnvState is the environment’s canonical ground-truth state (God’s-eye view), maintained by HybridEnvironment and its backends. EnvObservation is the sensory/perceptual packet the agent receives each tick (derived from EnvState by PerceptionAdapter). CCA8 never reads EnvState directly; it only sees EnvObservation.
+
+Q: How does HybridEnvironment relate to WorldGraph?
+A: HybridEnvironment lives on the environment side and knows nothing about WorldGraph. It owns EnvState, runs reset/step, and produces EnvObservation + reward/done/info. WorldGraph is purely agent-side; it ingests EnvObservation and maintains the agent’s internal beliefs/memories.
+
+Q: What does FsmBackend actually do in the newborn-goat vignette?
+A: It implements a small, hand-scripted storyboard over EnvState: stages birth → struggle → first_stand → first_latch → rest, time thresholds for automatic transitions, and optional acceleration when certain policies fire (e.g., treating "policy:stand_up" as an early stand trigger during struggle).
+
+Q: What is the role of PerceptionAdapter?
+A: PerceptionAdapter is the environment’s sensor interface. Given EnvState, it produces EnvObservation by:
+
+filling raw_sensors (e.g., distances, temperatures),
+
+mapping state into symbolic predicates (posture, proximity, nipple state),
+
+emitting cues (e.g., vision:silhouette:mom, drive:cold_skin), and
+
+including small env_meta. It does not update WorldGraph or the agent; it just describes what the agent gets to sense this tick.
+
+Q: How does Menu “Environment step (HybridEnvironment → WorldGraph demo)” use all this?
+A: That menu item runs a single closed-loop tick:
+
+HybridEnvironment evolves EnvState via reset or step(action, ctx).
+
+PerceptionAdapter produces EnvObservation.
+
+The runner injects predicates/cues into the WorldGraph.
+
+The controller runs one policy step and records which policy executed.
+
+The chosen policy name is fed back as the next action into HybridEnvironment on the following env-step.
+
+It’s a minimal “world ↔ brain” loop for inspection and debugging.
+
+
+
 ---
+
 
 
 

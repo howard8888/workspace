@@ -69,7 +69,20 @@ import shutil
 # CCA8 Module Imports
 #import cca8_world_graph as wgmod  # modular alternative: allows swapping WorldGraph engines
 import cca8_world_graph
-from cca8_controller import Drives, action_center_step, skill_readout, skills_to_dict, skills_from_dict, HUNGER_HIGH, FATIGUE_HIGH
+from cca8_controller import (
+    PRIMITIVES,
+    skill_readout,
+    skills_to_dict,
+    skills_from_dict,
+    HUNGER_HIGH,
+    FATIGUE_HIGH,
+    Drives,
+    action_center_step,
+    body_mom_distance,
+    body_nipple_state,
+    body_posture,
+    __version__ as controller_version,
+)
 from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
 from cca8_env import HybridEnvironment  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
@@ -170,7 +183,9 @@ class Ctx:
     env_last_action: Optional[str] = None  # last fired policy name for env.step(...)
     mini_snapshot: bool = True  #mini-snapshot toggle starting value
     posture_discrepancy_history: list[str] = field(default_factory=list) #per-session list of discrepancies motor command vs what environment reports
-
+    # BodyMap: tiny body+near-world map (separate WorldGraph instance)
+    body_world: Optional[cca8_world_graph.WorldGraph] = None
+    body_ids: dict[str, str] = field(default_factory=dict)
 
     def reset_controller_steps(self) -> None:
         """quick reset of Ctx.controller_steps counter
@@ -255,6 +270,80 @@ class Ctx:
 
 
 # --- Graph edge deletion helpers (engine-level, import-safe) -----------------
+
+def init_body_world() -> tuple[cca8_world_graph.WorldGraph, dict[str, str]]:
+    """
+    Initialize a tiny BodyMap as a separate WorldGraph instance.
+
+    Nodes (v1):
+      - ROOT      (anchor:BODY_ROOT) — body as a whole
+      - POSTURE   (pred:posture:*)   — overall posture
+      - MOM       (pred:proximity:mom:*) — mom distance relative to body
+      - NIPPLE    (pred:nipple:* / pred:milk:drinking) — nipple/latch state
+
+    Edges (v1):
+      BODY_ROOT --body_state-->     POSTURE
+      BODY_ROOT --body_relation-->  MOM
+      MOM       --body_part-->      NIPPLE
+
+    Returns:
+        (body_world, body_ids) where body_ids maps "root"/"posture"/"mom"/"nipple" → binding ids.
+    """
+    body_world = cca8_world_graph.WorldGraph()
+    # We may add non-lexicon tokens later; keep tag policy permissive here.
+    body_world.set_tag_policy("allow")
+    body_world.set_stage("neonate")
+
+    # Root / self node
+    root_bid = body_world.ensure_anchor("BODY_ROOT")
+
+    # Posture slot: default fallen at birth
+    posture_bid = body_world.add_predicate(
+        "posture:fallen",
+        attach="none",
+        meta={"body_slot": "posture", "created_by": "body_map_init"},
+    )
+    body_world.add_edge(
+        root_bid,
+        posture_bid,
+        "body_state",
+        meta={"created_by": "body_map_init"},
+    )
+
+    # Mom distance slot: default far
+    mom_bid = body_world.add_predicate(
+        "proximity:mom:far",
+        attach="none",
+        meta={"body_slot": "mom", "created_by": "body_map_init"},
+    )
+    body_world.add_edge(
+        root_bid,
+        mom_bid,
+        "body_relation",
+        meta={"created_by": "body_map_init"},
+    )
+
+    # Nipple slot: default hidden
+    nipple_bid = body_world.add_predicate(
+        "nipple:hidden",
+        attach="none",
+        meta={"body_slot": "nipple", "created_by": "body_map_init"},
+    )
+    body_world.add_edge(
+        mom_bid,
+        nipple_bid,
+        "body_part",
+        meta={"created_by": "body_map_init"},
+    )
+
+    body_ids = {
+        "root": root_bid,
+        "posture": posture_bid,
+        "mom": mom_bid,
+        "nipple": nipple_bid,
+    }
+    return body_world, body_ids
+
 
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
     return edge.get("dst") or edge.get("to") or edge.get("dst_id") or edge.get("id")
@@ -941,7 +1030,7 @@ def _engrams_on_binding(world, bid: str) -> list[str]:
     """
     b = world._bindings.get(bid)
     #-nodes in world instance of WorldGraph are dataclass Binding
-    #-fields of dataclass Binding -- id, tags {set}, edges [list of TypedDict Edges {to:xxx, label:xxx, meta:xxx}, {}...], meta {dict}, engrams {dict}
+    #-fields of dataclass Binding -- id, tags {set}, edges [list of TypedDict Edges {to:___, label:___, meta:___}, {}...], meta {dict}, engrams {dict}
     #-b=Binding below is an instance of dataclass Binding corresponding to, e.g., node b3
     #   nb. Python objects don't have an intrinsic 'instance name' -- just have variables point at them
     # e.g., b= Binding(id='b3', tags={'cue:vision:silhouette:mom'}, edges=[], meta={},
@@ -1025,6 +1114,118 @@ def has_pred_near_now(world, token: str, hops: int = 3) -> bool:
 def any_pred_present(world, tokens: List[str]) -> bool:
     """Return True if any pred:<token> in `tokens` exists anywhere in the graph."""
     return any(_bindings_with_pred(world, tok) for tok in tokens)
+
+
+#pylint: disable=superfluous-parens
+def _gate_stand_up_trigger_body_first(world, _drives: Drives, ctx) -> bool:
+    """
+    StandUp gate that prefers BodyMap for posture when available, falling back
+    to WorldGraph near-NOW predicates otherwise.
+
+    Trigger logic (neonate):
+      • fire if body_posture == "fallen"; OR
+      • fire if stand-intent is present near NOW AND not already standing.
+    """
+    # BodyMap posture if available
+    bp = body_posture(ctx) if ctx is not None else None
+    if bp is not None:
+        fallen = (bp == "fallen")
+        standing = (bp == "standing")
+    else:
+        fallen = has_pred_near_now(world, "posture:fallen")
+        standing = has_pred_near_now(world, "posture:standing")
+
+    stand_intent = has_pred_near_now(world, "stand")
+    return fallen or (stand_intent and not standing)
+
+
+def _gate_stand_up_explain(world, drives: Drives, ctx) -> str:
+    """
+    Human-readable explanation matching _gate_stand_up_trigger_body_first.
+    """
+    hunger = float(getattr(drives, "hunger", 0.0))
+    bp = body_posture(ctx) if ctx is not None else None
+    if bp is not None:
+        fallen = (bp == "fallen")
+        standing = (bp == "standing")
+    else:
+        fallen = has_pred_near_now(world, "posture:fallen")
+        standing = has_pred_near_now(world, "posture:standing")
+
+    stand_intent = has_pred_near_now(world, "stand")
+    return (
+        f"dev_gate: age_days={getattr(ctx, 'age_days', 0.0):.2f}<=3.0, trigger: "
+        f"fallen={fallen} or (stand_intent={stand_intent} and not standing={not standing}) "
+        f"(hunger={hunger:.2f})"
+    )
+
+
+def _gate_seek_nipple_trigger_body_first(world, drives: Drives, ctx) -> bool:
+    """
+    SeekNipple gate that prefers BodyMap for posture (standing/fallen) and uses
+    Drives.hunger numerically for the hunger condition.
+
+    Conditions:
+      • hunger > HUNGER_HIGH
+      • body_posture == 'standing'
+      • not fallen
+      • nipple_state != 'latched'
+      • not already seeking_mom near NOW
+    """
+    hunger = float(getattr(drives, "hunger", 0.0))
+    if hunger <= float(HUNGER_HIGH):
+        return False
+
+    bp = body_posture(ctx) if ctx is not None else None
+    if bp is not None:
+        standing = (bp == "standing")
+        fallen = (bp == "fallen")
+    else:
+        standing = has_pred_near_now(world, "posture:standing")
+        fallen = has_pred_near_now(world, "posture:fallen")
+
+    if not standing or fallen:
+        return False
+
+    # If BodyMap says we are already latched/drinking, do not seek again.
+    ns = body_nipple_state(ctx) if ctx is not None else None
+    if ns == "latched":
+        return False
+
+    # We still use the episode graph to see if 'seeking_mom' is already active.
+    if has_pred_near_now(world, "seeking_mom"):
+        return False
+
+    return True
+
+
+def _gate_seek_nipple_explain(world, drives: Drives, ctx) -> str:
+    """
+    Human-readable explanation matching _gate_seek_nipple_trigger_body_first.
+    """
+    hunger = float(getattr(drives, "hunger", 0.0))
+    bp = body_posture(ctx) if ctx is not None else None
+    if bp is not None:
+        standing = (bp == "standing")
+        fallen = (bp == "fallen")
+        posture_str = bp
+    else:
+        standing = has_pred_near_now(world, "posture:standing")
+        fallen = has_pred_near_now(world, "posture:fallen")
+        posture_str = f"standing={standing}, fallen={fallen}"
+
+    ns = body_nipple_state(ctx) if ctx is not None else None
+    nipple_str = ns if ns is not None else "n/a"
+
+    seeking = has_pred_near_now(world, "seeking_mom")
+    return (
+        f"dev_gate: True, trigger: posture={posture_str} "
+        f"and hunger={hunger:.2f}>0.60 "
+        f"and nipple_state={nipple_str} "
+        f"and not seeking={not seeking} "
+        f"and not fallen={not fallen}"
+    )
+#pylint: enable=superfluous-parens
 
 
 @dataclass
@@ -1143,49 +1344,15 @@ CATALOG_GATES: List[PolicyGate] = [
         name="policy:stand_up",
         # Neonatal only; later profiles/ages may choose a different gate.
         dev_gate=lambda ctx: getattr(ctx, "age_days", 0.0) <= 3.0,
-        trigger=lambda W, D, ctx: (
-            # (1) Safety-first: if explicitly fallen near NOW, stand up.
-            has_pred_near_now(W, "posture:fallen")
-            or
-            # (2) If there is an explicit stand intent near NOW, and we are not
-            # already standing, we may stand up.
-            (
-                has_pred_near_now(W, "stand")
-                and not has_pred_near_now(W, "posture:standing")
-            )
-        ),
-        explain=lambda W, D, ctx: (
-            f"dev_gate: age_days={getattr(ctx, 'age_days', 0.0):.2f}<=3.0, trigger: "
-            "fallen={fallen} or (stand_intent={stand_intent} and not standing={not_standing})"
-        ).format(
-            age=getattr(ctx, "age_days", 0.0),
-            fallen=(
-                has_pred_near_now(W, "posture:fallen")
-            ),
-            stand_intent=has_pred_near_now(W, "stand"),
-            not_standing=not (
-                has_pred_near_now(W, "posture:standing")
-            ),
-        ),
+        trigger=_gate_stand_up_trigger_body_first,
+        explain=_gate_stand_up_explain,
     ),
 
     PolicyGate(
         name="policy:seek_nipple",
         dev_gate=lambda ctx: True,
-        trigger=lambda W, D, ctx: (
-            has_pred_near_now(W, "posture:standing")
-            and (getattr(D, "hunger", 0.0) > 0.6)
-            # For now we do not require sensory cues in the gate; this keeps the
-            # integration tests simple (upright + hungry is enough to try seeking).
-            and not has_pred_near_now(W, "seeking_mom")      # prevent repeats
-            and not has_pred_near_now(W, "posture:fallen")   # ineligible while fallen
-        ),
-        explain=lambda W, D, ctx: (
-            f"dev_gate: True, trigger: posture:standing={has_pred_near_now(W,'posture:standing')} "
-            f"and hunger={getattr(D,'hunger',0.0):.2f}>0.60 "
-            f"and not seeking={not has_pred_near_now(W,'seeking_mom')} "
-            f"and not fallen={not has_pred_near_now(W,'posture:fallen')}"
-        ),
+        trigger=_gate_seek_nipple_trigger_body_first,
+        explain=_gate_seek_nipple_explain,
     ),
 
     PolicyGate(
@@ -2465,7 +2632,8 @@ def run_preflight_full(args) -> int:
 
     # 3) Controller primitives
     try:
-        from cca8_controller import PRIMITIVES, Drives as _Drv, __version__ as _CTRL_VER
+        from cca8_controller import Drives as _Drv, __version__ as _CTRL_VER
+
         # (action_center_step is already imported at module top; if not, import it here too)
         if isinstance(PRIMITIVES, list) and PRIMITIVES:
             ok(f"controller primitives loaded (count={len(PRIMITIVES)})")
@@ -3149,6 +3317,21 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
         lines.append("  (none)")
     lines.append("")
 
+    # BODYMAP (body + near-world)
+    if ctx is not None and getattr(ctx, "body_world", None) is not None and getattr(ctx, "body_ids", None):
+        bw = ctx.body_world
+        body_ids = ctx.body_ids
+        lines.append("BODYMAP (body + near-world):")
+        lines.append("  (**different map then the larger WorldGraph**)")
+        lines.append("  (same binding id's e.g., 'b1', 'b2', etc but different map)")
+        for slot in ("root", "posture", "mom", "nipple"):
+            bid = body_ids.get(slot)
+            if isinstance(bid, str) and bid in bw._bindings:
+                b = bw._bindings.get(bid)
+                tags = ", ".join(sorted(getattr(b, "tags", []))) if b else ""
+                lines.append(f"  {slot:<7}: {bid}: [{tags}]")
+        lines.append("")
+
     # POLICIES (skills readout)
     lines.append("POLICIES:\n (already run at least once, with their SkillStat statistics)  [src=skill_readout()]")
     try:
@@ -3298,6 +3481,112 @@ def recent_bindings_text(world, limit: int = 5) -> str:
     return "\n".join(lines) + "\n"
 
 
+def update_body_world_from_obs(ctx, env_obs) -> None:
+    """
+    Update the tiny BodyMap (ctx.body_world) from an EnvObservation.
+
+    We treat BodyMap as a structured register:
+      - posture slot reflects posture:* / resting predicates
+      - mom slot reflects proximity:mom:* predicates
+      - nipple slot reflects nipple:* / milk:drinking predicates
+
+    EnvObservation is observation-space; we mirror its discrete predicates here.
+    """
+    body_world = getattr(ctx, "body_world", None)
+    body_ids = getattr(ctx, "body_ids", {}) or {}
+    if body_world is None or not body_ids:
+        return
+
+    preds = set(getattr(env_obs, "predicates", []) or [])
+
+    # --- posture slot ---
+    posture_bid = body_ids.get("posture")
+    if posture_bid and posture_bid in body_world._bindings:
+        b = body_world._bindings[posture_bid]
+        tags = set(getattr(b, "tags", []) or [])
+
+        # Strip old posture-like tags
+        tags = {
+            t for t in tags
+            if not (
+                isinstance(t, str)
+                and (
+                    t.startswith("pred:posture:")
+                    or t == "pred:resting"
+                    or t == "resting"
+                )
+            )
+        }
+
+        new_posture: str | None = None
+        if "posture:standing" in preds:
+            new_posture = "standing"
+        elif "posture:fallen" in preds:
+            new_posture = "fallen"
+        elif "resting" in preds:
+            new_posture = "resting"
+
+        if new_posture == "resting":
+            tags.add("pred:resting")
+        elif new_posture in ("standing", "fallen"):
+            tags.add(f"pred:posture:{new_posture}")
+
+        b.tags = tags
+
+    # --- mom-distance slot ---
+    mom_bid = body_ids.get("mom")
+    if mom_bid and mom_bid in body_world._bindings:
+        b = body_world._bindings[mom_bid]
+        tags = set(getattr(b, "tags", []) or [])
+
+        # Remove old proximity tags
+        tags = {
+            t for t in tags
+            if not (
+                isinstance(t, str)
+                and t.startswith("pred:proximity:mom:")
+            )
+        }
+
+        if "proximity:mom:close" in preds:
+            tags.add("pred:proximity:mom:close")
+        elif "proximity:mom:far" in preds:
+            tags.add("pred:proximity:mom:far")
+
+        b.tags = tags
+
+    # --- nipple/latch slot ---
+    nipple_bid = body_ids.get("nipple")
+    if nipple_bid and nipple_bid in body_world._bindings:
+        b = body_world._bindings[nipple_bid]
+        tags = set(getattr(b, "tags", []) or [])
+
+        # Remove old nipple/milk tags
+        tags = {
+            t for t in tags
+            if not (
+                isinstance(t, str)
+                and (
+                    t.startswith("pred:nipple:")
+                    or t == "pred:milk:drinking"
+                )
+            )
+        }
+
+        # Infer a simple nipple state from observation predicates
+        if "nipple:latched" in preds:
+            tags.add("pred:nipple:latched")
+            if "milk:drinking" in preds:
+                tags.add("pred:milk:drinking")
+        elif "nipple:found" in preds:
+            tags.add("pred:nipple:found")
+        else:
+            # Fallback: hidden if nothing else observed
+            tags.add("pred:nipple:hidden")
+
+        b.tags = tags
+
+
 def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylint: disable=unused-argument
     """
     Map an EnvObservation into the WorldGraph as pred:* and cue:* bindings.
@@ -3312,7 +3601,8 @@ def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylin
     Notes:
         - Uses attach="now" for the first predicate/cue, then attach="latest" for subsequent ones.
         - Stamps meta={"created_by": "env_step", "source": "HybridEnvironment"} on all injected bindings.
-        - Prints the same [env→world] lines as the inline version in menu 35.
+        - Prints the same [env→world] lines as before.
+        - Also updates ctx.body_world (BodyMap) to mirror posture/mom_distance/nipple_state.
     """
     created_preds: List[str] = []
     created_cues: List[str] = []
@@ -3353,6 +3643,13 @@ def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylin
             attach_c = "latest"
     except Exception as e:
         print(f"[env→world] cue injection error: {e}")
+
+    # NEW: update BodyMap (ctx.body_world) from this observation
+    try:
+        update_body_world_from_obs(ctx, env_obs)
+    except Exception:
+        # BodyMap should never crash the runner; ignore errors here.
+        pass
 
     return {"predicates": created_preds, "cues": created_cues}
 
@@ -3952,6 +4249,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
         ctx.boundary_vhash64 = None
     print_startup_notices(world)
     env = HybridEnvironment()     # Environment simulation: newborn-goat scenario (HybridEnvironment)
+    ctx.body_world, ctx.body_ids = init_body_world() # initialize tiny BodyMap (body_world) as a separate WorldGraph instance
 
     # Optional: start session with a preloaded demo/test world to exercise graph menus.
     # Driven by --demo-world; ignored when --load is used (load takes precedence).
@@ -6427,6 +6725,15 @@ Attach an existing engram id (eid) to a binding id (bid).
             # This uses the shared helper so other code paths can reuse the same semantics.
             inject_obs_into_world(world, ctx, env_obs)
 
+            # Show BodyMap summary for this env step (posture/mom_distance/nipple_state)
+            try:
+                bp = body_posture(ctx)
+                md = body_mom_distance(ctx)
+                ns = body_nipple_state(ctx)
+                print(f"[body] posture={bp!r} mom_distance={md!r} nipple_state={ns!r}")
+            except Exception:
+                pass
+
             # Let the controller see the new facts and maybe act once
             try:
                 POLICY_RT.refresh_loaded(ctx)
@@ -6904,7 +7211,6 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         # additionally show primitive count if the controller is importable
         try:
-            from cca8_controller import PRIMITIVES
             print(f"\n    [controller primitives: {len(PRIMITIVES)}]")
         except Exception:
             pass
