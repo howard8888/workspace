@@ -81,6 +81,7 @@ from cca8_controller import (
     body_mom_distance,
     body_nipple_state,
     body_posture,
+    bodymap_is_stale,
     __version__ as controller_version,
 )
 from cca8_temporal import TemporalContext
@@ -186,6 +187,11 @@ class Ctx:
     # BodyMap: tiny body+near-world map (separate WorldGraph instance)
     body_world: Optional[cca8_world_graph.WorldGraph] = None
     body_ids: dict[str, str] = field(default_factory=dict)
+    bodymap_last_update_step: Optional[int] = None  # BodyMap recency marker: controller_steps value when BodyMap was last updated
+    # Safety / posture retry bookkeeping (Phase V)
+    last_standup_step: Optional[int] = None
+    last_standup_failed: bool = False
+
 
     def reset_controller_steps(self) -> None:
         """quick reset of Ctx.controller_steps counter
@@ -275,15 +281,19 @@ def init_body_world() -> tuple[cca8_world_graph.WorldGraph, dict[str, str]]:
     """
     Initialize a tiny BodyMap as a separate WorldGraph instance.
 
-    Nodes (v1):
+    Nodes (v1.1):
       - ROOT      (anchor:BODY_ROOT) — body as a whole
       - POSTURE   (pred:posture:*)   — overall posture
-      - MOM       (pred:proximity:mom:*) — mom distance relative to body
+      - MOM       (pred:proximity:mom:*)      — mom distance relative to body
       - NIPPLE    (pred:nipple:* / pred:milk:drinking) — nipple/latch state
+      - SHELTER   (pred:proximity:shelter:*)  — shelter distance relative to body
+      - CLIFF     (pred:hazard:cliff:*)       — dangerous drop proximity
 
-    Edges (v1):
+    Edges (v1.1):
       BODY_ROOT --body_state-->     POSTURE
       BODY_ROOT --body_relation-->  MOM
+      BODY_ROOT --body_relation-->  SHELTER
+      BODY_ROOT --body_danger-->    CLIFF
       MOM       --body_part-->      NIPPLE
 
     Returns:
@@ -323,6 +333,32 @@ def init_body_world() -> tuple[cca8_world_graph.WorldGraph, dict[str, str]]:
         meta={"created_by": "body_map_init"},
     )
 
+    # Shelter distance slot: default far
+    shelter_bid = body_world.add_predicate(
+        "proximity:shelter:far",
+        attach="none",
+        meta={"body_slot": "shelter", "created_by": "body_map_init"},
+    )
+    body_world.add_edge(
+        root_bid,
+        shelter_bid,
+        "body_relation",
+        meta={"created_by": "body_map_init"},
+    )
+
+    # Cliff / dangerous drop slot: default far (no immediate hazard)
+    cliff_bid = body_world.add_predicate(
+        "hazard:cliff:far",
+        attach="none",
+        meta={"body_slot": "cliff", "created_by": "body_map_init"},
+    )
+    body_world.add_edge(
+        root_bid,
+        cliff_bid,
+        "body_danger",
+        meta={"created_by": "body_map_init"},
+    )
+
     # Nipple slot: default hidden
     nipple_bid = body_world.add_predicate(
         "nipple:hidden",
@@ -341,7 +377,10 @@ def init_body_world() -> tuple[cca8_world_graph.WorldGraph, dict[str, str]]:
         "posture": posture_bid,
         "mom": mom_bid,
         "nipple": nipple_bid,
+        "shelter": shelter_bid,
+        "cliff": cliff_bid,
     }
+
     return body_world, body_ids
 
 
@@ -1123,11 +1162,17 @@ def _gate_stand_up_trigger_body_first(world, _drives: Drives, ctx) -> bool:
     to WorldGraph near-NOW predicates otherwise.
 
     Trigger logic (neonate):
-      • fire if body_posture == "fallen"; OR
-      • fire if stand-intent is present near NOW AND not already standing.
+      • If BodyMap is fresh and posture == 'fallen'  → fire.
+      • If BodyMap is fresh and posture == 'standing'→ do NOT fire.
+      • Otherwise, fall back to:
+            fallen  := pred:posture:fallen near NOW
+            standing:= pred:posture:standing near NOW
+        and fire if fallen or (stand_intent && not standing).
     """
-    # BodyMap posture if available
-    bp = body_posture(ctx) if ctx is not None else None
+    # BodyMap posture if available and not stale
+    stale = bodymap_is_stale(ctx) if ctx is not None else True
+    bp = body_posture(ctx) if ctx is not None and not stale else None
+
     if bp is not None:
         fallen = (bp == "fallen")
         standing = (bp == "standing")
@@ -1165,18 +1210,30 @@ def _gate_seek_nipple_trigger_body_first(world, drives: Drives, ctx) -> bool:
     SeekNipple gate that prefers BodyMap for posture (standing/fallen) and uses
     Drives.hunger numerically for the hunger condition.
 
-    Conditions:
+    Conditions (BodyMap + WorldGraph):
       • hunger > HUNGER_HIGH
-      • body_posture == 'standing'
+      • body_posture == 'standing' (BodyMap if fresh, else graph near NOW)
       • not fallen
-      • nipple_state != 'latched'
+      • if we have any mom-distance info (BodyMap or WorldGraph),
+        require "mom is near" (nursing range)
+      • nipple_state != 'latched' (BodyMap if available)
       • not already seeking_mom near NOW
+
+    Notes:
+      - Mom-distance is taken from BodyMap first (ctx.body_world / body_ids['mom']).
+      - If BodyMap is stale or absent, we fall back to WorldGraph predicates
+        proximity:mom:close / proximity:mom:far near NOW.
+      - If neither map has *any* mom proximity information, we leave the gate
+        unconstrained on mom distance (legacy behaviour).
     """
     hunger = float(getattr(drives, "hunger", 0.0))
     if hunger <= float(HUNGER_HIGH):
         return False
 
-    bp = body_posture(ctx) if ctx is not None else None
+    # Prefer BodyMap posture when it is not stale; otherwise fall back to graph.
+    stale = bodymap_is_stale(ctx) if ctx is not None else True
+    bp = body_posture(ctx) if ctx is not None and not stale else None
+
     if bp is not None:
         standing = (bp == "standing")
         fallen = (bp == "fallen")
@@ -1187,12 +1244,34 @@ def _gate_seek_nipple_trigger_body_first(world, drives: Drives, ctx) -> bool:
     if not standing or fallen:
         return False
 
+    # --- Mom-distance check (BodyMap + WorldGraph, but only if we have info) ---
+    have_distance = False
+    mom_near = True  # default: unconstrained (no info → do not block)
+
+    if ctx is not None and not stale:
+        md = body_mom_distance(ctx)
+        if md is not None:
+            have_distance = True
+            mom_near = (md == "near")
+
+    if not have_distance:
+        # Fall back to WorldGraph proximity predicates near NOW.
+        close = has_pred_near_now(world, "proximity:mom:close")
+        far   = has_pred_near_now(world, "proximity:mom:far")
+        if close or far:
+            have_distance = True
+            mom_near = close  # near only when "close" is explicitly present
+
+    # Only enforce the mom-distance gate when we actually have some signal.
+    if have_distance and not mom_near:
+        return False
+
     # If BodyMap says we are already latched/drinking, do not seek again.
     ns = body_nipple_state(ctx) if ctx is not None else None
     if ns == "latched":
         return False
 
-    # We still use the episode graph to see if 'seeking_mom' is already active.
+    # Use the episode graph to see if 'seeking_mom' is already active near NOW.
     if has_pred_near_now(world, "seeking_mom"):
         return False
 
@@ -1224,6 +1303,7 @@ def _gate_seek_nipple_explain(world, drives: Drives, ctx) -> str:
         f"and nipple_state={nipple_str} "
         f"and not seeking={not seeking} "
         f"and not fallen={not fallen}"
+        f"-mem_distance={body_mom_distance(ctx)}"
     )
 #pylint: enable=superfluous-parens
 
@@ -3324,7 +3404,7 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
         lines.append("BODYMAP (body + near-world):")
         lines.append("  (**different map then the larger WorldGraph**)")
         lines.append("  (same binding id's e.g., 'b1', 'b2', etc but different map)")
-        for slot in ("root", "posture", "mom", "nipple"):
+        for slot in ("root", "posture", "mom", "nipple", "shelter", "cliff"):
             bid = body_ids.get(slot)
             if isinstance(bid, str) and bid in bw._bindings:
                 b = bw._bindings.get(bid)
@@ -3555,6 +3635,74 @@ def update_body_world_from_obs(ctx, env_obs) -> None:
 
         b.tags = tags
 
+    # --- mom-distance slot ---
+    mom_bid = body_ids.get("mom")
+    if mom_bid and mom_bid in body_world._bindings:
+        b = body_world._bindings[mom_bid]
+        tags = set(getattr(b, "tags", []) or [])
+
+        # Remove old proximity tags
+        tags = {
+            t for t in tags
+            if not (
+                isinstance(t, str)
+                and t.startswith("pred:proximity:mom:")
+            )
+        }
+
+        if "proximity:mom:close" in preds:
+            tags.add("pred:proximity:mom:close")
+        elif "proximity:mom:far" in preds:
+            tags.add("pred:proximity:mom:far")
+
+        b.tags = tags
+
+    # --- shelter-distance slot ---
+    shelter_bid = body_ids.get("shelter")
+    if shelter_bid and shelter_bid in body_world._bindings:
+        b = body_world._bindings[shelter_bid]
+        tags = set(getattr(b, "tags", []) or [])
+
+        # Remove old shelter proximity tags
+        tags = {
+            t for t in tags
+            if not (
+                isinstance(t, str)
+                and t.startswith("pred:proximity:shelter:")
+            )
+        }
+
+        # Only update if the observation actually carries shelter proximity.
+        if "proximity:shelter:near" in preds:
+            tags.add("pred:proximity:shelter:near")
+        elif "proximity:shelter:far" in preds:
+            tags.add("pred:proximity:shelter:far")
+
+        b.tags = tags
+
+    # --- cliff / dangerous drop slot ---
+    cliff_bid = body_ids.get("cliff")
+    if cliff_bid and cliff_bid in body_world._bindings:
+        b = body_world._bindings[cliff_bid]
+        tags = set(getattr(b, "tags", []) or [])
+
+        # Remove old cliff hazard tags
+        tags = {
+            t for t in tags
+            if not (
+                isinstance(t, str)
+                and t.startswith("pred:hazard:cliff:")
+            )
+        }
+
+        # Hazard semantics: near vs far; if not present we leave previous value.
+        if "hazard:cliff:near" in preds:
+            tags.add("pred:hazard:cliff:near")
+        elif "hazard:cliff:far" in preds:
+            tags.add("pred:hazard:cliff:far")
+
+        b.tags = tags
+
     # --- nipple/latch slot ---
     nipple_bid = body_ids.get("nipple")
     if nipple_bid and nipple_bid in body_world._bindings:
@@ -3585,6 +3733,18 @@ def update_body_world_from_obs(ctx, env_obs) -> None:
             tags.add("pred:nipple:hidden")
 
         b.tags = tags
+
+    # --- recency marker ---
+    # We treat controller_steps as our integer "clock" for BodyMap staleness.
+    try:
+        # If controller_steps is not yet initialized, fall back to 0.
+        steps = int(getattr(ctx, "controller_steps", 0))
+        # Only set the attribute if it exists (Ctx defines bodymap_last_update_step).
+        if hasattr(ctx, "bodymap_last_update_step"):
+            ctx.bodymap_last_update_step = steps
+    except Exception:
+        # BodyMap bookkeeping must never break the env→body bridge.
+        pass
 
 
 def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylint: disable=unused-argument

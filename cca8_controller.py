@@ -188,6 +188,9 @@ HUNGER_HIGH = 0.60
 FATIGUE_HIGH = 0.70
 WARMTH_COLD = 0.30
 
+# --- Safety / retry control constants -----------------------------------
+STANDUP_RETRY_WINDOW = 5   # controller steps to wait before retrying
+
 
 # --- Canonical tokens ---------------------------------------------------------
 # Canonical tokens (second-level namespaces under pred:*)
@@ -511,21 +514,37 @@ def _any_cue_present(world) -> bool:
     return False
 
 
-def _fallen_near_now(world, max_hops: int = 3) -> bool:
+def _fallen_near_now(world, ctx, max_hops: int = 3) -> bool:
     """
-    Return True if any pred:posture:fallen is reachable from the NOW anchor
-    within <= `max_hops` edges.
+    Return True if the agent is "fallen" according to BodyMap when available,
+    otherwise fall back to scanning the episode graph near NOW for posture:fallen.
 
-    This is the safety check used by the Action Center. It is intentionally
-    local to the current NOW anchor so that old posture:fallen facts far in
-    the past do not keep StandUp firing forever.
+    Body-first logic (neonate):
+      • If BodyMap is FRESH and posture == 'fallen'  → treat as fallen (True).
+      • If BodyMap is FRESH and posture == 'standing'→ treat as not fallen (False).
+      • Otherwise, fall back to: any pred:posture:fallen reachable from NOW
+        within <= max_hops edges.
 
-    Graph intuition:
-      - Edges encode a weak temporal/causal succession (e.g., b1 -> b2 -> b3).
-      - The NOW anchor points at the current "situation" node.
-      - We only want to treat the agent as "fallen" if a fallen posture is
-        reachable by a short forward walk from NOW (e.g., the next few steps).
+    This function feeds the Action Center safety override. It keeps the safety
+    check local to the current NOW anchor so that old posture:fallen facts far
+    in the past do not keep StandUp firing forever.
     """
+
+    # --- BodyMap override when fresh ---
+    try:
+        if ctx is not None and not bodymap_is_stale(ctx):
+            bp = body_posture(ctx)
+            if bp == "fallen":
+                return True
+            if bp == "standing":
+                return False
+            # If BodyMap is fresh but posture is unknown (None or resting),
+            # we fall through to the graph-based check below.
+    except Exception:
+        # If anything goes wrong with BodyMap, fall back to graph only.
+        pass
+
+    # --- Graph-based local check around NOW anchor ---
     try:
         anchors = getattr(world, "_anchors", None)
         if not isinstance(anchors, dict):
@@ -543,7 +562,7 @@ def _fallen_near_now(world, max_hops: int = 3) -> bool:
 
     while q:
         u = q.popleft()
-        b = world._bindings.get(u) #pylint: disable=protected-access
+        b = world._bindings.get(u)  # pylint: disable=protected-access
 
         # Check this node's tags for a fallen posture
         if b is not None:
@@ -577,6 +596,7 @@ def _fallen_near_now(world, max_hops: int = 3) -> bool:
                     q.append(v)
 
     return False
+
 
 
 def _body_slot_tags(ctx, slot: str) -> set[str]:
@@ -636,6 +656,50 @@ def body_mom_distance(ctx) -> str | None:
     return None
 
 
+def body_shelter_distance(ctx) -> str | None:
+    """
+    Read the BodyMap's shelter-distance slot and return 'near'/'far' (or None).
+
+    This will be driven by predicates like:
+      proximity:shelter:near / proximity:shelter:far
+    mirrored into BodyMap as pred:proximity:shelter:* tags.
+    """
+    tags = _body_slot_tags(ctx, "shelter")
+    if "pred:proximity:shelter:near" in tags:
+        return "near"
+    if "pred:proximity:shelter:far" in tags:
+        return "far"
+    return None
+
+
+def body_cliff_distance(ctx) -> str | None:
+    """
+    Read the BodyMap's cliff / dangerous drop slot and return 'near'/'far' (or None).
+
+    This is driven by hazard:cliff:* style predicates (if present in EnvObservation):
+      hazard:cliff:near / hazard:cliff:far
+    mirrored into BodyMap as pred:hazard:cliff:* tags.
+    """
+    tags = _body_slot_tags(ctx, "cliff")
+    if "pred:hazard:cliff:near" in tags:
+        return "near"
+    if "pred:hazard:cliff:far" in tags:
+        return "far"
+    return None
+
+
+def body_shelter_is_near(ctx) -> bool:
+    """for future use
+    """
+    return body_shelter_distance(ctx) == "near"
+
+
+def body_cliff_is_near(ctx) -> bool:
+    """for future use
+    """
+    return body_cliff_distance(ctx) == "near"
+
+
 def body_nipple_state(ctx) -> str | None:
     """
     Read the BodyMap's nipple slot and return a simple nipple state label:
@@ -655,11 +719,61 @@ def body_nipple_state(ctx) -> str | None:
     return None
 
 
+def body_is_standing(ctx) -> bool:
+    """
+    Convenience: True if BodyMap reports posture == 'standing'.
+
+    Falls back to False if posture is unknown or BodyMap is unavailable.
+    """
+    return body_posture(ctx) == "standing"
 
 
+def body_is_fallen(ctx) -> bool:
+    """
+    Convenience: True if BodyMap reports posture == 'fallen'.
+
+    Falls back to False if posture is unknown or BodyMap is unavailable.
+    """
+    return body_posture(ctx) == "fallen"
 
 
+def body_mom_is_near(ctx) -> bool:
+    """
+    Convenience: True if BodyMap reports mom is 'near'.
+    """
+    return body_mom_distance(ctx) == "near"
 
+
+def body_nipple_latched(ctx) -> bool:
+    """
+    Convenience: True if BodyMap reports the nipple is latched (or actively drinking).
+    """
+    return body_nipple_state(ctx) == "latched"
+
+
+def bodymap_is_stale(ctx, max_steps: int = 5) -> bool:
+    """
+    Return True if the BodyMap has not been updated in more than `max_steps`
+    controller steps.
+
+    We use:
+      • ctx.bodymap_last_update_step — set by update_body_world_from_obs(...)
+      • ctx.controller_steps        — incremented by Instinct/Autonomic/env loops.
+
+    When this returns True, callers should treat BodyMap as advisory only and
+    fall back to the episode graph for posture/mom distance.
+    """
+    try:
+        last = getattr(ctx, "bodymap_last_update_step", None)
+        steps = int(getattr(ctx, "controller_steps", 0))
+        if last is None:
+            # Never updated → treat as stale so we fall back to graph predicates.
+            return True
+        return (steps - int(last)) > max_steps
+    except Exception:
+        # In ambiguous situations, treat BodyMap as stale and let callers
+        # fall back to other sources.
+        return True
 
 
 def _policy_deficit_score(name: str, drives: Drives) -> float:
@@ -1254,15 +1368,45 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
     # StandUp firing forever. If the agent has just stood up and NOW was moved
     # to the new standing node, _fallen_near_now(...) will return False until a
     # new fallen posture appears near NOW.
-    if _fallen_near_now(world, max_hops=3):
-        stand = None
-        for p in PRIMITIVES:
-            if p.name == "policy:stand_up":
-                stand = p
-                break
-        assert stand is not None, "Action Center safety override: StandUp policy not registered"
-        return _run(stand, world, ctx, drives)
 
+    if _fallen_near_now(world, ctx, max_hops=3):
+        # --- Legacy behaviour when ctx is None (tests / older callers) ---
+        if ctx is None or not hasattr(ctx, "last_standup_step"):
+            stand = next((p for p in PRIMITIVES if p.name == "policy:stand_up"), None)
+            assert stand is not None, "Action Center safety override: StandUp policy not registered"
+            return _run(stand, world, ctx, drives)
+
+        # --- Phase V retry control when ctx is a real Ctx instance ---
+        step_now = int(getattr(ctx, "controller_steps", 0))
+        last_step = getattr(ctx, "last_standup_step", None)
+        last_failed = bool(getattr(ctx, "last_standup_failed", False))
+
+        # If we recently attempted StandUp and BodyMap still says 'fallen',
+        # skip another attempt until the retry window has elapsed.
+        if last_failed and last_step is not None:
+            delta = step_now - int(last_step)
+            if delta < STANDUP_RETRY_WINDOW:
+                return {
+                    "policy": "policy:stand_up",
+                    "status": "skip",
+                    "reward": 0.0,
+                    "notes": f"posture still fallen — skipping retry (Δ={delta})",
+                }
+
+        # Otherwise, proceed with emergency StandUp as usual.
+        stand = next((p for p in PRIMITIVES if p.name == "policy:stand_up"), None)
+        assert stand is not None, "Action Center safety override: StandUp policy not registered"
+        result = _run(stand, world, ctx, drives)
+
+        # Record outcome only when ctx actually has the bookkeeping fields.
+        if hasattr(ctx, "last_standup_failed"):
+            if result.get("status") == "ok":
+                ctx.last_standup_failed = False
+            else:
+                ctx.last_standup_failed = True
+            ctx.last_standup_step = step_now
+
+        return result
 
     # (2) External advisory path (Option B-ready): honor exact 'preferred' if present
     #  e.g., preferred="policy:rest" as specified by the argument to the function
