@@ -208,6 +208,9 @@ ACTION_EXTEND_LEGS     = "action:extend_legs"
 ACTION_LOOK_AROUND     = "action:look_around"
 ACTION_ORIENT_TO_MOM   = "action:orient_to_mom"
 
+VALENCE_LIKE           = "valence:like"
+VALENCE_HATE           = "valence:hate"
+
 # Back-compat synonyms we still recognize when *reading* from the graph.
 # These map legacy state:* forms onto the new canonical tokens.
 CANON_SYNONYMS: dict[str, str] = {}
@@ -287,6 +290,63 @@ def _add_pred_base_aware(world, token: str, ctx, *, default_attach="latest", met
     """
     return _add_pred(world, token, attach=default_attach, meta=meta)
 #pylint: enable=unused-argument
+
+
+# ==== STUB spatial helpers =========================================
+
+def add_valence_binding(world, ctx, polarity: str, *, target: str | None = None, strength: float = 1.0) -> str:
+    """
+    Stub helper to write a valence predicate binding into the WorldGraph.
+
+    This creates a binding tagged with either:
+        pred:valence:like
+      or
+        pred:valence:hate
+
+    and stores the target + strength in meta. Future code may interpret this
+    when weighting plans or gating policies.
+
+    Parameters
+    ----------
+    world : WorldGraph-like
+        The main episode graph.
+
+    ctx : Any
+        Runtime context (used only to seed provenance via _policy_meta).
+
+    polarity : str
+        'like' or 'hate'. Any non-'like' value is treated as 'hate' for now.
+
+    target : str | None
+        Optional symbolic token for what this valence refers to, e.g. 'mom',
+        'cliff', 'shelter', 'research:approach_A', etc.
+
+    strength : float
+        Optional magnitude of valence (default 1.0). Allows gradients later
+        without changing the basic representation.
+
+    Returns
+    -------
+    bid : str
+        The new binding id carrying the valence predicate.
+    """
+    if polarity == "like":
+        tok = VALENCE_LIKE
+    else:
+        tok = VALENCE_HATE
+
+    meta = _policy_meta(ctx, "valence_stub")
+    meta.update(
+        {
+            "valence_polarity": polarity,
+            "valence_target": target,
+            "valence_strength": float(strength),
+        }
+    )
+
+    # Attach to 'latest' by default; call sites can choose a different attach mode later.
+    return _add_pred(world, tok, attach="latest", meta=meta)
+
 
 # -----------------------------------------------------------------------------
 # Drives
@@ -1244,11 +1304,35 @@ class Rest(Primitive):
 
 
     def execute(self, world, ctx, drives: Drives) -> dict:
-        """Reduce fatigue, assert 'resting', and return success (see class docstring)."""
+        """
+        Reduce fatigue, assert 'resting', and return success — but refuse to
+        rest in clearly unsafe geometry when BodyMap says:
+
+            cliff_distance == 'near' and shelter_distance != 'near'
+
+        In that case we treat this as a failed rest attempt and do NOT change
+        drives or world state.
+        """
+        # Safety check: consult BodyMap when it is fresh.
+        try:
+            if ctx is not None and not bodymap_is_stale(ctx):
+                cliff = body_cliff_distance(ctx)
+                shelter = body_shelter_distance(ctx)
+                if cliff == "near" and shelter != "near":
+                    return self._fail(
+                        "unsafe to rest (cliff near, shelter not near)",
+                        reward=0.0,
+                    )
+        except Exception:
+            # On any BodyMap error, fall back to the normal behaviour.
+            pass
+
+        # Normal resting behaviour: reduce fatigue and assert 'resting'.
         drives.fatigue = max(0.0, drives.fatigue - 0.2)
         meta = _policy_meta(ctx, self.name)
         _add_pred(world, STATE_RESTING, attach="now", meta=meta)
         return self._success(reward=0.2, notes="resting")
+
 
 # -----------------------------------------------------------------------------
 # Primitives to be Scanned by the Action Center

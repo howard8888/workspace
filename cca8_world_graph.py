@@ -160,6 +160,11 @@ class TagLexicon:
                 # Spatial / proximity
                 "proximity:mom:close",
                 "proximity:mom:far",
+                "proximity:shelter:near",
+                "proximity:shelter:far",
+                # Hazard / cliff proximity
+                "hazard:cliff:near",
+                "hazard:cliff:far",
                 # Feeding / episode facts
                 "nipple:found",
                 "nipple:latched",
@@ -169,6 +174,9 @@ class TagLexicon:
                 "seeking_mom",
                 # Intent predicates (if you still use these)
                 "stand",
+                # Valence (available from birth)
+                "valence:like",
+                "valence:hate",
             },
             "action": {
                 "push_up",
@@ -176,6 +184,7 @@ class TagLexicon:
                 "look_around",
                 "orient_to_mom",
             },
+
             "cue": {
                 "vision:silhouette:mom",
                 "scent:milk",
@@ -191,7 +200,6 @@ class TagLexicon:
                 "HERE",
             },
         },
-        # Other stages can be empty for now.
         "juvenile": {"pred": set(), "action": set(), "cue": set(), "anchor": set()},
         "adult":    {"pred": set(), "action": set(), "cue": set(), "anchor": set()},
     }

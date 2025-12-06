@@ -82,8 +82,12 @@ from cca8_controller import (
     body_nipple_state,
     body_posture,
     bodymap_is_stale,
+    body_cliff_distance,
     __version__ as controller_version,
 )
+from cca8_controller import body_shelter_distance  # pylint: disable=unused-import
+from cca8_controller import body_cliff_is_near     # pylint: disable=unused-import
+from cca8_controller import body_shelter_is_near   # pylint: disable=unused-import
 from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
 from cca8_env import HybridEnvironment  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
@@ -568,12 +572,45 @@ def _attach_via_base(world, base: dict | None, new_bid: str, *, rel: str = "then
             pass
 
 
+# Minimal vocabulary for spatial edge labels in WorldGraph.
+SPATIAL_REL_LABELS = {"near", "inside", "supports"}
 def add_spatial_relation(world, src_bid: str, rel: str, dst_bid: str, meta: dict | None = None) -> None:
     """
-    STUB: Sugar for scene-graph style relations (left_of, on, inside, supports, near).
-    Today this is just an alias of world.add_edge(...).
+    Sugar for scene-graph style relations (near, inside, supports).
+
+    Today this is just an alias of world.add_edge(...). The 'rel' string is not
+    strictly enforced here, but callers are encouraged to stick to the small,
+    explicit vocabulary in SPATIAL_REL_LABELS to avoid label explosion.
     """
     world.add_edge(src_bid, dst_bid, rel, meta or {})
+
+
+def add_spatial_inside(world, src_bid: str, dst_bid: str, meta: dict | None = None) -> None:
+    """
+    Stub helper for 'inside' spatial relation.
+
+    Intended future use:
+      SELF --inside--> SHELTER when the agent is resting in a sheltered niche.
+
+    Currently unused; provided as a clearly named wrapper so future code can
+    call it and we keep the label semantics centralized.
+    """
+    add_spatial_relation(world, src_bid, "inside", dst_bid, meta)
+
+
+def add_spatial_supports(world, src_bid: str, dst_bid: str, meta: dict | None = None) -> None:
+    """
+    Stub helper for 'supports' spatial relation.
+
+    Intended future use:
+      ROCK --supports--> SELF when a particular surface is bearing the body,
+      or SHELTER_FLOOR --supports--> SELF, etc.
+
+    Currently unused; provided as a stub for future development.
+    """
+    add_spatial_relation(world, src_bid, "supports", dst_bid, meta)
+
+
 
 # --------------------------------------------------------------------------------------
 # Persistence: atomic JSON autosave (world, drives, skills)
@@ -1155,6 +1192,112 @@ def any_pred_present(world, tokens: List[str]) -> bool:
     return any(_bindings_with_pred(world, tok) for tok in tokens)
 
 
+def neighbors_near_self(world) -> List[str]:
+    """
+    Return binding ids that are directly connected from NOW via a 'near' edge.
+
+        NOW --near--> bN
+
+    This queries the main WorldGraph (episode index), not the BodyMap. It is
+    purely descriptive sugar over the scene-graph edges written by
+    _write_spatial_scene_edges(...).
+    """
+    now_id = _anchor_id(world, "NOW")
+    if not now_id or now_id == "?" or now_id not in world._bindings:
+        return []
+
+    b = world._bindings.get(now_id)
+    if not b:
+        return []
+
+    edges_raw = (
+        getattr(b, "edges", []) or
+        getattr(b, "out", []) or
+        getattr(b, "links", []) or
+        getattr(b, "outgoing", [])
+    )
+
+    out: list[str] = []
+    if isinstance(edges_raw, list):
+        for e in edges_raw:
+            if not isinstance(e, dict):
+                continue
+            rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
+            if rel != "near":
+                continue
+            dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+            if isinstance(dst, str) and dst in world._bindings:
+                out.append(dst)
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for bid in out:
+        if bid not in seen:
+            seen.add(bid)
+            uniq.append(bid)
+    return uniq
+
+
+def resting_scenes_in_shelter(world) -> Dict[str, Any]:
+    """
+    Query helper for the current episode around NOW:
+
+    Returns a dict with:
+      {
+        "rest_near_now": bool,           # pred:resting reachable from NOW within a small radius
+        "shelter_near_now": bool,        # NOW --near--> binding(s) with pred:proximity:shelter:near
+        "shelter_bids": list[str],       # those shelter-near binding ids
+        "hazard_cliff_far_near_now": bool,  # pred:hazard:cliff:far reachable from NOW
+      }
+
+    This is intentionally simple and descriptive. It does NOT alter the world
+    or planner; it just inspects the structure produced by the env loop and
+    scene-graph writer.
+
+    Typical use:
+      - Ask "are we in a 'resting in shelter, cliff far' configuration now?"
+      - That is approximately when:
+          rest_near_now
+          and shelter_near_now
+          and hazard_cliff_far_near_now
+    """
+    now_id = _anchor_id(world, "NOW")
+    if not now_id or now_id == "?" or now_id not in world._bindings:
+        return {
+            "rest_near_now": False,
+            "shelter_near_now": False,
+            "shelter_bids": [],
+            "hazard_cliff_far_near_now": False,
+        }
+
+    # 1) Is there any 'resting' predicate reachable from NOW within a few hops?
+    rest_near_now = has_pred_near_now(world, "resting", hops=3)
+
+    # 2) Which neighbors via NOW --near--> are shelter-near bindings?
+    near_ids = neighbors_near_self(world)
+    shelter_bids: list[str] = []
+    for bid in near_ids:
+        b = world._bindings.get(bid)
+        if not b:
+            continue
+        tags = getattr(b, "tags", []) or []
+        if any(isinstance(t, str) and t == "pred:proximity:shelter:near" for t in tags):
+            shelter_bids.append(bid)
+
+    shelter_near_now = bool(shelter_bids)
+
+    # 3) Is there any 'hazard:cliff:far' near NOW?
+    hazard_cliff_far_near_now = has_pred_near_now(world, "hazard:cliff:far", hops=3)
+
+    return {
+        "rest_near_now": rest_near_now,
+        "shelter_near_now": shelter_near_now,
+        "shelter_bids": shelter_bids,
+        "hazard_cliff_far_near_now": hazard_cliff_far_near_now,
+    }
+
+
 #pylint: disable=superfluous-parens
 def _gate_stand_up_trigger_body_first(world, _drives: Drives, ctx) -> bool:
     """
@@ -1308,6 +1451,73 @@ def _gate_seek_nipple_explain(world, drives: Drives, ctx) -> str:
 #pylint: enable=superfluous-parens
 
 
+def _gate_rest_trigger_body_space(world, drives: Drives, ctx) -> bool:
+    """
+    Rest gate that adds a gentle body/space constraint on top of fatigue.
+
+    Conditions:
+      • fatigue > FATIGUE_HIGH OR drive:fatigue_high cue present, AND
+      • if BodyMap is fresh and we know about cliff/shelter:
+            do NOT rest when cliff is 'near' and shelter is not 'near'.
+      • otherwise, rely solely on fatigue / fatigue cue.
+
+    This keeps the original rest behaviour when BodyMap is stale or absent, and
+    only vetoes rest in clearly unsafe positions (near a cliff without shelter).
+    """
+    fatigue = float(getattr(drives, "fatigue", 0.0))
+    fatigue_high = fatigue > float(FATIGUE_HIGH)
+    fatigue_cue = any_cue_tokens_present(world, ["drive:fatigue_high"])
+
+    # If we are not tired enough, do not rest regardless of geometry.
+    if not (fatigue_high or fatigue_cue):
+        return False
+
+    # Gentle body/space veto: only when BodyMap is fresh and we have hazard info.
+    try:
+        if ctx is not None and not bodymap_is_stale(ctx):
+            cliff = body_cliff_distance(ctx)
+            shelter = body_shelter_distance(ctx)
+            # If there is a nearby cliff and shelter is not near, avoid resting here.
+            if cliff == "near" and shelter != "near":
+                return False
+    except Exception:
+        # On any BodyMap error, fall back to fatigue-based gate only.
+        return True
+
+    return True
+
+
+def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
+    """
+    Human-readable explanation matching _gate_rest_trigger_body_space.
+    """
+    fatigue = float(getattr(drives, "fatigue", 0.0))
+    fatigue_cue = any_cue_tokens_present(world, ["drive:fatigue_high"])
+
+    shelter = None
+    cliff = None
+    try:
+        if ctx is not None and not bodymap_is_stale(ctx):
+            shelter = body_shelter_distance(ctx)
+            cliff = body_cliff_distance(ctx)
+    except Exception:
+        shelter = cliff = None
+
+    if cliff is None and shelter is None:
+        zone = "unknown"
+    elif cliff == "near" and shelter != "near":
+        zone = "unsafe_cliff_near"
+    else:
+        zone = "safe"
+
+    return (
+        f"dev_gate: True, trigger: fatigue={fatigue:.2f}>{float(FATIGUE_HIGH):.2f} "
+        f"or cue:drive:fatigue_high present={fatigue_cue} "
+        f"and rest_zone={zone} (shelter={shelter}, cliff={cliff})"
+    )
+
+
+
 @dataclass
 class PolicyGate:
     """Declarative description of a controller gate used by PolicyRuntime (dev_gating,
@@ -1438,15 +1648,8 @@ CATALOG_GATES: List[PolicyGate] = [
     PolicyGate(
         name="policy:rest",
         dev_gate=lambda ctx: True,  # available at all stages; selection is by trigger/deficit
-        trigger=lambda W, D, ctx: (
-            # fire when raw fatigue is high, or when the rising-edge cue exists
-            float(getattr(D, "fatigue", 0.0)) > float(FATIGUE_HIGH)
-            or any_cue_tokens_present(W, ["drive:fatigue_high"])
-        ),
-        explain=lambda W, D, ctx: (
-            f"dev_gate: True, trigger: fatigue={getattr(D,'fatigue',0.0):.2f}>{float(FATIGUE_HIGH):.2f} "
-            f"or cue:drive:fatigue_high present={any_cue_tokens_present(W, ['drive:fatigue_high'])}"
-        ),
+        trigger=_gate_rest_trigger_body_space,
+        explain=_gate_rest_explain_body_space,
     ),
 
     PolicyGate(
@@ -3397,20 +3600,46 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
         lines.append("  (none)")
     lines.append("")
 
-    # BODYMAP (body + near-world)
-    if ctx is not None and getattr(ctx, "body_world", None) is not None and getattr(ctx, "body_ids", None):
-        bw = ctx.body_world
-        body_ids = ctx.body_ids
-        lines.append("BODYMAP (body + near-world):")
-        lines.append("  (**different map then the larger WorldGraph**)")
-        lines.append("  (same binding id's e.g., 'b1', 'b2', etc but different map)")
-        for slot in ("root", "posture", "mom", "nipple", "shelter", "cliff"):
-            bid = body_ids.get(slot)
-            if isinstance(bid, str) and bid in bw._bindings:
-                b = bw._bindings.get(bid)
-                tags = ", ".join(sorted(getattr(b, "tags", []))) if b else ""
-                lines.append(f"  {slot:<7}: {bid}: [{tags}]")
-        lines.append("")
+    # BODY (BodyMap + near-world) one-line summary
+    if ctx is not None:
+        try:
+            bp = body_posture(ctx)
+            md = body_mom_distance(ctx)
+            ns = body_nipple_state(ctx)
+            # shelter/cliff may not be present on older runs; guard separately
+            try:
+                sd = body_shelter_distance(ctx)
+            except Exception:
+                sd = None
+            try:
+                cd = body_cliff_distance(ctx)
+            except Exception:
+                cd = None
+
+            zone = None
+            if cd == "near" and sd != "near":
+                zone = "unsafe_cliff_near"
+            elif sd == "near" and cd != "near":
+                zone = "safe"
+
+            line = (
+                "BODY: "
+                f"posture={bp or '(n/a)'} "
+                f"mom={md or '(n/a)'} "
+                f"nipple={ns or '(n/a)'} "
+                f"shelter={sd or '(n/a)'} "
+                f"cliff={cd or '(n/a)'}"
+            )
+            if zone is not None:
+                line += f" zone={zone}"
+            lines.append(line)
+        except Exception:
+            # Snapshot must stay robust even if BodyMap is missing.
+            lines.append("BODY: (unavailable)")
+    else:
+        lines.append("BODY: (ctx unavailable)")
+    lines.append("")
+
 
     # POLICIES (skills readout)
     lines.append("POLICIES:\n (already run at least once, with their SkillStat statistics)  [src=skill_readout()]")
@@ -3747,6 +3976,144 @@ def update_body_world_from_obs(ctx, env_obs) -> None:
         pass
 
 
+def _write_spatial_scene_edges(world, ctx, env_obs, token_to_bid: Dict[str, str]) -> None: #pylint: disable=unused-argument
+    """
+    Write minimal scene-graph style edges for this observation.
+
+    Today we keep this extremely conservative:
+
+      • Only when 'resting' is present in env_obs.predicates (kid is in a relatively
+        stable configuration).
+
+      • Treat the NOW anchor as "SELF".
+
+      • For any bindings created this step with tokens:
+            proximity:mom:close
+            proximity:shelter:near
+            hazard:cliff:near
+        we add a single edge:
+
+            NOW --near--> <that binding>
+
+        if such an edge does not already exist.
+
+    The destination binding's predicate tags carry the semantics (mom vs shelter vs cliff);
+    the edge label 'near' is intentionally generic to avoid label explosion.
+    """
+    preds = set(getattr(env_obs, "predicates", []) or [])
+    # Only annotate a tiny scene when resting is present in this observation
+    if "resting" not in preds:
+        return
+
+    try:
+        now_id = _anchor_id(world, "NOW")
+        if not now_id or now_id == "?":
+            return
+        src = world._bindings.get(now_id)
+        if not src:
+            return
+
+        # Collect existing 'near' edges out of NOW so we don't duplicate them.
+        existing: set[str] = set()
+        edges_raw = (
+            getattr(src, "edges", []) or
+            getattr(src, "out", []) or
+            getattr(src, "links", []) or
+            getattr(src, "outgoing", [])
+        )
+        if isinstance(edges_raw, list):
+            for e in edges_raw:
+                if not isinstance(e, dict):
+                    continue
+                if e.get("label") == "near":
+                    dst = (
+                        e.get("to")
+                        or e.get("dst")
+                        or e.get("dst_id")
+                        or e.get("id")
+                    )
+                    if isinstance(dst, str):
+                        existing.add(dst)
+
+        # Candidate tokens we know how to represent.
+        candidates = [
+            "proximity:mom:close",
+            "proximity:shelter:near",
+            "hazard:cliff:near",
+        ]
+
+        for tok in candidates:
+            bid = token_to_bid.get(tok)
+            if not isinstance(bid, str):
+                continue
+            if bid in existing:
+                continue  # already have NOW --near--> bid
+
+            try:
+                add_spatial_relation(
+                    world,
+                    src_bid=now_id,
+                    rel="near",
+                    dst_bid=bid,
+                    meta={
+                        "created_by": "scene_graph",
+                        "source": "env_step",
+                        "kind": "near",
+                    },
+                )
+                existing.add(bid)
+            except Exception:
+                # Scene-graph sugar must never break env injection.
+                continue
+    except Exception:
+        # Fully defensive: if anything goes wrong, just skip spatial labels.
+        return
+
+
+def _inject_simple_valence_like_mom(world, ctx, env_obs, token_to_bid: Dict[str, str]) -> None:  # pylint: disable=unused-argument
+    """
+    Minimal valence stub: when the kid is latched and mom is close in the SAME EnvObservation,
+    tag the mom-proximity binding with pred:valence:like.
+
+    Condition:
+      • 'nipple:latched' ∈ env_obs.predicates
+      • 'proximity:mom:close' ∈ env_obs.predicates
+
+    Effect:
+      • Find the binding we just created for 'proximity:mom:close' (via token_to_bid)
+      • Add 'pred:valence:like' to its tags if not already present.
+
+    This encodes "like mom (when close and feeding)" directly on the mom-near binding,
+    ready for future planning/gating logic to read.
+    """
+    preds = set(getattr(env_obs, "predicates", []) or [])
+    if "nipple:latched" not in preds:
+        return
+    if "proximity:mom:close" not in preds:
+        return
+
+    mom_bid = token_to_bid.get("proximity:mom:close")
+    if not isinstance(mom_bid, str):
+        return
+
+    b = world._bindings.get(mom_bid)
+    if not b:
+        return
+
+    tags = getattr(b, "tags", None)
+
+    # Ensure tags is a mutable set
+    if tags is None:
+        b.tags = {"pred:valence:like"}
+        return
+    if isinstance(tags, list):
+        tags = set(tags)
+        b.tags = tags
+
+    if "pred:valence:like" not in tags:
+        tags.add("pred:valence:like")
+
+
 def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylint: disable=unused-argument
     """
     Map an EnvObservation into the WorldGraph as pred:* and cue:* bindings.
@@ -3763,9 +4130,12 @@ def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylin
         - Stamps meta={"created_by": "env_step", "source": "HybridEnvironment"} on all injected bindings.
         - Prints the same [env→world] lines as before.
         - Also updates ctx.body_world (BodyMap) to mirror posture/mom_distance/nipple_state.
+        - NEW: writes tiny scene-graph 'near' edges from NOW to mom/shelter/cliff bindings
+               when 'resting' is present (see _write_spatial_scene_edges).
     """
     created_preds: List[str] = []
     created_cues: List[str] = []
+    token_to_bid: Dict[str, str] = {}
 
     # Map env predicates into the CCA8 WorldGraph as pred:* tokens
     try:
@@ -3781,6 +4151,7 @@ def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylin
             )
             print(f"[env→world] pred:{token} → {bid} (attach={attach})")
             created_preds.append(bid)
+            token_to_bid[token] = bid
             # After the first predicate, hang subsequent ones off LATEST
             attach = "latest"
     except Exception as e:
@@ -3804,11 +4175,25 @@ def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylin
     except Exception as e:
         print(f"[env→world] cue injection error: {e}")
 
-    # NEW: update BodyMap (ctx.body_world) from this observation
+    # update BodyMap (ctx.body_world) from this observation
     try:
         update_body_world_from_obs(ctx, env_obs)
     except Exception:
         # BodyMap should never crash the runner; ignore errors here.
+        pass
+
+    # write tiny scene-graph 'near' edges for this observation
+    try:
+        _write_spatial_scene_edges(world, ctx, env_obs, token_to_bid)
+    except Exception:
+        # Scene-graph sugar must never crash env injection.
+        pass
+
+    # Minimal valence: 'like mom' when close + latched
+    try:
+        _inject_simple_valence_like_mom(world, ctx, env_obs, token_to_bid)
+    except Exception:
+        # Valence stub must never break env injection.
         pass
 
     return {"predicates": created_preds, "cues": created_cues}
@@ -4398,8 +4783,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
     """
     # Build initial world/drives fresh
     world = cca8_world_graph.WorldGraph()
-    drives = Drives()  #Drives(hunger=0.7, fatigue=0.2, warmth=0.6) at time of writing comment
+    #drives = Drives()  #Drives(hunger=0.7, fatigue=0.2, warmth=0.6) at time of writing comment
     #drives.fatigue = 0.85 #for devp't testing --> Drives(hunger=0.7, fatigue=0.85, warmth=0.6)
+    drives = Drives(hunger=0.5, fatigue=0.9, warmth=0.6)  #for rest gate to see hazard versus shelter
+
     ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
     ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump) # temporal soft clock (added)
     ctx.tvec_last_boundary = ctx.temporal.vector()  # seed “last boundary”
@@ -4458,6 +4845,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Simulation of the Environment (HybridEnvironment demo)
     35) Environment step (HybridEnvironment → WorldGraph demo) [env, hybrid]
     37) Run n environment steps (closed-loop timeline) [envloop, envrun]
+    38) Inspect BodyMap (summary from BodyMap helpers) [bodymap, bsnap]
+    39) Spatial scene demo (NOW-near + resting-in-shelter?) [spatial, near]
 
     # Perception & Memory (Cues & Engrams)
     12) Input [sensory] cue [sensory, cue]
@@ -4545,7 +4934,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "env": "35", "environment": "35", "hybrid": "35",
     "mini": "36", "msnap": "36",
     "envloop": "37", "envrun": "37", "envsteps": "37",
-
+    "bodymap": "38", "bsnap": "38",
+    "spatial": "39", "near": "39",
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -4600,6 +4990,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "35": "35",  # environment simulation
     "36": "36",  # mini-snapshot toggle
     "37": "37",  # envr't loop
+    "38": "38",  # inspect bodymap
+    "39": "39",  # spatial, near demo
 }
 
     # Attempt to load a prior session if requested
@@ -6993,6 +7385,96 @@ You can still use menu 35 for detailed, single-step inspection.
 
             # Show a one-line timekeeping summary after the run
             print_timekeeping_line(ctx)
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "38":
+            # Inspect BodyMap summary
+            print("Selection:  BodyMap Inspect\n")
+            print("Shows a one-line summary derived from body_* helpers plus zone classification.\n")
+
+            if ctx is None:
+                print("Ctx is not available.")
+                loop_helper(args.autosave, world, drives, ctx)
+                continue
+
+            try:
+                bp = body_posture(ctx)
+                md = body_mom_distance(ctx)
+                ns = body_nipple_state(ctx)
+                try:
+                    sd = body_shelter_distance(ctx)
+                except Exception:
+                    sd = None
+                try:
+                    cd = body_cliff_distance(ctx)
+                except Exception:
+                    cd = None
+
+                zone = None
+                if cd == "near" and sd != "near":
+                    zone = "unsafe_cliff_near"
+                elif sd == "near" and cd != "near":
+                    zone = "safe"
+
+                print("BodyMap one-line summary:")
+                line = (
+                    f"  posture={bp or '(n/a)'} "
+                    f"mom={md or '(n/a)'} "
+                    f"nipple={ns or '(n/a)'} "
+                    f"shelter={sd or '(n/a)'} "
+                    f"cliff={cd or '(n/a)'}"
+                )
+                if zone is not None:
+                    line += f"  zone={zone}"
+                print(line)
+            except Exception as e:
+                print(f"[bodymap] inspect error: {e}")
+
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "39":
+            # Spatial scene demo: what is NOW near + resting-in-shelter?
+            print("Selection:  Spatial Scene Demo\n")
+            print("Shows which bindings are NOW-near and whether we are in a 'resting in shelter, cliff far' scene.\n")
+
+            # Part 1: what is NOW near?
+            try:
+                near_ids = neighbors_near_self(world)
+                if not near_ids:
+                    print("NOW-near neighbors: (none)")
+                else:
+                    print("NOW-near neighbors:")
+                    for bid in near_ids:
+                        b = world._bindings.get(bid)
+                        tags = ", ".join(sorted(getattr(b, "tags", []) or [])) if b else ""
+                        print(f"  {bid}: [{tags}]")
+                print()
+            except Exception as e:
+                print(f"[spatial] neighbors_near_self error: {e}\n")
+
+            # Part 2: are we resting in shelter with cliff far?
+            try:
+                summary = resting_scenes_in_shelter(world)
+                print("Resting-in-shelter scene summary (around NOW):")
+                print(f"  rest_near_now:             {summary.get('rest_near_now')}")
+                print(f"  shelter_near_now:          {summary.get('shelter_near_now')}")
+                print(f"  hazard_cliff_far_near_now: {summary.get('hazard_cliff_far_near_now')}")
+                sbids = summary.get("shelter_bids") or []
+                if sbids:
+                    print("  shelter_bids (NOW --near--> ...):")
+                    for bid in sbids:
+                        b = world._bindings.get(bid)
+                        tags = ", ".join(sorted(getattr(b, 'tags', []) or [])) if b else ""
+                        print(f"    {bid}: [{tags}]")
+                else:
+                    print("  shelter_bids: (none)")
+            except Exception as e:
+                print(f"[spatial] resting_scenes_in_shelter error: {e}")
+
             loop_helper(args.autosave, world, drives, ctx)
 
 

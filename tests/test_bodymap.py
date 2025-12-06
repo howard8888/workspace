@@ -1,9 +1,10 @@
 import cca8_world_graph
-from cca8_run import Ctx, init_body_world, update_body_world_from_obs, _gate_seek_nipple_trigger_body_first
+from cca8_run import Ctx, init_body_world, update_body_world_from_obs, _gate_seek_nipple_trigger_body_first, _gate_rest_trigger_body_space
 from cca8_env import EnvObservation
 from cca8_controller import (
     Drives,
     HUNGER_HIGH,
+    FATIGUE_HIGH,
     body_posture,
     body_mom_distance,
     body_nipple_state,
@@ -131,3 +132,34 @@ def test_bodymap_has_shelter_and_cliff_slots():
         # Binding must have a tags attribute (may be empty or pre-populated)
         b = bw._bindings[bid]
         assert hasattr(b, "tags")
+        
+
+def test_rest_gate_uses_bodymap_shelter_and_cliff():
+    """
+    When fatigue is high, the rest gate should:
+      • allow rest in a 'safe' zone (shelter near, cliff far), and
+      • veto rest when a cliff is near and shelter is not near.
+    """
+    world = cca8_world_graph.WorldGraph()
+    world.ensure_anchor("NOW")
+
+    drives = Drives()
+    drives.fatigue = float(FATIGUE_HIGH) + 0.1  # definitely 'tired'
+
+    ctx = _make_ctx_with_bodymap()
+    bw = ctx.body_world
+    shelter_bid = ctx.body_ids["shelter"]
+    cliff_bid = ctx.body_ids["cliff"]
+
+    # Mark BodyMap as freshly updated so bodymap_is_stale(ctx) is False.
+    ctx.bodymap_last_update_step = ctx.controller_steps
+
+    # Case 1: safe zone — shelter near, cliff far → gate should allow rest.
+    bw._bindings[shelter_bid].tags = {"pred:proximity:shelter:near"}  # pylint: disable=protected-access
+    bw._bindings[cliff_bid].tags = {"pred:hazard:cliff:far"}          # pylint: disable=protected-access
+    assert _gate_rest_trigger_body_space(world, drives, ctx) is True
+
+    # Case 2: unsafe zone — cliff near, shelter not near → gate should veto rest.
+    bw._bindings[shelter_bid].tags = {"pred:proximity:shelter:far"}   # pylint: disable=protected-access
+    bw._bindings[cliff_bid].tags = {"pred:hazard:cliff:near"}         # pylint: disable=protected-access
+    assert _gate_rest_trigger_body_space(world, drives, ctx) is False

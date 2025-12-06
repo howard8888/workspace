@@ -1,0 +1,321 @@
+Nice milestone to pause and take stock 😄
+
+Here’s a clean recap of **what we’ve actually built in Phase V** and **what’s still on the menu**.
+
+---
+
+## ✅ Phase V – Completed Work
+
+### 1. BodyMap as an authority (Body + Near-Space)
+
+**Goal:** controller sees the *body + immediate world* through a single, authoritative map.
+
+Implemented:
+
+* **BodyMap slots (ctx.body_world + ctx.body_ids)**
+
+  * `root` (`anchor:BODY_ROOT`)
+  * `posture` – `pred:posture:fallen|standing`, `pred:resting`
+  * `mom` – `pred:proximity:mom:far|close`
+  * `nipple` – `pred:nipple:hidden|found|latched`, `pred:milk:drinking`
+  * **NEW**:
+
+    * `shelter` – `pred:proximity:shelter:far|near`
+    * `cliff` – `pred:hazard:cliff:far|near`
+
+* **Recency / staleness:**
+
+  * `Ctx.bodymap_last_update_step`
+  * `bodymap_is_stale(ctx, max_steps=...)` compares `controller_steps` to last update.
+
+* **Helpers for gating:**
+
+  * `body_posture(ctx)` → `'standing'|'fallen'|'resting'|None`
+  * `body_mom_distance(ctx)` → `'near'|'far'|None`
+  * `body_nipple_state(ctx)` → `'latched'|'found'|'hidden'|None`
+  * `body_shelter_distance(ctx)` → `'near'|'far'|None`
+  * `body_cliff_distance(ctx)` → `'near'|'far'|None`
+  * plus convenience booleans `body_is_standing`, `body_is_fallen`, etc.
+
+* **Env ↔ BodyMap bridge:**
+
+  * `HybridEnvironment` → `EnvObservation` →
+    `inject_obs_into_world(...)` →
+    `update_body_world_from_obs(ctx, env_obs)`
+    mirrors posture/mom/nipple/shelter/cliff from env predicates into BodyMap each step.
+
+Bottom line: policies now have a clean, body-centred view of “posture + mom + nipple + shelter + cliff”.
+
+---
+
+### 2. Safety / emergency: fall + StandUp + retries
+
+**Goal:** treat “fallen” as a safety issue, not just a planning detail.
+
+Implemented:
+
+* **Body-first fall detection:**
+
+  * `_fallen_near_now(world, ctx, max_hops=3)`:
+
+    * if BodyMap fresh and `body_posture == 'fallen'` → True,
+    * if BodyMap fresh and `body_posture == 'standing'` → False,
+    * else fall back to `posture:fallen` near NOW in WorldGraph.
+
+* **Action Center safety override:**
+
+  * `action_center_step(...)`:
+
+    * if `_fallen_near_now(...)` True → force `policy:stand_up` first, ignoring other triggers.
+
+* **Retry suppression:**
+
+  * `Ctx.last_standup_step`, `Ctx.last_standup_failed`
+  * StandUp safety block:
+
+    * if last StandUp failed recently and BodyMap still says “fallen” → skip new attempt until retry window passes.
+
+* **Tests:** fall detection and staleness logic covered by unit tests.
+
+---
+
+### 3. SeekNipple gate uses BodyMap (posture + mom + nipple)
+
+**Goal:** don’t try to seek nipple if posture/mom/nipple make it pointless.
+
+Implemented:
+
+* Gate `_gate_seek_nipple_trigger_body_first(...)` now requires:
+
+  * `hunger > HUNGER_HIGH`
+  * `posture == standing` (BodyMap-first, fallback to predicates)
+  * not fallen
+  * **if mom distance known (BodyMap or graph) → mom must be near/close**
+  * nipple not latched
+  * not already `seeking_mom` near NOW
+
+So SeekNipple now behaves like: *upright + hungry + mom near + nipple free*.
+
+---
+
+### 4. Shelter & cliff integrated in BodyMap + FSM + Rest
+
+**Goal:** body knows if it’s in a **safe sheltered spot** vs near a **dangerous cliff**.
+
+Implemented:
+
+* **EnvState fields:**
+
+  * `shelter_distance` (`far|near|touching`)
+  * `cliff_distance` (`far|near`)
+
+* **FSM wiring (`FsmBackend.step`):**
+
+  * `birth`: shelter=far, cliff=far
+  * `struggle` / `first_stand`: shelter=far, **cliff=near**
+  * `first_latch` / `rest`: **shelter=near**, cliff=far
+
+* **PerceptionAdapter → predicates:**
+
+  * `proximity:shelter:near|far`
+  * `hazard:cliff:near|far`
+
+* **BodyMap slots updated from these predicates** (as above).
+
+* **Rest safety:**
+
+  * In `cca8_controller.Rest.execute(...)`, if BodyMap is fresh and:
+
+    * `cliff == 'near'` and `shelter != 'near'` → Rest returns *fail* (no fatigue change, no `resting` predicate).
+  * Only rests successfully (ok, reward>0) when in **safe** geometry.
+
+Result: the kid can *try* to rest near a cliff, but the architecture refuses to actually let it rest until it’s in shelter and away from the drop.
+
+---
+
+### 5. BodyMap UX / introspection
+
+**Goal:** make BodyMap state easy to see.
+
+Implemented:
+
+* **Snapshot one-liner:**
+
+  ```text
+  BODY: posture=resting mom=near nipple=latched shelter=near cliff=far zone=safe
+  ```
+
+* **Menu 38: “BodyMap Inspect”**
+
+  * Prints the same one-line summary via `body_*` helpers (plus zone classification `safe` vs `unsafe_cliff_near`).
+
+This is great for debugging gating behaviour without scrolling miles of bindings.
+
+---
+
+### 6. Spatial labels on WorldGraph (`near`)
+
+**Goal:** freeze tiny “scene graph” facts into the episode index at important moments.
+
+Implemented:
+
+* **Spatial label vocabulary for main WorldGraph**:
+
+  * `near` (for now),
+  * plus stubs for `inside` and `supports` (helpers exist but aren’t used yet).
+
+* **Scene-graph writer (`_write_spatial_scene_edges`)** in `cca8_run.py`:
+
+  * Triggered when EnvObservation includes `resting`.
+  * Treats NOW (b1) as SELF.
+  * For bindings created *in that step* with:
+
+    * `proximity:mom:close`
+    * `proximity:shelter:near`
+    * `hazard:cliff:near` (future use)
+  * Writes:
+
+    ```text
+    NOW --near--> <that binding>
+    ```
+
+  if such an edge does not already exist.
+
+* In your snapshots you now see:
+
+  ```text
+  b1 --near--> b103, b104, ...
+  ...
+  b103: [pred:proximity:mom:close]
+  b104: [pred:proximity:shelter:near]
+  ```
+
+So WorldGraph now carries an episodic spatial overlay: “SELF near mom + near shelter when resting (in safe zone)”.
+
+---
+
+### 7. Valence stubs
+
+**Goal:** make valence a first-class predicate, not just random `meta`.
+
+Implemented:
+
+* **Valence tokens in lexicon (from neonate onward):**
+
+  ```python
+  "valence:like",
+  "valence:hate",
+  ```
+
+* **Canonical tokens in controller:**
+
+  ```python
+  VALENCE_LIKE = "valence:like"
+  VALENCE_HATE = "valence:hate"
+  ```
+
+* **Stub helper:**
+
+  ```python
+  add_valence_binding(world, ctx, polarity, *, target=None, strength=1.0)
+  ```
+
+  * Writes `pred:valence:like` or `pred:valence:hate`.
+  * Stores `valence_target` and `valence_strength` in meta.
+  * Not used yet; ready for future planning / gating / analysis.
+
+So valence has a real *slot* in the graph now, not just a meta dumping ground.
+
+---
+
+## 🧭 Phase V – Remaining / Optional Work
+
+At this point, the **core Phase V goals** are met. What’s left is polish + future hooks:
+
+### A. Use `inside` / `supports` labels (optional)
+
+We have stubs:
+
+* `add_spatial_inside(world, src_bid, dst_bid, meta=None)`
+* `add_spatial_supports(world, src_bid, dst_bid, meta=None)`
+
+Possible next moves:
+
+* When resting in shelter:
+
+  * add `SELF --inside--> SHELTER` (using `inside`) as a second scene-graph edge.
+* When posture is standing on a particular rock/surface:
+
+  * later add `ROCK --supports--> SELF`.
+
+For now, these are stub helpers — we haven’t called them anywhere.
+
+---
+
+### B. Actually *use* valence
+
+Right now valence is only representable; nothing reads it.
+
+Future directions:
+
+* **Dev-only menu** to mark:
+
+  * “like mom” → `pred:valence:like` near mom node,
+  * “hate cliff” → `pred:valence:hate` near cliff.
+* Add a tiny **valence-aware scoring**:
+
+  * e.g., bias exploration or rest toward nodes with `valence:like`, away from `valence:hate`.
+* Use valence predicates when weighting **edges or plans**:
+
+  * e.g., reduce cost / increase reward of paths that go through “liked” regions.
+
+These are Phase V-friendly but could also be postponed to a “Phase VI – Value & Preference” pass.
+
+---
+
+### C. Slight planner / query sugar for spatial edges
+
+Now that you have `near` edges:
+
+* You could add helper functions like:
+
+  * `neighbors_near_self(world)` – return bindings reachable by `NOW --near--> *`.
+  * `resting_scenes_in_shelter(world)` – query episodes where:
+
+    * `resting` and
+    * `NOW --near--> SHELTER` and `hazard:cliff:far`.
+
+No need to change the planner, just convenience queries.
+
+---
+
+Regarding feature #D (below) of Phase V, I would prefer to leave this for the future since it really belongs in a machine-learning/RL phase -- does that make sense?
+
+"### D. Optional: mild “don’t spam failed policies” heuristic
+
+Right now we see repeated **failed** `policy:rest` calls at the cliff until the environment moves to safe shelter. That’s logically ok but slightly redundant.
+
+A small future tweak could be:
+
+* Use SKILLS / `SkillStat.q` or a simple “consecutive failures” counter to:
+
+  * temporarily down-weight Rest in unsafe contexts,
+  * or add a short cool-down after repeated failures.
+
+Not essential for Phase V, but a natural follow-on."
+
+
+
+---
+
+## Summary
+
+Phase V has delivered:
+
+* A **body + near-world map** (BodyMap) that the controller actually uses.
+* **Safety-aware posture** and **hazard-aware rest**.
+* Tiny but real **spatial structure** in the episode graph (`near` edges).
+* Proper **valence predicates** ready for future use.
+* Improved introspection (BODY line + BodyMap inspect + rest zone classification).
+
+What’s left is mostly **optional enrichment** (inside/supports, valence usage, spatial queries) rather than missing fundamentals — which is a very good place to be.

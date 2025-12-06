@@ -196,6 +196,8 @@ class EnvState:
     # Discrete state
     kid_posture: str = "fallen"          # "fallen", "standing", "latched", "resting"
     mom_distance: str = "far"            # "far", "near", "touching"
+    shelter_distance: str = "far"        # "far", "near", "touching" (relative to shelter)
+    cliff_distance: str = "far"          # "far", "near"            (dangerous drop proximity)
     nipple_state: str = "hidden"         # "hidden", "visible", "reachable", "latched"
     scenario_stage: str = "birth"        # "birth", "struggle", "first_stand", "first_latch", "rest"
 
@@ -209,12 +211,15 @@ class EnvState:
     # Bookkeeping
     step_index: int = 0                  # environment steps in this episode
 
+
     def copy(self) -> "EnvState":
         """Return a shallow copy (explicit, so call sites stay readable).
         """
         return EnvState(
             kid_posture=self.kid_posture,
             mom_distance=self.mom_distance,
+            shelter_distance=self.shelter_distance,
+            cliff_distance=self.cliff_distance,
             nipple_state=self.nipple_state,
             scenario_stage=self.scenario_stage,
             kid_position=self.kid_position,
@@ -224,6 +229,7 @@ class EnvState:
             time_since_birth=self.time_since_birth,
             step_index=self.step_index,
         )
+
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +344,10 @@ class FsmBackend:
             env_state.kid_temperature = 0.6
             env_state.time_since_birth = 0.0
             env_state.step_index = 0
+
+            env_state.shelter_distance = "far"
+            env_state.cliff_distance   = "far"
+
         return env_state
 
 
@@ -392,6 +402,9 @@ class FsmBackend:
             state.kid_posture = "fallen"
             state.mom_distance = "far"
             state.nipple_state = "hidden"
+            # Environment geometry: no shelter or cliff immediately nearby.
+            state.shelter_distance = "far"
+            state.cliff_distance = "far"
 
             if steps >= self._BIRTH_TO_STRUGGLE:
                 state.scenario_stage = "struggle"
@@ -404,6 +417,11 @@ class FsmBackend:
         elif stage == "struggle":
             # The kid is on the ground, flailing a bit; mom gradually comes closer.
             state.kid_posture = "fallen"
+
+            # Geometric intuition: the kid is on a more exposed patch, with a drop
+            # somewhere nearby. Shelter is still far.
+            state.shelter_distance = "far"
+            state.cliff_distance = "near"
 
             # After a few steps, bring mom from far -> near.
             if steps >= self._STRUGGLE_MOM_NEAR and state.mom_distance == "far":
@@ -426,6 +444,10 @@ class FsmBackend:
                 state.mom_distance = "near"
                 state.mom_position = (0.5, state.mom_position[1])
 
+            # Still somewhat exposed: cliff remains near; shelter is not yet reached.
+            state.shelter_distance = "far"
+            state.cliff_distance = "near"
+
             # Step 1: nipple becomes reachable (found).
             if state.nipple_state in ("hidden", "visible"):
                 if _has_action("policy:seek_nipple") or steps >= self._AUTO_NIPPLE_REACHABLE:
@@ -447,6 +469,10 @@ class FsmBackend:
             state.nipple_state = "latched"
             state.mom_distance = "near"
 
+            # Interpretation: the kid has shifted into a safer, more sheltered niche.
+            state.shelter_distance = "near"
+            state.cliff_distance = "far"
+
             # After a short while, transition to a resting state.
             if steps >= self._AUTO_REST:
                 state.scenario_stage = "rest"
@@ -465,6 +491,10 @@ class FsmBackend:
             # We keep nipple_state as "latched" to indicate ongoing access to milk.
             if state.nipple_state == "hidden":
                 state.nipple_state = "latched"
+
+            # Resting near shelter; cliff is far.
+            state.shelter_distance = "near"
+            state.cliff_distance = "far"
 
         # ------------------------------------------------------------------
         # Simple physiology drifts (fatigue, temperature)
@@ -562,6 +592,20 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
             preds.append("proximity:mom:close")
         elif env_state.mom_distance == "far":
             preds.append("proximity:mom:far")
+
+        # --- shelter proximity predicates ---
+        # Coarse shelter distance: near/touching vs far.
+        if env_state.shelter_distance in ("near", "touching"):
+            preds.append("proximity:shelter:near")
+        elif env_state.shelter_distance == "far":
+            preds.append("proximity:shelter:far")
+
+        # --- cliff hazard predicates ---
+        # Dangerously near drop vs comfortably far from an edge.
+        if env_state.cliff_distance == "near":
+            preds.append("hazard:cliff:near")
+        elif env_state.cliff_distance == "far":
+            preds.append("hazard:cliff:far")
 
         # --- feeding predicates ---
         # README / lexicon use:

@@ -4792,6 +4792,495 @@ A: Today it affects policy gating and diagnostics, not planning: BFS/Dijkstra st
 
 
 
+## BodyMap slots for shelter and cliff (safety-aware near-space)
+
+In addition to posture, mom-distance, and nipple state, BodyMap at this time of writing tracks two
+extra near-world slots that matter for survival:
+
+- **shelter** – distance to a safe resting niche
+  (`pred:proximity:shelter:far` / `pred:proximity:shelter:near`).
+
+- **cliff** – proximity of a dangerous drop
+  (`pred:hazard:cliff:far` / `pred:hazard:cliff:near`).
+
+**The BodyMap graph is extended accordingly:**
+
+BODY_ROOT --body_state-->     POSTURE
+BODY_ROOT --body_relation-->  MOM
+BODY_ROOT --body_relation-->  SHELTER
+BODY_ROOT --body_danger-->    CLIFF
+MOM       --body_part-->      NIPPLE
+
+
+These slots are kept deliberately simple at the newborn stage:
+
+shelter_distance is “far” early in the story and becomes “near”
+when the kid has moved into a sheltered resting position near mom.
+
+cliff_distance is “near” during early struggle/first-stand (exposed
+terrain) and “far” once the kid is in a safer sheltered niche.
+
+The Environment module (EnvState + FsmBackend + PerceptionAdapter) drives
+these slots:
+
+EnvState.shelter_distance / cliff_distance are updated as part of
+the newborn storyboard (birth → struggle → first_stand → first_latch → rest).
+
+PerceptionAdapter.observe(...) emits proximity:shelter:* and
+hazard:cliff:* predicates.
+
+update_body_world_from_obs(ctx, env_obs) mirrors those predicates into the
+BodyMap shelter and cliff nodes (just like posture/mom/nipple).
+
+Controller helpers make these easy to read:
+
+body_shelter_distance(ctx) -> "near" | "far" | None
+
+body_cliff_distance(ctx) -> "near" | "far" | None
+
+
+**These helpers are used in gates and policies when deciding whether it is safe**
+**to rest or which actions are appropriate in the current geometry.**
+
+Hazard-aware Rest: “don’t lie down at the cliff edge”
+
+Resting is now BodyMap-aware in a simple but important way:
+
+When fatigue is high, policy:rest may be considered by the Action Center.
+
+Before it actually changes anything, Rest.execute(...) consults BodyMap:
+
+cliff   = body_cliff_distance(ctx)
+shelter = body_shelter_distance(ctx)
+if cliff == "near" and shelter != "near":
+    return self._fail("unsafe to rest (cliff near, shelter not near)")
+
+In that case, Rest fails fast:
+
+no change to drives (fatigue is not reduced),
+
+no pred:resting binding is written.
+
+Only when BodyMap says the geometry is safe:
+
+shelter_distance == "near" and
+
+cliff_distance == "far"
+
+does Rest.execute(...) succeed, reduce fatigue, and assert a resting state.
+
+This matches the ethological intuition:
+
+The kid may attempt to rest near a drop, but the architecture refuses
+to actually lie down until it is in a sheltered, safer position.
+
+Spatial overlay on the WorldGraph: NOW-near edges
+
+BodyMap is the live, body-centred map. The main WorldGraph now carries a
+tiny scene-graph overlay derived from BodyMap and the environment:
+
+At resting times, the runner inspects the current EnvObservation:
+
+if it contains resting,
+
+plus proximity:mom:close and/or proximity:shelter:near,
+
+it writes small spatial edges out of the NOW anchor:
+
+NOW --near--> b_mom_close
+NOW --near--> b_shelter_near
+
+The destination bindings already carry their own tags:
+
+pred:proximity:mom:close
+
+pred:proximity:shelter:near
+
+and any other metadata (e.g., temporal context, provenance).
+
+**The result is a very small spatial layer in the main episode graph:**
+
+The edge label vocabulary is kept minimal: near only (with inside and
+supports stubbed in code for future use).
+
+Nodes still carry all semantics via their tags; the near edges just say
+“SELF (NOW) is currently near this mom-near / shelter-near node.”
+
+**In snapshot output, you will see entries like:**
+
+b1 --near--> b183
+b183: [pred:proximity:mom:close]
+
+b1 --near--> b184
+b184: [pred:proximity:shelter:near]
+
+
+interpreted as:
+
+“At this resting moment, NOW (SELF) is near mom and near shelter.”
+
+Spatial queries and menu demos
+
+To make this spatial structure easy to inspect, the runner provides a couple
+of small query helpers and a menu demo.
+
+Helpers (in cca8_run.py):
+
+neighbors_near_self(world) -> list[str]
+
+Returns all binding ids reachable via NOW --near--> *. Useful when you
+want to know “what is SELF currently near?” without scrolling the whole
+edge list.
+
+resting_scenes_in_shelter(world) -> dict[str, Any]
+
+Returns a summary dict like:
+
+{
+    "rest_near_now": True/False,              # is any 'resting' near NOW?
+    "shelter_near_now": True/False,           # is NOW near shelter-near bindings?
+    "shelter_bids": [...],                    # the shelter-near binding ids
+    "hazard_cliff_far_near_now": True/False,  # is any 'hazard:cliff:far' near NOW?
+}
+
+
+This is a convenience wrapper for the “resting in shelter, cliff far”
+situation.
+
+Menu 39 – Spatial scene demo
+
+The runner adds a small TUI demo:
+
+“Spatial scene demo (NOW-near + resting-in-shelter?)” (menu 39).
+
+It prints:
+
+all NOW-near neighbors, showing their tags:
+
+NOW-near neighbors:
+  b183: [pred:proximity:mom:close]
+  b184: [pred:proximity:shelter:near]
+  ...
+
+a one-line summary of the resting-in-shelter pattern:
+
+Resting-in-shelter scene summary (around NOW):
+  rest_near_now:             True
+  shelter_near_now:          True
+  hazard_cliff_far_near_now: True
+  shelter_bids (NOW --near--> ...):
+    b184: [pred:proximity:shelter:near]
+    ...
+
+
+**Together with the BODYMAP summary line and the BodyMap Inspect menu, this
+gives a compact, readable picture of:**
+
+current posture,
+
+near-space geometry (mom / shelter / cliff),
+
+and where, in the episode graph, REST is happening (or being refused) as a
+function of that geometry.
+
+
+
+
+
+## Valence in the CCA8
+
+
+### What is valence? Why is it important in advantageous behavior?
+
+
+In CCA8, **valence** is a simple notion:
+
+> how good or bad a configuration feels to the agent, in a way that can guide
+> future approach/avoid decisions.
+
+It is not just a one-off reward at a single time step, but a small, symbolic
+marker that says:
+
+- “being in *this kind of situation* tends to be good for me”, or
+- “being in *this kind of situation* tends to be bad for me”.
+
+In biological brains, valence is closely tied to:
+
+- **Body state** (hunger relief, warmth, pain).
+- **Near-space geometry** (safe shelter vs exposed cliff).
+- **Social relations** (comfort near mom vs separation).
+
+CCA8 deliberately mirrors this by letting valence sit **on top of the same
+spatial maps** that drive behaviour:
+
+- BodyMap tells the agent how its body is configured and what is nearby
+  (posture, mom distance, shelter, cliff).
+- The main WorldGraph records episodes with posture / proximity / hazard facts.
+- Spatial edges (like `NOW --near--> mom_near` and `NOW --near--> shelter_near`)
+  mark which nodes are currently near SELF.
+
+Valence connects directly to these:
+
+- We do **not** treat “like/hate” as a separate channel or a mysterious
+  scalar floating around; instead we attach valence to **specific bindings**
+  in the WorldGraph (and, later, potentially to BodyMap configurations).
+- That way, the system is able to learn regularities like:
+  - “When I am near mom and latched I tend to like this configuration.”
+  - “When I am resting in shelter with the cliff far away this is usually safe
+     and desirable.”
+
+This matters pragmatically because:
+
+- Planning and policy selection can be biased toward **liked regions of the
+  world graph** (states and trajectories that were tagged as good), and away
+  from strongly disliked regions.
+- Spatial queries and the scene-graph overlay can be extended to ask not only
+  “what am I near?” but also “what am I near that I historically like?”
+
+The current Phase V implementation stops at **representing** a tiny amount of
+valence; using it for learning and policy bias is left to a future, more
+explicit RL/learning phase.
+
+
+
+### How is valence implemented in the CCA8?
+
+
+Valence in CCA8 is implemented as a small, explicit predicate vocabulary
+plus a couple of helpers and a minimal newborn wiring.
+
+**1. Valence tokens in the lexicon**
+
+The tag lexicon (`TagLexicon.BASE`) defines two canonical valence predicates:
+
+- `valence:like`
+- `valence:hate`
+
+These live in the **predicate** family (`pred:valence:like`, `pred:valence:hate`)
+and are available starting at the **neonate** stage. That means any stage
+(neonate → juvenile → adult) can attach simple “like/hate” markers to its
+episodes without fighting the tag policy.
+ 
+**2. Node-level valence tags**
+
+Valence is represented as an extra tag on **specific bindings** in the
+WorldGraph. A typical example after the Phase V work is:
+
+
+b143: [pred:proximity:mom:close, pred:valence:like]
+This says:
+
+“Binding b143 represents a state where mom is close, and the agent tags
+this configuration as liked.”
+
+Crucially:
+
+Valence is attached to a relational configuration, not a mysterious
+global “mom is always good” or “cliff is always bad”.
+
+The same object (e.g., cliffs) could later be tagged positively in other
+contexts (e.g., a safe refuge from predators). The representation does not
+hard-code “hate cliff”.
+
+3. Minimal newborn wiring: ‘like mom’
+
+In the current newborn goat scenario, we make one small but concrete choice:
+
+When an EnvObservation simultaneously reports:
+
+nipple:latched, and
+
+proximity:mom:close
+
+The runner identifies the binding created for proximity:mom:close in that
+step, and adds:
+
+text
+Copy code
+pred:valence:like
+to its tags.
+
+This is implemented as a tiny helper in the runner:
+
+It uses the token_to_bid map from inject_obs_into_world(...) to find
+the mom-near binding for that observation.
+
+It adds pred:valence:like to that binding’s tag set.
+
+Over time, the WorldGraph accumulates a series of bindings like:
+
+text
+Copy code
+b103: [pred:proximity:mom:close, pred:valence:like]
+b113: [pred:proximity:mom:close, pred:valence:like]
+b123: [pred:proximity:mom:close, pred:valence:like]
+...
+These are precisely those moments when the kid was near mom and nursing.
+They are then connected to NOW via NOW --near--> * edges at resting times,
+so spatial queries like “what is NOW near?” will often list mom-close-liked
+bindings in safe resting configurations.
+
+4. Future extensions: valence nodes and strengths (stubs)
+
+The controller also provides a stub helper:
+
+add_valence_binding(world, ctx, polarity, *, target=None, strength=1.0)
+
+which, when used, will create a separate valence binding carrying:
+
+pred:valence:like or pred:valence:hate,
+
+plus meta fields:
+
+python
+Copy code
+{
+    "valence_polarity":  "like" or "hate",
+    "valence_target":    "mom" / "cliff" / "shelter" / "research:direction_A" / ...,
+    "valence_strength":  float,
+    ...
+}
+The current newborn implementation does not use this helper yet; it is
+provided as a structured way to represent more abstract or longer-lasting
+valence in future phases (e.g., research strategies, complex environments),
+without scattering ad-hoc meta fields through the code.
+
+5. Where valence will plug in later
+
+In the present Phase V work, valence is entirely representational:
+
+No gate or planner reads pred:valence:like or pred:valence:hate yet.
+
+No edge weights or policy scores are adjusted based on valence.
+
+This is intentional: Phase V focuses on getting the wiring and structure
+right (BodyMap, spatial overlay, safety logic, valence tags). In a future
+learning/RL phase, these valence predicates can be used to:
+
+bias planning toward “liked” trajectories in the WorldGraph,
+
+modulate policy selection (e.g., prefer actions that preserve mom-close-liked
+configurations),
+
+and serve as a structured target for RL-style value functions that are
+grounded in the same spatial/episodic maps the rest of CCA8 uses.
+
+**In summary:**
+
+Valence in CCA8 is a small, explicit symbolic layer sitting on top of the
+same spatial and episodic machinery as posture, shelter, and cliffs. Today
+it records “like mom when close and feeding”; tomorrow it can help the
+agent decide where to go and what to do.
+
+
+
+
+
+### Q&A – BodyMap Safety, Spatial Overlay, and Scene Graph
+
+**Q: Why put shelter and cliff into BodyMap instead of a separate PeripersonalMap?**  
+
+**A: BodyMap already mixes body and very-near world (posture, mom distance, nipple state).**
+
+ Adding `shelter` and `cliff` slots simply makes that explicit: BodyMap is a **body-centred near-space map**. If we created a separate PeripersonalMap, we would have to keep two sources of truth for “is shelter near me?” and “is cliff near me?”, which is error-prone. With the current design:
+
+- BodyMap owns posture + mom + nipple + shelter + cliff.
+- Policies ask **one authority** (`body_*` helpers) for this information.
+- The main WorldGraph stores **episodes over time**, not a second near-space map.
+
+This keeps the architecture simple: **WorldGraph = story over time; BodyMap = body + immediate near world.**
+
+---
+
+**Q: What exactly happens when Rest is blocked near a cliff?**  
+
+**A:*When fatigue is high, the controller may select `policy:rest` based on drives. However, `Rest.execute(...)` now checks BodyMap:**
+
+
+cliff   = body_cliff_distance(ctx)
+shelter = body_shelter_distance(ctx)
+if cliff == "near" and shelter != "near":
+    return self._fail("unsafe to rest (cliff near, shelter not near)")
+
+
+In this situation:
+
+Rest returns fail (status "fail", reward 0.0).
+
+Fatigue is not reduced.
+
+No pred:resting predicate is written.
+
+So the goat may “try” to rest, but the architecture refuses to actually lie down at the edge. Once BodyMap says shelter=near and cliff=far, Rest is allowed to succeed and assert a resting state.
+
+**Q: How do the NOW-near edges relate to BodyMap? Aren’t they redundant?**
+
+**A: BodyMap is a live register (one posture/mom/shelter/cliff configuration at a time).**
+
+The NOW --near--> * edges are a thin episodic overlay written into the main WorldGraph at important moments (currently at resting times):
+
+BodyMap says: “right now, mom is near, shelter is near, cliff is far.”
+
+The runner writes: NOW --near--> b_mom_close and NOW --near--> b_shelter_near into the WorldGraph.
+
+Those bindings (b_mom_close, b_shelter_near) already carry their own tags, including provenance and temporal fingerprint.
+
+This lets you later inspect or analyze where resting happened in the episode graph (e.g., “rest near mom and shelter”) without re-running the environment or looking at BodyMap snapshots.
+
+**Q: Do spatial near edges change planning behavior today?**
+
+**A: No. Today, spatial edges are purely descriptive:**
+
+They don’t affect BFS/Dijkstra correctness.
+
+They’re not used as weights or filters yet.
+
+They exist so humans (and future algorithms) can see and query simple scene-graph structure.
+
+In the future, the same near label could be mapped to costs or constraints (e.g., prefer paths through near shelter states, avoid risky near cliff states), but Phase V keeps planning semantics unchanged. The edges are a no-regrets addition: useful for inspection now, available for planning later.
+
+**Q: How do I see what NOW is near in a running simulation?**
+
+**A: Use the Spatial scene demo (menu 39):**
+
+It calls neighbors_near_self(world) and prints all NOW --near--> * neighbors with their tags, e.g.:
+
+NOW-near neighbors:
+  b183: [pred:proximity:mom:close, pred:valence:like]
+  b184: [pred:proximity:shelter:near]
+
+
+It also calls resting_scenes_in_shelter(world) and prints:
+
+Resting-in-shelter scene summary (around NOW):
+  rest_near_now:             True
+  shelter_near_now:          True
+  hazard_cliff_far_near_now: True
+  shelter_bids (NOW --near--> ...):
+    b184: [pred:proximity:shelter:near]
+
+
+This is the quickest way to answer “what is SELF currently near?” and “are we in a resting-in-shelter, cliff-far scene?” without manually scanning the whole snapshot.
+
+**Q: How does all this relate to planning and learning later on?**
+
+**A: At the time of writing, the implementation's spatial and safety features are designed as structural hooks:**
+
+BodyMap adds shelter/cliff slots so policies can make safety-aware choices (e.g., blocking Rest at the cliff).
+
+The scene-graph overlay (NOW --near--> *) records where key events happened.
+
+Spatial queries (neighbors_near_self, resting_scenes_in_shelter) make it easy to inspect and measure these structures.
+
+In future phases (RL/learning), this same structure can be used to:
+
+Weight or filter planner edges (e.g., prefer “liked” or “safe” near-space configurations).
+
+Build simple value functions over states with spatial + safety context.
+
+Study how often successful paths pass through “resting in shelter, cliff far” configurations versus riskier ones.
+
+
 
 
 
