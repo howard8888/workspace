@@ -187,12 +187,41 @@ class EnvState:
     """
     Canonical environment state ("God's-eye" view).
 
-    This is *not* the agent's belief. It is maintained entirely on the
-    environment side and is manipulated by environment backends only.
+    This is *not* the agent's belief. It lives entirely on the environment side
+    and is manipulated only by environment backends.
 
-    Fields are deliberately simple and domain-specific for the newborn-goat
-    scenario; we can extend later as we add richer physics or sensors.
+    The fields describe the current geometry and situation of the world in a
+    compact, domain-specific way:
+
+      - kid_posture, mom_distance, shelter_distance, cliff_distance,
+        nipple_state, scenario_stage describe discrete aspects of the scene.
+      - kid_position, mom_position are low-dimensional coordinates used for
+        approximate distances and simple spatial reasoning.
+      - kid_fatigue, kid_temperature, time_since_birth and step_index track
+        slow, continuous dynamics and episode progress.
+
+    In Phase VI-C we treat this structure as the "geometry" of the environment:
+    the spatial configuration of kid, mom, cliff and shelter, and simple
+    safety-related relationships such as "near"/"far" or "unsafe"/"safe".
+
+    When the goat chooses an action that moves its body (for example, a future
+    `walk_toward_shelter` policy), the environment backend updates the relevant
+    fields in EnvState:
+
+      - positions and derived distances (kid_position, mom_position,
+        mom_distance, shelter_distance, cliff_distance),
+      - optionally, symbolic region labels (e.g. a future `position` field such
+        as "cliff_edge", "open_field", "shelter_area"),
+      - optionally, coarse safety labels derived from those (e.g. a future
+        `zone` field such as "unsafe", "neutral", "safe").
+
+    Those changes are then turned into an EnvObservation, mirrored into the
+    BodyMap, and written into WorldGraph predicates. In that sense, the goat's
+    own actions directly change the environment geometry: by walking away from
+    the cliff and toward shelter, EnvState moves from an unsafe to a safer
+    configuration, and the rest of CCA8 sees and remembers that change.
     """
+
     # Discrete state
     kid_posture: str = "fallen"          # "fallen", "standing", "latched", "resting"
     mom_distance: str = "far"            # "far", "near", "touching"
@@ -211,10 +240,21 @@ class EnvState:
     # Bookkeeping
     step_index: int = 0                  # environment steps in this episode
 
+    # Phase VI-C: symbolic spatial overlay for geometry / safety
+    position: str = "cliff_edge"         # symbolic location name
+    zone: str = "unsafe"                 # safety zone classification
+
+    def update_zone_from_position(self) -> None:
+        """Update safety zone label from the current symbolic position."""
+        mapping = {
+            "cliff_edge": "unsafe",
+            "open_field": "neutral",
+            "shelter_area": "safe",
+        }
+        self.zone = mapping.get(self.position, "neutral")
 
     def copy(self) -> "EnvState":
-        """Return a shallow copy (explicit, so call sites stay readable).
-        """
+        """Return a shallow copy (explicit, so call sites stay readable)."""
         return EnvState(
             kid_posture=self.kid_posture,
             mom_distance=self.mom_distance,
@@ -228,9 +268,9 @@ class EnvState:
             kid_temperature=self.kid_temperature,
             time_since_birth=self.time_since_birth,
             step_index=self.step_index,
+            position=self.position,
+            zone=self.zone,
         )
-
-
 
 # ---------------------------------------------------------------------------
 # EnvObservation: what CCA8 sees each tick
@@ -307,6 +347,9 @@ class FsmBackend:
       "policy:seek_nipple" when present.
     - Physiology fields (kid_fatigue, kid_temperature) receive very small,
       purely cosmetic drifts so PerceptionAdapter has something to report.
+    - When the CCA8 is operating in the real world then the real world provides
+      the inputs, not a storyboard, to the CCA8. The storyboard is largely for
+      development.
     """
 
     name: str = "fsm"
@@ -319,6 +362,45 @@ class FsmBackend:
     _AUTO_NIPPLE_REACHABLE: int = 11
     _AUTO_LATCH: int = 13
     _AUTO_REST: int = 16
+
+
+    def _update_spatial_label(self, state: EnvState) -> None:
+        """
+        (s/w devp't phase VI-C) coarse spatial geometry helper.
+
+        Keep EnvState.position/zone aligned with a simple spatial story:
+
+          - Early phases ('birth', 'struggle', 'first_stand') treat `position`
+            as a symbolic overlay that movement policies may update
+            (e.g. policy:follow_mom can move
+               cliff_edge → open_field → shelter_area).
+
+          - Later phases ('first_latch', 'rest') always snap to 'shelter_area',
+            since the kid is assumed to be nursing/resting in a sheltered niche.
+
+          - If `position` is unknown, fall back to a stage-based default.
+        """
+        stage = state.scenario_stage
+
+        # Later storyboard phases live in the shelter regardless of prior movement.
+        if stage in ("first_latch", "rest"):
+            state.position = "shelter_area"
+
+        # For earlier phases, only fill in a default if nothing meaningful is set.
+        elif state.position not in ("cliff_edge", "open_field", "shelter_area"):
+            if stage == "birth":
+                # Neutral ground before any struggle near the cliff.
+                state.position = "open_field"
+            elif stage in ("struggle", "first_stand"):
+                # Default to exposed terrain until movement policies change it.
+                state.position = "cliff_edge"
+            else:
+                # Unknown future stages: choose a neutral default.
+                state.position = "open_field"
+
+        # Always recompute coarse safety label from the current symbolic position.
+        state.update_zone_from_position()
+
 
     def reset( #pylint: disable=unused-argument
         self, env_state: EnvState, config: EnvConfig) -> EnvState:
@@ -347,7 +429,7 @@ class FsmBackend:
 
             env_state.shelter_distance = "far"
             env_state.cliff_distance   = "far"
-
+            self._update_spatial_label(env_state) #initialize coarse geometry / zone.
         return env_state
 
 
@@ -497,6 +579,28 @@ class FsmBackend:
             state.cliff_distance = "far"
 
         # ------------------------------------------------------------------
+        # Phase VI-C: interpret 'policy:follow_mom' as a small move toward shelter.
+        #
+        # Geometry ladder:
+        #   cliff_edge  --follow_mom-->  open_field  --follow_mom-->  shelter_area
+        #
+        # This only runs in 'struggle' / 'first_stand' so we do not interfere with
+        # the birth setup or the later nursing/resting configuration.
+        # ------------------------------------------------------------------
+        if _has_action("policy:follow_mom") and state.scenario_stage in ("struggle", "first_stand"):
+            if state.position == "cliff_edge":
+                # Step 1: move off the exposed cliff edge onto more neutral terrain.
+                state.position = "open_field"
+                state.cliff_distance = "far"
+                # shelter_distance stays as-is (usually 'far' at this point).
+            elif state.position == "open_field":
+                # Step 2: move from neutral ground into a more sheltered niche.
+                state.position = "shelter_area"
+                state.shelter_distance = "near"
+                state.cliff_distance = "far"
+            # If already in 'shelter_area', we leave geometry unchanged.
+
+        # ------------------------------------------------------------------
         # Simple physiology drifts (fatigue, temperature)
         # ------------------------------------------------------------------
         # Fatigue:
@@ -516,6 +620,7 @@ class FsmBackend:
             # Warmth from mom and milk.
             state.kid_temperature = min(1.0, state.kid_temperature + 0.005)
 
+        self._update_spatial_label(state) #keep symbolic position / zone in sync with storyboard
         return state
 
 

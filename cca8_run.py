@@ -83,6 +83,8 @@ from cca8_controller import (
     body_posture,
     bodymap_is_stale,
     body_cliff_distance,
+    body_space_zone,
+    _fallen_near_now,
     __version__ as controller_version,
 )
 from cca8_controller import body_shelter_distance  # pylint: disable=unused-import
@@ -1457,8 +1459,8 @@ def _gate_rest_trigger_body_space(world, drives: Drives, ctx) -> bool:
 
     Conditions:
       • fatigue > FATIGUE_HIGH OR drive:fatigue_high cue present, AND
-      • if BodyMap is fresh and we know about cliff/shelter:
-            do NOT rest when cliff is 'near' and shelter is not 'near'.
+      • if BodyMap is available: classify a 'rest_zone' via body_space_zone(ctx)
+            and do NOT rest when rest_zone == 'unsafe_cliff_near'.
       • otherwise, rely solely on fatigue / fatigue cue.
 
     This keeps the original rest behaviour when BodyMap is stale or absent, and
@@ -1468,17 +1470,42 @@ def _gate_rest_trigger_body_space(world, drives: Drives, ctx) -> bool:
     fatigue_high = fatigue > float(FATIGUE_HIGH)
     fatigue_cue = any_cue_tokens_present(world, ["drive:fatigue_high"])
 
+    # --- DEBUG: show how the Rest gate sees BodyMap and drives ---
+    try:
+        cliff = None
+        shelter = None
+        zone_label = "unknown"
+        bodymap_stale = True
+
+        if ctx is not None:
+            bodymap_stale = bodymap_is_stale(ctx)
+            if not bodymap_stale:
+                cliff = body_cliff_distance(ctx)
+                shelter = body_shelter_distance(ctx)
+                if cliff == "near" and shelter != "near":
+                    zone_label = "unsafe_cliff_near"
+                elif shelter == "near" and cliff != "near":
+                    zone_label = "safe"
+
+        print(
+            "[gate:rest] "
+            f"fatigue={fatigue:.2f} high={fatigue_high} cue={fatigue_cue} "
+            f"bodymap_stale={bodymap_stale} "
+            f"cliff={cliff} shelter={shelter} zone={zone_label}"
+        )
+    except Exception:
+        # Debug only; never crash the gate.
+        pass
+
     # If we are not tired enough, do not rest regardless of geometry.
     if not (fatigue_high or fatigue_cue):
         return False
 
-    # Gentle body/space veto: only when BodyMap is fresh and we have hazard info.
+    # Gentle body/space veto: only when we can classify a zone from BodyMap.
     try:
-        if ctx is not None and not bodymap_is_stale(ctx):
-            cliff = body_cliff_distance(ctx)
-            shelter = body_shelter_distance(ctx)
-            # If there is a nearby cliff and shelter is not near, avoid resting here.
-            if cliff == "near" and shelter != "near":
+        if ctx is not None:
+            zone = body_space_zone(ctx)
+            if zone == "unsafe_cliff_near":
                 return False
     except Exception:
         # On any BodyMap error, fall back to fatigue-based gate only.
@@ -1496,19 +1523,15 @@ def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
 
     shelter = None
     cliff = None
+    zone = "unknown"
     try:
         if ctx is not None and not bodymap_is_stale(ctx):
             shelter = body_shelter_distance(ctx)
             cliff = body_cliff_distance(ctx)
+        zone = body_space_zone(ctx) if ctx is not None else "unknown"
     except Exception:
         shelter = cliff = None
-
-    if cliff is None and shelter is None:
         zone = "unknown"
-    elif cliff == "near" and shelter != "near":
-        zone = "unsafe_cliff_near"
-    else:
-        zone = "safe"
 
     return (
         f"dev_gate: True, trigger: fatigue={fatigue:.2f}>{float(FATIGUE_HIGH):.2f} "
@@ -1516,6 +1539,53 @@ def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
         f"and rest_zone={zone} (shelter={shelter}, cliff={cliff})"
     )
 
+
+def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool: #pylint: disable=unused-argument
+    """
+    FollowMom gate: permissive fallback when the kid is not fallen.
+
+    Conditions:
+      • If BodyMap is fresh and posture == 'fallen' → do NOT fire
+        (let StandUp / safety handle that).
+      • Otherwise → True (act as a default "keep moving with mom" policy).
+
+    This keeps FollowMom from fighting the safety layer when the kid is actually
+    down, but otherwise lets it act as the permissive fallback we intended.
+    """
+    try:
+        if ctx is not None and not bodymap_is_stale(ctx):
+            bp = body_posture(ctx)
+            if bp == "fallen":
+                return False
+    except Exception:
+        # On any BodyMap issue, stay permissive; the safety override in the
+        # Action Center still protects us from truly fallen configurations.
+        pass
+    return True
+
+
+def _gate_follow_mom_explain_body_space(world, drives: Drives, ctx) -> str: #pylint: disable=unused-argument
+    """
+    Human-readable explanation matching _gate_follow_mom_trigger_body_space.
+    """
+    hunger = float(getattr(drives, "hunger", 0.0))
+    fatigue = float(getattr(drives, "fatigue", 0.0))
+
+    posture = None
+    zone = "unknown"
+    try:
+        if ctx is not None and not bodymap_is_stale(ctx):
+            posture = body_posture(ctx)
+            zone = body_space_zone(ctx)
+    except Exception:
+        posture = posture or "n/a"
+        zone = "unknown"
+
+    return (
+        "dev_gate: True, trigger: fallback=True when not fallen; "
+        f"posture={posture or 'n/a'} zone={zone} "
+        f"(hunger={hunger:.2f}, fatigue={fatigue:.2f})"
+    )
 
 
 @dataclass
@@ -1557,8 +1627,8 @@ class PolicyRuntime:
         if not matches:
             return "no_match"
 
-        # If fallen, force safety-only gates
-        if has_pred_near_now(world, "posture:fallen"):
+        # If fallen near NOW (BodyMap-first), force safety-only gates
+        if _fallen_near_now(world, ctx, max_hops=3):
             safety_only = {"policy:recover_fall", "policy:stand_up"}
             matches = [p for p in matches if p.name in safety_only]
             if not matches:
@@ -1650,6 +1720,13 @@ CATALOG_GATES: List[PolicyGate] = [
         dev_gate=lambda ctx: True,  # available at all stages; selection is by trigger/deficit
         trigger=_gate_rest_trigger_body_space,
         explain=_gate_rest_explain_body_space,
+    ),
+
+    PolicyGate(
+        name="policy:follow_mom",
+        dev_gate=lambda ctx: True,
+        trigger=_gate_follow_mom_trigger_body_space,
+        explain=_gate_follow_mom_explain_body_space,
     ),
 
     PolicyGate(
@@ -2823,7 +2900,7 @@ def run_preflight_full(args) -> int:
         ok(f"pyvis not installed (export still optional): {e}")
 
 
-    # 2) WorldGraph sanity
+    # 2) WorldGraph reasonableness
     try:
         w = cca8_world_graph.WorldGraph()
         w.ensure_anchor("NOW")
@@ -3050,7 +3127,7 @@ def run_preflight_full(args) -> int:
         bad(f"action metrics failed: {e}")
 
 
-    # Z4) BFS sanity (shortest-hop path found) — no warnings
+    # Z4) BFS reasonableness (shortest-hop path found) — no warnings
     try:
         _w5 = cca8_world_graph.WorldGraph()
         _w5.set_tag_policy("allow")  # silence lexicon WARNs here
@@ -3064,7 +3141,7 @@ def run_preflight_full(args) -> int:
         else:
             bad(f"planner: unexpected path { _path }")
     except Exception as e:
-        bad(f"planner (BFS) sanity failed: {e}")
+        bad(f"planner (BFS) reasonableness failed: {e}")
 
 
     # Z5) Lexicon strictness: reject out-of-lexicon pred at neonate
@@ -3107,7 +3184,7 @@ def run_preflight_full(args) -> int:
         bad(f"engram bridge failed: {e}")
 
 
-    # Z7) Timekeeping one-liner sanity
+    # Z7) Timekeeping one-liner reasonableness
     try:
         _w = cca8_world_graph.WorldGraph(); _w.ensure_anchor("NOW")
         _d = Drives(); _ctx = Ctx()
@@ -3127,6 +3204,57 @@ def run_preflight_full(args) -> int:
             bad("timekeeping one-liner missing fields")
     except Exception as e:
         bad(f"timekeeping one-liner error: {e}")
+
+
+    # Z7b) TemporalContext drift + boundary geometry
+    try:
+        _tctx = Ctx()
+        # Small dim so this stays inexpensive; sigma/jump large enough that we
+        # can see movement, but boundary() + tvec_last_boundary reset should
+        # bring cosine back very close to 1.0.
+        _tctx.temporal = TemporalContext(dim=16, sigma=0.03, jump=0.4)
+        _tctx.tvec_last_boundary = _tctx.temporal.vector()
+        _tctx.boundary_no = 0
+        try:
+            _tctx.boundary_vhash64 = _tctx.tvec64()
+        except Exception:
+            _tctx.boundary_vhash64 = None
+
+        _cos0 = _tctx.cos_to_last_boundary()
+        if not isinstance(_cos0, float):
+            bad("timekeeping drift/boundary: cos_to_last_boundary missing at init")
+        else:
+            # Drift once and ensure cosine is still finite and in [-1,1].
+            _tctx.temporal.step()
+            _cos1 = _tctx.cos_to_last_boundary()
+            if isinstance(_cos1, float) and -1.0001 <= _cos1 <= 1.0001:
+                ok("timekeeping drift: cos_to_last_boundary computed after step()")
+            else:
+                bad("timekeeping drift: cos_to_last_boundary out of range after step()")
+
+            # Boundary jump: epoch++ and cosine reset near 1.0 with a new vhash64.
+            _prev_hash = _tctx.boundary_vhash64
+            _new_v = _tctx.temporal.boundary()
+            _tctx.tvec_last_boundary = list(_new_v)
+            _tctx.boundary_no = getattr(_tctx, "boundary_no", 0) + 1
+            try:
+                _tctx.boundary_vhash64 = _tctx.tvec64()
+            except Exception:
+                _tctx.boundary_vhash64 = None
+
+            _cos2 = _tctx.cos_to_last_boundary()
+            if (
+                isinstance(_cos2, float)
+                and _cos2 > 0.95
+                and _tctx.boundary_no == 1
+                and _tctx.boundary_vhash64
+                and _tctx.boundary_vhash64 != _prev_hash
+            ):
+                ok("timekeeping boundary: epoch increment & cosine reset near 1.0")
+            else:
+                bad("timekeeping boundary: unexpected cosine/epoch/vhash behavior")
+    except Exception as e:
+        bad(f"timekeeping drift/boundary error: {e}")
 
 
     # Z8) Resolve Engrams pretty (smoke)
@@ -3194,7 +3322,211 @@ def run_preflight_full(args) -> int:
         bad(f"NOW_ORIGIN check failed: {e}")
 
 
-    # 7) Action helpers sanity
+    # Z12) BodyMap bridge + SeekNipple gate (body-first) sanity
+    try:
+        # Build a fresh BodyMap and context.
+        _bm_ctx = Ctx()
+        _bm_ctx.body_world, _bm_ctx.body_ids = init_body_world()
+        _bm_ctx.controller_steps = 0
+
+        # Minimal EnvObservation-like stub: only .predicates is needed here.
+        class _ObsStub:  # pylint: disable=too-few-public-methods
+            def __init__(self, predicates):
+                self.predicates = predicates
+
+        _obs = _ObsStub([
+            "posture:standing",
+            "proximity:mom:close",
+            "nipple:latched",
+            "milk:drinking",
+        ])
+
+        # Mirror observation into BodyMap.
+        update_body_world_from_obs(_bm_ctx, _obs)
+
+        # Check that the high-level BodyMap helpers see what we injected.
+        _bp = body_posture(_bm_ctx)
+        _md = body_mom_distance(_bm_ctx)
+        _ns = body_nipple_state(_bm_ctx)
+
+        if _bp == "standing" and _md == "near" and _ns == "latched":
+            ok("BodyMap: posture/mom/nipple mirrored from observation into BodyMap helpers")
+        else:
+            bad(
+                "BodyMap: mismatch between observation and helpers "
+                f"(posture={_bp!r}, mom={_md!r}, nipple={_ns!r})"
+            )
+
+        # With nipple already latched, SeekNipple gate should NOT trigger even if hunger is high.
+        _bm_world = cca8_world_graph.WorldGraph()
+        _bm_world.ensure_anchor("NOW")
+        _hungry = Drives(hunger=0.95, fatigue=0.1, warmth=0.6)
+        _gate = _gate_seek_nipple_trigger_body_first(_bm_world, _hungry, _bm_ctx)
+        if _gate:
+            bad("BodyMap gate: seek_nipple triggered despite nipple_state='latched'")
+        else:
+            ok("BodyMap gate: seek_nipple correctly suppressed when nipple_state='latched'")
+    except Exception as e:
+        bad(f"BodyMap / gate probes failed: {e}")
+
+
+    # Z12b) BodyMap spatial zone + Rest gate sanity
+    try:
+        # Fresh BodyMap + context for zone tests
+        _zone_ctx = Ctx()
+        _zone_ctx.body_world, _zone_ctx.body_ids = init_body_world()
+        _zone_ctx.controller_steps = 0
+
+        # Minimal EnvObservation-like stub: only .predicates is needed.
+        class _ObsStubZone:  # pylint: disable=too-few-public-methods
+            def __init__(self, predicates):
+                self.predicates = predicates
+
+        # ----- Case 1: unsafe_cliff_near (cliff=near, shelter=far) -----
+        _obs_unsafe = _ObsStubZone([
+            "posture:standing",
+            "proximity:mom:close",
+            "proximity:shelter:far",
+            "hazard:cliff:near",
+        ])
+        update_body_world_from_obs(_zone_ctx, _obs_unsafe)
+
+        _zone1 = body_space_zone(_zone_ctx)
+        if _zone1 == "unsafe_cliff_near":
+            ok("BodyMap zone: unsafe_cliff_near from (shelter=far, cliff=near)")
+        else:
+            bad(
+                "BodyMap zone: expected 'unsafe_cliff_near' from (shelter=far, cliff=near) "
+                f"but got {_zone1!r}"
+            )
+
+        # Rest gate should veto rest here even if fatigue is high.
+        _world_dummy = cca8_world_graph.WorldGraph()
+        _world_dummy.ensure_anchor("NOW")
+        _tired = Drives(hunger=0.20, fatigue=0.90, warmth=0.60)
+
+        _rest_gate_unsafe = _gate_rest_trigger_body_space(_world_dummy, _tired, _zone_ctx)
+        if _rest_gate_unsafe:
+            bad("Rest gate: incorrectly allowed rest when zone='unsafe_cliff_near' and fatigue high")
+        else:
+            ok("Rest gate: vetoes rest when zone='unsafe_cliff_near' despite high fatigue")
+
+        # ----- Case 2: safe (shelter=near, cliff=far) -----
+        _obs_safe = _ObsStubZone([
+            "posture:standing",
+            "proximity:mom:close",
+            "proximity:shelter:near",
+            "hazard:cliff:far",
+        ])
+        update_body_world_from_obs(_zone_ctx, _obs_safe)
+
+        _zone2 = body_space_zone(_zone_ctx)
+        if _zone2 == "safe":
+            ok("BodyMap zone: safe from (shelter=near, cliff=far)")
+        else:
+            bad(
+                "BodyMap zone: expected 'safe' from (shelter=near, cliff=far) "
+                f"but got {_zone2!r}"
+            )
+
+        _rest_gate_safe = _gate_rest_trigger_body_space(_world_dummy, _tired, _zone_ctx)
+        if _rest_gate_safe:
+            ok("Rest gate: allows rest when zone='safe' and fatigue high")
+        else:
+            bad("Rest gate: incorrectly vetoed rest when zone='safe' and fatigue high")
+
+    except Exception as e:
+        bad(f"BodyMap spatial zone / Rest gate probes failed: {e}")
+
+
+    # Z12c) Spatial scene-graph + 'resting in shelter' summary sanity
+    try:
+        # Fresh world + context with BodyMap initialized
+        _scene_world = cca8_world_graph.WorldGraph()
+        _scene_world.set_tag_policy("allow")
+        _scene_world.ensure_anchor("NOW")
+
+        _scene_ctx = Ctx()
+        _scene_ctx.body_world, _scene_ctx.body_ids = init_body_world()
+        _scene_ctx.controller_steps = 0
+
+        # Minimal EnvObservation-like stub: we only need .predicates for this probe.
+        class _ObsStubScene:  # pylint: disable=too-few-public-methods
+            def __init__(self, predicates):
+                self.predicates = predicates
+                self.cues = []
+
+        # Synthetic "resting in shelter, cliff far" observation.
+        _obs_rest = _ObsStubScene([
+            "resting",
+            "proximity:mom:close",
+            "proximity:shelter:near",
+            "hazard:cliff:far",
+        ])
+
+        # Use the normal env→world bridge: this will:
+        #   • create pred:* bindings,
+        #   • update BodyMap,
+        #   • write NOW --near--> mom/shelter bindings because 'resting' is present.
+        inject_obs_into_world(_scene_world, _scene_ctx, _obs_rest)
+
+        _summary = resting_scenes_in_shelter(_scene_world)
+
+        if _summary.get("rest_near_now") and _summary.get("shelter_near_now"):
+            ok(
+                "scene-graph: resting_scenes_in_shelter sees "
+                "rest_near_now=True and shelter_near_now=True after a resting-in-shelter obs"
+            )
+        else:
+            bad(
+                "scene-graph: resting_scenes_in_shelter summary unexpected for "
+                "resting+mom:close+shelter:near+cliff:far obs: "
+                f"{_summary}"
+            )
+
+    except Exception as e:
+        bad(f"Spatial scene-graph / resting_scenes_in_shelter probe failed: {e}")
+
+
+    # Z13) HybridEnvironment reset/step + perception smoke test
+    try:
+        env = HybridEnvironment()
+        _ctx_env = Ctx()
+
+        # Reset: get first observation + info.
+        obs0, info0 = env.reset()
+        if hasattr(obs0, "predicates") and isinstance(getattr(obs0, "predicates", None), list):
+            ok("env: reset produced initial observation with predicates list")
+        else:
+            bad("env: reset did not return an observation with .predicates list")
+
+        if isinstance(info0, dict) and "scenario_name" in info0:
+            ok("env: reset info contains scenario_name")
+        else:
+            bad("env: reset info missing scenario_name")
+
+        # Optional: inspect internal state shape (kid_posture + scenario_stage).
+        _st0 = getattr(env, "state", None)
+        if _st0 is not None and hasattr(_st0, "kid_posture") and hasattr(_st0, "scenario_stage"):
+            ok("env: state exposes kid_posture/scenario_stage after reset")
+        else:
+            bad("env: state missing kid_posture/scenario_stage after reset")
+
+        # One storyboard step forward.
+        obs1, reward1, done1, info1 = env.step(action=None, ctx=_ctx_env)
+        if hasattr(obs1, "predicates") and isinstance(getattr(obs1, "predicates", None), list):
+            _types_ok = isinstance(reward1, (int, float)) and isinstance(done1, bool) and isinstance(info1, dict)
+            if _types_ok:
+                ok("env: step produced (observation, reward, done, info) tuple")
+            else:
+                bad("env: step returned unexpected reward/done/info types")
+        else:
+            bad("env: step did not return an observation with .predicates list")
+    except Exception as e:
+        bad(f"env: reset/step probes failed: {e}")
+
+
+    # 7) Action helpers reasonableness
     try:
         _wa = cca8_world_graph.WorldGraph()
         s = _wa.action_summary_text(include_then=True, examples_per_action=1)
@@ -3238,7 +3570,7 @@ def run_preflight_full(args) -> int:
         bad_hw(f"cpu_count error: {e}")
 
 
-    # 3b) High-resolution timer sanity (monotonic + resolution)
+    # 3b) High-resolution timer reasonableness (monotonic + resolution)
     try:
         import time as _time2
         info = _time2.get_clock_info("perf_counter")
@@ -3616,11 +3948,10 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
             except Exception:
                 cd = None
 
-            zone = None
-            if cd == "near" and sd != "near":
-                zone = "unsafe_cliff_near"
-            elif sd == "near" and cd != "near":
-                zone = "safe"
+            try:
+                zone = body_space_zone(ctx)
+            except Exception:
+                zone = None
 
             line = (
                 "BODY: "
@@ -4178,6 +4509,32 @@ def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylin
     # update BodyMap (ctx.body_world) from this observation
     try:
         update_body_world_from_obs(ctx, env_obs)
+
+        # --- DEBUG: tiny bridge print to show what BodyMap now believes ---
+        try:
+            bp = body_posture(ctx)
+            md = body_mom_distance(ctx)
+            ns = body_nipple_state(ctx)
+            try:
+                sd = body_shelter_distance(ctx)
+            except Exception:
+                sd = None
+            try:
+                cd = body_cliff_distance(ctx)
+            except Exception:
+                cd = None
+
+            print(
+                "[env→body] BodyMap now: "
+                f"posture={bp or '(n/a)'} "
+                f"mom={md or '(n/a)'} "
+                f"nipple={ns or '(n/a)'} "
+                f"shelter={sd or '(n/a)'} "
+                f"cliff={cd or '(n/a)'}"
+            )
+        except Exception as e:
+            # Debug only; never crash the main loop.
+            print(f"[env→body] debug error: {e}")
     except Exception:
         # BodyMap should never crash the runner; ignore errors here.
         pass
@@ -4212,7 +4569,75 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
       - runs one controller step via PolicyRuntime.consider_and_maybe_fire(...),
       - remembers the last fired policy name in ctx.env_last_action so the next
         env.step(...) can react to it.
+
+    This version also prints a short *posture explanation* line per step, based
+    on how EnvState.kid_posture and EnvState.scenario_stage changed relative to
+    the previous step and which action was sent into the environment.
     """
+
+    def _explain_posture_change(prev_state, curr_state, action_for_env: str | None) -> str | None:
+        """Human-readable explanation for why posture is what it is this step."""
+        if curr_state is None:
+            return None
+
+        p = curr_state.kid_posture
+        s = curr_state.scenario_stage
+
+        if prev_state is None:
+            # First tick after reset: just describe the initial storyboard setup.
+            return (
+                f"initial storyboard setup: stage={s!r} starts with posture={p!r} "
+                "(newborn begins life on the ground)."
+            )
+
+        prev_p = prev_state.kid_posture
+        prev_s = prev_state.scenario_stage
+
+        # No posture change this tick
+        if p == prev_p:
+            if p == "fallen":
+                if action_for_env == "policy:stand_up":
+                    return (
+                        "stand_up was requested this tick, but the newborn is still "
+                        f"kept fallen by the storyboard (stage={s!r}); standing will "
+                        "only appear once the stand-up transition threshold is reached."
+                    )
+                return (
+                    f"storyboard keeps the kid posture={p!r} in stage={s!r}; no successful "
+                    "standing transition yet."
+                )
+            return f"posture remains {p!r}; no storyboard transition affecting posture this step."
+
+        # Posture changed
+        if prev_p == "fallen" and p == "standing":
+            if action_for_env == "policy:stand_up":
+                return (
+                    "stand_up action applied by the environment: posture changed "
+                    f"fallen→standing as the storyboard moved {prev_s!r}→{s!r}."
+                )
+            return (
+                f"storyboard crossed its stand-up threshold: posture changed "
+                f"fallen→standing as stage moved {prev_s!r}→{s!r}."
+            )
+
+        if prev_p == "standing" and p == "latched":
+            return (
+                "nipple became reachable and then latched in the storyboard; "
+                "the kid switches from upright to 'latched' while feeding."
+            )
+
+        if prev_p == "latched" and p == "resting":
+            return (
+                "after some time latched and feeding, the storyboard advanced to 'rest'; "
+                "the kid is now resting curled up against mom in a sheltered niche."
+            )
+
+        # Fallback for any other transitions.
+        return (
+            f"posture changed {prev_p!r}→{p!r} as the storyboard moved "
+            f"{prev_s!r}→{s!r} this step."
+        )
+
     if n_steps <= 0:
         print("[env-loop] N must be ≥ 1; nothing to do.")
         return
@@ -4239,6 +4664,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         if getattr(ctx, "temporal", None):
             ctx.temporal.step()
 
+        prev_state = None
+        action_for_env: str | None = None
+
         # 2) Environment evolution (reset once, then step with last action)
         if not getattr(ctx, "env_episode_started", False):
             env_obs, env_info = env.reset()
@@ -4251,6 +4679,12 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 f"scenario={env_info.get('scenario_name')}"
             )
         else:
+            # Snapshot previous EnvState so we can explain posture changes.
+            try:
+                prev_state = env.state.copy()
+            except Exception:
+                prev_state = None
+
             action_for_env = ctx.env_last_action
             env_obs, _env_reward, _env_done, env_info = env.step(
                 action=action_for_env,
@@ -4293,14 +4727,30 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             print(f"[env→controller] controller step error: {e}")
             ctx.env_last_action = None
 
-        # Short summary for this step
+        # Short summary for this step + posture explanation
         try:
             st = env.state
-            print(
-                f"[env-loop] summary step={step_idx} stage={st.scenario_stage} "
+            try:
+                zone = body_space_zone(ctx)
+            except Exception:
+                zone = None
+
+            line = (
+                f"[env-loop] summary envr't step={step_idx} stage={st.scenario_stage} "
                 f"posture={st.kid_posture} mom={st.mom_distance} "
                 f"nipple={st.nipple_state} last_policy={policy_name!r}"
             )
+            if zone is not None:
+                line += f" zone={zone}"
+            print(line)
+
+            # Explain why posture ended up as it is at this step.
+            try:
+                explanation = _explain_posture_change(prev_state, st, action_for_env)
+                if explanation:
+                    print(f"[env-loop] explain posture: {explanation}")
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -4785,7 +5235,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     world = cca8_world_graph.WorldGraph()
     #drives = Drives()  #Drives(hunger=0.7, fatigue=0.2, warmth=0.6) at time of writing comment
     #drives.fatigue = 0.85 #for devp't testing --> Drives(hunger=0.7, fatigue=0.85, warmth=0.6)
-    drives = Drives(hunger=0.5, fatigue=0.9, warmth=0.6)  #for rest gate to see hazard versus shelter
+    #drives = Drives(hunger=0.5, fatigue=0.9, warmth=0.6)  #for rest gate to see hazard versus shelter
+    drives = Drives(hunger=0.5, fatigue=0.3, warmth=0.6)  # moderate fatigue so fallback 'follow_mom' can win
 
     ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
     ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump) # temporal soft clock (added)
@@ -7229,6 +7680,17 @@ Attach an existing engram id (eid) to a binding id (bid).
       - for example, policy:stand_up will assert a short motor chain and a final posture:standing fact
         (this last fact represents the policy's expected outcome; the next [env] step will later confirm
          or refute standing via new sensory evidence).
+
+  • On each env step this occurs:
+    1. Env storyboard evolving (env.reset / env.step, kid posture, stage, mom distance, nipple state).
+        -dataclass EnvState== holds the true world state (posture, mom distance, fatigue, etc....)
+        -class FsmBackend== actual storyboard logic, i.e., the script for an environment period
+        -HybridEnvironment calls the storyboard each step
+        -fsmBackend.step(env_state, action, ctx) -- stage-by-stage logic updating posture, distances, etc.
+    2. WorldGraph being updated ([env→world] pred:* and cue:* bindings near NOW/LATEST).
+    3. BodyMap being mirrored ([body] posture=... mom_distance=... nipple_state=...).
+    4. Controller reacting ([env→controller] policy fire + any [note] meta).
+    5. Timekeeping advancing (one-line soft clock summary at the end).
 """)
 
             # Track bindings so we can show notes for any NEW bindings created during this step.
@@ -7412,11 +7874,10 @@ You can still use menu 35 for detailed, single-step inspection.
                 except Exception:
                     cd = None
 
-                zone = None
-                if cd == "near" and sd != "near":
-                    zone = "unsafe_cliff_near"
-                elif sd == "near" and cd != "near":
-                    zone = "safe"
+                try:
+                    zone = body_space_zone(ctx)
+                except Exception:
+                    zone = None
 
                 print("BodyMap one-line summary:")
                 line = (

@@ -306,8 +306,7 @@ A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph 
 **References and Notes**
 
 - [References](#references)
-- [Session Notes (Living Log)](#session-notes-living-log)
-- [Work in Progress](#work-in-progress)
+- [Developer and Maintainer Notes](#developer-and-maintainer-notes)
   
   
   
@@ -1719,7 +1718,6 @@ A: JUnit XML and coverage XML are written under .coverage/. They’re useful for
 
 # CCA8 as a Robotic Cognitive Operating System (RCOS)
 
-
 ## Overview
 
 **CCA8 can be considered in two ways:**
@@ -1746,7 +1744,6 @@ exposes a consistent “app platform” so users can install and compose new beh
 
 CCA8 aims to fill this role.
 
-
 ### Position in the stack
 
 You can think of CCA8 as sitting above the hardware and middleware in roughly this shape:
@@ -1769,7 +1766,6 @@ You can think of CCA8 as sitting above the hardware and middleware in roughly th
 |   - motors, joints, sensors, microcontrollers, RTOS/Linux   
 +-------------------------------------------------------------+
 
-
 In this view:
 
 A **HAL or ROS 2 stack plays a role analogous to a BIOS + device drivers in a PC**: it knows how to talk to motors, joints, cameras, etc.
@@ -1779,7 +1775,6 @@ A **HAL or ROS 2 stack plays a role analogous to a BIOS + device drivers in a PC
 **User-defined skills, policies, and task scripts** are the equivalent of applications.
 
 Small platforms like the PetitCat robot can sit under CCA8 just as well as richer ROS 2 platforms. As long as there is a HAL that implements the expected surfaces, the same CCA8 brain can drive different embodiments.
-
 
 #### What the user gets: an “app platform” for behavior
 
@@ -1793,9 +1788,7 @@ you specify goals and constraints,
 
 and the RCOS manages the ongoing lifecycle of perception, memory, and action.
 
-
 Concretely, CCA8 exposes (or is intended to expose) a few stable surfaces.
-
 
 **1. Embodiment and HAL configuration**
 
@@ -1809,7 +1802,6 @@ status() → reports health, battery, fault states, etc., which can be reflected
 
 CCA8 does not care whether act(intent) ends up calling ROS 2, a PetitCat‑style mini OS, or direct serial commands. That complexity stays below the RCOS boundary.
 
-
 **2. Drives, goals, and profiles**
 
 On top of the embodiment, the user configures the internal “needs” and goals:
@@ -1821,7 +1813,6 @@ profiles (e.g., “newborn mountain goat”, “explorer bot”) that set defaul
 optional task‑level goals (e.g., “stay upright”, “follow mom”, “inspect room”, “return to dock”) that guide what “success” means over episodes
 
 Drives are exposed to the controller as tags like drive:hunger_high, which policies can trigger on. This is where “what the robot should care about” gets declared.
-
 
 **3. Skills and policies as “apps”**
 
@@ -1851,7 +1842,6 @@ It leaves a trace in the world (provenance tags, binding chains) for later analy
 
 Higher-level skills can be built as small libraries of policies plus helper functions, packaged as Python modules or “behavior packs” that CCA8 discovers and loads.
 
-
 **4. Task scripts and curricula**
 
 On top of skills, the user writes task scripts that set up experimental or operational episodes. For example:
@@ -1875,7 +1865,6 @@ The intent is that non‑specialist users should be able to say, in effect:
 “Here is my robot body, here are the behaviors I want available, and here is what I want it to try to do.”
 
 and let the CCA8 RCOS handle the ongoing cycle of perception → world update → drive update → action selection → embodiment.
-
 
 **5. Introspection and debugging surfaces**
 
@@ -1902,7 +1891,6 @@ a thin HAL adapter translates between CCA8’s action tags and the robot’s spe
 the same CCA8 brain can then be reused across simulation and physical hardware, or across different small bodies.
 
 In that sense, CCA8 is not just a simulator of a mountain goat calf, but a general-purpose Robotic Cognitive Operating System designed to be ported to many embodiments while giving users a consistent way to “install” behaviors and tell their robot what they want it to do.
-
 
 
 
@@ -4443,7 +4431,6 @@ Persistence / checks / viz
 
 ### 0) Start a world
 
-
     from cca8_world_graph import WorldGraph
     g = WorldGraph()
     g.set_tag_policy("allow")  # keep lexicon quiet while learning
@@ -4451,13 +4438,11 @@ Persistence / checks / viz
 
 ### 1) Add predicates / cues (with auto-edges)
 
-
     b1 = g.add_predicate("posture:standing", attach="now")     # NOW -> b1
     b2 = g.add_cue("vision:silhouette:mom", attach="latest")   # b1 -> b2
     print(g.plan_pretty(now, "posture:standing"))              # NOW -> b1
 
 ### 2) Manual action edges
-
 
     fallen = g.add_predicate("posture:fallen", attach="none")
     stand  = g.add_predicate("posture:standing", attach="none")
@@ -4465,7 +4450,6 @@ Persistence / checks / viz
     print(g.plan_pretty(fallen, "posture:standing"))  # fallen --stand--> standing
 
 ### 3) Auto-chain timeline with `attach="latest"`
-
 
     a = g.add_predicate("alert", attach="latest")
     b = g.add_predicate("seeking_mom", attach="latest")
@@ -4987,7 +4971,6 @@ A: Today it affects policy gating and diagnostics, not planning: BFS/Dijkstra st
 
 
 
-
 ## BodyMap slots for shelter and cliff (safety-aware near-space)
 
 In addition to posture, mom-distance, and nipple state, BodyMap at this time of writing tracks two
@@ -5006,7 +4989,6 @@ BODY_ROOT --body_relation-->  MOM
 BODY_ROOT --body_relation-->  SHELTER
 BODY_ROOT --body_danger-->    CLIFF
 MOM       --body_part-->      NIPPLE
-
 
 These slots are kept deliberately simple at the newborn stage:
 
@@ -5034,9 +5016,29 @@ body_shelter_distance(ctx) -> "near" | "far" | None
 
 body_cliff_distance(ctx) -> "near" | "far" | None
 
-
 **These helpers are used in gates and policies when deciding whether it is safe**
 **to rest or which actions are appropriate in the current geometry.**
+
+---------
+
+### Terminology Explanation: Environment Geometry
+
+When this README talks about the **geometry** of the environment, it is not referring to school-style angles and triangles. Instead, “environment geometry” means the **spatial configuration of the scene**: where, for example, the kid, mom, shelter, and cliff are, and how they are related (near, far, under shelter, near a drop, etc.).
+
+In CCA8 there are three closely related layers that together define this geometry:
+
+1. **EnvState (God’s-eye world)**  
+   The Environment module keeps a canonical `EnvState` with fields such as `kid_posture`, `mom_distance`, `nipple_state`, `kid_position`, `mom_position`, and high-level `scenario_stage` (birth → struggle → first_stand → first_latch → rest). This is the environment’s own notion of “where everything is and what is happening right now.” :contentReference[oaicite:0]{index=0}  
+
+2. **BodyMap (body-centred near space)**  
+   BodyMap is a tiny, separate WorldGraph that tracks the **geometry as experienced by the body**: posture (fallen/standing/resting), mom’s proximity (far/near/touching), nipple state (hidden/found/latched/milk:drinking), and safety-relevant slots for shelter and cliff (shelter near/far, cliff near/far). From BodyMap you can ask, “Is it safe to lie down here?” or “Is mom close enough to seek the nipple?” without scanning the full episode history.  
+
+3. **WorldGraph spatial overlay (episode-level geometry)**  
+   The main WorldGraph stores **episodic traces** of geometry using predicates and a small scene-graph overlay. For example, when the kid is resting safely, the runner writes edges like  
+   `NOW --near--> b_mom_close` and `NOW --near--> b_shelter_near`,  
+   where the target bindings carry tags such as `pred:proximity:mom:close` and `pred:proximity:shelter:near`. These edges say, “in this episode moment, SELF (NOW) is near mom and near shelter,” and can be inspected later via the snapshot, Pyvis export, or the spatial scene demo menu.
+
+---------
 
 Hazard-aware Rest: “don’t lie down at the cliff edge”
 
@@ -5110,7 +5112,6 @@ b183: [pred:proximity:mom:close]
 b1 --near--> b184
 b184: [pred:proximity:shelter:near]
 
-
 interpreted as:
 
 “At this resting moment, NOW (SELF) is near mom and near shelter.”
@@ -5138,7 +5139,6 @@ Returns a summary dict like:
     "shelter_bids": [...],                    # the shelter-near binding ids
     "hazard_cliff_far_near_now": True/False,  # is any 'hazard:cliff:far' near NOW?
 }
-
 
 This is a convenience wrapper for the “resting in shelter, cliff far”
 situation.
@@ -5168,7 +5168,6 @@ Resting-in-shelter scene summary (around NOW):
     b184: [pred:proximity:shelter:near]
     ...
 
-
 **Together with the BODYMAP summary line and the BodyMap Inspect menu, this
 gives a compact, readable picture of:**
 
@@ -5185,9 +5184,7 @@ function of that geometry.
 
 ## Valence in the CCA8
 
-
 ### What is valence? Why is it important in advantageous behavior?
-
 
 In CCA8, **valence** is a simple notion:
 
@@ -5241,7 +5238,6 @@ explicit RL/learning phase.
 
 ### How is valence implemented in the CCA8?
 
-
 Valence in CCA8 is implemented as a small, explicit predicate vocabulary
 plus a couple of helpers and a minimal newborn wiring.
 
@@ -5256,12 +5252,11 @@ These live in the **predicate** family (`pred:valence:like`, `pred:valence:hate`
 and are available starting at the **neonate** stage. That means any stage
 (neonate → juvenile → adult) can attach simple “like/hate” markers to its
 episodes without fighting the tag policy.
- 
+
 **2. Node-level valence tags**
 
 Valence is represented as an extra tag on **specific bindings** in the
 WorldGraph. A typical example after the Phase V work is:
-
 
 b143: [pred:proximity:mom:close, pred:valence:like]
 This says:
@@ -5392,12 +5387,10 @@ This keeps the architecture simple: **WorldGraph = story over time; BodyMap = bo
 
 **A:*When fatigue is high, the controller may select `policy:rest` based on drives. However, `Rest.execute(...)` now checks BodyMap:**
 
-
 cliff   = body_cliff_distance(ctx)
 shelter = body_shelter_distance(ctx)
 if cliff == "near" and shelter != "near":
     return self._fail("unsafe to rest (cliff near, shelter not near)")
-
 
 In this situation:
 
@@ -5445,7 +5438,6 @@ NOW-near neighbors:
   b183: [pred:proximity:mom:close, pred:valence:like]
   b184: [pred:proximity:shelter:near]
 
-
 It also calls resting_scenes_in_shelter(world) and prints:
 
 Resting-in-shelter scene summary (around NOW):
@@ -5454,7 +5446,6 @@ Resting-in-shelter scene summary (around NOW):
   hazard_cliff_far_near_now: True
   shelter_bids (NOW --near--> ...):
     b184: [pred:proximity:shelter:near]
-
 
 This is the quickest way to answer “what is SELF currently near?” and “are we in a resting-in-shelter, cliff-far scene?” without manually scanning the whole snapshot.
 
@@ -5533,8 +5524,6 @@ CLI quick reference
     python cca8_run.py --demo-world
     
     Flags you’ll actually use: `--about`, `--version`, `--load`, `--autosave`, `--plan`, `--preflight`, `--no-intro`, `--no-boot-prime`, `--profile {goat,chimp,human,super}`, `--hal`, `--body`, `--demo-world`.
-
-
 
 Interactive menu: the 10 you’ll press most
 ------------------------------------------
@@ -5682,7 +5671,6 @@ Typical entry points:
 **What `interactive_loop(args)` sets up (at start)**
     from cca8_world_graph import WorldGraph
     from cca8_controller import Drives
-
     world = WorldGraph()            # empty world
     drives = Drives()               # controller drives (hunger/fatigue/warmth)
     ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)  # runtime context
@@ -5888,6 +5876,7 @@ Its job is to:
 
 The Controller does *not* try to be a full planner; it provides a small set of hand-written “reflexive” policies (e.g., StandUp, SeekNipple, Rest) that form the core of the newborn’s first repertoire.
 **Note: Code changes will occur over time, but the main ideas below should remain stable with the project*** `
+
 ---
 
 ## 1. Drives and Drive Flags
@@ -6688,7 +6677,6 @@ Core engram_id = column_mem.assert_fact(name: str, payload, meta: FactMeta|dict)
 
 Convenience helpers (present in current build) ok = column_mem.exists(engram_id: str) -> bool record_or_none = column_mem.try_get(engram_id: str)
     -> dict|None removed   = column_mem.delete(engram_id: str) 
-
     -> bool ids       = column_mem.list_ids(limit: int|None = None) -> list[str]matches = column_mem.find(name_contains: str|None =
 
     None,   epoch: int|None = None,  has_attr: str|None = None,   limit: int|None = None) -> list[dict]n = column_mem.count() -> int`
@@ -6825,9 +6813,9 @@ In this section we imagine a hybrid environment architecture that addresses this
 
 * * *
 
-**2 Backgroundand Related Work**
+**2 Backgroundand Related Work**
 
-**2.1 Environmentrepresentations and world models in robotics**
+**2.1 Environment representations and world models in robotics**
 
 Robots require internalrepresentations of their environment to plan and act. Traditional robotics hasemployed metric maps (e.g., occupancy grids, point clouds) for localization andnavigation. More recent work emphasizes **semantic world models**, whereobjects, rooms, and relations are explicitly represented in a knowledge base orgraph.
 
@@ -6835,25 +6823,25 @@ KnowRob is a prominent example,KnowRob, or Knowledge Processing for Robots, is a
 
 The CCA8 **WorldGraph** is conceptually aligned with these semantic/episodic knowledge graphs: itrepresents objects, agents, events, and relations as graph nodes and edges.However, in our design, WorldGraph is strictly an **internal construct** ofthe agent. The external environment is represented separately in **EnvState**,and only filtered, agent-relevant information is projected into WorldGraph.
 
-**2.2 Simulationin robotics and sim-to-real pipelines**
+**2.2 Simulation in robotics and sim-to-real pipelines**
 
 Simulation is widely used totest controllers, generate training data, and de-risk robotic deployments.Physics-based simulators model rigid-body dynamics, sensors, and interactionswith objects and humans, enabling control algorithms to be developed beforereal-world trials. Newer systems aim to create high-fidelity “digital twins” ofreal environments using 3D reconstruction and neural rendering, which can beused to train policies that transfer back to the physical world via sim-to-realpipelines.
 
 Hybrid approaches combineanalytical dynamics for parts of the scene with learned models for robotdynamics, providing more realistic simulators while keeping some structureexplicit. Our proposed architecture is compatible with such simulators: a **PhysicsBackend** can wrap any of these engines.
 
-**2.3 Reinforcementlearning environment APIs**
+**2.3 Reinforcement learning environment APIs**
 
 In RL, environment design isoften standardized through APIs. Gym and its successor Gymnasium  (formerly OpenAI Gym which is an open sourcePython library for reinforcement learning) define an interface where an agentinteracts with an environment via methods such as reset() and step(action), receiving observations, rewards, and terminationsignals. This interface has enabled broad interoperability acrossdomains—games, control tasks, and robotics—and is widely adopted in RL researchand practice.
 
 Our **HybridEnvironment** deliberately mirrors this style: it exposes a stable reset/step interface returning **EnvObservation**, areward, and metadata. However, rather than binding tightly to a singlesimulator, it orchestrates multiple backends (FSM, physics, LLM, robot sensors)to update a shared EnvState.
 
-**2.4 LLM-basedsimulators and world models**
+**2.4 LLM-based simulators and world models**
 
 Large language models areincreasingly used as components of simulation frameworks, both for agentpolicies and for environment dynamics. At the time of this writing, i.e.,November 2025, s urveys of LLM-empowered agent-based modeling emphasize theiruse in generating realistic agent behaviors, interactions, and narratives.Other work explores LLMs as text-based world simulators, assessing how wellmodels can track object properties and state transitions over time.
 
 There is also growing interestin “world models” that go beyond next-token prediction, maintaining internalstate and predictive dynamics to support planning and control. Our architecturetreats LLMs as **one backend among several**—primarily for high-level eventgeneration, scenario randomization, and narrative augmentation—rather than asthe sole environment model.
 
-**2.5 Hybridsynthetic and real data**
+**2.5 Hybrid synthetic and real data**
 
 To improve generalization andsim-to-real robustness, many systems combine synthetic and real data. Hybriddatasets blend simulated and real examples, leveraging the scalability ofsynthetic data and the fidelity of real-world samples. Robotics work similarlycombines simulated training with real-world fine-tuning, sometimes in iterative“real-to-sim-to-real” loops.
 
@@ -6861,9 +6849,9 @@ Our design aims to support thishybrid regime at the environment level: **RobotBa
 
 * * *
 
-**3 ProposedHybrid Environment Architecture for CCA8**
+**3 Proposed Hybrid Environment Architecture for CCA8**
 
-**3.1 Designgoals**
+**3.1 Design goals**
 
 The architecture is driven bythe following goals:
 
@@ -6873,7 +6861,7 @@ The architecture is driven bythe following goals:
 4. **Hybrid sim+sensor support**: Allow partial simulation and partial real sensing in the same environment episode, with clear precedence rules.
 5. **Cognitive realism**: Ensure that the agent never directly accesses the “God’s-eye” environment state; it only sees observations derived from that state.
 
-**3.2 Coreterminology**
+**3.2 Core terminology**
 
 We introduce key terms that willbe used consistently in CCA8 development.
 
@@ -6927,7 +6915,56 @@ HybridEnvironmentowns EnvState and coordinates multiple backends to update it.
 
 These definitions are chosen sothat CCA8 code refers only to HybridEnvironment, EnvObservation, and its ownWorldGraph; EnvState and backends are strictly environment-side.
 
-### Understandingthese terms:
+
+
+## Environment Geometry
+
+When we talk about the **geometry** of the environment, it is not referring to school-style angles and triangles. Instead, “environment geometry” means the **spatial configuration of the scene**: where, for example in the early stages of the Mountain Goat, the kid, mom, shelter, and cliff are, and how they are related (near, far, under shelter, near a drop, etc.).
+
+In CCA8 there are three closely related layers that together define this geometry:
+
+1. **EnvState (God’s-eye world)**  
+   The Environment module keeps a canonical `EnvState` with fields such as `kid_posture`, `mom_distance`, `nipple_state`, `kid_position`, `mom_position`, and high-level `scenario_stage` (birth → struggle → first_stand → first_latch → rest). This is the environment’s own notion of “where everything is and what is happening right now.” :contentReference[oaicite:0]{index=0}  
+
+2. **BodyMap (body-centred near space)**  
+   BodyMap is a tiny, separate WorldGraph that tracks the **geometry as experienced by the body**: posture (fallen/standing/resting), mom’s proximity (far/near/touching), nipple state (hidden/found/latched/milk:drinking), and safety-relevant slots for shelter and cliff (shelter near/far, cliff near/far). From BodyMap you can ask, “Is it safe to lie down here?” or “Is mom close enough to seek the nipple?” without scanning the full episode history.  
+
+3. **WorldGraph spatial overlay (episode-level geometry)**  
+   The main WorldGraph stores **episodic traces** of geometry using predicates and a small scene-graph overlay. For example, when the kid is resting safely, the runner writes edges like  
+   `NOW --near--> b_mom_close` and `NOW --near--> b_shelter_near`,  
+   where the target bindings carry tags such as `pred:proximity:mom:close` and `pred:proximity:shelter:near`. These edges say, “in this episode moment, SELF (NOW) is near mom and near shelter,” and can be inspected later via the snapshot, Pyvis export, or the spatial scene demo menu.
+   
+   
+
+### Passive storyboard vs. active geometry
+
+Early in development the geometry can be driven **purely by the storyboard**:
+
+- The `FsmBackend` advances `EnvState` through a fixed script (birth → struggle → first stand → latch → rest).
+- PerceptionAdapter turns that `EnvState` into `EnvObservation`, which is injected into WorldGraph and mirrored into BodyMap.
+- Geometry changes because the **environment script** says “mom moves closer,” “shelter becomes available,” and so on.
+
+As we move toward a more complete system, the goat’s **own actions** begin to change geometry:
+
+- Policies such as `StandUp`, `SeekNipple`, or a future `SeekShelter` fire in response to drives and BodyMap state.
+- Their chosen actions are fed back into `HybridEnvironment.step(action, ctx)`, where backends are allowed to update positions, distances, and stages based on what the agent did.
+- BodyMap and the WorldGraph spatial overlay then reflect geometry that has changed **because of the agent’s behavior**, not just because time passed in a storyboard.
+
+In this sense, when we say:
+
+> “the goat’s actions change the storyboard geometry”
+
+we mean that the same underlying structures—`EnvState`, BodyMap, and the WorldGraph spatial overlay—are being updated so that:
+
+- the kid moves from exposed, cliff-near terrain into a sheltered, cliff-far niche,
+- the spatial relations (`near mom`, `near shelter`, `cliff far`) flip as a **consequence of policies firing**, and
+- planning and inspection later can see that these safer configurations were **reached by the agent’s own actions**, not by a scripted teleport.
+
+Environment geometry, then, is simply the **current spatial layout of the scene** plus its episode-level trace: who is where relative to whom, which regions are safe vs. dangerous, and how that configuration evolves over time as the environment and the agent interact.
+
+
+
+### Understanding these terms:
 
 **1. Is EnvState the ground-truth state of the world?**
 
@@ -8418,296 +8455,52 @@ Tresp, V. et al., Tensor Brain -- [[2109.13392] The Tensor Brain: A Unified Theo
 
 
 
-# Session Notes (Living Log)
-
---
 
 
 
 
-
-# Work in Progress
-
-
-
-### December 2025 -- Spatial Intelligence Roadmap (stubs)
-
-CCA8’s WorldGraph is already a compact scene graph over time: bindings carry predicates/cues; edges carry weakly-causal transitions. Our next step is to **encode more spatial structure** while keeping the graph small and fast:
-
-1. **Scene-graph relations (labelled edges):** use short labels like `near`, `on`, `under`, `left_of`, `inside`. These remain **readable metadata** for planning today; later we can map them to costs/filters (e.g., Dijkstra/A*).
-
-2. **Base-aware write placement (stubbed):** when a policy writes, optionally anchor new nodes near a suggested “write base” (nearest target predicate → HERE → NOW). This keeps micro-timelines **semantically local** for planning/inspection.
-
-3. **3D hints in engrams:** when capturing scenes, attach tiny 1D tensors (pose/landmark cues) via the Column and stamp temporal attrs (`ticks`, `epoch`, `tvec64`) for correlation; the **graph only holds pointers**, not heavy data.
-
-4. **FOA weighting by spatial priors:** seed FOA from NOW/LATEST/cues (already shipped) and later bias searches toward spatially plausible neighbors (e.g., `near` before `far`).
-
-These are **no-regret extensions**: they retain CCA8’s split (small symbolic index + rich engrams) which is mammalian brain inspired and follows the published Causal Cognitive Architecture strategy. Note that recently, non-biological AI researchers have started to advocate spatial and more world model designs, e.g., “spatial intelligence” trajectory advocated by Fei-Fei Li and others. We’ll grow vocabulary gradually under the existing lexicon and keep planning semantics unchanged until weights/filters justify a switch.
+# Developer and Maintainer Notes
 
 
 
-### December 2025 -- Representations within the Architecture
+## Development Phases
 
-CCA8 Tagging & Cognitive Cycle Roadmap (v0.1)
-=============================================
+This section summarizes how the CCA8 codebase has been evolving. It is mainly for future maintainers and contributors.
 
-> This is a living design note that standardizes how we represent **sense → process → act** in the WorldGraph, and how tags, edges, and timekeeping map onto that loop.
+**Phase I – Core kernel and newborn goat skeleton**  
 
-* * *
+- Stand up `cca8_run.py` (runner), `cca8_world_graph.py` (WorldGraph), `cca8_controller.py` (drives + policies), `cca8_column.py` (engrams), and `cca8_temporal.py` (timekeeping).  
+- Implement a minimal newborn mountain-goat profile: bindings/edges, drives, primitive policies, autosave/load, and the CLI runner.
 
-1) Purpose & scope
+**Phase II – Testing, preflight, and documentation spine**  
 
-------------------
+- Add the pytest suite, coverage reporting, and the four-part `--preflight` self-test (unit tests + whole-flow probes).  
+- Grow this README into the main “compendium” for CCA8: overview, architecture, tutorials, contracts, and glossary.
 
-* Provide a consistent **predicate and cue taxonomy** for the CCA8 newborn–goat simulation (and future profiles).
+**Phase III – Representation and tagging cleanup**  
 
-* Clarify how evidence, intent, actions, and states appear in the graph.
+- Standardize tag families (`pred:*`, `action:*`, `cue:*`, `anchor:*`) and introduce the stage-aware restricted lexicon.  
+- Move to explicit `action:*` bindings and state–action–state (S–A–S) chains; deprecate legacy `state:*` and `pred:action:*` patterns.  
+- Clarify NOW / NOW_ORIGIN / LATEST semantics and tighten provenance/meta fields on bindings and edges.
 
-* Define minimal invariants that keep planning readable while leaving room for later embodiment/HAL.
+**Phase IV – Timekeeping, environment, and BodyMap**  
 
-* * *
+- Introduce the TemporalContext “soft clock” and the five time measures (controller steps, temporal drift, autonomic ticks, developmental age, cognitive cycles).  
+- Implement the newborn-goat storyboard environment: `EnvState`, `EnvObservation`, `FsmBackend`, `PerceptionAdapter`, and `HybridEnvironment`.  
+- Add BodyMap as a small body-centred graph (posture, mom distance, nipple/nursing state, shelter/cliff) with controller helpers.
 
-2) Core namespaces & their roles
+**Phase V – RCOS framing and operator tools (current)**  
 
---------------------------------
-
-### A. Cues (evidence — _not_ goals)
-
-* **Prefix:** `cue:*` (always normalized on write).
-
-* **Examples:** `cue:vision:silhouette:mom`, `cue:drive:hunger_high`, `cue:sound:bleat:mom`.
-
-* **Semantics:** Evidence that something is _perceived or inferred now_.
-
-* **Persistence style:** We **emit on rising-edges** (to keep the graph sparse) and keep the node for auditability.
-
-* **Use:** Policy triggers; seeds the **FOA** (focus of attention). We do **not** plan _to_ a cue.
-
-### B. States (relatively stable facts)
-
-* **Canonical prefixes (avoid `pred:state:*`):**
+- Present CCA8 as a Robotic Cognitive Operating System (RCOS) kernel and stabilize the runner / CLI experience.  
+- Extend preflight probes, snapshot/inspect views, BodyMap panels, and spatial “NOW-near” overlays to make internal state easy to audit.  
+- Polish logging, menu wording, and documentation so new users can reproduce the newborn-goat demo and understand how the system fits together.
   
-  * `pred:posture:*` → `pred:posture:standing`, `pred:posture:fallen`
   
-  * `pred:proximity:*` → `pred:proximity:mom:close`
-  
-  * `pred:motion:*` → `pred:motion:walking`, `pred:motion:climbing`, `pred:motion:still`
 
-* **Semantics:** Facts about the agent/world that can hold for some duration.
+## Future Development Phases
 
-* **Use:** Planner goals, safety checks, policy triggers.
+**Future phases** will extend spatial reasoning, multi-brain / multi-agent profiles,
+learning, and Theory-of-Mind modules on top of this base. (At the time of writing,
+November 2025 these are still design-stage.)
 
-### C. Actions (events that happened during execution)
 
-* **Prefix:** `pred:action:*` → micro-steps such as `pred:action:push_up`, `pred:action:extend_legs`.
-
-* **Semantics:** _Occurred_ (or is being executed now) sub-steps recorded as event nodes.
-
-* **Provenance:** action nodes carry `meta.policy`, time attrs, and may have an engram pointer.
-
-* **Status notation (minimal):** Prefer **`meta.status ∈ {executing, completed, aborted}`** on the action node rather than creating separate tag families for pending/ongoing. (Keeps vocabulary small while allowing monitors.)
-
-### D. Intent / working memory (optional, lightweight)
-
-* **Intent (optional):** `pred:intent:*` for explicit planner targets (e.g., `pred:intent:stand`). In many cases, the existing `pred:stand` token already serves this affordance role; use `intent` only when disambiguation is helpful.
-
-* **Scratch / intermediate results (optional):** `pred:wm:*` for temporary, human-visible intermediates; or keep truly ephemeral values in `ctx` (e.g., `ctx.scratch = {…}`) without writing to the graph.
-
-* * *
-
-3) Edges & attach semantics (placement)
-
----------------------------------------
-
-* **Edge label = transition/action** for readability: `then`, `fall`, `suckle`, `stabilize`, etc.
-
-* **Attach modes:**
-  
-  * `attach="now"` → `NOW → new` and update **LATEST**.
-  
-  * `attach="latest"` → `LATEST → new` and update **LATEST**.
-  
-  * `attach="none"` → create node without auto-edge; caller may add labeled edges manually.
-
-* **Default guidance:**
-  
-  * Cues: `attach=now` (exteroceptive) or `attach=latest` (interoceptive rising-edge) to keep the episode readable.
-  
-  * Actions & states from policies: `attach=latest` (readable chains).
-  
-  * WM/scratch: consider `attach=none` to avoid shifting LATEST.
-
-* **Future (stubbed today, no behavior change):** a **base-aware attach** that anchors new writes near the _contextual base_ (e.g., nearest target predicate → HERE → NOW). This keeps micro-timelines local without cluttering `NOW`.
-
-* * *
-
-4) Sense → Process → Act mapping
-
---------------------------------
-
-* **Sense** → write a `cue:*` node (plus optional tiny engram) and seed FOA.
-
-* **Process** → FOA around `NOW/LATEST` + cues; evaluate policy gates (`dev_gate`, `trigger`); optional explicit `pred:intent:*` or `pred:wm:*` scratch.
-
-* **Act** → execute one policy; emit `pred:action:*` nodes (micro-steps) and resulting state (e.g., `pred:posture:standing`); stamp provenance & time attrs.
-
-**Two reference flows**
-
-1. _Simulated fall → stand up_: `NOW → stand` … `fall` → `posture:fallen` → `action:push_up` → `action:extend_legs` → `posture:standing`.
-
-2. _Mom cue + hunger → seek nipple_ (later): `cue:vision:silhouette:mom` + `drive:hunger_high` → choose `seek_nipple` → emit action nodes and a new proximity/feeding state.
-
-* * *
-
-5) Timekeeping & counters (five measures)
-
------------------------------------------
-
-1. **Controller steps** — increment **once per Action Center invocation** (each menu path that runs it).
-
-2. **Temporal drift** — apply one soft-clock drift per controller step (except where the menu already drifted earlier in the same step, e.g., Autonomic Tick).
-
-3. **Autonomic ticks** — **independent heartbeat** that also drifts and advances age.
-
-4. **Developmental age (`age_days`)** — advanced by Autonomic Tick (or profile-specific rules).
-
-5. **Cognitive cycles (`cog_cycles`)** — **current definition**: increment **only in Instinct Step** when the controller step _produced writes_. (Conservative until an explicit sense→process→act loop is formalized.)
-
-**Boundary rule:** if a controller step **wrote** new facts, perform a temporal **boundary jump** (epoch++) and record fingerprints.
-
-* * *
-
-6) Naming & lexicon
-
--------------------
-
-* Lowercase tokens, `:`-separated namespaces: `family:subcategory:atom`.
-
-* Prefer canonical families (`posture`, `proximity`, `motion`, `action`, `nipple`, `milk`, …). Keep `state:*` only as a **legacy alias**.
-
-* Cue naming: `cue:<channel>:<token>` where `<channel> ∈ {vision, sound, touch, scent, drive, vestibular, …}`.
-
-* Keep the lexicon **stage-aware** (e.g., `neonate` warns on out-of-scope tokens).
-
-* * *
-
-7) Invariants (graph hygiene)
-
------------------------------
-
-* Cues are **evidence**, never planner goals.
-
-* States encode **facts**; actions encode **events**; intents/WM are **optional** and lightweight.
-
-* Keep chains **short and local**: new nodes attach near the current episode (`NOW/LATEST`), or to a base anchor when that feature is enabled.
-
-* All policy writes stamp **provenance** (`meta.policy`) and **time attrs** (ticks, epoch, `tvec64`, `epoch_vhash64`).
-
-* * *
-
-8) Roadmap items (no behavior change yet)
-
------------------------------------------
-
-* **Base-aware attach:** flip the stubs so actions/states anchor near the suggested base.
-
-* **Action status:** standardize `meta.status` and minimal monitors for long-running actions.
-
-* **FOA biasing:** prioritize neighbors with `near/on/inside` relations once those edges appear.
-
-* **Present windows:** optional TTL for cues/WM (e.g., present if `ticks - created_at_ticks < N`).
-
-* **Embodiment:** wire HAL hooks so actions can optionally touch actuators/sensors without changing graph semantics.
-
-* * *
-
-9) Examples (pattern snippets)
-
-------------------------------
-
-* **Cue (vision):** `cue:vision:silhouette:mom` (attach=now)
-
-* **Interoceptive cue (rising-edge):** `cue:drive:hunger_high` (attach=latest)
-
-* **Action micro-step:** `pred:action:push_up` with `meta.status='completed'`
-
-* **State (posture):** `pred:posture:standing`
-
-* **Motion state:** `pred:motion:walking` (vs. `pred:motion:still`)
-
-* **Intent (optional):** `pred:intent:stand`
-
-* **WM scratch (optional):** `pred:wm:target_path_ready`
-
-* * *
-
-* * *
-
-CCA8 Development Plan — WIP (Winter ’25-'26)
-========================================
-
-Objectives
-----------
-
-1. Walk the runner menus end-to-end; 2) tighten behavior/testing where needed; 3) stage a **newborn-goat, first-hours** demo; 4) bring in a minimal **ToM-bias** consistent with our architecture/paper; 5) only then reconsider representation tweaks (scene-graph relations, base-aware attach, motion states) and engram usage.
-
-Phase I — Menu pass-through
----------------------------
-
-* Work through each menu in order; capture any mismatches between comments, UI, and behavior; add a unit test when a fix lands.
-
-* Outputs: short commit notes + tests that exercise the new behavior (keep coverage ≥30%).
-
-Phase II — Per-menu adjustments & tests
----------------------------------------
-
-* Apply the “small, obvious fix” rule: interoceptive rising-edge cues, one drift per controller step, safety override traces, etc.
-
-* Outputs: green preflight, quiet logs, and readable traces that match the docs.
-
-Phase III — Newborn goat: **first hours** storyboard
-----------------------------------------------------
-
-Sequence to stage (bindings/edges only, no learning yet):
-
-1. born → wobble; 2) **stand-up** recovery path; 3) orient to mom; 4) mom:close; 5) nipple:found → latched; 6) milk:drinking; 7) rest/warmth.  
-   Timekeeping: controller_steps++, drift per step; developmental age via autonomic ticks only.  
-   Metrics: time-to-stand, time-to-latch, milk episodes, falls → recovery count. (Use existing tag families and the restricted lexicon.)
-
-Phase IV — The “800-lb gorilla”: minimal ToM bias
--------------------------------------------------
-
-* Rationale: In the paper, ToM is not just a test—it **directs behavior** and improved survival in simulation (97 vs 6 cycles, p<.001). We’ll reflect that as a light **selection bias**, not a new heavy module.
-
-* Mechanism (stub, toggleable):  
-  Add a single **ToM-bias scalar** in the controller step that (when enabled) slightly upweights policies that respond to **social cues** (e.g., `vision:silhouette:mom`, `sound:bleat:mom`) when hunger is high—mirroring the paper’s “Goal Module balances social vs energy signals” without changing graph format.
-
-* Guardrails: keep the bias small, report it in the trace, and ensure behavior stays explainable (dev-gate + trigger still rule).
-
-Phase V — Representation & tagging (no-behavior-change pass)
-------------------------------------------------------------
-
-* Keep the **canonical families**: cues (evidence), **pred:posture*** & **pred:proximity*** (states), **pred:action*** (events). Prefer motion states (`pred:motion:*`) for ongoing movement. (Legacy `pred:state:*` accepted with warnings.)
-
-* Optional, later: **base-aware attach** and labelled relations (`near/on/under/inside`) for readability—kept as stubs until Phase III is stable.
-
-Phase VI — Columns/engrams (lightweight)
-----------------------------------------
-
-* Keep WorldGraph as the symbolic index; attach tiny engrams only where it clarifies a cue or milestone (e.g., a short scene vector for `silhouette:mom`). Revisit once the first-hours demo is stable.
-
-Acceptance checks
------------------
-
-* Preflight: **PASS**; coverage ≥30%.
-
-* First-hours storyboard plays through with readable traces and no duplicate edges.
-
-* With ToM-bias **off** vs **on**, the demo shows the same structural path; with **on**, social-driven choices are selected slightly earlier given the same drives and cues (trace reports bias). This echoes the paper’s framing of ToM as a directing mechanism, not just inference.
-
-Next up (immediate)
--------------------
-
-* Proceed to **Menu #12 – Input cue** as the “Sense → Process → Act” segue: write `cue:<channel>:<token>`, drift once, and run **one controller step** to observe the reaction (seek mom vs rest, etc.). Then capture any deltas needed in triggers and tests.
-
-* * *

@@ -1,0 +1,178 @@
+How many closed-loop step(s) would you like to run? [default: 5]:
+[env-loop] Running 5 closed-loop environment/controller step(s).
+[env-loop] Each step will:
+  1) Advance controller_steps and the temporal soft clock (one drift),
+  2) Call env.reset() (first time) or env.step(last policy action),
+  3) Inject EnvObservation into the WorldGraph as pred:/cue: facts,
+  4) Run ONE controller step (Action Center) and store the last policy name.
+
+[env-loop] Note: environment episode has not started yet; the first step will call env.reset().
+
+[env-loop] Step 1/5
+[env] Reset newborn_goat scenario: episode_index=1 scenario=newborn_goat_first_hour
+[env→world] pred:posture:fallen → b3 (attach=now)
+[env→world] pred:proximity:mom:far → b4 (attach=latest)
+[env→world] pred:proximity:shelter:far → b5 (attach=latest)
+[env→world] pred:hazard:cliff:far → b6 (attach=latest)
+[env→body] BodyMap now: posture=fallen mom=far nipple=hidden shelter=far cliff=far
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
+[env→controller] policy:stand_up (added 3 bindings)
+[executed] policy:stand_up (ok, reward=+1.00) binding=b9
+pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+base: {'base': 'HERE', 'bid': '?'}
+foa:  {'seeds': ['b6', 'b1'], 'size': 5, 'ids': {'b1', 'b6', 'b3', 'b4', 'b2'}}
+cands:['b1', '?']
+post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+[env-loop] summary envr't step=0 stage=birth posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
+[env-loop] explain posture: initial storyboard setup: stage='birth' starts with posture='fallen' (newborn begins life on the ground).
+
+[env-loop] Step 2/5
+[env] step=1 stage=birth posture=fallen mom_distance=far nipple_state=hidden action='policy:stand_up'
+[env→world] pred:posture:fallen → b10 (attach=now)
+[env→world] pred:proximity:mom:far → b11 (attach=latest)
+[env→world] pred:proximity:shelter:far → b12 (attach=latest)
+[env→world] pred:hazard:cliff:far → b13 (attach=latest)
+[env→body] BodyMap now: posture=fallen mom=far nipple=hidden shelter=far cliff=far
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
+[env→controller] policy:stand_up (added 3 bindings)
+[executed] policy:stand_up (ok, reward=+1.00) binding=b16
+pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b9'}
+foa:  {'seeds': ['b13', 'b1'], 'size': 9, 'ids': {'b10', 'b1', 'b7', 'b11', 'b2', 'b13', 'b8', 'b3', 'b4'}}
+cands:['b1', '?', 'b9']
+post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+[env-loop] summary envr't step=1 stage=birth posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
+[env-loop] explain posture: stand_up was requested this tick, but the newborn is still kept fallen by the storyboard (stage='birth'); standing will only appear once the stand-up transition threshold is reached.
+
+[env-loop] Step 3/5
+[env] step=2 stage=birth posture=fallen mom_distance=far nipple_state=hidden action='policy:stand_up'
+[env→world] pred:posture:fallen → b17 (attach=now)
+[env→world] pred:proximity:mom:far → b18 (attach=latest)
+[env→world] pred:proximity:shelter:far → b19 (attach=latest)
+[env→world] pred:hazard:cliff:far → b20 (attach=latest)
+[env→body] BodyMap now: posture=fallen mom=far nipple=hidden shelter=far cliff=far
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
+[env→controller] policy:stand_up (added 3 bindings)
+[executed] policy:stand_up (ok, reward=+1.00) binding=b23
+pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b9'}
+foa:  {'seeds': ['b20', 'b1'], 'size': 13, 'ids': {'b10', 'b1', 'b20', 'b7', 'b11', 'b2', 'b18', 'b8', 'b14', 'b3', 'b4', 'b15', 'b17'}}
+cands:['b1', '?', 'b9']
+post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+[env-loop] summary envr't step=2 stage=birth posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
+[env-loop] explain posture: stand_up was requested this tick, but the newborn is still kept fallen by the storyboard (stage='birth'); standing will only appear once the stand-up transition threshold is reached.
+
+[env-loop] Step 4/5
+[env] step=3 stage=struggle posture=fallen mom_distance=far nipple_state=hidden action='policy:stand_up'
+[env→world] pred:posture:fallen → b24 (attach=now)
+[env→world] pred:proximity:mom:far → b25 (attach=latest)
+[env→world] pred:proximity:shelter:far → b26 (attach=latest)
+[env→world] pred:hazard:cliff:far → b27 (attach=latest)
+[env→body] BodyMap now: posture=fallen mom=far nipple=hidden shelter=far cliff=far
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
+[env→controller] policy:stand_up (added 3 bindings)
+[executed] policy:stand_up (ok, reward=+1.00) binding=b30
+pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b9'}
+foa:  {'seeds': ['b27', 'b1'], 'size': 17, 'ids': {'b1', 'b11', 'b25', 'b18', 'b24', 'b8', 'b3', 'b15', 'b17', 'b10', 'b22', 'b7', 'b2', 'b14', 'b21', 'b4', 'b27'}}
+cands:['b1', '?', 'b9']
+post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+[env-loop] summary envr't step=3 stage=struggle posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
+[env-loop] explain posture: stand_up was requested this tick, but the newborn is still kept fallen by the storyboard (stage='struggle'); standing will only appear once the stand-up transition threshold is reached.
+
+[env-loop] Step 5/5
+[env] step=4 stage=first_stand posture=standing mom_distance=far nipple_state=hidden action='policy:stand_up'
+[env→world] pred:posture:standing → b31 (attach=now)
+[env→world] pred:proximity:mom:far → b32 (attach=latest)
+[env→world] pred:proximity:shelter:far → b33 (attach=latest)
+[env→world] pred:hazard:cliff:near → b34 (attach=latest)
+[env→body] BodyMap now: posture=standing mom=far nipple=hidden shelter=far cliff=near
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=near shelter=far zone=unsafe_cliff_near
+[env→controller] policy:follow_mom (added 2 bindings)
+[executed] policy:follow_mom (ok, reward=+0.10) binding=None
+pre:  dev_gate: True, trigger: fallback=True when not fallen; posture=standing zone=unsafe_cliff_near (hunger=0.50, fatigue=0.30)
+base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b31'}
+foa:  {'seeds': ['b34', 'b1'], 'size': 21, 'ids': {'b1', 'b29', 'b11', 'b25', 'b18', 'b31', 'b24', 'b8', 'b3', 'b15', 'b17', 'b10', 'b22', 'b7', 'b2', 'b34', 'b32', 'b14', 'b21', 'b4', 'b28'}}
+cands:['b1', '?', 'b31']
+post: dev_gate: True, trigger: fallback=True when not fallen; posture=standing zone=unsafe_cliff_near (hunger=0.50, fatigue=0.30)
+[env-loop] summary envr't step=4 stage=first_stand posture=standing mom=far nipple=hidden last_policy='policy:follow_mom' zone=unsafe_cliff_near
+[env-loop] explain posture: stand_up action applied by the environment: posture changed fallen→standing as the storyboard moved 'struggle'→'first_stand'.
+
+[env-loop] Closed-loop run complete. You can inspect details via Snapshot or the mini-snapshot that follows.
+[time] controller_steps=5, cos_to_last_boundary=0.9302, temporal_epochs=0, autonomic_ticks=0, age_days=0.0000, cog_cycles=0
+
+Values of time measures, nodes and links at this point:
+[time] controller_steps=5, cos_to_last_boundary=0.9302, temporal_epochs=0, autonomic_ticks=0, age_days=0.0000, cog_cycles=0
+[world] last 36 binding(s):
+  b1: [anchor:NOW, anchor:NOW_ORIGIN]
+      edges: then:b2, then:b3, then:b7, then:b10, then:b14, then:b17, then:b21, then:b24, then:b28, then:b31, then:b35
+  b2: [pred:posture:fallen]
+      edges: (none)
+  b3: [pred:posture:fallen]
+      edges: then:b4
+  b4: [pred:proximity:mom:far]
+      edges: then:b5
+  b5: [pred:proximity:shelter:far]
+      edges: then:b6
+  b6: [pred:hazard:cliff:far]
+      edges: (none)
+  b7: [action:push_up]
+      edges: then:b8
+  b8: [action:extend_legs]
+      edges: then:b9
+  b9: [pred:posture:standing]
+      edges: (none)
+  b10: [pred:posture:fallen]
+      edges: then:b11
+  b11: [pred:proximity:mom:far]
+      edges: then:b12
+  b12: [pred:proximity:shelter:far]
+      edges: then:b13
+  b13: [pred:hazard:cliff:far]
+      edges: (none)
+  b14: [action:push_up]
+      edges: then:b15
+  b15: [action:extend_legs]
+      edges: then:b16
+  b16: [pred:posture:standing]
+      edges: (none)
+  b17: [pred:posture:fallen]
+      edges: then:b18
+  b18: [pred:proximity:mom:far]
+      edges: then:b19
+  b19: [pred:proximity:shelter:far]
+      edges: then:b20
+  b20: [pred:hazard:cliff:far]
+      edges: (none)
+  b21: [action:push_up]
+      edges: then:b22
+  b22: [action:extend_legs]
+      edges: then:b23
+  b23: [pred:posture:standing]
+      edges: (none)
+  b24: [pred:posture:fallen]
+      edges: then:b25
+  b25: [pred:proximity:mom:far]
+      edges: then:b26
+  b26: [pred:proximity:shelter:far]
+      edges: then:b27
+  b27: [pred:hazard:cliff:far]
+      edges: (none)
+  b28: [action:push_up]
+      edges: then:b29
+  b29: [action:extend_legs]
+      edges: then:b30
+  b30: [pred:posture:standing]
+      edges: (none)
+  b31: [pred:posture:standing]
+      edges: then:b32
+  b32: [pred:proximity:mom:far]
+      edges: then:b33
+  b33: [pred:proximity:shelter:far]
+      edges: then:b34
+  b34: [pred:hazard:cliff:near]
+      edges: (none)
+  b35: [action:look_around]
+      edges: then:b36
+  b36: [pred:alert]
+      edges: (none)

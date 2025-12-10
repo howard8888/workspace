@@ -580,8 +580,9 @@ def _fallen_near_now(world, ctx, max_hops: int = 3) -> bool:
     otherwise fall back to scanning the episode graph near NOW for posture:fallen.
 
     Body-first logic (neonate):
-      • If BodyMap is FRESH and posture == 'fallen'  → treat as fallen (True).
-      • If BodyMap is FRESH and posture == 'standing'→ treat as not fallen (False).
+      • If BodyMap is FRESH and posture == 'fallen'           → treat as fallen (True).
+      • If BodyMap is FRESH and posture in {'standing',
+        'resting'}                                           → treat as not fallen (False).
       • Otherwise, fall back to: any pred:posture:fallen reachable from NOW
         within <= max_hops edges.
 
@@ -596,9 +597,9 @@ def _fallen_near_now(world, ctx, max_hops: int = 3) -> bool:
             bp = body_posture(ctx)
             if bp == "fallen":
                 return True
-            if bp == "standing":
+            if bp in ("standing", "resting"):
                 return False
-            # If BodyMap is fresh but posture is unknown (None or resting),
+            # If BodyMap is fresh but posture is unknown (None or other),
             # we fall through to the graph-based check below.
     except Exception:
         # If anything goes wrong with BodyMap, fall back to graph only.
@@ -656,7 +657,6 @@ def _fallen_near_now(world, ctx, max_hops: int = 3) -> bool:
                     q.append(v)
 
     return False
-
 
 
 def _body_slot_tags(ctx, slot: str) -> set[str]:
@@ -746,6 +746,51 @@ def body_cliff_distance(ctx) -> str | None:
     if "pred:hazard:cliff:far" in tags:
         return "far"
     return None
+
+
+def body_space_zone(ctx) -> str:
+    """
+    Coarse body/space classification based on BodyMap shelter/cliff slots.
+
+    Returns one of:
+      'unsafe_cliff_near' — BodyMap is fresh and cliff is 'near' while shelter is not 'near'.
+      'safe'              — BodyMap is fresh and shelter is 'near' while cliff is not 'near'.
+      'unknown'           — BodyMap is stale/unavailable or we have insufficient information.
+
+    This helper is used by:
+      • the Rest gate (to veto resting in clearly unsafe geometry),
+      • snapshot/BodyMap displays (for a one-word zone label),
+      • environment-loop summaries (to show how the agent reacts to each zone).
+
+    It deliberately does *not* try to interpret all possible combinations
+    (e.g., both cliff and shelter 'near'); those are reported as 'unknown'
+    so callers can treat them conservatively or extend the taxonomy later.
+    """
+    try:
+        # If BodyMap is missing or stale, we do not trust spatial slots.
+        if ctx is None or bodymap_is_stale(ctx):
+            return "unknown"
+    except Exception:
+        return "unknown"
+
+    try:
+        cliff = body_cliff_distance(ctx)
+        shelter = body_shelter_distance(ctx)
+    except Exception:
+        return "unknown"
+
+    if cliff is None and shelter is None:
+        return "unknown"
+
+    if cliff == "near" and shelter != "near":
+        return "unsafe_cliff_near"
+
+    if shelter == "near" and cliff != "near":
+        return "safe"
+
+    # Any other combination (including inconsistent or partially-known) is treated
+    # as 'unknown' so that gates can fall back to drive-based behaviour.
+    return "unknown"
 
 
 def body_shelter_is_near(ctx) -> bool:
