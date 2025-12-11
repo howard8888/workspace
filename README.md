@@ -537,12 +537,6 @@ Example (stand up):
   
   
 
-Design decision (ADR-0002 folded in): Policies are intentionally small and readable. We avoid global planning for every step to keep the code explainable and the UI responsive. Guards in `trigger()` prevent repeated firing (e.g., don’t stand up twice if standing exists).
-
-Design decision (ADR-0008 folded in): If a drive source cannot publish tag predicates for some reason, the system should continue running, policies degrade gracefully by relying on tags already in the graph.
-
-
-
 ***Q&A to help you learn this section***
 Q: How is an action chosen each tick?   
 A: The Action Center scans policies in a fixed order and runs the first whose `trigger()` returns True given current drives/tags.
@@ -560,13 +554,145 @@ A: Policies degrade gracefully by relying on existing graph tags, the system kee
 
 
 
-**Persistence (snapshots):**
+### Gating versus Triggering versus Executing
+
+How do policies work in the CCA8 architecture?
+
+You should think of how policies work in terms of three states (which actually map very cleanly to what CCA8 is doing in code):
+
+1. **Gating**
+
+   * “Is this policy even allowed in the candidate set right now?”
+   * Includes:
+
+     * `dev_gate(ctx)` (e.g., neonatal-only policies)
+     * safety overrides (e.g., “if fallen, only allow StandUp/RecoverFall”)
+   * Everything that fails here is **out** before we even look at drives or world.
+
+2. **Triggering**
+
+   * For the policies that passed gating:
+     “Given world + drives + BodyMap, does this policy *want* to fire now?”
+   * Implemented by each policy’s `trigger(world, drives, ctx)`.
+   * If `trigger(...)` is `True` → the policy is **triggered** and joins the **candidate list** for this tick.
+
+3. **Executing**
+
+   * Among all **triggered** policies, pick one to actually run.
+   * This is where we define “best”:
+
+     * drive deficit scores (hunger vs fatigue, etc.),
+     * maybe a preferred action,
+     * tie-breaking / ordering.
+   * The winner gets:
+
+     * logged as `[executed] policy:...`,
+     * its primitive run in the Action Center,
+     * its name fed into `env.step(action=...)` next tick.
+
+So in short:
+
+ **Allowed → Triggered → Executed**
+ (gating → triggering → winner)
+
+
+
+***Q&A to help you learn this section***
+
+Q: What is a “policy” in CCA8?
+A: A policy is a named behaviour like policy:stand_up, policy:seek_nipple, policy:follow_mom, or policy:rest. Each policy has:
+
+a gate (dev + safety),
+
+a trigger function,
+
+and a primitive that actually runs when the policy is selected to execute.
+
+Q: What does “gating” really do?
+A: Gating answers: “Is this policy even allowed to be considered right now?”
+Examples:
+
+dev_gate(ctx) filters out policies that don’t apply to the current profile (e.g., neonatal-only).
+
+The safety override may say “if BodyMap says fallen, only allow StandUp/RecoverFall.”
+If a policy fails gating, its trigger is never even called that tick.
+
+Q: How is “triggering” different from “gating”?
+A: Gating is a coarse include/exclude filter. Triggering is a context check for policies that survived the gate:
+
+Gating: “Am I even allowed in the candidate set?”
+
+Triggering: “Given world + drives + BodyMap, do I want to fire now?”
+
+Triggering is implemented by trigger(world, drives, ctx). If this returns True, the policy is marked as triggered and joins the candidate list.
+
+Q: Can a policy pass gating but fail to trigger?
+A: Yes. For example, policy:rest might:
+
+Pass gating (dev + safety say it is allowed), but
+
+Fail trigger if fatigue is below FATIGUE_HIGH or zone is unsafe.
+
+In that case, Rest is “allowed in principle” but does not join the triggered candidate set for that tick.
+
+Q: Can multiple policies trigger in the same tick?
+A: Yes. For example, both SeekNipple and Rest can be triggered if hunger and fatigue are both high and zone is safe. In that case, they both enter the candidate list and the execution stage must pick a winner.
+
+Q: How do we choose which triggered policy actually executes?
+A: Execution is handled by the Action Center / PolicyRuntime:
+
+It takes the triggered policies,
+
+Computes some notion of “best” (e.g., drive deficit scores, preferred action, ordering),
+
+Chooses a single winner for this tick.
+
+That winner:
+
+is logged as [executed] policy:...,
+
+runs its primitive,
+
+and its name becomes the action string for env.step(...) in the next environment tick.
+
+Q: Where does the safety override fit into this picture?
+A: Safety is implemented as an extra gating layer:
+
+First, we collect policies that pass dev_gate(ctx) and trigger True.
+
+Then, if _fallen_near_now(...) says “fallen”, we filter that list down to a small safety set (e.g., {StandUp, RecoverFall}).
+
+Only after that do we pick the “best” policy to execute.
+
+So safety never directly executes a policy; it restricts which policies are even allowed to compete.
+
+Q: How does this relate to what I see in the env-loop logs?
+A: Roughly:
+
+[gate:rest] ... lines show triggering and gating conditions (fatigue, zone, BodyMap freshness, etc.).
+
+[env→controller] policy:... shows what the gate catalog and safety layer proposed for this tick.
+
+[executed] policy:... (in the controller logs) shows which policy actually executed.
+
+env.step(action='policy:...') uses that executed policy name to advance the storyboard and world geometry on the next environment tick.
+
+In other words, the logs are just different windows onto the three phases you summarized as:
+
+Allowed → Triggered → Executed
+(gating → triggering → winner)
+
+
+
+
+### Persistence (snapshots):
 
 A session snapshot is a JSON file that contains: the world graph (bindings + edges + internal counters), drives, minimal skill telemetry, and small context items. Saving is atomic, loading restores indices and advances the id counter so new bindings don’t collide with old ids.
 
 Design decision (ADR-0003 folded in): We use human‑readable JSON for portability and easy field debugging. A binary format would be smaller but harder to inspect. The JSON structure is stable enough to be versioned if we add fields later.
 
 Design decision (ADR-0005 folded in): A runner‑level “Reset” is preferable to ad‑hoc deletes when starting a clean demo—this guarantees counters and anchors are consistent.
+
 
 ***Q&A to help you learn this section***
 
@@ -1558,6 +1684,54 @@ Design decision (folded in): Attachment semantics are explicit and lowercase: `a
 
 
 
+## Environment loop and episode configuration
+
+Two runner menu selection entries work together to make the newborn-goat simulation easier to explore:
+
+- **Run N environment steps (closed-loop timeline)**  
+  Runs a short loop between the **HybridEnvironment** and the **Action Center**:
+
+  1. If needed, calls `env.reset()` to start a newborn-goat episode.
+  2. On each step, calls `env.step(action=ctx.env_last_action, ctx=ctx)`, where `ctx.env_last_action` is the name of the last executed policy (e.g., `policy:stand_up`, `policy:seek_nipple`, `policy:follow_mom`).
+  3. Injects `EnvObservation` into the main WorldGraph and updates BodyMap from the predicates.
+  4. Runs one controller step to select and execute a policy, logging it as `[executed] policy:...`, and stores its name back into `ctx.env_last_action` for the next environment tick.
+
+  The log for each step includes:
+
+  - an `[env]` line (stage, posture, mom/nipple, last action),
+  - `[env→world]` lines (what predicates/cues were written),
+  - `[env→controller]` lines (which policy fired and why),
+  - a compact `[env-loop] summary ...` line, plus:
+    - `explain posture: ...` — why posture stayed fallen/standing/latched/resting,
+    - `explain nipple: ...` — how nipple moved hidden → reachable → latched,
+    - `explain zone: ...` — why geometry is currently classified as unknown / unsafe_cliff_near / safe.
+
+  Together, these lines turn the closed-loop run into a readable text storyboard (“fell, stood, followed mom off the cliff, moved into shelter, latched, rested”).
+
+- **Configure episode starting state (drives + age_days)**  
+  Allows you to adjust the **internal starting conditions** without editing code:
+
+  - `drives.hunger` (0.0–1.0)
+  - `drives.fatigue` (0.0–1.0)
+  - `drives.warmth` (0.0–1.0)
+  - `ctx.age_days` (≥ 0.0)
+
+  The runner:
+
+  1. Prints current values.
+  2. Prompts for new values (blank = keep current), clamping drives to `[0.0, 1.0]` and age to `≥ 0.0`.
+  3. Writes them back into the live `drives` and `ctx` objects.
+  4. Prints an updated summary line.
+
+  This is the main way to explore different behavioural regimes:
+
+  - **Hungry, not tired** → expect `SeekNipple` to dominate once geometry is safe.
+  - **Very tired, moderately hungry** → `Rest` competes strongly once the kid is in shelter.
+  - **Low drives** → permissive `FollowMom` behaviour dominates, moving geometry without strong drive pressure.
+
+After configuring drives and age with menu 40, you can immediately run menu 37 to see how those initial conditions change the closed-loop story.
+
+
 ***Q&A to help you learn this section***
 
 Q: What are the most useful menu items while learning?   
@@ -1620,7 +1794,9 @@ Included starter tests:
 
 - `tests/test_smoke.py` — basic reasonableness (asserts True).
 - `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → pred:stand exists.
-- `tests/test_inspect_binding_details.py` — uses a small demo world to exercise binding shape, provenance (`meta.policy/created_by/...`), engram pointers, and incoming/outgoing edge degrees as expected by the “Inspect binding details” menu.
+- `tests/test_inspect_binding_details.py` — uses a small demo world and asserts that inspect-binding reports edge degrees as expected by the “Inspect binding details” menu.
+- `tests/test_phase_vi_c_spatial.py` — checks that the newborn-goat environment’s **spatial movement and safety gating** behave as described: `follow_mom` moves the kid off the cliff and into shelter, and the Rest gate respects BodyMap’s safety zone (vetoes rest near the cliff, allows rest when shelter is near and the cliff is far).
+
 
 The demo world for these tests is built via `cca8_test_worlds.build_demo_world_for_inspect()`, which creates a tiny, deterministic WorldGraph (anchors NOW/HERE, stand/fallen/cue_mom/rest predicates, and a single engram pointer) that you can also use interactively via `--demo-world`.
 Unit tests (pytest)
@@ -5966,7 +6142,139 @@ We refer to these as **S–A–S segments** (State–Action–State), but in the
 
 * * *
 
-## 3. Policies and the Action Center
+
+## 3. Gating versus Triggering versus Executing
+
+This sub-section gives a mini-tutorial, i.e., an overview, on how policies work in the CCA8 architecture.
+
+You should think of how policies work in terms of three states (which actually map very cleanly to what CCA8 is doing in code):
+
+1. **Gating**
+
+   * “Is this policy even allowed in the candidate set right now?”
+   * Includes:
+
+     * `dev_gate(ctx)` (e.g., neonatal-only policies)
+     * safety overrides (e.g., “if fallen, only allow StandUp/RecoverFall”)
+   * Everything that fails here is **out** before we even look at drives or world.
+
+2. **Triggering**
+
+   * For the policies that passed gating:
+     “Given world + drives + BodyMap, does this policy *want* to fire now?”
+   * Implemented by each policy’s `trigger(world, drives, ctx)`.
+   * If `trigger(...)` is `True` → the policy is **triggered** and joins the **candidate list** for this tick.
+
+3. **Executing**
+
+   * Among all **triggered** policies, pick one to actually run.
+   * This is where we define “best”:
+
+     * drive deficit scores (hunger vs fatigue, etc.),
+     * maybe a preferred action,
+     * tie-breaking / ordering.
+   * The winner gets:
+
+     * logged as `[executed] policy:...`,
+     * its primitive run in the Action Center,
+     * its name fed into `env.step(action=...)` next tick.
+
+So in short:
+
+ **Allowed → Triggered → Executed**
+ (gating → triggering → winner)
+
+
+
+***Q&A to help you learn this section***
+
+Q: What is a “policy” in CCA8?
+A: A policy is a named behaviour like policy:stand_up, policy:seek_nipple, policy:follow_mom, or policy:rest. Each policy has:
+
+a gate (dev + safety),
+
+a trigger function,
+
+and a primitive that actually runs when the policy is selected to execute.
+
+Q: What does “gating” really do?
+A: Gating answers: “Is this policy even allowed to be considered right now?”
+Examples:
+
+dev_gate(ctx) filters out policies that don’t apply to the current profile (e.g., neonatal-only).
+
+The safety override may say “if BodyMap says fallen, only allow StandUp/RecoverFall.”
+If a policy fails gating, its trigger is never even called that tick.
+
+Q: How is “triggering” different from “gating”?
+A: Gating is a coarse include/exclude filter. Triggering is a context check for policies that survived the gate:
+
+Gating: “Am I even allowed in the candidate set?”
+
+Triggering: “Given world + drives + BodyMap, do I want to fire now?”
+
+Triggering is implemented by trigger(world, drives, ctx). If this returns True, the policy is marked as triggered and joins the candidate list.
+
+Q: Can a policy pass gating but fail to trigger?
+A: Yes. For example, policy:rest might:
+
+Pass gating (dev + safety say it is allowed), but
+
+Fail trigger if fatigue is below FATIGUE_HIGH or zone is unsafe.
+
+In that case, Rest is “allowed in principle” but does not join the triggered candidate set for that tick.
+
+Q: Can multiple policies trigger in the same tick?
+A: Yes. For example, both SeekNipple and Rest can be triggered if hunger and fatigue are both high and zone is safe. In that case, they both enter the candidate list and the execution stage must pick a winner.
+
+Q: How do we choose which triggered policy actually executes?
+A: Execution is handled by the Action Center / PolicyRuntime:
+
+It takes the triggered policies,
+
+Computes some notion of “best” (e.g., drive deficit scores, preferred action, ordering),
+
+Chooses a single winner for this tick.
+
+That winner:
+
+is logged as [executed] policy:...,
+
+runs its primitive,
+
+and its name becomes the action string for env.step(...) in the next environment tick.
+
+Q: Where does the safety override fit into this picture?
+A: Safety is implemented as an extra gating layer:
+
+First, we collect policies that pass dev_gate(ctx) and trigger True.
+
+Then, if _fallen_near_now(...) says “fallen”, we filter that list down to a small safety set (e.g., {StandUp, RecoverFall}).
+
+Only after that do we pick the “best” policy to execute.
+
+So safety never directly executes a policy; it restricts which policies are even allowed to compete.
+
+Q: How does this relate to what I see in the env-loop logs?
+A: Roughly:
+
+[gate:rest] ... lines show triggering and gating conditions (fatigue, zone, BodyMap freshness, etc.).
+
+[env→controller] policy:... shows what the gate catalog and safety layer proposed for this tick.
+
+[executed] policy:... (in the controller logs) shows which policy actually executed.
+
+env.step(action='policy:...') uses that executed policy name to advance the storyboard and world geometry on the next environment tick.
+
+In other words, the logs are just different windows onto the three phases you summarized as:
+
+Allowed → Triggered → Executed
+(gating → triggering → winner)
+
+
+* * *
+
+## 4. Policies and the Action Center
 
 Each primitive behavior is represented by a small **policy class** in `cca8_controller.py`:
 
@@ -6004,7 +6312,7 @@ This keeps the controller logic simple and explainable: a handful of hand-author
 
 * * *
 
-## 4. Example: StandUp (fallen → standing)
+## 5. Example: StandUp (fallen → standing)
 
 **Goal:** If the newborn goat is fallen and not too fatigued, stand it up.
 
@@ -6046,7 +6354,7 @@ After execution:
 
 * * *
 
-## 5. Example: SeekNipple (standing & hungry → seeking mom)
+## 6. Example: SeekNipple (standing & hungry → seeking mom)
 
 **Goal:** When upright and hungry, start seeking mom’s nipple.
 
@@ -6084,7 +6392,7 @@ Again, that’s a sequence of **predicate–action–predicate** segments.
 
 * * *
 
-## 6. Example: Rest (fatigued → resting)
+## 7. Example: Rest (fatigued → resting)
 
 **Goal:** When the goat is very fatigued, let it rest and reduce fatigue.
 
@@ -6108,7 +6416,7 @@ The S–A–S shape is simpler here:
 
 * * *
 
-## 7. Interplay with NOW, NOW_ORIGIN, and LATEST
+## 8. Interplay with NOW, NOW_ORIGIN, and LATEST
 
 The controller and runner cooperate to keep the anchors meaningful:
 
@@ -6128,7 +6436,7 @@ This leads to a natural interpretation:
 
 * * *
 
-## 8. Q&A to help consolidate
+## 9. Q&A to help consolidate
 
 **Q: Where are actions stored — in edges or nodes?**  
 A: In **nodes**. Each action is a binding tagged `action:*` (e.g., `action:push_up`) with `then` edges linking it to predicates. Edge labels are mostly human-facing aliases (often just `"then"`).
@@ -6961,6 +7269,40 @@ we mean that the same underlying structures—`EnvState`, BodyMap, and the World
 - planning and inspection later can see that these safer configurations were **reached by the agent’s own actions**, not by a scripted teleport.
 
 Environment geometry, then, is simply the **current spatial layout of the scene** plus its episode-level trace: who is where relative to whom, which regions are safe vs. dangerous, and how that configuration evolves over time as the environment and the agent interact.
+
+
+### Example: Follow-mom movement across terrain
+
+In the newborn goat storyboard, one of the simplest examples of “actions changing geometry” is the **follow-mom behaviour**.
+
+At the environment level we keep a coarse spatial ladder in `EnvState`:
+
+- `position`: `"cliff_edge"`, `"open_field"`, or `"shelter_area"`
+- `zone`: a safety classification derived from `position` and distances (`"unsafe"`, `"neutral"`, `"safe"`)
+
+The **storyboard + FollowMom policy** cooperate to move the kid along this ladder:
+
+1. Early in the story, once the kid is standing, geometry is still exposed:
+
+   - `position = "cliff_edge"`
+   - `cliff_distance = "near"`
+   - `shelter_distance = "far"`
+   - BodyMap’s zone ≈ “near a drop, no shelter” (unsafe for resting)
+
+2. When the controller selects `policy:follow_mom` and the environment applies it in this stage:
+
+   - First hop:  
+     `cliff_edge → open_field`  
+     `cliff_distance` flips to `"far"` while `shelter_distance` stays `"far"`.  
+     Geometry is now “neutral ground” (no nearby cliff, no nearby shelter).
+
+   - Second hop:  
+     `open_field → shelter_area`  
+     `shelter_distance` becomes `"near"`, `cliff_distance` remains `"far"`.  
+     Geometry is now a sheltered niche near mom, suitable for resting and feeding.
+
+BodyMap mirrors these changes into posture / mom-distance / shelter / cliff slots and recomputes its own zone (`unsafe_cliff_near` vs `safe`). The main WorldGraph records the **episode trace** of these transitions, so a diagnostic snapshot clearly shows that the kid did not magically teleport into safety; it walked off the edge, then into shelter, under its own `follow_mom` behaviour.
+
 
 
 

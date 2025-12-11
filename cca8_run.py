@@ -4570,10 +4570,197 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
       - remembers the last fired policy name in ctx.env_last_action so the next
         env.step(...) can react to it.
 
-    This version also prints a short *posture explanation* line per step, based
-    on how EnvState.kid_posture and EnvState.scenario_stage changed relative to
-    the previous step and which action was sent into the environment.
+    This version also prints short explanation lines for:
+      - posture (why we are fallen / standing / latched / resting),
+      - nipple_state (hidden → reachable → latched → resting),
+      - zone (why we are 'unknown' vs 'unsafe_cliff_near' vs 'safe').
     """
+
+    def _coarse_zone_from_env(state) -> str | None:
+        """Approximate the BodyMap's zone from EnvState distances.
+
+        This mirrors cca8_controller.body_space_zone:
+
+          - 'unsafe_cliff_near' if cliff is 'near' and shelter is not 'near'.
+          - 'safe' if shelter is 'near' and cliff is not 'near'.
+          - 'unknown' otherwise (including None / inconsistent / partial info).
+        """
+        if state is None:
+            return None
+        try:
+            cliff = getattr(state, "cliff_distance", None)
+            shelter = getattr(state, "shelter_distance", None)
+        except Exception:
+            return None
+
+        if cliff is None and shelter is None:
+            return "unknown"
+        if cliff == "near" and shelter != "near":
+            return "unsafe_cliff_near"
+        if shelter == "near" and cliff != "near":
+            return "safe"
+        return "unknown"
+
+    def _explain_zone_change(prev_state, curr_state, zone: str | None, ctx) -> str | None: #pylint: disable=unused-argument
+        """Human-readable explanation for why the coarse zone is what it is this step."""
+        if zone is None:
+            return None
+
+        # Try to reconstruct the previous zone from EnvState distances.
+        prev_zone = _coarse_zone_from_env(prev_state)
+
+        # 'unknown' zone: either BodyMap is stale or geometry is ambiguous/incomplete.
+        if zone == "unknown":
+            stale = False
+            try:
+                if ctx is None or bodymap_is_stale(ctx):
+                    stale = True
+            except Exception:
+                # If anything goes wrong, just treat as possibly stale.
+                stale = False
+
+            if stale:
+                return (
+                    "zone is 'unknown' because the BodyMap is stale or unavailable; "
+                    "we do not yet trust shelter/cliff slots for spatial gating."
+                )
+            if prev_zone and prev_zone != "unknown":
+                return (
+                    f"zone changed {prev_zone!r}→'unknown'; cliff/shelter geometry is now in a "
+                    "combination we do not classify (e.g., both near) or partially known, so "
+                    "we treat it conservatively."
+                )
+            return (
+                "zone is 'unknown'; either the environment has not yet established clear "
+                "cliff/shelter distances or they are in a combination we do not classify, "
+                "so gates treat it conservatively."
+            )
+
+        # Unsafe near a cliff.
+        if zone == "unsafe_cliff_near":
+            if prev_zone and prev_zone != zone:
+                return (
+                    f"zone changed {prev_zone!r}→'unsafe_cliff_near'; BodyMap now sees the cliff "
+                    "near while shelter is not near, so this geometry is treated as unsafe for "
+                    "resting."
+                )
+            return (
+                "zone is 'unsafe_cliff_near'; BodyMap sees a nearby cliff but no nearby shelter, "
+                "so resting policies are gated off in this configuration."
+            )
+
+        # Safe in a sheltered niche.
+        if zone == "safe":
+            if prev_zone and prev_zone != zone:
+                return (
+                    f"zone changed {prev_zone!r}→'safe'; cliff is no longer near and shelter is "
+                    "near, so the kid is now in a sheltered niche where resting/feeding are "
+                    "allowed."
+                )
+            return (
+                "zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a "
+                "sheltered niche suitable for resting and feeding."
+            )
+
+        # Any other zone label (future extensions).
+        if prev_zone and prev_zone != zone:
+            return (
+                f"zone changed {prev_zone!r}→{zone!r}; this label is not yet given a detailed "
+                "explanation in the newborn-goat storyboard."
+            )
+        return f"zone is {zone!r}; this label currently has no more detailed explanation."
+
+    def _explain_nipple_change(prev_state, curr_state, action_for_env: str | None) -> str | None:
+        """Human-readable explanation for why nipple_state is what it is this step."""
+        if curr_state is None:
+            return None
+
+        n = curr_state.nipple_state
+        s = curr_state.scenario_stage
+
+        if prev_state is None:
+            # First tick after reset: describe the starting feeding milestone.
+            if n == "hidden":
+                return (
+                    "initial storyboard setup: nipple_state='hidden' in stage "
+                    f"{s!r}; the kid has not yet found or reached the nipple."
+                )
+            return (
+                f"initial storyboard setup: nipple_state={n!r} in stage={s!r} "
+                "(start-of-episode feeding configuration)."
+            )
+
+        prev_n = prev_state.nipple_state
+        prev_s = prev_state.scenario_stage
+
+        # No nipple_state change this tick
+        if n == prev_n:
+            if n == "hidden":
+                return (
+                    "nipple remains hidden; the storyboard has not yet made it "
+                    "reachable (or visible) to the kid in this stage."
+                )
+            if n in ("visible", "reachable"):
+                return (
+                    f"nipple_state remains {n!r}; the nipple is available but "
+                    "has not yet latched this step."
+                )
+            if n == "latched":
+                if prev_s != s and s == "rest":
+                    return (
+                        "stage advanced from 'first_latch' to 'rest' while the "
+                        "nipple remains latched; the kid is effectively resting "
+                        "with ongoing access to milk."
+                    )
+                return (
+                    "nipple remains latched; the kid continues feeding at the "
+                    "maternal nipple this step."
+                )
+            return (
+                f"nipple_state remains {n!r}; no storyboard transition affecting "
+                "feeding milestones this step."
+            )
+
+        # Nipple milestone changed this tick
+        if prev_n in ("hidden", "visible") and n == "reachable":
+            if action_for_env == "policy:seek_nipple":
+                return (
+                    "nipple changed hidden→reachable, helped by a seek_nipple "
+                    "action; the kid has oriented enough that the nipple is now "
+                    "within reach."
+                )
+            return (
+                "nipple changed hidden→reachable as the storyboard crossed its "
+                f"\"nipple reachable\" threshold in stage {s!r}."
+            )
+
+        if prev_n in ("hidden", "visible") and n == "latched":
+            if action_for_env == "policy:seek_nipple":
+                return (
+                    "nipple jumped hidden→latched under seek_nipple; the kid "
+                    "found and latched onto the nipple in one scripted step."
+                )
+            return (
+                "nipple jumped hidden→latched directly by storyboard timing; "
+                "this compresses 'found' and 'latched' into a single episode step."
+            )
+
+        if prev_n == "reachable" and n == "latched":
+            if action_for_env == "policy:seek_nipple":
+                return (
+                    "nipple changed reachable→latched under seek_nipple; the kid "
+                    "successfully latched after having the nipple within reach."
+                )
+            return (
+                "nipple changed reachable→latched as the storyboard hit its "
+                "\"auto latch\" threshold; milk:drinking now begins."
+            )
+
+        # Any other transition (rare in the newborn storyboard)
+        return (
+            f"nipple_state changed {prev_n!r}→{n!r} as the storyboard moved "
+            f"{prev_s!r}→{s!r} this step."
+        )
 
     def _explain_posture_change(prev_state, curr_state, action_for_env: str | None) -> str | None:
         """Human-readable explanation for why posture is what it is this step."""
@@ -4679,7 +4866,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 f"scenario={env_info.get('scenario_name')}"
             )
         else:
-            # Snapshot previous EnvState so we can explain posture changes.
+            # Snapshot previous EnvState so we can explain posture/nipple/zone changes.
             try:
                 prev_state = env.state.copy()
             except Exception:
@@ -4700,7 +4887,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 f"action={action_for_env!r}"
             )
 
-        # 3) EnvObservation → WorldGraph
+        # 3) EnvObservation → WorldGraph + BodyMap
         inject_obs_into_world(world, ctx, env_obs)
 
         # 4) Controller response
@@ -4727,7 +4914,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             print(f"[env→controller] controller step error: {e}")
             ctx.env_last_action = None
 
-        # Short summary for this step + posture explanation
+        # Short summary for this step + posture/nipple/zone explanations
         try:
             st = env.state
             try:
@@ -4746,9 +4933,25 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
             # Explain why posture ended up as it is at this step.
             try:
-                explanation = _explain_posture_change(prev_state, st, action_for_env)
-                if explanation:
-                    print(f"[env-loop] explain posture: {explanation}")
+                posture_expl = _explain_posture_change(prev_state, st, action_for_env)
+                if posture_expl:
+                    print(f"[env-loop] explain posture: {posture_expl}")
+            except Exception:
+                pass
+
+            # Explain why nipple_state ended up as it is at this step.
+            try:
+                nipple_expl = _explain_nipple_change(prev_state, st, action_for_env)
+                if nipple_expl:
+                    print(f"[env-loop] explain nipple: {nipple_expl}")
+            except Exception:
+                pass
+
+            # Explain why zone ended up as it is at this step.
+            try:
+                zone_expl = _explain_zone_change(prev_state, st, zone, ctx)
+                if zone_expl:
+                    print(f"[env-loop] explain zone: {zone_expl}")
             except Exception:
                 pass
         except Exception:
@@ -5328,6 +5531,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     33) Lines of Python code LOC by directory [loc, sloc]
     34) Reset current saved session [reset]
     36) Toggle mini-snapshot after each menu selection [mini, msnap]
+    40) Configure episode starting state (drives + age_days) [config-episode, cfg-epi]
 
 
     Select: """
@@ -5387,6 +5591,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "envloop": "37", "envrun": "37", "envsteps": "37",
     "bodymap": "38", "bsnap": "38",
     "spatial": "39", "near": "39",
+    "config-episode": "40", "cfg-epi": "40",
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -5443,6 +5648,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "37": "37",  # envr't loop
     "38": "38",  # inspect bodymap
     "39": "39",  # spatial, near demo
+    "40": "40",  # Configure episode starting state (drives + age_days)
 }
 
     # Attempt to load a prior session if requested
@@ -7936,6 +8142,114 @@ You can still use menu 35 for detailed, single-step inspection.
             except Exception as e:
                 print(f"[spatial] resting_scenes_in_shelter error: {e}")
 
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "40":
+            # Configure episode starting state (drives + age_days)
+            print("Selection: Configure episode starting state (drives + age_days)\n")
+            print("(For development work, it is useful to adjust starting state attributes and see the")
+            print("  effect on program behavior.)\n")
+
+            # Read current values defensively
+            try:
+                current_hunger = float(getattr(drives, "hunger", 0.0))
+            except Exception:
+                current_hunger = 0.0
+            try:
+                current_fatigue = float(getattr(drives, "fatigue", 0.0))
+            except Exception:
+                current_fatigue = 0.0
+            try:
+                current_warmth = float(getattr(drives, "warmth", 0.0))
+            except Exception:
+                current_warmth = 0.0
+            try:
+                current_age = float(getattr(ctx, "age_days", 0.0) or 0.0)
+            except Exception:
+                current_age = 0.0
+
+            print("Current values:")
+            print(f"  hunger   = {current_hunger:.2f}")
+            print(f"  fatigue  = {current_fatigue:.2f}")
+            print(f"  warmth   = {current_warmth:.2f}")
+            print(f"  age_days = {current_age:.2f}")
+            print("\nEnter new values or press Enter to keep the current value.")
+            print("Drives are clamped to the range [0.0, 1.0]. age_days must be ≥ 0.\n")
+
+            def _prompt_float(
+                label: str,
+                cur: float,
+                low: float | None = None,
+                high: float | None = None,
+            ) -> float:
+                """Prompt for a float with optional clamping; blank keeps current."""
+                try:
+                    raw = input(f"{label} (current={cur:.2f}): ").strip()
+                except Exception:
+                    return cur
+                if not raw:
+                    return cur
+                try:
+                    val = float(raw)
+                except Exception:
+                    print(f"  [warn] Could not parse {label!r}; keeping previous value.")
+                    return cur
+                if low is not None and val < low:
+                    print(f"  [warn] {label} below minimum {low:.2f}; clamping.")
+                    val = low
+                if high is not None and val > high:
+                    print(f"  [warn] {label} above maximum {high:.2f}; clamping.")
+                    val = high
+                return val
+
+            # Update drives in-place (these are the same objects used by env-loop)
+            new_hunger = _prompt_float("hunger", current_hunger, 0.0, 1.0)
+            new_fatigue = _prompt_float("fatigue", current_fatigue, 0.0, 1.0)
+            new_warmth = _prompt_float("warmth", current_warmth, 0.0, 1.0)
+
+            try:
+                drives.hunger = new_hunger
+            except Exception:
+                pass
+            try:
+                drives.fatigue = new_fatigue
+            except Exception:
+                pass
+            try:
+                drives.warmth = new_warmth
+            except Exception:
+                pass
+
+            # Update age_days (non-negative float)
+            try:
+                raw_age = input(f"age_days (current={current_age:.2f}): ").strip()
+            except Exception:
+                raw_age = ""
+            if raw_age:
+                try:
+                    val = float(raw_age)
+                    if val < 0.0:
+                        print("  [warn] age_days below 0.0; clamping to 0.0.")
+                        val = 0.0
+                    ctx.age_days = val
+                except Exception:
+                    print("  [warn] Could not parse age_days; keeping previous value.")
+            else:
+                # Ensure ctx.age_days is at least present
+                try:
+                    ctx.age_days = current_age
+                except Exception:
+                    pass
+
+            print("\n[config] Updated episode starting state:")
+            print(
+                f"  hunger={getattr(drives, 'hunger', new_hunger):.2f} "
+                f"fatigue={getattr(drives, 'fatigue', new_fatigue):.2f} "
+                f"warmth={getattr(drives, 'warmth', new_warmth):.2f} "
+                f"age_days={getattr(ctx, 'age_days', current_age):.2f}"
+            )
             loop_helper(args.autosave, world, drives, ctx)
 
 
