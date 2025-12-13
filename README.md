@@ -295,6 +295,7 @@ A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph 
 - [Tutorial on BodyMap](#tutorial-on-bodymap)
 - [Tutorial on Main (Runner) Module Technical Features](#tutorial-on-main-runner-module-technical-features)
 - [Tutorial on Controller Module Technical Features](#tutorial-on-controller-module-technical-features)
+- [Tutorial on Reinforcement Learning in the CCA8](#tutorial-on-reinforcement-learning-in-the-cca8)
 - [Tutorial on Temporal Module Technical Features](#tutorial-on-temporal-module-technical-features)
 - [Tutorial on Features Module Technical Features](#tutorial-on-features-module-technical-features)
 - [Tutorial on Column Module Technical Features](#tutorial-on-column-module-technical-features)
@@ -6469,6 +6470,103 @@ A: Policies call drives.flags() (or the runner helper _drive_tags(drives)) to ge
 
 Q: If I want the agent to plan around hunger, what should I do?
 A: Decide whether you want hunger to be a goal or just evidence. Use pred:drive:hunger_high if you want planners to explicitly seek alleviation conditions; use cue:drive:hunger_high if it should only modulate which policies fire (e.g., SeekNipple) without becoming a planner target.
+
+
+
+
+
+
+# Tutorial on Reinforcement Learning in the CCA8
+
+
+
+The CCA8 is designed so that learning can be introduced **incrementally** without rewriting the core architecture. The first learning target is **policy selection** (which primitive to execute under which conditions), rather than “learning the maps” (WorldGraph / BodyMap) themselves. This matches both the current code structure and a plausible evolutionary sequence: first learn *which actions work in which contexts*, then later refine richer navigation/map circuits.
+
+CCA8 begins with **transparent, inspectable reinforcement learning** rather than opaque gradient-heavy training loops. That does not mean CCA8 will never use gradient descent (e.g., for perception modules or external neural components); it means that, for the core newborn-goat controller, we start with RL mechanisms that are easy to audit in logs, tests, and snapshots.
+
+The RL integration points are intentionally small and clean:
+
+### 1) MdpBackend: reward and termination as a separate concern
+
+Reward and episode termination are handled by an **MdpBackend** whose job is to **evaluate** transitions, not to change world state. It reads `(prev_state, action, curr_state)` and returns `(reward, done, mdp_info)`. This keeps the task definition (what counts as “good” or “complete”) separate from the environment dynamics (how the world evolves).
+
+### 2) HybridEnvironment: a stable RL-style seam
+
+`HybridEnvironment` is the environment-side orchestrator and the stable boundary between “world” and “brain.” It exposes a Gym-like interface:
+
+- `reset(...) -> (EnvObservation, info)`
+- `step(action, ctx) -> (EnvObservation, reward, done, info)`
+
+In early development, the environment dynamics are primarily scripted (FSM/storyboard), but the interface already supports reward/done so RL experiments can be layered in without disturbing WorldGraph, BodyMap, or the Action Center API.
+
+### 3) Skill ledger: learning over policies first
+
+CCA8 already maintains a lightweight per-policy telemetry structure (the **skill ledger**) that tracks how often each policy runs and how well it tends to do. When reward is enabled via `MdpBackend`, each executed policy can update its `SkillStat` (e.g., running value estimate `q`, success counts, last reward).
+
+This yields a simple, biologically natural learning loop:
+
+1. World + drives + BodyMap gate/trigger a small set of candidate policies.
+2. The Action Center selects and executes one policy.
+3. The environment evaluates the transition and emits `reward` / `done`.
+4. The skill ledger updates the statistics for the executed policy.
+5. Over time, these learned estimates can be used (initially as a **tie-breaker**) to prefer policies that historically produce better outcomes in similar contexts.
+
+The key design principle is that learning should **not** bypass safety gates or replace the controller’s interpretability. Early RL in CCA8 is meant to be a small, auditable improvement to “which policy wins,” while the underlying maps remain readable and stable.
+
+
+## Policy choice with and without RL (rl_enabled / rl_epsilon)
+
+CCA8 policies operate in three conceptual stages:
+
+1) gating  
+A fast filter: dev gates (e.g., neonatal-only) and safety overrides (e.g., if the body is fallen, restrict to recovery/stand policies).
+
+2) triggering  
+For policies that pass gating: each policy’s `trigger(world, drives, ctx)` decides whether it is active this tick.
+
+3) executing  
+If multiple policies triggered, choose one “best” policy to execute.
+
+Reinforcement learning (RL) in CCA8 currently modifies only the executing stage. Gating, triggering, and safety logic remain unchanged.
+
+**(At the time of this writing. This will change with development.)**
+
+
+### No RL (rl_enabled = False)
+
+If multiple policies are triggered, CCA8 selects the winner by:
+
+- highest drive-deficit score (domain heuristic; hunger vs fatigue, etc.)
+- if tied, stable policy order (deterministic)
+
+The skill ledger is still updated for telemetry, but it does not affect selection.
+
+### RL enabled (rl_enabled = True)
+
+RL introduces epsilon-greedy exploration when multiple policies are triggered:
+
+- Let epsilon be the exploration rate:
+  - epsilon = `rl_epsilon` if set
+  - otherwise epsilon falls back to `ctx.jump`
+
+Selection rule:
+
+- With probability epsilon: choose a random triggered policy (exploration).
+- With probability (1 - epsilon): choose greedily by:
+  1) highest drive-deficit score
+  2) if tied, highest `SkillStat.q` (learned value from past rewards)
+  3) if still tied, stable policy order
+
+`SkillStat.q` is a learned value estimate for each policy: an exponential moving average of observed rewards for that policy. It is not the success rate (success rate is tracked for inspection, but q is the value estimate).
+
+### Why CCA8 starts RL here
+
+CCA8 introduces learning in the smallest, most inspectable place: choosing among already-triggered policies. This is a conservative design:
+
+- It is biologically plausible as an “early” learning mechanism (reward-modulated action selection).
+- It keeps safety interpretable: RL never bypasses safety gating.
+- It is easy to debug: the learned values (n/succ/q/last) are visible in snapshot output and can be correlated with behavior.
+
 
 
 

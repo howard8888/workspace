@@ -154,6 +154,7 @@ from dataclasses import dataclass, asdict
 from collections import deque
 from datetime import datetime
 from typing import Dict, List
+import random
 
 # PyPI and Third-Party Imports
 # --none at this time at program startup--
@@ -169,6 +170,7 @@ __version__ = "0.2.0"
 __all__ = [
     "Drives",
     "SkillStat",
+    "skill_q",
     "skills_to_dict",
     "skills_from_dict",
     "skill_readout",
@@ -514,6 +516,26 @@ def skill_readout() -> str:
             f"{name}: n={s.n}, succ={s.succ}, rate={rate:.2f}, q={s.q:.2f}, last={s.last_reward:+.2f}"
         )
     return "\n".join(lines)
+
+
+def skill_q(name: str, default: float = 0.0) -> float:
+    """Return the current learned q-value for a policy.
+
+    The controller maintains a tiny skill ledger (SKILLS) keyed by policy name.
+    Each entry holds an exponential moving average (EMA) of observed rewards for
+    that policy (see update_skill()).
+
+    When policy-level reinforcement learning is enabled (ctx.rl_enabled=True),
+    selection logic can use this value as a secondary tie-breaker (or small bonus)
+    among multiple triggered policies.
+    """
+    s = SKILLS.get(name)
+    if s is None:
+        return float(default)
+    try:
+        return float(s.q)
+    except Exception:
+        return float(default)
 
 # -----------------------------------------------------------------------------
 # Helper queries (controller-local; simple global scans)
@@ -1560,7 +1582,46 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
     if len(triggered) == 1:
         return _run(triggered[0], world, ctx, drives)
 
-    # Multiple triggered -- choose by drive deficit
+    # Multiple triggered -- choose a winner.
+    #
+    # Default (RL disabled): drive-deficit scoring with stable-order fallback.
+    # Optional (RL enabled): epsilon-greedy selection where the learned policy
+    # value (SkillStat.q) is used as a secondary tie-breaker.
+    rl_enabled = bool(getattr(ctx, "rl_enabled", False))
+    if rl_enabled:
+        # Exploration probability (epsilon): prefer ctx.rl_epsilon, else ctx.jump, else 0.
+        eps_raw = getattr(ctx, "rl_epsilon", None)
+        if eps_raw is None:
+            eps_raw = getattr(ctx, "jump", 0.0)
+
+        if eps_raw is None:
+            eps_f = 0.0
+        else:
+            try:
+                eps_f = float(eps_raw)
+            except (TypeError, ValueError):
+                eps_f = 0.0
+
+        eps_f = max(0.0, min(1.0, eps_f))
+
+        # Epsilon exploration: pick a random triggered policy.
+        if eps_f > 0.0 and random.random() < eps_f:
+            chosen = random.choice(triggered)
+            return _run(chosen, world, ctx, drives)
+
+        # Greedy choice: (drive deficit, learned q, stable order)
+        names_in_order = [p.name for p in PRIMITIVES]
+        chosen = max(
+            triggered,
+            key=lambda p: (
+                _policy_deficit_score(p.name, drives),
+                skill_q(p.name, default=0.0),
+                -names_in_order.index(p.name),
+            ),
+        )
+        return _run(chosen, world, ctx, drives)
+
+    # --- Default heuristic selection (RL disabled) ---
     scored = [(p, _policy_deficit_score(p.name, drives)) for p in triggered]
     max_score = max(s for _, s in scored)
 

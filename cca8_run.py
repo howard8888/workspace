@@ -72,6 +72,7 @@ import cca8_world_graph
 from cca8_controller import (
     PRIMITIVES,
     skill_readout,
+    skill_q,
     skills_to_dict,
     skills_from_dict,
     HUNGER_HIGH,
@@ -139,40 +140,29 @@ ASCII_LOGOS = {
 
 # --- Runtime Context (ENGINE↔CLI seam) --------------------------------------------
 
-
 @dataclass(slots=True)
 class Ctx:
     """Mutable runtime context for the agent (module-level, importable).
 
-    Timekeeping (soft clock + counters)
-    -----------------------------------
-    controller_steps : int
-        Count of Action Center decision/execution loops run in this session
-        (aka “instinct steps”). This is not wall-clock; it’s for analysis/debug.
-        Resettable.
+    ... existing sections ...
 
-    cog_cycles : int
-        Count of completed “cognitive cycles” that produced an output
-        (sense→decide→act *and* a write occurred in the WorldGraph).
-        Resettable.
-
-    Temporal timekeeping (soft clock)
-    ---------------------------------
-    temporal : TemporalContext | None
-        Owner of the procedural “now” vector and step()/boundary() operations.
-    sigma : float
-        Drift noise magnitude applied each step() (larger → faster cosine decay within epoch).
-    jump : float
-        Boundary noise magnitude applied on boundary() (larger → deeper post-boundary separation).
-    tvec_last_boundary : list[float] | None
-        Copy of the vector at the last boundary; used for cosine(current, last_boundary).
-    boundary_no : int
-        Epoch counter; incremented on each boundary() call.
-    boundary_vhash64 : str | None
-        64-bit sign-bit fingerprint of the vector at the last boundary (readable hex).
+    Reinforcement learning (policy selection)
+    -----------------------------------------
+    rl_enabled : bool
+        Enable epsilon-greedy policy selection. When enabled, the selector can use the
+        controller skill ledger (SkillStat.q) as a secondary tie-break among triggered policies.
+    rl_epsilon : float | None
+        Exploration probability in [0.0, 1.0]. If None, fall back to ctx.jump (so you can reuse
+        the existing “jump” knob as an exploration knob during early experiments).
     """
+
     sigma: float = 0.015
     jump: float = 0.2
+
+    # Reinforcement learning (policy selection)
+    rl_enabled: bool = False
+    rl_epsilon: Optional[float] = None
+
     age_days: float = 0.0
     ticks: int = 0
     profile: str = "Mountain Goat"
@@ -1649,7 +1639,38 @@ class PolicyRuntime:
             except ValueError:
                 return 10_000
 
-        chosen = max(matches, key=lambda p: (deficit(p.name), -stable_idx(p)))
+        #chosen = max(matches, key=lambda p: (deficit(p.name), -stable_idx(p)))
+        # Optional RL selection: epsilon-greedy with a learned-value tie-break.
+        #
+        # - Primary criterion remains the domain heuristic deficit(...) so
+        #   drives still dominate.
+        # - When deficits tie, we optionally prefer policies with higher
+        #   SkillStat.q (EMA reward) from the controller's skill ledger.
+        # - With epsilon>0, occasionally pick a random match for exploration.
+        rl_enabled = bool(getattr(ctx, "rl_enabled", False))
+        if rl_enabled:
+            eps = getattr(ctx, "rl_epsilon", None)
+            if eps is None:
+                eps = getattr(ctx, "jump", 0.0)
+            try:
+                eps_f = float(eps)
+            except Exception:
+                eps_f = 0.0
+            eps_f = max(0.0, min(1.0, eps_f))
+
+            if eps_f > 0.0 and random.random() < eps_f:
+                chosen = random.choice(matches)
+            else:
+                chosen = max(
+                    matches,
+                    key=lambda p: (
+                        deficit(p.name),
+                        skill_q(p.name, default=0.0),
+                        -stable_idx(p),
+                    ),
+                )
+        else:
+            chosen = max(matches, key=lambda p: (deficit(p.name), -stable_idx(p)))
 
         # Context for logging
         base  = choose_contextual_base(world, ctx, targets=["posture:standing", "stand"])
@@ -5532,6 +5553,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     34) Reset current saved session [reset]
     36) Toggle mini-snapshot after each menu selection [mini, msnap]
     40) Configure episode starting state (drives + age_days) [config-episode, cfg-epi]
+    41) Toggle RL policy selection (rl_enabled + rl_epsilon) [rl, rltog, x]
 
 
     Select: """
@@ -5592,6 +5614,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "bodymap": "38", "bsnap": "38",
     "spatial": "39", "near": "39",
     "config-episode": "40", "cfg-epi": "40",
+    "rl": "41", "rltog": "41", "toggle-rl": "41", "x": "41",
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -5649,6 +5672,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "38": "38",  # inspect bodymap
     "39": "39",  # spatial, near demo
     "40": "40",  # Configure episode starting state (drives + age_days)
+    "41": "41",  # Toggle RL policy selection
 }
 
     # Attempt to load a prior session if requested
@@ -8250,6 +8274,155 @@ You can still use menu 35 for detailed, single-step inspection.
                 f"warmth={getattr(drives, 'warmth', new_warmth):.2f} "
                 f"age_days={getattr(ctx, 'age_days', current_age):.2f}"
             )
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "41":
+            # Toggle RL policy selection (epsilon-greedy)
+            print("Selection: Toggle RL policy selection (epsilon-greedy)\n")
+            print("""
+RL policy selection (epsilon-greedy) — what it changes (at this point in development)
+-------------------------------------------------------------------------------------
+
+CCA8 policy evaluation has three stages:
+
+  1) gating
+     Fast filters: dev_gate(ctx) and safety overrides (e.g., fallen → only StandUp/RecoverFall).
+
+  2) triggering
+     For policies that pass gating: trigger(world, drives, ctx) decides whether each policy is active this tick.
+
+  3) executing
+     If multiple policies triggered, choose ONE policy to run.
+
+Reinforcement learning (RL) in CCA8 currently changes ONLY stage (3) (at this time of writing -- will change)
+Stages (1) and (2) are unchanged.
+
+When rl_enabled = False (no RL)
+-------------------------------
+If multiple policies are triggered:
+  - Choose the policy with the highest "drive deficit" score (the same heuristic as before).
+  - If there is a tie, break ties by stable policy order (deterministic).
+  - SkillStat.q is still recorded, but it is NOT used to select the winner.
+
+When rl_enabled = True (RL enabled)
+-----------------------------------
+Let epsilon be the exploration rate:
+  - epsilon = rl_epsilon if set
+  - otherwise epsilon falls back to ctx.jump
+
+If multiple policies are triggered:
+  - With probability epsilon:
+      Pick a random triggered policy (exploration).
+  - With probability (1 - epsilon):
+      Pick greedily by:
+        1) highest drive deficit score
+        2) if tied, highest SkillStat.q (learned value from past rewards)
+        3) if still tied, stable policy order
+
+What is SkillStat.q?
+--------------------
+SkillStat.q is the learned value estimate for a policy: an exponential moving average (EMA) of
+the rewards observed when that policy executed. It is NOT the success rate.
+(We still track success rate for telemetry, but q is the value estimate.)
+
+Why introduce RL this way?
+--------------------------
+- Evolutionary Biology: a plausible early learning mechanism is reward-modulated action selection ("which action works here?"),
+  before learning/optimizing larger navigation maps.
+- Safety: RL never bypasses safety gating; it only arbitrates among already-allowed candidates.
+- Debuggability: learned values are visible in the snapshot skill ledger (n / succ / q / last), so behavior stays explainable.
+
+Tip:
+- rl_epsilon = 0.0 gives greedy, deterministic behavior (no exploration).
+- rl_epsilon = 0.2 explores 20% of the time when there are multiple triggered policies.
+
+""")
+
+
+            enabled_now = bool(getattr(ctx, "rl_enabled", False))
+            eps_now = getattr(ctx, "rl_epsilon", None)
+
+            try:
+                jump_now = float(getattr(ctx, "jump", 0.0))
+            except Exception:
+                jump_now = 0.0
+
+            # Effective epsilon: rl_epsilon if set, else fall back to ctx.jump (by design).
+            try:
+                eff_eps = float(eps_now) if eps_now is not None else jump_now
+            except (TypeError, ValueError):
+                eff_eps = jump_now
+
+            print("Current RL settings:")
+            print(f"  rl_enabled = {enabled_now}")
+            print(f"  rl_epsilon = {eps_now!r}   (None means fallback to ctx.jump)")
+            print(f"  effective epsilon = {eff_eps:.3f}   (used for epsilon-greedy exploration)")
+            print("")
+
+            # Toggle enablement
+            try:
+                raw = input("Toggle RL?  [Enter=toggle | on | off]: ").strip().lower()
+            except Exception:
+                raw = ""
+
+            if raw == "":
+                enabled_new = not enabled_now
+            elif raw in ("on", "true", "1", "yes", "y"):
+                enabled_new = True
+            elif raw in ("off", "false", "0", "no", "n"):
+                enabled_new = False
+            else:
+                print("  [warn] Unrecognized input; leaving rl_enabled unchanged.")
+                enabled_new = enabled_now
+
+            # If enabling, optionally set epsilon
+            eps_new = eps_now
+            if enabled_new:
+                print("")
+                print("Set exploration probability epsilon (0..1).")
+                print("  - Enter keeps current rl_epsilon.")
+                print("  - Type 'none' to set rl_epsilon=None (exploration will use ctx.jump).")
+                print("  - Type 0 for greedy selection (no exploration).")
+                try:
+                    raw_eps = input(f"rl_epsilon (current={eps_now!r}, effective={eff_eps:.3f}): ").strip().lower()
+                except Exception:
+                    raw_eps = ""
+
+                if raw_eps == "":
+                    eps_new = eps_now
+                elif raw_eps in ("none", "null"):
+                    eps_new = None
+                else:
+                    try:
+                        val = float(raw_eps)
+                        if val < 0.0:
+                            print("  [warn] epsilon below 0.0; clamping to 0.0.")
+                            val = 0.0
+                        if val > 1.0:
+                            print("  [warn] epsilon above 1.0; clamping to 1.0.")
+                            val = 1.0
+                        eps_new = val
+                    except (TypeError, ValueError):
+                        print("  [warn] Could not parse rl_epsilon; leaving unchanged.")
+                        eps_new = eps_now
+
+            # Apply
+            ctx.rl_enabled = enabled_new
+            ctx.rl_epsilon = eps_new
+
+            # Print updated summary
+            try:
+                eff_after = float(ctx.rl_epsilon) if ctx.rl_epsilon is not None else float(getattr(ctx, "jump", 0.0))
+            except (TypeError, ValueError):
+                eff_after = float(getattr(ctx, "jump", 0.0))
+
+            print("")
+            print("[rl] Updated RL settings:")
+            print(f"  rl_enabled = {ctx.rl_enabled}")
+            print(f"  rl_epsilon = {ctx.rl_epsilon!r}")
+            print(f"  effective epsilon = {eff_after:.3f}")
             loop_helper(args.autosave, world, drives, ctx)
 
 
