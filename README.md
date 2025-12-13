@@ -6532,6 +6532,7 @@ Reinforcement learning (RL) in CCA8 currently modifies only the executing stage.
 **(At the time of this writing. This will change with development.)**
 
 
+
 ### No RL (rl_enabled = False)
 
 If multiple policies are triggered, CCA8 selects the winner by:
@@ -6540,6 +6541,7 @@ If multiple policies are triggered, CCA8 selects the winner by:
 - if tied, stable policy order (deterministic)
 
 The skill ledger is still updated for telemetry, but it does not affect selection.
+
 
 ### RL enabled (rl_enabled = True)
 
@@ -6559,6 +6561,7 @@ Selection rule:
 
 `SkillStat.q` is a learned value estimate for each policy: an exponential moving average of observed rewards for that policy. It is not the success rate (success rate is tracked for inspection, but q is the value estimate).
 
+
 ### Why CCA8 starts RL here
 
 CCA8 introduces learning in the smallest, most inspectable place: choosing among already-triggered policies. This is a conservative design:
@@ -6566,6 +6569,108 @@ CCA8 introduces learning in the smallest, most inspectable place: choosing among
 - It is biologically plausible as an “early” learning mechanism (reward-modulated action selection).
 - It keeps safety interpretable: RL never bypasses safety gating.
 - It is easy to debug: the learned values (n/succ/q/last) are visible in snapshot output and can be correlated with behavior.
+
+
+### Soft tie-break learning: rl_delta (when q is allowed to matter)
+
+When RL is enabled, CCA8 still uses drive deficit as the primary notion of urgency, but it adds a conservative mechanism that lets the learned value estimate `SkillStat.q` influence choices in *ambiguous* situations.
+
+Definitions (executing stage only; gating/triggering/safety are unchanged):
+
+- Each triggered policy receives a `deficit(policy)` score (domain heuristic; hunger/fatigue urgency).
+- Let `best_deficit = max(deficit(policy))` over the triggered set.
+- Define a “near-best band” using `rl_delta`:
+
+  Any policy with `(best_deficit - deficit(policy)) <= rl_delta` is considered near-best.
+
+Selection logic in exploit mode (i.e., not exploring):
+
+- If the near-best band has exactly one candidate → choose it (deficit clearly dominates).
+- If the near-best band has multiple candidates → choose among that band by:
+  1) highest `SkillStat.q` (learned value; EMA reward),
+  2) if tied, slightly higher deficit,
+  3) if still tied, stable policy order.
+
+rl_delta effect (important):
+
+- `rl_delta = 0.0`  
+  `q` is only used when deficits are exactly tied (most conservative behavior).
+
+- `rl_delta` small (e.g., 0.02)  
+  `q` is used only in “near ties” (learning nudges choices only when urgency is very close).
+
+- `rl_delta` large  
+  Many policies fall into the near-best band, so `q` can influence most choices among triggered policies (approaches “q-driven” within the candidate set, while still respecting gating/triggering/safety).
+
+This is a conservative compromise between:
+- “q only breaks exact ties” (too inert when scores are real-valued/noisy), and
+- “blend q into every score” (can amplify noisy/mis-specified rewards).
+
+
+
+### Interactive controls for RL (runner menu 41)
+
+The Runner provides an interactive control panel:
+
+- `rl_enabled`  
+  Turns the RL logic on/off. When off, selection uses deficit + stable order only. :contentReference[oaicite:1]{index=1}
+
+- `rl_epsilon` (exploration rate, 0..1)  
+  When RL is enabled and multiple policies are triggered:
+  - with probability epsilon → choose a random triggered policy (exploration),
+  - otherwise → exploit using deficit and (when applicable) the q-based soft tie-break. :contentReference[oaicite:2]{index=2}
+
+  If `rl_epsilon` is `None`, epsilon falls back to `ctx.jump` (so you can reuse the existing “jump” knob as a quick exploration control).
+
+- `rl_delta` (soft tie-break band, >=0)  
+  Controls how often learned value `q` is consulted during exploitation:
+  - 0.0 = q only on exact ties
+  - larger = q used more often (near ties)
+
+Menu 41 prints the current values, allows toggling RL, and prompts for new epsilon and delta values. :contentReference[oaicite:3]{index=3}
+
+
+
+### Skill ledger and the Skills HUD (how to read learning)
+
+CCA8 maintains a tiny per-policy skill ledger and prints a compact Skills HUD after closed-loop environment runs.
+
+Per-policy fields:
+
+- `n`  
+  Number of times the policy executed.
+
+- `succ` and `rate = succ / n`  
+  Success bookkeeping. (At this stage many policies count as “ok” most of the time; this becomes more informative as explicit failures are modeled.)
+
+- `last`  
+  The reward value received the last time the policy executed.
+
+- `q` (learned value estimate)  
+  Exponential moving average (EMA) of observed rewards for this policy:
+
+  `q_new = (1 - alpha) * q_old + alpha * reward`
+
+  where alpha is a smoothing factor (currently ~0.3). `q` is not the success rate; it is the running value estimate used for RL tie-breaking within the near-best band.
+
+The Skills HUD also reports RL settings and the observed explore/exploit counts for the current run (these counts increment only when RL selection is actually active).
+
+
+
+### Seeing when q influenced a choice in the env-loop trace (menu 37)
+
+During menu 37 (closed-loop environment run), the trace may include a line like:
+
+`[rl-pick] chosen via q-soft-tiebreak: ...`
+
+This line is printed only when:
+- RL is enabled,
+- the system is exploiting (not in the epsilon-random exploration branch),
+- and the near-best band contains more than one candidate (meaning q was consulted to decide the winner).
+
+Note: safety gating still has priority. For example, in a “fallen” situation, the safety layer can still force StandUp/RecoverFall regardless of q; the `[rl-pick]` line indicates how the gate runtime ranked candidates, not a bypass of safety logic.
+
+
 
 
 

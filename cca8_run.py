@@ -148,20 +148,34 @@ class Ctx:
 
     Reinforcement learning (policy selection)
     -----------------------------------------
+    -there may be, and often are, many policies which successfully gate and trigger; however, only one can
+      be executed; which one to execute?
+    -in the first versions of the CCA8 we simply used the order of the policies and executed the first one to trigger,
+      then in further development we used the deficit values produced by each policy and used an RL value only to break ties,
+      and then, as shown below, if the deficit values are close enough together (i.e., within a specified rl_delta value) then
+      we use RL values to decide which of these triggered policies to execute.
     rl_enabled : bool
         Enable epsilon-greedy policy selection. When enabled, the selector can use the
         controller skill ledger (SkillStat.q) as a secondary tie-break among triggered policies.
     rl_epsilon : float | None
         Exploration probability in [0.0, 1.0]. If None, fall back to ctx.jump (so you can reuse
         the existing “jump” knob as an exploration knob during early experiments).
+        # rl_delta controls how often learned value (SkillStat.q) can influence selection of which triggered policy to execute:
+    rl_delta:
+        = 0.0  → q is used only for exact deficit ties.
+        = small positive (e.g., rl_delta=0.02) → q is used for "near ties" (deficits within delta of best).
+        = large rl_delta → q can influence most choices among triggered policies (approaches "q-driven" within the candidate set).
+
     """
 
     sigma: float = 0.015
     jump: float = 0.2
 
-    # Reinforcement learning (policy selection)
-    rl_enabled: bool = False
-    rl_epsilon: Optional[float] = None
+    rl_enabled: bool = False             # Reinforcement learning (policy selection)
+    rl_epsilon: Optional[float] = None   # Reinforcement learning (policy selection)
+    rl_explore_steps: int = 0  # RL bookkeeping
+    rl_exploit_steps: int = 0  # RL bookkeeping
+    rl_delta: float = 0.0 # rl_delta controls how often learned value (SkillStat.q) can influence selection of triggered policies to execute
 
     age_days: float = 0.0
     ticks: int = 0
@@ -1639,14 +1653,15 @@ class PolicyRuntime:
             except ValueError:
                 return 10_000
 
-        #chosen = max(matches, key=lambda p: (deficit(p.name), -stable_idx(p)))
-        # Optional RL selection: epsilon-greedy with a learned-value tie-break.
-        #
-        # - Primary criterion remains the domain heuristic deficit(...) so
-        #   drives still dominate.
-        # - When deficits tie, we optionally prefer policies with higher
-        #   SkillStat.q (EMA reward) from the controller's skill ledger.
-        # - With epsilon>0, occasionally pick a random match for exploration.
+        # Optional RL selection: epsilon-greedy with a learned-value soft tie-break.
+        # - RL enabled:
+        #     With probability epsilon: explore by picking a random triggered policy.
+        #     Otherwise exploit: choose by deficit, but if top deficits are within rl_delta,
+        #     treat as ambiguous and allow learned value q to decide among near-best candidates.
+        # - RL disabled:
+        #     Deterministic heuristic: choose by deficit, then stable order. (No q used.)
+
+        rl_pick_note = ""  # printed only when q-soft-tiebreak (near-tie band) actually decided the pick
         rl_enabled = bool(getattr(ctx, "rl_enabled", False))
         if rl_enabled:
             eps = getattr(ctx, "rl_epsilon", None)
@@ -1658,18 +1673,64 @@ class PolicyRuntime:
                 eps_f = 0.0
             eps_f = max(0.0, min(1.0, eps_f))
 
+            def _bump(field_name: str) -> None:
+                try:
+                    if ctx is not None and hasattr(ctx, field_name):
+                        setattr(ctx, field_name, int(getattr(ctx, field_name, 0)) + 1)
+                except Exception:
+                    pass
+
             if eps_f > 0.0 and random.random() < eps_f:
                 chosen = random.choice(matches)
+                _bump("rl_explore_steps")
             else:
-                chosen = max(
-                    matches,
-                    key=lambda p: (
-                        deficit(p.name),
-                        skill_q(p.name, default=0.0),
-                        -stable_idx(p),
-                    ),
-                )
+                # --- RL "soft tie-break"
+                # Drives dominate unless deficits are close; within the close band we let q decide.
+                rl_delta_raw = getattr(ctx, "rl_delta", 0.0)
+                try:
+                    rl_delta = float(rl_delta_raw)
+                except (TypeError, ValueError):
+                    rl_delta = 0.0
+                rl_delta = max(rl_delta, 0.0)
+
+                scored = [(p, deficit(p.name)) for p in matches]
+                best_deficit = max(d for _, d in scored)
+                near_best = [(p, d) for p, d in scored if (best_deficit - d) <= rl_delta]
+
+                if len(near_best) == 1:
+                    chosen = near_best[0][0]
+                else:
+                    chosen = max(
+                        near_best,
+                        key=lambda pd: (
+                            skill_q(pd[0].name, default=0.0),
+                            pd[1],
+                            -stable_idx(pd[0]),
+                        ),
+                    )[0]
+
+                # If the near-best band has > 1 candidate, then q influenced the choice.
+                if len(near_best) > 1:
+                    bits: list[str] = []
+                    # Sort candidates so the printed list is stable/readable.
+                    for p, d in sorted(near_best, key=lambda pd: (-pd[1], pd[0].name)):
+                        qv = skill_q(p.name, default=0.0)
+                        bits.append(f"{p.name}(def={d:.3f}, q={qv:+.2f})")
+
+                    # Prevent log spam if rl_delta is large and the band gets big.
+                    if len(bits) > 6:
+                        bits = bits[:6] + ["..."]
+
+                    chosen_q = skill_q(chosen.name, default=0.0)
+                    rl_pick_note = (
+                        "[rl-pick] chosen via q-soft-tiebreak: "
+                        f"best_def={best_deficit:.3f} delta={rl_delta:.3f} "
+                        f"→ {chosen.name} (q={chosen_q:+.2f}) among [{', '.join(bits)}]"
+                    )
+
+                _bump("rl_exploit_steps")
         else:
+            # RL disabled: original deterministic heuristic (deficit, then stable order)
             chosen = max(matches, key=lambda p: (deficit(p.name), -stable_idx(p)))
 
         # Context for logging
@@ -1700,8 +1761,10 @@ class PolicyRuntime:
 
         gate_for_label = next((p for p in self.loaded if p.name == label), chosen)
         post_expl = gate_for_label.explain(world, drives, ctx) if gate_for_label.explain else "explain: (not provided)"
+        pick_line = (rl_pick_note + "\n") if rl_pick_note else ""
         return (
             f"{label} (added {delta_n} bindings)\n"
+            f"{pick_line}"
             f"{exec_line}"
             f"pre:  {pre_expl}\n"
             f"base: {base}\n"
@@ -5284,6 +5347,83 @@ def skill_ledger_text(example_policy: str = "policy:stand_up") -> str:
     return "\n".join(lines) + "\n"
 
 
+def skills_hud_text(ctx: Optional[Ctx] = None, *, top_n: int = 8) -> str:
+    """
+    Compact HUD for learned policy values (SkillStat.q).
+
+    - Sorts policies by q (EMA reward) descending.
+    - Shows basic counts: n, succ-rate, q, last_reward.
+    - If ctx is provided, also prints RL settings + explore/exploit counters.
+
+    This is intentionally a *read-only* helper (no world writes).
+    """
+    try:
+        raw = skills_to_dict() or {}
+    except Exception:
+        raw = {}
+
+    try:
+        delta = float(getattr(ctx, "rl_delta", 0.0))
+    except Exception:
+        delta = 0.0
+    delta = max(delta, 0.0)
+
+    rows: list[tuple[str, int, int, float, float]] = []
+    for name, stat in raw.items():
+        if not isinstance(name, str) or not isinstance(stat, dict):
+            continue
+        try:
+            n = int(stat.get("n", 0) or 0)
+            succ = int(stat.get("succ", 0) or 0)
+            q = float(stat.get("q", 0.0) or 0.0)
+            last = float(stat.get("last_reward", 0.0) or 0.0)
+        except Exception:
+            continue
+        if n <= 0:
+            continue
+        rows.append((name, n, succ, q, last))
+
+    if not rows:
+        return "(no skill stats yet)"
+
+    # Sort: high q first, then higher n, then name for stability
+    rows.sort(key=lambda t: (-t[3], -t[1], t[0]))
+
+    lines: list[str] = []
+
+    if ctx is not None:
+        enabled = bool(getattr(ctx, "rl_enabled", False))
+        eps_raw = getattr(ctx, "rl_epsilon", None)
+        try:
+            eff_eps = float(eps_raw) if eps_raw is not None else float(getattr(ctx, "jump", 0.0))
+        except (TypeError, ValueError):
+            eff_eps = float(getattr(ctx, "jump", 0.0))
+
+        explore = int(getattr(ctx, "rl_explore_steps", 0) or 0)
+        exploit = int(getattr(ctx, "rl_exploit_steps", 0) or 0)
+        total = explore + exploit
+        explore_rate = (explore / total) if total else 0.0
+
+        lines.append(
+            "RL: "
+            f"enabled={enabled} "
+            f"epsilon={eff_eps:.3f} "
+            f"delta={delta:.3f} "
+            f"(explore={explore}, exploit={exploit}, explore_rate={explore_rate:.2f})"
+        )
+
+    show_n = min(top_n, len(rows))
+    lines.append(f"Skill HUD (top {show_n} by q=EMA reward):")
+
+    for i, (name, n, succ, q, last) in enumerate(rows[:show_n], start=1):
+        rate = (succ / n) if n else 0.0
+        lines.append(
+            f"  {i:2d}) {name:<18}  n={n:3d}  rate={rate:.2f}  q={q:+.2f}  last={last:+.2f}"
+        )
+
+    return "\n".join(lines)
+
+
 def _io_banner(args, loaded_path: str | None, loaded_ok: bool) -> None:
     """Explain how load/autosave will behave for this run.
     """
@@ -8075,8 +8215,13 @@ You can still use menu 35 for detailed, single-step inspection.
 
             run_env_closed_loop_steps(env, world, drives, ctx, POLICY_RT, n_steps)
 
-            # Show a one-line timekeeping summary after the run
-            print_timekeeping_line(ctx)
+            print("\n[skills-hud] Learned policy values after env-loop:")
+            print("(terminology: hud==heads-up-display; n==number times policy executed; rate==% times we counted policy as successful;")
+            print("  last==reward value that policy received the last time it executed; q==learned value estimate;")
+            print("  EMA==exponential moving average of rewards; q_new = (1-alpha_smoothing_factor)*q_old + alpha*reward (alpha ~0.3))")
+            print("(if RL=enabled, epsilon is theoretical % times to choose randomly, 'explore_rate' is measured % of random choices;")
+            print("   delta=0 then q used only for exact ties otherwise deficit values within delta range are considered tied and q used to decide)")
+            print(skills_hud_text(ctx, top_n=8))
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -8296,8 +8441,8 @@ CCA8 policy evaluation has three stages:
   3) executing
      If multiple policies triggered, choose ONE policy to run.
 
-Reinforcement learning (RL) in CCA8 currently changes ONLY stage (3) (at this time of writing -- will change)
-Stages (1) and (2) are unchanged.
+Reinforcement learning (RL) in CCA8 currently changes ONLY stage (3).
+
 
 When rl_enabled = False (no RL)
 -------------------------------
@@ -8308,18 +8453,26 @@ If multiple policies are triggered:
 
 When rl_enabled = True (RL enabled)
 -----------------------------------
-Let epsilon be the exploration rate:
-  - epsilon = rl_epsilon if set
-  - otherwise epsilon falls back to ctx.jump
 
-If multiple policies are triggered:
-  - With probability epsilon:
-      Pick a random triggered policy (exploration).
-  - With probability (1 - epsilon):
-      Pick greedily by:
-        1) highest drive deficit score
-        2) if tied, highest SkillStat.q (learned value from past rewards)
-        3) if still tied, stable policy order
+In the simplest RL integration we treated learned value (SkillStat.q) as an exact tie-breaker:
+choose by deficit first, and only consult q when deficits are identical. However, in practice,
+exact ties can be rare when scores are real-valued or noisy, so that approach can make RL feel
+inert even though q is learning.
+
+The opposite extreme is to blend q into every choice: score = deficit + beta * q, which makes
+learning matter on every decision but can amplify a noisy/mis-specified reward signal.
+
+We use a "soft tie-break" as a conservative middle ground:
+- Drives (deficit) still dominate when one option is clearly more urgent.
+- When the best deficits are CLOSE (within rl_delta), we treat the choice as ambiguous and allow
+ learned value q to decide among the near-best candidates.
+- Safety gating and triggering are unchanged; this only affects the final winner among already-allowed candidates.
+
+rl_delta effect (very important):
+- rl_delta = 0.0  → q is used only for exact deficit ties (Option A behavior).
+- rl_delta small  → q influences only "near ties".
+- rl_delta large  → many policies fall into the near-best band, so q influences most choices
+                  (approaches "q-driven" selection among triggered policies).
 
 What is SkillStat.q?
 --------------------
@@ -8352,6 +8505,11 @@ Tip:
             # Effective epsilon: rl_epsilon if set, else fall back to ctx.jump (by design).
             try:
                 eff_eps = float(eps_now) if eps_now is not None else jump_now
+                try:
+                    delta_now = float(getattr(ctx, "rl_delta", 0.0))
+                except Exception:
+                    delta_now = 0.0
+                delta_now = max(delta_now, 0.0)
             except (TypeError, ValueError):
                 eff_eps = jump_now
 
@@ -8359,6 +8517,7 @@ Tip:
             print(f"  rl_enabled = {enabled_now}")
             print(f"  rl_epsilon = {eps_now!r}   (None means fallback to ctx.jump)")
             print(f"  effective epsilon = {eff_eps:.3f}   (used for epsilon-greedy exploration)")
+            print(f"  rl_delta   = {delta_now:.3f}   (0.000=use q only on exact deficit ties; larger=use q for near-ties)")
             print("")
 
             # Toggle enablement
@@ -8408,6 +8567,26 @@ Tip:
                         print("  [warn] Could not parse rl_epsilon; leaving unchanged.")
                         eps_new = eps_now
 
+                print("")
+                print("Set rl_delta (>=0). This controls how often learned q can influence selection in exploit mode.")
+                print("  - 0.0  = q only on exact deficit ties (most conservative).")
+                print("  - small (e.g., 0.02) = q used for near-ties.")
+                print("  - larger = q influences more choices among triggered policies.")
+                try:
+                    raw_delta = input(f"rl_delta (current={delta_now:.3f}, Enter=keep): ").strip().lower()
+                except Exception:
+                    raw_delta = ""
+
+                if raw_delta != "":
+                    try:
+                        val = float(raw_delta)
+                        if val < 0.0:
+                            print("  [warn] rl_delta below 0.0; clamping to 0.0.")
+                            val = 0.0
+                        ctx.rl_delta = val
+                    except (TypeError, ValueError):
+                        print("  [warn] Could not parse rl_delta; leaving unchanged.")
+
             # Apply
             ctx.rl_enabled = enabled_new
             ctx.rl_epsilon = eps_new
@@ -8423,6 +8602,7 @@ Tip:
             print(f"  rl_enabled = {ctx.rl_enabled}")
             print(f"  rl_epsilon = {ctx.rl_epsilon!r}")
             print(f"  effective epsilon = {eff_after:.3f}")
+            print(f"  rl_delta   = {getattr(ctx, 'rl_delta', 0.0):.3f}")
             loop_helper(args.autosave, world, drives, ctx)
 
 

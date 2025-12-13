@@ -1535,13 +1535,13 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
         # If we recently attempted StandUp and BodyMap still says 'fallen',
         # skip another attempt until the retry window has elapsed.
         if last_failed and last_step is not None:
-            delta = step_now - int(last_step)
-            if delta < STANDUP_RETRY_WINDOW:
+            delta_steps = step_now - int(last_step)
+            if delta_steps < STANDUP_RETRY_WINDOW:
                 return {
                     "policy": "policy:stand_up",
                     "status": "skip",
                     "reward": 0.0,
-                    "notes": f"posture still fallen — skipping retry (Δ={delta})",
+                    "notes": f"posture still fallen — skipping retry (Δ={delta_steps})",
                 }
 
         # Otherwise, proceed with emergency StandUp as usual.
@@ -1583,10 +1583,9 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
         return _run(triggered[0], world, ctx, drives)
 
     # Multiple triggered -- choose a winner.
-    #
-    # Default (RL disabled): drive-deficit scoring with stable-order fallback.
-    # Optional (RL enabled): epsilon-greedy selection where the learned policy
-    # value (SkillStat.q) is used as a secondary tie-breaker.
+    # -Default (RL disabled): drive-deficit scoring with stable-order fallback.
+    # -Optional (RL enabled): epsilon-greedy selection where the learned policy
+    #    value (SkillStat.q) is used as a secondary tie-breaker.
     rl_enabled = bool(getattr(ctx, "rl_enabled", False))
     if rl_enabled:
         # Exploration probability (epsilon): prefer ctx.rl_epsilon, else ctx.jump, else 0.
@@ -1607,19 +1606,76 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
         # Epsilon exploration: pick a random triggered policy.
         if eps_f > 0.0 and random.random() < eps_f:
             chosen = random.choice(triggered)
+            try:
+                if ctx is not None and hasattr(ctx, "rl_explore_steps"):
+                    ctx.rl_explore_steps += 1
+            except Exception:
+                pass
             return _run(chosen, world, ctx, drives)
 
         # Greedy choice: (drive deficit, learned q, stable order)
+        # --- RL "soft tie-break"
+        #
+        # In the simplest RL integration we treated learned value (SkillStat.q) as an exact tie-breaker:
+        #   choose by deficit first, and only consult q when deficits are identical.
+        #
+        # In practice, exact ties can be rare when scores are real-valued or noisy, so that approach can
+        # make RL feel inert even though q is learning.
+        #
+        # The opposite extreme is to blend q into every choice:
+        #   score = deficit + beta * q
+        # which makes learning matter on every decision but can amplify a noisy/mis-specified reward signal.
+        #
+        # This "soft tie-break" is a conservative middle ground:
+        #   - Drives (deficit) still dominate when one option is clearly more urgent.
+        #   - When the best deficits are CLOSE (within rl_delta), we treat the choice as ambiguous and allow
+        #     learned value q to decide among the near-best candidates.
+        #   - Safety gating and triggering are unchanged; this only affects the final winner among already-allowed candidates.
+        #
+        # rl_delta effect (very important):
+        #   - rl_delta = 0.0  → q is used only for exact deficit ties (Option A behavior).
+        #   - rl_delta small  → q influences only "near ties".
+        #   - rl_delta large  → many policies fall into the near-best band, so q influences most choices
+        #                      (approaches "q-driven" selection among triggered policies).
+        rl_delta_raw = getattr(ctx, "rl_delta", 0.0)
+        try:
+            rl_delta = float(rl_delta_raw)
+        except (TypeError, ValueError):
+            rl_delta = 0.0
+        rl_delta = max(rl_delta, 0.0)
+
+        # Score deficits once (these capture current physiological urgency).
+        scored = [(p, _policy_deficit_score(p.name, drives)) for p in triggered]
+        best_deficit = max(d for _, d in scored)
+
+        # Stable order list for final tie-break inside the near-best band.
         names_in_order = [p.name for p in PRIMITIVES]
-        chosen = max(
-            triggered,
-            key=lambda p: (
-                _policy_deficit_score(p.name, drives),
-                skill_q(p.name, default=0.0),
-                -names_in_order.index(p.name),
-            ),
-        )
+
+        # Candidate band: anything within rl_delta of the best deficit is considered "near-best".
+        near_best = [(p, d) for p, d in scored if (best_deficit - d) <= rl_delta]
+
+        if len(near_best) == 1:
+            chosen = near_best[0][0]
+        else:
+            # Within the near-best band, prefer higher learned value q, then slightly higher deficit,
+            # then stable order as a final deterministic tie-break.
+            chosen = max(
+                near_best,
+                key=lambda pd: (
+                    skill_q(pd[0].name, default=0.0),     # learned value (EMA reward)
+                    pd[1],                                # prefer slightly higher deficit if q ties
+                    -names_in_order.index(pd[0].name),    # final stable tie-break
+                ),
+            )[0]
+
+        try:
+            if ctx is not None and hasattr(ctx, "rl_exploit_steps"):
+                ctx.rl_exploit_steps += 1
+        except Exception:
+            pass
+
         return _run(chosen, world, ctx, drives)
+
 
     # --- Default heuristic selection (RL disabled) ---
     scored = [(p, _policy_deficit_score(p.name, drives)) for p in triggered]
