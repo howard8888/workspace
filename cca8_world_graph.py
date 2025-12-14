@@ -52,7 +52,7 @@ Persistence:
 from __future__ import annotations
 from dataclasses import dataclass
 from collections import deque
-from typing import Dict, List, Set, Optional, TypedDict
+from typing import Dict, List, Set, Optional, TypedDict, Iterator
 import itertools
 import heapq
 import os
@@ -253,6 +253,58 @@ class TagLexicon:
         prefix = family + ":"
         return family, tok[len(prefix):] if tok.startswith(prefix) else tok
 
+
+    # Compatibility helpers (used by newer callers / refactors)
+
+
+    def normalize_pred(self, raw: str) -> str:
+        """
+        Normalize a predicate token into *family-local* form (no 'pred:' prefix).
+
+        Examples:
+          - "pred:posture:standing" -> "posture:standing"
+          - "posture:standing"      -> "posture:standing"
+        """
+        _, tok = self.normalize_family_and_token("pred", raw)
+        return tok
+
+
+    def normalize_cue(self, raw: str) -> str:
+        """
+        Normalize a cue token into *family-local* form (no 'cue:' prefix).
+
+        Examples:
+          - "cue:vision:silhouette:mom" -> "vision:silhouette:mom"
+          - "vision:silhouette:mom"     -> "vision:silhouette:mom"
+        """
+        _, tok = self.normalize_family_and_token("cue", raw)
+        return tok
+
+
+    def aliases_for_pred(self, token_local: str) -> list[str]:
+        """
+        Return legacy aliases (family-local, no 'pred:' prefix) for a canonical predicate token.
+
+        IMPORTANT: This is intentionally conservative to avoid cluttering the WorldGraph with
+        redundant tags. We only return aliases implied by LEGACY_MAP (reverse lookup).
+
+        If you want 'posture_standing' as an alias for 'posture:standing', put it in LEGACY_MAP:
+            LEGACY_MAP["posture_standing"] = "posture:standing"
+        """
+        aliases: list[str] = []
+        for legacy, preferred in self.LEGACY_MAP.items():
+            if preferred == token_local:
+                aliases.append(legacy)
+
+        # de-dupe while preserving order
+        seen: set[str] = set()
+        out: list[str] = []
+        for a in aliases:
+            if a and a not in seen:
+                seen.add(a)
+                out.append(a)
+        return out
+
 # -----------------------------------------------------------------------------
 # World graph
 # -----------------------------------------------------------------------------
@@ -273,27 +325,64 @@ class WorldGraph:
         - The planner is intentionally simple (BFS/Djikstra/other) and replaceable later.
     """
 
-    def __init__(self) -> None:
-        """Initializes an empty episode graph
-        ids are b1, b2, .... via an internal counter
+    def __init__(self, *, memory_mode: str = "episodic") -> None:
+        """Initializes an empty episode graph.
+
+        Args:
+            memory_mode:
+                - "episodic": every add_predicate/add_cue call creates a fresh binding
+                              (this is the existing/default behavior).
+                - "semantic": add_predicate/add_cue will *reuse* an existing binding when the
+                              identical tag already exists, enabling basic consolidation
+                              (reduces repetitive nodes in long-term graphs).
         """
         self._bindings: Dict[str, Binding] = {}
         self._anchors: Dict[str, str] = {}           # name -> binding_id
         self._latest_binding_id: Optional[str] = None
-        self._id_counter = itertools.count(1)
-        self._init_lexicon()
-        self._plan_strategy: str = (os.environ.get("CCA8_PLANNER", "bfs") or "bfs").lower()
-        self._stage = "neonate"      # predeclare
-        self._tag_policy = "warn"    # predeclare
+        #self._id_counter: int = 1
+        self._id_counter: Iterator[int] = itertools.count(1)
 
+
+        # Stage-aware tag gating (existing behavior)
+        self._tag_policy: str = "allow"              # default: permissive
+        self._stage: str = "neonate"
+        self._lexicon: TagLexicon = TagLexicon()
+
+        # Tag lexicon (existing behavior)
+        self._tag_lexicon = TagLexicon()
+
+        # Planning strategy (existing behavior)
+        #self._plan_strategy: str = "bfs"
+        # Planning strategy (default BFS).
+        #
+        # IMPORTANT: tests and CLI behavior expect that if the user sets:
+        #     CCA8_PLANNER=dijkstra
+        # before constructing the WorldGraph, the new instance starts in that mode.
+        #
+        # This keeps "global default planner" configuration easy, while still allowing
+        # explicit runtime switching via world.set_planner(...).
+        self._plan_strategy: str = "bfs"
+        env_planner = (os.environ.get("CCA8_PLANNER", "") or "").strip().lower()
+        if env_planner:
+            try:
+                self.set_planner(env_planner)
+            except ValueError:
+                # Ignore invalid env values; keep BFS.
+                pass
+
+        # Memory / consolidation mode (NEW)
+        self._memory_mode: str = "episodic"
+        self._semantic_tag_index: Dict[str, str] = {}  # tag -> canonical binding_id (semantic mode only)
+        self.set_memory_mode(memory_mode)
 
     # --- tag policy / developmental stage -----------------------------------
 
+    #self._lexicon: TagLexicon = TagLexicon()  # predeclare for pylint; _init_lexicon will reset if desired
     def _init_lexicon(self):
         """Initialize stage/tag-lexicon and default tag policy."""
         self._lexicon = TagLexicon()
-        self._stage: str = "neonate"         # default
-        self._tag_policy: str = "warn"       # 'allow' | 'warn' | 'strict'
+        self._stage = "neonate"         # default
+        self._tag_policy = "warn"       # 'allow' | 'warn' | 'strict'
 
 
     def set_stage(self, stage: str) -> None:
@@ -338,6 +427,44 @@ class WorldGraph:
         return token_local
 
 
+    def _warn_if_tag_not_allowed(self, tag_or_family: str, token_local: Optional[str] = None) -> str:
+        """
+        Lexicon enforcement helper (back-compat and ergonomics).
+
+        Some call sites naturally want to say:
+            _warn_if_tag_not_allowed("pred:posture:fallen")
+
+        Other call sites are clearer as:
+            _warn_if_tag_not_allowed("pred", "posture:fallen")
+
+        This function supports BOTH forms.
+
+        Parameters
+        ----------
+        tag_or_family:
+            Either a full tag (e.g., "pred:posture:fallen") OR a family (e.g., "pred").
+        token_local:
+            If provided, the family-local token (e.g., "posture:fallen").
+            If None, we parse tag_or_family as a full tag and split on the first ":".
+
+        Returns
+        -------
+        str
+            The token_local that will be stored (we warn/raise but do not auto-rewrite legacy tokens).
+        """
+        if token_local is None:
+            raw = (tag_or_family or "").strip()
+            if ":" in raw:
+                family, token_local = raw.split(":", 1)
+            else:
+                # If someone accidentally passes just the local token, treat it as a pred by default.
+                family, token_local = "pred", raw
+        else:
+            family = (tag_or_family or "").strip()
+
+        return self._enforce_tag(family, token_local)
+
+
     def set_planner(self, strategy: str = "bfs") -> None:
         """
         Set the path planner used by plan_to_predicate().
@@ -352,6 +479,69 @@ class WorldGraph:
     def get_planner(self) -> str:
         """Return the current planner strategy ('bfs' or 'dijkstra')."""
         return getattr(self, "_plan_strategy", "bfs")
+
+    # --- memory / consolidation --------------------------------------------
+
+    def set_memory_mode(self, mode: str) -> None:
+        """Set how predicates/cues are stored.
+
+        Modes:
+          - "episodic": every observation becomes a new node (default / current behavior)
+          - "semantic": identical predicate/cue tags are consolidated to a single node
+
+        Important:
+          This only affects add_predicate() and add_cue(). It does not change anchor
+          behavior or edge labels. It is an opt-in clutter-reduction mechanism.
+        """
+        mode_norm = (mode or "episodic").strip().lower()
+        if mode_norm not in ("episodic", "semantic"):
+            raise ValueError(f"Unknown memory_mode={mode!r}; expected 'episodic' or 'semantic'")
+        self._memory_mode = mode_norm
+        self._rebuild_semantic_index()
+
+
+    def get_memory_mode(self) -> str:
+        """Return current memory mode: 'episodic' or 'semantic'."""
+        return getattr(self, "_memory_mode", "episodic")
+
+
+    def _semantic_lookup(self, tag: str) -> Optional[str]:
+        """Return canonical binding_id for tag if in semantic mode; else None."""
+        if self.get_memory_mode() != "semantic":
+            return None
+        bid = self._semantic_tag_index.get(tag)
+        if bid and bid in self._bindings:
+            return bid
+        return None
+
+
+    def _semantic_index(self, bid: str) -> None:
+        """Index a binding's pred:/cue: tags for semantic reuse."""
+        if self.get_memory_mode() != "semantic":
+            return
+        b = self._bindings.get(bid)
+        if not b:
+            return
+        for t in b.tags:
+            if t.startswith("pred:") or t.startswith("cue:"):
+                # Keep the first-seen (oldest) binding as canonical.
+                self._semantic_tag_index.setdefault(t, bid)
+
+
+    def _rebuild_semantic_index(self) -> None:
+        """Rebuild semantic index from current graph contents."""
+        self._semantic_tag_index = {}
+        if self.get_memory_mode() != "semantic":
+            return
+
+        def _bid_key(x: str) -> int:
+            try:
+                return int(x[1:]) if x.startswith("b") else 10**9
+            except Exception:
+                return 10**9
+
+        for bid in sorted(self._bindings.keys(), key=_bid_key):
+            self._semantic_index(bid)
 
     # ------------------------- internals -------------------------
 
@@ -443,16 +633,12 @@ class WorldGraph:
                     pass
 
         prev = self._anchors.get("NOW")
-
         if clean_previous and prev and prev in self._bindings and prev != bid:
             _tag_discard(_tags_of(prev), "anchor:NOW")
-
         # point NOW to the new id
         self._anchors["NOW"] = bid
-
         if tag:
             _tag_add(_tags_of(bid), "anchor:NOW")
-
         return prev
 
     # ------------------------- creation --------------------------
@@ -481,90 +667,181 @@ class WorldGraph:
         return bid
 
 
-    def add_predicate(self, token: str, *, attach: Optional[str] = None, meta: Optional[dict] = None, engrams: Optional[dict] = None) -> str:
-        """Create a new predicate binding and optionally auto-link it.
+    def add_predicate(
+        self,
+        token: str,
+        *,
+        attach: Optional[str] = None,
+        meta: Optional[dict] = None,
+        engrams: Optional[dict] = None,
+    ) -> str:
+        """
+        Adds a predicate node.
 
         Args:
-            token: Predicate token. Accepts either "<token>" or "pred:<token>".
-                   We normalize so the stored tag is always "pred:<token>" (no double "pred:").
-                   Examples: "pred:posture_standing", "action:push_up", "vision:silhouette:mom".
-            attach: If "now", link NOW → new. If "latest", link <previous latest> → new.
-                    If None or "none", no auto-link is added.
-            meta:   Optional provenance dictionary to store on the binding.
-            engrams:Optional engram attachments (small dict).
+            token: e.g. 'posture:fallen', 'proximity:mom:far' (WITHOUT the 'pred:' prefix)
+            attach: None | 'now' | 'latest'
+            meta: optional metadata dict
+            engrams: optional engram pointers dict
 
-        Returns:
-            The new binding id (e.g., "b42").
+        Memory mode:
+            - episodic: always creates a new binding (existing behavior)
+            - semantic: reuses an existing binding if identical 'pred:{token}' already exists
         """
-        # --- normalize token to a single 'pred:' prefix --------------------------------
-        tok = (token or "").strip()
-        if tok.startswith("pred:"):
-            tok = tok[5:]
-        # enforce against lexicon (do not auto-rewrite legacy; just warn/allow)
-        tok = self._enforce_tag("pred", tok)
-        tag = f"pred:{tok}"
+        # --- validate / normalize ---
+        norm_token = self._tag_lexicon.normalize_pred(token)
+        tag = f"pred:{norm_token}"
+        self._warn_if_tag_not_allowed(tag)
 
-        # --- validate attach option -----------------------------------------------------
-        att = (attach or "none").lower()
-        if att not in _ATTACH_OPTIONS:  # e.g., {"now", "latest", "none"}
-            raise ValueError(f"attach must be one of {_ATTACH_OPTIONS!r}")
+        att: Optional[str] = (attach or "").strip().lower() or None
+        if att == "none":
+            att = None
+        if att not in (None, "now", "latest"):
+            raise ValueError("attach must be None|'now'|'latest'|'none'")
 
-        # --- allocate id and construct the binding ---
-        prev_latest = self._latest_binding_id         # keep BEFORE we change it
+        # --- semantic consolidation fast-path ---
+        existing = self._semantic_lookup(tag)
+        if existing:
+            prev_latest = self._latest_binding_id
+            self._latest_binding_id = existing
+
+            # lightweight consolidation telemetry (safe + optional)
+            if meta:
+                b_exist = self._bindings.get(existing)
+                if b_exist is not None:
+                    c = b_exist.meta.setdefault("_consolidated", {})
+                    c["seen"] = int(c.get("seen", 0)) + 1
+                    c["last_meta"] = dict(meta)
+
+            def _edge_exists(src_id: str, dst_id: str, label: str) -> bool:
+                src = self._bindings.get(src_id)
+                if not src:
+                    return False
+                return any(e.get("to") == dst_id and e.get("label") == label for e in src.edges)
+
+            # Preserve basic sequencing if requested (but avoid duplicate edges / self-loops)
+            if att == "now":
+                src = self.ensure_anchor("NOW")
+                if src != existing and not _edge_exists(src, existing, "then"):
+                    self.add_edge(src, existing, label="then", meta=dict(meta or {}))
+            elif att == "latest" and prev_latest and prev_latest in self._bindings:
+                if prev_latest != existing and not _edge_exists(prev_latest, existing, "then"):
+                    self.add_edge(prev_latest, existing, label="then", meta=dict(meta or {}))
+
+            return existing
+
+        # --- allocate id and construct a fresh binding (episodic behavior) ---
+        prev_latest = self._latest_binding_id
         bid = self._next_id()
         b = Binding(
             id=bid,
             tags={tag},
             edges=[],
-            meta=dict(meta) if meta else {},
-            engrams=dict(engrams) if engrams else {},
+            meta=dict(meta or {}),
+            engrams=dict(engrams or {}),
+        )
+
+        # Add alias tags (TagLexicon)
+        for alias in self._tag_lexicon.aliases_for_pred(norm_token):
+            alias_tag = f"pred:{alias}"
+            b.tags.add(alias_tag)
+            self._warn_if_tag_not_allowed(alias_tag)
+
+        self._bindings[bid] = b
+        self._latest_binding_id = bid
+
+        # Attach edges
+        if att == "now":
+            src = self.ensure_anchor("NOW")
+            self.add_edge(src, bid, label="then", meta=dict(meta or {}))
+        elif att == "latest" and prev_latest:
+            self.add_edge(prev_latest, bid, label="then", meta=dict(meta or {}))
+
+        # Index for semantic reuse if enabled
+        self._semantic_index(bid)
+        return bid
+
+
+    def add_cue(
+        self,
+        token: str,
+        *,
+        attach: Optional[str] = None,
+        meta: Optional[dict] = None,
+        engrams: Optional[dict] = None,
+    ) -> str:
+        """
+        Adds a cue node.
+
+        Args:
+            token: e.g. 'vision:silhouette:mom' (WITHOUT the 'cue:' prefix)
+            attach: None | 'now' | 'latest'
+            meta: optional metadata dict
+            engrams: optional engram pointers dict
+
+        Memory mode:
+            - episodic: always creates a new binding (existing behavior)
+            - semantic: reuses an existing binding if identical 'cue:{token}' already exists
+        """
+        norm_token = self._tag_lexicon.normalize_cue(token)
+        tag = f"cue:{norm_token}"
+        self._warn_if_tag_not_allowed(tag)
+
+        att = (attach or "").lower() or None
+        if att not in (None, "now", "latest"):
+            raise ValueError("attach must be None|'now'|'latest'")
+
+        # --- semantic consolidation fast-path ---
+        existing = self._semantic_lookup(tag)
+        if existing:
+            prev_latest = self._latest_binding_id
+            self._latest_binding_id = existing
+
+            if meta:
+                b_exist = self._bindings.get(existing)
+                if b_exist is not None:
+                    c = b_exist.meta.setdefault("_consolidated", {})
+                    c["seen"] = int(c.get("seen", 0)) + 1
+                    c["last_meta"] = dict(meta)
+
+            def _edge_exists(src_id: str, dst_id: str, label: str) -> bool:
+                src = self._bindings.get(src_id)
+                if not src:
+                    return False
+                return any(e.get("to") == dst_id and e.get("label") == label for e in src.edges)
+
+            if att == "now":
+                src = self.ensure_anchor("NOW")
+                if src != existing and not _edge_exists(src, existing, "then"):
+                    self.add_edge(src, existing, label="then", meta=dict(meta or {}))
+            elif att == "latest" and prev_latest and prev_latest in self._bindings:
+                if prev_latest != existing and not _edge_exists(prev_latest, existing, "then"):
+                    self.add_edge(prev_latest, existing, label="then", meta=dict(meta or {}))
+
+            return existing
+
+        # --- allocate id and create fresh binding ---
+        prev_latest = self._latest_binding_id
+        bid = self._next_id()
+        b = Binding(
+            id=bid,
+            tags={tag},
+            edges=[],
+            meta=dict(meta or {}),
+            engrams=dict(engrams or {}),
         )
         self._bindings[bid] = b
         self._latest_binding_id = bid
 
-        # --- optional auto-linking ---
         if att == "now":
             src = self.ensure_anchor("NOW")
-            self.add_edge(src, bid, "then", meta or {})
-        elif att == "latest" and prev_latest and prev_latest in self._bindings:
-            # link from the binding that was 'latest' BEFORE creating this one
-            self.add_edge(prev_latest, bid, "then", meta or {})
+            self.add_edge(src, bid, label="then", meta=dict(meta or {}))
+        elif att == "latest" and prev_latest:
+            self.add_edge(prev_latest, bid, label="then", meta=dict(meta or {}))
 
+        self._semantic_index(bid)
         return bid
 
-
-    def add_cue(self, token: str, *, attach: Optional[str] = None,
-            meta: Optional[dict] = None, engrams: Optional[dict] = None) -> str:
-        """Create a new cue binding (tag normalized to 'cue:<token>') and optionally auto-link it.
-
-        Use this for sensory/context evidence that policies will react to (not planning targets).
-        attach: 'now' → NOW→new, 'latest' → LATEST→new, 'none'/None → no auto edge.
-        """
-        tok = (token or "").strip()
-        if tok.startswith("cue:"):
-            tok = tok[4:]
-        tok = self._enforce_tag("cue", tok)
-        tag = f"cue:{tok}"
-
-        att = (attach or "none").lower()
-        if att not in _ATTACH_OPTIONS:
-            raise ValueError(f"attach must be one of {_ATTACH_OPTIONS!r}")
-
-        prev_latest = self._latest_binding_id
-        bid = self._next_id()
-        b = Binding(
-            id=bid, tags={tag}, edges=[],
-            meta=dict(meta or {}), engrams=dict(engrams or {}))
-        self._bindings[bid] = b
-        self._latest_binding_id = bid
-
-        if att == "now":
-            src = self.ensure_anchor("NOW")
-            self.add_edge(src, bid, "then", meta or {})
-        elif att == "latest" and prev_latest and prev_latest in self._bindings:
-            self.add_edge(prev_latest, bid, "then", meta or {})
-
-        return bid
 
 
     # ------------------------- engram / signal bridge -------------------------
@@ -799,9 +1076,45 @@ class WorldGraph:
         else:
             edges[:] = [e for e in edges if not (e.get("to") == dst_id and _rel(e) == label)]
         return before - len(edges)
-
     # alias (older callers may still use remove_edge() )
     remove_edge = delete_edge
+
+
+    def delete_binding(self, bid: str, *, prune_incoming: bool = True, prune_anchors: bool = True) -> bool:
+        """Delete a binding node from the graph.
+
+        This is intentionally conservative and used primarily for WorkingMap pruning.
+
+        - Removes incoming edges that point to `bid` (optional)
+        - Removes anchors that point to `bid` (optional)
+        - Cleans the semantic index if it pointed at this node
+
+        Returns:
+            True if deleted, False if `bid` did not exist.
+        """
+        if bid not in self._bindings:
+            return False
+
+        if prune_incoming:
+            for b in self._bindings.values():
+                b.edges = [e for e in b.edges if e.get("to") != bid]
+
+        if prune_anchors:
+            for name, aid in list(self._anchors.items()):
+                if aid == bid:
+                    del self._anchors[name]
+
+        del self._bindings[bid]
+
+        if self._latest_binding_id == bid:
+            self._latest_binding_id = None
+
+        for t, xid in list(getattr(self, "_semantic_tag_index", {}).items()):
+            if xid == bid:
+                del self._semantic_tag_index[t]
+
+        return True
+
 
     def add_action(self, token: str, attach: str = "latest", meta: Optional[dict] = None, engrams: Optional[dict] = None) -> str:
         """
@@ -1330,30 +1643,40 @@ class WorldGraph:
     # ------------------------- persistence -----------------------
 
     def to_dict(self) -> dict:
-        """Serialize the whole world for autosave."""
+        """Serialize the whole world for autosave.
+        """
         return {
             "bindings": {bid: b.to_dict() for bid, b in self._bindings.items()},
             "anchors": dict(self._anchors),
             "latest": self._latest_binding_id,
+            "memory_mode": self.get_memory_mode(),
             "version": "0.1",
         }
 
+
     @classmethod
     def from_dict(cls, data: dict) -> "WorldGraph":
-        """Restore a world from autosave and advance the id counter to avoid collisions."""
-        g = cls()
+        """Restore a world from autosave and advance the id counter to avoid collisions.
+        """
+        g = cls(memory_mode=data.get("memory_mode", "episodic"))
         g._bindings = {bid: Binding.from_dict(b) for bid, b in data.get("bindings", {}).items()}
         g._anchors = dict(data.get("anchors", {}))
         g._latest_binding_id = data.get("latest")
 
-        # Advance the id counter past the max numeric suffix to avoid collisions
-        if g._bindings:
+        # Advance id counter
+        def _idnum(x: str) -> int:
             try:
-                mx = max(int(bid[1:]) for bid in g._bindings if bid.startswith("b"))
-            except ValueError:
-                mx = 0
-            g._id_counter = itertools.count(mx + 1)
+                return int(x[1:]) if x.startswith("b") else 0
+            except Exception:
+                return 0
 
+        max_id = max((_idnum(bid) for bid in g._bindings.keys()), default=0)
+        #g._id_counter = max_id + 1
+        g._id_counter = itertools.count(max_id + 1)
+
+
+        # Ensure semantic index matches loaded graph content
+        g.set_memory_mode(data.get("memory_mode", g.get_memory_mode()))
         return g
 
 

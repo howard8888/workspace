@@ -198,6 +198,11 @@ class Ctx:
     body_world: Optional[cca8_world_graph.WorldGraph] = None
     body_ids: dict[str, str] = field(default_factory=dict)
     bodymap_last_update_step: Optional[int] = None  # BodyMap recency marker: controller_steps value when BodyMap was last updated
+    # WorkingMap: short-term working memory graph (separate WorldGraph instance)
+    working_world: Optional[cca8_world_graph.WorldGraph] = None
+    working_enabled: bool = True         # mirror env observations into WorkingMap
+    working_verbose: bool = False        # print per-tick WorkingMap injection lines
+    working_max_bindings: int = 250      # cap WorkingMap size (anchors are preserved)
     # Safety / posture retry bookkeeping (Phase V)
     last_standup_step: Optional[int] = None
     last_standup_failed: bool = False
@@ -392,6 +397,56 @@ def init_body_world() -> tuple[cca8_world_graph.WorldGraph, dict[str, str]]:
     }
 
     return body_world, body_ids
+
+
+def init_working_world() -> cca8_world_graph.WorldGraph:
+    """Initialize a short-term WorkingMap (working memory) as a separate WorldGraph.
+
+    Design intent:
+      - WorkingMap holds the full episodic trace (write everything, per-tick).
+      - Long-term WorldGraph can later be run in 'semantic' mode to reduce clutter.
+      - Consolidation policy (what gets copied from WorkingMap into WorldGraph) can evolve
+        without losing the ability to record raw per-tick structure.
+    """
+    ww = cca8_world_graph.WorldGraph(memory_mode="episodic")
+    ww.set_tag_policy("allow")
+    ww.set_stage("neonate")
+    ww.ensure_anchor("NOW")
+    ww.ensure_anchor("NOW_ORIGIN")
+    return ww
+
+
+def reset_working_world(ctx) -> None:
+    """Reset ctx.working_world to a fresh WorkingMap instance.
+    """
+    try:
+        ctx.working_world = init_working_world()
+    except Exception:
+        # If ctx is not writable for some reason, fail silently.
+        pass
+
+
+def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] snapshot") -> None:
+    """Print a small tail snapshot of the WorkingMap graph.
+    """
+    ww = getattr(ctx, "working_world", None)
+    if ww is None:
+        print(f"{title}: (no working_world)")
+        return
+    def _bid_key(bid: str) -> int:
+        try:
+            return int(bid[1:]) if bid.startswith("b") else 10**9
+        except Exception:
+            return 10**9
+
+    all_ids = sorted(ww._bindings.keys(), key=_bid_key)  # pylint: disable=protected-access
+    tail = all_ids[-max(1, int(n)) :]
+
+    print(f"{title}: last {len(tail)} binding(s) of {len(all_ids)} total")
+    for bid in tail:
+        b = ww._bindings[bid]  # pylint: disable=protected-access
+        tags = ", ".join(sorted(b.tags))
+        print(f"  {bid}: [{tags}] edges={len(b.edges)}")
 
 
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
@@ -4529,6 +4584,80 @@ def _inject_simple_valence_like_mom(world, ctx, env_obs, token_to_bid: Dict[str,
         tags.add("pred:valence:like")
 
 
+def _prune_working_world(ctx) -> None:
+    """Keep the WorkingMap bounded so long runs do not explode memory.
+
+    This only applies to ctx.working_world. It never touches the long-term `world`.
+    """
+    ww = getattr(ctx, "working_world", None)
+    if ww is None:
+        return
+
+    max_b = int(getattr(ctx, "working_max_bindings", 0) or 0)
+    if max_b <= 0:
+        return
+
+    # Protect anchors + latest (so pruning doesn't sever the current frame completely)
+    protected = set(getattr(ww, "_anchors", {}).values())  # pylint: disable=protected-access
+    latest = getattr(ww, "_latest_binding_id", None)        # pylint: disable=protected-access
+    if latest:
+        protected.add(latest)
+
+    def _bid_key(bid: str) -> int:
+        try:
+            return int(bid[1:]) if bid.startswith("b") else 10**9
+        except Exception:
+            return 10**9
+
+    # Delete oldest non-protected bindings until within cap
+    all_ids = sorted(list(getattr(ww, "_bindings", {}).keys()), key=_bid_key)  # pylint: disable=protected-access
+    while len(getattr(ww, "_bindings", {})) > max_b:  # pylint: disable=protected-access
+        victim = None
+        for bid in all_ids:
+            if bid not in protected:
+                victim = bid
+                break
+        if victim is None:
+            break
+        ww.delete_binding(victim)  # NEW WorldGraph method
+        all_ids.remove(victim)
+
+
+def inject_obs_into_working_world(ctx, env_obs) -> Dict[str, List[str]]:
+    """Mirror env observations into ctx.working_world (WorkingMap).
+
+    This is a short-term 'write everything' graph intended for:
+      - debugging, story replay, consolidation experiments
+      - separating 'current tick evidence' from 'long term memory' later on
+    """
+    if ctx is None or not getattr(ctx, "working_enabled", False):
+        return {"predicates": [], "cues": []}
+
+    if getattr(ctx, "working_world", None) is None:
+        ctx.working_world = init_working_world()
+
+    ww = ctx.working_world
+    created_preds: List[str] = []
+    created_cues: List[str] = []
+
+    # Use the same attach semantics as long-term injection
+    for p in getattr(env_obs, "predicates", []) or []:
+        token = p.replace("pred:", "")
+        ww.add_predicate(token, attach="now", meta={"created_by": "env_obs", "source": "working"})
+        created_preds.append(p)
+
+    for c in getattr(env_obs, "cues", []) or []:
+        token = c.replace("cue:", "")
+        ww.add_cue(token, attach="latest", meta={"created_by": "env_obs", "source": "working"})
+        created_cues.append(c)
+
+    if getattr(ctx, "working_verbose", False):
+        print(f"[env→work] +preds={len(created_preds)} +cues={len(created_cues)} total_bindings={len(ww._bindings)}")  # pylint: disable=protected-access
+
+    _prune_working_world(ctx)
+    return {"predicates": created_preds, "cues": created_cues}
+
+
 def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylint: disable=unused-argument
     """
     Map an EnvObservation into the WorldGraph as pred:* and cue:* bindings.
@@ -4548,6 +4677,11 @@ def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylin
         - NEW: writes tiny scene-graph 'near' edges from NOW to mom/shelter/cliff bindings
                when 'resting' is present (see _write_spatial_scene_edges).
     """
+    # Mirror into WorkingMap first (optional). This is a no-op unless ctx.working_enabled is True.
+    try:
+        inject_obs_into_working_world(ctx, env_obs)
+    except Exception:
+        pass
     created_preds: List[str] = []
     created_cues: List[str] = []
     token_to_bid: Dict[str, str] = {}
@@ -5612,6 +5746,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     print_startup_notices(world)
     env = HybridEnvironment()     # Environment simulation: newborn-goat scenario (HybridEnvironment)
     ctx.body_world, ctx.body_ids = init_body_world() # initialize tiny BodyMap (body_world) as a separate WorldGraph instance
+    ctx.working_world = init_working_world()
 
     # Optional: start session with a preloaded demo/test world to exercise graph menus.
     # Driven by --demo-world; ignored when --load is used (load takes precedence).
@@ -5692,9 +5827,12 @@ def interactive_loop(args: argparse.Namespace) -> None:
     33) Lines of Python code LOC by directory [loc, sloc]
     34) Reset current saved session [reset]
     36) Toggle mini-snapshot after each menu selection [mini, msnap]
+
+    # Memories
     40) Configure episode starting state (drives + age_days) [config-episode, cfg-epi]
     41) Toggle RL policy selection (rl_enabled + rl_epsilon) [rl, rltog, x]
-
+    42) WorkingMap & WorldGraph memory mode (episodic vs semantic) [workingmap, wm, memory-mode]
+    43) WorkingMap snapshot (last N bindings; optional clear) [wsnap, wmsnap]
 
     Select: """
 
@@ -5750,11 +5888,15 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "reset": "34",
     "env": "35", "environment": "35", "hybrid": "35",
     "mini": "36", "msnap": "36",
+
+    # Memories
     "envloop": "37", "envrun": "37", "envsteps": "37",
     "bodymap": "38", "bsnap": "38",
     "spatial": "39", "near": "39",
     "config-episode": "40", "cfg-epi": "40",
     "rl": "41", "rltog": "41", "toggle-rl": "41", "x": "41",
+    "workingmap": "42", "wm": "42", "memory-mode": "42", "memorymode": "42",
+    "wsnap": "43", "wm-snapshot": "43", "wmsnap": "43",
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -5813,6 +5955,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "39": "39",  # spatial, near demo
     "40": "40",  # Configure episode starting state (drives + age_days)
     "41": "41",  # Toggle RL policy selection
+    "42": "42",  # working map
+    "43": "43",  # wm snapshot
 }
 
     # Attempt to load a prior session if requested
@@ -8492,8 +8636,6 @@ Tip:
 - rl_epsilon = 0.2 explores 20% of the time when there are multiple triggered policies.
 
 """)
-
-
             enabled_now = bool(getattr(ctx, "rl_enabled", False))
             eps_now = getattr(ctx, "rl_epsilon", None)
 
@@ -8603,6 +8745,104 @@ Tip:
             print(f"  rl_epsilon = {ctx.rl_epsilon!r}")
             print(f"  effective epsilon = {eff_after:.3f}")
             print(f"  rl_delta   = {getattr(ctx, 'rl_delta', 0.0):.3f}")
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "42":
+            # WorkingMap + WorldGraph memory-mode controls
+            print("Selection: WorkingMap & WorldGraph memory mode (episodic vs semantic)\n")
+
+            # Ensure WorkingMap exists
+            if getattr(ctx, "working_world", None) is None:
+                ctx.working_world = init_working_world()
+
+            ww = ctx.working_world
+            world_mode = world.get_memory_mode() if hasattr(world, "get_memory_mode") else "episodic"
+
+            print("Current memory settings:")
+            print(f"  WorkingMap enabled      = {getattr(ctx, 'working_enabled', False)}")
+            print(f"  WorkingMap verbose      = {getattr(ctx, 'working_verbose', False)}")
+            print(f"  WorkingMap max_bindings = {getattr(ctx, 'working_max_bindings', 0)}")
+            print(f"  WorkingMap bindings     = {len(getattr(ww, '_bindings', {}))}")  # pylint: disable=protected-access
+            print(f"  WorldGraph memory_mode  = {world_mode}")
+            print()
+
+            # Toggle WorkingMap mirroring
+            raw = input("WorkingMap capture? [Enter=toggle | on | off]: ").strip().lower()
+            if raw in ("on", "true", "1", "yes", "y"):
+                ctx.working_enabled = True
+            elif raw in ("off", "false", "0", "no", "n"):
+                ctx.working_enabled = False
+            elif raw == "":
+                ctx.working_enabled = not getattr(ctx, "working_enabled", False)
+
+            # Toggle verbose
+            rawv = input("WorkingMap verbose? [Enter=toggle | on | off]: ").strip().lower()
+            if rawv in ("on", "true", "1", "yes", "y"):
+                ctx.working_verbose = True
+            elif rawv in ("off", "false", "0", "no", "n"):
+                ctx.working_verbose = False
+            elif rawv == "":
+                ctx.working_verbose = not getattr(ctx, "working_verbose", False)
+
+            # Set max bindings
+            rawm = input(f"WorkingMap max_bindings (current={getattr(ctx, 'working_max_bindings', 0)}; Enter=keep): ").strip().lower()
+            if rawm:
+                try:
+                    ctx.working_max_bindings = max(0, int(float(rawm)))
+                except ValueError:
+                    print("  (ignored: could not parse max_bindings)")
+
+            # WorldGraph memory mode
+            if hasattr(world, "set_memory_mode") and hasattr(world, "get_memory_mode"):
+                print("\nWorldGraph memory_mode options:")
+                print("  episodic = create a new node for every observation (current behavior)")
+                print("  semantic = reuse identical pred/cue nodes to reduce clutter (experimental)")
+                raw_mode = input(f"WorldGraph memory_mode (current={world.get_memory_mode()}): ").strip().lower()
+                if raw_mode in ("episodic", "semantic"):
+                    world.set_memory_mode(raw_mode)
+
+            # Clear working map?
+            rawc = input("Clear WorkingMap now? [y/N]: ").strip().lower()
+            if rawc in ("y", "yes"):
+                reset_working_world(ctx)
+
+            # Re-prune after any setting changes
+            _prune_working_world(ctx)
+
+            print("\nUpdated memory settings:")
+            print(f"  WorkingMap enabled      = {getattr(ctx, 'working_enabled', False)}")
+            print(f"  WorkingMap verbose      = {getattr(ctx, 'working_verbose', False)}")
+            print(f"  WorkingMap max_bindings = {getattr(ctx, 'working_max_bindings', 0)}")
+            print(f"  WorkingMap bindings     = {len(getattr(ctx.working_world, '_bindings', {}))}")  # pylint: disable=protected-access
+            if hasattr(world, "get_memory_mode"):
+                print(f"  WorldGraph memory_mode  = {world.get_memory_mode()}")
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "43":
+            print("Selection: WorkingMap snapshot\n")
+
+            if getattr(ctx, "working_world", None) is None:
+                ctx.working_world = init_working_world()
+
+            raw_n = input("Show last N bindings (default=15): ").strip()
+            n = 15
+            if raw_n:
+                try:
+                    n = max(1, int(float(raw_n)))
+                except ValueError:
+                    pass
+
+            print_working_map_snapshot(ctx, n=n)
+
+            rawc = input("\nClear WorkingMap now? [y/N]: ").strip().lower()
+            if rawc in ("y", "yes"):
+                reset_working_world(ctx)
+                print("(WorkingMap cleared.)")
+
             loop_helper(args.autosave, world, drives, ctx)
 
 

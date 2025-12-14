@@ -711,6 +711,70 @@ A: JSON keeps sessions portable and debuggable, binary would be smaller but opaq
 
 
 
+## WorkingMap (Working Memory Graph)
+
+CCA8 now maintains a **WorkingMap**, a short‑term “write everything” graph intended to hold the *full episodic trace* of what is happening tick‑by‑tick.
+
+### Why a WorkingMap?
+
+WorldGraph can become cluttered quickly when we log repeated predicates (e.g., posture, distances, cues) every tick. Biologically, this mirrors a common separation:
+
+- **working / short‑term memory**: high‑bandwidth, constantly updated, may be pruned
+- **long‑term memory**: lower bandwidth, consolidated, less redundant
+
+WorkingMap lets us record the detailed stream without forcing long‑term memory to store every redundant node.
+
+### Implementation
+
+- `ctx.working_world` is a **separate** `WorldGraph` instance (WorkingMap).
+- Environment observations are mirrored into WorkingMap on each tick (when enabled).
+- WorkingMap is capped by `ctx.working_max_bindings` to prevent unlimited growth.
+- WorkingMap is intended to become the source graph for consolidation policies later:
+  “write everything to WorkingMap → copy/consolidate selected information into WorldGraph”.
+
+### Runner controls
+
+- **Menu #__**: WorkingMap + WorldGraph memory mode
+  - Toggle WorkingMap mirroring
+  - Toggle WorkingMap verbose logging
+  - Set WorkingMap size cap
+  - Toggle long‑term WorldGraph memory mode (episodic vs semantic)
+  - Optionally clear WorkingMap
+
+- **Menu #__**: WorkingMap snapshot
+  - Print the last N bindings from WorkingMap
+  - Optionally clear WorkingMap
+
+---
+
+## WorldGraph memory modes: episodic vs semantic
+
+WorldGraph supports two storage modes for predicates/cues:
+
+### Episodic mode (default)
+
+- Each `add_predicate(...)` / `add_cue(...)` creates a **new** binding.
+- Best when you want a rich timeline and do not mind redundancy.
+
+### Semantic mode (consolidated, experimental)
+
+- Identical `pred:` / `cue:` tags are consolidated to a **single** canonical binding.
+- Reduces repeated nodes in long‑term graphs and can improve readability.
+
+**Important note:** If policy code treats “tag exists anywhere in WorldGraph” as meaning “true right now”, semantic mode can make stale facts appear permanently true. The safe trajectory is:
+
+- use **WorkingMap / BodyMap** as the source of “current tick” state,
+- use **WorldGraph (semantic)** as consolidated long‑term structure.
+
+(Note at time of this writing: CCA8 is being developed in that direction; semantic mode is optin and intended for experimentation.)
+
+
+
+
+
+
+
+
 
 
 # Tagging Standard (bindings, predicates, cues, anchors, actions, provenance & engrams)
@@ -9049,3 +9113,65 @@ learning, and Theory-of-Mind modules on top of this base. (At the time of writin
 November 2025 these are still design-stage.)
 
 
+### Future Phase  – Two-Stream Processing (Ventral “what” / Dorsal “where/how”) + Binding Hub (design-stage)
+
+Evidence suggests the dorsal/ventral “two-stream” split is a conserved motif across vertebrate lineages, and is not
+a primate-only quirk. In other words: for a goat-like agent, a dorsal **action/spatial** stream and a ventral
+**identity/recognition** stream are likely part of the baseline architecture, not an optional “human upgrade”.
+
+**Design intent for CCA8:** keep “what” and “where” representations separate through at least one tier, then
+introduce an explicit *binding* mechanism (a heteromodal “hub”) that can combine them when the task truly
+requires it. This keeps integrated identity+location queries *explicit* (and therefore measurable), and preserves a
+workspace for symbolic relations instead of pre-binding everything into one structure.
+
+#### Mapping to existing CCA8 concepts
+
+- **Dorsal / “where-how”** (fast, body-centred, action-guiding):
+  - BodyMap (`ctx.body_world`) already functions like a tiny dorsal register (posture, mom distance, nipple state,
+    shelter/cliff safety slots).
+  - The “NOW-near” scene-graph overlays (spatial neighbors) are also dorsal-leaning.
+
+- **Ventral / “what”** (slower, feature-rich, invariant identity):
+  - A future *FeatureMap / ObjectMap* should hold object identity representations and richer perceptual engrams.
+  - This can live as a separate WorldGraph-like structure or as a dedicated engram store (column) indexed by stable
+    object IDs.
+
+- **Binding hub / heteromodal workspace**:
+  - A future binder should explicitly link a ventral identity token to a dorsal location / affordance context.
+  - In CCA terms, this can be represented as either:
+    - a dedicated binding record (cross-index table), and/or
+    - a small “binding episode” node in the main WorldGraph whose role is to *relate* the two streams.
+
+#### Operational rule of thumb (simulation + engineering)
+
+1. **Default: don’t collapse streams early.**
+   - Policies that require fast action should read mostly dorsal state (BodyMap + near-world).
+   - Perceptual learning and semantic enrichment should write mostly ventral state (FeatureMap/ObjectMap).
+
+2. **Make binding an operator, not an accidental side effect.**
+   - Add an explicit API (future) such as:
+     - `bind(what_id, where_id, *, t, confidence, source="...")`
+   - Treat each bind as a first-class event (loggable, inspectable, testable).
+
+3. **Exploit parallelism.**
+   - Dorsal and ventral updates should be able to run concurrently (ideally separate OS processes).
+   - This is aligned with the existing multi-brain scaffolding: “parallelism note: farm processors to separate OS
+     processes” (see cca8_run.py narrative scaffolds).
+
+4. **Instrument query mix.**
+   - Track how often the agent needs integrated “what+where” binding versus stream-local queries.
+   - This will let us validate whether the simulation is operating in a “two-stream-beneficial” regime, and where to
+     spend optimization effort (binder vs caches).
+
+#### Concrete future work items
+
+- Add `ctx.ventral_world` (or `ctx.feature_world`) alongside BodyMap, with a minimal vocabulary for object IDs and
+  feature tags.
+- Add a `cca8_binding.py` (or similar) module that defines:
+  - a binding record schema, plus
+  - simple binding/unbinding operations, plus
+  - debug printouts (so we can see the workspace forming).
+- Add a micro-benchmark / probe in `--preflight` that:
+  - creates N objects with (what, where),
+  - runs a controlled mix of what-only / where-only / integrated queries,
+  - reports the measured ratios and timing (for regression tracking).
