@@ -50,7 +50,8 @@ def test_mini_snapshot_discrepancy_and_history_persist() -> None:
 
     # Current discrepancy (main + explanatory hint)
     assert any(line.startswith("[discrepancy] env posture='fallen'") for line in lines1)
-    assert any("often the motor system will attempt an action" in line for line in lines1)
+    assert any(line.startswith("[discrepancy] note:") for line in lines1)
+
     # History section should be present with at least one entry.
     assert any(line.startswith("[discrepancy history]") for line in lines1)
     assert sum("env posture='fallen'" in line for line in lines1) >= 2  # main line + history line
@@ -66,8 +67,9 @@ def test_mini_snapshot_discrepancy_and_history_persist() -> None:
     text2 = mini_snapshot_text(world, ctx, limit=10)
     lines2 = text2.splitlines()
 
+
     # No new hint line on the second call (no *new* discrepancy).
-    assert not any("often the motor system will attempt an action" in line for line in lines2)
+    assert not any(line.startswith("[discrepancy] note:") for line in lines2)
 
     # History should still be printed and contain the original mismatch.
     assert any(line.startswith("[discrepancy history]") for line in lines2)

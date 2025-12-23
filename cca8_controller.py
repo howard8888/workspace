@@ -166,7 +166,7 @@ import random
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "Drives",
     "SkillStat",

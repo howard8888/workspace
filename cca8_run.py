@@ -100,7 +100,7 @@ from cca8_env import HybridEnvironment  # environment simulation (HybridEnvironm
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.8.0"
+__version__ = "0.8.1"
 __all__ = [
     "main",
     "interactive_loop",
@@ -206,6 +206,10 @@ class Ctx:
     # Safety / posture retry bookkeeping (Phase V)
     last_standup_step: Optional[int] = None
     last_standup_failed: bool = False
+    # Long-term WorldGraph env-observation injection (STUB)
+    #-This records the user's preference, but is NOT enforced yet: we still inject EnvObservation
+    # into the long-term WorldGraph each tick, exactly as before.
+    longterm_obs_enabled: bool = True
 
 
     def reset_controller_steps(self) -> None:
@@ -1681,10 +1685,14 @@ class PolicyRuntime:
 
     def consider_and_maybe_fire(self, world, drives, ctx, tie_break: str = "first") -> str:  # pylint: disable=unused-argument
         """Evaluate triggers, prefer safety-critical gates, then run the controller once;
-              return a short human string."""
+              return a short human string.
+              """
         matches = [p for p in self.loaded if _safe(p.trigger, world, drives, ctx)]
         if not matches:
             return "no_match"
+
+        # NEW: capture the full triggered set (before any safety-only filtering)
+        triggered_all = [p.name for p in matches]
 
         # If fallen near NOW (BodyMap-first), force safety-only gates
         if _fallen_near_now(world, ctx, max_hops=3):
@@ -1716,7 +1724,9 @@ class PolicyRuntime:
         # - RL disabled:
         #     Deterministic heuristic: choose by deficit, then stable order. (No q used.)
 
-        rl_pick_note = ""  # printed only when q-soft-tiebreak (near-tie band) actually decided the pick
+        rl_pick_note = ""     # printed only when q-soft-tiebreak (near-tie band) decided the pick
+        did_explore = False   # NEW: lets us label the pick source accurately in debug output
+
         rl_enabled = bool(getattr(ctx, "rl_enabled", False))
         if rl_enabled:
             eps = getattr(ctx, "rl_epsilon", None)
@@ -1737,10 +1747,10 @@ class PolicyRuntime:
 
             if eps_f > 0.0 and random.random() < eps_f:
                 chosen = random.choice(matches)
+                did_explore = True
                 _bump("rl_explore_steps")
             else:
                 # --- RL "soft tie-break"
-                # Drives dominate unless deficits are close; within the close band we let q decide.
                 rl_delta_raw = getattr(ctx, "rl_delta", 0.0)
                 try:
                     rl_delta = float(rl_delta_raw)
@@ -1767,12 +1777,9 @@ class PolicyRuntime:
                 # If the near-best band has > 1 candidate, then q influenced the choice.
                 if len(near_best) > 1:
                     bits: list[str] = []
-                    # Sort candidates so the printed list is stable/readable.
                     for p, d in sorted(near_best, key=lambda pd: (-pd[1], pd[0].name)):
                         qv = skill_q(p.name, default=0.0)
                         bits.append(f"{p.name}(def={d:.3f}, q={qv:+.2f})")
-
-                    # Prevent log spam if rl_delta is large and the band gets big.
                     if len(bits) > 6:
                         bits = bits[:6] + ["..."]
 
@@ -1788,38 +1795,66 @@ class PolicyRuntime:
             # RL disabled: original deterministic heuristic (deficit, then stable order)
             chosen = max(matches, key=lambda p: (deficit(p.name), -stable_idx(p)))
 
+        # NEW: label *how* we picked, so "best_policy" never lies
+        selector_kind = "deficit"
+        if rl_enabled:
+            if did_explore:
+                selector_kind = "rl_explore"
+            elif rl_pick_note:
+                selector_kind = "rl_exploit(q_soft_tiebreak)"
+            else:
+                selector_kind = "rl_exploit(deficit)"
+
         # Context for logging
-        base  = choose_contextual_base(world, ctx, targets=["posture:standing", "stand"])
-        foa   = compute_foa(world, ctx, max_hops=2)
+        base = choose_contextual_base(world, ctx, targets=["posture:standing", "stand"])
+        foa = compute_foa(world, ctx, max_hops=2)
         cands = candidate_anchors(world, ctx)
         pre_expl = chosen.explain(world, drives, ctx) if chosen.explain else "explain: (not provided)"
 
         # Run controller with the exact policy we selected
         try:
             before_n = len(world._bindings)
-            result   = action_center_step(world, ctx, drives, preferred=chosen.name)
-            after_n  = len(world._bindings)
-            delta_n  = after_n - before_n
-            label    = result.get("policy") if isinstance(result, dict) and "policy" in result else chosen.name
+            result = action_center_step(world, ctx, drives, preferred=chosen.name)
+            after_n = len(world._bindings)
+            delta_n = after_n - before_n
+            label = result.get("policy") if isinstance(result, dict) and "policy" in result else chosen.name
         except Exception as e:
             return f"{chosen.name} (error: {e})"
 
         # Build an explicit [executed] line from the result dict, if available
         exec_line = ""
         if isinstance(result, dict):
-            status  = result.get("status")
-            reward  = result.get("reward")
+            status = result.get("status")
+            reward = result.get("reward")
             binding = result.get("binding")
             if status and status != "noop":
                 rtxt = f"{reward:+.2f}" if isinstance(reward, (int, float)) else "n/a"
                 exec_line = f"[executed] {label} ({status}, reward={rtxt}) binding={binding}\n"
 
+        # NEW: one-line candidate+winner summary (this is what you asked for)
+        pick_debug_line = ""
+        try:
+            triggered_final = [p.name for p in matches]  # after safety filtering (if any)
+            trig_txt = ", ".join(triggered_all)
+            final_txt = ", ".join(triggered_final)
+
+            pick_debug = f"[pick] best_policy={label} best_by={selector_kind} triggered=[{trig_txt}]"
+            if triggered_final != triggered_all:
+                pick_debug += f" safety_filtered=[{final_txt}]"
+            if chosen.name != label:
+                pick_debug += f" selected={chosen.name}"
+            pick_debug_line = pick_debug + "\n"
+        except Exception:
+            pick_debug_line = ""
+
         gate_for_label = next((p for p in self.loaded if p.name == label), chosen)
         post_expl = gate_for_label.explain(world, drives, ctx) if gate_for_label.explain else "explain: (not provided)"
-        pick_line = (rl_pick_note + "\n") if rl_pick_note else ""
+        rl_line = (rl_pick_note + "\n") if rl_pick_note else ""
+
         return (
             f"{label} (added {delta_n} bindings)\n"
-            f"{pick_line}"
+            f"{pick_debug_line}"
+            f"{rl_line}"
             f"{exec_line}"
             f"pre:  {pre_expl}\n"
             f"base: {base}\n"
@@ -1827,7 +1862,6 @@ class PolicyRuntime:
             f"cands:{cands}\n"
             f"post: {post_expl}"
         )
-
 
 def _safe(fn, *args):
     """Invoke a predicate defensively (exceptions → False).
@@ -1956,70 +1990,91 @@ def boot_prime_stand(world, ctx) -> None:
 
 
 def print_tagging_and_policies_help(policy_rt=None) -> None:
-    """Terminal help: bindings, edges, predicates, cues, anchors, provenance/engrams, and policies."""
+    """Terminal help: bindings, edges, predicates, cues, anchors, provenance/engrams, and policies.
+    """
+
     print("""
 
 ==================== Understanding Bindings, Edges, Predicates, Cues & Policies ====================
 
 What is a Binding?
   • A small 'episode card' that binds together:
-      - tags (symbols: predicates / cues / anchors)
+      - tags (symbols: predicates / actions / cues / anchors)
       - engrams (pointers to rich memory outside WorldGraph)
       - meta (provenance, timestamps, light notes)
-      - edges (directed links from this binding)\n
+      - edges (directed links from this binding)
+
   Structure (conceptual):
       { id:'bN', tags:[...], engrams:{...}, meta:{...}, edges:[{'to': 'bK', 'label':'then', 'meta':{...}}, ...] }
 
 Tag Families (use these prefixes)
-  • pred:*        → predicates (facts you might plan TO)
+  • pred:*        → predicates (facts / goals you might plan TO)
       examples: pred:posture:standing, pred:posture:fallen, pred:nipple:latched, pred:milk:drinking,
-                pred:proximity:mom:close, pred:event:fall_detected
-  • pred:action:* → explicit action bindings (verbs in the map).
-      examples: pred:action:push_up, pred:action:extend_legs, pred:action:orient_to_mom
+                pred:proximity:mom:close, pred:proximity:shelter:near, pred:hazard:cliff:near
+
+  • action:*      → actions (verbs; what the agent did or is doing)
+      examples: action:push_up, action:extend_legs, action:orient_to_mom
+
   • cue:*         → evidence/context you NOTICE (policy triggers); not planner goals
       examples: cue:vision:silhouette:mom, cue:scent:milk, cue:sound:bleat:mom, cue:terrain:rocky
+                cue:drive:hunger_high, cue:drive:fatigue_high
+
   • anchor:*      → orientation markers (e.g., anchor:NOW); also mapped in engine anchors {'NOW': 'b1'}
-  • drive thresholds (pick one convention and be consistent):
-      default: pred:drive:hunger_high  (plannable)
-      alt:     cue:drive:hunger_high   (trigger/evidence only)
+
+Drive thresholds (house style)
+  • Canonical storage: numeric values live in the Drives object:
+        drives.hunger, drives.fatigue, drives.warmth
+  • Threshold flags are *derived* (e.g., hunger>=HUNGER_HIGH) and are optionally emitted as
+    rising-edge *cues* to avoid clutter:
+        cue:drive:hunger_high, cue:drive:fatigue_high
+  • Only use pred:drive:* when you deliberately want a planner goal like "pred:drive:warm_enough".
+    Otherwise treat thresholds as evidence (cue:drive:*).
 
 Edges = Transitions
   • We treat edge labels as weak episode links (often just 'then').
-  • Most semantics live in bindings (predicates and pred:action:*); edge labels are for readability and metrics.
+  • Most semantics live in bindings (pred:* and action:*); edge labels are for readability and metrics.
   • Quantities about the transition live in edge.meta (e.g., meters, duration_s, created_by).
-  • Planner behavior today: labels are for readability; BFS follows structure (node/edge graph), not names.
+  • Planner behavior today: BFS/Dijkstra follow structure (node/edge graph), not label meaning.
   • Duplicate protection: the UI warns on exact duplicates of (src, label, dst)
 
 Provenance & Engrams
-  • Who created a binding?   binding.meta['policy'] = 'policy:<name>'
-  • Who created an edge?     edge.meta['created_by'] = 'policy:<name>'
+  • Who created a binding?   binding.meta['policy'] = 'policy:<name>' (or meta.created_by for non-policy writes)
+  • Who created an edge?     edge.meta['created_by'] = 'policy:<name>' (or similar)
   • Where is the rich data?  binding.engrams[...] → pointers (large payloads live outside WorldGraph)
+
+Maps & Memory (where things live)
+  • WorldGraph  → symbolic episode index (bindings/edges/tags); great for inspection + planning over pred:*.
+  • BodyMap     → agent-centric working state used for gating (fast, “what do I believe right now?”).
+  • Drives      → numeric interoception state (hunger/fatigue/etc.); may emit cue:drive:* threshold events.
+  • Engrams     → pointers from bindings to richer payloads stored outside the graph (future: Column / disk store).
+
+Memory types (rough mapping)
+  • Declarative / semantic → stable pred:* summaries (small in WorldGraph; richer payloads via engrams / Column later).
+  • Episodic               → sequences of bindings/edges anchored by NOW (plus engram payload pointers).
+  • Procedural             → policies + any learned parameters/weights/skill stats used to select/execute actions.
 
 Anchors
   • anchor:NOW exists; used as the start for planning; may have no pred:*
-  • Other anchors (e.g., HERE) are allowed; anchors are just bindings with special meaning
+  • Other anchors (e.g., HERE, NOW_ORIGIN) are allowed; anchors are bindings with special meaning
 
-Planner (BFS) Basics
-  • Goal test: a popped binding whose tags contain the target 'pred:<token>'
-  • Shortest hops: BFS with visited-on-enqueue; parent map reconstructs the path
-  • BFS → fewest hops (unweighted).
+Planner (BFS/Dijkstra) Basics
+  • Goal test: reach a binding whose tags contain the target 'pred:<token>'
+  • BFS → fewest hops (unweighted)
   • Dijkstra → lowest total edge weight; weights come from edge.meta keys in this order:
-      'weight' → 'cost' → 'distance' → 'duration_s' (default 1.0 if none present).
-  • Toggle strategy via the 'Planner strategy' menu item, then run 'Plan from NOW'.
-  • Pretty paths show first pred:* as the node label (fallback to id) and --label--> between nodes
-  • Try: menu 'Plan from NOW', menu 'Display snapshot', menu 'Export interactive graph'
+      'weight' → 'cost' → 'distance' → 'duration_s' (default 1.0 if none present)
+  • Pretty paths show first pred:* (or id) as the node label and --label--> between nodes
 
 Policies (Action Center overview)
   • Policies live in cca8_controller and expose:
-      - dev_gate(ctx)       → True/False (availability by development stage/context)
-      - trigger(world, drives, ctx) → True/False (should we act now?)
-      - execute(world, ctx, drives) → adds bindings/edges; stamps provenance
-  • Action Center scans loaded policies in order each tick; first match runs (with safety priority for
-             recovery)
-  • After execute, you may see:
-      - new bindings (with meta.policy)
-      - new edges (with edge.meta.created_by)
-     - skill ledger updates ('Show skill stats')
+      - dev_gate(ctx)               → availability by development stage/context
+      - trigger(world, drives, ctx) → should we act now?
+      - execute(world, ctx, drives) → writes bindings/edges; stamps provenance
+
+  • Per controller step the Action Center:
+      1) filters by dev_gate and safety overrides (e.g., fallen → recovery-only),
+      2) evaluates triggers to form a candidate set,
+      3) chooses ONE winner (drive-deficit heuristic; optional RL q soft tie-break),
+      4) executes the winner and updates skill stats.
 
     """)
 
@@ -2035,16 +2090,18 @@ Policies (Action Center overview)
         pass
 
     print("Do / Don’t (project house style)")
-    print("  ✓ Use pred:* for states/goals/events (and drive thresholds if plannable)")
-    print("  ✓ Use cue:* for evidence/conditions (not planning targets)")
+    print("  ✓ Use pred:* for facts/goals/events")
+    print("  ✓ Use action:* for verbs (what the agent does)")
+    print("  ✓ Use cue:* for evidence/conditions/triggers (including cue:drive:* threshold events)")
     print("  ✓ Put creator/time/notes in meta; put action measurements in edge.meta")
     print("  ✓ Allow anchor-only bindings (e.g., anchor:NOW)")
     print("  ✗ Don’t store large data in tags; put it in engrams")
-    print("\nExamples")
-    print("  born --then--> wobble --stabilize--> posture:standing --suckle--> milk:drinking")
-    print("  stand --search--> nipple:found --latch--> nipple:latched --suckle--> milk:drinking")
-    print("\n(See README.md → Tagging Standard for more information.)\n")
 
+    print("\nExamples")
+    print("  pred:posture:fallen --then--> action:push_up --then--> action:extend_legs --then--> pred:posture:standing")
+    print("  pred:posture:standing --then--> action:orient_to_mom --then--> pred:seeking_mom --then--> pred:nipple:latched")
+
+    print("\n(See README.md → Tagging Standard for more information.)\n")
 
 # --------------------------------------------------------------------------------------
 # Profiles & tutorials: experimental profiles (dry-run) + narrative fallbacks
@@ -4682,6 +4739,11 @@ def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylin
         inject_obs_into_working_world(ctx, env_obs)
     except Exception:
         pass
+    # NOTE (STUB): ctx.longterm_obs_enabled is not enforced yet.
+    # We still inject EnvObservation into the long-term WorldGraph below.
+    # Next step (later): if longterm_obs_enabled is False, skip the pred/cue injection,
+    # and rely on WorkingMap + explicit consolidation events.
+
     created_preds: List[str] = []
     created_cues: List[str] = []
     token_to_bid: Dict[str, str] = {}
@@ -5323,8 +5385,8 @@ def mini_snapshot_text(world, ctx=None, limit: int = 50) -> str:
                 )
 
             msg_hint = (
-                "[discrepancy] -often the motor system will attempt an action, "
-                "but it does not actually occur-"
+                "[discrepancy] note: a mismatch can be normal right after reset (env has not yet applied the last action); "
+                "persistent mismatches across steps suggest failed execution or storyboard veto."
             )
 
             lines.append(msg_main)
@@ -8181,31 +8243,64 @@ Attach an existing engram id (eid) to a binding id (bid).
             print("Selection: Environment step (HybridEnvironment → WorldGraph demo)\n")
             print("""[guide] This selection runs ONE closed-loop step between the newborn-goat environment and the CCA8 brain.
 
+Key output lines you will see
+----------------------------
+
   • [env] lines summarize what the environment simulation just did:
       - on the first call we RESET the newborn_goat_first_hour storyboard
       - on later calls we STEP the storyboard forward using the last policy action (if any)
 
   • [env→world] lines show how EnvObservation is injected into the WorldGraph:
-      - predicates like posture:fallen or proximity:mom:far become pred:* facts (the agent's beliefs)
-      - cues (e.g., vision:silhouette:mom) become cue:* facts attached near NOW/LATEST
+      - each env predicate token (e.g., posture:fallen) becomes a pred:* binding
+      - first injected predicate uses attach=now; subsequent ones use attach=latest (forming a short chain)
 
-  • [env→controller] lines show how the controller responds:
-      - after seeing the updated WorldGraph + drives, the Action Center chooses ONE policy to execute
-      - for example, policy:stand_up will assert a short motor chain and a final posture:standing fact
-        (this last fact represents the policy's expected outcome; the next [env] step will later confirm
-         or refute standing via new sensory evidence).
+  • [env→body] line is a debug bridge: the same EnvObservation also updates BodyMap.
+      - BodyMap is a tiny, agent-centric working map used primarily for gating decisions.
 
-  • On each env step this occurs:
-    1. Env storyboard evolving (env.reset / env.step, kid posture, stage, mom distance, nipple state).
-        -dataclass EnvState== holds the true world state (posture, mom distance, fatigue, etc....)
-        -class FsmBackend== actual storyboard logic, i.e., the script for an environment period
-        -HybridEnvironment calls the storyboard each step
-        -fsmBackend.step(env_state, action, ctx) -- stage-by-stage logic updating posture, distances, etc.
-    2. WorldGraph being updated ([env→world] pred:* and cue:* bindings near NOW/LATEST).
-    3. BodyMap being mirrored ([body] posture=... mom_distance=... nipple_state=...).
-    4. Controller reacting ([env→controller] policy fire + any [note] meta).
-    5. Timekeeping advancing (one-line soft clock summary at the end).
+  • [body] line is a short, human-readable summary derived from BodyMap helper functions
+    (posture/mom_distance/nipple_state).
+
+  • [gate:rest] line (when present) is a debug print from the Rest gate:
+      - shows fatigue threshold status, fatigue cue presence, whether BodyMap is stale,
+        and the (cliff/shelter/zone) classification used to veto resting when unsafe.
+
+    - Note on print order: gate debug lines may print BEFORE [env→controller] because triggers are evaluated
+        first (to build the candidate set). Only after trigger evaluation (and any safety filtering) does the
+        controller print the winner and execute it.
+
+  • [env→controller] block shows how the controller responded:
+      - "<policy> (added N bindings)" means the chosen policy executed and wrote N new bindings.
+      - "[executed] ..." is the status/reward/binding id returned from action_center_step(...).
+      - "[pick] ..." is a one-line summary of triggered policies and the best_policy chosen this step.
+      - "pre:" and "post:" are the gate explanation before and after execution.
+      - "base:" is a suggested write-base, i.e., where should new writes attach to keep the
+            episode tidy? (diagnostic; may show bid='?' if HERE is not set yet).
+            -no NEAREST_PRED target found near NOW, so it fell back to HERE.
+            -at this time, policies still use their own attach semantics (base is just informational)
+      - "foa:" is the Focus of Attention neighborhood (seeds = NOW/LATEST (+ any cue nodes)).
+            -computed as union of neighborhoods within max_hops=2 (or other small value) around LATEST,
+                NOW and any cue nodes.
+      - "cands:" are candidate anchors for future search/attachment (diagnostic).
+            -e.g., when start off it may show NOW at b1 still, and HERE as ? since not set yet.
+
+
+
+  • At the end you may also see a "mini-snapshot" (if enabled) showing:
+      - last bindings/edges
+      - optional posture discrepancy: env posture (from env injection) vs policy-expected posture (from policy write)
+        (a mismatch can be normal immediately after reset (action not yet applied by env);
+         persistent mismatches across multiple steps suggest failed execution or storyboard veto).
+
+What happens conceptually per step
+----------------------------------
+  1) Environment evolves (env.reset / env.step; posture/stage/mom/nipple).
+  2) WorldGraph is updated ([env→world] pred:* and cue:* bindings near NOW/LATEST).
+  3) BodyMap is updated ([env→body] and [body] summaries).
+  4) Controller reacts ([env→controller] policy fire + optional [gate:*] debug lines).
+  5) Timekeeping advances (controller_steps + one temporal drift; shown as a one-line summary).
+
 """)
+
 
             # Track bindings so we can show notes for any NEW bindings created during this step.
             try:
@@ -8766,6 +8861,7 @@ Tip:
             print(f"  WorkingMap max_bindings = {getattr(ctx, 'working_max_bindings', 0)}")
             print(f"  WorkingMap bindings     = {len(getattr(ww, '_bindings', {}))}")  # pylint: disable=protected-access
             print(f"  WorldGraph memory_mode  = {world_mode}")
+            print(f"  WorldGraph env obs injection (stub) = {getattr(ctx, 'longterm_obs_enabled', True)}")
             print()
 
             # Toggle WorkingMap mirroring
@@ -8803,6 +8899,17 @@ Tip:
                 if raw_mode in ("episodic", "semantic"):
                     world.set_memory_mode(raw_mode)
 
+            # Long-term WorldGraph env observation injection (STUB only — no behavioral effect yet)
+            lt_now = bool(getattr(ctx, "longterm_obs_enabled", True))
+            raw_lt = input("WorldGraph env obs injection? (stub; no effect yet) [Enter=toggle | on | off]: ").strip().lower()
+            if raw_lt in ("on", "true", "1", "yes", "y"):
+                ctx.longterm_obs_enabled = True
+            elif raw_lt in ("off", "false", "0", "no", "n"):
+                ctx.longterm_obs_enabled = False
+            elif raw_lt == "":
+                ctx.longterm_obs_enabled = not lt_now
+            print("  [note] This flag is recorded but not enforced yet; env observations still inject into WorldGraph each tick.")
+
             # Clear working map?
             rawc = input("Clear WorkingMap now? [y/N]: ").strip().lower()
             if rawc in ("y", "yes"):
@@ -8818,8 +8925,8 @@ Tip:
             print(f"  WorkingMap bindings     = {len(getattr(ctx.working_world, '_bindings', {}))}")  # pylint: disable=protected-access
             if hasattr(world, "get_memory_mode"):
                 print(f"  WorldGraph memory_mode  = {world.get_memory_mode()}")
+                print(f"  WorldGraph env obs injection (stub) = {getattr(ctx, 'longterm_obs_enabled', True)}")
             loop_helper(args.autosave, world, drives, ctx)
-
 
         #----Menu Selection Code Block------------------------
         elif choice == "43":

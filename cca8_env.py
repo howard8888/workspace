@@ -148,7 +148,7 @@ from typing import Any, Dict, List, Optional, Tuple
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 __all__ = [
     "EnvState",
     "EnvObservation",
