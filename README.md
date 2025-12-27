@@ -78,7 +78,7 @@ CCA8 aims to simulate early mammalian cognition with a **small symbolic episode 
 
 - **WorldGraph** — the directed graph composed of these bindings and edges, supports **BFS planning**.  
 
-- **Policy (primitive)** — an instinctive behavior with `trigger()` + `execute()`. The **Action Center** scans policies in order and runs the first whose trigger matches current **drive** tags (hunger/fatigue/warmth).  
+- **Policy (primitive)** — an instinctive behavior with `dev_gate(ctx)` + `trigger(world, drives, ctx)` + `execute(world, ctx, drives)`. Each tick, CCA8 forms a candidate set (dev_gate + trigger + safety filters) and selects ONE winner: drive-urgency “deficit” score → non-drive priority → (if RL enabled: epsilon exploration / learned q tie-break) → stable policy order.
 
 - **Provenance** — when a policy creates a new binding, its name is stamped into `binding.meta["policy"]`.  
 
@@ -527,7 +527,10 @@ A: O(1) `popleft()` for BFS frontiers (lists would be O(n) for `pop(0)`).
 
 **Drives, Policies, and the Action Center:**
 
-The controller tracks simple drives (hunger, fatigue, warmth). Policies consume those signals and look for tags in the WorldGraph or context to decide whether to act. The Action Center asks policies in a fixed order “are you ready? ” and executes the first one that returns true.
+The controller tracks simple drives (hunger, fatigue, warmth). Policies consume those signals and look for tags in the WorldGraph or context to decide whether to act. 
+
+The Action Center evaluates all policies that pass dev gating, forms a triggered candidate set, and selects ONE winner. By default (non-RL), winner = highest drive-urgency “deficit” → non-drive priority → stable policy order. With RL enabled, epsilon may choose a random candidate (exploration); otherwise exploitation chooses within the near-best deficit band (rl_delta) and breaks ties by non-drive → learned value q → stable policy order.
+
 
 Example (stand up):
 
@@ -540,7 +543,7 @@ Example (stand up):
 
 ***Q&A to help you learn this section***
 Q: How is an action chosen each tick?   
-A: The Action Center scans policies in a fixed order and runs the first whose `trigger()` returns True given current drives/tags.
+A: Policies are first filtered by dev_gate + safety overrides, then triggers are evaluated to form a candidate set. The winner is chosen by: deficit (drive urgency) → non_drive priority → (RL: q tie-break inside the near-best deficit band; non-RL: stable order). In RL mode, epsilon can also pick a random candidate (exploration).
 
 Q: What prevents re-firing the same action?   
 A: Guards in `trigger()` (e.g., StandUp checks that standing isn’t already true).
@@ -690,9 +693,9 @@ Allowed → Triggered → Executed
 
 A session snapshot is a JSON file that contains: the world graph (bindings + edges + internal counters), drives, minimal skill telemetry, and small context items. Saving is atomic, loading restores indices and advances the id counter so new bindings don’t collide with old ids.
 
-Design decision (ADR-0003 folded in): We use human‑readable JSON for portability and easy field debugging. A binary format would be smaller but harder to inspect. The JSON structure is stable enough to be versioned if we add fields later.
+Design decision: We use human‑readable JSON for portability and easy field debugging. A binary format would be smaller but harder to inspect. The JSON structure is stable enough to be versioned if we add fields later.
 
-Design decision (ADR-0005 folded in): A runner‑level “Reset” is preferable to ad‑hoc deletes when starting a clean demo—this guarantees counters and anchors are consistent.
+Design decision: A runner‑level “Reset” is preferable to ad‑hoc deletes when starting a clean demo—this guarantees counters and anchors are consistent.
 
 
 ***Q&A to help you learn this section***
@@ -1450,7 +1453,7 @@ A thresholded segmentation (“τ-cut”) can also force a boundary when `cos_to
 ## Data flow (a controller step)
 
 1. Action Center computes active **drive flags**.  
-2. Scans **policies** in order, first `trigger()` that returns True **fires**.  
+2. Evaluates dev gates + triggers to form a candidate set; selects ONE winner by deficit → non_drive → (RL: q tie-break / epsilon explore) → stable order. 
 3. `execute()` appends a **small chain** of predicates + edges to the WorldGraph, stamps `meta.policy`, returns a status dict, and updates the skill ledger.  
 4. Planner (on demand) runs BFS from **NOW** to a target `pred:<token>`.  
 
@@ -1488,7 +1491,11 @@ A: Wall-clock is great for logs and cross-run inspection, but awkward for unitle
    Updated: `PRIMITIVES = [StandUp(), SeekNipple(), Rest(), FollowMom(), ExploreCheck(), ...]`  
   ( code now evaluates **Rest before FollowMom**.)
 
-- **Action Center** runs the **first** policy whose `trigger` is True.  
+- **Action Center / PolicyRuntime** selects ONE policy per tick:
+  - build candidates = dev_gate passes AND trigger(...) is True (plus safety filtering),
+  - winner = highest deficit → non_drive → (RL: q tie-break inside near-best band; non-RL: stable order),
+  - RL adds epsilon-greedy exploration: epsilon chooses a random candidate; otherwise we exploit the winner logic above.
+
 
 - **StandUp guard:** `StandUp.trigger()` checks for an existing `pred:posture:standing` to avoid “re-standing” every tick.
 
@@ -1499,11 +1506,8 @@ A: Wall-clock is great for logs and cross-run inspection, but awkward for unitle
 
 ## Policy ordering & fairness
 
-Policies are evaluated in a fixed order to keep behavior explainable. If two policies could fire on the same tick, the one earlier in the list wins that tick, the other will get a chance later if its trigger remains true. For fairness in long runs, you can:
+Policies are evaluated in a fixed order mainly as a deterministic final tie-break (and for readability), but most decisions are made by deficit/non_drive scoring (and, in RL mode, by q within the near-best band).
 
-* periodically rotate policy order, or
-
-* add light inhibition windows (e.g., “don’t refire within N ticks”).
 
 ## Designing good `trigger()` guards
 
@@ -6601,8 +6605,10 @@ Reinforcement learning (RL) in CCA8 currently modifies only the executing stage.
 
 If multiple policies are triggered, CCA8 selects the winner by:
 
-- highest drive-deficit score (domain heuristic; hunger vs fatigue, etc.)
-- if tied, stable policy order (deterministic)
+1) highest drive-urgency “deficit” score (amount above threshold; max(0, drive - HIGH_THRESHOLD))
+2) if tied, highest non_drive_priority (Phase VI-D: explicit posture/safety tie-breaks)
+3) if still tied, stable policy order (deterministic)
+
 
 The skill ledger is still updated for telemetry, but it does not affect selection.
 
@@ -6618,10 +6624,13 @@ RL introduces epsilon-greedy exploration when multiple policies are triggered:
 Selection rule:
 
 - With probability epsilon: choose a random triggered policy (exploration).
-- With probability (1 - epsilon): choose greedily by:
-  1) highest drive-deficit score
-  2) if tied, highest `SkillStat.q` (learned value from past rewards)
-  3) if still tied, stable policy order
+- With probability (1 - epsilon): exploit:
+  1) compute deficit scores and define a near-best band using rl_delta:
+         (best_deficit - deficit(policy)) <= rl_delta
+  2) within the near-best band, prefer higher non_drive_priority
+  3) if still tied, prefer higher SkillStat.q (EMA of observed rewards)
+  4) if still tied, prefer slightly higher deficit
+  5) if still tied, stable policy order
 
 `SkillStat.q` is a learned value estimate for each policy: an exponential moving average of observed rewards for that policy. It is not the success rate (success rate is tracked for inspection, but q is the value estimate).
 
@@ -6650,10 +6659,13 @@ Definitions (executing stage only; gating/triggering/safety are unchanged):
 Selection logic in exploit mode (i.e., not exploring):
 
 - If the near-best band has exactly one candidate → choose it (deficit clearly dominates).
+
 - If the near-best band has multiple candidates → choose among that band by:
-  1) highest `SkillStat.q` (learned value; EMA reward),
-  2) if tied, slightly higher deficit,
-  3) if still tied, stable policy order.
+  1) highest non_drive_priority
+  2) if tied, highest SkillStat.q (learned value; EMA reward)
+  3) if tied, slightly higher deficit
+  4) if still tied, stable policy order
+
 
 rl_delta effect (important):
 

@@ -209,6 +209,7 @@ ACTION_PUSH_UP         = "action:push_up"
 ACTION_EXTEND_LEGS     = "action:extend_legs"
 ACTION_LOOK_AROUND     = "action:look_around"
 ACTION_ORIENT_TO_MOM   = "action:orient_to_mom"
+ACTION_RECOVER_FALL    = "action:recover_fall"
 
 VALENCE_LIKE           = "valence:like"
 VALENCE_HATE           = "valence:hate"
@@ -923,6 +924,10 @@ def _policy_deficit_score(name: str, drives: Drives) -> float:
         agent or LLM, expose 'drives_summary(drives)' and world facts; let the agent propose
         a 'preferred' policy string. The controller remains the safety gate (e.g., fallen →
         StandUp overrides everything). See action_center_step docstring for details.
+
+    (NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).)
+    (Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled).)
+
     """
     if name == "policy:seek_nipple":
         return max(0.0, float(drives.hunger) - float(HUNGER_HIGH)) * 1.0
@@ -1134,6 +1139,46 @@ class StandUp(Primitive):
             return self._success(reward=1.0, notes="stood up", binding=c)
         except Exception as e:
             return self._fail(f"stand_up failed: {e}")
+
+
+class RecoverFall(Primitive):
+    """
+    More forceful posture recovery used when repeated StandUp attempts are not "taking" (env still reports fallen).
+
+    Intent
+    ------
+    - Write an explicit action:recover_fall episode marker.
+    - Write posture:standing as an expected outcome (belief), same pattern as StandUp.
+    - HybridEnvironment can treat policy:recover_fall as a strong assist toward standing.
+
+    Note
+    ----
+    This primitive is intentionally simple right now: it exists so the runner can *actually execute*
+    the policy it selects after persistent discrepancy, rather than being forced back to StandUp.
+    """
+    name = "policy:recover_fall"
+
+    def trigger(self, world, drives: Drives) -> bool:  # pylint: disable=unused-argument
+        # Keep trigger cheap and conservative; runner selection usually supplies this via 'preferred'.
+        return _has(world, STATE_POSTURE_FALLEN) or _has(world, "posture:fallen")
+
+    def execute(self, world, ctx, drives: Drives):  # pylint: disable=unused-argument
+        meta = _policy_meta(ctx, self.name)
+        try:
+            _add_action(world, ACTION_RECOVER_FALL, attach="now", meta=meta)
+
+            standing_meta = dict(meta)
+            standing_meta["note"] = (
+                "RecoverFall wrote this posture:standing fact as its expected outcome: "
+                "after recover_fall the agent believes it is now upright. "
+                "A later environment step (HybridEnvironment) will confirm or refute standing "
+                "via new sensory evidence."
+            )
+            c = _add_pred(world, STATE_POSTURE_STANDING, attach="latest", meta=standing_meta)
+
+            return self._success(reward=0.8, notes="recover_fall", binding=c)
+        except Exception as e:
+            return self._fail(f"recover_fall failed: {e}")
 
 
 class SeekNipple(Primitive):
@@ -1361,6 +1406,10 @@ class Rest(Primitive):
     In `PRIMITIVES`, Rest is ordered **before** the permissive fallback so recovery
     can preempt idling when appropriate; the Action Center may also prefer it via
     deficit scoring when fatigue dominates.
+
+    (NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).)
+    (Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled).)
+
     """
     name = "policy:rest"
 
@@ -1426,10 +1475,14 @@ class Rest(Primitive):
 #      -When you add a new policy class, you must also instantiate it and add it to PRIMITIVES or
 #        the Action Center will never consider it.
 #      -The list’s order matters (used as a final tie-breaker after deficit scoring), so place your new policy where its priority makes sense.
-#      -If you want the class importable from the module, add its name to __all__ too
+#      -If you want the class importable from the module, add its name to __all__ too#
+# NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).
+# Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled).
+
 #
 PRIMITIVES: List[Primitive] = [
     StandUp(),
+    RecoverFall(),
     SeekNipple(),
     Rest(),         # check restorative action before permissive fallback
     FollowMom(),    # permissive default should be after concrete needs
@@ -1496,10 +1549,14 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
     Run one controller step.
 
     Order of operations:
-        1) Safety override: if fallen, force StandUp (ignores 'preferred').
+        1) Safety override: if fallen, force StandUp/RecoverFall; honors preferred when it is one of thes.
         2) If 'preferred' is provided, execute that exact policy (controller still handles errors).
         3) Otherwise: evaluate triggers; if multiple triggered, choose by drive deficit
            If all scores are zero, fall back to the legacy scan order for backward-compat.
+
+    NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).
+    Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled).
+
 
     -sample input parameter arguments, e.g. --
       world  = <cca8_world_graph.WorldGraph object at 0x0000021DC0A50C50>
@@ -1521,13 +1578,20 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
     # new fallen posture appears near NOW.
 
     if _fallen_near_now(world, ctx, max_hops=3):
-        # --- Legacy behaviour when ctx is None (tests / older callers) ---
+        # --- legacy behaviour when ctx is None (tests / older callers) ---
         if ctx is None or not hasattr(ctx, "last_standup_step"):
             stand = next((p for p in PRIMITIVES if p.name == "policy:stand_up"), None)
             assert stand is not None, "Action Center safety override: StandUp policy not registered"
             return _run(stand, world, ctx, drives)
 
-        # --- Phase V retry control when ctx is a real Ctx instance ---
+        # if the caller explicitly prefers RecoverFall, honor it even inside the
+        #   fallen-near-NOW safety override (RecoverFall is also a safety posture recovery policy).
+        if preferred == "policy:recover_fall":
+            recover = next((p for p in PRIMITIVES if p.name == "policy:recover_fall"), None)
+            if recover is not None:
+                return _run(recover, world, ctx, drives)
+
+        # --- retry control when ctx is a real Ctx instance ---
         step_now = int(getattr(ctx, "controller_steps", 0))
         last_step = getattr(ctx, "last_standup_step", None)
         last_failed = bool(getattr(ctx, "last_standup_failed", False))

@@ -200,7 +200,7 @@ class EnvState:
       - kid_fatigue, kid_temperature, time_since_birth and step_index track
         slow, continuous dynamics and episode progress.
 
-    In Phase VI-C we treat this structure as the "geometry" of the environment:
+    Here we treat this structure as the "geometry" of the environment:
     the spatial configuration of kid, mom, cliff and shelter, and simple
     safety-related relationships such as "near"/"far" or "unsafe"/"safe".
 
@@ -240,7 +240,7 @@ class EnvState:
     # Bookkeeping
     step_index: int = 0                  # environment steps in this episode
 
-    # Phase VI-C: symbolic spatial overlay for geometry / safety
+    # Symbolic spatial overlay for geometry / safety
     position: str = "cliff_edge"         # symbolic location name
     zone: str = "unsafe"                 # safety zone classification
 
@@ -354,7 +354,7 @@ class FsmBackend:
 
     name: str = "fsm"
 
-    # Simple thresholds in *steps* for phase changes; HybridEnvironment bumps
+    # Simple thresholds in *steps* for software changes; HybridEnvironment bumps
     # EnvState.step_index and time_since_birth before calling this backend.
     _BIRTH_TO_STRUGGLE: int = 3
     _STRUGGLE_MOM_NEAR: int = 5
@@ -366,7 +366,7 @@ class FsmBackend:
 
     def _update_spatial_label(self, state: EnvState) -> None:
         """
-        (s/w devp't phase VI-C) coarse spatial geometry helper.
+        Coarse spatial geometry helper.
 
         Keep EnvState.position/zone aligned with a simple spatial story:
 
@@ -511,7 +511,7 @@ class FsmBackend:
                 # Move mom closer along the x-axis (purely illustrative).
                 state.mom_position = (0.7, state.mom_position[1])
 
-            stood_up = _has_action("policy:stand_up") or (steps >= self._AUTO_STAND_UP)
+            stood_up = _has_action("policy:stand_up") or _has_action("policy:recover_fall") or (steps >= self._AUTO_STAND_UP)
             if stood_up:
                 state.kid_posture = "standing"
                 state.scenario_stage = "first_stand"
@@ -579,7 +579,7 @@ class FsmBackend:
             state.cliff_distance = "far"
 
         # ------------------------------------------------------------------
-        # Phase VI-C: interpret 'policy:follow_mom' as a small move toward shelter.
+        # Interpret 'policy:follow_mom' as a small move toward shelter.
         #
         # Geometry ladder:
         #   cliff_edge  --follow_mom-->  open_field  --follow_mom-->  shelter_area

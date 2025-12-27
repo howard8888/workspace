@@ -154,6 +154,9 @@ class Ctx:
       then in further development we used the deficit values produced by each policy and used an RL value only to break ties,
       and then, as shown below, if the deficit values are close enough together (i.e., within a specified rl_delta value) then
       we use RL values to decide which of these triggered policies to execute.
+      (NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).
+      (Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled).
+
     rl_enabled : bool
         Enable epsilon-greedy policy selection. When enabled, the selector can use the
         controller skill ledger (SkillStat.q) as a secondary tie-break among triggered policies.
@@ -203,7 +206,7 @@ class Ctx:
     working_enabled: bool = True         # mirror env observations into WorkingMap
     working_verbose: bool = False        # print per-tick WorkingMap injection lines
     working_max_bindings: int = 250      # cap WorkingMap size (anchors are preserved)
-    # Safety / posture retry bookkeeping (Phase V)
+    # Safety / posture retry bookkeeping
     last_standup_step: Optional[int] = None
     last_standup_failed: bool = False
     # Long-term WorldGraph env-observation injection (STUB)
@@ -1651,6 +1654,60 @@ def _gate_follow_mom_explain_body_space(world, drives: Drives, ctx) -> str: #pyl
     )
 
 
+def _gate_recover_fall_trigger_body_first(world, _drives: Drives, ctx) -> bool:
+    """
+    RecoverFall gate that prefers BodyMap for posture when available, falling back
+    to WorldGraph near-NOW predicates otherwise.
+
+    Trigger logic:
+      • If explicit fall cues are present → fire (regardless of posture).
+      • If BodyMap is fresh:
+            posture == 'fallen'   → fire
+            posture == 'standing' → do NOT fire
+            posture == 'resting'  → do NOT fire
+      • Otherwise fall back to graph near-NOW: pred:posture:fallen near NOW.
+    """
+    # Fall cues always override
+    if any_cue_tokens_present(world, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"]):
+        return True
+
+    # Prefer BodyMap when fresh
+    stale = bodymap_is_stale(ctx) if ctx is not None else True
+    bp = body_posture(ctx) if ctx is not None and not stale else None
+    if bp is not None:
+        return bp == "fallen"
+
+    # Fallback to episode graph (legacy behavior)
+    return has_pred_near_now(world, "posture:fallen")
+
+
+def _gate_recover_fall_explain(world, _drives: Drives, ctx) -> str:
+    """
+    Human-readable explanation matching _gate_recover_fall_trigger_body_first.
+    """
+    fall_cue = any_cue_tokens_present(world, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"])
+
+    bodymap_stale = True
+    bp = None
+    try:
+        bodymap_stale = bodymap_is_stale(ctx) if ctx is not None else True
+        bp = body_posture(ctx) if ctx is not None and not bodymap_stale else None
+    except Exception:
+        bodymap_stale = True
+        bp = None
+
+    if bp is not None:
+        fallen = bp == "fallen"
+    else:
+        fallen = has_pred_near_now(world, "posture:fallen")
+
+    return (
+        "dev_gate: True, trigger: "
+        f"fallen={fallen} (bodymap_posture={bp or 'n/a'}, bodymap_stale={bodymap_stale}) "
+        f"or fall_cue={fall_cue} cues={present_cue_bids(world)}"
+    )
+
+
 @dataclass
 class PolicyGate:
     """Declarative description of a controller gate used by PolicyRuntime (dev_gating,
@@ -1691,7 +1748,7 @@ class PolicyRuntime:
         if not matches:
             return "no_match"
 
-        # NEW: capture the full triggered set (before any safety-only filtering)
+        # capture the full triggered set (before any safety-only filtering)
         triggered_all = [p.name for p in matches]
 
         # If fallen near NOW (BodyMap-first), force safety-only gates
@@ -1702,6 +1759,8 @@ class PolicyRuntime:
                 return "no_match"
 
         # Choose by drive-deficit
+        # NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).
+        # Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled).
         def deficit(name: str) -> float:
             d = 0.0
             if name == "policy:seek_nipple":
@@ -1716,6 +1775,63 @@ class PolicyRuntime:
             except ValueError:
                 return 10_000
 
+        # non_drive_priority(...) is a tiny, explicit tie-break score used only when drive-urgency deficits tie
+        # it prevents “catalog order” from being the hidden reason a policy wins in common 0.00-deficit situations
+        def non_drive_priority(name: str) -> float:
+            """Tiny non-drive tie-break score.
+
+            Used only as a SECONDARY score when drive-urgency deficits tie.
+
+            Intent:
+              - StandUp: prefer when BodyMap is fresh and posture == 'fallen'.
+              - RecoverFall: prefer when explicit fall cues are present.
+            """
+            if name == "policy:stand_up":
+                try:
+                    if ctx is not None and not bodymap_is_stale(ctx) and body_posture(ctx) == "fallen":
+                        return 2.0
+                except Exception:
+                    pass
+                return 0.0
+
+            if name == "policy:recover_fall":
+                # RecoverFall: prefer when explicit fall cues are present OR when we see a persistent
+                # env-vs-expected posture discrepancy after StandUp attempts (motor command not taking effect).
+                cue_bonus = 0.0
+                try:
+                    if any_cue_tokens_present(world, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"]):
+                        cue_bonus = 1.0
+                except Exception:
+                    cue_bonus = 0.0
+                # Discrepancy-driven bonus:
+                #   If the most recent discrepancies repeatedly show:
+                #     env posture == fallen  AND policy:stand_up expected standing,
+                #   then StandUp is "not taking" and we should try RecoverFall.
+                streak = 0
+                try:
+                    hist = getattr(ctx, "posture_discrepancy_history", []) if ctx is not None else []
+                    if isinstance(hist, list) and hist:
+                        # Count a short streak over the most recent entries.
+                        for entry in reversed(hist[-10:]):
+                            s = str(entry)
+                            if (
+                                ("from policy:stand_up" in s)
+                                and ("env posture=" in s and "fallen" in s)
+                                and ("policy-expected posture=" in s and "standing" in s)
+                            ):
+                                streak += 1
+                            else:
+                                break
+                except Exception:
+                    streak = 0
+                # Ignore a single mismatch (often happens right after reset because the env hasn't consumed the action yet).
+                hist_bonus = 0.0
+                if streak >= 2:
+                    # 2.5 beats StandUp's 2.0; ramp slowly with longer streaks (cap to keep numbers tame).
+                    hist_bonus = min(4.0, 2.5 + 0.5 * (streak - 2))
+                return cue_bonus + hist_bonus
+            return 0.0
+
         # Optional RL selection: epsilon-greedy with a learned-value soft tie-break.
         # - RL enabled:
         #     With probability epsilon: explore by picking a random triggered policy.
@@ -1725,7 +1841,9 @@ class PolicyRuntime:
         #     Deterministic heuristic: choose by deficit, then stable order. (No q used.)
 
         rl_pick_note = ""     # printed only when q-soft-tiebreak (near-tie band) decided the pick
-        did_explore = False   # NEW: lets us label the pick source accurately in debug output
+        did_explore = False   # lets us label the pick source accurately in debug output
+        rl_exploit_kind = ""  # exploit kind: "deficit" | "non_drive_tiebreak" | "q_soft_tiebreak" (rl_enabled only)
+
 
         rl_enabled = bool(getattr(ctx, "rl_enabled", False))
         if rl_enabled:
@@ -1758,49 +1876,96 @@ class PolicyRuntime:
                     rl_delta = 0.0
                 rl_delta = max(rl_delta, 0.0)
 
-                scored = [(p, deficit(p.name)) for p in matches]
-                best_deficit = max(d for _, d in scored)
-                near_best = [(p, d) for p, d in scored if (best_deficit - d) <= rl_delta]
+                scored = [(p, deficit(p.name), non_drive_priority(p.name)) for p in matches]
+                best_deficit = max(d for _, d, _ in scored)
+                near_best = [(p, d, nd) for p, d, nd in scored if (best_deficit - d) <= rl_delta]
 
                 if len(near_best) == 1:
                     chosen = near_best[0][0]
+                    rl_exploit_kind = "deficit"
                 else:
-                    chosen = max(
-                        near_best,
-                        key=lambda pd: (
-                            skill_q(pd[0].name, default=0.0),
-                            pd[1],
-                            -stable_idx(pd[0]),
-                        ),
-                    )[0]
+                    # Phase VI-D: within the deficit near-tie band, prefer explicit non-drive priority
+                    # before falling back to learned value q.
+                    eps_tie = 1e-9
+                    best_nd = max(nd for _, _, nd in near_best)
+                    top_nd = [(p, d, nd) for p, d, nd in near_best if abs(nd - best_nd) <= eps_tie]
 
-                # If the near-best band has > 1 candidate, then q influenced the choice.
+                    if len(top_nd) == 1:
+                        chosen = top_nd[0][0]
+                        rl_exploit_kind = "non_drive_tiebreak"
+                    else:
+                        chosen = max(
+                            top_nd,
+                            key=lambda t: (
+                                skill_q(t[0].name, default=0.0),
+                                t[1],   # deficit (within rl_delta band)
+                                t[2],   # non-drive score (tied here, but harmless)
+                                -stable_idx(t[0]),
+                            ),
+                        )[0]
+                        rl_exploit_kind = "q_soft_tiebreak"
+
+                # Optional: print a compact explanation when the near-tie band had > 1 candidate.
                 if len(near_best) > 1:
                     bits: list[str] = []
-                    for p, d in sorted(near_best, key=lambda pd: (-pd[1], pd[0].name)):
+                    for p, d, nd in sorted(near_best, key=lambda t: (-t[1], -t[2], t[0].name)):
                         qv = skill_q(p.name, default=0.0)
-                        bits.append(f"{p.name}(def={d:.3f}, q={qv:+.2f})")
+                        bits.append(f"{p.name}(def={d:.3f}, nd={nd:.2f}, q={qv:+.2f})")
                     if len(bits) > 6:
                         bits = bits[:6] + ["..."]
 
                     chosen_q = skill_q(chosen.name, default=0.0)
-                    rl_pick_note = (
-                        "[rl-pick] chosen via q-soft-tiebreak: "
-                        f"best_def={best_deficit:.3f} delta={rl_delta:.3f} "
-                        f"→ {chosen.name} (q={chosen_q:+.2f}) among [{', '.join(bits)}]"
-                    )
+                    chosen_nd = non_drive_priority(chosen.name)
+
+                    if rl_exploit_kind == "non_drive_tiebreak":
+                        rl_pick_note = (
+                            "[rl-pick] chosen via non-drive tiebreak in deficit near-tie band: "
+                            f"best_def={best_deficit:.3f} delta={rl_delta:.3f} "
+                            f"→ {chosen.name} (nd={chosen_nd:.2f}, q={chosen_q:+.2f}) "
+                            f"among [{', '.join(bits)}]"
+                        )
+                    elif rl_exploit_kind == "q_soft_tiebreak":
+                        rl_pick_note = (
+                            "[rl-pick] chosen via q-soft-tiebreak in deficit near-tie band: "
+                            f"best_def={best_deficit:.3f} delta={rl_delta:.3f} "
+                            f"→ {chosen.name} (q={chosen_q:+.2f}) among [{', '.join(bits)}]"
+                        )
 
                 _bump("rl_exploit_steps")
         else:
             # RL disabled: original deterministic heuristic (deficit, then stable order)
-            chosen = max(matches, key=lambda p: (deficit(p.name), -stable_idx(p)))
+            chosen = max(matches, key=lambda p: (deficit(p.name), non_drive_priority(p.name), -stable_idx(p)))
 
-        # NEW: label *how* we picked, so "best_policy" never lies
+        # label *how* we picked; add a tie-break note when deficits are tied.
+        tie_break_label = ""
+        # For RL-disabled runs, "deficit" often ties at 0.0 (many policies have no drive score yet).
+        # In that case the stable catalog order is the *actual* decision mechanism.
+        if not rl_enabled:
+            try:
+                scored_final = [(p.name, deficit(p.name), non_drive_priority(p.name)) for p in matches]
+                if scored_final:
+                    eps = 1e-9
+                    best_d = max(d for _, d, _ in scored_final)
+                    top = [(nm, nd) for (nm, d, nd) in scored_final if abs(d - best_d) <= eps]
+
+                    if len(top) > 1:
+                        best_nd = max(nd for _, nd in top)
+                        n_best_nd = sum(1 for _, nd in top if abs(nd - best_nd) <= eps)
+
+                        if n_best_nd == 1:
+                            tie_break_label = "non_drive_priority(deficit_tie)"
+                        else:
+                            tie_break_label = "stable_order(deficit_tie)"
+            except Exception:
+                tie_break_label = ""
+        # Preserve existing best_by labeling
         selector_kind = "deficit"
         if rl_enabled:
             if did_explore:
                 selector_kind = "rl_explore"
-            elif rl_pick_note:
+            elif rl_exploit_kind == "non_drive_tiebreak":
+                selector_kind = "rl_exploit(non_drive_tiebreak)"
+            elif rl_exploit_kind == "q_soft_tiebreak":
                 selector_kind = "rl_exploit(q_soft_tiebreak)"
             else:
                 selector_kind = "rl_exploit(deficit)"
@@ -1831,18 +1996,67 @@ class PolicyRuntime:
                 rtxt = f"{reward:+.2f}" if isinstance(reward, (int, float)) else "n/a"
                 exec_line = f"[executed] {label} ({status}, reward={rtxt}) binding={binding}\n"
 
-        # NEW: one-line candidate+winner summary (this is what you asked for)
+        #  one-line candidate+winner summary
         pick_debug_line = ""
         try:
             triggered_final = [p.name for p in matches]  # after safety filtering (if any)
             trig_txt = ", ".join(triggered_all)
             final_txt = ", ".join(triggered_final)
 
-            pick_debug = f"[pick] best_policy={label} best_by={selector_kind} triggered=[{trig_txt}]"
+            # Show deficit scores for triggered policies (helps explain ties).
+            def _fmt_deficits(names: list[str], limit: int = 12) -> str:
+                parts: list[str] = []
+                lim = max(0, int(limit))
+                for nm in names[:lim]:
+                    try:
+                        parts.append(f"{nm}:{deficit(nm):.2f}")
+                    except Exception:
+                        parts.append(f"{nm}:n/a")
+                if len(names) > lim:
+                    parts.append("...")
+                return ", ".join(parts)
+
+            # Show non-drive tie-break scores for triggered policies.
+            def _fmt_non_drive(names: list[str], limit: int = 12) -> str:
+                parts: list[str] = []
+                lim = max(0, int(limit))
+                for nm in names[:lim]:
+                    try:
+                        parts.append(f"{nm}:{non_drive_priority(nm):.2f}")
+                    except Exception:
+                        parts.append(f"{nm}:n/a")
+                if len(names) > lim:
+                    parts.append("...")
+                return ", ".join(parts)
+
+            deficits_all = _fmt_deficits(triggered_all, limit=12)
+            non_drive_all = _fmt_non_drive(triggered_all, limit=12)
+
+            pick_debug = f"[pick] best_policy={label} best_by={selector_kind}"
+            if tie_break_label:
+                pick_debug += f" tie_break={tie_break_label}"
+            pick_debug += f" triggered=[{trig_txt}]"
+
+            if deficits_all:
+                pick_debug += f" deficits=[{deficits_all}]"
+
+            if non_drive_all:
+                pick_debug += f" non_drive=[{non_drive_all}]"
+
             if triggered_final != triggered_all:
                 pick_debug += f" safety_filtered=[{final_txt}]"
+
+                deficits_final = _fmt_deficits(triggered_final, limit=12)
+                if deficits_final:
+                    pick_debug += f" deficits_filtered=[{deficits_final}]"
+
+                non_drive_final = _fmt_non_drive(triggered_final, limit=12)
+                if non_drive_final:
+                    pick_debug += f" non_drive_filtered=[{non_drive_final}]"
+
             if chosen.name != label:
                 pick_debug += f" selected={chosen.name}"
+
             pick_debug_line = pick_debug + "\n"
         except Exception:
             pick_debug_line = ""
@@ -1923,16 +2137,10 @@ CATALOG_GATES: List[PolicyGate] = [
     PolicyGate(
         name="policy:recover_fall",
         dev_gate=lambda ctx: True,
-        trigger=lambda W, D, ctx: (
-            has_pred_near_now(W, "posture:fallen")
-            or any_cue_tokens_present(W, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"])
-            #or any_pred_present(W, ["vestibular:fall", "touch:flank_on_ground", "balance:lost"])
-        ),
-        explain=lambda W, D, ctx: (
-            f"dev_gate: True, trigger: fallen={has_pred_near_now(W,'posture:fallen')} "
-            f"or cues={present_cue_bids(W)}"
-        ),
+        trigger=_gate_recover_fall_trigger_body_first,
+        explain=_gate_recover_fall_explain,
     ),
+
 ]
 
 
@@ -2075,6 +2283,8 @@ Policies (Action Center overview)
       2) evaluates triggers to form a candidate set,
       3) chooses ONE winner (drive-deficit heuristic; optional RL q soft tie-break),
       4) executes the winner and updates skill stats.
+        (NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).
+        (Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled).
 
     """)
 
@@ -4669,15 +4879,15 @@ def _prune_working_world(ctx) -> None:
     # Delete oldest non-protected bindings until within cap
     all_ids = sorted(list(getattr(ww, "_bindings", {}).keys()), key=_bid_key)  # pylint: disable=protected-access
     while len(getattr(ww, "_bindings", {})) > max_b:  # pylint: disable=protected-access
-        victim = None
+        binding_to_delete = None
         for bid in all_ids:
             if bid not in protected:
-                victim = bid
+                binding_to_delete = bid
                 break
-        if victim is None:
+        if binding_to_delete is None:
             break
-        ww.delete_binding(victim)  # NEW WorldGraph method
-        all_ids.remove(victim)
+        ww.delete_binding(binding_to_delete)
+        all_ids.remove(binding_to_delete)
 
 
 def inject_obs_into_working_world(ctx, env_obs) -> Dict[str, List[str]]:
@@ -4731,7 +4941,7 @@ def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylin
         - Stamps meta={"created_by": "env_step", "source": "HybridEnvironment"} on all injected bindings.
         - Prints the same [env→world] lines as before.
         - Also updates ctx.body_world (BodyMap) to mirror posture/mom_distance/nipple_state.
-        - NEW: writes tiny scene-graph 'near' edges from NOW to mom/shelter/cliff bindings
+        -      writes tiny scene-graph 'near' edges from NOW to mom/shelter/cliff bindings
                when 'resting' is present (see _write_spatial_scene_edges).
     """
     # Mirror into WorkingMap first (optional). This is a no-op unless ctx.working_enabled is True.
@@ -5161,7 +5371,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             st = env.state
             step_idx = env_info.get("step_index")
             print(
-                f"[env] step={step_idx} "
+                f"[env] env_step={step_idx} (since reset) "
                 f"stage={st.scenario_stage} posture={st.kid_posture} "
                 f"mom_distance={st.mom_distance} nipple_state={st.nipple_state} "
                 f"action={action_for_env!r}"
@@ -7013,7 +7223,7 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
             print("      foa is the current 'focus of attention' neighborhood size used for light-weight planning.")
 
             result = action_center_step(world, ctx, drives)
-            after_n  = len(world._bindings)  # NEW: measure write delta for this path
+            after_n  = len(world._bindings)  #  measure write delta for this path
 
             # Count a cognitive cycle only if the step produced an output (a real write)
             # [Cognitive cycles — current definition]
@@ -7523,7 +7733,6 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
 -then there is a controller==Action Center step -- in the example with a newborn calf the gate and trigger conditions for
     policy:stand_up are met, and this policy is executed
 
-Phase 4B note:
   - When attach='latest' (default in base-aware mode), this menu now consults a write-base suggestion:
       base = NEAREST_PRED(pred=posture:standing/stand) near NOW → binding bN
     and uses base-aware attach semantics so the captured scene anchors under a meaningful posture node
@@ -7543,7 +7752,7 @@ Phase 4B note:
         specified target predicate, if found returns, e.g., {'base':'NEAREST_PRED', 'pred':'posture:standing', 'bid':'b5'},
         but if not found returns, e.g., {'base':'HERE', 'bid':'?'}, i.e., strategy of HERE rather than nearest predicate and if can't
         use HERE then will use NOW/LATEST
-    base-aware logic -- see above Phase 4B note -- if attach='latest' and last node was a cue or some dev_gate, etc, the new predicate/scene
+    base-aware logic  -- if attach='latest' and last node was a cue or some dev_gate, etc, the new predicate/scene
         binding would normally link to those, even though they really belong under another node, then attach='effective_attach'=='none',
         and have NEAREST_PRED base, then _attach_via_base(...) links under NEAREST_PRED base
 
@@ -7571,7 +7780,7 @@ Phase 4B note:
 
             vec = _parse_vector(vtext)
 
-            # Phase 4B: decide on a contextual write base for this capture_scene.
+            # decide on a contextual write base for this capture_scene.
             base = None
             effective_attach = attach
             if attach == "latest":
@@ -8241,6 +8450,9 @@ Attach an existing engram id (eid) to a binding id (bid).
         elif choice == "35":
             # Environment step (HybridEnvironment → WorldGraph demo)
             print("Selection: Environment step (HybridEnvironment → WorldGraph demo)\n")
+            print("[policy-selection] Candidates = dev_gate passes AND trigger(...) returns True.")
+            print("[policy-selection] Winner = highest deficit → non_drive → (RL: q | non-RL: stable order).")
+            print("[policy-selection] RL adds exploration: epsilon picks a random candidate; otherwise we exploit the winner logic above.\n")
             print("""[guide] This selection runs ONE closed-loop step between the newborn-goat environment and the CCA8 brain.
 
 Key output lines you will see
@@ -8249,6 +8461,7 @@ Key output lines you will see
   • [env] lines summarize what the environment simulation just did:
       - on the first call we RESET the newborn_goat_first_hour storyboard
       - on later calls we STEP the storyboard forward using the last policy action (if any)
+      - "env_step" is the environment’s internal step_index since the last RESET; it is not the count of menu  invocations
 
   • [env→world] lines show how EnvObservation is injected into the WorldGraph:
       - each env predicate token (e.g., posture:fallen) becomes a pred:* binding
@@ -8272,6 +8485,20 @@ Key output lines you will see
       - "<policy> (added N bindings)" means the chosen policy executed and wrote N new bindings.
       - "[executed] ..." is the status/reward/binding id returned from action_center_step(...).
       - "[pick] ..." is a one-line summary of triggered policies and the best_policy chosen this step.
+            "tie_break=..." appears when deficits tie; it explains the deterministic fallback (stable policy order).
+            "deficits=[...]" shows the current drive-deficit scores for the triggered set (many policies
+                    will be 0.00 until they gain a drive/priority term).
+            "deficits_filtered=[...]" appears when the safety filter reduced the candidate set.
+            "non_drive=[...]" shows small non-drive tie-break scores used when deficits tie
+                (e.g., posture recovery and safety-related priorities).
+            "tie_break=non_drive_priority(deficit_tie)" means deficits tied and non_drive_priority decided the winner;
+                if non_drive also ties, we fall back to stable policy order.
+            "best_by=rl_exploit(non_drive_tiebreak)" may be seen in RL mode. It is a compressed label which means that this
+                step was exploitation (not epsilon exploration) and inside the RL exploit pipeline the best policy deciding
+                stage was not deficits (considered first) but the non-drive values to break the tie.
+            "best_by=rl_explore" may be seen in RL mode. It means that the epsilon probability exploration mode occurred and
+                policy chosen was by chance, although for transparency the deficit and nd (non-deficit) values are still shown.
+
       - "pre:" and "post:" are the gate explanation before and after execution.
       - "base:" is a suggested write-base, i.e., where should new writes attach to keep the
             episode tidy? (diagnostic; may show bid='?' if HERE is not set yet).
@@ -8283,7 +8510,8 @@ Key output lines you will see
       - "cands:" are candidate anchors for future search/attachment (diagnostic).
             -e.g., when start off it may show NOW at b1 still, and HERE as ? since not set yet.
 
-
+        (NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit))
+        (Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled))
 
   • At the end you may also see a "mini-snapshot" (if enabled) showing:
       - last bindings/edges
@@ -8338,7 +8566,7 @@ What happens conceptually per step
 
                 st = env.state
                 print(
-                    f"[env] step={env_info.get('step_index')} "
+                    f"[env] env_step={env_info.get('step_index')} (since reset) "
                     f"stage={st.scenario_stage} posture={st.kid_posture} "
                     f"mom_distance={st.mom_distance} nipple_state={st.nipple_state} "
                     f"action={action_for_env!r}"
@@ -8438,6 +8666,10 @@ For each step we will:
 This is like pressing menu 35 multiple times, but with a more compact, per-step summary.
 You can still use menu 35 for detailed, single-step inspection.
 """)
+            print("[policy-selection] Candidates = dev_gate passes AND trigger(...) returns True.")
+            print("[policy-selection] Winner = highest deficit → non_drive → (RL: q | non-RL: stable order).")
+            print("[policy-selection] RL adds exploration: epsilon picks a random candidate; otherwise we exploit the winner logic above.\n")
+
             # Ask the user for n
             try:
                 n_text = input("How many closed-loop step(s) would you like to run? [default: 5]: ").strip()
@@ -8460,9 +8692,11 @@ You can still use menu 35 for detailed, single-step inspection.
             print("  EMA==exponential moving average of rewards; q_new = (1-alpha_smoothing_factor)*q_old + alpha*reward (alpha ~0.3))")
             print("(if RL=enabled, epsilon is theoretical % times to choose randomly, 'explore_rate' is measured % of random choices;")
             print("   delta=0 then q used only for exact ties otherwise deficit values within delta range are considered tied and q used to decide)")
+            print("NOTE: deficit here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).")
+            print("Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled)")
+
             print(skills_hud_text(ctx, top_n=8))
             loop_helper(args.autosave, world, drives, ctx)
-
 
         #----Menu Selection Code Block------------------------
         elif choice == "38":
@@ -8689,6 +8923,10 @@ If multiple policies are triggered:
   - Choose the policy with the highest "drive deficit" score (the same heuristic as before).
   - If there is a tie, break ties by stable policy order (deterministic).
   - SkillStat.q is still recorded, but it is NOT used to select the winner.
+
+(NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).)
+(Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled).)
+
 
 When rl_enabled = True (RL enabled)
 -----------------------------------
