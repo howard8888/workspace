@@ -714,6 +714,100 @@ A: JSON keeps sessions portable and debuggable, binary would be smaller but opaq
 
 
 
+
+
+
+## Memory systems in CCA8: BodyMap, WorkingMap, WorldGraph, and Engrams
+
+CCA8 uses several small “maps” as well the large WorldGraph map for its memory store. The key idea is to separate:
+
+- **what must be correct right now** (for action selection),
+- **what we want to keep as a detailed trace** (for debugging / later consolidation),
+- **what we want to keep long-term** (for planning and inspection),
+- **and where heavy data lives** (engrams).
+
+### 1) BodyMap (ctx.body_world): “what I believe right now”
+BodyMap is a tiny, structured register for body + near-world state (e.g. in the case of the goat calf, its posture, mom distance, nipple state, shelter/cliff distances).
+
+- Updated **every environment step** from EnvObservation.
+- Used **BodyMap-first** for policy gating (e.g., don’t execute RecoverFall when posture is already standing).
+- Can become “stale” if it hasn’t been updated recently; in that case, some gates fall back to WorldGraph.
+
+Think of BodyMap as the “fast, always-on” body schema.
+
+### 2) WorkingMap (ctx.working_world): short-term “write everything” trace
+WorkingMap is a separate WorldGraph instance intended to log the raw tick-by-tick stream.
+
+- It is deliberately **high bandwidth** and may contain repeated predicates/actions.
+- It is capped by `working_max_bindings` so long runs don’t explode memory.
+- It exists so we can keep a rich local trace **without forcing long-term memory** to store every redundant node.
+
+WorkingMap is a good place for future consolidation rules:
+“write everything to WorkingMap → copy/consolidate selected structure into WorldGraph”.
+
+### 3) WorldGraph (long-term): symbolic episode index for planning + inspection
+WorldGraph is the long-term symbolic episode index.
+
+It contains:
+- **actions and expected outcomes** written by policies (episodic “attempts”),
+- and **selected summaries of environment state** (predicates/cues) that are useful for reasoning and planning.
+
+#### Long-term EnvObservation → WorldGraph injection (“snapshot” vs “changes”)
+When the environment produces discrete predicates (posture, proximity, hazards, etc.), we can choose how aggressively to log them in the long-term WorldGraph:
+
+- `mode = snapshot`  
+  Write every observed `pred:*` each tick (dense, easy to read, can spam repeated facts).
+
+- `mode = changes`  
+  Treat many env predicates as **state slots** (e.g., `posture`, `proximity:mom`, `hazard:cliff`) and write a new `pred:*` binding only when the slot changes.  
+  This prevents “rewriting the same fact 4000×” while preserving transitions like fallen→standing→fallen.
+
+Optional flexibility knobs:
+- `reassert_steps` — re-emit unchanged slots periodically (so stable facts can be “re-observed” occasionally).
+- `keyframe_on_stage_change` — force a snapshot-like refresh when the environment’s scenario stage changes (birth→struggle→first_stand…).
+
+### 4) WorldGraph memory_mode: episodic vs semantic
+WorldGraph also has an internal memory mode:
+
+- **episodic**: every add creates a new binding (timeline-first).
+- **semantic (experimental)**: identical pred/cue tags may be consolidated to a canonical binding (clutter reduction).
+
+Important caution: semantic consolidation can make stale facts “look true forever” if code treats “tag exists anywhere” as “true now”.
+The safe trajectory is:
+- use **BodyMap / WorkingMap** for “current tick truth”,
+- use **WorldGraph** for long-term structure and episodes.
+
+### 5) Engrams (Column memory): heavy payloads live outside the graph
+WorldGraph bindings are small. Rich content (vectors, sensory payloads, scene descriptors) is stored as **engrams** in Column memory.
+Bindings can carry lightweight pointers to these engrams so you can keep the symbolic index compact while still retaining rich data.
+
+
+### Mammalian / Human memory systems and their CCA8 equivalents (conceptual map)
+
+This table is a *conceptual mapping*, not a claim of exact neuroanatomical equivalence. It is intended to help readers orient themselves: “if I know the human memory taxonomy, where does that live in CCA8?”
+
+| Mammalian / human memory system | What it does (brain-side) | CCA8 equivalent (architecture / simulation) |
+|---|---|---|
+| **Sensory memory** (iconic / echoic / haptic) | Very short-lived sensory traces (sub-second to a few seconds) in primary sensory cortex pipelines | **HybridEnvironment → EnvObservation** as the “incoming perceptual stream” (raw_sensors + predicates + cues). Optionally, capture as **engrams** if you want persistence. The intent is that this stream is transient and can be configured for different time windows. |
+| **Short-term memory** | Passive short holding buffer (~15–30s; classic “7±2” item framing) | **WorkingMap** as a short-term high-bandwidth trace (bounded by max_bindings) plus **BodyMap** as a tiny register. (CCA8 does not yet enforce strict capacity; instead it provides pruning knobs.) |
+| **Working memory (overall)** | Short-term + active processing (“workspace”) | **WorkingMap + PolicyRuntime/Action Center + FOA/base mechanisms**. WorkingMap holds the local trace; PolicyRuntime/Action Center selects what to do next; FOA/base are the “what is currently relevant?” scaffolds. |
+| • Central executive (WM component) | Attention control, selection, coordination | **PolicyRuntime / Action Center** (gating → triggering → executing) plus FOA selection. |
+| • Phonological loop (WM component) | Verbal/auditory rehearsal system | Not a focus in the goat profile; future “human-like” profiles would likely map this to **column/engram payloads** + rehearsal-like controller loops. |
+| • Visuospatial sketchpad (WM component) | Spatial/visual manipulation (“mind’s eye”) | **BodyMap + environment geometry** (near-space posture/mom/shelter/cliff) and (future) richer **engrams** for spatial scenes. |
+| • Episodic buffer (WM component) | Integrates across WM subsystems and links to LTM | A future “bridge” layer: **WorkingMap → consolidation into WorldGraph/Columns** (partially scaffolded today; details still evolving). |
+| **Long-term memory: episodic (explicit/declarative)** | Personal event memory; hippocampal indexing and retrieval | **WorldGraph** as the episode index + methods that reconstruct trajectories (bindings/edges with provenance). (CCA8 episodic details remain a design focus and will evolve.) |
+| **Long-term memory: semantic (explicit/declarative)** | General knowledge/facts consolidated in cortex (semantic hub concepts) | **WorldGraph** as the symbolic index; optionally `memory_mode="semantic"` (experimental). Longer-term, “semantic engrams” belong in **Columns**, with WorldGraph as the pointer/index layer. |
+| **Procedural memory (implicit/non-declarative)** | Skills/habits; basal ganglia + cerebellum involvement | **Controller policies/primitives** and their learned parameters (e.g., skill ledger / q values). This is “how to do things,” not “facts about the world.” |
+| **Priming / classical conditioning (implicit)** | Learned associations (cue → response), often emotion/autonomic linked | **Autonomic + drive/threshold cues + learned primitives**: rising-edge interoceptive cues (`cue:drive:*`), valence tags, and policy selection shaping. (CCA8 currently expresses this via autonomic tick + cue/policy machinery; richer conditioning is future work.) |
+
+Notes:
+- Sensory memory: iconic/echoic/haptic timescales and cortical associations are listed in the companion document; CCA8 treats these as the **incoming observation stream** and can store them longer/shorter as needed.
+- Working memory components and their cognitive roles are listed in the companion document; in CCA8 they map naturally onto “what is currently in focus” + the action selection machinery + short-term traces.
+- Episodic vs semantic vs procedural vs priming/conditioning are listed in the companion document; CCA8’s current equivalents are WorldGraph for episodic/semantic indexing and Controller policies/autonomic machinery for procedural/conditioning-style behavior shaping.
+
+
+
+
 ## WorkingMap (Working Memory Graph)
 
 CCA8 now maintains a **WorkingMap**, a short‑term “write everything” graph intended to hold the *full episodic trace* of what is happening tick‑by‑tick.
@@ -735,18 +829,20 @@ WorkingMap lets us record the detailed stream without forcing long‑term memory
 - WorkingMap is intended to become the source graph for consolidation policies later:
   “write everything to WorkingMap → copy/consolidate selected information into WorldGraph”.
 
+
+
+
 ### Runner controls
 
-- **Menu #__**: WorkingMap + WorldGraph memory mode
-  - Toggle WorkingMap mirroring
-  - Toggle WorkingMap verbose logging
-  - Set WorkingMap size cap
-  - Toggle long‑term WorldGraph memory mode (episodic vs semantic)
-  - Optionally clear WorkingMap
+- **Menu #**: Control Panel (RL + memory knobs)
+  - Toggle WorkingMap mirroring + verbosity + size cap
+  - Set WorldGraph `memory_mode` (episodic vs semantic)
+  - Configure long-term env observation injection (changes vs snapshot, reassert_steps, keyframes, verbose reuse)
 
-- **Menu #__**: WorkingMap snapshot
+- **Menu #**: WorkingMap snapshot
   - Print the last N bindings from WorkingMap
   - Optionally clear WorkingMap
+
 
 ---
 

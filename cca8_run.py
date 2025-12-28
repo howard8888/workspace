@@ -93,7 +93,7 @@ from cca8_controller import body_cliff_is_near     # pylint: disable=unused-impo
 from cca8_controller import body_shelter_is_near   # pylint: disable=unused-import
 from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
-from cca8_env import HybridEnvironment  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
+from cca8_env import HybridEnvironment, EnvObservation  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
 
 
 # --- Public API index, version, global variables and constants ----------------------------------------
@@ -213,6 +213,32 @@ class Ctx:
     #-This records the user's preference, but is NOT enforced yet: we still inject EnvObservation
     # into the long-term WorldGraph each tick, exactly as before.
     longterm_obs_enabled: bool = True
+
+    # Long-term WorldGraph observation logging controls
+    # -----------------------------------------------
+    # Most of the time the environment's state does not change every tick.
+    # In episodic mode, injecting a full snapshot each tick can spam the long-term
+    # graph with identical pred:* nodes (e.g., posture:fallen repeated many times).
+    #
+    # longterm_obs_mode:
+    #   - "snapshot": old behavior; always write every observed predicate each tick
+    #   - "changes" : write only when a state-slot changes (plus optional re-asserts)
+    longterm_obs_mode: str = "changes"
+
+    # If >0, re-emit an unchanged slot again after this many controller_steps.
+    # This keeps the graph flexible enough to "re-observe" a stable fact occasionally
+    # without logging it every single tick.
+    longterm_obs_reassert_steps: int = 0
+
+    # If True, force a one-tick snapshot when the env's scenario_stage changes (including resets).
+    longterm_obs_keyframe_on_stage_change: bool = True
+
+    # If True, print per-token reuse lines when longterm_obs_mode="changes" skips unchanged slots.
+    longterm_obs_verbose: bool = False
+
+    # Private state: per-slot last (token, bid, emit_step) used by longterm_obs_mode="changes".
+    lt_obs_slots: dict[str, dict[str, Any]] = field(default_factory=dict)
+    lt_obs_last_stage: Optional[str] = None
 
 
     def reset_controller_steps(self) -> None:
@@ -4890,160 +4916,247 @@ def _prune_working_world(ctx) -> None:
         all_ids.remove(binding_to_delete)
 
 
-def inject_obs_into_working_world(ctx, env_obs) -> Dict[str, List[str]]:
-    """Mirror env observations into ctx.working_world (WorkingMap).
+def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
+    """Mirror EnvObservation into the short-term WorkingMap (ctx.working_world).
 
-    This is a short-term 'write everything' graph intended for:
-      - debugging, story replay, consolidation experiments
-      - separating 'current tick evidence' from 'long term memory' later on
+    This is intentionally a "write everything" trace (episodic). It is independent of the
+    long-term WorldGraph injection mode (snapshot vs changes).
+
+    Behavior:
+      - Creates ctx.working_world if missing
+      - Writes all env predicates + cues for this tick
+      - Uses attach=now for the first predicate, then attach=latest (forms a short chain)
+      - Prunes WorkingMap to ctx.working_max_bindings (anchors preserved)
+
+    Returns:
+        {"predicates": [...], "cues": [...]} where items are normalized tokens WITHOUT pred:/cue: prefixes.
     """
-    if ctx is None or not getattr(ctx, "working_enabled", False):
+    if ctx is None:
         return {"predicates": [], "cues": []}
 
     if getattr(ctx, "working_world", None) is None:
         ctx.working_world = init_working_world()
 
     ww = ctx.working_world
-    created_preds: List[str] = []
-    created_cues: List[str] = []
+    if ww is None:
+        return {"predicates": [], "cues": []}
 
-    # Use the same attach semantics as long-term injection
-    for p in getattr(env_obs, "predicates", []) or []:
-        token = p.replace("pred:", "")
-        ww.add_predicate(token, attach="now", meta={"created_by": "env_obs", "source": "working"})
-        created_preds.append(p)
+    # Be permissive in WorkingMap: it's meant to capture raw traces.
+    try:
+        ww.set_tag_policy("allow")
+        ww.set_stage("neonate")
+        ww.ensure_anchor("NOW")
+        ww.ensure_anchor("NOW_ORIGIN")
+    except Exception:
+        pass
 
-    for c in getattr(env_obs, "cues", []) or []:
-        token = c.replace("cue:", "")
-        ww.add_cue(token, attach="latest", meta={"created_by": "env_obs", "source": "working"})
-        created_cues.append(c)
+    created_preds: list[str] = []
+    created_cues: list[str] = []
 
-    if getattr(ctx, "working_verbose", False):
-        print(f"[env→work] +preds={len(created_preds)} +cues={len(created_cues)} total_bindings={len(ww._bindings)}")  # pylint: disable=protected-access
+    # Normalize tokens (tests may pass "pred:*" / "cue:*" already)
+    pred_tokens = [
+        str(p).replace("pred:", "")
+        for p in (getattr(env_obs, "predicates", []) or [])
+        if p is not None
+    ]
+    cue_tokens = [
+        str(c).replace("cue:", "")
+        for c in (getattr(env_obs, "cues", []) or [])
+        if c is not None
+    ]
 
-    _prune_working_world(ctx)
+    meta = {"source": "HybridEnvironment", "controller_steps": getattr(ctx, "controller_steps", None)}
+
+    attach = "now"
+    for tok in pred_tokens:
+        try:
+            ww.add_predicate(tok, attach=attach, meta=meta)
+            created_preds.append(tok)
+            if getattr(ctx, "working_verbose", False):
+                print(f"[env→working] pred:{tok} (attach={attach})")
+        except Exception:
+            pass
+        attach = "latest"
+
+    cue_attach = "latest" if created_preds else "now"
+    for tok in cue_tokens:
+        try:
+            ww.add_cue(tok, attach=cue_attach, meta=meta)
+            created_cues.append(tok)
+            if getattr(ctx, "working_verbose", False):
+                print(f"[env→working] cue:{tok} (attach={cue_attach})")
+        except Exception:
+            pass
+
+    # Keep working map bounded
+    try:
+        _prune_working_world(ctx)
+    except Exception:
+        pass
+
     return {"predicates": created_preds, "cues": created_cues}
 
 
-def inject_obs_into_world(world, ctx, env_obs) -> Dict[str, List[str]]:  # pylint: disable=unused-argument
+def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
+    """Write env observation tokens into the long-term WorldGraph with clear attach semantics.
+
+    Modes (ctx.longterm_obs_mode):
+      - "snapshot": old behavior; always write all observed predicates each tick
+      - "changes" : write only when a state-slot changes, plus optional re-asserts/keyframes
+
+    Slot definition:
+      token "proximity:mom:far" -> slot "proximity:mom"
+      token "resting"           -> slot "resting" (no ":")
+
+    Keyframes (only in "changes" mode):
+      - time_since_birth == 0.0 forces a snapshot (reset)
+      - scenario_stage change can force a snapshot if enabled
+
+    Even when we skip writing an unchanged token, token_to_bid will still map that token
+    to the most recent binding id for its slot (so downstream helpers can still find it).
     """
-    Map an EnvObservation into the WorldGraph as pred:* and cue:* bindings.
+    created_preds: list[str] = []
+    created_cues: list[str] = []
+    token_to_bid: dict[str, str] = {}
 
-    - world: live WorldGraph instance.
-    - ctx  : runtime context (currently unused here; reserved for future time/base-aware writes).
-    - env_obs: EnvObservation with .predicates and .cues lists.
-
-    Returns:
-        {"predicates": [binding ids], "cues": [binding ids]} for any created bindings.
-
-    Notes:
-        - Uses attach="now" for the first predicate/cue, then attach="latest" for subsequent ones.
-        - Stamps meta={"created_by": "env_step", "source": "HybridEnvironment"} on all injected bindings.
-        - Prints the same [env→world] lines as before.
-        - Also updates ctx.body_world (BodyMap) to mirror posture/mom_distance/nipple_state.
-        -      writes tiny scene-graph 'near' edges from NOW to mom/shelter/cliff bindings
-               when 'resting' is present (see _write_spatial_scene_edges).
-    """
-    # Mirror into WorkingMap first (optional). This is a no-op unless ctx.working_enabled is True.
-    try:
-        inject_obs_into_working_world(ctx, env_obs)
-    except Exception:
-        pass
-    # NOTE (STUB): ctx.longterm_obs_enabled is not enforced yet.
-    # We still inject EnvObservation into the long-term WorldGraph below.
-    # Next step (later): if longterm_obs_enabled is False, skip the pred/cue injection,
-    # and rely on WorkingMap + explicit consolidation events.
-
-    created_preds: List[str] = []
-    created_cues: List[str] = []
-    token_to_bid: Dict[str, str] = {}
-
-    # Map env predicates into the CCA8 WorldGraph as pred:* tokens
-    try:
-        attach = "now"
-        for token in getattr(env_obs, "predicates", []) or []:
-            bid = world.add_predicate(
-                token,
-                attach=attach,
-                meta={
-                    "created_by": "env_step",
-                    "source": "HybridEnvironment",
-                },
-            )
-            print(f"[env→world] pred:{token} → {bid} (attach={attach})")
-            created_preds.append(bid)
-            token_to_bid[token] = bid
-            # After the first predicate, hang subsequent ones off LATEST
-            attach = "latest"
-    except Exception as e:
-        print(f"[env→world] predicate injection error: {e}")
-
-    # Map env cues into the WorldGraph as cue:* tokens
-    try:
-        attach_c = "now"
-        for cue_token in getattr(env_obs, "cues", []) or []:
-            bid_c = world.add_cue(
-                cue_token,
-                attach=attach_c,
-                meta={
-                    "created_by": "env_step",
-                    "source": "HybridEnvironment",
-                },
-            )
-            print(f"[env→world] cue:{cue_token} → {bid_c} (attach={attach_c})")
-            created_cues.append(bid_c)
-            attach_c = "latest"
-    except Exception as e:
-        print(f"[env→world] cue injection error: {e}")
-
-    # update BodyMap (ctx.body_world) from this observation
+    # Always keep BodyMap current (policies are BodyMap-first now).
     try:
         update_body_world_from_obs(ctx, env_obs)
-
-        # --- DEBUG: tiny bridge print to show what BodyMap now believes ---
-        try:
-            bp = body_posture(ctx)
-            md = body_mom_distance(ctx)
-            ns = body_nipple_state(ctx)
-            try:
-                sd = body_shelter_distance(ctx)
-            except Exception:
-                sd = None
-            try:
-                cd = body_cliff_distance(ctx)
-            except Exception:
-                cd = None
-
-            print(
-                "[env→body] BodyMap now: "
-                f"posture={bp or '(n/a)'} "
-                f"mom={md or '(n/a)'} "
-                f"nipple={ns or '(n/a)'} "
-                f"shelter={sd or '(n/a)'} "
-                f"cliff={cd or '(n/a)'}"
-            )
-        except Exception as e:
-            # Debug only; never crash the main loop.
-            print(f"[env→body] debug error: {e}")
     except Exception:
-        # BodyMap should never crash the runner; ignore errors here.
+        # BodyMap update should never be allowed to break env stepping.
+        pass
+    # Mirror into WorkingMap (raw per-tick trace) when enabled.
+    try:
+        if getattr(ctx, "working_enabled", False):
+            inject_obs_into_working_world(ctx, env_obs)
+    except Exception:
         pass
 
-    # write tiny scene-graph 'near' edges for this observation
+    # Allow turning off long-term injection entirely (BodyMap still updates).
+    if not getattr(ctx, "longterm_obs_enabled", True):
+        return {"predicates": created_preds, "cues": created_cues, "token_to_bid": token_to_bid}
+
+    mode = (getattr(ctx, "longterm_obs_mode", "snapshot") or "snapshot").strip().lower()
+    do_changes = mode in ("changes", "dedup", "delta", "state_changes")
+
+    # Normalize (defensive: some probes may include prefixes already)
+    pred_tokens = [
+        str(p).replace("pred:", "")
+        for p in (getattr(env_obs, "predicates", []) or [])
+        if p is not None
+    ]
+    cue_tokens = [
+        str(c).replace("cue:", "")
+        for c in (getattr(env_obs, "cues", []) or [])
+        if c is not None
+    ]
+
+    # Pull a couple of env meta fields for keyframes (if present)
+    env_meta = getattr(env_obs, "env_meta", None) or {}
+    stage = env_meta.get("scenario_stage")
+    time_since_birth = env_meta.get("time_since_birth")
+
+    # In "changes" mode: optionally force a one-tick snapshot at stage transitions/resets
+    if do_changes:
+        force_snapshot = False
+
+        # Reset keyframe: env.reset() produces time_since_birth == 0.0
+        if isinstance(time_since_birth, (int, float)) and float(time_since_birth) <= 0.0:
+            force_snapshot = True
+
+        if getattr(ctx, "longterm_obs_keyframe_on_stage_change", True):
+            last_stage = getattr(ctx, "lt_obs_last_stage", None)
+            if stage is not None and last_stage is not None and stage != last_stage:
+                force_snapshot = True
+
+        if force_snapshot:
+            ctx.lt_obs_slots.clear()
+
+        ctx.lt_obs_last_stage = stage
+
+    def _slot_key(tok: str) -> str:
+        return tok.rsplit(":", 1)[0] if ":" in tok else tok
+
+    step_no = int(getattr(ctx, "controller_steps", 0) or 0)
+    reassert_steps = int(getattr(ctx, "longterm_obs_reassert_steps", 0) or 0)
+    verbose_skips = bool(getattr(ctx, "longterm_obs_verbose", False))
+
+    wrote_any_pred_this_tick = False
+
+    # Predicates: snapshot vs changes mode
+    for tok in pred_tokens:
+        meta = {"source": "HybridEnvironment", "controller_steps": getattr(ctx, "controller_steps", None)}
+
+        if not do_changes:
+            attach = "now" if not wrote_any_pred_this_tick else "latest"
+            bid = world.add_predicate(tok, attach=attach, meta=meta)
+            created_preds.append(tok)
+            token_to_bid[tok] = bid
+            wrote_any_pred_this_tick = True
+            print(f"[env→world] pred:{tok} → {bid} (attach={attach})")
+            continue
+
+        slot = _slot_key(tok)
+        prev = ctx.lt_obs_slots.get(slot)
+
+        emit = False
+        reason = ""
+        if prev is None:
+            emit = True
+            reason = "first"
+        elif prev.get("token") != tok:
+            emit = True
+            reason = "changed"
+        else:
+            # unchanged
+            if 0 < reassert_steps <= (step_no - int(prev.get("last_emit_step", 0) or 0)):
+                emit = True
+                reason = "reassert"
+            else:
+                emit = False
+                reason = "unchanged"
+        if emit:
+            meta2 = dict(meta)
+            meta2["_dedup"] = reason
+            attach = "now" if not wrote_any_pred_this_tick else "latest"
+            bid = world.add_predicate(tok, attach=attach, meta=meta2)
+            created_preds.append(tok)
+            token_to_bid[tok] = bid
+            ctx.lt_obs_slots[slot] = {"token": tok, "bid": bid, "last_emit_step": step_no}
+            wrote_any_pred_this_tick = True
+            print(f"[env→world] pred:{tok} → {bid} (attach={attach})")
+        else:
+            prev_bid = prev.get("bid") if isinstance(prev, dict) else None
+            if isinstance(prev_bid, str):
+                token_to_bid[tok] = prev_bid
+            if verbose_skips:
+                print(f"[env→world] pred:{tok} → {prev_bid} (reused; unchanged)")
+
+    # If everything was unchanged, print one line so the user knows this is intentional.
+    if do_changes and pred_tokens and not created_preds and not verbose_skips:
+        print("[env→world] (long-term obs unchanged; no new pred:* bindings written)")
+
+    # Cues: keep episodic (events). Attach to latest if we wrote any preds this tick; else attach to now.
+    cue_attach = "latest" if wrote_any_pred_this_tick else "now"
+    for tok in cue_tokens:
+        meta = {"source": "HybridEnvironment", "controller_steps": getattr(ctx, "controller_steps", None)}
+        bid = world.add_cue(tok, attach=cue_attach, meta=meta)
+        created_cues.append(tok)
+        token_to_bid[tok] = bid
+        print(f"[env→world] cue:{tok} → {bid} (attach={cue_attach})")
+
+    # Optional env sugar on top of tokens (must never break env stepping)
     try:
         _write_spatial_scene_edges(world, ctx, env_obs, token_to_bid)
     except Exception:
-        # Scene-graph sugar must never crash env injection.
         pass
 
-    # Minimal valence: 'like mom' when close + latched
     try:
         _inject_simple_valence_like_mom(world, ctx, env_obs, token_to_bid)
     except Exception:
-        # Valence stub must never break env injection.
         pass
 
-    return {"predicates": created_preds, "cues": created_cues}
+    return {"predicates": created_preds, "cues": created_cues, "token_to_bid": token_to_bid}
 
 
 def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) -> None:
@@ -6102,8 +6215,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
     # Memories
     40) Configure episode starting state (drives + age_days) [config-episode, cfg-epi]
-    41) Toggle RL policy selection (rl_enabled + rl_epsilon) [rl, rltog, x]
-    42) WorkingMap & WorldGraph memory mode (episodic vs semantic) [workingmap, wm, memory-mode]
+    41) WorkingMap & WorldGraph settings, toggle RL policy [rl, rltog, workingmap, wm, memory-mode, knobs]
+    42) future usage
     43) WorkingMap snapshot (last N bindings; optional clear) [wsnap, wmsnap]
 
     Select: """
@@ -6166,8 +6279,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "bodymap": "38", "bsnap": "38",
     "spatial": "39", "near": "39",
     "config-episode": "40", "cfg-epi": "40",
-    "rl": "41", "rltog": "41", "toggle-rl": "41", "x": "41",
-    "workingmap": "42", "wm": "42", "memory-mode": "42", "memorymode": "42",
+    "rl": "41", "rltog": "41", "workingmap": "41", "wm": "41", "memory-mode": "41", "memorymode": "41", "knobs": "41",
+    "future": "42",
     "wsnap": "43", "wm-snapshot": "43", "wmsnap": "43",
 
     # Keep letter shortcuts working too
@@ -6226,8 +6339,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "38": "38",  # inspect bodymap
     "39": "39",  # spatial, near demo
     "40": "40",  # Configure episode starting state (drives + age_days)
-    "41": "41",  # Toggle RL policy selection
-    "42": "42",  # working map
+    "41": "41",  # Toggle RL policy selection, select memory knobs
+    "42": "42",  # future usage
     "43": "43",  # wm snapshot
 }
 
@@ -8896,275 +9009,271 @@ You can still use menu 35 for detailed, single-step inspection.
 
 
         #----Menu Selection Code Block------------------------
-        elif choice == "41":
-            # Toggle RL policy selection (epsilon-greedy)
-            print("Selection: Toggle RL policy selection (epsilon-greedy)\n")
-            print("""
-RL policy selection (epsilon-greedy) — what it changes (at this point in development)
--------------------------------------------------------------------------------------
+        elif choice in "41":
+            # Control panel: RL policy selection + WorkingMap + long-term WorldGraph obs injection
+            print("Selection: Control Panel (RL policy selection + memory knobs)\n")
 
-CCA8 policy evaluation has three stages:
+            print("""[guide] This menu is the main "knobs and buttons" control panel for CCA8 experiments.
 
-  1) gating
-     Fast filters: dev_gate(ctx) and safety overrides (e.g., fallen → only StandUp/RecoverFall).
+Key ideas
+---------
+  • WorkingMap (ctx.working_world): short-term raw trace. If enabled, every EnvObservation is mirrored here
+    (episodic, write-everything). It is capped by working_max_bindings via pruning.
 
-  2) triggering
-     For policies that pass gating: trigger(world, drives, ctx) decides whether each policy is active this tick.
+  • WorldGraph memory_mode:
+      episodic = every add_predicate/add_cue call creates a new binding (dense episodic trace).
+      semantic = reuse identical pred/cue bindings to reduce clutter (experimental).
 
-  3) executing
-     If multiple policies triggered, choose ONE policy to run.
+  • Long-term EnvObservation → WorldGraph injection (this is enforced):
+      mode=changes  = write pred:* only when a state-slot changes (posture, proximity:mom, hazard:cliff, ...).
+                      optional reassert_steps can re-emit unchanged slots periodically.
+      mode=snapshot = write every observed pred:* each tick (old behavior).
+      keyframe_on_stage_change forces a one-tick "fresh snapshot" when scenario_stage changes (helps separate contexts).
 
-Reinforcement learning (RL) in CCA8 currently changes ONLY stage (3).
+  • RL policy selection (epsilon-greedy among triggered candidates):
+      explore: with probability epsilon, pick a random triggered policy.
+      exploit: otherwise pick by deficit band (rl_delta) then non_drive then learned q then stable order.
 
+Tip: Press Enter to keep current values. Most prompts accept Enter=keep or Enter=toggle.\n""")
 
-When rl_enabled = False (no RL)
--------------------------------
-If multiple policies are triggered:
-  - Choose the policy with the highest "drive deficit" score (the same heuristic as before).
-  - If there is a tie, break ties by stable policy order (deterministic).
-  - SkillStat.q is still recorded, but it is NOT used to select the winner.
+            # Ensure WorkingMap exists
+            if getattr(ctx, "working_world", None) is None:
+                ctx.working_world = init_working_world()
+            ww = ctx.working_world
 
-(NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).)
-(Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled).)
-
-
-When rl_enabled = True (RL enabled)
------------------------------------
-
-In the simplest RL integration we treated learned value (SkillStat.q) as an exact tie-breaker:
-choose by deficit first, and only consult q when deficits are identical. However, in practice,
-exact ties can be rare when scores are real-valued or noisy, so that approach can make RL feel
-inert even though q is learning.
-
-The opposite extreme is to blend q into every choice: score = deficit + beta * q, which makes
-learning matter on every decision but can amplify a noisy/mis-specified reward signal.
-
-We use a "soft tie-break" as a conservative middle ground:
-- Drives (deficit) still dominate when one option is clearly more urgent.
-- When the best deficits are CLOSE (within rl_delta), we treat the choice as ambiguous and allow
- learned value q to decide among the near-best candidates.
-- Safety gating and triggering are unchanged; this only affects the final winner among already-allowed candidates.
-
-rl_delta effect (very important):
-- rl_delta = 0.0  → q is used only for exact deficit ties (Option A behavior).
-- rl_delta small  → q influences only "near ties".
-- rl_delta large  → many policies fall into the near-best band, so q influences most choices
-                  (approaches "q-driven" selection among triggered policies).
-
-What is SkillStat.q?
---------------------
-SkillStat.q is the learned value estimate for a policy: an exponential moving average (EMA) of
-the rewards observed when that policy executed. It is NOT the success rate.
-(We still track success rate for telemetry, but q is the value estimate.)
-
-Why introduce RL this way?
---------------------------
-- Evolutionary Biology: a plausible early learning mechanism is reward-modulated action selection ("which action works here?"),
-  before learning/optimizing larger navigation maps.
-- Safety: RL never bypasses safety gating; it only arbitrates among already-allowed candidates.
-- Debuggability: learned values are visible in the snapshot skill ledger (n / succ / q / last), so behavior stays explainable.
-
-Tip:
-- rl_epsilon = 0.0 gives greedy, deterministic behavior (no exploration).
-- rl_epsilon = 0.2 explores 20% of the time when there are multiple triggered policies.
-
-""")
+            # --- Current RL settings ---
             enabled_now = bool(getattr(ctx, "rl_enabled", False))
             eps_now = getattr(ctx, "rl_epsilon", None)
-
             try:
                 jump_now = float(getattr(ctx, "jump", 0.0))
             except Exception:
                 jump_now = 0.0
-
-            # Effective epsilon: rl_epsilon if set, else fall back to ctx.jump (by design).
             try:
                 eff_eps = float(eps_now) if eps_now is not None else jump_now
-                try:
-                    delta_now = float(getattr(ctx, "rl_delta", 0.0))
-                except Exception:
-                    delta_now = 0.0
-                delta_now = max(delta_now, 0.0)
-            except (TypeError, ValueError):
-                eff_eps = jump_now
-
-            print("Current RL settings:")
-            print(f"  rl_enabled = {enabled_now}")
-            print(f"  rl_epsilon = {eps_now!r}   (None means fallback to ctx.jump)")
-            print(f"  effective epsilon = {eff_eps:.3f}   (used for epsilon-greedy exploration)")
-            print(f"  rl_delta   = {delta_now:.3f}   (0.000=use q only on exact deficit ties; larger=use q for near-ties)")
-            print("")
-
-            # Toggle enablement
-            try:
-                raw = input("Toggle RL?  [Enter=toggle | on | off]: ").strip().lower()
             except Exception:
-                raw = ""
+                eff_eps = jump_now
+            try:
+                delta_now = float(getattr(ctx, "rl_delta", 0.0))
+            except Exception:
+                delta_now = 0.0
+            delta_now = max(delta_now, 0.0)
+            explore_steps = int(getattr(ctx, "rl_explore_steps", 0) or 0)
+            exploit_steps = int(getattr(ctx, "rl_exploit_steps", 0) or 0)
 
-            if raw == "":
-                enabled_new = not enabled_now
-            elif raw in ("on", "true", "1", "yes", "y"):
+            # --- Current memory settings ---
+            world_mode = world.get_memory_mode() if hasattr(world, "get_memory_mode") else "episodic"
+            wm_enabled = bool(getattr(ctx, "working_enabled", False))
+            wm_verbose = bool(getattr(ctx, "working_verbose", False))
+            wm_max = int(getattr(ctx, "working_max_bindings", 0) or 0)
+            wm_count = len(getattr(ww, "_bindings", {}))  # pylint: disable=protected-access
+
+            lt_enabled = bool(getattr(ctx, "longterm_obs_enabled", True))
+            lt_mode = str(getattr(ctx, "longterm_obs_mode", "snapshot"))
+            lt_reassert = int(getattr(ctx, "longterm_obs_reassert_steps", 0) or 0)
+            lt_keyframe = bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True))
+            lt_verbose = bool(getattr(ctx, "longterm_obs_verbose", False))
+
+            print("Current settings:")
+            print(f"  RL: enabled={enabled_now} epsilon={eps_now!r} effective={eff_eps:.3f} delta={delta_now:.3f} (explore={explore_steps}, exploit={exploit_steps})")
+            print(f"  WorkingMap: enabled={wm_enabled} verbose={wm_verbose} max_bindings={wm_max} bindings={wm_count}")
+            print(f"  WorldGraph: memory_mode={world_mode}")
+            print(f"  Long-term env obs: enabled={lt_enabled} mode={lt_mode} reassert_steps={lt_reassert} keyframe_on_stage={lt_keyframe} verbose={lt_verbose}")
+            print()
+
+            # Quick exit if user just wants to view status
+            edit = input("Adjust settings now? [y/N]: ").strip().lower()
+            if edit not in ("y", "yes"):
+                loop_helper(args.autosave, world, drives, ctx)
+                continue
+
+            # ---- Presets (quick tuning of long-term env obs) ----
+            print("\nPresets (long-term env obs):")
+            print("  bio    = changes + keyframes + reassert=25 (periodic re-observation)")
+            print("  sparse = changes + keyframes + reassert=0  (minimal long-term growth)")
+            print("  debug  = snapshot + verbose (write every env pred each tick)")
+            preset = input("Preset? [Enter=skip | bio | sparse | debug]: ").strip().lower()
+            if preset in ("bio", "biological"):
+                ctx.longterm_obs_enabled = True
+                ctx.longterm_obs_mode = "changes"
+                ctx.longterm_obs_reassert_steps = 25
+                ctx.longterm_obs_keyframe_on_stage_change = True
+                ctx.longterm_obs_verbose = False
+            elif preset in ("sparse", "minimal"):
+                ctx.longterm_obs_enabled = True
+                ctx.longterm_obs_mode = "changes"
+                ctx.longterm_obs_reassert_steps = 0
+                ctx.longterm_obs_keyframe_on_stage_change = True
+                ctx.longterm_obs_verbose = False
+            elif preset in ("debug", "trace"):
+                ctx.longterm_obs_enabled = True
+                ctx.longterm_obs_mode = "snapshot"
+                ctx.longterm_obs_reassert_steps = 0
+                ctx.longterm_obs_keyframe_on_stage_change = True
+                ctx.longterm_obs_verbose = True
+
+            # ---- RL controls ----
+            print("\nRL policy selection:")
+            raw = input("RL enabled? [Enter=toggle | on | off]: ").strip().lower()
+            if raw in ("on", "true", "1", "yes", "y"):
                 enabled_new = True
             elif raw in ("off", "false", "0", "no", "n"):
                 enabled_new = False
+            elif raw == "":
+                enabled_new = not enabled_now
             else:
-                print("  [warn] Unrecognized input; leaving rl_enabled unchanged.")
                 enabled_new = enabled_now
 
-            # If enabling, optionally set epsilon
             eps_new = eps_now
             if enabled_new:
-                print("")
-                print("Set exploration probability epsilon (0..1).")
-                print("  - Enter keeps current rl_epsilon.")
-                print("  - Type 'none' to set rl_epsilon=None (exploration will use ctx.jump).")
-                print("  - Type 0 for greedy selection (no exploration).")
-                try:
-                    raw_eps = input(f"rl_epsilon (current={eps_now!r}, effective={eff_eps:.3f}): ").strip().lower()
-                except Exception:
-                    raw_eps = ""
-
+                raw_eps = input(f"rl_epsilon (0..1 or 'none'; current={eps_now!r}, effective={eff_eps:.3f}; Enter=keep): ").strip().lower()
                 if raw_eps == "":
                     eps_new = eps_now
                 elif raw_eps in ("none", "null"):
                     eps_new = None
                 else:
                     try:
-                        val = float(raw_eps)
-                        if val < 0.0:
-                            print("  [warn] epsilon below 0.0; clamping to 0.0.")
-                            val = 0.0
-                        if val > 1.0:
-                            print("  [warn] epsilon above 1.0; clamping to 1.0.")
-                            val = 1.0
-                        eps_new = val
-                    except (TypeError, ValueError):
-                        print("  [warn] Could not parse rl_epsilon; leaving unchanged.")
+                        v = float(raw_eps)
+                        v = max(v, 0.0)
+                        v = min(v, 1.0)
+                        eps_new = v
+                    except ValueError:
                         eps_new = eps_now
 
-                print("")
-                print("Set rl_delta (>=0). This controls how often learned q can influence selection in exploit mode.")
-                print("  - 0.0  = q only on exact deficit ties (most conservative).")
-                print("  - small (e.g., 0.02) = q used for near-ties.")
-                print("  - larger = q influences more choices among triggered policies.")
-                try:
-                    raw_delta = input(f"rl_delta (current={delta_now:.3f}, Enter=keep): ").strip().lower()
-                except Exception:
-                    raw_delta = ""
-
+                raw_delta = input(f"rl_delta (>=0; current={delta_now:.3f}; Enter=keep): ").strip().lower()
                 if raw_delta != "":
                     try:
-                        val = float(raw_delta)
-                        if val < 0.0:
-                            print("  [warn] rl_delta below 0.0; clamping to 0.0.")
-                            val = 0.0
-                        ctx.rl_delta = val
-                    except (TypeError, ValueError):
-                        print("  [warn] Could not parse rl_delta; leaving unchanged.")
+                        v = float(raw_delta)
+                        v = max(v, 0.0)
+                        ctx.rl_delta = v
+                    except ValueError:
+                        pass
 
-            # Apply
             ctx.rl_enabled = enabled_new
             ctx.rl_epsilon = eps_new
 
-            # Print updated summary
-            try:
-                eff_after = float(ctx.rl_epsilon) if ctx.rl_epsilon is not None else float(getattr(ctx, "jump", 0.0))
-            except (TypeError, ValueError):
-                eff_after = float(getattr(ctx, "jump", 0.0))
-
-            print("")
-            print("[rl] Updated RL settings:")
-            print(f"  rl_enabled = {ctx.rl_enabled}")
-            print(f"  rl_epsilon = {ctx.rl_epsilon!r}")
-            print(f"  effective epsilon = {eff_after:.3f}")
-            print(f"  rl_delta   = {getattr(ctx, 'rl_delta', 0.0):.3f}")
-            loop_helper(args.autosave, world, drives, ctx)
-
-
-        #----Menu Selection Code Block------------------------
-        elif choice == "42":
-            # WorkingMap + WorldGraph memory-mode controls
-            print("Selection: WorkingMap & WorldGraph memory mode (episodic vs semantic)\n")
-
-            # Ensure WorkingMap exists
-            if getattr(ctx, "working_world", None) is None:
-                ctx.working_world = init_working_world()
-
-            ww = ctx.working_world
-            world_mode = world.get_memory_mode() if hasattr(world, "get_memory_mode") else "episodic"
-
-            print("Current memory settings:")
-            print(f"  WorkingMap enabled      = {getattr(ctx, 'working_enabled', False)}")
-            print(f"  WorkingMap verbose      = {getattr(ctx, 'working_verbose', False)}")
-            print(f"  WorkingMap max_bindings = {getattr(ctx, 'working_max_bindings', 0)}")
-            print(f"  WorkingMap bindings     = {len(getattr(ww, '_bindings', {}))}")  # pylint: disable=protected-access
-            print(f"  WorldGraph memory_mode  = {world_mode}")
-            print(f"  WorldGraph env obs injection (stub) = {getattr(ctx, 'longterm_obs_enabled', True)}")
-            print()
-
-            # Toggle WorkingMap mirroring
+            # ---- WorkingMap controls ----
+            print("\nWorkingMap (short-term raw trace):")
             raw = input("WorkingMap capture? [Enter=toggle | on | off]: ").strip().lower()
             if raw in ("on", "true", "1", "yes", "y"):
                 ctx.working_enabled = True
             elif raw in ("off", "false", "0", "no", "n"):
                 ctx.working_enabled = False
             elif raw == "":
-                ctx.working_enabled = not getattr(ctx, "working_enabled", False)
+                ctx.working_enabled = not bool(getattr(ctx, "working_enabled", False))
 
-            # Toggle verbose
             rawv = input("WorkingMap verbose? [Enter=toggle | on | off]: ").strip().lower()
             if rawv in ("on", "true", "1", "yes", "y"):
                 ctx.working_verbose = True
             elif rawv in ("off", "false", "0", "no", "n"):
                 ctx.working_verbose = False
             elif rawv == "":
-                ctx.working_verbose = not getattr(ctx, "working_verbose", False)
+                ctx.working_verbose = not bool(getattr(ctx, "working_verbose", False))
 
-            # Set max bindings
-            rawm = input(f"WorkingMap max_bindings (current={getattr(ctx, 'working_max_bindings', 0)}; Enter=keep): ").strip().lower()
+            rawm = input(f"WorkingMap max_bindings (current={wm_max}; Enter=keep): ").strip()
             if rawm:
                 try:
                     ctx.working_max_bindings = max(0, int(float(rawm)))
                 except ValueError:
                     print("  (ignored: could not parse max_bindings)")
 
-            # WorldGraph memory mode
+            # ---- WorldGraph memory_mode ----
             if hasattr(world, "set_memory_mode") and hasattr(world, "get_memory_mode"):
-                print("\nWorldGraph memory_mode options:")
-                print("  episodic = create a new node for every observation (current behavior)")
-                print("  semantic = reuse identical pred/cue nodes to reduce clutter (experimental)")
-                raw_mode = input(f"WorldGraph memory_mode (current={world.get_memory_mode()}): ").strip().lower()
+                print("\nWorldGraph memory_mode:")
+                print("  episodic = every add creates a new binding (dense trace)")
+                print("  semantic = reuse identical pred/cue bindings (less clutter; experimental)")
+                raw_mode = input(f"memory_mode (current={world.get_memory_mode()}; Enter=keep): ").strip().lower()
                 if raw_mode in ("episodic", "semantic"):
                     world.set_memory_mode(raw_mode)
 
-            # Long-term WorldGraph env observation injection (STUB only — no behavioral effect yet)
-            lt_now = bool(getattr(ctx, "longterm_obs_enabled", True))
-            raw_lt = input("WorldGraph env obs injection? (stub; no effect yet) [Enter=toggle | on | off]: ").strip().lower()
+            # ---- Long-term env observation injection knobs ----
+            print("\nLong-term EnvObservation → WorldGraph injection:")
+            raw_lt = input("Enabled? [Enter=toggle | on | off]: ").strip().lower()
             if raw_lt in ("on", "true", "1", "yes", "y"):
                 ctx.longterm_obs_enabled = True
             elif raw_lt in ("off", "false", "0", "no", "n"):
                 ctx.longterm_obs_enabled = False
             elif raw_lt == "":
-                ctx.longterm_obs_enabled = not lt_now
-            print("  [note] This flag is recorded but not enforced yet; env observations still inject into WorldGraph each tick.")
+                ctx.longterm_obs_enabled = not bool(getattr(ctx, "longterm_obs_enabled", True))
 
-            # Clear working map?
-            rawc = input("Clear WorkingMap now? [y/N]: ").strip().lower()
+            print("Mode options:")
+            print("  changes  = write only when a state slot changes (dedup env preds)")
+            print("  snapshot = write every observed pred each tick (old behavior)")
+            raw_ltm = input(f"mode (current={getattr(ctx,'longterm_obs_mode','snapshot')}; Enter=keep): ").strip().lower()
+            if raw_ltm in ("changes", "snapshot"):
+                ctx.longterm_obs_mode = raw_ltm
+
+            raw_rs = input(f"reassert_steps (current={getattr(ctx,'longterm_obs_reassert_steps',0)}; Enter=keep): ").strip()
+            if raw_rs:
+                try:
+                    ctx.longterm_obs_reassert_steps = max(0, int(float(raw_rs)))
+                except ValueError:
+                    print("  (ignored: could not parse reassert steps)")
+
+            raw_kf = input("keyframe_on_stage_change? [Enter=toggle | on | off]: ").strip().lower()
+            if raw_kf in ("on", "true", "1", "yes", "y"):
+                ctx.longterm_obs_keyframe_on_stage_change = True
+            elif raw_kf in ("off", "false", "0", "no", "n"):
+                ctx.longterm_obs_keyframe_on_stage_change = False
+            elif raw_kf == "":
+                ctx.longterm_obs_keyframe_on_stage_change = not bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True))
+
+            raw_lv = input("longterm_obs_verbose (show reuse lines)? [Enter=toggle | on | off]: ").strip().lower()
+            if raw_lv in ("on", "true", "1", "yes", "y"):
+                ctx.longterm_obs_verbose = True
+            elif raw_lv in ("off", "false", "0", "no", "n"):
+                ctx.longterm_obs_verbose = False
+            elif raw_lv == "":
+                ctx.longterm_obs_verbose = not bool(getattr(ctx, "longterm_obs_verbose", False))
+
+            # ---- Optional clears ----
+            rawc = input("\nClear WorkingMap now? [y/N]: ").strip().lower()
             if rawc in ("y", "yes"):
                 reset_working_world(ctx)
 
-            # Re-prune after any setting changes
+            raw_slot = input("Clear long-term slot cache now? (next env obs treated as 'first') [y/N]: ").strip().lower()
+            if raw_slot in ("y", "yes"):
+                try:
+                    ctx.lt_obs_slots.clear()
+                    ctx.lt_obs_last_stage = None
+                except Exception:
+                    pass
+
+            # Re-prune after changes
             _prune_working_world(ctx)
 
-            print("\nUpdated memory settings:")
-            print(f"  WorkingMap enabled      = {getattr(ctx, 'working_enabled', False)}")
-            print(f"  WorkingMap verbose      = {getattr(ctx, 'working_verbose', False)}")
-            print(f"  WorkingMap max_bindings = {getattr(ctx, 'working_max_bindings', 0)}")
-            print(f"  WorkingMap bindings     = {len(getattr(ctx.working_world, '_bindings', {}))}")  # pylint: disable=protected-access
-            if hasattr(world, "get_memory_mode"):
-                print(f"  WorldGraph memory_mode  = {world.get_memory_mode()}")
-                print(f"  WorldGraph env obs injection (stub) = {getattr(ctx, 'longterm_obs_enabled', True)}")
+            # ---- Print updated settings ----
+            try:
+                jump_now = float(getattr(ctx, "jump", 0.0))
+            except Exception:
+                jump_now = 0.0
+            eps_now2 = getattr(ctx, "rl_epsilon", None)
+            try:
+                eff_eps2 = float(eps_now2) if eps_now2 is not None else jump_now
+            except Exception:
+                eff_eps2 = jump_now
+            try:
+                delta_now2 = float(getattr(ctx, "rl_delta", 0.0))
+            except Exception:
+                delta_now2 = 0.0
+
+            world_mode2 = world.get_memory_mode() if hasattr(world, "get_memory_mode") else "episodic"
+            ww_count2 = len(getattr(ctx.working_world, "_bindings", {}))  # pylint: disable=protected-access
+
+            print("\nUpdated settings:")
+            print(f"  RL: enabled={bool(getattr(ctx,'rl_enabled',False))} epsilon={getattr(ctx,'rl_epsilon',None)!r} effective={eff_eps2:.3f} delta={max(0.0, float(delta_now2)):.3f}")
+            print(f"  WorkingMap: enabled={bool(getattr(ctx,'working_enabled',False))} verbose={bool(getattr(ctx,'working_verbose',False))} max_bindings={int(getattr(ctx,'working_max_bindings',0) or 0)} bindings={ww_count2}")
+            print(f"  WorldGraph: memory_mode={world_mode2}")
+            print(f"  Long-term env obs: enabled={bool(getattr(ctx,'longterm_obs_enabled',True))} mode={getattr(ctx,'longterm_obs_mode','snapshot')} reassert_steps={int(getattr(ctx,'longterm_obs_reassert_steps',0) or 0)} keyframe_on_stage={bool(getattr(ctx,'longterm_obs_keyframe_on_stage_change',True))} verbose={bool(getattr(ctx,'longterm_obs_verbose',False))}")
+
             loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "42":
+            # fuure usage
+            print("Selection: future usage\n")
+            loop_helper(args.autosave, world, drives, ctx)
+
 
         #----Menu Selection Code Block------------------------
         elif choice == "43":
