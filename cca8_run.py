@@ -197,15 +197,37 @@ class Ctx:
     env_last_action: Optional[str] = None  # last fired policy name for env.step(...)
     mini_snapshot: bool = True  #mini-snapshot toggle starting value
     posture_discrepancy_history: list[str] = field(default_factory=list) #per-session list of discrepancies motor command vs what environment reports
+
     # BodyMap: tiny body+near-world map (separate WorldGraph instance)
     body_world: Optional[cca8_world_graph.WorldGraph] = None
     body_ids: dict[str, str] = field(default_factory=dict)
     bodymap_last_update_step: Optional[int] = None  # BodyMap recency marker: controller_steps value when BodyMap was last updated
+
     # WorkingMap: short-term working memory graph (separate WorldGraph instance)
     working_world: Optional[cca8_world_graph.WorldGraph] = None
     working_enabled: bool = True         # mirror env observations into WorkingMap
     working_verbose: bool = False        # print per-tick WorkingMap injection lines
     working_max_bindings: int = 250      # cap WorkingMap size (anchors are preserved)
+    working_move_now: bool = True       # move WorkingMap NOW to the latest predicate each env tick
+
+    # memory pipeline knobs (opt-in; defaults preserve Phase VI behavior)
+    phase7_working_first: bool = False    # execute policies in WorkingMap; keep long-term WorldGraph sparse
+    phase7_run_compress: bool = False     # compress consecutive identical policy actions into one long-term run
+    phase7_run_verbose: bool = False      # print run-compression debug lines during env-loop
+    phase7_move_longterm_now_to_env: bool = False  # move long-term NOW to latest env posture binding each step
+
+    # run-compression state (env-loop)
+    run_policy: Optional[str] = None
+    run_action_bid: Optional[str] = None
+    run_len: int = 0
+    run_start_env_step: Optional[int] = None
+    run_last_env_step: Optional[int] = None
+    run_open: bool = False
+
+    # if True, print a one-line notice when a keyframe boundary clears lt_obs_slots -- effects if write new predicate bindings
+    #   this is intentionally separate from longterm_obs_verbose (reuse-line spam).
+    longterm_obs_keyframe_log: bool = True
+
     # Safety / posture retry bookkeeping
     last_standup_step: Optional[int] = None
     last_standup_failed: bool = False
@@ -1766,7 +1788,8 @@ class PolicyRuntime:
         return [p.name for p in self.loaded]
 
 
-    def consider_and_maybe_fire(self, world, drives, ctx, tie_break: str = "first") -> str:  # pylint: disable=unused-argument
+    def consider_and_maybe_fire(self, world, drives, ctx, tie_break: str = "first", exec_world=None) -> str:  # pylint: disable=unused-argument
+
         """Evaluate triggers, prefer safety-critical gates, then run the controller once;
               return a short human string.
               """
@@ -2003,10 +2026,11 @@ class PolicyRuntime:
         pre_expl = chosen.explain(world, drives, ctx) if chosen.explain else "explain: (not provided)"
 
         # Run controller with the exact policy we selected
+        world_exec = exec_world if exec_world is not None else world
         try:
-            before_n = len(world._bindings)
-            result = action_center_step(world, ctx, drives, preferred=chosen.name)
-            after_n = len(world._bindings)
+            before_n = len(getattr(world_exec, "_bindings", {}))
+            result = action_center_step(world_exec, ctx, drives, preferred=chosen.name)
+            after_n = len(getattr(world_exec, "_bindings", {}))
             delta_n = after_n - before_n
             label = result.get("policy") if isinstance(result, dict) and "policy" in result else chosen.name
         except Exception as e:
@@ -4445,6 +4469,29 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
         else:
             lines.append(f"{bid}: [{tags}]  [src=world._bindings['{bid}'].tags]")
 
+    # PROMINENCE (top tags; runtime convenience)
+    lines.append("")
+    lines.append("PROMINENCE (top tags; obs>=2, sorted by act):")
+    try:
+        rows = world.prominence_top(n=12, sort_by="act", min_obs=2)
+    except Exception:
+        rows = []
+    if not rows:
+        lines.append("(none)")
+    else:
+        for tag, rec in rows:
+            try:
+                obs = int(rec.get("obs", 0))
+            except Exception:
+                obs = 0
+            try:
+                act = float(rec.get("act", 0.0))
+            except Exception:
+                act = 0.0
+            last_step = rec.get("last_step")
+            step_key = rec.get("step_key")
+            lines.append(f"{tag}: obs={obs} act={act:.2f} last_step={last_step} [{step_key}]")
+
     # EDGES (collapsed duplicates)
     lines.append("")
     lines.append("EDGES:")
@@ -4968,15 +5015,26 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
     meta = {"source": "HybridEnvironment", "controller_steps": getattr(ctx, "controller_steps", None)}
 
     attach = "now"
+    last_pred_bid: str | None = None
     for tok in pred_tokens:
         try:
-            ww.add_predicate(tok, attach=attach, meta=meta)
+            bid = ww.add_predicate(tok, attach=attach, meta=meta)
+            last_pred_bid = bid
             created_preds.append(tok)
             if getattr(ctx, "working_verbose", False):
-                print(f"[env→working] pred:{tok} (attach={attach})")
+                print(f"[env→working] pred:{tok} -> {bid} (attach={attach})")
         except Exception:
             pass
         attach = "latest"
+
+    # Optional: move WorkingMap NOW to the latest predicate this tick
+    #   so "near NOW" queries reflect the current local frame.
+    try:
+        if getattr(ctx, "working_move_now", True) and last_pred_bid:
+            ww.set_now(last_pred_bid, tag=True, clean_previous=True)
+    except Exception:
+        pass
+
 
     cue_attach = "latest" if created_preds else "now"
     for tok in cue_tokens:
@@ -5057,22 +5115,32 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
     time_since_birth = env_meta.get("time_since_birth")
 
     # In "changes" mode: optionally force a one-tick snapshot at stage transitions/resets
+    # In "changes" mode: optionally force a one-tick snapshot at stage transitions/resets
     if do_changes:
         force_snapshot = False
+        reasons: list[str] = []
 
         # Reset keyframe: env.reset() produces time_since_birth == 0.0
         if isinstance(time_since_birth, (int, float)) and float(time_since_birth) <= 0.0:
             force_snapshot = True
+            reasons.append(f"env_reset(time_since_birth={float(time_since_birth):.2f})")
 
+        # Stage-change keyframe (optional)
+        last_stage = getattr(ctx, "lt_obs_last_stage", None)
         if getattr(ctx, "longterm_obs_keyframe_on_stage_change", True):
-            last_stage = getattr(ctx, "lt_obs_last_stage", None)
             if stage is not None and last_stage is not None and stage != last_stage:
                 force_snapshot = True
+                reasons.append(f"stage_change {last_stage!r}→{stage!r}")
 
         if force_snapshot:
+            old_n = len(getattr(ctx, "lt_obs_slots", {}) or {})
             ctx.lt_obs_slots.clear()
+            if bool(getattr(ctx, "longterm_obs_keyframe_log", True)):
+                why = ", ".join(reasons) if reasons else "keyframe"
+                print(f"[env→world] KEYFRAME: {why} | cleared {old_n} slot(s)")
 
         ctx.lt_obs_last_stage = stage
+
 
     def _slot_key(tok: str) -> str:
         return tok.rsplit(":", 1)[0] if ":" in tok else tok
@@ -5129,6 +5197,10 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
             prev_bid = prev.get("bid") if isinstance(prev, dict) else None
             if isinstance(prev_bid, str):
                 token_to_bid[tok] = prev_bid
+                try:
+                    world.bump_prominence(prev_bid, tag=f"pred:{tok}", meta=meta, reason="observe")
+                except Exception:
+                    pass
             if verbose_skips:
                 print(f"[env→world] pred:{tok} → {prev_bid} (reused; unchanged)")
 
@@ -5204,6 +5276,214 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             return "safe"
         return "unknown"
 
+    # --- action-run compression helpers (long-term WorldGraph) -----------------
+    # phase7 is one of the s/w devp't phases, need some scaffolding to converted memory pipeline to
+    #    sensory input -> recognition -> inject into Working Mem,BodyMap -> details to Work Mem -> consolidate to WorldGraph
+
+    def _phase7_enabled() -> bool:
+        return bool(getattr(ctx, "phase7_run_compress", False))
+
+
+    def _phase7_dbg(msg: str) -> None:
+        if bool(getattr(ctx, "phase7_run_verbose", False)):
+            try:
+                print(msg)
+            except Exception:
+                pass
+
+
+    def _phase7_pick_state_bid(token_to_bid: dict) -> str | None:
+        """Pick a representative 'state' binding id for run start/end edges.
+
+        Preference order:
+          1) resting (stable episode marker)
+          2) posture:standing / posture:fallen
+          3) nipple:latched / milk:drinking (feeding milestones)
+          4) any last-seen token bid as a fallback
+        """
+        if not isinstance(token_to_bid, dict):
+            return None
+        for tok in ("resting", "posture:standing", "posture:fallen", "nipple:latched", "milk:drinking"):
+            bid = token_to_bid.get(tok)
+            if isinstance(bid, str):
+                return bid
+        try:
+            vals = list(token_to_bid.values())
+            for bid in reversed(vals):
+                if isinstance(bid, str):
+                    return bid
+        except Exception:
+            pass
+        return None
+
+
+    def _phase7_close_run(long_world, *, reason: str) -> None:
+        """Close the currently-open run (if any) and clear ctx run state."""
+        if ctx is None or not _phase7_enabled():
+            return
+        if not bool(getattr(ctx, "run_open", False)):
+            return
+
+        run_bid = getattr(ctx, "run_action_bid", None)
+        if isinstance(run_bid, str):
+            try:
+                b = long_world._bindings.get(run_bid)
+                if b is not None and isinstance(getattr(b, "meta", None), dict):
+                    b.meta["run_open"] = False
+                    b.meta["run_closed_reason"] = reason
+            except Exception:
+                pass
+
+        # Clear ctx run state
+        try:
+            ctx.run_open = False
+            ctx.run_policy = None
+            ctx.run_action_bid = None
+            ctx.run_len = 0
+            ctx.run_start_env_step = None
+            ctx.run_last_env_step = None
+        except Exception:
+            pass
+
+        _phase7_dbg(f"[phase7-run] close reason={reason}")
+
+
+    def _phase7_update_open_run_end(long_world, state_bid: str | None, *, env_step: int | None) -> None:
+        """Update the open run's end-state edge to point at `state_bid` (one edge, overwritten)."""
+        if ctx is None or not _phase7_enabled():
+            return
+        if not bool(getattr(ctx, "run_open", False)):
+            return
+
+        run_bid = getattr(ctx, "run_action_bid", None)
+        if not (isinstance(run_bid, str) and isinstance(state_bid, str)):
+            return
+
+        # Identify prior end bid (stored in run.meta)
+        old_end = None
+        try:
+            b = long_world._bindings.get(run_bid)
+            if b is not None and isinstance(getattr(b, "meta", None), dict):
+                old_end = b.meta.get("run_end_bid")
+        except Exception:
+            old_end = None
+
+        # Remove old end-edge if it existed and changed
+        if isinstance(old_end, str) and old_end != state_bid:
+            try:
+                long_world.delete_edge(run_bid, old_end, label=None)
+            except Exception:
+                pass
+
+        # Add/update current end-edge (avoid duplicates)
+        try:
+            need_edge = True
+            b = long_world._bindings.get(run_bid)
+            if b is not None:
+                for e in getattr(b, "edges", []) or []:
+                    if isinstance(e, dict) and e.get("to") == state_bid:
+                        need_edge = False
+                        break
+            if need_edge:
+                long_world.add_edge(run_bid, state_bid, "then", meta={"phase7": "run_end", "env_step": env_step})
+        except Exception:
+            pass
+
+        # Update meta
+        try:
+            b = long_world._bindings.get(run_bid)
+            if b is not None and isinstance(getattr(b, "meta", None), dict):
+                b.meta["run_end_bid"] = state_bid
+                b.meta["run_last_env_step"] = env_step
+                b.meta["run_open"] = True
+        except Exception:
+            pass
+
+
+    def _phase7_start_or_extend_run(long_world, state_bid: str | None, policy: str | None, *, env_step: int | None) -> None:
+        """Start a new run node (action) or extend the existing run if the policy repeats."""
+        if ctx is None or not _phase7_enabled():
+            return
+        if not (isinstance(policy, str) and policy.startswith("policy:")):
+            return
+        if not isinstance(state_bid, str):
+            return
+
+        # Extend in-place when policy repeats and run is still open
+        if bool(getattr(ctx, "run_open", False)) and getattr(ctx, "run_policy", None) == policy:
+            try:
+                ctx.run_len = int(getattr(ctx, "run_len", 0) or 0) + 1
+            except Exception:
+                ctx.run_len = 1
+            ctx.run_last_env_step = env_step
+
+            run_bid = getattr(ctx, "run_action_bid", None)
+            if isinstance(run_bid, str):
+                try:
+                    b = long_world._bindings.get(run_bid)
+                    if b is not None and isinstance(getattr(b, "meta", None), dict):
+                        b.meta["run_len"] = int(getattr(ctx, "run_len", 1))
+                        b.meta["run_last_env_step"] = env_step
+                        b.meta["run_open"] = True
+                except Exception:
+                    pass
+
+            _phase7_dbg(f"[phase7-run] extend {policy} len={int(getattr(ctx, 'run_len', 1))}")
+            return
+
+        # Otherwise, close the previous run (if any) and start a new one
+        if bool(getattr(ctx, "run_open", False)):
+            _phase7_close_run(long_world, reason="policy_change")
+
+        token = policy.split(":", 1)[1]
+        meta = {
+            "phase7": "run_start",
+            "policy": policy,
+            "run_open": True,
+            "run_len": 1,
+            "run_start_env_step": env_step,
+            "run_last_env_step": env_step,
+        }
+
+        try:
+            run_bid = long_world.add_action(token, attach="none", meta=meta)
+        except Exception:
+            return
+
+        # Connect state → run (stable episode locality)
+        try:
+            long_world.add_edge(state_bid, run_bid, "then", meta={"phase7": "run_start", "policy": policy, "env_step": env_step})
+        except Exception:
+            pass
+
+        try:
+            ctx.run_open = True
+            ctx.run_policy = policy
+            ctx.run_action_bid = run_bid
+            ctx.run_len = 1
+            ctx.run_start_env_step = env_step
+            ctx.run_last_env_step = env_step
+        except Exception:
+            pass
+
+        _phase7_dbg(f"[phase7-run] start {policy} run_bid={run_bid} from={state_bid} env_step={env_step}")
+
+
+    def _phase7_reset_run_state() -> None:
+        """Clear ctx run state (used on env.reset())."""
+        if ctx is None:
+            return
+        try:
+            ctx.run_open = False
+            ctx.run_policy = None
+            ctx.run_action_bid = None
+            ctx.run_len = 0
+            ctx.run_start_env_step = None
+            ctx.run_last_env_step = None
+        except Exception:
+            pass
+
+
     def _explain_zone_change(prev_state, curr_state, zone: str | None, ctx) -> str | None: #pylint: disable=unused-argument
         """Human-readable explanation for why the coarse zone is what it is this step."""
         if zone is None:
@@ -5272,6 +5552,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 "explanation in the newborn-goat storyboard."
             )
         return f"zone is {zone!r}; this label currently has no more detailed explanation."
+
 
     def _explain_nipple_change(prev_state, curr_state, action_for_env: str | None) -> str | None:
         """Human-readable explanation for why nipple_state is what it is this step."""
@@ -5364,6 +5645,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             f"nipple_state changed {prev_n!r}→{n!r} as the storyboard moved "
             f"{prev_s!r}→{s!r} this step."
         )
+
 
     def _explain_posture_change(prev_state, curr_state, action_for_env: str | None) -> str | None:
         """Human-readable explanation for why posture is what it is this step."""
@@ -5460,6 +5742,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         # 2) Environment evolution (reset once, then step with last action)
         if not getattr(ctx, "env_episode_started", False):
             env_obs, env_info = env.reset()
+            _phase7_reset_run_state() # phase7 s/w devpt: clear any previous run state on env reset
             ctx.env_episode_started = True
             ctx.env_last_action = None
             step_idx = env_info.get("step_index", 0)
@@ -5491,13 +5774,68 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             )
 
         # 3) EnvObservation → WorldGraph + BodyMap
-        inject_obs_into_world(world, ctx, env_obs)
+        inj = inject_obs_into_world(world, ctx, env_obs)
+        try:
+            token_to_bid = inj.get("token_to_bid", {}) if isinstance(inj, dict) else {}
+        except Exception:
+            token_to_bid = {}
+
+        # boundary detection + update open run end-state from the outcome we just observed.
+        zone_now = None
+        try:
+            zone_now = body_space_zone(ctx)
+        except Exception:
+            zone_now = None
+
+        boundary_changed = False
+        try:
+            st_curr = env.state
+            prev_zone = _coarse_zone_from_env(prev_state) if prev_state is not None else None
+            prev_sig = (
+                getattr(prev_state, "scenario_stage", None),
+                getattr(prev_state, "kid_posture", None),
+                getattr(prev_state, "nipple_state", None),
+                (prev_zone or "unknown"),
+            ) if prev_state is not None else None
+            curr_sig = (
+                getattr(st_curr, "scenario_stage", None),
+                getattr(st_curr, "kid_posture", None),
+                getattr(st_curr, "nipple_state", None),
+                (zone_now or "unknown"),
+            )
+            boundary_changed = (prev_sig is not None) and (prev_sig != curr_sig)
+        except Exception:
+            boundary_changed = False
+
+        state_bid = _phase7_pick_state_bid(token_to_bid) if isinstance(token_to_bid, dict) else None
+
+        if _phase7_enabled():
+            # Outcome update: the env state we see NOW is the result of the previous action tick.
+            _phase7_update_open_run_end(world, state_bid, env_step=step_idx)
+
+            # Hard boundary breaks runs (stage/posture/nipple/zone changes)
+            if boundary_changed:
+                _phase7_close_run(world, reason="boundary")
+
+            # Optional: move long-term NOW onto the env's current posture/resting binding
+            if bool(getattr(ctx, "phase7_move_longterm_now_to_env", False)) and isinstance(state_bid, str):
+                try:
+                    world.set_now(state_bid, tag=True, clean_previous=True)
+                except Exception:
+                    pass
 
         # 4) Controller response
         policy_name = None
         try:
             policy_rt.refresh_loaded(ctx)
-            fired = policy_rt.consider_and_maybe_fire(world, drives, ctx)
+
+            exec_world = None
+            if bool(getattr(ctx, "phase7_working_first", False)):
+                if getattr(ctx, "working_world", None) is None:
+                    ctx.working_world = init_working_world()
+                exec_world = ctx.working_world
+
+            fired = policy_rt.consider_and_maybe_fire(world, drives, ctx, exec_world=exec_world)
             if fired != "no_match":
                 print(f"[env→controller] {fired}")
 
@@ -5516,6 +5854,11 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         except Exception as e:
             print(f"[env→controller] controller step error: {e}")
             ctx.env_last_action = None
+
+        # start/extend run for the policy we just chose (applied on the NEXT env step)
+        if _phase7_enabled():
+            _phase7_start_or_extend_run(world, state_bid, policy_name, env_step=step_idx)
+
 
         # Short summary for this step + posture/nipple/zone explanations
         try:
@@ -9009,32 +9352,145 @@ You can still use menu 35 for detailed, single-step inspection.
 
 
         #----Menu Selection Code Block------------------------
-        elif choice in "41":
+        elif choice == "41":
             # Control panel: RL policy selection + WorkingMap + long-term WorldGraph obs injection
             print("Selection: Control Panel (RL policy selection + memory knobs)\n")
 
             print("""[guide] This menu is the main "knobs and buttons" control panel for CCA8 experiments.
 
+Mental Model You Should Have to Understand these Settings
+---------------------------------------------------------
+
+At runtime you should consider three graphs operating in the CCA8 simulation:
+
+1. WorkingMap ( ctx.working_world ) -- This is a short-term raw trace scratchpad. In a way, analagous to mammalian
+    short-term memory (a component of WM)/ Working Memory, although for real Working Memory need all the associated
+    processing methods. Keep in mind that in the CCA8 we are not limited to the biological constraints of the brain.
+
+   -WorkingMap receives all the raw inputs. It is designed to be a dense, clock tick-level recording, pruned by
+        working_max_bindings and only certain parts of it later consolidated to WorldGraph.
+
+2. WorldGraph ( world ) -- This is the large, durable knowledge representation that persists (autosave/ save session).
+        It is analagous to the mammalian neocortex (as well as other areas).
+
+   -WorldGraph receives the EnvObservation injection (i.e., processed simulated environment sensory signals) predicates and cues,
+    which depend on the "Long-term env obs" knob settings.
+   -WorldGraph receives all the policy writes unless the "Phase VII working_first" is enabled, in which case policy writes go
+    to the WorkingMap instead.
+
+3. BodyMap ( ctx.body_world ) -- This is a small, safety-critical map of the agent's body and surroundings, i.e., in the present
+   moment. It is used largely at present for gating and tie-break of what is the best policy to choose, and zone classf'n.
+
+   -Note that in the brain our egocentric maps, i.e., map of the agent's body and relation to immediate surroundings, is largely
+    within the posterior parietal cortex, where vision, touch, proprioception are all integrated to create an egocentric
+    reference frame. On the other hand, in the hippocampus there is largely an allocentric map, i.e., a 'bird's-eye view' of the
+    world, using its grid and place cells to map the layout of the environment independent of the body's orientation (e.g., if
+    the agent turns 180 degrees the map still stays the same). At the time of writing, we don't have a clear analogous
+    hippocampal map, but instead use the WorldGraph and the WorkingMap for this purpose.
+
+
 Key ideas
 ---------
   • WorkingMap (ctx.working_world): short-term raw trace. If enabled, every EnvObservation is mirrored here
     (episodic, write-everything). It is capped by working_max_bindings via pruning.
+    -If ENABLED=TRUE ( ctx.working_enabled) then every EnvObservation is mirrored into WorkingMap (pred + cue).
+        Note: inject_obs_into_world(...) first injects into BodyMap update (always), then WorkingMap mirror (if enabled), then
+            WorldGraph (if enabled)
+        Note: Long-term env obs enabled = TRUE (default setting) + if WorkingMap enabled = TRUE then same preds, cues to both.
+        Note: This writing occurs according to mode = changes/snapshot, plus keyframes, etc.
+        Note: If Long-term env obs enabled = FALSE (ctx.longterm_obs_enabled=False) then preds, cues go only to WorkingMap.
+    -If WorkingMap ENABLED=FALSE then WorkingMap exists but won't gent new injections of cues and predicates from the simulated processed environment.
+    -verbose = TRUE then prints '[env->working] pred:... ->bid ' lines each tick.
+    -max_bindings ( ctx.working_max_bindings) is how large WorkingMap is allowed to get and then will delete older nodes but
+        keeps anchors.
+    -note: if working_enabled=True and longterm_obs_enabled=True then same EnvObservation written to WorkingMap and WorldGraph
 
   • WorldGraph memory_mode:
       episodic = every add_predicate/add_cue call creates a new binding (dense episodic trace).
+        -every add_predicate(...) creates a new binding even if that tag already exists.
+        -each time somehting happens it becomes a new node in the graph even if the same tag as before, and thus graph essentially
+            acts as a literal event log; in a literal timeline you can count occurrences, see ordering, attach metadata to
+            certain instances of the event; the keyframe segmentation however stays visible.
       semantic = reuse identical pred/cue bindings to reduce clutter (experimental).
+        -if an identical tag already exists, reuse that existing binding id instead of allocating a new one.
+        -do not have a literal timeline, i.e., repeated events collapse and you lose 'how many times/when exactly aspect'.
+        -labeled experimental at time of writing since reduces clutter but changes temporal semantics
 
   • Long-term EnvObservation → WorldGraph injection (this is enforced):
-      mode=changes  = write pred:* only when a state-slot changes (posture, proximity:mom, hazard:cliff, ...).
+      mode=changes => write pred:* only when a state-slot changes (posture, proximity:mom, hazard:cliff, ...).
                       optional reassert_steps can re-emit unchanged slots periodically.
-      mode=snapshot = write every observed pred:* each tick (old behavior).
+                      -note that only pred:* is slot-deduped; cues remain episodic so repeated cues written unless
+                        use WorldGraph memory_mode=semantic or disable long-term env injection.
+      mode=snapshot => write every observed pred:* each tick (old behavior).
       keyframe_on_stage_change forces a one-tick "fresh snapshot" when scenario_stage changes (helps separate contexts).
+      -IF ENABLED=FALSE ( ctx.longterm_obs_enabled=False ) then envrt preds, cues do not get wirtten to worldGraph
+        (but BodyMap still updates and WorkingMap updates based on its own settings).
+      -IF ENABLED=SNAPSHOT then write all preds each tick (old write-everything behavior).
+      -IF ENABLED=CHANGES then write preds only when its "state slot" changes or optional reassert/keyframes change.
+            -IF reassert_steps=TRUE then even if a slot is unchanged, re-emit it after N controller steps, i.e., this
+                allows a period 're-observation'
+            -IF keyframe_on_stage=TRUE then when scenario_stage changes (e.g., birth-> struggle), it clears the slot
+                cache so the next tick writes a fresh snapshot, i.e., keyframe segmentation
+       [mental model for understanding the 'changes mode' -- it uses a 'slot cache' to avoid rewriting the same state over
+        and over again. If ctx.longterm_obs_mode="changes" then each environtment predicate token treated as (slot, value)
+        e.g., pred token proximity:mom:far therefore slot key is 'proximity:mom', and this way get, e.g., proximity:mom,
+        posture, hazard:cliff, etc. 'state slots'
+        -once have idea of state slots can understand if slot never been seen then emit('first'); if slot token differs then
+        emit('changed') but if token identical then skip (unless reassert_steps forces periodic re-write).  ]
+       -VERBOSE then prints reuse lines for each unchanged predicate slot.
 
   • RL policy selection (epsilon-greedy among triggered candidates):
-      explore: with probability epsilon, pick a random triggered policy.
-      exploit: otherwise pick by deficit band (rl_delta) then non_drive then learned q then stable order.
+    -This is policy selection behaviour when multiple policies trigger, i.e., the 'best policy' has to be picked and this
+        can be done under non-RL conditions or RL-conditions (see READMD.md or menu selection "Environment Step" for more details).
+        If False == NOT enbabled -- non-RL, i.e., deterministic selection of best policy: DELTA-band deficit values, then non-drive tie-break,
+            stable order tie-break.
+        IF True == enabled -- RL mode, i.e., epsilon-greedy selection of best policy:
+            IF EPSILON (ctx.rl_epsilon) == True, then certain % that by luck will "explore" rather than follow decifict
+                heuristic, and randomly pick a best policy; epsilon 0 to 1, thus .1 means 10% chance explore, 90% chance exploit
+                Note: 10% chance among all triggered candidate policies (i.e., policy still has to be triggered).
+            IF  EPSILON == 0.0 then 0% explore, 100% exploitation, i.e, deterministic selection of best policy
+            -RL exploitation to decide best policy: deficit values within DELTA band, then non_drive values, then learned q values,
+                then stable order.
+        -JUMP is an older knob ( ctx.jump ) is event-boundary jump scale for TemporalContext soft-clock whereby
+            sigma=per-tick drift, jump ='bigger change' at boundarie, how much we change when a boundary appears
+            IF EPSILON == None then effective_epsilon = ctx.jump, e.g., see something printed out like 'epsilon=None, effective=0.200',
+                which means you didn't set rl_epsilon so the software is using jump =0.200 as the exploration probability
+        ==> If want RL enabled but no randomness then set rl_enabled = ON, rl_epsilon = 0.0 (otherwise will get rl_epsilon = <jump value>
+        ==> If want RL to choose among policies even when deficits differ a bit, set a larger DELTA
 
-Tip: Press Enter to keep current values. Most prompts accept Enter=keep or Enter=toggle.\n""")
+
+Settings
+--------
+
+-Current Settings -- what the current settings are. You can change them in the sections which follow.
+- Note that to speed up entry of settings, you can pess Enter to keep current values.
+
+-Presets are quick configure shortcuts that set the long-term env obs injection knobs with the settings as shown
+    for you to choose, e.g., bio sets changes enabled=True, keyframes True and reassert every 25 steps  versus
+    e.g., debug sets snapshots enabled=True and verbose=True, so writes every predicate each tick
+
+--Phase7 s/w dev't  -- these settings are software development phase7 (scaffolding for converting the architecture's memory pipeline to
+    model described above); they are OFF by default.
+    -working_first - OFF by default and thus policies write into long-term WorldGraph (action/preds accumulate there).
+    -working_first=ON then policies execute into WorkingMap instead, and WorldGraph stays sparser with mostly keyframes,
+        cues, 'runs', once run_compress is on
+    -run_compress =TRUE then WorldGraph stops logging each repeated policy execution as its own action node, but instead
+        keeps one 'open run' per repeated policy and just updates its metadata.
+        e.g., instead of state=fallen -> action stand_up -> action stand_up -> action stand_up -> state=standing,
+        you get:  state=fallen -> action stand_up(run len=3) -> state=standing
+        -key idea is that one node represents a contiguous run of the same policy
+        -if a boundary occurs (stage/posture/nipple/zone signature changes, e.g.) or the policy changes, then close
+            the old run and start a new run node
+    -move_longterm_NOW-to_env -- moves long-term NOW to env state each step; about anchor semantics
+        -in changes mode, if env didn't change then don't write a new predicate which means NOW might not move
+        -if OFF then NOW only moves when something is written or at keyframes
+        -if ON then NOW actively repositioned to current env's binding state each step, and NOW behaves like currrent world pointer.
+
+-Clear WorkingMap -- resets WorkMap which can be useful when you want to start a fresh short-term window with resetting the
+    environment.
+-Clear long-term slot cache now -- a manual keyframe so that the next env observation is treated as 'first'
+
+""")
 
             # Ensure WorkingMap exists
             if getattr(ctx, "working_world", None) is None:
@@ -9074,6 +9530,7 @@ Tip: Press Enter to keep current values. Most prompts accept Enter=keep or Enter
             lt_verbose = bool(getattr(ctx, "longterm_obs_verbose", False))
 
             print("Current settings:")
+            print(f"  phase7 s/w dev't: working_first={bool(getattr(ctx,'phase7_working_first',False))} run_compress={bool(getattr(ctx,'phase7_run_compress',False))} run_verbose={bool(getattr(ctx,'phase7_run_verbose',False))} move_NOW_to_env={bool(getattr(ctx,'phase7_move_longterm_now_to_env',False))}")
             print(f"  RL: enabled={enabled_now} epsilon={eps_now!r} effective={eff_eps:.3f} delta={delta_now:.3f} (explore={explore_steps}, exploit={exploit_steps})")
             print(f"  WorkingMap: enabled={wm_enabled} verbose={wm_verbose} max_bindings={wm_max} bindings={wm_count}")
             print(f"  WorldGraph: memory_mode={world_mode}")
@@ -9175,6 +9632,44 @@ Tip: Press Enter to keep current values. Most prompts accept Enter=keep or Enter
                     ctx.working_max_bindings = max(0, int(float(rawm)))
                 except ValueError:
                     print("  (ignored: could not parse max_bindings)")
+
+             # ---- phase7 s/w devp't scaffolding memory pipeline knobs ----
+            print("\nphase7 s/w devp't memory pipeline (experimental):")
+            raw = input("working_first (execute policies in WorkingMap)? [Enter=toggle | on | off]: ").strip().lower()
+            if raw in ("on", "true", "1", "yes", "y"):
+                ctx.phase7_working_first = True
+            elif raw in ("off", "false", "0", "no", "n"):
+                ctx.phase7_working_first = False
+            elif raw == "":
+                ctx.phase7_working_first = not bool(getattr(ctx, "phase7_working_first", False))
+
+            raw = input("run_compress (compress repeated policy actions in long-term WorldGraph)? [Enter=toggle | on | off]: ").strip().lower()
+            if raw in ("on", "true", "1", "yes", "y"):
+                ctx.phase7_run_compress = True
+                # If we are compressing actions, it's usually because we want long-term WorldGraph sparse.
+                ctx.phase7_working_first = True
+            elif raw in ("off", "false", "0", "no", "n"):
+                ctx.phase7_run_compress = False
+            elif raw == "":
+                ctx.phase7_run_compress = not bool(getattr(ctx, "phase7_run_compress", False))
+                if bool(getattr(ctx, "phase7_run_compress", False)):
+                    ctx.phase7_working_first = True
+
+            raw = input("run_verbose (print run-compression debug lines)? [Enter=toggle | on | off]: ").strip().lower()
+            if raw in ("on", "true", "1", "yes", "y"):
+                ctx.phase7_run_verbose = True
+            elif raw in ("off", "false", "0", "no", "n"):
+                ctx.phase7_run_verbose = False
+            elif raw == "":
+                ctx.phase7_run_verbose = not bool(getattr(ctx, "phase7_run_verbose", False))
+
+            raw = input("move_longterm_NOW_to_env (move long-term NOW to env state each step)? [Enter=toggle | on | off]: ").strip().lower()
+            if raw in ("on", "true", "1", "yes", "y"):
+                ctx.phase7_move_longterm_now_to_env = True
+            elif raw in ("off", "false", "0", "no", "n"):
+                ctx.phase7_move_longterm_now_to_env = False
+            elif raw == "":
+                ctx.phase7_move_longterm_now_to_env = not bool(getattr(ctx, "phase7_move_longterm_now_to_env", False))
 
             # ---- WorldGraph memory_mode ----
             if hasattr(world, "set_memory_mode") and hasattr(world, "get_memory_mode"):

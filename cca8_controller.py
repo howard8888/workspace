@@ -1321,7 +1321,7 @@ class FollowMom(Primitive):
         a = _add_action(world, ACTION_LOOK_AROUND, attach="now", meta=meta)
         b = _add_pred(world, STATE_ALERT, meta=meta)
         world.add_edge(a, b, "then")
-        return self._success(reward=0.1, notes="idling/alert")
+        return self._success(reward=0.1, notes="idling/alert", binding=b)
 
 
 class ExploreCheck(Primitive):
@@ -1446,8 +1446,8 @@ class Rest(Primitive):
         # Normal resting behaviour: reduce fatigue and assert 'resting'.
         drives.fatigue = max(0.0, drives.fatigue - 0.2)
         meta = _policy_meta(ctx, self.name)
-        _add_pred(world, STATE_RESTING, attach="now", meta=meta)
-        return self._success(reward=0.2, notes="resting")
+        b = _add_pred(world, STATE_RESTING, attach="now", meta=meta)
+        return self._success(reward=0.2, notes="resting", binding=b)
 
 
 # -----------------------------------------------------------------------------

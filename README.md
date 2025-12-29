@@ -782,6 +782,11 @@ WorldGraph bindings are small. Rich content (vectors, sensory payloads, scene de
 Bindings can carry lightweight pointers to these engrams so you can keep the symbolic index compact while still retaining rich data.
 
 
+
+
+
+
+
 ### Mammalian / Human memory systems and their CCA8 equivalents (conceptual map)
 
 This table is a *conceptual mapping*, not a claim of exact neuroanatomical equivalence. It is intended to help readers orient themselves: “if I know the human memory taxonomy, where does that live in CCA8?”
@@ -804,6 +809,7 @@ Notes:
 - Sensory memory: iconic/echoic/haptic timescales and cortical associations are listed in the companion document; CCA8 treats these as the **incoming observation stream** and can store them longer/shorter as needed.
 - Working memory components and their cognitive roles are listed in the companion document; in CCA8 they map naturally onto “what is currently in focus” + the action selection machinery + short-term traces.
 - Episodic vs semantic vs procedural vs priming/conditioning are listed in the companion document; CCA8’s current equivalents are WorldGraph for episodic/semantic indexing and Controller policies/autonomic machinery for procedural/conditioning-style behavior shaping.
+
 
 
 
@@ -844,7 +850,267 @@ WorkingMap lets us record the detailed stream without forcing long‑term memory
   - Optionally clear WorkingMap
 
 
+
+
+
+
+
+### Menu Menu Selection — Control Panel (RL policy selection + memory knobs)
+
+This menu selection is the main “knobs and buttons” control panel for CCA8 experiments. It lets you control:
+
+how policies are selected (deterministic vs RL-assisted),
+
+whether EnvObservation is written to WorkingMap, WorldGraph, or both,
+
+how aggressively long-term environment observations are deduplicated,
+
+and (Phase VII) whether the system logs long-term actions as “motor program runs” rather than decision ticks.
+
+**Mental model (what these knobs are really controlling)**
+
+At runtime, it helps to keep three graphs in mind:
+
+BodyMap (ctx.body_world)
+A tiny, safety-critical “what I believe right now” register (posture, mom distance, nipple state, shelter/cliff). Used for gating, safety, and tie-break logic.
+
+WorkingMap (ctx.working_world)
+A short-term raw trace scratchpad (dense, tick-level). It is pruned by working_max_bindings and is intended to hold detail that we do not want to commit to long-term memory.
+
+WorldGraph (world)
+The durable long-term episode index that persists (autosave/save session). It holds a sparse symbolic record for planning/inspection.
+
+EnvObservation injection follows this fixed pipeline:
+
+EnvObservation → BodyMap update (always) → WorkingMap mirror (if enabled) → WorldGraph injection (if enabled)
+
+So WorkingMap is normally a mirror, not a redirect: if WorkingMap and long-term env obs are both enabled, EnvObservation is written to both (WorkingMap every tick, WorldGraph according to its long-term injection settings).
+
+**Presets (long-term env obs)**
+
+Presets are shortcuts that set only the “Long-term EnvObservation → WorldGraph injection” knobs.
+
+bio
+mode=changes, keyframes on, reassert_steps=25
+Rationale: sparse long-term growth, but periodically re-assert stable state slots to mimic re-observation.
+
+sparse
+mode=changes, keyframes on, reassert_steps=0
+Rationale: minimal long-term growth (write only on slot change + keyframes).
+
+debug
+mode=snapshot, verbose on
+Rationale: maximal visibility (writes every env predicate each tick; will be noisy).
+
+**RL policy selection knobs (epsilon-greedy among triggered candidates)**
+
+These knobs only matter when more than one policy is eligible/triggered and we must choose a single winner.
+
+rl_enabled (bool)
+
+OFF: deterministic heuristic selection (deficit → non-drive priority → stable order).
+
+ON: epsilon-greedy selection:
+
+explore (probability epsilon): choose a random policy from the triggered candidate set.
+
+exploit (probability 1 - epsilon): choose by deficit and tie-break logic (see rl_delta below).
+
+rl_epsilon (float in [0.0, 1.0] or None)
+
+Exploration probability.
+
+0.0 means 0% explore (always exploit).
+
+0.10 means 10% explore.
+
+Values are clamped to [0.0, 1.0].
+
+Important: if rl_epsilon is None, the “effective epsilon” falls back to ctx.jump.
+This is a convenience reuse of the existing jump knob (originally meant for TemporalContext boundaries), and it means RL can still explore even if epsilon prints as None.
+
+If you want RL enabled but no randomness, explicitly set:
+
+rl_enabled = on
+
+rl_epsilon = 0.0
+
+rl_delta (float, >= 0.0)
+
+Defines the “near-best deficit band” inside the exploit branch:
+
+Compute best_deficit = max(deficit(policy)) over triggered candidates.
+
+Define near_best as those policies where (best_deficit - deficit(policy)) <= rl_delta.
+
+Meaning:
+
+rl_delta = 0.0: learning/tie-breaks only matter on exact deficit ties (most conservative).
+
+larger rl_delta: more policies qualify as “near-best” and learning can influence more choices.
+
+Within the near-best band, the system breaks ties by:
+
+non-drive priority (explicit tie-break logic),
+
+learned value estimate q (skill ledger),
+
+then stable order as the final deterministic fallback.
+
+**WorkingMap (short-term raw trace)**
+
+working_enabled (bool)
+
+ON: mirror every EnvObservation into WorkingMap (dense per-tick trace).
+
+OFF: WorkingMap exists but receives no new env predicates/cues.
+
+Note: WorkingMap mirroring does not automatically disable long-term injection; if long-term env obs is still enabled, EnvObservation will be written to both.
+
+working_verbose (bool)
+
+ON: prints per-tick [env→working] ... lines for env injection into WorkingMap.
+
+working_max_bindings (int)
+
+Caps WorkingMap size; pruning deletes older non-anchor bindings to prevent unlimited growth.
+
+**Phase VII memory pipeline (experimental)**
+
+These knobs are used to move toward a WorkingMap-first pipeline and “motor program runs, not decision ticks”.
+
+phase7_working_first (bool)
+
+If ON, the controller executes policy writes into WorkingMap rather than into the long-term WorldGraph. This helps keep WorldGraph sparse while WorkingMap remains dense.
+
+This is currently most relevant to the closed-loop environment run (menu 37).
+
+phase7_run_compress (bool)
+
+If ON, long-term WorldGraph records policy actions as compressed “runs” rather than per-tick action spam.
+
+High-level behavior:
+
+If the same policy repeats across consecutive env steps, do not create a new long-term action binding each tick.
+
+Instead, extend one run record (run_len++) and update the run’s end-state pointer.
+
+Split/close the run on boundary signatures (e.g., stage/posture/nipple/zone changes) or when policy changes.
+
+Net effect:
+
+Long-term WorldGraph becomes: keyframe state → run(action) → keyframe state → …
+
+In the menu implementation, enabling run_compress typically turns working_first on automatically (because run compression makes the most sense when dense tick-level detail is kept in WorkingMap).
+
+phase7_run_verbose (bool)
+
+If ON, prints run-compression debug lines such as: start / extend / close run.
+
+phase7_move_longterm_now_to_env (bool)
+
+Controls anchor semantics for long-term NOW in mode=changes.
+
+OFF: NOW only moves when new long-term predicate bindings are written (or at keyframes).
+
+ON: long-term NOW is actively moved to the current environment “state binding” each step (useful for NOW-relative debugging when changes-mode suppresses writes).
+
+**WorldGraph memory_mode (long-term storage strategy)**
+episodic (default)
+
+Every add_predicate(...) / add_cue(...) creates a fresh binding.
+This preserves a literal “event log” timeline (new node per occurrence), which is easiest for ordering and debugging.
+
+semantic (experimental)
+
+Identical pred/cue tokens are consolidated (reused) to reduce clutter.
+This reduces node explosion but changes temporal semantics: repeated occurrences can collapse onto one node. Use with caution if you rely on “the chain itself” as a literal time axis.
+
+**Long-term EnvObservation → WorldGraph injection**
+longterm_obs_enabled (bool)
+
+ON: env predicates/cues are written to WorldGraph (subject to mode settings).
+
+OFF: env predicates/cues are not written to WorldGraph (BodyMap still updates; WorkingMap still mirrors if enabled).
+
+longterm_obs_mode (changes vs snapshot)
+
+snapshot: write every observed env predicate each tick (dense, old behavior).
+
+changes: treat env predicates as “state slots” (posture, proximity:mom, hazard:cliff, …) and write only when a slot changes.
+
+In changes mode, the system deduplicates per slot using a slot cache:
+
+first time a slot is seen → emit (“first”)
+
+slot value changes → emit (“changed”)
+
+unchanged → skip (unless reasserted)
+
+longterm_obs_reassert_steps (int)
+
+In changes mode: re-emit unchanged slots periodically after N controller steps (re-observation).
+
+longterm_obs_keyframe_on_stage_change (bool)
+
+Only meaningful in changes mode.
+
+If ON: when scenario_stage changes (birth → struggle → first_stand …), clear the slot cache so the current state is written again as a keyframe (even if some values are unchanged). This is why you see a KEYFRAME log line and then a “rewrite” of stable predicates at stage boundaries.
+
+longterm_obs_keyframe_log (bool)
+
+If ON: print a one-line KEYFRAME message when a keyframe boundary clears the slot cache (helpful for debugging long-term representation).
+
+longterm_obs_verbose (bool)
+
+In changes mode: print verbose reuse lines when slots are unchanged (can be noisy).
+
+**Clear actions (manual resets without env.reset)**
+Clear WorkingMap now?
+
+Clears WorkingMap (fresh short-term trace window without resetting the environment).
+
+Clear long-term slot cache now?
+
+Clears the long-term slot cache so the next env observation is treated as “first” for each slot (manual keyframe).
+
+**Practical starter configs**
+
+Minimal long-term growth (recommended default for closed-loop runs)
+
+preset: sparse
+
+RL: off
+
+WorkingMap: on
+
+WorldGraph memory_mode: episodic
+
+Phase VII: off
+
+Debug “why didn’t this write?”
+
+preset: debug
+
+WorkingMap verbose: on (briefly)
+
+Phase VII experiment (WorkingMap-first + long-term runs)
+
+WorkingMap: on
+
+Phase VII: working_first=on, run_compress=on, run_verbose=on briefly
+
+long-term env obs: changes + keyframes, reassert=0
+
+WorldGraph: episodic (for now)
+
 ---
+
+
+
+
+
+
 
 ## WorldGraph memory modes: episodic vs semantic
 

@@ -55,6 +55,7 @@ from collections import deque
 from typing import Dict, List, Set, Optional, TypedDict, Iterator
 import itertools
 import heapq
+from datetime import datetime
 import os
 
 
@@ -178,12 +179,22 @@ class TagLexicon:
                 "valence:like",
                 "valence:hate",
             },
+
             "action": {
                 "push_up",
                 "extend_legs",
                 "look_around",
                 "orient_to_mom",
+                "stand_up",
+                "seek_nipple",
+                "follow_mom",
+                "rest",
+                "recover_fall",
+                "recover_miss",
+                "suckle",
+                "explore_check",
             },
+
 
             "cue": {
                 "vision:silhouette:mom",
@@ -373,6 +384,23 @@ class WorldGraph:
         # Memory / consolidation mode (NEW)
         self._memory_mode: str = "episodic"
         self._semantic_tag_index: Dict[str, str] = {}  # tag -> canonical binding_id (semantic mode only)
+
+        # Prominence / salience bookkeeping
+        #
+        # This is intentionally lightweight: it is NOT a full learning system. It is a
+        # repetition/recency signal that is useful when:
+        #   - semantic mode collapses identical tags into one node, or
+        #   - long-term env injection runs in "changes" mode (unchanged facts are skipped).
+        #
+        # We maintain:
+        #   1) per-binding stats in Binding.meta["_prominence"] (persists with the binding)
+        #   2) per-tag stats in self._tag_prominence (runtime only; convenience for reports)
+        #
+        # Activation ("act") is a decayed count that grows with repeated observations and
+        # decays with time (controller_steps / ticks). Decay is per-step.
+        self._prominence_decay: float = 0.97
+        self._tag_prominence: Dict[str, dict] = {}
+
         self.set_memory_mode(memory_mode)
 
     # --- tag policy / developmental stage -----------------------------------
@@ -543,6 +571,155 @@ class WorldGraph:
         for bid in sorted(self._bindings.keys(), key=_bid_key):
             self._semantic_index(bid)
 
+
+        # --- Prominence / salience --------------------------------------------------------------
+
+    @staticmethod
+    def _prominence_step_from_meta(meta: Optional[dict]) -> tuple[Optional[int], Optional[str]]:
+        """Extract a discrete 'time step' from a meta dict.
+
+        We use whichever counter is available, in preference order:
+          1) controller_steps  (env-loop decision ticks)
+          2) ticks             (older internal tick counter used by policies)
+          3) env_step          (if a caller supplies it)
+
+        Returns:
+            (step_value, step_key) where step_value may be None.
+        """
+        if not isinstance(meta, dict):
+            return None, None
+        for k in ("controller_steps", "ticks", "env_step"):
+            v = meta.get(k)
+            if isinstance(v, int):
+                return v, k
+        return None, None
+
+
+    def _prominence_bump_record(self, rec: dict, meta: Optional[dict], *, reason: str) -> None:
+        """Update one prominence record in-place.
+
+        Fields (all optional):
+          - obs:    how many times this thing was observed/referenced
+          - writes: how many times we allocated a NEW binding id for it
+          - reuses: how many times we reused an existing binding (semantic consolidation)
+          - last_step / step_key: last discrete step we saw
+          - act: decayed activation (EMA-like), grows with repetition, decays with time
+
+        Notes:
+          - We intentionally keep this lightweight and robust; prominence is a bookkeeping
+            signal, not a learning system.
+          - 'act' uses self._prominence_decay per step. If we cannot infer a step,
+            we apply one decay step.
+        """
+        rec["obs"] = int(rec.get("obs", 0)) + 1
+        if reason == "write":
+            rec["writes"] = int(rec.get("writes", 0)) + 1
+        elif reason == "reuse":
+            rec["reuses"] = int(rec.get("reuses", 0)) + 1
+
+        step, step_key = self._prominence_step_from_meta(meta)
+        decay = float(rec.get("decay", self._prominence_decay))
+
+        act_prev = float(rec.get("act", 0.0))
+        if isinstance(step, int):
+            last_step = rec.get("last_step")
+            dt = 0
+            if isinstance(last_step, int) and step >= last_step:
+                dt = step - last_step
+
+            rec["act"] = act_prev * (decay ** dt) + 1.0
+            rec["last_step"] = step
+            rec["step_key"] = step_key
+        else:
+            rec["act"] = act_prev * decay + 1.0
+
+        if isinstance(meta, dict) and meta:
+            rec["last_meta"] = dict(meta)
+            created_at = meta.get("created_at")
+            if isinstance(created_at, str):
+                rec["last_seen_at"] = created_at
+            else:
+                rec["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
+
+
+    def bump_prominence(self, bid: str, *, tag: Optional[str] = None,
+                        meta: Optional[dict] = None, reason: str = "observe") -> None:
+        """Bump prominence for a binding (and optionally for its canonical tag).
+
+        This is used in two places:
+          1) add_predicate/add_cue: when we create or reuse a binding id
+          2) changes-mode env injection: when a fact is re-observed but we intentionally
+             skip creating a new long-term binding (no-spam).
+
+        Args:
+            bid: binding id to update (e.g., 'b42')
+            tag: optional canonical tag ('pred:...' or 'cue:...') used for the per-tag table
+            meta: provenance dict, used to capture last_seen_step and last_meta
+            reason: 'observe' | 'write' | 'reuse' (controls writes/reuses counters)
+        """
+        b = self._bindings.get(bid)
+        if b is None:
+            return
+
+        # Per-binding stats (persist with the binding)
+        p = b.meta.setdefault("_prominence", {})
+        self._prominence_bump_record(p, meta, reason=reason)
+
+        # Back-compat: keep minimal consolidation telemetry for existing tools.
+        c = b.meta.setdefault("_consolidated", {})
+        c["seen"] = int(p.get("obs", 0))
+        if isinstance(p.get("last_meta"), dict):
+            c["last_meta"] = dict(p["last_meta"])
+
+        # Per-tag stats (runtime convenience; not persisted unless you serialize it yourself)
+        if isinstance(tag, str):
+            t = self._tag_prominence.setdefault(tag, {})
+            self._prominence_bump_record(t, meta, reason=reason)
+
+
+    def prominence_top(self, *, n: int = 12, sort_by: str = "act",
+                       min_obs: int = 2) -> list[tuple[str, dict]]:
+        """Return the top-N tags by prominence.
+
+        This report uses the runtime per-tag table (self._tag_prominence). If the table
+        is empty (e.g., immediately after loading a world from disk), it returns [].
+
+        Args:
+            n: number of rows to return
+            sort_by: 'act' (default) or 'obs'
+            min_obs: minimum observations required to show a tag
+
+        Returns:
+            List of (tag, record) pairs sorted by the requested metric.
+        """
+        if not isinstance(self._tag_prominence, dict) or not self._tag_prominence:
+            return []
+
+        key = "act" if (sort_by or "act").strip().lower() == "act" else "obs"
+
+        items: list[tuple[str, dict]] = []
+        for tag, rec in self._tag_prominence.items():
+            try:
+                obs = int(rec.get("obs", 0))
+            except Exception:
+                obs = 0
+            if obs < int(min_obs):
+                continue
+            items.append((tag, rec))
+
+
+        def _score(item: tuple[str, dict]) -> float:
+            rec = item[1]
+            try:
+                if key == "obs":
+                    return float(int(rec.get("obs", 0)))
+                return float(rec.get("act", 0.0))
+            except Exception:
+                return 0.0
+
+        items.sort(key=_score, reverse=True)
+        return items[:max(0, int(n))]
+
     # ------------------------- internals -------------------------
 
     def _next_id(self) -> str:
@@ -704,14 +881,8 @@ class WorldGraph:
         if existing:
             prev_latest = self._latest_binding_id
             self._latest_binding_id = existing
-
-            # lightweight consolidation telemetry (safe + optional)
-            if meta:
-                b_exist = self._bindings.get(existing)
-                if b_exist is not None:
-                    c = b_exist.meta.setdefault("_consolidated", {})
-                    c["seen"] = int(c.get("seen", 0)) + 1
-                    c["last_meta"] = dict(meta)
+            # Prominence bookkeeping: semantic consolidation reused an existing binding
+            self.bump_prominence(existing, tag=tag, meta=meta, reason="reuse")
 
             def _edge_exists(src_id: str, dst_id: str, label: str) -> bool:
                 src = self._bindings.get(src_id)
@@ -727,7 +898,6 @@ class WorldGraph:
             elif att == "latest" and prev_latest and prev_latest in self._bindings:
                 if prev_latest != existing and not _edge_exists(prev_latest, existing, "then"):
                     self.add_edge(prev_latest, existing, label="then", meta=dict(meta or {}))
-
             return existing
 
         # --- allocate id and construct a fresh binding (episodic behavior) ---
@@ -756,6 +926,9 @@ class WorldGraph:
             self.add_edge(src, bid, label="then", meta=dict(meta or {}))
         elif att == "latest" and prev_latest:
             self.add_edge(prev_latest, bid, label="then", meta=dict(meta or {}))
+
+        # Prominence bookkeeping: new binding written
+        self.bump_prominence(bid, tag=tag, meta=meta, reason="write")
 
         # Index for semantic reuse if enabled
         self._semantic_index(bid)
@@ -796,19 +969,16 @@ class WorldGraph:
         if existing:
             prev_latest = self._latest_binding_id
             self._latest_binding_id = existing
+            # Prominence bookkeeping: semantic consolidation reused an existing binding
+            self.bump_prominence(existing, tag=tag, meta=meta, reason="reuse")
 
-            if meta:
-                b_exist = self._bindings.get(existing)
-                if b_exist is not None:
-                    c = b_exist.meta.setdefault("_consolidated", {})
-                    c["seen"] = int(c.get("seen", 0)) + 1
-                    c["last_meta"] = dict(meta)
 
             def _edge_exists(src_id: str, dst_id: str, label: str) -> bool:
                 src = self._bindings.get(src_id)
                 if not src:
                     return False
                 return any(e.get("to") == dst_id and e.get("label") == label for e in src.edges)
+
 
             if att == "now":
                 src = self.ensure_anchor("NOW")
@@ -839,10 +1009,11 @@ class WorldGraph:
         elif att == "latest" and prev_latest:
             self.add_edge(prev_latest, bid, label="then", meta=dict(meta or {}))
 
+        # Prominence bookkeeping: new binding written
+        self.bump_prominence(bid, tag=tag, meta=meta, reason="write")
         self._semantic_index(bid)
+
         return bid
-
-
 
     # ------------------------- engram / signal bridge -------------------------
 
