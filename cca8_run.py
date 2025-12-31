@@ -209,6 +209,11 @@ class Ctx:
     working_verbose: bool = False        # print per-tick WorkingMap injection lines
     working_max_bindings: int = 250      # cap WorkingMap size (anchors are preserved)
     working_move_now: bool = True       # move WorkingMap NOW to the latest predicate each env tick
+    # WorkingMap MapSurface (Phase VII): stable map updated in place (not a tick log).
+    working_mapsurface: bool = True      # env obs updates entity nodes in place (no repeated pred/cue bindings)
+    working_trace: bool = False          # debug only: also append a per-tick trace (can grow quickly)
+    wm_entities: dict[str, str] = field(default_factory=dict)            # entity_id -> binding id (in working_world)
+    wm_last_env_cues: dict[str, set[str]] = field(default_factory=dict)  # entity_id -> last injected cue tags
 
     # memory pipeline knobs (opt-in; defaults preserve Phase VI behavior)
     phase7_working_first: bool = False    # execute policies in WorkingMap; keep long-term WorldGraph sparse
@@ -477,17 +482,21 @@ def init_working_world() -> cca8_world_graph.WorldGraph:
 
 
 def reset_working_world(ctx) -> None:
-    """Reset ctx.working_world to a fresh WorkingMap instance.
+    """Reset ctx.working_world to a fresh WorkingMap instance (and clear MapSurface caches).
     """
     try:
         ctx.working_world = init_working_world()
+        # MapSurface caches live on ctx (slots=True → must be explicit)
+        ctx.wm_entities.clear()
+        ctx.wm_last_env_cues.clear()
     except Exception:
         # If ctx is not writable for some reason, fail silently.
         pass
 
 
 def _wm_display_id(bid: str) -> str:
-    """Display-only: show WorkingMap ids as wN while keeping real ids as bN."""
+    """Display-only: show WorkingMap ids as wN while keeping real ids as bN.
+    """
     try:
         if isinstance(bid, str) and bid.startswith("b") and bid[1:].isdigit():
             return "w" + bid[1:]
@@ -503,6 +512,7 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
     if ww is None:
         print(f"{title}: (no working_world)")
         return
+
     def _bid_key(bid: str) -> int:
         try:
             return int(bid[1:]) if bid.startswith("b") else 10**9
@@ -513,11 +523,26 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
     tail = all_ids[-max(1, int(n)) :]
 
     print(f"{title}: last {len(tail)} binding(s) of {len(all_ids)} total")
+
     for bid in tail:
         b = ww._bindings[bid]  # pylint: disable=protected-access
-        tags = ", ".join(sorted(b.tags))
-        print(f"  {_wm_display_id(bid)} ({bid}): [{tags}] edges={len(b.edges)}")
+        tags = ", ".join(sorted(getattr(b, "tags", []) or []))
 
+        edges = getattr(b, "edges", []) or []
+        # Preview up to 6 outgoing edges
+        preview: list[str] = []
+        if isinstance(edges, list):
+            for e in edges[:6]:
+                if not isinstance(e, dict):
+                    continue
+                rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
+                dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                if isinstance(dst, str):
+                    preview.append(f"{rel}:{_wm_display_id(dst)}")
+        more = f" (+{len(edges)-6} more)" if isinstance(edges, list) and len(edges) > 6 else ""
+        pv = ", ".join(preview) + more if preview else "(none)"
+
+        print(f"  {_wm_display_id(bid)} ({bid}): [{tags}] out={len(edges)} edges={pv}")
 
 
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
@@ -2162,9 +2187,21 @@ class PolicyRuntime:
             status = result.get("status")
             reward = result.get("reward")
             binding = result.get("binding")
+            binding_disp = binding
+            try:
+                # If we executed into WorkingMap, label binding ids as wN for display.
+                if (
+                    isinstance(binding, str)
+                    and exec_world is not None
+                    and ctx is not None
+                    and exec_world is getattr(ctx, "working_world", None)
+                ):
+                    binding_disp = f"{_wm_display_id(binding)} ({binding})"
+            except Exception:
+                binding_disp = binding
             if status and status != "noop":
                 rtxt = f"{reward:+.2f}" if isinstance(reward, (int, float)) else "n/a"
-                exec_line = f"[executed] {label} ({status}, reward={rtxt}) binding={binding}\n"
+                exec_line = f"[executed] {label} ({status}, reward={rtxt}) binding={binding_disp}\n"
 
         #  one-line candidate+winner summary
         pick_debug_line = ""
@@ -2235,15 +2272,25 @@ class PolicyRuntime:
         post_expl = gate_for_label.explain(world, drives, ctx) if gate_for_label.explain else "explain: (not provided)"
         rl_line = (rl_pick_note + "\n") if rl_pick_note else ""
 
+        # Where did we execute the chosen policy?
+        where_exec = "WG"
+        try:
+            if ctx is not None and world_exec is getattr(ctx, "working_world", None):
+                where_exec = "WM"
+        except Exception:
+            where_exec = "WG"
+        maps_line = f"[maps] selection_on=WG execute_on={where_exec}\n"
+
         return (
             f"{label} (added {delta_n} bindings)\n"
             f"{pick_debug_line}"
             f"{rl_line}"
             f"{exec_line}"
+            f"{maps_line}"
             f"pre:  {pre_expl}\n"
-            f"base: {base}\n"
-            f"foa:  {foa}\n"
-            f"cands:{cands}\n"
+            f"wg_base: {base}\n"
+            f"wg_foa:  {foa}\n"
+            f"wg_cands:{cands}\n"
             f"post: {post_expl}"
         )
 
@@ -5084,77 +5131,482 @@ def _prune_working_world(ctx) -> None:
 
 
 def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
-    """Mirror EnvObservation into the short-term WorkingMap (ctx.working_world).
-
-    This is intentionally a "write everything" trace (episodic). It is independent of the
-    long-term WorldGraph injection mode (snapshot vs changes).
-
-    Behavior:
-      - Creates ctx.working_world if missing
-      - Writes all env predicates + cues for this tick
-      - Uses attach=now for the first predicate, then attach=latest (forms a short chain)
-      - Prunes WorkingMap to ctx.working_max_bindings (anchors preserved)
-
-    Returns:
-        {"predicates": [...], "cues": [...]} where items are normalized tokens WITHOUT pred:/cue: prefixes.
     """
-    if ctx is None:
-        return {"predicates": [], "cues": []}
+    Mirror EnvObservation into WorkingMap.
 
-    if getattr(ctx, "working_world", None) is None:
-        ctx.working_world = init_working_world()
+    Phase VII default: MapSurface (stable map)
+    -----------------------------------------
+    - We maintain *stable* entity bindings (SELF, MOM, SHELTER, CLIFF, ...).
+    - We update pred:* and cue:* tags IN PLACE (so step 2 does NOT create new posture/mom/etc. nodes).
+    - We store a 2D "schematic" coordinate frame in binding.meta["wm"]["pos"] (distorted, subway-map style).
 
-    ww = ctx.working_world
+    Optional debug: if ctx.working_trace=True, we also append a per-tick trace using add_predicate/add_cue
+    (old behaviour) after updating the map.
+    """
+    ww = getattr(ctx, "working_world", None)
     if ww is None:
-        return {"predicates": [], "cues": []}
+        try:
+            ctx.working_world = init_working_world()
+            ww = ctx.working_world
+        except Exception:
+            return {"predicates": [], "cues": []}
 
-    # Be permissive in WorkingMap: it's meant to capture raw traces.
-    try:
-        ww.set_tag_policy("allow")
-        ww.set_stage("neonate")
-        ww.ensure_anchor("NOW")
-        ww.ensure_anchor("NOW_ORIGIN")
-    except Exception:
-        pass
-
+    meta = {"source": "HybridEnvironment", "controller_steps": getattr(ctx, "controller_steps", None)}
     created_preds: list[str] = []
     created_cues: list[str] = []
 
-    # Normalize tokens (tests may pass "pred:*" / "cue:*" already)
+    # -------------------- small helpers (robust to tags=list vs tags=set) --------------------
+    def _tagset_of(bid: str) -> set[str]:
+        b = ww._bindings.get(bid)
+        if b is None:
+            return set()
+        ts = getattr(b, "tags", None)
+        if ts is None:
+            b.tags = set()
+            return b.tags
+        if isinstance(ts, set):
+            return ts
+        if isinstance(ts, list):
+            s = set(ts)
+            b.tags = s
+            return s
+        try:
+            s = set(ts)  # last resort
+            b.tags = s
+            return s
+        except Exception:
+            b.tags = set()
+            return b.tags
+
+    def _sanitize_entity_anchor(entity_id: str) -> str:
+        s = (entity_id or "unknown").strip().upper()
+        out: list[str] = []
+        for ch in s:
+            out.append(ch if ch.isalnum() else "_")
+        s = "".join(out)
+        while "__" in s:
+            s = s.replace("__", "_")
+        s = s.strip("_") or "UNKNOWN"
+        return f"WM_ENT_{s}"
+
+    def _upsert_edge(src: str, dst: str, label: str, meta2: dict | None = None) -> None:
+        b = ww._bindings.get(src)
+        if b is None:
+            return
+        edges = getattr(b, "edges", None)
+        if edges is None or not isinstance(edges, list):
+            b.edges = []
+            edges = b.edges
+        # update if exists
+        for e in edges:
+            try:
+                to_ = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                lab = e.get("label") or e.get("rel") or e.get("relation")
+                if to_ == dst and lab == label:
+                    if isinstance(meta2, dict) and meta2:
+                        em = e.get("meta")
+                        if isinstance(em, dict):
+                            em.update(meta2)
+                        else:
+                            e["meta"] = dict(meta2)
+                    return
+            except Exception:
+                continue
+        edges.append({"to": dst, "label": label, "meta": dict(meta2 or {})})
+
+    def _ensure_entity(entity_id: str, *, kind_hint: str | None = None) -> str:
+        eid = (entity_id or "unknown").strip().lower()
+        # cached?
+        bid = (getattr(ctx, "wm_entities", {}) or {}).get(eid)
+        if isinstance(bid, str) and bid in ww._bindings:
+            return bid
+
+        anchor_name = "WM_SELF" if eid == "self" else _sanitize_entity_anchor(eid)
+        try:
+            bid = ww.ensure_anchor(anchor_name)
+        except Exception:
+            # fallback: a plain node if anchors fail for any reason
+            bid = ww.add_predicate(f"wm_entity:{eid}", attach="none", meta={"created_by": "wm_mapsurface"})
+
+        # mark + cache
+        try:
+            ctx.wm_entities[eid] = bid
+        except Exception:
+            pass
+
+        tags = _tagset_of(bid)
+        tags.add("wm:entity")
+        tags.add(f"wm:eid:{eid}")
+        if isinstance(kind_hint, str) and kind_hint:
+            tags.add(f"wm:kind:{kind_hint}")
+
+        # attach under WM_ROOT so predicates are reachable from NOW (we pin NOW to WM_ROOT each tick)
+        try:
+            _upsert_edge(root_bid, bid, "wm_has", {"created_by": "wm_mapsurface"})
+        except Exception:
+            pass
+
+        # init wm meta
+        try:
+            b = ww._bindings.get(bid)
+            if b is not None and isinstance(getattr(b, "meta", None), dict):
+                wmm = b.meta.setdefault("wm", {})
+                if isinstance(wmm, dict):
+                    wmm.setdefault("entity_id", eid)
+        except Exception:
+            pass
+
+        return bid
+
+    def _replace_pred_slot_on_entity(bid: str, slot_prefix: str, new_full_tag: str) -> bool:
+        """
+        Ensure entity has exactly one pred tag for this slot family, e.g.:
+          slot_prefix='posture'         → pred:posture:*
+          slot_prefix='proximity:mom'   → pred:proximity:mom:*
+        Returns True if the stored tag actually changed.
+        """
+        tags = _tagset_of(bid)
+        pref = f"pred:{slot_prefix}:"
+        old = None
+        for t in list(tags):
+            if isinstance(t, str) and t.startswith(pref):
+                old = t
+                break
+        if old == new_full_tag:
+            return False
+        # remove all in that family, then add the new one
+        for t in list(tags):
+            if isinstance(t, str) and t.startswith(pref):
+                tags.discard(t)
+        tags.add(new_full_tag)
+        return True
+
+    def _entity_from_pred(tok: str) -> tuple[str, str]:
+        """
+        Return (entity_id, slot_prefix) from a predicate token (no 'pred:' prefix).
+        """
+        parts = (tok or "").split(":")
+        if not parts:
+            return ("self", "unknown")
+
+        head = parts[0]
+
+        if head == "posture":
+            return ("self", "posture")
+        if head in ("nipple", "milk"):
+            return ("self", head)
+
+        if head == "proximity" and len(parts) >= 3:
+            ent = parts[1]
+            return (ent, f"proximity:{ent}")
+
+        if head == "hazard" and len(parts) >= 3:
+            ent = parts[1]
+            return (ent, f"hazard:{ent}")
+
+        # fallback: treat as SELF attribute family
+        return ("self", head)
+
+    def _entity_from_cue(tok: str) -> str:
+        """
+        Heuristic: for cues like 'vision:silhouette:mom', assume the last segment is an entity id.
+        """
+        parts = (tok or "").split(":")
+        if len(parts) >= 2:
+            tail = parts[-1].strip().lower()
+            if tail:
+                return tail
+        return "self"
+
+    def _set_pos(bid: str, x: float, y: float, dist_m: float | None, dist_class: str | None) -> None:
+        b = ww._bindings.get(bid)
+        if b is None:
+            return
+        if not isinstance(getattr(b, "meta", None), dict):
+            b.meta = {}
+        wmm = b.meta.setdefault("wm", {})
+        if not isinstance(wmm, dict):
+            wmm = {}
+            b.meta["wm"] = wmm
+        wmm["pos"] = {"x": float(x), "y": float(y), "frame": "wm_schematic_v1"}
+        if dist_m is not None:
+            wmm["dist_m"] = float(dist_m)
+        if isinstance(dist_class, str) and dist_class:
+            wmm["dist_class"] = dist_class
+        wmm["last_seen_step"] = int(getattr(ctx, "controller_steps", 0) or 0)
+
+    def _dist_value_from_class(dist_class: str | None) -> float:
+        m = {
+            "touching": 0.2,
+            "close": 1.0,
+            "near": 1.2,
+            "reachable": 0.8,
+            "far": 5.0,
+        }
+        if dist_class is None:
+            return 3.0
+        return float(m.get(dist_class, 3.0))
+
+    def _raw_distance_guess(raw: dict, ent: str) -> float | None:
+        if not isinstance(raw, dict):
+            return None
+
+        # common keys
+        for k in (
+            f"distance_to_{ent}",
+            f"{ent}_distance",
+            f"{ent}_distance_m",
+            f"dist_{ent}",
+        ):
+            v = raw.get(k)
+            if isinstance(v, (int, float)):
+                return float(v)
+
+        # positions: (kid_position, mom_position, shelter_position, cliff_position, ...)
+        kp = raw.get("kid_position") or raw.get("self_position")
+        op = raw.get(f"{ent}_position")
+        if isinstance(kp, (tuple, list)) and isinstance(op, (tuple, list)) and len(kp) == 2 and len(op) == 2:
+            try:
+                from math import sqrt
+                dx = float(op[0]) - float(kp[0])
+                dy = float(op[1]) - float(kp[1])
+                return sqrt(dx * dx + dy * dy)
+            except Exception:
+                return None
+
+        return None
+
+    def _lane_y(ent: str, *, kind: str | None) -> float:
+        ent_l = (ent or "").lower()
+        if kind == "hazard" or ent_l in ("cliff", "drop", "danger"):
+            return 1.0
+        if ent_l in ("shelter", "den", "nest"):
+            return -1.0
+        # deterministic lane based on characters (avoid python hash randomization)
+        s = sum(ord(c) for c in ent_l)
+        lane = (s % 5) - 2  # -2..+2
+        return float(lane) * 0.5
+
+    def _project(dist_m: float, ent: str, *, kind: str | None) -> tuple[float, float]:
+        # subway-map distortion: compress far distances but keep ordering monotonic
+        from math import log
+        d = max(0.0, float(dist_m))
+        x = 3.0 * log(1.0 + d)
+        y = _lane_y(ent, kind=kind)
+        return (x, y)
+
+    # -------------------- MapSurface path (default) --------------------
+    if getattr(ctx, "working_mapsurface", True):
+        # Ensure WM_ROOT exists, and pin NOW to it so has_pred_near_now(...) works against the map.
+        try:
+            root_bid = ww.ensure_anchor("WM_ROOT")
+        except Exception:
+            # fallback: keep whatever NOW is if WM_ROOT cannot be created
+            root_bid = ww.ensure_anchor("NOW")
+
+        try:
+            ww.set_now(root_bid, tag=True, clean_previous=True)
+        except Exception:
+            try:
+                ww._anchors["NOW"] = root_bid
+                _tagset_of(root_bid).add("anchor:NOW")
+            except Exception:
+                pass
+
+        # Optional: keep NOW_ORIGIN aligned with WM_ROOT in WorkingMap
+        try:
+            ww._anchors["NOW_ORIGIN"] = root_bid
+            _tagset_of(root_bid).add("anchor:NOW_ORIGIN")
+        except Exception:
+            pass
+
+        # Ensure SELF entity exists and sits under WM_ROOT
+        self_bid = _ensure_entity("self", kind_hint="agent")
+        _upsert_edge(root_bid, self_bid, "wm_has", {"created_by": "wm_mapsurface"})
+        _set_pos(self_bid, 0.0, 0.0, dist_m=0.0, dist_class="self")
+
+        # --- Predicates: update entity tags in place ---
+        pred_tokens = [
+            str(p).replace("pred:", "", 1)
+            for p in (getattr(env_obs, "predicates", []) or [])
+            if p is not None
+        ]
+        for tok in pred_tokens:
+            ent, slot_prefix = _entity_from_pred(tok)
+            kind = "hazard" if slot_prefix.startswith("hazard:") else None
+            if ent == "self":
+                kind = "agent"
+            if ent == "shelter":
+                kind = "shelter"
+
+            bid = _ensure_entity(ent, kind_hint=kind)
+            full_tag = f"pred:{tok}"
+            changed = _replace_pred_slot_on_entity(bid, slot_prefix, full_tag)
+
+            # bump prominence (exposure signal) even if unchanged
+            try:
+                ww.bump_prominence(bid, tag=full_tag, meta=meta, reason="observe")
+            except Exception:
+                pass
+
+            created_preds.append(tok)
+            if getattr(ctx, "working_verbose", False) or changed:
+                try:
+                    print(f"[env→working] MAP pred:{tok} → {bid} (entity={ent}, slot={slot_prefix})" + (" [changed]" if changed else ""))
+                except Exception:
+                    pass
+
+        # --- Cues: attach to an entity and dedup/remove old env cues per entity ---
+        cue_tokens = [
+            str(c).replace("cue:", "", 1)
+            for c in (getattr(env_obs, "cues", []) or [])
+            if c is not None
+        ]
+
+        cues_by_ent: dict[str, set[str]] = {}
+        for tok in cue_tokens:
+            ent = _entity_from_cue(tok)
+            cues_by_ent.setdefault(ent, set()).add(f"cue:{tok}")
+            created_cues.append(tok)
+
+        # update each entity that has cues this tick
+        for ent, new_cue_tags in cues_by_ent.items():
+            bid = _ensure_entity(ent)
+            tags = _tagset_of(bid)
+
+            prev = (getattr(ctx, "wm_last_env_cues", {}) or {}).get(ent, set())
+            # remove old env cues not present now
+            for t in list(prev - new_cue_tags):
+                try:
+                    tags.discard(t)
+                except Exception:
+                    pass
+            # add new env cues
+            for t in list(new_cue_tags - prev):
+                try:
+                    tags.add(t)
+                except Exception:
+                    pass
+
+            try:
+                ctx.wm_last_env_cues[ent] = set(new_cue_tags)
+            except Exception:
+                pass
+
+            for t in new_cue_tags:
+                try:
+                    ww.bump_prominence(bid, tag=t, meta=meta, reason="observe")
+                except Exception:
+                    pass
+
+            if getattr(ctx, "working_verbose", False):
+                try:
+                    for t in sorted(new_cue_tags):
+                        print(f"[env→working] MAP {t} → {bid} (entity={ent})")
+                except Exception:
+                    pass
+
+        # Also clear env cues for entities that had cues last tick but none now
+        try:
+            for ent in list(ctx.wm_last_env_cues.keys()):
+                if ent in cues_by_ent:
+                    continue
+                bid = (ctx.wm_entities or {}).get(ent)
+                if not (isinstance(bid, str) and bid in ww._bindings):
+                    ctx.wm_last_env_cues.pop(ent, None)
+                    continue
+                tags = _tagset_of(bid)
+                for t in list(ctx.wm_last_env_cues.get(ent, set())):
+                    tags.discard(t)
+                ctx.wm_last_env_cues.pop(ent, None)
+        except Exception:
+            pass
+
+        # --- Coordinates + distance edges (schematic map) ---
+        raw = getattr(env_obs, "raw_sensors", {}) or {}
+        for ent, bid in (getattr(ctx, "wm_entities", {}) or {}).items():
+            if ent in ("self",):
+                continue
+            if not isinstance(bid, str) or bid not in ww._bindings:
+                continue
+
+            tags = _tagset_of(bid)
+            # infer a distance class from the current pred tags on this entity
+            dist_class = None
+            kind = None
+            for t in tags:
+                if not isinstance(t, str) or not t.startswith("pred:"):
+                    continue
+                if t.startswith(f"pred:proximity:{ent}:"):
+                    dist_class = t.split(":")[-1]
+                    break
+                if t.startswith(f"pred:hazard:{ent}:"):
+                    dist_class = t.split(":")[-1]
+                    kind = "hazard"
+                    break
+            if ent == "shelter":
+                kind = "shelter"
+            if dist_class is None:
+                dist_class = "unknown"
+
+            dist_m = _raw_distance_guess(raw, ent)
+            if dist_m is None:
+                dist_m = _dist_value_from_class(dist_class)
+
+            x, y = _project(dist_m, ent, kind=kind)
+            _set_pos(bid, x, y, dist_m=dist_m, dist_class=dist_class)
+
+            # self -> entity distance edge (upsert)
+            try:
+                _upsert_edge(self_bid, bid, "distance_to", {"meters": float(dist_m), "class": dist_class, "frame": "wm_schematic_v1"})
+            except Exception:
+                pass
+
+        # Keep working map bounded (mostly relevant if policies also write into WorkingMap)
+        try:
+            _prune_working_world(ctx)
+        except Exception:
+            pass
+
+        # Optional: append raw trace nodes (debug only)
+        if getattr(ctx, "working_trace", False):
+            try:
+                attach = "now"
+                for tok in pred_tokens:
+                    ww.add_predicate(tok, attach=attach, meta=meta)
+                    attach = "latest"
+                cue_attach = "latest" if pred_tokens else "now"
+                for tok in cue_tokens:
+                    ww.add_cue(tok, attach=cue_attach, meta=meta)
+                _prune_working_world(ctx)
+            except Exception:
+                pass
+
+        return {"predicates": created_preds, "cues": created_cues}
+
+    # -------------------- Fallback: old episodic “tick log” behaviour --------------------
+    # (kept so you can revert quickly if desired)
     pred_tokens = [
-        str(p).replace("pred:", "")
+        str(p).replace("pred:", "", 1)
         for p in (getattr(env_obs, "predicates", []) or [])
         if p is not None
     ]
     cue_tokens = [
-        str(c).replace("cue:", "")
+        str(c).replace("cue:", "", 1)
         for c in (getattr(env_obs, "cues", []) or [])
         if c is not None
     ]
 
-    meta = {"source": "HybridEnvironment", "controller_steps": getattr(ctx, "controller_steps", None)}
-
     attach = "now"
-    last_pred_bid: str | None = None
     for tok in pred_tokens:
         try:
-            bid = ww.add_predicate(tok, attach=attach, meta=meta)
-            last_pred_bid = bid
+            ww.add_predicate(tok, attach=attach, meta=meta)
             created_preds.append(tok)
             if getattr(ctx, "working_verbose", False):
-                print(f"[env→working] pred:{tok} -> {_wm_display_id(bid)} ({bid}) (attach={attach})")
+                print(f"[env→working] pred:{tok} (attach={attach})")
         except Exception:
             pass
         attach = "latest"
-
-    # Optional: move WorkingMap NOW to the latest predicate this tick
-    #   so "near NOW" queries reflect the current local frame.
-    try:
-        if getattr(ctx, "working_move_now", True) and last_pred_bid:
-            ww.set_now(last_pred_bid, tag=True, clean_previous=True)
-    except Exception:
-        pass
-
 
     cue_attach = "latest" if created_preds else "now"
     for tok in cue_tokens:
@@ -5162,16 +5614,13 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             ww.add_cue(tok, attach=cue_attach, meta=meta)
             created_cues.append(tok)
             if getattr(ctx, "working_verbose", False):
-                print(f"[env→working] cue:{tok} -> {_wm_display_id(ww._latest_binding_id)} ({ww._latest_binding_id}) (attach={cue_attach})")
+                print(f"[env→working] cue:{tok} (attach={cue_attach})")
         except Exception:
             pass
-
-    # Keep working map bounded
     try:
         _prune_working_world(ctx)
     except Exception:
         pass
-
     return {"predicates": created_preds, "cues": created_cues}
 
 
@@ -9337,6 +9786,8 @@ You can still use menu 35 for detailed, single-step inspection.
                 continue
 
             run_env_closed_loop_steps(env, world, drives, ctx, POLICY_RT, n_steps)
+            print()
+            print_working_map_snapshot(ctx, n=250, title="[workingmap] auto snapshot (last 250)")
 
             print("\n[skills-hud] Learned policy values after env-loop:")
             print("(terminology: hud==heads-up-display; n==number times policy executed; rate==% times we counted policy as successful;")
