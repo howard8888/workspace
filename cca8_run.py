@@ -251,12 +251,17 @@ class Ctx:
     # This keeps the graph flexible enough to "re-observe" a stable fact occasionally
     # without logging it every single tick.
     longterm_obs_reassert_steps: int = 0
+    # Long-term cue de-dup (changes-mode only): emit cue only on rising edge (absent→present),
+    # optionally re-emit after reassert_steps while still present; mark absent when it disappears.
+    longterm_obs_dedup_cues: bool = True
+    lt_obs_cues: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # If True, force a one-tick snapshot when the env's scenario_stage changes (including resets).
     longterm_obs_keyframe_on_stage_change: bool = True
 
     # If True, print per-token reuse lines when longterm_obs_mode="changes" skips unchanged slots.
     longterm_obs_verbose: bool = False
+
 
     # Private state: per-slot last (token, bid, emit_step) used by longterm_obs_mode="changes".
     lt_obs_slots: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -481,6 +486,16 @@ def reset_working_world(ctx) -> None:
         pass
 
 
+def _wm_display_id(bid: str) -> str:
+    """Display-only: show WorkingMap ids as wN while keeping real ids as bN."""
+    try:
+        if isinstance(bid, str) and bid.startswith("b") and bid[1:].isdigit():
+            return "w" + bid[1:]
+    except Exception:
+        pass
+    return f"w({bid})"
+
+
 def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] snapshot") -> None:
     """Print a small tail snapshot of the WorkingMap graph.
     """
@@ -501,7 +516,8 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
     for bid in tail:
         b = ww._bindings[bid]  # pylint: disable=protected-access
         tags = ", ".join(sorted(b.tags))
-        print(f"  {bid}: [{tags}] edges={len(b.edges)}")
+        print(f"  {_wm_display_id(bid)} ({bid}): [{tags}] edges={len(b.edges)}")
+
 
 
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
@@ -1754,6 +1770,110 @@ def _gate_recover_fall_explain(world, _drives: Drives, ctx) -> str:
         f"fallen={fallen} (bodymap_posture={bp or 'n/a'}, bodymap_stale={bodymap_stale}) "
         f"or fall_cue={fall_cue} cues={present_cue_bids(world)}"
     )
+
+
+def apply_hardwired_profile_phase7(ctx: "Ctx", world) -> None:
+    """Hardwire the Phase VII daily-driver memory pipeline.
+
+    Intent:
+      - WorkingMap: dense workspace (env mirroring always on; policy execution writes can live here)
+      - WorldGraph: sparse long-term index (env obs in changes mode + keyframes + cue dedup + run-compressed actions)
+      - RL: off by default (deterministic selection while we validate memory mechanics)
+
+    This replaces the need for Menu 41 in normal use.
+    """
+    if ctx is None or world is None:
+        return
+
+    # --- RL: enabled (deterministic by default) ---
+    # turning RL ON, but keeping exploration essentially OFF (epsilon=0.05) so behavior stays reproducible.
+    # You still get q-based tie-break behavior when it applies.
+    try:
+        ctx.rl_enabled = True
+        ctx.rl_epsilon = 0.05  # % explore, i.e., the amount of randomness
+        ctx.rl_delta = 0.0     # q used only for exact deficit ties (safe default)
+        ctx.rl_explore_steps = 0
+        ctx.rl_exploit_steps = 0
+    except Exception:
+        pass
+
+    # --- WorkingMap: on (trace/workspace) ---
+    try:
+        ctx.working_enabled = True
+        ctx.working_verbose = True
+        ctx.working_max_bindings = 250
+        if hasattr(ctx, "working_move_now"):
+            ctx.working_move_now = True
+    except Exception:
+        pass
+
+    # --- Phase VII: motor runs + (optionally) working-first execution ---
+    try:
+        ctx.phase7_working_first = True
+        ctx.phase7_run_compress = True
+        ctx.phase7_run_verbose = False
+        ctx.phase7_move_longterm_now_to_env = True
+    except Exception:
+        pass
+
+    # --- WorldGraph memory mode: keep literal time semantics for long-term writes ---
+    try:
+        if hasattr(world, "set_memory_mode"):
+            world.set_memory_mode("episodic")
+    except Exception:
+        pass
+
+    # --- Long-term EnvObservation injection: sparse + keyframes + cue dedup ---
+    try:
+        ctx.longterm_obs_enabled = True
+        ctx.longterm_obs_mode = "changes"
+        ctx.longterm_obs_reassert_steps = 0
+        ctx.longterm_obs_keyframe_on_stage_change = True
+        ctx.longterm_obs_verbose = False
+    except Exception:
+        pass
+
+    # Low-noise, useful log
+    try:
+        if hasattr(ctx, "longterm_obs_keyframe_log"):
+            ctx.longterm_obs_keyframe_log = True
+    except Exception:
+        pass
+
+    # Cue dedup (presence/rising-edge)
+    try:
+        if hasattr(ctx, "longterm_obs_dedup_cues"):
+            ctx.longterm_obs_dedup_cues = True
+    except Exception:
+        pass
+
+    # Clear long-term slot caches (dedup bookkeeping) so the next env obs is a clean "first".
+    try:
+        ctx.lt_obs_slots.clear()
+    except Exception:
+        pass
+    try:
+        if hasattr(ctx, "lt_obs_cues"):
+            ctx.lt_obs_cues.clear()
+    except Exception:
+        pass
+    try:
+        ctx.lt_obs_last_stage = None
+    except Exception:
+        pass
+
+    # Clear any open run-compression state (defensive; safe no-op if fields not present)
+    try:
+        if hasattr(ctx, "run_open"):
+            ctx.run_open = False
+            ctx.run_policy = None
+            ctx.run_action_bid = None
+            ctx.run_len = 0
+            ctx.run_start_env_step = None
+            ctx.run_last_env_step = None
+    except Exception:
+        pass
+
 
 
 @dataclass
@@ -5022,7 +5142,7 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             last_pred_bid = bid
             created_preds.append(tok)
             if getattr(ctx, "working_verbose", False):
-                print(f"[env→working] pred:{tok} -> {bid} (attach={attach})")
+                print(f"[env→working] pred:{tok} -> {_wm_display_id(bid)} ({bid}) (attach={attach})")
         except Exception:
             pass
         attach = "latest"
@@ -5042,7 +5162,7 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             ww.add_cue(tok, attach=cue_attach, meta=meta)
             created_cues.append(tok)
             if getattr(ctx, "working_verbose", False):
-                print(f"[env→working] cue:{tok} (attach={cue_attach})")
+                print(f"[env→working] cue:{tok} -> {_wm_display_id(ww._latest_binding_id)} ({ww._latest_binding_id}) (attach={cue_attach})")
         except Exception:
             pass
 
@@ -5115,7 +5235,6 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
     time_since_birth = env_meta.get("time_since_birth")
 
     # In "changes" mode: optionally force a one-tick snapshot at stage transitions/resets
-    # In "changes" mode: optionally force a one-tick snapshot at stage transitions/resets
     if do_changes:
         force_snapshot = False
         reasons: list[str] = []
@@ -5131,14 +5250,18 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
             if stage is not None and last_stage is not None and stage != last_stage:
                 force_snapshot = True
                 reasons.append(f"stage_change {last_stage!r}→{stage!r}")
-
         if force_snapshot:
-            old_n = len(getattr(ctx, "lt_obs_slots", {}) or {})
+            old_pred_n = len(getattr(ctx, "lt_obs_slots", {}) or {})
+            old_cue_n = len(getattr(ctx, "lt_obs_cues", {}) or {})
+
             ctx.lt_obs_slots.clear()
+            try:
+                ctx.lt_obs_cues.clear()
+            except Exception:
+                pass
             if bool(getattr(ctx, "longterm_obs_keyframe_log", True)):
                 why = ", ".join(reasons) if reasons else "keyframe"
-                print(f"[env→world] KEYFRAME: {why} | cleared {old_n} slot(s)")
-
+                print(f"[env→world] KEYFRAME: {why} | cleared {old_pred_n} pred slot(s), {old_cue_n} cue slot(s)")
         ctx.lt_obs_last_stage = stage
 
 
@@ -5208,14 +5331,80 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
     if do_changes and pred_tokens and not created_preds and not verbose_skips:
         print("[env→world] (long-term obs unchanged; no new pred:* bindings written)")
 
-    # Cues: keep episodic (events). Attach to latest if we wrote any preds this tick; else attach to now.
+    # Cues:
+    # Default: episodic (write each observed cue each tick).
+    # Optional (changes-mode): rising-edge de-dup (emit only when absent→present), but still bump prominence every tick.
     cue_attach = "latest" if wrote_any_pred_this_tick else "now"
-    for tok in cue_tokens:
-        meta = {"source": "HybridEnvironment", "controller_steps": getattr(ctx, "controller_steps", None)}
-        bid = world.add_cue(tok, attach=cue_attach, meta=meta)
-        created_cues.append(tok)
-        token_to_bid[tok] = bid
-        print(f"[env→world] cue:{tok} → {bid} (attach={cue_attach})")
+    dedup_cues = bool(do_changes) and bool(getattr(ctx, "longterm_obs_dedup_cues", False))
+    if not dedup_cues:
+        for tok in cue_tokens:
+            meta = {"source": "HybridEnvironment", "controller_steps": getattr(ctx, "controller_steps", None)}
+            bid = world.add_cue(tok, attach=cue_attach, meta=meta)
+            created_cues.append(tok)
+            token_to_bid[tok] = bid
+            print(f"[env→world] cue:{tok} → {bid} (attach={cue_attach})")
+    else:
+        cue_cache = getattr(ctx, "lt_obs_cues", None)
+        if not isinstance(cue_cache, dict):
+            cue_cache = {}
+            try:
+                ctx.lt_obs_cues = cue_cache
+            except Exception:
+                pass
+
+        seen_this_step: set[str] = set()
+        cues_now: set[str] = set()
+        for tok in cue_tokens:
+            if not isinstance(tok, str):
+                continue
+            if tok in seen_this_step:
+                continue
+            seen_this_step.add(tok)
+            cues_now.add(tok)
+            meta = {"source": "HybridEnvironment", "controller_steps": getattr(ctx, "controller_steps", None)}
+            prev = cue_cache.get(tok)
+            was_present = bool(isinstance(prev, dict) and prev.get("present", False))
+            emit = False
+            reason = ""
+            if not was_present:
+                emit = True
+                reason = "rising"
+            else:
+                if 0 < reassert_steps <= (step_no - int((prev or {}).get("last_emit_step", 0) or 0)):
+                    emit = True
+                    reason = "reassert"
+                else:
+                    emit = False
+                    reason = "held"
+            if emit:
+                meta2 = dict(meta)
+                meta2["_dedup"] = reason
+                bid = world.add_cue(tok, attach=cue_attach, meta=meta2)
+                created_cues.append(tok)
+                token_to_bid[tok] = bid
+                cue_cache[tok] = {"present": True, "bid": bid, "last_emit_step": step_no}
+                print(f"[env→world] cue:{tok} → {bid} (attach={cue_attach})")
+            else:
+                prev_bid = prev.get("bid") if isinstance(prev, dict) else None
+                if isinstance(prev_bid, str):
+                    token_to_bid[tok] = prev_bid
+                    try:
+                        world.bump_prominence(prev_bid, tag=f"cue:{tok}", meta=meta, reason="observe")
+                    except Exception:
+                        pass
+                if isinstance(prev, dict):
+                    prev["present"] = True
+                if verbose_skips:
+                    print(f"[env→world] cue:{tok} → {prev_bid} (reused; held)")
+        # Mark cues that were present but are absent now as not present.
+        try:
+            for tok, rec in list(cue_cache.items()):
+                if not isinstance(rec, dict):
+                    continue
+                if rec.get("present", False) and tok not in cues_now:
+                    rec["present"] = False
+        except Exception:
+            pass
 
     # Optional env sugar on top of tokens (must never break env stepping)
     try:
@@ -5905,6 +6094,12 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
     print("\n[env-loop] Closed-loop run complete. "
           "You can inspect details via Snapshot or the mini-snapshot that follows.")
+    try:
+        if getattr(ctx, "working_enabled", False):
+            print()
+            print_working_map_snapshot(ctx, n=250, title="[workingmap] auto snapshot (last 250)")
+    except Exception:
+        pass
 
 
 def _latest_posture_binding(world, *, source: Optional[str] = None, require_policy: bool = False):
@@ -6475,6 +6670,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     env = HybridEnvironment()     # Environment simulation: newborn-goat scenario (HybridEnvironment)
     ctx.body_world, ctx.body_ids = init_body_world() # initialize tiny BodyMap (body_world) as a separate WorldGraph instance
     ctx.working_world = init_working_world()
+    apply_hardwired_profile_phase7(ctx, world)
+    print("[profile] Hardwired memory pipeline: phase7 daily-driver (no options menu needed).")
 
     # Optional: start session with a preloaded demo/test world to exercise graph menus.
     # Driven by --demo-world; ignored when --load is used (load takes precedence).
@@ -6558,8 +6755,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
     # Memories
     40) Configure episode starting state (drives + age_days) [config-episode, cfg-epi]
-    41) WorkingMap & WorldGraph settings, toggle RL policy [rl, rltog, workingmap, wm, memory-mode, knobs]
-    42) future usage
+    41) Retired: WorkingMap & WorldGraph settings, toggle RL policy
     43) WorkingMap snapshot (last N bindings; optional clear) [wsnap, wmsnap]
 
     Select: """
@@ -6622,7 +6818,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "bodymap": "38", "bsnap": "38",
     "spatial": "39", "near": "39",
     "config-episode": "40", "cfg-epi": "40",
-    "rl": "41", "rltog": "41", "workingmap": "41", "wm": "41", "memory-mode": "41", "memorymode": "41", "knobs": "41",
+    "retired": "41",
     "future": "42",
     "wsnap": "43", "wm-snapshot": "43", "wmsnap": "43",
 
@@ -6682,7 +6878,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "38": "38",  # inspect bodymap
     "39": "39",  # spatial, near demo
     "40": "40",  # Configure episode starting state (drives + age_days)
-    "41": "41",  # Toggle RL policy selection, select memory knobs
+    "41": "41",  # retired: Toggle RL policy selection, select memory knobs
     "42": "42",  # future usage
     "43": "43",  # wm snapshot
 }
@@ -9353,9 +9549,10 @@ You can still use menu 35 for detailed, single-step inspection.
 
         #----Menu Selection Code Block------------------------
         elif choice == "41":
+            print("Menu 41 retired. Memory pipeline is hardwired (Phase VII daily-driver).")
+
             # Control panel: RL policy selection + WorkingMap + long-term WorldGraph obs injection
             print("Selection: Control Panel (RL policy selection + memory knobs)\n")
-
             print("""[guide] This menu is the main "knobs and buttons" control panel for CCA8 experiments.
 
 Mental Model You Should Have to Understand these Settings
@@ -9387,6 +9584,14 @@ At runtime you should consider three graphs operating in the CCA8 simulation:
     world, using its grid and place cells to map the layout of the environment independent of the body's orientation (e.g., if
     the agent turns 180 degrees the map still stays the same). At the time of writing, we don't have a clear analogous
     hippocampal map, but instead use the WorldGraph and the WorkingMap for this purpose.
+
+4. Cue-slot Deduplication -- Just as we avoiding filling up WorldGraph with the same predicate bindings over and over again (e.g.,
+    mountain goat trying to stand up 5 times will otherwise give 5 sets of these predicate bindings) (and we use 'prominence' instead
+    to count how many times nodes are activated), we can de-duplicate repeated sensory cues so we don't have dozens of the same cue
+    bindings created for the same episode.
+    -If a cue appears that wasn't then we write a cue:* binding.
+    -If a cue repeats then we don't create additional bindings but increment prominence.
+    -If it disappears and then reappears later, then we do write another cue:* binding.
 
 
 Key ideas
@@ -9491,6 +9696,10 @@ Settings
 -Clear long-term slot cache now -- a manual keyframe so that the next env observation is treated as 'first'
 
 """)
+
+            loop_helper(args.autosave, world, drives, ctx)
+            continue
+            #pylint: disable=unreachable
 
             # Ensure WorkingMap exists
             if getattr(ctx, "working_world", None) is None:

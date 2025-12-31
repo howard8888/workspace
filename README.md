@@ -287,6 +287,7 @@ A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph 
 **Tutorials and technical deep dives**
 
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
+- [Tutorial on WorkingMap](#tutorial-on-workingmap)
 - [Binding and Edge Representation](#binding-and-edge-representation)
 - [Anchors, LATEST, and Base-Aware Writes](#anchors-latest-and-base-aware-writes)
 - [Tutorial on Drives](#tutorial-on-drives)
@@ -3401,6 +3402,211 @@ A: It means each pred-binding is intended to be a self-contained state card (“
 
 Q: How does the planner know which label to show for a binding?
 A: The first pred:* tag (if present) is used as the node’s human label in pretty paths and exports. If there is no pred:* tag, we fall back to the binding id (bN).
+
+
+
+
+
+
+
+# Tutorial on WorkingMap
+
+
+### Future Phase — WorkingMap-first map workspace + WorldGraph as a repository of WorkingMap instances (design-stage)
+
+This section documents a high-level design hypothesis that has emerged during Phase VI–VII development.
+
+Goal: move CCA8 toward a “maps-first” cognitive architecture where the agent operates primarily on an active, updatable WorkingMap
+(“map workspace”), while the long-term WorldGraph acts as a compact episode index and a searchable repository of prior WorkingMap
+instances (“stored maps”).
+
+This is a conceptual design note: it will evolve as the implementation evolves.
+
+---
+
+#### Hypothesis: maps-first memory pipeline (computational story)
+
+A useful computational decomposition for mammalian-like cognition is:
+
+1. Incoming sensory evidence updates a small, active map workspace (WorkingMap).
+2. Action selection operates on this map workspace (plus drives + safety).
+3. At episode boundaries, a compact summary of the working map state is stored long-term.
+4. When a similar situation is encountered later, a matching stored map instance is retrieved and used to prime the active workspace.
+
+In this picture, neocortex is not treated primarily as “a better planner,” but as a large, searchable store that supplies priors
+(map instances / schemas / engrams) to the active workspace.
+
+---
+
+#### Representational layers in CCA8 (target architecture)
+
+Environment-side (external world):
+
+- EnvState: “God’s-eye” ground truth maintained by the environment subsystem.
+- EnvObservation: the per-tick perceptual packet crossing the boundary into the agent (predicates + cues + optional raw sensors).
+
+Agent-side (internal world model):
+
+1) BodyMap (ctx.body_world)
+- Small safety-critical register of body + near-space state (posture, near hazards, etc.).
+- Used for gating/safety and “must be correct right now” decisions.
+
+2) WorkingMap (the active map workspace)
+WorkingMap will be split into two sublayers:
+
+2a) WorkingMap.MapSurface (the real map)
+- A stable, updatable scene graph of entities and relations representing the agent’s current best model of the situation.
+- Updated in-place each tick (no per-tick “append the same predicate again” behavior).
+- Holds geometry-like relations (initially coarse; later richer).
+
+2b) WorkingMap.TaskSurface / Scratch (optional)
+- Transient computation layer for short-lived intermediate steps:
+  - policy micro-steps (“look_around”, “push_up”),
+  - hypotheses,
+  - partial plans.
+- Pruneable and not treated as the “map itself.”
+
+3) WorldGraph (long-term symbolic index + repository)
+- A compact episode-level index used for:
+  - planning/search over episode skeletons,
+  - inspection and debugging,
+  - retrieval indexing (“find me a similar prior map”).
+- WorldGraph stores pointers (engrams) to richer stored content rather than duplicating heavy structures into the graph.
+
+4) Columns / Engrams (rich stored content)
+- Column memory stores larger payloads (map snapshots, sensory features, scene descriptors).
+- WorldGraph bindings carry pointers to these engrams.
+
+---
+
+#### Core design rule: hard-wire the format, not the contents
+
+WorkingMap must generalize across domains (newborn goat, wolf hunting, making coffee).
+
+We do not hard-wire “mom / cliff / shelter / nipple” as special architectural slots.
+Instead we hard-wire only:
+- that a WorkingMap exists,
+- that it contains entities + relations + attributes,
+- that updates are in-place (map semantics).
+
+Entities like MOM or KETTLE are just dynamically created instances that appear because perception (and retrieval) says they are relevant now.
+
+---
+
+#### Minimal WorkingMap.MapSurface schema (v1)
+
+This is the minimum map schema that supports both newborn-goat and kitchen tasks without hard-coded domain objects.
+
+Entities
+- Each entity has:
+  - entity_id (stable within the WorkingMap session),
+  - type label (agent/object/place/substance/etc.),
+  - attributes dict (key → value),
+  - confidence/prominence bookkeeping (optional).
+
+Relations (edges)
+- Relations are typed links between entities, with values stored in edge meta (or a dedicated relation node if preferred).
+- Minimal relation types:
+  - distance_to(self, X) = near/far (later numeric meters)
+  - bearing_to(self, X) = optional (left/right/front/back)
+  - inside / on / attached_to
+  - reachable (boolean or graded)
+  - blocked_by / supports (future)
+
+Update semantics
+- For each tick:
+  - upsert entities as needed (create if missing),
+  - update attributes in place,
+  - upsert relations in place (keyed by (src, rel_type, dst)),
+  - increase confidence/prominence with repeated confirmation rather than adding duplicate nodes.
+
+Prominence / confidence
+- Repetition should increase a strength/confidence signal rather than create a new node.
+- This supports “I saw mom silhouette again” without polluting the map.
+
+---
+
+#### How policies use the map (action selection)
+
+Policy selection (BG-like)
+- Policies are selected using:
+  - drives (urgency/deficit),
+  - non-drive priorities (safety and developmental tie-breaks),
+  - optional RL (epsilon-greedy, q-value tie-break).
+
+Policy execution (PFC-like workspace operation)
+- Policies operate primarily on WorkingMap.MapSurface:
+  - read current entities/relations,
+  - update WorkingMap.MapSurface to reflect predicted consequences,
+  - optionally stage action sequences in WorkingMap.Scratch.
+
+World interaction
+- The chosen policy name (or macro action) is fed to HybridEnvironment.step(action, ctx).
+- The next EnvObservation updates MapSurface (confirm/refute predictions).
+
+---
+
+#### WorldGraph as repository of WorkingMap instances
+
+WorldGraph’s long-term role becomes:
+
+- Episode index: keyframes + compressed action runs + important transitions.
+- Retrieval index: descriptors/tags that help find similar prior situations.
+- Pointers to MapEngrams: stored WorkingMap.MapSurface snapshots in Column memory.
+
+At episode boundaries, store:
+- a MapEngram snapshot of WorkingMap.MapSurface,
+- a compact index binding in WorldGraph linking to that engram,
+- minimal descriptors (stage, hazards, salient cues, drive regime, etc.).
+
+When a similar situation occurs:
+- derive a query signature from current evidence (BodyMap + cues + stage/drives),
+- retrieve the nearest matching MapEngram(s),
+- prime WorkingMap.MapSurface from that stored map, then merge current observation updates.
+
+---
+
+#### Episode boundaries (when to consolidate)
+
+Episode boundaries are the natural trigger for consolidating a working map instance into long-term memory.
+Examples:
+- scenario stage transitions (birth → struggle → first_stand → …)
+- safety zone flips (unsafe ↔ safe)
+- goal achievement (standing achieved, latch achieved)
+- large prediction error streaks (expected vs observed mismatch)
+- explicit “end of episode” events (env.reset)
+
+---
+
+#### Implementation plan (incremental)
+
+1) Introduce WorkingMap.MapSurface as a stable entity+relation map updated in place from EnvObservation.
+   - Keep the current “WorkingMap trace” only as an optional debug mode (not the default).
+
+2) Keep WorldGraph sparse:
+   - long-term env predicates in changes-mode + keyframes,
+   - cue dedup (rising-edge) + prominence,
+   - action runs compressed into run nodes.
+
+3) Add MapEngram storage:
+   - snapshot MapSurface at boundaries into Column memory,
+   - store a pointer + compact descriptor binding in WorldGraph.
+
+4) Add retrieval:
+   - given current evidence, retrieve best MapEngram and prime MapSurface.
+
+This yields a WorkingMap-first pipeline where most computation occurs on the active map, while long-term storage is a searchable
+repository of prior map instances rather than a per-tick log.
+
+
+
+
+
+
+
+
+
+
 
 
 
