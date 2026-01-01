@@ -495,7 +495,8 @@ def reset_working_world(ctx) -> None:
 
 
 def _wm_display_id(bid: str) -> str:
-    """Display-only: show WorkingMap ids as wN while keeping real ids as bN.
+    """
+    Display-only: show WorkingMap ids as wN while keeping real ids as bN.
     """
     try:
         if isinstance(bid, str) and bid.startswith("b") and bid[1:].isdigit():
@@ -506,8 +507,7 @@ def _wm_display_id(bid: str) -> str:
 
 
 def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] snapshot") -> None:
-    """Print a small tail snapshot of the WorkingMap graph.
-    """
+    """Print a tail snapshot of the WorkingMap graph, showing tags + a small edge preview."""
     ww = getattr(ctx, "working_world", None)
     if ww is None:
         print(f"{title}: (no working_world)")
@@ -515,32 +515,42 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
 
     def _bid_key(bid: str) -> int:
         try:
-            return int(bid[1:]) if bid.startswith("b") else 10**9
+            return int(bid[1:]) if isinstance(bid, str) and bid.startswith("b") else 10**9
         except Exception:
             return 10**9
 
-    all_ids = sorted(ww._bindings.keys(), key=_bid_key)  # pylint: disable=protected-access
+    all_ids = sorted(getattr(ww, "_bindings", {}).keys(), key=_bid_key)  # pylint: disable=protected-access
     tail = all_ids[-max(1, int(n)) :]
 
     print(f"{title}: last {len(tail)} binding(s) of {len(all_ids)} total")
+    print("  Legend edges: wm_has=WM_ROOT contains entity; distance_to=WM_SELF→entity (meta has meters/class); then=policy scratch sequence")
+    print("  Legend tags : wm:entity / wm:eid:<id> / wm:kind:<kind> mark entities; pred:* on entities = current belief; cue:* on entities = cues present now; meta.wm.pos={x,y,frame}")
+
+
 
     for bid in tail:
-        b = ww._bindings[bid]  # pylint: disable=protected-access
+        b = ww._bindings.get(bid)  # pylint: disable=protected-access
+        if b is None:
+            continue
+
         tags = ", ".join(sorted(getattr(b, "tags", []) or []))
 
-        edges = getattr(b, "edges", []) or []
-        # Preview up to 6 outgoing edges
-        preview: list[str] = []
-        if isinstance(edges, list):
-            for e in edges[:6]:
-                if not isinstance(e, dict):
-                    continue
-                rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
-                dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
-                if isinstance(dst, str):
-                    preview.append(f"{rel}:{_wm_display_id(dst)}")
-        more = f" (+{len(edges)-6} more)" if isinstance(edges, list) and len(edges) > 6 else ""
-        pv = ", ".join(preview) + more if preview else "(none)"
+        edges_raw = getattr(b, "edges", []) or []
+        edges = [e for e in edges_raw if isinstance(e, dict)]
+
+        preview = []
+        for e in edges[:6]:
+            rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
+            dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+            if isinstance(dst, str):
+                preview.append(f"{rel}:{_wm_display_id(dst)} ({dst})")
+
+        if preview:
+            pv = ", ".join(preview)
+            if len(edges) > 6:
+                pv += f" (+{len(edges) - 6} more)"
+        else:
+            pv = "(none)"
 
         print(f"  {_wm_display_id(bid)} ({bid}): [{tags}] out={len(edges)} edges={pv}")
 
@@ -5452,7 +5462,10 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             created_preds.append(tok)
             if getattr(ctx, "working_verbose", False) or changed:
                 try:
-                    print(f"[env→working] MAP pred:{tok} → {bid} (entity={ent}, slot={slot_prefix})" + (" [changed]" if changed else ""))
+                    disp = f"{_wm_display_id(bid)} ({bid})"
+                    print(
+                        f"[env→working] MAP pred:{tok} → {disp} (entity={ent}, slot={slot_prefix})"
+                        + (" [changed]" if changed else ""))
                 except Exception:
                     pass
 
@@ -5502,7 +5515,8 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             if getattr(ctx, "working_verbose", False):
                 try:
                     for t in sorted(new_cue_tags):
-                        print(f"[env→working] MAP {t} → {bid} (entity={ent})")
+                        disp = f"{_wm_display_id(bid)} ({bid})"
+                        print(f"[env→working] MAP {t} → {disp} (entity={ent})")
                 except Exception:
                     pass
 
@@ -9787,8 +9801,6 @@ You can still use menu 35 for detailed, single-step inspection.
 
             run_env_closed_loop_steps(env, world, drives, ctx, POLICY_RT, n_steps)
             print()
-            print_working_map_snapshot(ctx, n=250, title="[workingmap] auto snapshot (last 250)")
-
             print("\n[skills-hud] Learned policy values after env-loop:")
             print("(terminology: hud==heads-up-display; n==number times policy executed; rate==% times we counted policy as successful;")
             print("  last==reward value that policy received the last time it executed; q==learned value estimate;")
