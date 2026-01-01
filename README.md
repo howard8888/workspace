@@ -727,7 +727,9 @@ CCA8 uses several small “maps” as well the large WorldGraph map for its memo
 - **what we want to keep long-term** (for planning and inspection),
 - **and where heavy data lives** (engrams).
 
+
 ### 1) BodyMap (ctx.body_world): “what I believe right now”
+
 BodyMap is a tiny, structured register for body + near-world state (e.g. in the case of the goat calf, its posture, mom distance, nipple state, shelter/cliff distances).
 
 - Updated **every environment step** from EnvObservation.
@@ -736,8 +738,10 @@ BodyMap is a tiny, structured register for body + near-world state (e.g. in the 
 
 Think of BodyMap as the “fast, always-on” body schema.
 
-### 2) WorkingMap (ctx.working_world): short-term “write everything” trace
-WorkingMap is a separate WorldGraph instance intended to log the raw tick-by-tick stream.
+
+### 2) WorkingMap (ctx.working_world): short-term **map workspace (MapSurface)** + optional trace
+
+WorkingMap is a separate WorldGraph instance used primarily as an active **map workspace** (stable entities + relations updated in place each tick). A per-tick trace is optional and intended for debugging, not as the default representation.
 
 - It is deliberately **high bandwidth** and may contain repeated predicates/actions.
 - It is capped by `working_max_bindings` so long runs don’t explode memory.
@@ -746,14 +750,18 @@ WorkingMap is a separate WorldGraph instance intended to log the raw tick-by-tic
 WorkingMap is a good place for future consolidation rules:
 “write everything to WorkingMap → copy/consolidate selected structure into WorldGraph”.
 
+
 ### 3) WorldGraph (long-term): symbolic episode index for planning + inspection
+
 WorldGraph is the long-term symbolic episode index.
 
 It contains:
 - **actions and expected outcomes** written by policies (episodic “attempts”),
 - and **selected summaries of environment state** (predicates/cues) that are useful for reasoning and planning.
 
+
 #### Long-term EnvObservation → WorldGraph injection (“snapshot” vs “changes”)
+
 When the environment produces discrete predicates (posture, proximity, hazards, etc.), we can choose how aggressively to log them in the long-term WorldGraph:
 
 - `mode = snapshot`  
@@ -767,7 +775,9 @@ Optional flexibility knobs:
 - `reassert_steps` — re-emit unchanged slots periodically (so stable facts can be “re-observed” occasionally).
 - `keyframe_on_stage_change` — force a snapshot-like refresh when the environment’s scenario stage changes (birth→struggle→first_stand…).
 
+
 ### 4) WorldGraph memory_mode: episodic vs semantic
+
 WorldGraph also has an internal memory mode:
 
 - **episodic**: every add creates a new binding (timeline-first).
@@ -778,7 +788,9 @@ The safe trajectory is:
 - use **BodyMap / WorkingMap** for “current tick truth”,
 - use **WorldGraph** for long-term structure and episodes.
 
+
 ### 5) Engrams (Column memory): heavy payloads live outside the graph
+
 WorldGraph bindings are small. Rich content (vectors, sensory payloads, scene descriptors) is stored as **engrams** in Column memory.
 Bindings can carry lightweight pointers to these engrams so you can keep the symbolic index compact while still retaining rich data.
 
@@ -817,7 +829,10 @@ Notes:
 
 ## WorkingMap (Working Memory Graph)
 
-CCA8 now maintains a **WorkingMap**, a short‑term “write everything” graph intended to hold the *full episodic trace* of what is happening tick‑by‑tick.
+CCA8 now maintains a **WorkingMap**, a short-term **map workspace**: a stable MapSurfrace in place each tick, plus an optional cratch/trace layer for debugging.
+
+
+
 
 ### Why a WorkingMap?
 
@@ -835,6 +850,48 @@ WorkingMap lets us record the detailed stream without forcing long‑term memory
 - WorkingMap is capped by `ctx.working_max_bindings` to prevent unlimited growth.
 - WorkingMap is intended to become the source graph for consolidation policies later:
   “write everything to WorkingMap → copy/consolidate selected information into WorldGraph”.
+
+
+### WorkingMap.MapSurface (implemented: wm_schematic_v1)
+
+WorkingMap now has an implemented **MapSurface** layer: a stable, updatable map of entities and relations.
+
+**Entity nodes (stable across ticks)**
+- Entities are represented as stable WorkingMap bindings tagged:
+  - `wm:entity`
+  - `wm:eid:<entity_id>`
+  - `wm:kind:<kind>` (e.g., agent/shelter/hazard)
+- The current map instance is rooted at `anchor:WM_ROOT`.
+- `anchor:WM_SELF` is the SELF entity (always present).
+
+**Belief state lives on entities (in-place updates)**
+- Environment predicates are applied as `pred:*` tags **on the relevant entity node**, replacing within a “slot family”:
+  - e.g., SELF carries exactly one of `pred:posture:fallen` / `pred:posture:standing`
+  - CLIFF carries exactly one of `pred:hazard:cliff:far` / `pred:hazard:cliff:near`
+- This prevents per-tick “duplicate predicate nodes” in WorkingMap.
+
+**Geometry is explicit**
+- `WM_SELF --distance_to--> <entity>` edges represent schematic geometry.
+- The edge meta holds:
+  - `meters` (numeric; real if available, otherwise derived from near/far)
+  - `class` (near/far/etc)
+  - `frame` (`wm_schematic_v1`)
+- Each entity stores a 2D schematic coordinate in:
+  - `binding.meta["wm"]["pos"] = {"x": ..., "y": ..., "frame": "wm_schematic_v1"}`
+
+**Schematic coordinate distortion (subway-map style)**
+- Distances are monotonic but distorted (compressed for large distances).
+- Current implementation uses a simple projection (log compression) for x and lane-based y.
+
+**Scratch / micro-action trace (optional)**
+- Policies may still write transient `action:*` and `then` chains into WorkingMap as a scratchpad.
+- This is intentionally separate from the stable MapSurface belief state.
+
+**UI**
+- The env-loop (menu 37) prints:
+  - a MapSurface entity table (entity_id, kind, pos(x,y), dist_m/class, last_seen),
+  - followed by a WorkingMap snapshot where WorkingMap IDs are printed as `wN (bN)`.
+
 
 
 

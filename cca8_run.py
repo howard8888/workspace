@@ -521,20 +521,18 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
 
     all_ids = sorted(getattr(ww, "_bindings", {}).keys(), key=_bid_key)  # pylint: disable=protected-access
     tail = all_ids[-max(1, int(n)) :]
-
     print(f"{title}: last {len(tail)} binding(s) of {len(all_ids)} total")
-    print("  Legend edges: wm_has=WM_ROOT contains entity; distance_to=WM_SELF→entity (meta has meters/class); then=policy scratch sequence")
+    print(
+    "  Legend edges: wm_entity=WM_ROOT→entity (MapSurface membership); "
+    "wm_scratch=WM_ROOT→WM_SCRATCH (policy scratch root; keeps WM_ROOT clean); "
+    "distance_to=WM_SELF→entity (meta has meters/class); then=policy action chain (should hang off WM_SCRATCH)"
+)
     print("  Legend tags : wm:entity / wm:eid:<id> / wm:kind:<kind> mark entities; pred:* on entities = current belief; cue:* on entities = cues present now; meta.wm.pos={x,y,frame}")
-
-
-
     for bid in tail:
         b = ww._bindings.get(bid)  # pylint: disable=protected-access
         if b is None:
             continue
-
         tags = ", ".join(sorted(getattr(b, "tags", []) or []))
-
         edges_raw = getattr(b, "edges", []) or []
         edges = [e for e in edges_raw if isinstance(e, dict)]
 
@@ -542,8 +540,18 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
         for e in edges[:6]:
             rel = e.get("label") or e.get("rel") or e.get("relation") or "then"
             dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
-            if isinstance(dst, str):
-                preview.append(f"{rel}:{_wm_display_id(dst)} ({dst})")
+            if not isinstance(dst, str):
+                continue
+            extra = ""
+            em = e.get("meta") if isinstance(e, dict) else None
+            if rel == "distance_to" and isinstance(em, dict):
+                meters = em.get("meters")
+                dclass = em.get("class")
+                if isinstance(meters, (int, float)):
+                    extra += f" meters={float(meters):.2f}"
+                if isinstance(dclass, str) and dclass:
+                    extra += f" class={dclass}"
+            preview.append(f"{rel}:{_wm_display_id(dst)} ({dst}){extra}")
 
         if preview:
             pv = ", ".join(preview)
@@ -551,8 +559,95 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
                 pv += f" (+{len(edges) - 6} more)"
         else:
             pv = "(none)"
-
         print(f"  {_wm_display_id(bid)} ({bid}): [{tags}] out={len(edges)} edges={pv}")
+
+
+def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface entity table") -> None:
+    """Print a compact table of WorkingMap entities with schematic coordinates and key WM meta.
+
+    This is intentionally a *MapSurface* view (entities + geometry), not the full binding log.
+    Coordinates are stored in binding.meta['wm']['pos'] as {x,y,frame}.
+    """
+    ww = getattr(ctx, "working_world", None)
+    if ww is None:
+        print(f"{title}: (no working_world)")
+        return
+
+    ent_map = getattr(ctx, "wm_entities", None)
+    if not isinstance(ent_map, dict) or not ent_map:
+        print(f"{title}: (no wm_entities; MapSurface may not be initialized yet)")
+        return
+
+    def _sort_key(item) -> tuple[int, str]:
+        eid = str(item[0])
+        return (0, "") if eid == "self" else (1, eid)
+
+    print(title)
+    print("  ent      node        kind      pos(x,y)         dist_m  class     seen  preds (short)                cues (short)")
+    print("  -------  ----------  --------  --------------  ------  --------  ----  --------------------------  ----------------")
+
+    for eid, bid in sorted(ent_map.items(), key=_sort_key):
+        if not isinstance(bid, str):
+            continue
+        b = ww._bindings.get(bid)  # pylint: disable=protected-access
+        if b is None:
+            continue
+
+        tags = list(getattr(b, "tags", []) or [])
+        kind = ""
+        for t in tags:
+            if isinstance(t, str) and t.startswith("wm:kind:"):
+                kind = t.split(":", 2)[2]
+                break
+
+        meta = getattr(b, "meta", None)
+        wmm = meta.get("wm", {}) if isinstance(meta, dict) else {}
+        pos = wmm.get("pos", {}) if isinstance(wmm, dict) else {}
+
+        x = pos.get("x") if isinstance(pos, dict) else None
+        y = pos.get("y") if isinstance(pos, dict) else None
+        frame = pos.get("frame") if isinstance(pos, dict) else None
+
+        dist_m = wmm.get("dist_m") if isinstance(wmm, dict) else None
+        dist_class = wmm.get("dist_class") if isinstance(wmm, dict) else None
+        last_seen = wmm.get("last_seen_step") if isinstance(wmm, dict) else None
+
+        node_disp = f"{_wm_display_id(bid)} ({bid})"
+
+        if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            pos_txt = f"({float(x):6.2f},{float(y):6.2f})"
+        else:
+            pos_txt = "(   n/a,   n/a)"
+
+        dist_txt = f"{float(dist_m):6.2f}" if isinstance(dist_m, (int, float)) else "  n/a "
+        cls_txt = str(dist_class) if isinstance(dist_class, str) else "n/a"
+        seen_txt = f"{int(last_seen):4d}" if isinstance(last_seen, int) else " n/a"
+        frame_txt = str(frame) if isinstance(frame, str) else ""
+        #to clear pylint #0612: Unused variable "frame_txt" will append frame to pos_txt
+        if isinstance(frame, str) and frame_txt:
+            pos_txt += f" [{frame}]"
+
+        # Optional: schematic bearing/heading (degrees) from SELF to entity, based on the distorted (x,y) WM coords.
+        # This is not "true physics bearing" yet — it's a consistent directional cue for debugging/map intuition.
+        try:
+            if eid != "self" and isinstance(x, (int, float)) and isinstance(y, (int, float)) and (float(x) != 0.0 or float(y) != 0.0):
+                from math import atan2, degrees
+                brg = degrees(atan2(float(y), float(x)))
+                pos_txt += f" brg={brg:+.0f}°"
+        except Exception:
+            pass
+
+        # Short belief summaries
+        preds = sorted(t[5:] for t in tags if isinstance(t, str) and t.startswith("pred:"))
+        cues  = sorted(t[4:] for t in tags if isinstance(t, str) and t.startswith("cue:"))
+
+        pred_txt = ", ".join(preds[:3]) + (" …" if len(preds) > 3 else "")
+        cue_txt  = ", ".join(cues[:2]) + (" …" if len(cues) > 2 else "")
+
+        print(
+            f"  {eid:<7}  {node_disp:<10}  {kind:<8}  {pos_txt:<14}  {dist_txt:>6}  {cls_txt:<8}  {seen_txt:>4}  "
+            f"{pred_txt:<26}  {cue_txt}"
+        )
 
 
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
@@ -2184,7 +2279,35 @@ class PolicyRuntime:
         world_exec = exec_world if exec_world is not None else world
         try:
             before_n = len(getattr(world_exec, "_bindings", {}))
+
+            # --- WM_SCRATCH redirect (only when executing into WorkingMap MapSurface) ---
+            did_redirect = False
+            wm_root_bid = None
+            try:
+                is_wm_exec = (
+                    ctx is not None
+                    and world_exec is getattr(ctx, "working_world", None)
+                    and bool(getattr(ctx, "working_mapsurface", False))
+                )
+                if is_wm_exec:
+                    wm_root_bid = world_exec.ensure_anchor("WM_ROOT")
+                    wm_scratch_bid = world_exec.ensure_anchor("WM_SCRATCH")
+                    # Temporarily point NOW at WM_SCRATCH so policy scratch chains don't hang off WM_ROOT
+                    world_exec.set_now(wm_scratch_bid, tag=True, clean_previous=True)
+                    did_redirect = True
+            except Exception:
+                did_redirect = False
+                wm_root_bid = None
+
+            # --- Execute the chosen policy ---
             result = action_center_step(world_exec, ctx, drives, preferred=chosen.name)
+
+            # --- Restore NOW back to WM_ROOT after scratch writes ---
+            if did_redirect and wm_root_bid:
+                try:
+                    world_exec.set_now(wm_root_bid, tag=True, clean_previous=True)
+                except Exception:
+                    pass
             after_n = len(getattr(world_exec, "_bindings", {}))
             delta_n = after_n - before_n
             label = result.get("policy") if isinstance(result, dict) and "policy" in result else chosen.name
@@ -5212,6 +5335,19 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             try:
                 to_ = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
                 lab = e.get("label") or e.get("rel") or e.get("relation")
+                # Treat wm_has as a legacy alias of wm_entity (cosmetic rename)
+                if label == "wm_entity" and to_ == dst and lab in ("wm_entity", "wm_has"):
+                    # migrate label in-place (prevents duplicate edges)
+                    if lab != "wm_entity":
+                        e["label"] = "wm_entity"
+                    if isinstance(meta2, dict) and meta2:
+                        em = e.get("meta")
+                        if isinstance(em, dict):
+                            em.update(meta2)
+                        else:
+                            e["meta"] = dict(meta2)
+                    return
+
                 if to_ == dst and lab == label:
                     if isinstance(meta2, dict) and meta2:
                         em = e.get("meta")
@@ -5229,6 +5365,13 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
         # cached?
         bid = (getattr(ctx, "wm_entities", {}) or {}).get(eid)
         if isinstance(bid, str) and bid in ww._bindings:
+            # If we later learn a better kind hint, annotate the existing entity in-place.
+            if isinstance(kind_hint, str) and kind_hint:
+                try:
+                    tags = _tagset_of(bid)
+                    tags.add(f"wm:kind:{kind_hint}")
+                except Exception:
+                    pass
             return bid
 
         anchor_name = "WM_SELF" if eid == "self" else _sanitize_entity_anchor(eid)
@@ -5252,7 +5395,7 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
 
         # attach under WM_ROOT so predicates are reachable from NOW (we pin NOW to WM_ROOT each tick)
         try:
-            _upsert_edge(root_bid, bid, "wm_has", {"created_by": "wm_mapsurface"})
+            _upsert_edge(root_bid, bid, "wm_entity", {"created_by": "wm_mapsurface"})
         except Exception:
             pass
 
@@ -5430,9 +5573,24 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
         except Exception:
             pass
 
+        # Ensure WM_SCRATCH exists and is reachable from WM_ROOT.
+        # This is where policy scratch chains will attach, so WM_ROOT stays a clean "map surface".
+        try:
+            scratch_bid = ww.ensure_anchor("WM_SCRATCH")
+            try:
+                _tagset_of(scratch_bid).add("wm:scratch")
+            except Exception:
+                pass
+            try:
+                _upsert_edge(root_bid, scratch_bid, "wm_scratch", {"created_by": "wm_mapsurface"})
+            except Exception:
+                pass
+        except Exception:
+            pass
+
         # Ensure SELF entity exists and sits under WM_ROOT
         self_bid = _ensure_entity("self", kind_hint="agent")
-        _upsert_edge(root_bid, self_bid, "wm_has", {"created_by": "wm_mapsurface"})
+        _upsert_edge(root_bid, self_bid, "wm_entity", {"created_by": "wm_mapsurface"})
         _set_pos(self_bid, 0.0, 0.0, dist_m=0.0, dist_class="self")
 
         # --- Predicates: update entity tags in place ---
@@ -5446,9 +5604,10 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             kind = "hazard" if slot_prefix.startswith("hazard:") else None
             if ent == "self":
                 kind = "agent"
+            if ent in ("mom", "mother"):
+                kind = "agent"
             if ent == "shelter":
                 kind = "shelter"
-
             bid = _ensure_entity(ent, kind_hint=kind)
             full_tag = f"pred:{tok}"
             changed = _replace_pred_slot_on_entity(bid, slot_prefix, full_tag)
@@ -5458,7 +5617,6 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
                 ww.bump_prominence(bid, tag=full_tag, meta=meta, reason="observe")
             except Exception:
                 pass
-
             created_preds.append(tok)
             if getattr(ctx, "working_verbose", False) or changed:
                 try:
@@ -5484,7 +5642,8 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
 
         # update each entity that has cues this tick
         for ent, new_cue_tags in cues_by_ent.items():
-            bid = _ensure_entity(ent)
+            kind = "agent" if ent in ("mom", "mother") else None
+            bid = _ensure_entity(ent, kind_hint=kind)
             tags = _tagset_of(bid)
 
             prev = (getattr(ctx, "wm_last_env_cues", {}) or {}).get(ent, set())
@@ -6559,6 +6718,8 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
           "You can inspect details via Snapshot or the mini-snapshot that follows.")
     try:
         if getattr(ctx, "working_enabled", False):
+            print()
+            print_working_map_entity_table(ctx, title="[workingmap] MapSurface entity table")
             print()
             print_working_map_snapshot(ctx, n=250, title="[workingmap] auto snapshot (last 250)")
     except Exception:
