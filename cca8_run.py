@@ -5529,16 +5529,20 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
 
         return None
 
+
     def _lane_y(ent: str, *, kind: str | None) -> float:
         ent_l = (ent or "").lower()
         if kind == "hazard" or ent_l in ("cliff", "drop", "danger"):
             return 1.0
         if ent_l in ("shelter", "den", "nest"):
             return -1.0
+        if kind == "agent" or ent_l in ("mom", "mother"):
+            return 0.0
         # deterministic lane based on characters (avoid python hash randomization)
         s = sum(ord(c) for c in ent_l)
         lane = (s % 5) - 2  # -2..+2
         return float(lane) * 0.5
+
 
     def _project(dist_m: float, ent: str, *, kind: str | None) -> tuple[float, float]:
         # subway-map distortion: compress far distances but keep ordering monotonic
@@ -5725,7 +5729,9 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             dist_m = _raw_distance_guess(raw, ent)
             if dist_m is None:
                 dist_m = _dist_value_from_class(dist_class)
-
+            if kind is None:
+                if any(isinstance(t, str) and t == "wm:kind:agent" for t in tags):
+                    kind = "agent"
             x, y = _project(dist_m, ent, kind=kind)
             _set_pos(bid, x, y, dist_m=dist_m, dist_class=dist_class)
 

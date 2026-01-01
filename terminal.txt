@@ -28,7 +28,7 @@ How many closed-loop step(s) would you like to run? [default: 5]:
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b6', 'b3'], 'size': 4, 'ids': {'b4', 'b5', 'b6', 'b3'}}
+wg_foa:  {'seeds': ['b6', 'b3'], 'size': 4, 'ids': {'b3', 'b5', 'b6', 'b4'}}
 wg_cands:['b3', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 [env-loop] summary envr't step=0 stage=birth posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
@@ -51,7 +51,7 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b3', 'b4', 'b5', 'b7'}}
+wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b4', 'b3', 'b5', 'b7'}}
 wg_cands:['b3', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 [env-loop] summary envr't step=1 stage=birth posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
@@ -74,7 +74,7 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b3', 'b4', 'b5', 'b7'}}
+wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b4', 'b3', 'b5', 'b7'}}
 wg_cands:['b3', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 [env-loop] summary envr't step=2 stage=birth posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
@@ -101,7 +101,7 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b11', 'b8'], 'size': 4, 'ids': {'b9', 'b11', 'b8', 'b10'}}
+wg_foa:  {'seeds': ['b11', 'b8'], 'size': 4, 'ids': {'b9', 'b10', 'b8', 'b11'}}
 wg_cands:['b8', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 [env-loop] summary envr't step=3 stage=struggle posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
@@ -127,7 +127,7 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: True, trigger: fallback=True when not fallen; posture=standing zone=unsafe_cliff_near (hunger=0.50, fatigue=0.30)
 wg_base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b13'}
-wg_foa:  {'seeds': ['b16', 'b13'], 'size': 4, 'ids': {'b14', 'b15', 'b16', 'b13'}}
+wg_foa:  {'seeds': ['b16', 'b13'], 'size': 4, 'ids': {'b13', 'b16', 'b14', 'b15'}}
 wg_cands:['b13', '?']
 post: dev_gate: True, trigger: fallback=True when not fallen; posture=standing zone=unsafe_cliff_near (hunger=0.50, fatigue=0.30)
 [env-loop] summary envr't step=4 stage=first_stand posture=standing mom=far nipple=hidden last_policy='policy:follow_mom' zone=unsafe_cliff_near
@@ -142,7 +142,7 @@ post: dev_gate: True, trigger: fallback=True when not fallen; posture=standing z
   -------  ----------  --------  --------------  ------  --------  ----  --------------------------  ----------------
   self     w5 (b5)     agent     (  0.00,  0.00) [wm_schematic_v1]    0.00  self         5  posture:standing        
   cliff    w8 (b8)     hazard    (  2.37,  1.00) [wm_schematic_v1] brg=+23°    1.20  near         5  hazard:cliff:near
-  mom      w6 (b6)     agent     (  2.08,  1.00) [wm_schematic_v1] brg=+26°    1.00  far          5  proximity:mom:far
+  mom      w6 (b6)     agent     (  2.08,  0.00) [wm_schematic_v1] brg=+0°    1.00  far          5  proximity:mom:far
   shelter  w7 (b7)     shelter   (  5.38, -1.00) [wm_schematic_v1] brg=-11°    5.00  far          5  proximity:shelter:far
 
 [workingmap] auto snapshot (last 250): last 22 binding(s) of 22 total
@@ -186,7 +186,7 @@ Skill HUD (top 2 by q=EMA reward):
    2) policy:follow_mom   n=  1  rate=1.00  q=+0.03  last=+0.10
 
 Values of time measures, nodes and links at this point:
-[time] controller_steps=5, cos_to_last_boundary=0.9294, temporal_epochs=0, autonomic_ticks=0, age_days=0.0000, cog_cycles=0
+[time] controller_steps=5, cos_to_last_boundary=0.9307, temporal_epochs=0, autonomic_ticks=0, age_days=0.0000, cog_cycles=0
 [world] last 17 binding(s):
   b1: [anchor:NOW_ORIGIN]
       edges: then:b2, then:b3
