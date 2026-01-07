@@ -288,6 +288,7 @@ A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph 
 
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
 - [Tutorial on WorkingMap](#tutorial-on-workingmap)
+- [WorkingMap Layer Contracts] (#workingmap-layer-contracts)
 - [Binding and Edge Representation](#binding-and-edge-representation)
 - [Anchors, LATEST, and Base-Aware Writes](#anchors-latest-and-base-aware-writes)
 - [Tutorial on Drives](#tutorial-on-drives)
@@ -829,7 +830,7 @@ Notes:
 
 ## WorkingMap (Working Memory Graph)
 
-CCA8 now maintains a **WorkingMap**, a short-term **map workspace**: a stable MapSurfrace in place each tick, plus an optional cratch/trace layer for debugging.
+CCA8 now maintains a **WorkingMap**, a short-term **map workspace**: a stable MapSurface in place each tick, plus an optional scratch/trace layer for debugging.
 
 
 
@@ -891,6 +892,8 @@ WorkingMap now has an implemented **MapSurface** layer: a stable, updatable map 
 - The env-loop (menu 37) prints:
   - a MapSurface entity table (entity_id, kind, pos(x,y), dist_m/class, last_seen),
   - followed by a WorkingMap snapshot where WorkingMap IDs are printed as `wN (bN)`.
+
+
 
 
 
@@ -3459,6 +3462,107 @@ A: It means each pred-binding is intended to be a self-contained state card (“
 
 Q: How does the planner know which label to show for a binding?
 A: The first pred:* tag (if present) is used as the node’s human label in pretty paths and exports. If there is no pred:* tag, we fall back to the binding id (bN).
+
+
+
+
+
+
+
+
+
+# WorkingMap Layer Contracts
+
+## WorkingMap Layer Contracts (MapSurface / Scratch / Creative Layers)
+## For development reference -- will merge later into Tutorial on WorkingMap
+
+
+**Purpose:** Unified working memory snapshot used for perception, reasoning, action selection, imagination, and consolidation.
+**Contains:**
+
+* **MapSurface** (visuospatial sketchpad / “what is here now”)
+* **Scratch** (transient reasoning + action chains)
+* **Creative** (counterfactual rollouts / imagined futures)
+
+**Lifecycle:** Exists across steps; layers are refreshed/cleared on different schedules (below).
+**Invariant:** WorkingMap is the *only* place where “rich, moment-to-moment” state lives; WorldGraph stores stable, reusable indexing aspects and long-lived knowledge.
+
+---
+
+### MapSurface (visuospatial sketchpad)
+
+**Purpose:** A best-current estimate of the *present situation* in a compact, inspectable structure.
+**Writes:**
+
+* Environment→WorkingMap projection (“percepts”, current stage/zone cues, salient objects/relations).
+* WorldGraph→WorkingMap retrieval of stable items needed *right now* (anchors, known entities, stable relations).
+
+**Reads:**
+
+* Controller / policy selection
+* Gating logic
+* Consolidation triggers
+
+**Lifecycle:** Refreshed each cognitive cycle (or each env step). Can retain continuity via anchors (NOW/HERE) but should not accumulate long chains.
+
+**Allowed content:** “What is present / believed present” + simple relations (near/far, in_zone, supports, blocked_by).
+**Not allowed:** Long multi-step reasoning traces, multi-option hypothetical futures (those go to Scratch/Creative).
+
+---
+
+### Scratch (transient reasoning workspace)
+
+**Purpose:** Temporary workspace for reasoning and action sequencing.
+**Writes:**
+
+* Intermediate variables (“candidate action”, “goal”, “constraint violated”, “subplan step i”).
+* Short action chains, explanations, diagnostic tags for terminal readability.
+
+**Reads:**
+
+* Policy executors (to carry transient state across micro-steps)
+* Debug/inspection
+
+**Lifecycle:** Cleared aggressively: typically every cycle, or after an action is committed/executed (depending on whether you want multi-cycle “ongoing thought”).
+
+**Allowed content:** Any transient scaffolding that would be confusing/dangerous to store long-term.
+**Invariant:** Nothing in Scratch is assumed to persist unless explicitly promoted.
+
+---
+
+### Creative (imagination / counterfactual rollouts)
+
+**Purpose:** Hold *multiple candidate futures* generated from the current state, so we can choose actions via evaluation.
+**Writes:**
+
+* “Rollout candidates” produced by simulating hypothetical actions from the current MapSurface (+ optional Scratch context).
+* Each candidate includes: action sequence, predicted outcomes, score, and provenance.
+
+**Reads:**
+
+* Action selection / planner (choose best candidate)
+* Debug/inspection (why did we choose X?)
+
+**Lifecycle:** Usually cleared each decision point; may persist for a short horizon if you want plan reuse.
+
+**Representation recommendation (future):** Creative should behave like a **pool of candidate WorkingMaps** (or “delta summaries”), not “thousands of stacked layers inside one map.” This keeps candidates isolated and comparable.
+
+**Invariant:** Creative never directly mutates MapSurface “reality”; it produces proposals that must be selected/committed.
+
+---
+
+## Minimal “CreativeCandidate” record (future hook)
+
+When we implement, each candidate should carry:
+
+* `seed_state_id` (what present snapshot it started from)
+* `actions` (list of proposed actions)
+* `predicted_state_summary` (small, inspectable outcome)
+* `score` + `score_breakdown` (why this is good/bad)
+* `provenance` (version, RNG seed, parameters, evaluator name)
+
+This aligns with the article’s emphasis on verifiers + provenance, without committing us to Genie-style learned world models yet.
+
 
 
 

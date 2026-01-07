@@ -141,6 +141,30 @@ ASCII_LOGOS = {
 # --- Runtime Context (ENGINE↔CLI seam) --------------------------------------------
 
 @dataclass(slots=True)
+class CreativeCandidate:
+    """One imagined candidate proposed by the WorkingMap Creative layer.
+
+    This is intentionally lightweight and inspectable (terminal-friendly). It is NOT a learned model.
+    Think of it as: "if I were to do X next, what do I roughly expect and why?"
+
+    Fields:
+        policy:
+            The policy name being proposed (e.g., "policy:follow_mom").
+        score:
+            A comparable score (higher is better). For now this is a placeholder for future rollout scoring.
+        notes:
+            Short human-readable rationale for the candidate (why it was considered / why it scored).
+        predicted:
+            Optional small dict holding predicted consequences (e.g., {"zone": "safe"}).
+            This is intentionally shallow: anything rich belongs in engrams later.
+    """
+    policy: str
+    score: float
+    notes: str = ""
+    predicted: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class Ctx:
     """Mutable runtime context for the agent (module-level, importable).
 
@@ -214,6 +238,14 @@ class Ctx:
     working_trace: bool = False          # debug only: also append a per-tick trace (can grow quickly)
     wm_entities: dict[str, str] = field(default_factory=dict)            # entity_id -> binding id (in working_world)
     wm_last_env_cues: dict[str, set[str]] = field(default_factory=dict)  # entity_id -> last injected cue tags
+
+    # WorkingMap Creative layer (counterfactual rollouts / imagined futures)
+    # - Does not change policy selection yet (purely inspectable scaffolding for Option B).
+    # - Candidates will later be written under WM_CREATIVE (or stored as engrams), but for now we keep them on ctx.
+    wm_creative_enabled: bool = False
+    wm_creative_k: int = 3  # typical 2–5; keep small to stay terminal-readable
+    wm_creative_candidates: list[CreativeCandidate] = field(default_factory=list)
+    wm_creative_last_pick: Optional[CreativeCandidate] = None
 
     # memory pipeline knobs (opt-in; defaults preserve Phase VI behavior)
     phase7_working_first: bool = False    # execute policies in WorkingMap; keep long-term WorldGraph sparse
@@ -468,7 +500,7 @@ def init_working_world() -> cca8_world_graph.WorldGraph:
     """Initialize a short-term WorkingMap (working memory) as a separate WorldGraph.
 
     Design intent:
-      - WorkingMap holds the full episodic trace (write everything, per-tick).
+      - WorkingMap holds the full episodic trace.
       - Long-term WorldGraph can later be run in 'semantic' mode to reduce clutter.
       - Consolidation policy (what gets copied from WorkingMap into WorldGraph) can evolve
         without losing the ability to record raw per-tick structure.
@@ -489,6 +521,12 @@ def reset_working_world(ctx) -> None:
         # MapSurface caches live on ctx (slots=True → must be explicit)
         ctx.wm_entities.clear()
         ctx.wm_last_env_cues.clear()
+        # Creative layer state is also WorkingMap-local (ephemeral); clearing WM clears this too.
+        try:
+            ctx.wm_creative_candidates.clear()
+            ctx.wm_creative_last_pick = None
+        except Exception:
+            pass
     except Exception:
         # If ctx is not writable for some reason, fail silently.
         pass
@@ -525,8 +563,9 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
     print(
     "  Legend edges: wm_entity=WM_ROOT→entity (MapSurface membership); "
     "wm_scratch=WM_ROOT→WM_SCRATCH (policy scratch root; keeps WM_ROOT clean); "
+    "wm_creative=WM_ROOT→WM_CREATIVE (counterfactual rollouts); "
     "distance_to=WM_SELF→entity (meta has meters/class); then=policy action chain (should hang off WM_SCRATCH)"
-)
+    )
     print("  Legend tags : wm:entity / wm:eid:<id> / wm:kind:<kind> mark entities; pred:* on entities = current belief; cue:* on entities = cues present now; meta.wm.pos={x,y,frame}")
     for bid in tail:
         b = ww._bindings.get(bid)  # pylint: disable=protected-access
@@ -560,6 +599,63 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
         else:
             pv = "(none)"
         print(f"  {_wm_display_id(bid)} ({bid}): [{tags}] out={len(edges)} edges={pv}")
+
+def print_working_map_layers(ctx, *, title: str = "[workingmap] layers") -> None:
+    """Print a compact HUD of WorkingMap layers (MapSurface / Scratch / Creative).
+
+    This is intentionally a *structural* view:
+      - Which roots exist?
+      - Is Creative enabled?
+      - How many candidates are currently staged?
+
+    It does not print the full graph; use print_working_map_snapshot(...) for that.
+    """
+    ww = getattr(ctx, "working_world", None)
+    if ww is None:
+        print(f"{title}: (no working_world)")
+        return
+
+    anchors = getattr(ww, "_anchors", {}) if hasattr(ww, "_anchors") else {}
+    root_bid = (anchors.get("WM_ROOT") or anchors.get("NOW"))
+    scratch_bid = anchors.get("WM_SCRATCH")
+    creative_bid = anchors.get("WM_CREATIVE")
+
+    ent_map = getattr(ctx, "wm_entities", {}) or {}
+    enabled = bool(getattr(ctx, "wm_creative_enabled", False))
+    cands = getattr(ctx, "wm_creative_candidates", []) or []
+
+    print(title)
+    if isinstance(root_bid, str):
+        print(f"  MapSurface: root={_wm_display_id(root_bid)} ({root_bid}) entities={len(ent_map)}")
+    else:
+        print(f"  MapSurface: root=(none) entities={len(ent_map)}")
+
+    if isinstance(scratch_bid, str):
+        print(f"  Scratch  : root={_wm_display_id(scratch_bid)} ({scratch_bid})")
+    else:
+        print("  Scratch  : root=(none)")
+
+    if isinstance(creative_bid, str):
+        print(f"  Creative : root={_wm_display_id(creative_bid)} ({creative_bid}) enabled={enabled} candidates={len(cands)}")
+    else:
+        print(f"  Creative : root=(none) enabled={enabled} candidates={len(cands)}")
+
+    # Optional: show candidate summaries if present
+    if cands:
+        print("  Creative candidates (best first):")
+        try:
+            ordered = sorted(cands, key=lambda c: float(getattr(c, "score", 0.0)), reverse=True)
+        except Exception:
+            ordered = list(cands)
+
+        for i, c in enumerate(ordered[:8], 1):
+            try:
+                pol = getattr(c, "policy", "(unknown)")
+                score = float(getattr(c, "score", 0.0))
+                notes = str(getattr(c, "notes", "") or "")
+                print(f"    {i:>2}) {pol:<18} score={score:>6.2f}  {notes}")
+            except Exception:
+                print(f"    {i:>2}) {c}")
 
 
 def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface entity table") -> None:
@@ -5587,6 +5683,21 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
                 pass
             try:
                 _upsert_edge(root_bid, scratch_bid, "wm_scratch", {"created_by": "wm_mapsurface"})
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Ensure WM_CREATIVE exists and is reachable from WM_ROOT.
+        # This is the "imagination" workspace: counterfactual rollouts should not contaminate MapSurface.
+        try:
+            creative_bid = ww.ensure_anchor("WM_CREATIVE")
+            try:
+                _tagset_of(creative_bid).add("wm:creative")
+            except Exception:
+                pass
+            try:
+                _upsert_edge(root_bid, creative_bid, "wm_creative", {"created_by": "wm_mapsurface"})
             except Exception:
                 pass
         except Exception:
@@ -10624,6 +10735,10 @@ Settings
                 except ValueError:
                     pass
 
+            print_working_map_layers(ctx)
+            print()
+            print_working_map_entity_table(ctx)
+            print()
             print_working_map_snapshot(ctx, n=n)
 
             rawc = input("\nClear WorkingMap now? [y/N]: ").strip().lower()
