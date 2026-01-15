@@ -288,7 +288,7 @@ A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph 
 
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
 - [Tutorial on WorkingMap](#tutorial-on-workingmap)
-- [WorkingMap Layer Contracts](#working-map-layer-contracts)
+- [WorkingMap Layer Contracts](#workingmap-layer-contracts)
 - [Binding and Edge Representation](#binding-and-edge-representation)
 - [Anchors, LATEST, and Base-Aware Writes](#anchors-latest-and-base-aware-writes)
 - [Tutorial on Drives](#tutorial-on-drives)

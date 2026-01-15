@@ -49,6 +49,7 @@ non-interactive utility flags for scripting, like `--about`, `--version`, and `-
 from __future__ import annotations
 import argparse
 import json
+import hashlib
 import os
 import platform
 import sys
@@ -242,10 +243,15 @@ class Ctx:
     # WorkingMap Creative layer (counterfactual rollouts / imagined futures)
     # - Does not change policy selection yet (purely inspectable scaffolding for Option B).
     # - Candidates will later be written under WM_CREATIVE (or stored as engrams), but for now we keep them on ctx.
-    wm_creative_enabled: bool = False
+    wm_creative_enabled: bool = True
     wm_creative_k: int = 3  # typical 2–5; keep small to stay terminal-readable
     wm_creative_candidates: list[CreativeCandidate] = field(default_factory=list)
     wm_creative_last_pick: Optional[CreativeCandidate] = None
+    # MapSurface snapshot dedup + last stored pointer (manual first; later boundary-triggered)
+    wm_mapsurface_last_sig: Optional[str] = None
+    wm_mapsurface_last_engram_id: Optional[str] = None
+    wm_mapsurface_last_world_bid: Optional[str] = None
+
 
     # memory pipeline knobs (opt-in; defaults preserve Phase VI behavior)
     phase7_working_first: bool = False    # execute policies in WorkingMap; keep long-term WorldGraph sparse
@@ -600,6 +606,7 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
             pv = "(none)"
         print(f"  {_wm_display_id(bid)} ({bid}): [{tags}] out={len(edges)} edges={pv}")
 
+
 def print_working_map_layers(ctx, *, title: str = "[workingmap] layers") -> None:
     """Print a compact HUD of WorkingMap layers (MapSurface / Scratch / Creative).
 
@@ -642,7 +649,8 @@ def print_working_map_layers(ctx, *, title: str = "[workingmap] layers") -> None
 
     # Optional: show candidate summaries if present
     if cands:
-        print("  Creative candidates (best first):")
+        print("  Creative candidates (best first): trig=Y means policy trigger satisfied; trig=N means blocked")
+        print("(Note: The 'score' value is a simple ranking signal for this display, not RL skill value or deficit calculation.)")
         try:
             ordered = sorted(cands, key=lambda c: float(getattr(c, "score", 0.0)), reverse=True)
         except Exception:
@@ -653,7 +661,18 @@ def print_working_map_layers(ctx, *, title: str = "[workingmap] layers") -> None
                 pol = getattr(c, "policy", "(unknown)")
                 score = float(getattr(c, "score", 0.0))
                 notes = str(getattr(c, "notes", "") or "")
-                print(f"    {i:>2}) {pol:<18} score={score:>6.2f}  {notes}")
+
+                pred = getattr(c, "predicted", None)
+                trig = bool(pred.get("triggerable", False)) if isinstance(pred, dict) else False
+                trig_txt = "Y" if trig else "N"
+
+                # If the candidate is blocked, normalize the old note prefix so output is cleaner.
+                if (not trig) and notes.startswith("blocked(not_triggered)"):
+                    rest = notes[len("blocked(not_triggered)"):]
+                    rest = rest.lstrip(" ;")
+                    notes = "not_triggered" + (f"; {rest}" if rest else "")
+
+                print(f"    {i:>2}) {pol:<18} trig={trig_txt} score={score:>6.2f}  {notes}")
             except Exception:
                 print(f"    {i:>2}) {c}")
 
@@ -744,6 +763,365 @@ def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface
             f"  {eid:<7}  {node_disp:<10}  {kind:<8}  {pos_txt:<14}  {dist_txt:>6}  {cls_txt:<8}  {seen_txt:>4}  "
             f"{pred_txt:<26}  {cue_txt}"
         )
+
+
+def serialize_mapsurface_v1(ctx: Ctx, *, include_internal_ids: bool = False) -> dict[str, Any]:
+    """Serialize the WorkingMap MapSurface into a JSON-safe dict (MapEngram payload v1).
+
+    Purpose / intent
+    ----------------
+    Option B (memory pipeline) will store WorkingMap snapshots as **Column engrams**. This function provides the
+    *heavy payload* for such an engram: a stable, explicit, inspectable representation of the current MapSurface.
+
+    Design constraints
+    ------------------
+    - Must be JSON-safe: only dict/list/str/int/float/bool/None.
+    - Must be robust: never raise (best-effort snapshot).
+    - Must NOT mutate WorkingMap: read-only.
+
+    Included content (v1)
+    ---------------------
+    - header:
+        schema tag, controller_steps/ticks/boundary/run-step, temporal fingerprint, and a tiny BodyMap readout if available.
+    - entities:
+        one record per WM entity (eid/kind/pos/dist/seen + preds + cues).
+    - relations:
+        distance_to edges from SELF → other entities, including edge meta (meters/class/frame) when present.
+
+    Args:
+        ctx:
+            Runtime context (holds working_world and wm_entities).
+        include_internal_ids:
+            If True, include internal WorkingMap binding ids (e.g., "b17") in entity and relation records.
+            Keep False for stable payloads; turn on only for debugging.
+
+    Returns:
+        A dict payload suitable for storing as a Column engram.
+    """
+    ww = getattr(ctx, "working_world", None)
+    if ww is None:
+        return {
+            "schema": "wm_mapsurface_v1",
+            "header": {"error": "no_working_world"},
+            "entities": [],
+            "relations": [],
+        }
+
+    ent_map = getattr(ctx, "wm_entities", None)
+    if not isinstance(ent_map, dict):
+        ent_map = {}
+
+    anchors = getattr(ww, "_anchors", {}) if hasattr(ww, "_anchors") else {}
+    root_bid = anchors.get("WM_ROOT") or anchors.get("NOW")
+    self_bid = ent_map.get("self") or anchors.get("WM_SELF")
+
+    # ---- header (best-effort) ----
+    header: dict[str, Any] = {
+        "schema": "wm_mapsurface_v1",
+        "profile": getattr(ctx, "profile", None),
+        "controller_steps": int(getattr(ctx, "controller_steps", 0) or 0),
+        "ticks": int(getattr(ctx, "ticks", 0) or 0),
+        "boundary_no": int(getattr(ctx, "boundary_no", 0) or 0),
+        "boundary_vhash64": getattr(ctx, "boundary_vhash64", None),
+        "tvec64": (ctx.tvec64() if hasattr(ctx, "tvec64") else None),
+        "run_last_env_step": getattr(ctx, "run_last_env_step", None),
+    }
+    if isinstance(root_bid, str) and include_internal_ids:
+        header["wm_root_bid"] = root_bid
+    if isinstance(self_bid, str) and include_internal_ids:
+        header["wm_self_bid"] = self_bid
+
+    # Tiny BodyMap readout (helps indexing/debug; does not affect MapSurface content)
+    body: dict[str, Any] = {"stale": True}
+    try:
+        stale = bool(bodymap_is_stale(ctx))
+        body["stale"] = stale
+        if not stale:
+            try:
+                body["posture"] = body_posture(ctx)
+            except Exception:
+                pass
+            try:
+                body["mom_distance"] = body_mom_distance(ctx)
+            except Exception:
+                pass
+            try:
+                body["nipple_state"] = body_nipple_state(ctx)
+            except Exception:
+                pass
+            try:
+                body["zone"] = body_space_zone(ctx)
+            except Exception:
+                pass
+    except Exception:
+        body = {"stale": True}
+    header["body"] = body
+
+    # ---- helpers ----
+    def _as_float(x) -> float | None:
+        try:
+            return float(x)
+        except Exception:
+            return None
+
+    def _as_int(x) -> int | None:
+        try:
+            return int(x)
+        except Exception:
+            return None
+
+    # reverse map for relation decoding (bid -> eid)
+    bid_to_eid: dict[str, str] = {}
+    for eid, bid in ent_map.items():
+        if isinstance(eid, str) and isinstance(bid, str):
+            bid_to_eid[bid] = eid
+
+    def _entity_record(eid: str, bid: str) -> dict[str, Any]:
+        b = ww._bindings.get(bid)  # pylint: disable=protected-access
+        if b is None:
+            out = {"eid": eid}
+            if include_internal_ids:
+                out["bid"] = bid
+            return out
+
+        tags_raw = getattr(b, "tags", None)
+        if tags_raw is None:
+            tags: list[str] = []
+        elif isinstance(tags_raw, (set, list, tuple)):
+            tags = [t for t in tags_raw if isinstance(t, str)]
+        else:
+            try:
+                tags = [t for t in list(tags_raw) if isinstance(t, str)]
+            except Exception:
+                tags = []
+
+        kind = None
+        for t in tags:
+            if t.startswith("wm:kind:"):
+                kind = t.split(":", 2)[2]
+                break
+
+        preds = sorted(t[5:] for t in tags if t.startswith("pred:"))
+        cues = sorted(t[4:] for t in tags if t.startswith("cue:"))
+
+        meta = getattr(b, "meta", None)
+        wmm = meta.get("wm", {}) if isinstance(meta, dict) else {}
+        pos = wmm.get("pos", {}) if isinstance(wmm, dict) else {}
+
+        x = pos.get("x") if isinstance(pos, dict) else None
+        y = pos.get("y") if isinstance(pos, dict) else None
+        frame = pos.get("frame") if isinstance(pos, dict) else None
+
+        dist_m = wmm.get("dist_m") if isinstance(wmm, dict) else None
+        dist_class = wmm.get("dist_class") if isinstance(wmm, dict) else None
+        last_seen = wmm.get("last_seen_step") if isinstance(wmm, dict) else None
+
+        rec: dict[str, Any] = {
+            "eid": eid,
+            "kind": kind,
+            "pos": {
+                "x": _as_float(x),
+                "y": _as_float(y),
+                "frame": str(frame) if isinstance(frame, str) else None,
+            },
+            "dist_m": _as_float(dist_m),
+            "dist_class": str(dist_class) if isinstance(dist_class, str) else None,
+            "last_seen_step": _as_int(last_seen),
+            "preds": preds,
+            "cues": cues,
+        }
+        if include_internal_ids:
+            rec["bid"] = bid
+        return rec
+
+    # ---- entities ----
+    entities: list[dict[str, Any]] = []
+    try:
+        # stable order: self first, then alphabetical by eid
+        eids = sorted([e for e in ent_map.keys() if isinstance(e, str)])
+        if "self" in eids:
+            eids.remove("self")
+            eids = ["self"] + eids
+
+        for eid in eids:
+            bid = ent_map.get(eid)
+            if not isinstance(bid, str):
+                continue
+            entities.append(_entity_record(eid, bid))
+    except Exception:
+        entities = []
+
+    # ---- relations (distance_to edges) ----
+    relations: list[dict[str, Any]] = []
+    try:
+        if isinstance(self_bid, str) and self_bid in getattr(ww, "_bindings", {}):  # pylint: disable=protected-access
+            bself = ww._bindings.get(self_bid)  # pylint: disable=protected-access
+            edges = getattr(bself, "edges", []) or []
+            if isinstance(edges, list):
+                for e in edges:
+                    if not isinstance(e, dict):
+                        continue
+                    lab = e.get("label") or e.get("rel") or e.get("relation")
+                    if lab != "distance_to":
+                        continue
+
+                    dst = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                    if not isinstance(dst, str):
+                        continue
+
+                    em = e.get("meta")
+                    em = em if isinstance(em, dict) else {}
+                    meters = em.get("meters")
+                    cls = em.get("class")
+                    frame = em.get("frame")
+
+                    dst_eid = bid_to_eid.get(dst) or "(unknown)"
+                    rel_rec: dict[str, Any] = {
+                        "rel": "distance_to",
+                        "src": "self",
+                        "dst": dst_eid,
+                        "meters": _as_float(meters),
+                        "class": str(cls) if isinstance(cls, str) else None,
+                        "frame": str(frame) if isinstance(frame, str) else None,
+                    }
+                    if include_internal_ids:
+                        rel_rec["src_bid"] = self_bid
+                        rel_rec["dst_bid"] = dst
+                    relations.append(rel_rec)
+    except Exception:
+        relations = []
+
+    return {
+        "schema": "wm_mapsurface_v1",
+        "header": header,
+        "entities": entities,
+        "relations": relations,
+    }
+
+
+def mapsurface_payload_sig_v1(payload: dict[str, Any], *, stage: Optional[str] = None, zone: Optional[str] = None) -> str:
+    """Stable content signature for MapSurface snapshots (used for dedup vs last).
+
+    Important:
+      - excludes volatile header fields (steps/ticks/tvec/etc)
+      - excludes volatile per-entity recency (last_seen_step)
+      - includes stage/zone *if provided* (so you can choose whether those differentiate snapshots)
+
+    Rationale:
+      - In closed-loop runs, entities get "seen again" every tick. If we include last_seen_step, the
+        signature changes every step even when the scene is otherwise identical, defeating dedup.
+    """
+    ents_in = payload.get("entities", []) or []
+    ents_norm: list[dict[str, Any]] = []
+    for ent in ents_in:
+        if isinstance(ent, dict):
+            d = dict(ent)
+            d.pop("last_seen_step", None)  # volatile per-tick recency
+            ents_norm.append(d)
+        else:
+            # Extremely defensive fallback; should not happen in normal paths.
+            ents_norm.append({"_raw": str(ent)})
+
+    core = {
+        "schema": payload.get("schema"),
+        "stage": stage,
+        "zone": zone,
+        "entities": ents_norm,
+        "relations": payload.get("relations", []),
+    }
+    blob = json.dumps(core, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def store_mapsurface_snapshot_v1(world, ctx: Ctx, *, reason: str, attach: str = "now",
+                                force: bool = False, quiet: bool = False) -> dict[str, Any]:
+    """Store the current WorkingMap.MapSurface snapshot into Column memory and index it in WorldGraph.
+
+    What gets written:
+      1) Column engram payload: serialize_mapsurface_v1(ctx) (JSON-safe dict)
+      2) WorldGraph binding: a thin pointer node tagged cue:wm:mapsurface_snapshot + index tags
+         with engram pointer attached under binding.engrams["column01"]["id"].
+
+    Dedup:
+      - If the content signature matches ctx.wm_mapsurface_last_sig, we skip storing unless force=True.
+    """
+    payload = serialize_mapsurface_v1(ctx, include_internal_ids=False)
+
+    # Index attributes (best-effort)
+    stage = getattr(ctx, "lt_obs_last_stage", None)
+    if not isinstance(stage, str):
+        stage = None
+
+    try:
+        zone = body_space_zone(ctx)
+    except Exception:
+        zone = None
+    if not isinstance(zone, str):
+        zone = None
+
+    sig = mapsurface_payload_sig_v1(payload, stage=stage, zone=zone)
+    last_sig = getattr(ctx, "wm_mapsurface_last_sig", None)
+
+    if (not force) and (sig == last_sig):
+        return {"stored": False, "why": "dedup_same_as_last", "sig": sig, "stage": stage, "zone": zone}
+
+    # Create a thin WorldGraph index binding (always new; no semantic reuse)
+    tags = {"cue:wm:mapsurface_snapshot"}
+    if stage:
+        tags.add(f"idx:stage:{stage}")
+    if zone:
+        tags.add(f"idx:zone:{zone}")
+
+    meta = {
+        "wm": {
+            "kind": "mapsurface_snapshot",
+            "schema": payload.get("schema"),
+            "sig": sig,
+            "stage": stage,
+            "zone": zone,
+            "reason": reason,
+        }
+    }
+
+    bid = world.add_binding(set(tags), meta=meta)
+
+    att = (attach or "").strip().lower() or None
+    if att in (None, "none"):
+        pass
+    elif att == "now":
+        src = world.ensure_anchor("NOW")
+        world.add_edge(src, bid, label="then", meta={"kind": "wm_mapsurface_snapshot", "reason": reason})
+    else:
+        raise ValueError("attach must be None|'now'|'none'")
+
+    # Store engram in Column + attach pointer to the WorldGraph binding
+    from cca8_features import FactMeta  # local import OK
+
+    attrs = {
+        "schema": payload.get("schema"),
+        "sig": sig,
+        "stage": stage,
+        "zone": zone,
+        "reason": reason,
+        "controller_steps": int(getattr(ctx, "controller_steps", 0) or 0),
+        "ticks": int(getattr(ctx, "ticks", 0) or 0),
+        "boundary_no": int(getattr(ctx, "boundary_no", 0) or 0),
+        "boundary_vhash64": getattr(ctx, "boundary_vhash64", None),
+    }
+    fm = FactMeta(name="wm_mapsurface", links=[bid], attrs=attrs)
+
+    engram_id = column_mem.assert_fact("wm_mapsurface", payload, fm)
+    world.attach_engram(bid, column="column01", engram_id=engram_id, act=1.0)
+
+    # Update ctx "last"
+    ctx.wm_mapsurface_last_sig = sig
+    ctx.wm_mapsurface_last_engram_id = engram_id
+    ctx.wm_mapsurface_last_world_bid = bid
+
+    if not quiet:
+        print(f"[wm->column] stored wm_mapsurface: sig={sig[:16]} bid={bid} engram_id={engram_id[:16]}... stage={stage} zone={zone}")
+
+    return {"stored": True, "sig": sig, "bid": bid, "engram_id": engram_id, "stage": stage, "zone": zone}
 
 
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
@@ -6159,6 +6537,225 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
     return {"predicates": created_preds, "cues": created_cues, "token_to_bid": token_to_bid}
 
 
+def _wm_creative_update(policy_rt, world, drives, ctx, *, exec_world=None) -> None:
+
+    """
+    Populate the WorkingMap Creative layer with a tiny "imagination" demo (Option B Step 2).
+
+    What this does (and does NOT do):
+      - It scores a few candidate *policies* using a simple heuristic (safety first).
+      - It stores the results on ctx:
+          ctx.wm_creative_candidates (best-first)
+          ctx.wm_creative_last_pick
+      - It does NOT change which policy the controller actually executes yet.
+
+    Candidate pool:
+      - We use policy_rt.loaded (already dev-gated by profile/age via refresh_loaded(ctx)).
+      - We evaluate trigger(world, drives) to see which are currently feasible.
+      - We mirror the controller's safety filter: if "fallen near NOW", only StandUp/RecoverFall count as feasible.
+    """
+    if ctx is None:
+        return
+
+    enabled = bool(getattr(ctx, "wm_creative_enabled", False))
+    if not enabled:
+        try:
+            ctx.wm_creative_candidates.clear()
+        except Exception:
+            pass
+        try:
+            ctx.wm_creative_last_pick = None
+        except Exception:
+            pass
+        return
+
+    # Clamp K to a readable small range (2–5 recommended; allow 1..5)
+    try:
+        k = int(getattr(ctx, "wm_creative_k", 3) or 3)
+    except Exception:
+        k = 3
+    k = max(1, min(5, k))
+    try:
+        ctx.wm_creative_k = k
+        # Use the same world the controller will execute into (if provided) so "triggerable" matches real executability.
+        trigger_world = exec_world if exec_world is not None else world
+    except Exception:
+        pass
+
+    # Read BodyMap (preferred) for cheap state signals
+    posture = None
+    mom = None
+    nipple = None
+    zone = "unknown"
+    try:
+        if not bodymap_is_stale(ctx):
+            posture = body_posture(ctx)
+            mom = body_mom_distance(ctx)
+            nipple = body_nipple_state(ctx)
+            try:
+                zone = body_space_zone(ctx)
+            except Exception:
+                zone = "unknown"
+    except Exception:
+        zone = "unknown"
+
+    hunger = float(getattr(drives, "hunger", 0.0))
+    fatigue = float(getattr(drives, "fatigue", 0.0))
+
+    # Which loaded policies are actually triggerable right now?
+    loaded = getattr(policy_rt, "loaded", []) or []
+    triggerable: set[str] = set()
+    all_names: list[str] = []
+
+    for g in loaded:
+        name = getattr(g, "name", None)
+        if not isinstance(name, str):
+            continue
+        all_names.append(name)
+        ok = False
+        try:
+            ok = bool(g.trigger(trigger_world, drives, ctx))
+        except Exception:
+            ok = False
+        if ok:
+            triggerable.add(name)
+
+    # Mirror safety override: if fallen near NOW, only allow posture recovery policies as feasible.
+    try:
+        if _fallen_near_now(trigger_world, ctx, max_hops=3):
+            triggerable &= {"policy:stand_up", "policy:recover_fall"}
+    except Exception:
+        pass
+
+
+    def _score_policy(name: str) -> tuple[float, str, dict]:
+        """
+        Tiny heuristic scorer.
+        Returns (score, notes, predicted_dict).
+        """
+        score = 0.0
+        notes: list[str] = []
+        predicted: dict = {}
+
+        # Safety/posture recovery first
+        if name == "policy:stand_up":
+            if posture == "fallen":
+                score += 5.0
+                notes.append("safety:fallen→stand")
+                predicted["posture"] = "standing"
+            elif posture == "standing":
+                score -= 2.0
+                notes.append("already_standing")
+            else:
+                score += 0.5
+                notes.append("posture_unknown")
+
+        elif name == "policy:recover_fall":
+            if posture == "fallen":
+                score += 4.0
+                notes.append("recover:fallen→assist")
+                predicted["posture"] = "standing"
+            else:
+                score -= 1.0
+                notes.append("not_fallen")
+
+        # Hunger / feeding
+        elif name == "policy:seek_nipple":
+            if hunger > HUNGER_HIGH:
+                score += 3.0 * (hunger - HUNGER_HIGH)
+                notes.append(f"hunger_high({hunger:.2f})")
+                predicted["feeding"] = "advance"
+            else:
+                score -= 0.3
+                notes.append(f"hunger_ok({hunger:.2f})")
+
+            if mom in ("near", "close", "touching"):
+                score += 0.6
+                notes.append("mom_near")
+            elif mom == "far":
+                score -= 0.6
+                notes.append("mom_far")
+
+            if posture == "fallen":
+                score -= 1.5
+                notes.append("blocked_by_fallen")
+
+            if nipple == "latched":
+                score -= 3.0
+                notes.append("already_latched")
+                predicted["feeding"] = "already"
+
+        # Fatigue / resting (with zone veto)
+        elif name == "policy:rest":
+            if fatigue > FATIGUE_HIGH:
+                score += 3.0 * (fatigue - FATIGUE_HIGH)
+                notes.append(f"fatigue_high({fatigue:.2f})")
+                predicted["fatigue"] = "down"
+            else:
+                score -= 0.2
+                notes.append(f"fatigue_ok({fatigue:.2f})")
+
+            if zone == "safe":
+                score += 0.6
+                notes.append("zone_safe")
+            if zone == "unsafe_cliff_near":
+                score -= 2.5
+                notes.append("zone_unsafe_veto")
+
+        # Movement / geometry change
+        elif name == "policy:follow_mom":
+            score += 0.2
+            notes.append("move/fallback")
+            if zone == "unsafe_cliff_near":
+                score += 1.6
+                notes.append("escape_cliff")
+                predicted["zone"] = "safer"
+            if mom == "far":
+                score += 0.4
+                notes.append("mom_far")
+            if nipple == "latched":
+                score -= 0.2
+                notes.append("already_nursing")
+
+        # Default: keep neutral
+        else:
+            score += 0.0
+
+        return score, "; ".join(notes), predicted
+
+    # Build candidates for all loaded policies, but sort triggerable ones first.
+    cands: list[CreativeCandidate] = []
+    for name in all_names:
+        sc, note, pred = _score_policy(name)
+        trig = name in triggerable
+        pred = dict(pred or {})
+        pred["triggerable"] = trig
+        if not trig:
+            note = "blocked(not_triggered)" + (f"; {note}" if note else "")
+        cands.append(CreativeCandidate(policy=name, score=float(sc), notes=note, predicted=pred))
+
+    trig_cands = [c for c in cands if bool(getattr(c, "predicted", {}).get("triggerable", False))]
+    blk_cands  = [c for c in cands if not bool(getattr(c, "predicted", {}).get("triggerable", False))]
+
+    trig_cands.sort(key=lambda c: float(getattr(c, "score", 0.0)), reverse=True)
+    blk_cands.sort(key=lambda c: float(getattr(c, "score", 0.0)), reverse=True)
+
+    out = trig_cands[:k]
+    if len(out) < k:
+        out += blk_cands[: (k - len(out))]
+
+    try:
+        ctx.wm_creative_candidates.clear()
+        ctx.wm_creative_candidates.extend(out)
+    except Exception:
+        pass
+
+    try:
+        ctx.wm_creative_last_pick = out[0] if out else None
+    except Exception:
+        pass
+
+
 def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) -> None:
     """
     Run N closed-loop steps between the HybridEnvironment and the CCA8 brain
@@ -6204,7 +6801,6 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             return "safe"
         return "unknown"
 
-    # --- action-run compression helpers (long-term WorldGraph) -----------------
     # phase7 is one of the s/w devp't phases, need some scaffolding to converted memory pipeline to
     #    sensory input -> recognition -> inject into Working Mem,BodyMap -> details to Work Mem -> consolidate to WorldGraph
 
@@ -6715,6 +7311,8 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         except Exception:
             zone_now = None
 
+        wm_auto_store = False
+        wm_auto_reason = None
         boundary_changed = False
         try:
             st_curr = env.state
@@ -6732,6 +7330,25 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 (zone_now or "unknown"),
             )
             boundary_changed = (prev_sig is not None) and (prev_sig != curr_sig)
+            # Stage/zone boundary detection (ignore posture/nipple here to keep storage sparse/readable)
+            try:
+                stage_changed = prev_sig[0] != curr_sig[0]
+                zone_changed  = prev_sig[3] != curr_sig[3]
+            except Exception:
+                stage_changed, zone_changed = False, False
+
+            if stage_changed or zone_changed:
+                _ps = prev_sig[0] or "?"
+                _cs = curr_sig[0] or "?"
+                _pz = prev_sig[3] or "?"
+                _cz = curr_sig[3] or "?"
+                parts: list[str] = []
+                if stage_changed:
+                    parts.append(f"stage:{_ps}->{_cs}")
+                if zone_changed:
+                    parts.append(f"zone:{_pz}->{_cz}")
+                wm_auto_store = True
+                wm_auto_reason = "auto_boundary_" + "_".join(parts)
         except Exception:
             boundary_changed = False
 
@@ -6752,6 +7369,37 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 except Exception:
                     pass
 
+            # Auto-store MapSurface snapshot at stage/zone boundaries (Option B#3)
+            if wm_auto_store and bool(getattr(ctx, "phase7_working_first", False)):
+                try:
+                    if (
+                        bool(getattr(ctx, "working_enabled", True))
+                        and getattr(ctx, "working_world", None) is not None
+                        and bool(getattr(ctx, "working_mapsurface", True))
+                    ):
+                        info = store_mapsurface_snapshot_v1(
+                            world,
+                            ctx,
+                            reason=(wm_auto_reason or "auto_boundary"),
+                            attach="now",
+                            force=False,
+                            quiet=True,
+                        )
+                        if info.get("stored"):
+                            print(
+                                "[wm->column] (auto) stored wm_mapsurface: "
+                                f"sig={str(info.get('sig',''))[:16]} bid={info.get('bid')} "
+                                f"engram_id={str(info.get('engram_id',''))[:16]}... "
+                                f"({wm_auto_reason})"
+                            )
+                        else:
+                            print(
+                                f"[wm->column] (auto) SKIP: {info.get('why','(no reason)')} "
+                                f"sig={str(info.get('sig',''))[:16]}"
+                            )
+                except Exception as e:
+                    print(f"[wm->column] (auto) store failed: {e}")
+
         # 4) Controller response
         policy_name = None
         try:
@@ -6762,7 +7410,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 if getattr(ctx, "working_world", None) is None:
                     ctx.working_world = init_working_world()
                 exec_world = ctx.working_world
-
+            _wm_creative_update(policy_rt, world, drives, ctx, exec_world=exec_world)
             fired = policy_rt.consider_and_maybe_fire(world, drives, ctx, exec_world=exec_world)
             if fired != "no_match":
                 print(f"[env→controller] {fired}")
@@ -6786,7 +7434,6 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         # start/extend run for the policy we just chose (applied on the NEXT env step)
         if _phase7_enabled():
             _phase7_start_or_extend_run(world, state_bid, policy_name, env_step=step_idx)
-
 
         # Short summary for this step + posture/nipple/zone explanations
         try:
@@ -7498,6 +8145,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
     40) Configure episode starting state (drives + age_days) [config-episode, cfg-epi]
     41) Retired: WorkingMap & WorldGraph settings, toggle RL policy
     43) WorkingMap snapshot (last N bindings; optional clear) [wsnap, wmsnap]
+    44) Store MapSurface snapshot to Column + WG pointer (dedup vs last) [wstore, wmstore]
+    45) List recent wm_mapsurface engrams (Column)
+
 
     Select: """
 
@@ -7562,6 +8212,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "retired": "41",
     "future": "42",
     "wsnap": "43", "wm-snapshot": "43", "wmsnap": "43",
+    "wstore": "44", "wmstore": "44",
+    "recent_wm_amp": "45",
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -7622,6 +8274,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "41": "41",  # retired: Toggle RL policy selection, select memory knobs
     "42": "42",  # future usage
     "43": "43",  # wm snapshot
+    "44": "44",  # store mapsurface snapshot
+    "45": "45",  # list recent wm_mapsurface engrams
+
 }
 
     # Attempt to load a prior session if requested
@@ -9969,6 +10624,42 @@ What happens conceptually per step
             # This uses the shared helper so other code paths can reuse the same semantics.
             inject_obs_into_world(world, ctx, env_obs)
 
+            # auto-store MapSurface snapshot at keyframes (stage/zone changes) ---
+            try:
+                stage_now = getattr(st, "scenario_stage", None)
+            except Exception:
+                stage_now = None
+            try:
+                zone_now = body_space_zone(ctx)
+            except Exception:
+                zone_now = None
+
+            stage_changed = (stage_now is not None and stage_now != prev_stage)
+            zone_changed = (zone_now is not None and zone_now != prev_zone)
+
+            if bool(getattr(ctx, "working_enabled", True)) and (stage_changed or zone_changed or (prev_stage is None and prev_zone is None)):
+                why_bits = []
+                if prev_stage is None and stage_now is not None:
+                    why_bits.append(f"start:{stage_now}")
+                elif stage_changed:
+                    why_bits.append(f"stage:{prev_stage}->{stage_now}")
+                if prev_zone is None and zone_now is not None:
+                    why_bits.append(f"zone:{zone_now}")
+                elif zone_changed:
+                    why_bits.append(f"zone:{prev_zone}->{zone_now}")
+
+                reason = "auto_keyframe" + (":" + ",".join(why_bits) if why_bits else "")
+                info = store_mapsurface_snapshot_v1(world, ctx, reason=reason, attach="now", force=False, quiet=True)
+
+                if info.get("stored"):
+                    print(f"[wm->column] auto stored wm_mapsurface: sig={info.get('sig','')[:16]} "
+                          f"bid={info.get('bid')} stage={info.get('stage')} zone={info.get('zone')}")
+                else:
+                    print(f"[wm->column] auto skip: {info.get('why')} sig={info.get('sig','')[:16]}")
+
+            prev_stage = stage_now
+            prev_zone = zone_now
+
             # Show BodyMap summary for this env step (posture/mom_distance/nipple_state)
             try:
                 bp = body_posture(ctx)
@@ -10741,11 +11432,90 @@ Settings
             print()
             print_working_map_snapshot(ctx, n=n)
 
+            # Dump MapSurface (MapEngram payload v1) — this is the exact snapshot we will later store into Column memory.
+            try:
+                payload = serialize_mapsurface_v1(ctx, include_internal_ids=False)
+                txt = json.dumps(payload, indent=2, ensure_ascii=False)
+                print()
+                print("[workingmap] MapSurface payload (wm_mapsurface_v1; JSON-safe)")
+                print(txt)
+            except Exception as e:
+                print()
+                print(f"[workingmap] MapSurface payload dump failed: {e}")
+
             rawc = input("\nClear WorkingMap now? [y/N]: ").strip().lower()
             if rawc in ("y", "yes"):
                 reset_working_world(ctx)
                 print("(WorkingMap cleared.)")
 
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "44":
+            #  Store WorkingMap MapSurface snapshot (Column + WG pointer)
+            print("Selection: Store WorkingMap MapSurface snapshot (Column + WG pointer)\n")
+            info = store_mapsurface_snapshot_v1(world, ctx, reason="manual_menu44", attach="now", force=False, quiet=False)
+            if info.get("stored"):
+                print(f"OK: stored. sig={info.get('sig','')[:16]} bid={info.get('bid')} engram_id={info.get('engram_id','')}")
+            else:
+                print(f"SKIP: {info.get('why','(no reason)')}. sig={info.get('sig','')[:16]}")
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "45":
+            print("Selection: List recent wm_mapsurface engrams (Column)\n")
+
+            raw_n = input("How many recent MapSurface engrams? (default=10): ").strip()
+            n = 10
+            if raw_n:
+                try:
+                    n = max(1, int(float(raw_n)))
+                except ValueError:
+                    pass
+
+            # Traverse column memory from newest to oldest; filter by record name.
+            rows = []
+            try:
+                ids = list(column_mem.list_ids())
+                for eid in reversed(ids):
+                    rec = column_mem.try_get(eid)
+                    if not isinstance(rec, dict):
+                        continue
+                    if rec.get("name") != "wm_mapsurface":
+                        continue
+                    rows.append(rec)
+                    if len(rows) >= n:
+                        break
+            except Exception:
+                rows = []
+
+            if not rows:
+                print("(none) No wm_mapsurface engrams found in column memory yet.")
+                print("Tip: run menu 44 (manual store) or run menu 37 until a stage/zone boundary occurs.")
+                loop_helper(args.autosave, world, drives, ctx)
+                continue
+
+            print(f"Recent wm_mapsurface engrams (newest first; n={len(rows)}):")
+            for i, rec in enumerate(rows, start=1):
+                eid = str(rec.get("id", ""))
+                meta = rec.get("meta", {}) if isinstance(rec.get("meta"), dict) else {}
+                attrs = meta.get("attrs", {}) if isinstance(meta.get("attrs"), dict) else {}
+
+                created_at = meta.get("created_at") or "(n/a)"
+                stage = attrs.get("stage") or "(n/a)"
+                zone  = attrs.get("zone") or "(n/a)"
+                sig   = attrs.get("sig") or ""
+
+                links = meta.get("links")
+                src = links[0] if isinstance(links, list) and links else None
+                src_txt = f" src={src}" if isinstance(src, str) else ""
+                sig_txt = f" sig={str(sig)[:12]}" if sig else ""
+
+                print(f"  {i:2d}) {eid[:8]}… created={created_at} stage={stage} zone={zone}{sig_txt}{src_txt}")
+
+            print("\nTip: paste an engram id into menu 27 to inspect payload/meta.")
             loop_helper(args.autosave, world, drives, ctx)
 
 
