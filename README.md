@@ -3597,7 +3597,75 @@ A useful computational decomposition for mammalian-like cognition is:
 In this picture, neocortex is not treated primarily as “a better planner,” but as a large, searchable store that supplies priors
 (map instances / schemas / engrams) to the active workspace.
 
----
+
+## Phase VII (Option B): MapSurface snapshot consolidation into Columns (implemented)
+
+This phase implements the first half of a WorkingMap-first memory pipeline: storing WorkingMap.MapSurface snapshots as column engrams, and indexing them in the long-term WorldGraph with thin pointer bindings.
+
+### Mental model: small symbolic index + rich stored maps
+
+- WorldGraph stays small and searchable (episode index + thin pointers).
+- Column memory stores the heavy content (MapSurface snapshots).
+- WorkingMap.MapSurface remains the live, editable “scene state”; snapshots are immutable records.
+
+### What is stored: wm_mapsurface_v1 payload (JSON-safe dict)
+
+A MapSurface snapshot is serialized into a JSON-safe dict (but stored as a Python dict, not a JSON string):
+
+- schema: "wm_mapsurface_v1"
+- header:
+  - controller_steps / ticks / boundary_no / boundary_vhash64 / tvec64 (when available)
+  - a small BodyMap readout (posture / mom_distance / nipple_state / zone) for indexing/debug
+- entities: one record per MapSurface entity (stable ids)
+  - eid, kind
+  - pos: {x, y, frame} (wm_schematic_v1)
+  - dist_m, dist_class
+  - preds: ["posture:standing", ...]  (pred:* tags on the entity, without the "pred:" prefix)
+  - cues:  ["vision:silhouette:mom", ...] (cue:* tags on the entity, without the "cue:" prefix)
+- relations: distance_to edges from SELF → other entities
+  - {rel="distance_to", src="self", dst="<eid>", meters, class, frame}
+
+This payload is the “map instance” we will later retrieve to seed WorkingMap.
+
+### Dedup: stable content signature (sha256)
+
+To avoid storing near-identical snapshots repeatedly, each payload produces a stable signature:
+
+- signature core excludes volatile fields (controller_steps/ticks/tvec/last_seen_step)
+- sig = sha256(canonical_json(core)).hexdigest()
+
+If the new sig matches the last stored sig, we skip storage (unless forced).
+
+### Thin WorldGraph pointer binding (index node)
+
+When a snapshot is stored, we also create a thin WorldGraph binding:
+
+- tags:
+  - cue:wm:mapsurface_snapshot
+  - idx:stage:<stage>
+  - idx:zone:<zone>
+- meta["wm"]:
+  - kind="mapsurface_snapshot"
+  - schema="wm_mapsurface_v1"
+  - sig=<sha256...>
+  - stage, zone, reason
+
+This binding is attached under long-term NOW via a `then` edge, and it carries an engram pointer:
+
+- binding.engrams["column01"] = {"id": "<engram_id>", "act": 1.0}
+
+So: WorldGraph holds the searchable skeleton; Columns hold the full map.
+
+### When snapshots are taken (keyframes)
+
+Currently: keyframe = stage change OR zone change.
+
+This keeps storage sparse and readable, and matches “episode boundary / keyframe” intuition.
+
+(Planned later: add “soft boundary” keyframes for surprise/prediction error, or salience triggers.)
+
+
+
 
 #### Representational layers in CCA8 (target architecture)
 

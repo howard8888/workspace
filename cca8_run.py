@@ -8370,6 +8370,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
     pretty_scroll = True  #to see changes before terminal menu scrolls over screen
 
+    # Menu 35 keyframe tracker (auto-store MapSurface snapshots on stage/zone change)
+    prev_stage: str | None = None
+    prev_zone: str | None = None
+
+
     # Interactive menu loop  >>>>>>>>>>>>>>>>>>>
     while True:
         try:
@@ -10633,6 +10638,10 @@ What happens conceptually per step
                 zone_now = body_space_zone(ctx)
             except Exception:
                 zone_now = None
+
+            # Normalize types for mypy + sanity (we only want str|None here)
+            stage_now = stage_now if isinstance(stage_now, str) else None
+            zone_now = zone_now if isinstance(zone_now, str) else None
 
             stage_changed = (stage_now is not None and stage_now != prev_stage)
             zone_changed = (zone_now is not None and zone_now != prev_zone)
