@@ -1,68 +1,111 @@
 # CCA8  — Project Documentation -- Compendium (README.md)
 
-*If you are new to CCA8: read 1-minute + 5-minute summary, try the 5-step demo, then jump to ‘The WorldGraph in detail’ and ‘Action Selection’.*
-
-*The Tutorials below (see Table of Contents) are designed to teach you the practical aspects of the CCA8 as well as some of the theory behind it.*
-
-Questions?  Send me an email: hschneidermd@alum.mit.edu
+Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 
 
 
-# **1-minute summary**
 
-The CCA8 Project is the simulation of the brain of a mountain goat through the lifecycle with hooks for different robotic embodiments. 
+# **TL;DR == One-minute summary**
 
-Scaffolding in place (partially operational) for simulation of a chimpanzee-like brain, human-like brain, human-like brain with five brains operating in parallel in the same agent, human-like brain with multiple agents interacting, human-like brain with five brains operating in parallel with combinatorial planning ability.
+● **Simulates a mammalian brain**
 
-This single document is the canonical “compendium” for the Causal Cognitive Architecture 8 (CCA8). It serves as: README, user guide, architecture notes, design decisions, and maintainer reference.
+*The CCA8 project simulates a mammalian brain inspired by a mountain goat across its lifecycle, used as a testbed for a navigation-map-based theory of mammalian brain evolution and function.  It aims to: (1) model how vertebrate navigation-map mechanisms could evolve into human capacities such as full causal reasoning, full analogical reasoning, and partially compositional language; (2) offer a candidate mechanistic account of mammalian cognition; and (3) explore in-model mechanisms of psychotic and autistic disorders (no clinical claims).*
+
+
+● **Robotic Cognitive Operating System (RCOS)**
+
+*The CCA8 project also creates a flexible kernel of a Robotic Cognitive Operating System (RCOS):*
+ - Agent behavior layer
+ - CCA8 RCOS kernel
+ - Robot middleware (e.g., ROS 2)
+ - HAL / device drivers
+ - Low-Level OS / firmware (e.g., Linux, an RTOS, or a PetitCat-style minimal middleware/device driver/OS)
+ - Hardware
+
+
+
+
+# **TL;DR == Five-minute summary**
+
+● The CCA8 Project is the simulation of a brain inspired by a mountain goat through its lifecycle. It is intended as a testbed of the navigation map-based theory of mammalian brain evolution and functioning (see References for academic citations). 
+
+
+● The CCA8 model is intended to show: 
+- i. The mechanistically grounded evolution over 500 million years (or equivalent, respectfully depending on one's beliefs) of the features of the pre-vertebrate and the early vertebrate brain into the human mammalian brain (i.e., functionality includes full causality + analogies + partial compositionality);
+- ii. A candidate mechanistic account of how the mammalian brain actually functions (not disparate pieces of neurophysiology research but rather an explanation of the actual mechanisms behind mammalian thinking); 
+- iii. The evolution of human psychotic and autistic disorders based on the mechanisms of this model, and potential means of mitigation (in-model; no clinical claims made).
+
+
+*(This theory holds that the basic features of pre-vertebrate and earlier vertebrate navigation evolved into the anatomy and features of the cerebral cortex of the mammalian brain. It is postulated that in primate evolution (see papers listed in the Reference section) specific mechanisms emerged which allowed these navigation maps to support full causal reasoning, full analogical reasoning and partial but real compositional language seen in the human brain. Scaffolding is in place (partially operational) in the CCA8 project for the simulation of a chimpanzee-like brain, a human-like brain, a human-like brain composed of five sub-brains operating in parallel in the same agent, and a human-like brain composed of five sub-brains operating in parallel in the same agent with additional combinatorial and compositional planning ability.)*
+
+
+
+
+● The CCA8 also contains hooks for different robotic embodiments, and serves as the kernel of a very flexible robotic cognitive operating system (RCOS). The RCOS is situated below the application layer but above the low-level OS/firmware + hardware-interface stack. For example, the software stack could consist of:
+ - Agent behavior layer
+ - CCA8 RCOS kernel
+ - Robot middleware (e.g., ROS 2)
+ - HAL / device drivers
+ - Low-Level OS / firmware (e.g., Linux, an RTOS, or a PetitCat-style minimal middleware/device driver/OS)
+ - Hardware
+ 
+
+● The CCA8 RCOS gives a more mammalian-like or human-like operation than current robotic and non-robotic agentic frameworks, e.g., LangChain-like products.
+
+
+
+● This single document is the canonical “compendium” for the Causal Cognitive Architecture 8 (CCA8). It serves as: README, user guide, architecture notes, design decisions, and maintainer reference.
 
 **Repo:** `https://github.com/howard8888/workspace`
 **Entry point:** `>python cca8_run.py`  
 
-*The program will run on most computers, although different sets of features (as well as embodiments, of course) will be available.*
+● *The program will run on most computers (Win/Linux/Mac), although different sets of features/embodiments will be supported by different sets of software/hardware platforms.*
 
 
 
 <img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
 
-*Adult Mountain Goat with recently born Calf (walking within minutes
+*Adult Mountain Goat with recently born calf (walking within minutes
 of birth, and by one week can climb most places its mother can)*
 
 
 
-**CCA8** Simulation of a mountain goat through the lifecycle 
-**CCA8b** Simulation of a mountain goat-like brain with 5 brains within the same agent
-**CCA8c** Simulation of multiple agents with goat-like brains able to interact
-**CCA8d** Simulation of a mountain goat-like brain with 5 brains within the same agent with combinatorial planning
-**CCA9** Simulation of a chimpanzee through the lifecycle
-**CCA10** Simulation of a human through the lifecycle
 
-*See **References** Section for published peer reviewed articles on the **CCA7** and earlier versions*
+### CCA8 Versions
 
 
+- CCA8 Simulation of a mountain goat through the lifecycle 
+- CCA8b Simulation of a mountain goat-like brain with 5 brains within the same agent
+- CCA8c Simulation of multiple agents with goat-like brains able to interact
+- CCA8d Simulation of a mountain goat-like brain with 5 brains within the same agent with combinatorial planning
+- CCA9 Simulation of a chimpanzee through the lifecycle
+- CCA10 Simulation of a human through the lifecycle
 
 ***Notes:***
 
--Versions of Python that will work with code:  check docstring of cca8_run.py or requirements.txt
+- Versions of Python that will work with the code:  check docstring of cca8_run.py or requirements.txt
    *(at time of writing, tested on Windows 11 Pro with Python 3.11.4)*
 
--Dependencies required:  check docstring of cca8_run.py or requirements.txt
-     -*-> Software should be able to run on most systems without any issues (GPU and LLM API requirements, if used, are very fail-safe)*
+- Dependencies required:  check docstring of cca8_run.py or requirements.txt
+     *Software should be able to run on most systems without any issues (GPU and LLM API requirements, if used, are very fail-safe)*
 
--Windows: *>python cca8_run.py*   will also usually work, depending on Python setup; it will ignore the shebang line
-(*>cca8_run.py* may work if Windows file associations set up for the Python version)
+- Windows: *>python cca8_run.py*   will also usually work, depending on Python setup; it will ignore the shebang line
+(*>cca8_run.py* may work if Windows file associations setup for the Python version)
 
--Mac, Linux:  *>python3 cca8_run.py*
+- Mac, Linux:  *>python3 cca8_run.py*
 
--Virtual environment Venv (*must activate*) (Windows, Mac or Linux):  *>python cca8_run.py*
+- Virtual environment Venv (*must activate*) (Windows, Mac or Linux):  *>python cca8_run.py*
 
--Graphical User Interface (GUI): Due to ongoing software development, the CCA8 Simulation is Command-Line Interface (CLI) only.  (Tkinter Windows GUI-based cca8_run.pyw module is available but not supported at this time.)
+- Graphical User Interface (GUI): Due to ongoing software development, the CCA8 Simulation is Command-Line Interface (CLI) only.  (Tkinter Windows GUI-based cca8_run.pyw module is available but not supported at this time.)
 
--Robotics real-world environment: You need to run the Python environment version of cca8_run.py as shown above, and specify the robotics embodiment as shown above. (Ensure that the correct hardware abstraction layer (HAL) exists and is installed for the robotics equipment version you are using.)
+- Robotics real-world environment: You need to run the Python environment version of cca8_run.py as shown above. In setup, you will be asked to specify the robotics embodiment. (Ensure that the correct hardware abstraction layer (HAL) exists and is installed for the robotics equipment version you are using.)
 
 
 
-# **5-minute summary**
+
+
+
+# **15-minute summary**
 
 
 
@@ -3829,14 +3872,18 @@ repository of prior map instances rather than a per-tick log.
 
 
 
+### Runner tools used in this WorkingMap snapshot pipeline (not a full menu list)
 
+Menu numbers may change over time; treat these as “the tools used in this tutorial,” not a canonical menu reference.
 
+- : closed-loop environment run (produces keyframes; auto-stores MapSurface snapshots on stage/zone changes)
+- : WorkingMap snapshot + MapSurface payload dump (wm_mapsurface_v1)
+- : manually store MapSurface snapshot to Column + WorldGraph pointer (dedup vs last)
+- : list recent wm_mapsurface engrams (Column)
 
-
-
-
-
-
+Validation / inspection:
+- : inspect a WorldGraph binding to confirm it carries an engram pointer (binding.engrams["column01"])
+- : inspect an engram by id (verify payload/meta)
 
 
 
