@@ -64,7 +64,7 @@ Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 
 
 
-<img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:400%;">
+<img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
 
 *Adult Mountain Goat with recently born calf (walking within minutes
 of birth, and by one week can climb most places its mother can)*

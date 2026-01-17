@@ -1033,6 +1033,84 @@ def mapsurface_payload_sig_v1(payload: dict[str, Any], *, stage: Optional[str] =
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+_SALIENT_PRED_PREFIXES = (
+    "posture:",
+    "proximity:mom:",
+    "proximity:shelter:",
+    "hazard:cliff:",
+    "nipple:",
+    "milk:",
+)
+
+_SALIENT_PRED_EXACT = {
+    "resting",
+    "alert",
+    "seeking_mom",
+}
+
+
+def mapsurface_salience_v1(payload: dict[str, Any], *, max_preds: int = 32, max_cues: int = 32) -> dict[str, Any]:
+    """Extract a compact salience signature from a wm_mapsurface_v1 payload.
+
+    Purpose:
+      - Give us a small, robust descriptor we can store in Column meta for retrieval scoring.
+      - This is NOT an embedding; it's a tiny "bag of salient symbols" for overlap scoring.
+
+    Returns:
+      {
+        "sig": <hex16>,
+        "preds": [<salient pred tokens>],
+        "cues":  [<salient cue tokens>],
+      }
+    """
+    preds_set: set[str] = set()
+    cues_set: set[str] = set()
+
+    ents = payload.get("entities", [])
+    if isinstance(ents, list):
+        for ent in ents:
+            if not isinstance(ent, dict):
+                continue
+
+            preds = ent.get("preds")
+            if isinstance(preds, list):
+                for p in preds:
+                    if not isinstance(p, str) or not p:
+                        continue
+                    if (p in _SALIENT_PRED_EXACT) or any(p.startswith(pref) for pref in _SALIENT_PRED_PREFIXES):
+                        preds_set.add(p)
+
+            cues = ent.get("cues")
+            if isinstance(cues, list):
+                for c in cues:
+                    if isinstance(c, str) and c:
+                        cues_set.add(c)
+
+    # Full (uncapped) lists used for signature stability
+    preds_full = sorted(preds_set)
+    cues_full = sorted(cues_set)
+
+    blob = json.dumps({"preds": preds_full, "cues": cues_full}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    sig16 = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+    # Capped lists stored in meta for readability
+    preds_out = preds_full[: max(1, int(max_preds))]
+    cues_out = cues_full[: max(1, int(max_cues))]
+
+    return {"sig": sig16, "preds": preds_out, "cues": cues_out}
+
+
+def current_mapsurface_salience_v1(ctx: Ctx) -> dict[str, Any]:
+    """Compute the current salience signature from the live WorkingMap.MapSurface."""
+    try:
+        payload = serialize_mapsurface_v1(ctx, include_internal_ids=False)
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return mapsurface_salience_v1(payload)
+
+
 def store_mapsurface_snapshot_v1(world, ctx: Ctx, *, reason: str, attach: str = "now",
                                 force: bool = False, quiet: bool = False) -> dict[str, Any]:
     """Store the current WorkingMap.MapSurface snapshot into Column memory and index it in WorldGraph.
@@ -1060,6 +1138,10 @@ def store_mapsurface_snapshot_v1(world, ctx: Ctx, *, reason: str, attach: str = 
         zone = None
 
     sig = mapsurface_payload_sig_v1(payload, stage=stage, zone=zone)
+    sal = mapsurface_salience_v1(payload)
+    sal_sig = sal.get("sig")
+    sal_preds = sal.get("preds", []) if isinstance(sal.get("preds"), list) else []
+    sal_cues  = sal.get("cues", []) if isinstance(sal.get("cues"), list) else []
     last_sig = getattr(ctx, "wm_mapsurface_last_sig", None)
 
     if (not force) and (sig == last_sig):
@@ -1080,6 +1162,9 @@ def store_mapsurface_snapshot_v1(world, ctx: Ctx, *, reason: str, attach: str = 
             "stage": stage,
             "zone": zone,
             "reason": reason,
+            "salience_sig": sal_sig,
+            "salient_pred_n": len(sal_preds),
+            "salient_cue_n": len(sal_cues),
         }
     }
 
@@ -1107,6 +1192,9 @@ def store_mapsurface_snapshot_v1(world, ctx: Ctx, *, reason: str, attach: str = 
         "ticks": int(getattr(ctx, "ticks", 0) or 0),
         "boundary_no": int(getattr(ctx, "boundary_no", 0) or 0),
         "boundary_vhash64": getattr(ctx, "boundary_vhash64", None),
+        "salience_sig": sal_sig,
+        "salient_preds": list(sal_preds),
+        "salient_cues": list(sal_cues),
     }
     fm = FactMeta(name="wm_mapsurface", links=[bid], attrs=attrs)
 
@@ -1122,6 +1210,444 @@ def store_mapsurface_snapshot_v1(world, ctx: Ctx, *, reason: str, attach: str = 
         print(f"[wm->column] stored wm_mapsurface: sig={sig[:16]} bid={bid} engram_id={engram_id[:16]}... stage={stage} zone={zone}")
 
     return {"stored": True, "sig": sig, "bid": bid, "engram_id": engram_id, "stage": stage, "zone": zone}
+
+
+def _wm_entity_anchor_name(entity_id: str) -> str:
+    """Return the WorkingMap anchor name for an entity id (must match the MapSurface naming scheme)."""
+    eid = (entity_id or "unknown").strip().lower()
+    if eid == "self":
+        return "WM_SELF"
+
+    # Match inject_obs_into_working_world._sanitize_entity_anchor semantics:
+    s = eid.strip().upper()
+    out: list[str] = []
+    for ch in s:
+        out.append(ch if ch.isalnum() else "_")
+    s = "".join(out)
+    while "__" in s:
+        s = s.replace("__", "_")
+    s = s.strip("_") or "UNKNOWN"
+    return f"WM_ENT_{s}"
+
+
+def _wm_tagset_of(world, bid: str) -> set[str]:
+    """Return a mutable tag set for a binding (robust to legacy list tags)."""
+    b = getattr(world, "_bindings", {}).get(bid)
+    if not b:
+        return set()
+    ts = getattr(b, "tags", None)
+    if ts is None:
+        b.tags = set()
+        return b.tags
+    if isinstance(ts, set):
+        return ts
+    if isinstance(ts, list):
+        s = set(ts)
+        b.tags = s
+        return s
+    try:
+        s = set(ts)
+        b.tags = s
+        return s
+    except Exception:
+        b.tags = set()
+        return b.tags
+
+
+def _wm_upsert_edge(world, src: str, dst: str, label: str, meta: dict | None = None) -> None:
+    """Upsert an edge in a WorldGraph-like object (used for WorkingMap structural edges)."""
+    b = getattr(world, "_bindings", {}).get(src)
+    if not b:
+        return
+    edges = getattr(b, "edges", None)
+    if not isinstance(edges, list):
+        b.edges = []
+        edges = b.edges
+
+    for e in edges:
+        if not isinstance(e, dict):
+            continue
+        to_ = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+        lab = e.get("label") or e.get("rel") or e.get("relation")
+        if to_ == dst and lab == label:
+            if isinstance(meta, dict) and meta:
+                em = e.get("meta")
+                if isinstance(em, dict):
+                    em.update(meta)
+                else:
+                    e["meta"] = dict(meta)
+            return
+
+    edges.append({"to": dst, "label": label, "meta": dict(meta or {})})
+
+
+def _rec_stage_zone(rec: dict) -> tuple[str | None, str | None]:
+    """Extract (stage, zone) from a Column record dict."""
+    meta = rec.get("meta", {})
+    meta = meta if isinstance(meta, dict) else {}
+    attrs = meta.get("attrs", {})
+    attrs = attrs if isinstance(attrs, dict) else {}
+    stage = attrs.get("stage")
+    zone = attrs.get("zone")
+    stage = stage if isinstance(stage, str) else None
+    zone = zone if isinstance(zone, str) else None
+    return stage, zone
+
+
+def pick_best_wm_mapsurface_rec(*, stage: str | None, zone: str | None, ctx: Ctx | None = None,
+                               allow_fallback: bool = True, max_scan: int = 500) -> dict[str, Any]:
+    """Pick the best wm_mapsurface record for (stage, zone), using salience overlap scoring.
+
+    Behavior (v1):
+      1) Build candidate pool by stage+zone (then fall back to stage-only, zone-only, then newest-any).
+      2) Score candidates by overlap between:
+           - current salience (from ctx WorkingMap MapSurface) and
+           - candidate salience stored in Column meta.attrs (salient_preds/salient_cues)
+      3) Tie-break by recency (newest-first) automatically because we iterate newest-first.
+
+    Returns:
+      {
+        "ok": bool,
+        "match": "stage+zone"|"stage"|"zone"|"any"|"none",
+        "rec": dict|None,
+        "score": float,
+        "overlap_preds": int,
+        "overlap_cues": int,
+        "want_pred_n": int,
+        "want_cue_n": int,
+        "want_salience_sig": str|None,
+        "cand_salience_sig": str|None,
+        "want_stage":..., "want_zone":...
+      }
+    """
+    def _iter_newest(limit: int) -> list[dict]:
+        out: list[dict] = []
+        try:
+            ids = list(column_mem.list_ids())
+            for eid in reversed(ids):
+                rec = column_mem.try_get(eid)
+                if not isinstance(rec, dict):
+                    continue
+                if rec.get("name") != "wm_mapsurface":
+                    continue
+                out.append(rec)
+                if len(out) >= limit:
+                    break
+        except Exception:
+            out = []
+        return out
+
+    recs = _iter_newest(max(1, int(max_scan)))
+    if not recs:
+        return {"ok": False, "match": "none", "rec": None, "want_stage": stage, "want_zone": zone}
+
+    # Current salience (from ctx WorkingMap MapSurface)
+    want_preds: set[str] = set()
+    want_cues: set[str] = set()
+    want_sig: str | None = None
+    if ctx is not None:
+        try:
+            want = current_mapsurface_salience_v1(ctx)
+            want_sig = want.get("sig") if isinstance(want.get("sig"), str) else None
+            wp = want.get("preds", [])
+            wc = want.get("cues", [])
+            if isinstance(wp, list):
+                want_preds = {p for p in wp if isinstance(p, str) and p}
+            if isinstance(wc, list):
+                want_cues = {c for c in wc if isinstance(c, str) and c}
+        except Exception:
+            pass
+
+    def _rec_salience_sets(rec: dict) -> tuple[set[str], set[str], str | None]:
+        meta = rec.get("meta", {}) if isinstance(rec.get("meta"), dict) else {}
+        attrs = meta.get("attrs", {}) if isinstance(meta.get("attrs"), dict) else {}
+
+        sp = attrs.get("salient_preds")
+        sc = attrs.get("salient_cues")
+        ss = attrs.get("salience_sig")
+        sig = ss if isinstance(ss, str) else None
+
+        preds_set: set[str] = set()
+        cues_set: set[str] = set()
+
+        if isinstance(sp, list):
+            preds_set = {p for p in sp if isinstance(p, str) and p}
+        if isinstance(sc, list):
+            cues_set = {c for c in sc if isinstance(c, str) and c}
+
+        # Back-compat: older engrams may not have salience attrs; compute from payload
+        if (not preds_set and not cues_set) and isinstance(rec.get("payload"), dict):
+            sal = mapsurface_salience_v1(rec["payload"])
+            sig = sig or (sal.get("sig") if isinstance(sal.get("sig"), str) else None)
+            preds = sal.get("preds", [])
+            cues = sal.get("cues", [])
+            if isinstance(preds, list):
+                preds_set = {p for p in preds if isinstance(p, str) and p}
+            if isinstance(cues, list):
+                cues_set = {c for c in cues if isinstance(c, str) and c}
+
+        return preds_set, cues_set, sig
+
+    def _score_candidate(rec: dict) -> tuple[float, int, int, str | None]:
+        preds_set, cues_set, cand_sig = _rec_salience_sets(rec)
+        op = len(want_preds & preds_set) if want_preds else 0
+        oc = len(want_cues & cues_set) if want_cues else 0
+        score = float(op) * 10.0 + float(oc) * 3.0
+        return score, op, oc, cand_sig
+
+    # Candidate filtering tiers
+    def _filter_stage_zone(match_kind: str) -> list[dict]:
+        if match_kind == "stage+zone" and stage and zone:
+            return [r for r in recs if _rec_stage_zone(r) == (stage, zone)]
+        if match_kind == "stage" and stage:
+            return [r for r in recs if _rec_stage_zone(r)[0] == stage]
+        if match_kind == "zone" and zone:
+            return [r for r in recs if _rec_stage_zone(r)[1] == zone]
+        if match_kind == "any":
+            return list(recs)
+        return []
+
+    tier_order = ["stage+zone", "stage", "zone", "any"] if allow_fallback else ["stage+zone"]
+    for tier in tier_order:
+        cands = _filter_stage_zone(tier)
+        if not cands:
+            continue
+
+        best_rec = None
+        best_score = -1.0
+        best_op = 0
+        best_oc = 0
+        best_cand_sig: str | None = None
+
+        for rec in cands:  # newest-first
+            score, op, oc, cand_sig = _score_candidate(rec)
+            if score > best_score:
+                best_score, best_op, best_oc = score, op, oc
+                best_rec = rec
+                best_cand_sig = cand_sig
+
+        if best_rec is not None:
+            return {
+                "ok": True,
+                "match": tier,
+                "rec": best_rec,
+                "score": best_score,
+                "overlap_preds": best_op,
+                "overlap_cues": best_oc,
+                "want_pred_n": len(want_preds),
+                "want_cue_n": len(want_cues),
+                "want_salience_sig": want_sig,
+                "cand_salience_sig": best_cand_sig,
+                "want_stage": stage,
+                "want_zone": zone,
+            }
+
+    return {"ok": False, "match": "none", "rec": None, "want_stage": stage, "want_zone": zone}
+
+
+def load_mapsurface_payload_v1_into_workingmap(ctx: Ctx, payload: dict[str, Any], *, replace: bool = True, reason: str = "manual_load") -> dict[str, Any]:
+    """Load a wm_mapsurface_v1 payload into WorkingMap MapSurface.
+
+    Semantics (Option B4 v1):
+      - replace=True: clear WorkingMap, then rebuild MapSurface exactly from payload.
+      - This is a *prior/seed*; the next EnvObservation tick may overwrite parts of it.
+
+    Returns: {"ok": bool, "entities": int, "relations": int}.
+    """
+    if replace:
+        reset_working_world(ctx)
+
+    if getattr(ctx, "working_world", None) is None:
+        ctx.working_world = init_working_world()
+    ww = ctx.working_world
+    if ww is None:
+        return {"ok": False, "entities": 0, "relations": 0}
+
+    # Ensure MapSurface roots exist
+    root_bid = ww.ensure_anchor("WM_ROOT")
+    try:
+        ww.set_now(root_bid, tag=True, clean_previous=True)
+    except Exception:
+        try:
+            ww._anchors["NOW"] = root_bid
+            _wm_tagset_of(ww, root_bid).add("anchor:NOW")
+        except Exception:
+            pass
+
+    # Keep NOW_ORIGIN aligned (same pattern as inject_obs_into_working_world)
+    try:
+        ww._anchors["NOW_ORIGIN"] = root_bid
+        _wm_tagset_of(ww, root_bid).add("anchor:NOW_ORIGIN")
+    except Exception:
+        pass
+
+    # Scratch + Creative anchors and links
+    scratch_bid = ww.ensure_anchor("WM_SCRATCH")
+    _wm_tagset_of(ww, scratch_bid).add("wm:scratch")
+    _wm_upsert_edge(ww, root_bid, scratch_bid, "wm_scratch", {"created_by": "wm_load", "reason": reason})
+
+    creative_bid = ww.ensure_anchor("WM_CREATIVE")
+    _wm_tagset_of(ww, creative_bid).add("wm:creative")
+    _wm_upsert_edge(ww, root_bid, creative_bid, "wm_creative", {"created_by": "wm_load", "reason": reason})
+
+    # Reset MapSurface caches
+    try:
+        ctx.wm_entities.clear()
+        ctx.wm_last_env_cues.clear()
+    except Exception:
+        pass
+
+    # Entities
+    ents = payload.get("entities", [])
+    if not isinstance(ents, list):
+        ents = []
+
+    n_ent = 0
+    for ent in ents:
+        if not isinstance(ent, dict):
+            continue
+        eid_raw = ent.get("eid")
+        if not isinstance(eid_raw, str) or not eid_raw.strip():
+            continue
+        eid = eid_raw.strip().lower()
+        kind = ent.get("kind")
+        kind = kind if isinstance(kind, str) else None
+
+        anchor_name = _wm_entity_anchor_name(eid)
+        bid = ww.ensure_anchor(anchor_name)
+
+        # cache mapping
+        try:
+            ctx.wm_entities[eid] = bid
+        except Exception:
+            pass
+
+        tags = _wm_tagset_of(ww, bid)
+
+        # remove old MapSurface tags (keep anchor:* tags)
+        for t in list(tags):
+            if isinstance(t, str) and (t.startswith("wm:") or t.startswith("pred:") or t.startswith("cue:")):
+                tags.discard(t)
+
+        tags.add("wm:entity")
+        tags.add(f"wm:eid:{eid}")
+        if kind:
+            tags.add(f"wm:kind:{kind}")
+
+        preds = ent.get("preds")
+        if isinstance(preds, list):
+            for p in preds:
+                if isinstance(p, str) and p:
+                    tags.add(f"pred:{p}")
+
+        cues = ent.get("cues")
+        cue_full_tags: set[str] = set()
+        if isinstance(cues, list):
+            for c in cues:
+                if isinstance(c, str) and c:
+                    tags.add(f"cue:{c}")
+                    cue_full_tags.add(f"cue:{c}")
+
+        # meta.wm
+        b = ww._bindings.get(bid)  # pylint: disable=protected-access
+        if b is not None:
+            if not isinstance(getattr(b, "meta", None), dict):
+                b.meta = {}
+            wmm = b.meta.setdefault("wm", {})
+            if isinstance(wmm, dict):
+                pos = ent.get("pos")
+                if isinstance(pos, dict):
+                    x = pos.get("x")
+                    y = pos.get("y")
+                    frame = pos.get("frame")
+                    if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                        wmm["pos"] = {
+                            "x": float(x),
+                            "y": float(y),
+                            "frame": frame if isinstance(frame, str) and frame else "wm_schematic_v1",
+                        }
+
+                dist_m = ent.get("dist_m")
+                if isinstance(dist_m, (int, float)):
+                    wmm["dist_m"] = float(dist_m)
+
+                dist_class = ent.get("dist_class")
+                if isinstance(dist_class, str) and dist_class:
+                    wmm["dist_class"] = dist_class
+
+                # Mark as fresh "seen" now (avoid confusing recency across sessions)
+                wmm["last_seen_step"] = int(getattr(ctx, "controller_steps", 0) or 0)
+                wmm["loaded_from"] = "wm_mapsurface_v1"
+                wmm["load_reason"] = reason
+
+        # root membership
+        _wm_upsert_edge(ww, root_bid, bid, "wm_entity", {"created_by": "wm_load", "reason": reason})
+
+        # cue cache for next env injection
+        if cue_full_tags:
+            try:
+                ctx.wm_last_env_cues[eid] = set(cue_full_tags)
+            except Exception:
+                pass
+
+        n_ent += 1
+
+    # Relations (distance_to)
+    rels = payload.get("relations", [])
+    if not isinstance(rels, list):
+        rels = []
+
+    n_rel = 0
+    self_bid = (getattr(ctx, "wm_entities", {}) or {}).get("self")
+    for r in rels:
+        if not isinstance(r, dict):
+            continue
+        if r.get("rel") != "distance_to":
+            continue
+        if r.get("src") != "self":
+            continue
+        dst = r.get("dst")
+        if not isinstance(dst, str) or not dst.strip():
+            continue
+        dst_eid = dst.strip().lower()
+        dst_bid = (getattr(ctx, "wm_entities", {}) or {}).get(dst_eid)
+
+        if not (isinstance(self_bid, str) and isinstance(dst_bid, str)):
+            continue
+
+        em: dict[str, Any] = {"created_by": "wm_load", "reason": reason}
+        meters = r.get("meters")
+        if isinstance(meters, (int, float)):
+            em["meters"] = float(meters)
+        cls = r.get("class")
+        if isinstance(cls, str) and cls:
+            em["class"] = cls
+        frame = r.get("frame")
+        if isinstance(frame, str) and frame:
+            em["frame"] = frame
+
+        _wm_upsert_edge(ww, self_bid, dst_bid, "distance_to", em)
+        n_rel += 1
+
+    return {"ok": True, "entities": n_ent, "relations": n_rel}
+
+
+def load_wm_mapsurface_engram_into_workingmap(ctx: Ctx, engram_id: str, *, replace: bool = True) -> dict[str, Any]:
+    """Load a Column engram (wm_mapsurface) into WorkingMap MapSurface."""
+    rec = column_mem.try_get(engram_id)
+    if not isinstance(rec, dict):
+        return {"ok": False, "why": "no_such_engram", "entities": 0, "relations": 0}
+
+    if rec.get("name") != "wm_mapsurface":
+        return {"ok": False, "why": "wrong_name", "entities": 0, "relations": 0}
+
+    payload = rec.get("payload")
+    if not isinstance(payload, dict):
+        return {"ok": False, "why": "payload_not_dict", "entities": 0, "relations": 0}
+
+    out = load_mapsurface_payload_v1_into_workingmap(ctx, payload, replace=replace, reason=f"engram:{engram_id[:8]}")
+    out["engram_id"] = engram_id
+    return out
 
 
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
@@ -8147,7 +8673,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     43) WorkingMap snapshot (last N bindings; optional clear) [wsnap, wmsnap]
     44) Store MapSurface snapshot to Column + WG pointer (dedup vs last) [wstore, wmstore]
     45) List recent wm_mapsurface engrams (Column)
-
+    46) Pick best wm_mapsurface engram for current stage/zone (read-only) [wpick, wpickwm]
+    47) Load wm_mapsurface engram into WorkingMap (replace MapSurface) [wload, wmload]
 
     Select: """
 
@@ -8214,6 +8741,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "wsnap": "43", "wm-snapshot": "43", "wmsnap": "43",
     "wstore": "44", "wmstore": "44",
     "recent_wm_amp": "45",
+    "wpick": "46", "wpickwm": "46",
+    "wload": "47", "wmload": "47",
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -8276,6 +8805,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "43": "43",  # wm snapshot
     "44": "44",  # store mapsurface snapshot
     "45": "45",  # list recent wm_mapsurface engrams
+    "46": "46",  # wpickwm
+    "47": "47",  # wmload
 
 }
 
@@ -11516,15 +12047,119 @@ Settings
                 stage = attrs.get("stage") or "(n/a)"
                 zone  = attrs.get("zone") or "(n/a)"
                 sig   = attrs.get("sig") or ""
+                sal = attrs.get("salience_sig") or ""
+                sal_txt = f" sal={str(sal)[:12]}" if sal else ""
 
                 links = meta.get("links")
                 src = links[0] if isinstance(links, list) and links else None
                 src_txt = f" src={src}" if isinstance(src, str) else ""
                 sig_txt = f" sig={str(sig)[:12]}" if sig else ""
 
-                print(f"  {i:2d}) {eid[:8]}… created={created_at} stage={stage} zone={zone}{sig_txt}{src_txt}")
+                print(f"  {i:2d}) {eid[:8]}… created={created_at} stage={stage} zone={zone}{sig_txt}{src_txt} {sal_txt}")
 
             print("\nTip: paste an engram id into menu 27 to inspect payload/meta.")
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "46":
+            print("Selection: Pick best wm_mapsurface engram for current stage/zone (read-only)\n")
+
+            stage = getattr(ctx, "lt_obs_last_stage", None)
+            stage = stage if isinstance(stage, str) else None
+
+            try:
+                zone = body_space_zone(ctx)
+            except Exception:
+                zone = None
+            zone = zone if isinstance(zone, str) else None
+
+            print(f"[wm-retrieve] want stage={stage!r} zone={zone!r}")
+            info = pick_best_wm_mapsurface_rec(stage=stage, zone=zone, ctx=ctx, allow_fallback=True)
+
+            if not info.get("ok"):
+                print("(none) No wm_mapsurface engrams found in Column memory yet.")
+                print("Tip: run menu 37 to auto-store keyframes, or menu 44 to store manually.")
+                loop_helper(args.autosave, world, drives, ctx)
+                continue
+
+            rec = info.get("rec")
+            rec = rec if isinstance(rec, dict) else None
+            if rec is None:
+                print("(none) Picker returned no record.")
+                loop_helper(args.autosave, world, drives, ctx)
+                continue
+
+            eid = str(rec.get("id", ""))
+            meta = rec.get("meta", {}) if isinstance(rec.get("meta"), dict) else {}
+            attrs = meta.get("attrs", {}) if isinstance(meta.get("attrs"), dict) else {}
+            created_at = meta.get("created_at") or "(n/a)"
+            src = None
+            links = meta.get("links")
+            if isinstance(links, list) and links:
+                src = links[0]
+
+            match = info.get("match")
+            print(f"[wm-retrieve] picked engram={eid[:8]}… match={match} created_at={created_at}")
+            print(f"             stage={attrs.get('stage')!r} zone={attrs.get('zone')!r} sig={str(attrs.get('sig',''))[:12]}")
+            if isinstance(src, str):
+                print(f"             src(binding)={src}")
+
+            if info.get("ok"):
+                print(
+                    f"             score={info.get('score')} "
+                    f"overlap_preds={info.get('overlap_preds')}/{info.get('want_pred_n')} "
+                    f"overlap_cues={info.get('overlap_cues')}/{info.get('want_cue_n')} "
+                    f"sal_sig={str(info.get('cand_salience_sig') or '')[:12]} "
+                    f"want_sal={str(info.get('want_salience_sig') or '')[:12]}"
+                )
+
+            # Tiny payload stats (no dump here; use menu 27 to inspect engram payload if desired)
+            payload = rec.get("payload")
+            if isinstance(payload, dict):
+                ents = payload.get("entities", [])
+                rels = payload.get("relations", [])
+                n_ent = len(ents) if isinstance(ents, list) else 0
+                n_rel = len(rels) if isinstance(rels, list) else 0
+                print(f"             payload: entities={n_ent} relations={n_rel} schema={payload.get('schema')!r}")
+
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "47":
+            print("Selection: Load wm_mapsurface engram into WorkingMap (replace MapSurface)\n")
+
+            raw = input("Engram id to load (blank = pick best for current stage/zone): ").strip()
+            if not raw:
+                stage = getattr(ctx, "lt_obs_last_stage", None)
+                stage = stage if isinstance(stage, str) else None
+                try:
+                    zone = body_space_zone(ctx)
+                except Exception:
+                    zone = None
+                zone = zone if isinstance(zone, str) else None
+                info = pick_best_wm_mapsurface_rec(stage=stage, zone=zone, ctx=ctx, allow_fallback=True)
+                rec = info.get("rec")
+                rec = rec if isinstance(rec, dict) else None
+                if not (info.get("ok") and rec):
+                    print("(none) No wm_mapsurface engrams available to load.")
+                    loop_helper(args.autosave, world, drives, ctx)
+                    continue
+                raw = str(rec.get("id", "")).strip()
+
+            replace_txt = input("Replace WorkingMap (clear WM first)? [Y/n]: ").strip().lower()
+            replace = not replace_txt in ("n", "no")
+
+            out = load_wm_mapsurface_engram_into_workingmap(ctx, raw, replace=replace)
+            if not out.get("ok"):
+                print(f"(failed) load: {out.get('why','unknown')}")
+                loop_helper(args.autosave, world, drives, ctx)
+                continue
+
+            print(f"[wm-retrieve] loaded engram={raw[:8]}… into WorkingMap: entities={out.get('entities')} relations={out.get('relations')}")
+            print("Tip: run menu 43 now to inspect the loaded MapSurface; next env step may overwrite parts of it.")
+
             loop_helper(args.autosave, world, drives, ctx)
 
 
