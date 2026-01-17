@@ -9,7 +9,7 @@ Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 
 ● **Simulates a mammalian brain**
 
-*The CCA8 project simulates a mammalian brain inspired by a mountain goat across its lifecycle, used as a testbed for a navigation-map-based theory of mammalian brain evolution and function.  It aims to: (1) model how vertebrate navigation-map mechanisms could evolve into human capacities such as full causal reasoning, full analogical reasoning, and partially compositional language; (2) offer a candidate mechanistic account of mammalian cognition; and (3) explore in-model mechanisms of psychotic and autistic disorders (no clinical claims).*
+*The CCA8 project simulates a mammalian brain inspired by a mountain goat across its lifecycle, used as a testbed for a navigation-map-based theory of mammalian brain evolution and function.  It aims to: (1) model how vertebrate navigation-map mechanisms could evolve into human capacities such as full causal reasoning, full analogical reasoning, and (partially) compositional language; (2) offer a candidate mechanistic account, i.e., explanation, of mammalian cognition; and (3) explore in-model evolution and mechanisms of psychotic and autistic disorders in humans (no clinical claims).*
 
 
 ● **Robotic Cognitive Operating System (RCOS)**
@@ -17,10 +17,10 @@ Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 *The CCA8 project also creates a flexible kernel of a Robotic Cognitive Operating System (RCOS):*
  - Agent behavior layer
  - CCA8 RCOS kernel
- - Robot middleware (e.g., ROS 2)
+ - Robot middleware layer (e.g., ROS 2)
  - Hardware Abstraction Layer (HAL)
  - Low-Level OS / firmware (e.g., Linux, an RTOS, or a PetitCat-style minimal middleware/OS)
- - Hardware
+ - Hardware Layer
 
 
 
@@ -44,10 +44,10 @@ Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 ● The CCA8 also contains hooks for different robotic embodiments, and serves as the kernel of a very flexible robotic cognitive operating system (RCOS). The RCOS is situated below the application layer but above the middleware and low-level OS/firmware + hardware-interface stack. For example, the software stack could consist of:
  - Agent behavior layer
  - CCA8 RCOS kernel
- - Robot middleware (e.g., ROS 2)
+ - Robot middleware layer (e.g., ROS 2)
  - Hardware Abstraction Layer (HAL)
  - Low-Level OS / firmware (e.g., Linux, an RTOS, or a PetitCat-style minimal middleware/OS)
- - Hardware
+ - Hardware Layer
 
  
 
