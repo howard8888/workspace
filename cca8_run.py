@@ -1294,20 +1294,121 @@ def _rec_stage_zone(rec: dict) -> tuple[str | None, str | None]:
     return stage, zone
 
 
-def pick_best_wm_mapsurface_rec(*, stage: str | None, zone: str | None, ctx: Ctx | None = None,
-                               allow_fallback: bool = True, max_scan: int = 500) -> dict[str, Any]:
-    """Pick the best wm_mapsurface record for (stage, zone), using salience overlap scoring.
+def _wm_snapshot_pointer_bids(long_world, *, max_scan: int = 500) -> list[str]:
+    """Return newest-first WorldGraph binding ids that act as MapSurface snapshot pointers.
 
-    Behavior (v1):
-      1) Build candidate pool by stage+zone (then fall back to stage-only, zone-only, then newest-any).
-      2) Score candidates by overlap between:
-           - current salience (from ctx WorkingMap MapSurface) and
-           - candidate salience stored in Column meta.attrs (salient_preds/salient_cues)
-      3) Tie-break by recency (newest-first) automatically because we iterate newest-first.
+    Pointer node definition (Option B):
+      - binding tags contain: 'cue:wm:mapsurface_snapshot'
+      - binding.engrams contains a column pointer to the stored engram id
+    """
+    if long_world is None:
+        return []
+
+    # Collect pointer bindings
+    out: list[str] = []
+    try:
+        for bid, b in getattr(long_world, "_bindings", {}).items():
+            tags = getattr(b, "tags", None) or []
+            if isinstance(tags, set):
+                ok = "cue:wm:mapsurface_snapshot" in tags
+            else:
+                ok = any(isinstance(t, str) and t == "cue:wm:mapsurface_snapshot" for t in tags)
+            if ok:
+                out.append(bid)
+    except Exception:
+        return []
+
+    # Sort newest-first by numeric bN (unknown ids at end)
+    def _bid_key_desc(bid: str) -> tuple[int, int]:
+        if isinstance(bid, str) and bid.startswith("b") and bid[1:].isdigit():
+            return (0, -int(bid[1:]))
+        return (1, 0)
+
+    out.sort(key=_bid_key_desc)
+    return out[: max(1, int(max_scan))]
+
+
+def _wm_pointer_engram_id(long_world, pointer_bid: str) -> str | None:
+    """Extract the engram id from a WorldGraph pointer binding (best-effort)."""
+    try:
+        b = getattr(long_world, "_bindings", {}).get(pointer_bid)
+        if b is None:
+            return None
+        eng = getattr(b, "engrams", None)
+        if not isinstance(eng, dict) or not eng:
+            return None
+
+        # Prefer the canonical slot name, else fall back to the first slot.
+        v = eng.get("column01")
+        if not isinstance(v, dict):
+            try:
+                v = next(iter(eng.values()))
+            except Exception:
+                v = None
+        if isinstance(v, dict):
+            eid = v.get("id")
+            return eid if isinstance(eid, str) and eid else None
+    except Exception:
+        return None
+    return None
+
+
+def _iter_newest_wm_mapsurface_recs(*, long_world=None, limit: int = 500) -> tuple[list[dict], str]:
+    """Return newest-first wm_mapsurface Column records, preferably via WorldGraph pointers.
+
+    Returns (recs, source) where source ∈ {"world_pointers","column_scan"}.
+    """
+    lim = max(1, int(limit))
+
+    # Prefer WorldGraph pointer nodes (fast index)
+    if long_world is not None:
+        seen: set[str] = set()
+        recs: list[dict] = []
+        for pbid in _wm_snapshot_pointer_bids(long_world, max_scan=lim * 2):
+            eid = _wm_pointer_engram_id(long_world, pbid)
+            if not isinstance(eid, str) or not eid or eid in seen:
+                continue
+            seen.add(eid)
+            rec = column_mem.try_get(eid)
+            if isinstance(rec, dict) and rec.get("name") == "wm_mapsurface":
+                recs.append(rec)
+                if len(recs) >= lim:
+                    return recs, "world_pointers"
+        if recs:
+            return recs, "world_pointers"
+
+    # no resolvable pointer engrams -> fallback to column scan
+    # Fallback: scan column ids newest-first
+    out: list[dict] = []
+    try:
+        ids = list(column_mem.list_ids())
+        for eid in reversed(ids):
+            rec = column_mem.try_get(eid)
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("name") != "wm_mapsurface":
+                continue
+            out.append(rec)
+            if len(out) >= lim:
+                break
+    except Exception:
+        out = []
+    return out, "column_scan"
+
+
+def pick_best_wm_mapsurface_rec(*, stage: str | None, zone: str | None, ctx: Ctx | None = None,
+                               long_world=None, allow_fallback: bool = True, max_scan: int = 500,
+                               top_k: int = 5) -> dict[str, Any]:
+    """Pick the best wm_mapsurface record for (stage, zone), using WorldGraph pointers + salience overlap.
+
+    Changes in B6:
+      - Candidate source prefers WorldGraph pointer bindings (cue:wm:mapsurface_snapshot), then loads Column records.
+      - Returns ranked top-K candidates (not just the winner) for inspection.
 
     Returns:
       {
         "ok": bool,
+        "source": "world_pointers"|"column_scan",
         "match": "stage+zone"|"stage"|"zone"|"any"|"none",
         "rec": dict|None,
         "score": float,
@@ -1317,31 +1418,24 @@ def pick_best_wm_mapsurface_rec(*, stage: str | None, zone: str | None, ctx: Ctx
         "want_cue_n": int,
         "want_salience_sig": str|None,
         "cand_salience_sig": str|None,
+        "ranked": [ {candidate summary dicts...} ],
         "want_stage":..., "want_zone":...
       }
     """
-    def _iter_newest(limit: int) -> list[dict]:
-        out: list[dict] = []
-        try:
-            ids = list(column_mem.list_ids())
-            for eid in reversed(ids):
-                rec = column_mem.try_get(eid)
-                if not isinstance(rec, dict):
-                    continue
-                if rec.get("name") != "wm_mapsurface":
-                    continue
-                out.append(rec)
-                if len(out) >= limit:
-                    break
-        except Exception:
-            out = []
-        return out
+    recs, source = _iter_newest_wm_mapsurface_recs(long_world=long_world, limit=max(1, int(max_scan)))
 
-    recs = _iter_newest(max(1, int(max_scan)))
     if not recs:
-        return {"ok": False, "match": "none", "rec": None, "want_stage": stage, "want_zone": zone}
+        return {
+            "ok": False,
+            "source": source,
+            "match": "none",
+            "rec": None,
+            "want_stage": stage,
+            "want_zone": zone,
+            "ranked": [],
+        }
 
-    # Current salience (from ctx WorkingMap MapSurface)
+    # --- Current salience (from ctx WorkingMap MapSurface) ---
     want_preds: set[str] = set()
     want_cues: set[str] = set()
     want_sig: str | None = None
@@ -1407,42 +1501,68 @@ def pick_best_wm_mapsurface_rec(*, stage: str | None, zone: str | None, ctx: Ctx
             return list(recs)
         return []
 
+    def _candidate_summary(rec: dict, *, score: float, op: int, oc: int, cand_sig: str | None) -> dict[str, Any]:
+        meta = rec.get("meta", {}) if isinstance(rec.get("meta"), dict) else {}
+        attrs = meta.get("attrs", {}) if isinstance(meta.get("attrs"), dict) else {}
+        created_at = meta.get("created_at") or "(n/a)"
+
+        links = meta.get("links")
+        src = links[0] if isinstance(links, list) and links else None
+
+        return {
+            "engram_id": str(rec.get("id", "")),
+            "created_at": created_at,
+            "stage": attrs.get("stage"),
+            "zone": attrs.get("zone"),
+            "sig": attrs.get("sig"),
+            "salience_sig": attrs.get("salience_sig"),
+            "src": src,
+            "score": float(score),
+            "overlap_preds": int(op),
+            "overlap_cues": int(oc),
+            "cand_salience_sig": cand_sig,
+        }
+
+    k = max(1, min(10, int(top_k)))  # keep terminal readable
     tier_order = ["stage+zone", "stage", "zone", "any"] if allow_fallback else ["stage+zone"]
+
     for tier in tier_order:
         cands = _filter_stage_zone(tier)
         if not cands:
             continue
 
-        best_rec = None
-        best_score = -1.0
-        best_op = 0
-        best_oc = 0
-        best_cand_sig: str | None = None
-
-        for rec in cands:  # newest-first
+        scored: list[tuple[float, int, int, str | None, int, dict]] = []
+        # preserve recency tie-break: cands is newest-first, so lower idx = newer
+        for idx, rec in enumerate(cands):
             score, op, oc, cand_sig = _score_candidate(rec)
-            if score > best_score:
-                best_score, best_op, best_oc = score, op, oc
-                best_rec = rec
-                best_cand_sig = cand_sig
+            scored.append((score, op, oc, cand_sig, idx, rec))
 
-        if best_rec is not None:
-            return {
-                "ok": True,
-                "match": tier,
-                "rec": best_rec,
-                "score": best_score,
-                "overlap_preds": best_op,
-                "overlap_cues": best_oc,
-                "want_pred_n": len(want_preds),
-                "want_cue_n": len(want_cues),
-                "want_salience_sig": want_sig,
-                "cand_salience_sig": best_cand_sig,
-                "want_stage": stage,
-                "want_zone": zone,
-            }
+        scored.sort(key=lambda t: (-t[0], t[4]))  # high score first, then newest
+        top = scored[:k]
 
-    return {"ok": False, "match": "none", "rec": None, "want_stage": stage, "want_zone": zone}
+        best = top[0]
+        best_score, best_op, best_oc, best_csig, _best_idx, best_rec = best
+
+        ranked = [_candidate_summary(r, score=s, op=op, oc=oc, cand_sig=csig) for (s, op, oc, csig, _i, r) in top]
+
+        return {
+            "ok": True,
+            "source": source,
+            "match": tier,
+            "rec": best_rec,
+            "score": float(best_score),
+            "overlap_preds": int(best_op),
+            "overlap_cues": int(best_oc),
+            "want_pred_n": len(want_preds),
+            "want_cue_n": len(want_cues),
+            "want_salience_sig": want_sig,
+            "cand_salience_sig": best_csig,
+            "ranked": ranked,
+            "want_stage": stage,
+            "want_zone": zone,
+        }
+
+    return {"ok": False, "source": source, "match": "none", "rec": None, "want_stage": stage, "want_zone": zone, "ranked": []}
 
 
 def load_mapsurface_payload_v1_into_workingmap(ctx: Ctx, payload: dict[str, Any], *, replace: bool = True, reason: str = "manual_load") -> dict[str, Any]:
@@ -1630,6 +1750,255 @@ def load_mapsurface_payload_v1_into_workingmap(ctx: Ctx, payload: dict[str, Any]
         n_rel += 1
 
     return {"ok": True, "entities": n_ent, "relations": n_rel}
+
+
+def merge_mapsurface_payload_v1_into_workingmap(ctx: Ctx, payload: dict[str, Any], *, reason: str = "manual_merge") -> dict[str, Any]:
+    """Merge/seed a wm_mapsurface_v1 payload into the current WorkingMap.MapSurface (conservative prior).
+
+    Design intent:
+      - Do NOT clear WorkingMap.
+      - Do NOT delete or overwrite existing observed slot families.
+      - Do NOT add cue:* tags (cues mean 'present now'); store cues in meta as 'prior_cues' instead.
+
+    Returns:
+      {"ok": bool, "added_entities": int, "filled_slots": int, "added_edges": int, "stored_prior_cues": int}
+    """
+    if getattr(ctx, "working_world", None) is None:
+        ctx.working_world = init_working_world()
+    ww = ctx.working_world
+    if ww is None:
+        return {"ok": False, "added_entities": 0, "filled_slots": 0, "added_edges": 0, "stored_prior_cues": 0}
+
+    # Ensure MapSurface roots exist (do not clear anything)
+    root_bid = ww.ensure_anchor("WM_ROOT")
+    try:
+        ww.set_now(root_bid, tag=True, clean_previous=True)
+    except Exception:
+        pass
+
+    # Ensure Scratch + Creative exist (structural)
+    scratch_bid = ww.ensure_anchor("WM_SCRATCH")
+    _wm_tagset_of(ww, scratch_bid).add("wm:scratch")
+    _wm_upsert_edge(ww, root_bid, scratch_bid, "wm_scratch", {"created_by": "wm_merge", "reason": reason})
+
+    creative_bid = ww.ensure_anchor("WM_CREATIVE")
+    _wm_tagset_of(ww, creative_bid).add("wm:creative")
+    _wm_upsert_edge(ww, root_bid, creative_bid, "wm_creative", {"created_by": "wm_merge", "reason": reason})
+
+    # Rebuild ctx.wm_entities cache if empty (best-effort scan)
+    try:
+        if not getattr(ctx, "wm_entities", {}):
+            for bid, b in getattr(ww, "_bindings", {}).items():
+                tags = getattr(b, "tags", []) or []
+                for t in tags:
+                    if isinstance(t, str) and t.startswith("wm:eid:"):
+                        eid = t.split(":", 2)[2].strip().lower()
+                        if eid:
+                            ctx.wm_entities[eid] = bid
+    except Exception:
+        pass
+
+
+    def _pred_family(tok: str) -> str:
+        if not isinstance(tok, str) or not tok:
+            return ""
+        return tok.rsplit(":", 1)[0] if ":" in tok else tok
+
+
+    def _has_slot_family(tags: set[str], family: str) -> bool:
+        """Return True if tags already contain any pred:* token in this slot family.
+
+        Examples:
+          family="posture"        matches pred:posture:standing, pred:posture:fallen
+          family="proximity:mom"  matches pred:proximity:mom:close, pred:proximity:mom:far
+          family="resting"        matches pred:resting (exact token)
+        """
+        if not family:
+            return False
+
+        # Exact token case (e.g., pred:resting)
+        if f"pred:{family}" in tags:
+            return True
+
+        # Family-prefix case (e.g., pred:posture:*)
+        pref = f"pred:{family}:"
+        return any(isinstance(t, str) and t.startswith(pref) for t in tags)
+
+
+    def _has_edge(src: str, dst: str, label: str) -> bool:
+        b = getattr(ww, "_bindings", {}).get(src)
+        if not b:
+            return False
+        edges = getattr(b, "edges", []) or []
+        if not isinstance(edges, list):
+            return False
+        for e in edges:
+            if not isinstance(e, dict):
+                continue
+            to_ = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+            lab = e.get("label") or e.get("rel") or e.get("relation")
+            if to_ == dst and lab == label:
+                return True
+        return False
+
+    ents = payload.get("entities", [])
+    if not isinstance(ents, list):
+        ents = []
+
+    added_entities = 0
+    filled_slots = 0
+    stored_prior_cues = 0
+
+    # Entities: create if missing; else fill missing slot families only.
+    for ent in ents:
+        if not isinstance(ent, dict):
+            continue
+        eid_raw = ent.get("eid")
+        if not isinstance(eid_raw, str) or not eid_raw.strip():
+            continue
+        eid = eid_raw.strip().lower()
+
+        kind = ent.get("kind")
+        kind = kind if isinstance(kind, str) else None
+
+        bid = (getattr(ctx, "wm_entities", {}) or {}).get(eid)
+        if not (isinstance(bid, str) and bid in getattr(ww, "_bindings", {})):
+            # Create / ensure anchor
+            bid = ww.ensure_anchor(_wm_entity_anchor_name(eid))
+            ctx.wm_entities[eid] = bid
+            added_entities += 1
+
+        tags = _wm_tagset_of(ww, bid)
+        tags.add("wm:entity")
+        tags.add(f"wm:eid:{eid}")
+
+        # Only set kind if missing (do not fight existing kind tags)
+        if kind and not any(isinstance(t, str) and t.startswith("wm:kind:") for t in tags):
+            tags.add(f"wm:kind:{kind}")
+
+        # Ensure membership under WM_ROOT
+        _wm_upsert_edge(ww, root_bid, bid, "wm_entity", {"created_by": "wm_merge", "reason": reason})
+
+        # meta.wm fill (only if missing)
+        b = ww._bindings.get(bid)  # pylint: disable=protected-access
+        if b is not None:
+            if not isinstance(getattr(b, "meta", None), dict):
+                b.meta = {}
+            wmm = b.meta.setdefault("wm", {})
+            if isinstance(wmm, dict):
+                pos = ent.get("pos")
+                if "pos" not in wmm and isinstance(pos, dict):
+                    x = pos.get("x"); y = pos.get("y"); frame = pos.get("frame")
+                    if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                        wmm["pos"] = {"x": float(x), "y": float(y), "frame": frame if isinstance(frame, str) and frame else "wm_schematic_v1"}
+
+                if "dist_m" not in wmm:
+                    dist_m = ent.get("dist_m")
+                    if isinstance(dist_m, (int, float)):
+                        wmm["dist_m"] = float(dist_m)
+
+                if "dist_class" not in wmm:
+                    dist_class = ent.get("dist_class")
+                    if isinstance(dist_class, str) and dist_class:
+                        wmm["dist_class"] = dist_class
+
+                # recency marker always refreshed
+                wmm["last_seen_step"] = int(getattr(ctx, "controller_steps", 0) or 0)
+                wmm["loaded_from"] = "wm_mapsurface_v1"
+                wmm["load_reason"] = reason
+
+                # Store cues as "prior_cues" (do NOT add cue:* tags in merge mode)
+                cues = ent.get("cues")
+                if isinstance(cues, list) and cues:
+                    prior = wmm.setdefault("prior_cues", [])
+                    if isinstance(prior, list):
+                        for c in cues:
+                            if isinstance(c, str) and c and c not in prior:
+                                prior.append(c)
+                                stored_prior_cues += 1
+
+        # Predicates: only fill slot families that are missing
+        preds = ent.get("preds")
+        if isinstance(preds, list):
+            for p in preds:
+                if not isinstance(p, str) or not p:
+                    continue
+                fam = _pred_family(p)
+                if _has_slot_family(tags, fam):
+                    continue
+                tags.add(f"pred:{p}")
+                filled_slots += 1
+
+    # Relations: add missing distance_to edges only
+    rels = payload.get("relations", [])
+    if not isinstance(rels, list):
+        rels = []
+
+    added_edges = 0
+    self_bid = (getattr(ctx, "wm_entities", {}) or {}).get("self")
+    for r in rels:
+        if not isinstance(r, dict):
+            continue
+        if r.get("rel") != "distance_to" or r.get("src") != "self":
+            continue
+        dst = r.get("dst")
+        if not isinstance(dst, str) or not dst.strip():
+            continue
+        dst_eid = dst.strip().lower()
+        dst_bid = (getattr(ctx, "wm_entities", {}) or {}).get(dst_eid)
+        if not (isinstance(self_bid, str) and isinstance(dst_bid, str)):
+            continue
+
+        if _has_edge(self_bid, dst_bid, "distance_to"):
+            continue
+
+        em: dict[str, Any] = {"created_by": "wm_merge", "reason": reason}
+        meters = r.get("meters")
+        if isinstance(meters, (int, float)):
+            em["meters"] = float(meters)
+        cls = r.get("class")
+        if isinstance(cls, str) and cls:
+            em["class"] = cls
+        frame = r.get("frame")
+        if isinstance(frame, str) and frame:
+            em["frame"] = frame
+
+        _wm_upsert_edge(ww, self_bid, dst_bid, "distance_to", em)
+        added_edges += 1
+
+    return {
+        "ok": True,
+        "added_entities": added_entities,
+        "filled_slots": filled_slots,
+        "added_edges": added_edges,
+        "stored_prior_cues": stored_prior_cues,
+    }
+
+
+def load_wm_mapsurface_engram_into_workingmap_mode(ctx: Ctx, engram_id: str, *, mode: str = "replace") -> dict[str, Any]:
+    """Load a Column engram (wm_mapsurface) into WorkingMap using replace or merge/seed mode."""
+    rec = column_mem.try_get(engram_id)
+    if not isinstance(rec, dict):
+        return {"ok": False, "why": "no_such_engram"}
+
+    if rec.get("name") != "wm_mapsurface":
+        return {"ok": False, "why": "wrong_name"}
+
+    payload = rec.get("payload")
+    if not isinstance(payload, dict):
+        return {"ok": False, "why": "payload_not_dict"}
+
+    m = (mode or "replace").strip().lower()
+    if m in ("merge", "seed", "merge_seed", "merge/seed"):
+        out = merge_mapsurface_payload_v1_into_workingmap(ctx, payload, reason=f"engram_merge:{engram_id[:8]}")
+        out["mode"] = "merge"
+    else:
+        out = load_mapsurface_payload_v1_into_workingmap(ctx, payload, replace=True, reason=f"engram_replace:{engram_id[:8]}")
+        out["mode"] = "replace"
+
+    out["ok"] = True
+    out["engram_id"] = engram_id
+    return out
 
 
 def load_wm_mapsurface_engram_into_workingmap(ctx: Ctx, engram_id: str, *, replace: bool = True) -> dict[str, Any]:
@@ -12074,61 +12443,79 @@ Settings
                 zone = None
             zone = zone if isinstance(zone, str) else None
 
-            print(f"[wm-retrieve] want stage={stage!r} zone={zone!r}")
-            info = pick_best_wm_mapsurface_rec(stage=stage, zone=zone, ctx=ctx, allow_fallback=True)
+            raw_k = input("Show top K candidates (default=5): ").strip()
+            k = 5
+            if raw_k:
+                try:
+                    k = max(1, int(float(raw_k)))
+                except Exception:
+                    k = 5
+
+            print(f"[wm-retrieve] want stage={stage!r} zone={zone!r} (top_k={k})")
+            info = pick_best_wm_mapsurface_rec(stage=stage, zone=zone, ctx=ctx, long_world=world, allow_fallback=True, top_k=k)
 
             if not info.get("ok"):
-                print("(none) No wm_mapsurface engrams found in Column memory yet.")
+                print("(none) No wm_mapsurface engrams found for retrieval.")
                 print("Tip: run menu 37 to auto-store keyframes, or menu 44 to store manually.")
                 loop_helper(args.autosave, world, drives, ctx)
                 continue
 
+            print(f"[wm-retrieve] candidate_source={info.get('source')} match_tier={info.get('match')}")
+            print(
+                f"[wm-retrieve] want_sal={str(info.get('want_salience_sig') or '')[:12]} "
+                f"want_pred_n={info.get('want_pred_n')} want_cue_n={info.get('want_cue_n')}"
+            )
+
+            ranked = info.get("ranked", [])
+            if isinstance(ranked, list) and ranked:
+                print("\nTop candidates (winner marked with '*'):")
+                for i, c in enumerate(ranked, start=1):
+                    if not isinstance(c, dict):
+                        continue
+                    star = "*" if i == 1 else " "
+                    eid = str(c.get("engram_id", ""))
+                    created = c.get("created_at") or "(n/a)"
+                    st = c.get("stage") or "(n/a)"
+                    zn = c.get("zone") or "(n/a)"
+                    src = c.get("src")
+                    src_txt = f" src={src}" if isinstance(src, str) else ""
+                    sig = str(c.get("sig") or "")[:12]
+                    sal = str(c.get("salience_sig") or "")[:12]
+                    score = float(c.get("score", 0.0) or 0.0)
+                    op = int(c.get("overlap_preds", 0) or 0)
+                    oc = int(c.get("overlap_cues", 0) or 0)
+                    print(
+                        f" {star}{i:2d}) {eid[:8]}… score={score:6.1f} op={op:2d} oc={oc:2d} "
+                        f"stage={st} zone={zn} sig={sig} sal={sal} created={created}{src_txt}"
+                    )
+
+            # Winner summary (same info as before)
             rec = info.get("rec")
             rec = rec if isinstance(rec, dict) else None
-            if rec is None:
-                print("(none) Picker returned no record.")
-                loop_helper(args.autosave, world, drives, ctx)
-                continue
+            if rec is not None:
+                eid = str(rec.get("id", ""))
+                meta = rec.get("meta", {}) if isinstance(rec.get("meta"), dict) else {}
+                attrs = meta.get("attrs", {}) if isinstance(meta.get("attrs"), dict) else {}
+                created_at = meta.get("created_at") or "(n/a)"
+                links = meta.get("links")
+                src = links[0] if isinstance(links, list) and links else None
 
-            eid = str(rec.get("id", ""))
-            meta = rec.get("meta", {}) if isinstance(rec.get("meta"), dict) else {}
-            attrs = meta.get("attrs", {}) if isinstance(meta.get("attrs"), dict) else {}
-            created_at = meta.get("created_at") or "(n/a)"
-            src = None
-            links = meta.get("links")
-            if isinstance(links, list) and links:
-                src = links[0]
-
-            match = info.get("match")
-            print(f"[wm-retrieve] picked engram={eid[:8]}… match={match} created_at={created_at}")
-            print(f"             stage={attrs.get('stage')!r} zone={attrs.get('zone')!r} sig={str(attrs.get('sig',''))[:12]}")
-            if isinstance(src, str):
-                print(f"             src(binding)={src}")
-
-            if info.get("ok"):
+                print("\n[wm-retrieve] winner:")
+                print(f"  engram={eid[:8]}… created_at={created_at} stage={attrs.get('stage')!r} zone={attrs.get('zone')!r}")
+                if isinstance(src, str):
+                    print(f"  src(binding)={src}")
                 print(
-                    f"             score={info.get('score')} "
+                    f"  score={info.get('score')} "
                     f"overlap_preds={info.get('overlap_preds')}/{info.get('want_pred_n')} "
-                    f"overlap_cues={info.get('overlap_cues')}/{info.get('want_cue_n')} "
-                    f"sal_sig={str(info.get('cand_salience_sig') or '')[:12]} "
-                    f"want_sal={str(info.get('want_salience_sig') or '')[:12]}"
+                    f"overlap_cues={info.get('overlap_cues')}/{info.get('want_cue_n')}"
                 )
-
-            # Tiny payload stats (no dump here; use menu 27 to inspect engram payload if desired)
-            payload = rec.get("payload")
-            if isinstance(payload, dict):
-                ents = payload.get("entities", [])
-                rels = payload.get("relations", [])
-                n_ent = len(ents) if isinstance(ents, list) else 0
-                n_rel = len(rels) if isinstance(rels, list) else 0
-                print(f"             payload: entities={n_ent} relations={n_rel} schema={payload.get('schema')!r}")
 
             loop_helper(args.autosave, world, drives, ctx)
 
 
         #----Menu Selection Code Block------------------------
         elif choice == "47":
-            print("Selection: Load wm_mapsurface engram into WorkingMap (replace MapSurface)\n")
+            print("Selection: Load wm_mapsurface engram into WorkingMap (replace OR merge/seed)\n")
 
             raw = input("Engram id to load (blank = pick best for current stage/zone): ").strip()
             if not raw:
@@ -12139,7 +12526,8 @@ Settings
                 except Exception:
                     zone = None
                 zone = zone if isinstance(zone, str) else None
-                info = pick_best_wm_mapsurface_rec(stage=stage, zone=zone, ctx=ctx, allow_fallback=True)
+
+                info = pick_best_wm_mapsurface_rec(stage=stage, zone=zone, ctx=ctx, long_world=world, allow_fallback=True, top_k=5)
                 rec = info.get("rec")
                 rec = rec if isinstance(rec, dict) else None
                 if not (info.get("ok") and rec):
@@ -12148,17 +12536,25 @@ Settings
                     continue
                 raw = str(rec.get("id", "")).strip()
 
-            replace_txt = input("Replace WorkingMap (clear WM first)? [Y/n]: ").strip().lower()
-            replace = not replace_txt in ("n", "no")
+            mode_txt = input("Load mode: [R]eplace / [M]erge-seed (default R): ").strip().lower()
+            mode = "merge" if mode_txt.startswith("m") else "replace"
 
-            out = load_wm_mapsurface_engram_into_workingmap(ctx, raw, replace=replace)
+            out = load_wm_mapsurface_engram_into_workingmap_mode(ctx, raw, mode=mode)
             if not out.get("ok"):
                 print(f"(failed) load: {out.get('why','unknown')}")
                 loop_helper(args.autosave, world, drives, ctx)
                 continue
 
-            print(f"[wm-retrieve] loaded engram={raw[:8]}… into WorkingMap: entities={out.get('entities')} relations={out.get('relations')}")
-            print("Tip: run menu 43 now to inspect the loaded MapSurface; next env step may overwrite parts of it.")
+            if out.get("mode") == "merge":
+                print(
+                    f"[wm-retrieve] merged engram={raw[:8]}… into WorkingMap: "
+                    f"added_entities={out.get('added_entities')} filled_slots={out.get('filled_slots')} "
+                    f"added_edges={out.get('added_edges')} stored_prior_cues={out.get('stored_prior_cues')}"
+                )
+                print("Tip: run menu 43 to inspect; then run one env step to let observation correct the prior.")
+            else:
+                print(f"[wm-retrieve] replaced WorkingMap from engram={raw[:8]}…: entities={out.get('entities')} relations={out.get('relations')}")
+                print("Tip: run menu 43 now to inspect the loaded MapSurface; next env step may overwrite parts of it.")
 
             loop_helper(args.autosave, world, drives, ctx)
 
