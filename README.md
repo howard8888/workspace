@@ -18,8 +18,8 @@ Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
  - Agent behavior layer
  - CCA8 RCOS kernel
  - Robot middleware (e.g., ROS 2)
- - HAL / device drivers
- - Low-Level OS / firmware (e.g., Linux, an RTOS, or a PetitCat-style minimal middleware/device driver/OS)
+ - Hardware Abstraction Layer (HAL)
+ - Low-Level OS / firmware (e.g., Linux, an RTOS, or a PetitCat-style minimal middleware/OS)
  - Hardware
 
 
@@ -41,13 +41,14 @@ Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 
 
 
-● The CCA8 also contains hooks for different robotic embodiments, and serves as the kernel of a very flexible robotic cognitive operating system (RCOS). The RCOS is situated below the application layer but above the low-level OS/firmware + hardware-interface stack. For example, the software stack could consist of:
+● The CCA8 also contains hooks for different robotic embodiments, and serves as the kernel of a very flexible robotic cognitive operating system (RCOS). The RCOS is situated below the application layer but above the middleware and low-level OS/firmware + hardware-interface stack. For example, the software stack could consist of:
  - Agent behavior layer
  - CCA8 RCOS kernel
  - Robot middleware (e.g., ROS 2)
- - HAL / device drivers
- - Low-Level OS / firmware (e.g., Linux, an RTOS, or a PetitCat-style minimal middleware/device driver/OS)
+ - Hardware Abstraction Layer (HAL)
+ - Low-Level OS / firmware (e.g., Linux, an RTOS, or a PetitCat-style minimal middleware/OS)
  - Hardware
+
  
 
 ● The CCA8 RCOS gives a more mammalian-like or human-like operation than current robotic and non-robotic agentic frameworks, e.g., LangChain-like products.
