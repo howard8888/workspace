@@ -9,7 +9,7 @@ Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 
 ● **Simulates a mammalian brain**
 
-*The CCA8 project simulates a mammalian brain inspired by a mountain goat across its lifecycle, used as a testbed for a navigation-map-based theory of mammalian brain evolution and function.  It aims to: (1) model how vertebrate navigation-map mechanisms could evolve into human capacities such as full causal reasoning, full analogical reasoning, and (partially) compositional language; (2) offer a candidate mechanistic account, i.e., explanation, of mammalian cognition; and (3) explore in-model evolution and mechanisms of psychotic and autistic disorders in humans (no clinical claims).*
+*The CCA8 project simulates a mammalian brain inspired by a mountain goat across its lifecycle, used as a testbed for a navigation map-based theory of mammalian brain evolution and function.  It aims to: (1) model how vertebrate navigation map mechanisms could evolve into human capacities such as full causal reasoning, full analogical reasoning, and (partially) compositional language; (2) offer a candidate mechanistic account, i.e., explanation, of mammalian cognition; and (3) explore in-model evolution and mechanisms of psychotic and autistic disorders in humans (no clinical claims).*
 
 
 ● **Robotic Cognitive Operating System (RCOS)**
@@ -64,7 +64,7 @@ Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 
 
 
-<img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
+<img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:400%;">
 
 *Adult Mountain Goat with recently born calf (walking within minutes
 of birth, and by one week can climb most places its mother can)*
