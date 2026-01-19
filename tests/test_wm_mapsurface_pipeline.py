@@ -246,3 +246,88 @@ def test_picker_prefers_higher_overlap_over_newer_when_stage_zone_match() -> Non
     assert isinstance(rec, dict)
     assert rec.get("id") == ida
     assert info.get("source") == "world_pointers"
+
+
+def test_autoretrieve_skips_excluded_engram_id_and_merges_prior():
+    import cca8_world_graph
+    from cca8_column import mem as column_mem
+    from cca8_run import (
+        Ctx,
+        init_body_world,
+        init_working_world,
+        update_body_world_from_obs,
+        inject_obs_into_working_world,
+        store_mapsurface_snapshot_v1,
+        maybe_autoretrieve_mapsurface_on_keyframe,
+    )
+
+    # Keep this test isolated
+    column_mem._store.clear()
+
+    world = cca8_world_graph.WorldGraph()
+    world.set_tag_policy("allow")
+    world.ensure_anchor("NOW")
+
+    ctx = Ctx()
+    ctx.body_world, ctx.body_ids = init_body_world()
+    ctx.working_world = init_working_world()
+    ctx.working_enabled = True
+    ctx.working_mapsurface = True
+    ctx.wm_mapsurface_autoretrieve_enabled = True
+    ctx.wm_mapsurface_autoretrieve_verbose = False
+
+    class _Obs:  # minimal EnvObservation-like stub
+        def __init__(self, predicates, cues=None, env_meta=None):
+            self.predicates = predicates
+            self.cues = cues or []
+            self.env_meta = env_meta or {}
+            self.raw_sensors = {}
+
+    preds = [
+        "resting",
+        "proximity:mom:close",
+        "proximity:shelter:near",
+        "hazard:cliff:far",
+        "nipple:latched",
+        "milk:drinking",
+    ]
+    cues = ["vision:silhouette:mom"]
+    obs = _Obs(preds, cues, {"scenario_stage": "rest"})
+
+    # Make stage/zone available for storage + retrieval
+    ctx.lt_obs_last_stage = "rest"
+    update_body_world_from_obs(ctx, obs)
+    inject_obs_into_working_world(ctx, obs)
+
+    # Snapshot #1 (baseline)
+    s1 = store_mapsurface_snapshot_v1(world, ctx, reason="t1", attach="now", force=True, quiet=True)
+    assert s1.get("stored")
+    eid1 = s1.get("engram_id")
+    assert isinstance(eid1, str) and eid1
+
+    # Modify WM slightly to make a distinct snapshot (#2)
+    self_bid = ctx.wm_entities.get("self")
+    assert isinstance(self_bid, str)
+    bself = ctx.working_world._bindings.get(self_bid)  # pylint: disable=protected-access
+    tags = getattr(bself, "tags", None)
+    assert isinstance(tags, set)
+    tags.add("pred:alert")  # salient exact token; changes sig + salience
+
+    s2 = store_mapsurface_snapshot_v1(world, ctx, reason="t2", attach="now", force=True, quiet=True)
+    assert s2.get("stored")
+    eid2 = s2.get("engram_id")
+    assert isinstance(eid2, str) and eid2 and eid2 != eid1
+
+    # Auto-retrieve should skip excluded eid2 and pick eid1
+    out = maybe_autoretrieve_mapsurface_on_keyframe(
+        world,
+        ctx,
+        stage="rest",
+        zone="safe",
+        exclude_engram_id=eid2,
+        reason="test_autoretrieve",
+        top_k=5,
+    )
+    assert out.get("ok") is True
+    assert out.get("engram_id") == eid1
+

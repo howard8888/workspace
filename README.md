@@ -3646,6 +3646,166 @@ In this picture, neocortex is not treated primarily as “a better planner,” b
 
 This phase implements the first half of a WorkingMap-first memory pipeline: storing WorkingMap.MapSurface snapshots as column engrams, and indexing them in the long-term WorldGraph with thin pointer bindings.
 
+
+### Memory pipeline (plain-English): how CCA8 remembers
+
+This is a straightforward way to think about the current CCA8 memory pipeline:
+
+**Reality is outside the agent**, and **memory is inside the agent**.
+
+- The environment (outside) has a “God’s-eye” truth state (EnvState).
+- The agent (CCA8) never reads that directly.
+- What the agent gets each tick is an **EnvObservation** (a little packet of “what I saw/feel right now”).
+
+Once EnvObservation crosses the boundary into CCA8, the pipeline splits into a few different memory stores that each have a job.
+
+#### The four “memory places” in the current build
+
+**1) BodyMap = the dashboard**
+BodyMap is tiny and safety-critical: posture, mom distance, nipple state, shelter/cliff distances, zone classification, etc.
+Think of it as: “what I believe about my body and near-space right now.”
+
+**2) WorkingMap (MapSurface) = the scratch paper**
+WorkingMap.MapSurface is the agent’s *live* scene map: “self, mom, cliff, shelter” as stable entities with attributes and relations.
+This is what gets updated in-place each tick.
+
+**3) WorldGraph = the table of contents**
+WorldGraph is the long-term symbolic episode index used for planning and inspection.
+It stays small on purpose. It stores *what happened* (predicates, actions, cues, weak ‘then’ links), but it does not store heavy scene payloads.
+
+**4) Columns/Engrams = the storage closet**
+Column memory holds the heavy payloads (for us right now: MapSurface snapshots).
+WorldGraph bindings can point to those payloads using engram pointers.
+
+If you remember one sentence, it’s this:
+
+> **WorldGraph tells you where to look; Columns hold what you actually want to look at.**
+
+---
+
+### What happens each env-loop step (the “normal” flow)
+
+Each closed-loop env step looks like:
+
+1) **EnvObservation arrives**
+   - this is “what the agent saw this tick.”
+
+2) **BodyMap updates**
+   - BodyMap reflects what is true right now (posture, safety zone, etc.).
+
+3) **WorkingMap.MapSurface updates**
+   - The map is updated in-place (entities + slot families like posture/mom proximity/hazard cliff).
+
+4) **WorldGraph may log the episode**
+   - Long-term logging is controlled by your long-term injection settings (snapshot vs changes, keyframes, etc.).
+
+5) **Action Center picks one policy**
+   - policies read BodyMap + WorkingMap/WorldGraph neighborhood and choose one action for this tick.
+
+---
+
+### Keyframes and “boundaries”: when we store a MapSurface snapshot
+
+Right now we treat **stage changes** and **zone changes** as “keyframes” / “boundaries.”
+At those boundaries we store a snapshot because the scene meaning has changed and we want a durable record of the map.
+
+When a boundary happens, CCA8 stores a **MapSurface snapshot** as an engram:
+
+- **Column** stores the full snapshot payload (`wm_mapsurface_v1`).
+- **WorldGraph** stores a thin pointer binding tagged like:
+  - `cue:wm:mapsurface_snapshot`
+  - `idx:stage:<stage>`
+  - `idx:zone:<zone>`
+  and attaches an engram pointer:
+  - `binding.engrams["column01"]["id"] = <engram_id>`
+
+This gives us the core “write path”:
+
+> **WorkingMap → Column engram, and WorldGraph gets a small pointer/index node.**
+
+We also dedup snapshots using a signature so we don’t store the same map 100 times in a row.
+
+---
+
+### Auto-retrieve: what it means (and what it does NOT mean)
+
+**Auto-retrieve means:**
+At a keyframe (stage/zone boundary), CCA8 automatically tries to pull a previously stored `wm_mapsurface` snapshot from Column memory and apply it to the current WorkingMap as a **prior**.
+
+It is not magic and it is not “LLM memory.” It’s just: “grab the last map like this, and reuse it.”
+
+**Is it copying the engram into WorkingMap?**
+Yes — conceptually:
+
+1) pick an engram id (stage/zone match first, then salience overlap)
+2) load the payload dict from Column
+3) apply it to WorkingMap.MapSurface using one of two modes:
+
+- **replace mode**: clear WM, rebuild it exactly from the payload
+- **merge/seed mode (default)**: don’t clear; only fill missing slot families/edges; do not inject `cue:*` tags (cues mean “present now”)
+
+So the retrieval direction is:
+
+> **Column engram → WorkingMap MapSurface**
+
+**Do we ever retrieve a full engram from WorldGraph?**
+No. WorldGraph never stores the full map payload. It only stores the thin pointer node and tags.
+
+WorldGraph’s job is indexing/routing:
+- find candidate pointer nodes quickly (stage/zone/salience tags),
+- read the engram id off the pointer,
+- then fetch the heavy payload from Column.
+
+That’s why retrieval is a two-step:
+
+> **WorldGraph narrows candidates; Columns supply the real content.**
+
+**Why do we sometimes see: `skip: only_excluded_candidate`?**
+Because on the first time you enter a new (stage, zone) bucket, the only “candidate” is the snapshot you just stored on that same boundary — and we explicitly refuse to retrieve “ourselves” immediately. So auto-retrieve reports a skip instead of doing something pointless.
+
+---
+
+### What improvements you should notice now (even before perception gets harder)
+
+You should see two main things:
+
+1) **A real read-path exists at keyframes**
+   - the system is no longer just recording; it tries to reuse prior WorkingMaps at boundaries.
+
+2) **When a context repeats, memory reuse becomes automatic**
+   - when the same (stage, zone) happens again, it starts printing auto-retrieve merges.
+
+One subtlety:
+Because EnvObservation already injected a “truthy” WM for that step, and merge/seed is conservative, auto-retrieve might not visibly change WM much right now. The benefit becomes obvious later when:
+- observations become partial/noisy,
+- you clear/trim WorkingMap more aggressively,
+- or you want fast “snap into” priors before processing the next observation.
+
+---
+
+### Planned: a guard hook (programmatic control of auto-retrieve)
+
+In real-world sensing later, we’ll want auto-retrieve sometimes, and *not* other times. So the plan is to add a single guard function so the decision is centralized and easy to reason about.
+
+**Idea (not the exact final code):**
+
+`should_autoretrieve(ctx, env_obs, *, stage_changed, zone_changed) -> bool`
+
+What it decides:
+- return True when we want to use priors (auto-retrieve allowed)
+- return False when we want “pure perception update” (auto-retrieve suppressed)
+
+Simple examples of future guard logic:
+- allow auto-retrieve when BodyMap is stale, cues are missing, or uncertainty is high
+- suppress auto-retrieve during debugging runs, when sensors are high-confidence, or when we deliberately want a “no priors” baseline
+
+The important design rule:
+> Put the decision in one place (the guard hook), not scattered across the env loop.
+
+
+
+
+
 ### Mental model: small symbolic index + rich stored maps
 
 - WorldGraph stays small and searchable (episode index + thin pointers).

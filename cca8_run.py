@@ -251,7 +251,15 @@ class Ctx:
     wm_mapsurface_last_sig: Optional[str] = None
     wm_mapsurface_last_engram_id: Optional[str] = None
     wm_mapsurface_last_world_bid: Optional[str] = None
-
+    # MapSurface auto-retrieve (Option B6/B7)
+    # - When enabled, on keyframes (stage/zone boundary) we try to seed WorkingMap from a prior
+    #   wm_mapsurface engram (default mode="merge" so it behaves as a conservative prior).
+    wm_mapsurface_autoretrieve_enabled: bool = False
+    wm_mapsurface_autoretrieve_mode: str = "merge"   # "merge" (recommended) or "replace" (debug)
+    wm_mapsurface_autoretrieve_top_k: int = 5        # candidates to rank (2..10)
+    wm_mapsurface_autoretrieve_verbose: bool = True  # print when auto-retrieve applies
+    wm_mapsurface_last_autoretrieve_engram_id: Optional[str] = None
+    wm_mapsurface_last_autoretrieve_reason: Optional[str] = None
 
     # memory pipeline knobs (opt-in; defaults preserve Phase VI behavior)
     phase7_working_first: bool = False    # execute policies in WorkingMap; keep long-term WorldGraph sparse
@@ -2001,6 +2009,276 @@ def load_wm_mapsurface_engram_into_workingmap_mode(ctx: Ctx, engram_id: str, *, 
     return out
 
 
+def should_autoretrieve_mapsurface(
+    ctx: Ctx,
+    env_obs: EnvObservation | None,
+    *,
+    stage: str | None,
+    zone: str | None,
+    stage_changed: bool,
+    zone_changed: bool,
+    boundary_reason: str | None = None,
+) -> dict[str, Any]:
+    """Guard hook: decide whether CCA8 should attempt MapSurface auto-retrieval *right now*.
+
+    What this is (plain English)
+    ----------------------------
+    Auto-retrieve is the read-path side of the memory pipeline:
+
+        Column engram (wm_mapsurface payload)  →  WorkingMap.MapSurface (as a prior)
+
+    We attempt it at keyframes so the system can "snap into" a previously seen scene configuration
+    without bloating the long-term WorldGraph.
+
+    WorldGraph does NOT store the full engram payload; it stores a thin pointer binding (index tags + engram id).
+    The heavy data lives in Column memory. This hook only decides whether we *try* the retrieval on this boundary.
+
+    Why we need this hook
+    ---------------------
+    In the current demo environment (HybridEnvironment), observations are rich and frequent, so merge/seed can be
+    a quiet no-op. In future, when we process real-world sensor streams, there will be times we WANT priors and
+    times we DO NOT (debugging, high-confidence perception, deliberate "no priors" baselines, etc.).
+
+    This function is the one place to put that decision logic so it stays consistent and testable.
+
+    Inputs
+    ------
+    ctx:
+        Runtime context (holds the user-controlled knobs, and is the correct home for programmatic control).
+        Key knobs used today:
+            - ctx.wm_mapsurface_autoretrieve_enabled
+            - ctx.wm_mapsurface_autoretrieve_mode          ("merge" recommended; "replace" debug)
+            - ctx.wm_mapsurface_autoretrieve_top_k         (candidate count)
+            - ctx.wm_mapsurface_autoretrieve_verbose       (logging)
+    env_obs:
+        The current observation packet (may be None in some future integrations).
+        We do not require any particular schema here; we only use it for cheap diagnostics (counts).
+    stage / zone:
+        The best-effort context labels for this keyframe (strings or None).
+        These are used for retrieval filtering and for human-readable diagnostics.
+    stage_changed / zone_changed:
+        Which kind(s) of keyframe boundary caused this hook to run.
+        (Right now CCA8 triggers memory snapshots at stage/zone boundaries.)
+    boundary_reason:
+        Optional string used only for logging/debugging (e.g., "auto_boundary_stage:birth->struggle").
+
+    Returns
+    -------
+    dict with stable keys:
+      ok:
+        True if we should attempt auto-retrieval now.
+      why:
+        Short reason string for logs/tests (e.g., "enabled_boundary", "disabled", "not_boundary").
+      mode:
+        Normalized retrieval mode to use ("merge" or "replace").
+      top_k:
+        Candidate budget (int, clamped to 2..10 so exclusion logic can still pick a second-best).
+      verbose:
+        Whether the caller should print diagnostic lines.
+      diag:
+        Small diagnostic dictionary (counts, boundary flags, stage/zone) for optional logging.
+
+    Default policy (Phase VII demo)
+    -------------------------------
+    - If auto-retrieve is disabled → do not attempt.
+    - If this is not a stage/zone boundary → do not attempt.
+    - Otherwise → attempt.
+
+    Future upgrades (expected)
+    --------------------------
+    This is where you will later add:
+      - confidence gating (sensor confidence / missing cues / partial predicates)
+      - BodyMap staleness gating (priors help more when BodyMap is stale)
+      - debug/baseline modes ("no priors" runs)
+      - task-specific suppression (e.g., planning-only phases vs perception-only phases)
+
+    """
+    enabled = bool(getattr(ctx, "wm_mapsurface_autoretrieve_enabled", False))
+    verbose = bool(getattr(ctx, "wm_mapsurface_autoretrieve_verbose", False))
+
+    # Normalize mode (keep conservative by default)
+    mode_raw = (getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge")
+    mode_eff = str(mode_raw).strip().lower()
+    if mode_eff not in ("merge", "replace", "r"):
+        mode_eff = "merge"
+    if mode_eff == "r":
+        mode_eff = "replace"
+
+    # Clamp top_k so exclusion has room to choose a second candidate.
+    try:
+        top_raw = int(getattr(ctx, "wm_mapsurface_autoretrieve_top_k", 5) or 5)
+    except Exception:
+        top_raw = 5
+    top_k = max(2, min(10, int(top_raw)))
+
+    # Cheap diagnostic counts (do not depend on exact schema)
+    pred_n = 0
+    cue_n = 0
+    try:
+        preds = getattr(env_obs, "predicates", None) if env_obs is not None else None
+        cues = getattr(env_obs, "cues", None) if env_obs is not None else None
+        pred_n = len(preds) if isinstance(preds, list) else 0
+        cue_n = len(cues) if isinstance(cues, list) else 0
+    except Exception:
+        pred_n = 0
+        cue_n = 0
+
+    # Decision logic (simple baseline)
+    if not enabled:
+        return {
+            "ok": False,
+            "why": "disabled",
+            "mode": mode_eff,
+            "top_k": top_k,
+            "verbose": verbose,
+            "diag": {
+                "stage": stage,
+                "zone": zone,
+                "stage_changed": bool(stage_changed),
+                "zone_changed": bool(zone_changed),
+                "boundary_reason": boundary_reason,
+                "pred_n": pred_n,
+                "cue_n": cue_n,
+            },
+        }
+
+    if not (bool(stage_changed) or bool(zone_changed)):
+        return {
+            "ok": False,
+            "why": "not_boundary",
+            "mode": mode_eff,
+            "top_k": top_k,
+            "verbose": verbose,
+            "diag": {
+                "stage": stage,
+                "zone": zone,
+                "stage_changed": bool(stage_changed),
+                "zone_changed": bool(zone_changed),
+                "boundary_reason": boundary_reason,
+                "pred_n": pred_n,
+                "cue_n": cue_n,
+            },
+        }
+
+    return {
+        "ok": True,
+        "why": "enabled_boundary",
+        "mode": mode_eff,
+        "top_k": top_k,
+        "verbose": verbose,
+        "diag": {
+            "stage": stage,
+            "zone": zone,
+            "stage_changed": bool(stage_changed),
+            "zone_changed": bool(zone_changed),
+            "boundary_reason": boundary_reason,
+            "pred_n": pred_n,
+            "cue_n": cue_n,
+        },
+    }
+
+
+def maybe_autoretrieve_mapsurface_on_keyframe(
+    world,
+    ctx: Ctx,
+    *,
+    stage: str | None,
+    zone: str | None,
+    exclude_engram_id: str | None = None,
+    reason: str = "auto_keyframe",
+    mode: str | None = None,
+    top_k: int | None = None,
+    max_scan: int = 500,
+) -> dict[str, Any]:
+    """Try to seed WorkingMap from a prior wm_mapsurface engram on a keyframe boundary.
+
+    This is the *read-path* complement to store_mapsurface_snapshot_v1(...).
+
+    Intended semantics:
+      - Keyframes are stage/zone boundaries. At that moment we may want a "prior" map.
+      - We select candidates by (stage, zone) first, then rank by salience overlap vs *current* WM.
+      - We skip `exclude_engram_id` (usually the snapshot we just stored this same boundary).
+      - We load into WorkingMap using either:
+          * mode="merge"   (default): conservative prior; does NOT inject cue:*; does NOT overwrite slot families.
+          * mode="replace" (debug): clear + rebuild; observation will overwrite next tick.
+
+    Returns:
+      dict with keys {ok, why?, engram_id?, chosen?, pick?, load?} (safe for tests/printing).
+    """
+    if ctx is None or world is None:
+        return {"ok": False, "why": "missing_ctx_or_world"}
+
+    if not bool(getattr(ctx, "wm_mapsurface_autoretrieve_enabled", False)):
+        return {"ok": False, "why": "disabled"}
+
+    mode_eff = (mode or getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge").strip().lower()
+    top_eff = top_k if isinstance(top_k, int) else int(getattr(ctx, "wm_mapsurface_autoretrieve_top_k", 5) or 5)
+    top_eff = max(2, min(10, int(top_eff)))  # need >=2 because we may exclude the top candidate
+
+    pick = pick_best_wm_mapsurface_rec(
+        stage=stage,
+        zone=zone,
+        ctx=ctx,
+        long_world=world,
+        allow_fallback=True,
+        max_scan=max(1, int(max_scan)),
+        top_k=top_eff,
+    )
+
+    ranked = pick.get("ranked") if isinstance(pick, dict) else None
+    if not (isinstance(ranked, list) and ranked):
+        return {"ok": False, "why": "no_candidates", "pick": pick}
+
+    chosen: dict[str, Any] | None = None
+    for cand in ranked:
+        if not isinstance(cand, dict):
+            continue
+        eid = cand.get("engram_id")
+        if not isinstance(eid, str) or not eid:
+            continue
+        if isinstance(exclude_engram_id, str) and exclude_engram_id and eid == exclude_engram_id:
+            continue
+        chosen = cand
+        break
+
+    if chosen is None:
+        return {"ok": False, "why": "only_excluded_candidate", "pick": pick}
+
+    eid = chosen.get("engram_id")
+    if not isinstance(eid, str) or not eid:
+        return {"ok": False, "why": "bad_engram_id", "pick": pick}
+
+    # Execute the load into WM
+    if mode_eff in ("replace", "r"):
+        load = load_wm_mapsurface_engram_into_workingmap_mode(ctx, eid, mode="replace")
+    else:
+        load = load_wm_mapsurface_engram_into_workingmap_mode(ctx, eid, mode="merge")
+
+    try:
+        ctx.wm_mapsurface_last_autoretrieve_engram_id = eid
+        ctx.wm_mapsurface_last_autoretrieve_reason = reason
+    except Exception:
+        pass
+
+    if bool(getattr(ctx, "wm_mapsurface_autoretrieve_verbose", False)):
+        try:
+            match = pick.get("match") if isinstance(pick, dict) else None
+            score = chosen.get("score")
+            op = chosen.get("overlap_preds")
+            oc = chosen.get("overlap_cues")
+            src = chosen.get("src")
+            mode_txt = load.get("mode", "merge") if isinstance(load, dict) else mode_eff
+            print(
+                f"[wm-retrieve] (auto) {mode_txt} engram={eid[:8]}… match={match} "
+                f"score={score} op={op} oc={oc} src={src}"
+            )
+        except Exception:
+            pass
+
+    return {"ok": True, "engram_id": eid, "chosen": chosen, "pick": pick, "load": load}
+
+
+
 def load_wm_mapsurface_engram_into_workingmap(ctx: Ctx, engram_id: str, *, replace: bool = True) -> dict[str, Any]:
     """Load a Column engram (wm_mapsurface) into WorkingMap MapSurface."""
     rec = column_mem.try_get(engram_id)
@@ -3312,6 +3590,15 @@ def apply_hardwired_profile_phase7(ctx: "Ctx", world) -> None:
         ctx.phase7_run_compress = True
         ctx.phase7_run_verbose = False
         ctx.phase7_move_longterm_now_to_env = True
+    except Exception:
+        pass
+
+    # --- MapSurface auto-retrieve at keyframes (safe default = merge) ---
+    try:
+        ctx.wm_mapsurface_autoretrieve_enabled = True
+        ctx.wm_mapsurface_autoretrieve_mode = "merge"
+        ctx.wm_mapsurface_autoretrieve_top_k = 5
+        ctx.wm_mapsurface_autoretrieve_verbose = True
     except Exception:
         pass
 
@@ -8287,6 +8574,64 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                                 f"engram_id={str(info.get('engram_id',''))[:16]}... "
                                 f"({wm_auto_reason})"
                             )
+
+                            # --- Auto-retrieve (read path) ---
+                            try:
+                                reason_kf = (wm_auto_reason or "auto_boundary")
+
+                                # Context labels for retrieval filtering
+                                stage_kf = None
+                                try:
+                                    stage_kf = getattr(env.state, "scenario_stage", None)
+                                except Exception:
+                                    stage_kf = None
+                                stage_kf = stage_kf if isinstance(stage_kf, str) else None
+
+                                zone_kf = zone_now if isinstance(zone_now, str) else None
+
+                                # Boundary type flags (derived from reason string you already construct)
+                                stage_chg = isinstance(reason_kf, str) and ("stage:" in reason_kf)
+                                zone_chg = isinstance(reason_kf, str) and ("zone:" in reason_kf)
+
+                                dec = should_autoretrieve_mapsurface(
+                                    ctx,
+                                    env_obs,
+                                    stage=stage_kf,
+                                    zone=zone_kf,
+                                    stage_changed=stage_chg,
+                                    zone_changed=zone_chg,
+                                    boundary_reason=reason_kf,
+                                )
+
+                                if not bool(dec.get("ok")):
+                                    if bool(dec.get("verbose")):
+                                        print(f"[wm-retrieve] (auto) guard skip: {dec.get('why')} ({reason_kf})")
+                                else:
+                                    exclude = None
+                                    if isinstance(info, dict) and info.get("stored"):
+                                        exclude = info.get("engram_id")
+
+                                    out = maybe_autoretrieve_mapsurface_on_keyframe(
+                                        world,
+                                        ctx,
+                                        stage=stage_kf,
+                                        zone=zone_kf,
+                                        exclude_engram_id=exclude if isinstance(exclude, str) else None,
+                                        reason=reason_kf,
+                                        mode=str(dec.get("mode") or ""),
+                                        top_k=int(dec.get("top_k") or 5),
+                                    )
+
+                                    # Note: success printing is already handled inside maybe_autoretrieve_mapsurface_on_keyframe(...)
+                                    # (it prints a detailed line with match/score/src when verbose is enabled).
+                                    if bool(dec.get("verbose")) and isinstance(out, dict) and (not out.get("ok")):
+                                        why = out.get("why") or "no-op"
+                                        print(f"[wm-retrieve] (auto) skip: {why} ({reason_kf})")
+
+                            except Exception:
+                                pass
+                            # ----- END Auto-retrieve (read path) ----
+
                         else:
                             print(
                                 f"[wm->column] (auto) SKIP: {info.get('why','(no reason)')} "
@@ -11565,6 +11910,33 @@ What happens conceptually per step
                           f"bid={info.get('bid')} stage={info.get('stage')} zone={info.get('zone')}")
                 else:
                     print(f"[wm->column] auto skip: {info.get('why')} sig={info.get('sig','')[:16]}")
+
+                # Auto-retrieve (read path): seed WM from a PRIOR engram for this stage/zone.
+                # We exclude the engram we may have just stored on this same boundary so we don't "retrieve ourselves".
+                try:
+                    exclude = None
+                    if isinstance(info, dict) and info.get("stored"):
+                        exclude = info.get("engram_id")
+                    out = maybe_autoretrieve_mapsurface_on_keyframe(
+                        world,
+                        ctx,
+                        stage=stage_now,
+                        zone=zone_now,
+                        exclude_engram_id=exclude if isinstance(exclude, str) else None,
+                        reason=reason,
+                    )
+                    # Make it visible (merge can be a silent no-op if WM already has those slots).
+                    if bool(getattr(ctx, "wm_mapsurface_autoretrieve_verbose", False)):
+                        if isinstance(out, dict) and out.get("ok"):
+                            eid = str(out.get("engram_id") or "")
+                            load = out.get("load", {}) if isinstance(out.get("load"), dict) else {}
+                            mode_used = str(load.get("mode") or getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge")
+                            print(f"[wm-retrieve] auto {mode_used} engram={eid[:8]}... ({reason})")
+                        else:
+                            why = out.get("why") if isinstance(out, dict) else None
+                            print(f"[wm-retrieve] auto skip: {why or 'no-op'} ({reason})")
+                except Exception:
+                    pass
 
             prev_stage = stage_now
             prev_zone = zone_now
