@@ -1,0 +1,699 @@
+[planner] Active planner on startup: BFS
+[profile] Hardwired memory pipeline: phase7 daily-driver (no options menu needed).
+
+
+# --------------------------------------------------------------------------------------
+# NEW RUN   NEW RUN
+# --------------------------------------------------------------------------------------
+
+A Warm Welcome to the CCA8 Mammalian Brain Simulation
+(cca8_run.py v0.8.2)
+
+[33m    ____            CCA8
+ .'    `-.       mountain goat
+/  _  _   \
+| (o)(o)  |
+\    __  /
+ `'-.____'[0m
+
+Entry point program being run: C:\Users\howar\workspace\cca8_run.py
+OS: win32 (see system-dependent utilities for more detailed system/simulation info)
+(for non-interactive execution, ">python cca8_run.py --help" to see optional flags you can set)
+
+Embodiment:  HAL (hardware abstraction layer) setting: OFF (runs without consideration of the robotic embodiment)
+Embodiment:  body_type|version_number|serial_number (i.e., robotic embodiment): 0.0.0 : none specified 
+
+The simulation of the cognitive architecture can be adjusted to add or take away
+  various features, allowing exploration of different evolutionary-like configurations.
+
+  1. Mountain Goat-like brain simulation
+  2. Chimpanzee-like brain simulation
+  3. Human-like brain simulation
+  4. Human-like one-agent multiple-brains simulation
+  5. Human-like one-brain simulation × multiple-agents society
+  6. Human-like one-agent multiple-brains simulation with combinatorial planning
+  7. Super-Human-like machine simulation
+  T. Tutorial (more information) on using and maintaining this program, references
+
+Please make a choice [1–7 or T | Enter = Mountain Goat]: Profile set: Mountain Goat (sigma=0.015, jump=0.2, k=2)
+
+[io] Started a NEW session. Autosave OFF — use menu selection Save Session or relaunch with --autosave <path>.
+[boot] Seeded posture:fallen as b2 (NOW -> fallen)
+[preflight-lite] checks ok
+
+
+
+Please press any key (* stops this scroll pause) to continue with menu (above screen will scroll)....
+    [hints for text selection instead of numerical selection]
+
+    # Quick Start & Tutorial
+    1) Understanding bindings, edges, predicates, policies [understanding, tagging]
+    2) Help: System Docs and/or Tutorial with demo tour [help, tutorial, demo]
+
+    # Quick Start / Overview
+    3) Snapshot (bindings + edges + ctx + policies) [snapshot, display]
+    4) World stats [world, stats]
+    5) Recent bindings (last 5) [last, bindings]
+    6) Drives & drive tags [drives]
+    7) Skill ledger [skills]
+    8) Temporal probe (epoch/hash/cos/hamming) [temporal, probe]
+
+    # Act / Simulate
+    9) Instinct step (Action Center) [instinct, act]
+    10) Autonomic tick (emit interoceptive cues) [autonomic, tick]
+    11) Simulate fall (add posture:fallen and try recovery) [fall, simulate]
+
+    # Simulation of the Environment (HybridEnvironment demo)
+    35) Environment step (HybridEnvironment → WorldGraph demo) [env, hybrid]
+    37) Run n environment steps (closed-loop timeline) [envloop, envrun]
+    38) Inspect BodyMap (summary from BodyMap helpers) [bodymap, bsnap]
+    39) Spatial scene demo (NOW-near + resting-in-shelter?) [spatial, near]
+
+    # Perception & Memory (Cues & Engrams)
+    12) Input [sensory] cue [sensory, cue]
+    13) Capture scene → tiny engram (signal bridge) [capture, scene]
+    14) Resolve engrams on a binding [resolve, engrams]
+    15) Inspect engram by id (or binding) [engram, ei]
+    16) List all engrams [engrams-all, list-engrams]
+    17) Search engrams (by name / epoch) [search-engrams, find-engrams]
+    18) Delete engram by bid or eid [delete-engram, del-engram]
+    19) Attach existing engram to a binding [attach-engram, ae]
+
+    # Graph Inspect / Build / Plan
+    20) Inspect binding details [inspect, details]
+    21) List predicates [listpredicates, listpreds]
+    22) [Add] predicate [add, predicate]
+    23) Connect two bindings (src, dst, relation) [connect, link]
+    24) Delete edge (source, destn, relation) [delete, rm]
+    25) Plan from NOW -> <predicate> [plan]
+    26) Planner strategy (toggle BFS ↔ Dijkstra) [planner, strategy]
+    27) Export and display interactive graph with options [pyvis, graph]
+
+    # Save / System / Help
+    28) Export snapshot (text only) [export snapshot]
+    29) Save session → path [save]
+    30) Load session → path [load]
+    31) Run preflight now [preflight]
+    32) Quit [quit, exit]
+    33) Lines of Python code LOC by directory [loc, sloc]
+    34) Reset current saved session [reset]
+    36) Toggle mini-snapshot after each menu selection [mini, msnap]
+
+    # Memories
+    40) Configure episode starting state (drives + age_days) [config-episode, cfg-epi]
+    41) Retired: WorkingMap & WorldGraph settings, toggle RL policy
+    43) WorkingMap snapshot (last N bindings; optional clear) [wsnap, wmsnap]
+    44) Store MapSurface snapshot to Column + WG pointer (dedup vs last) [wstore, wmstore]
+    45) List recent wm_mapsurface engrams (Column)
+    46) Pick best wm_mapsurface engram for current stage/zone (read-only) [wpick, wpickwm]
+    47) Load wm_mapsurface engram into WorkingMap (replace MapSurface) [wload, wmload]
+
+    Select: Selection: Run n environment steps (closed-loop timeline)
+
+This selection runs several consecutive closed-loop steps between the
+HybridEnvironment (newborn-goat world) and the CCA8 brain.
+
+For each step we will:
+  1) Advance controller_steps and the temporal soft clock once,
+  2) STEP the newborn-goat environment using the last policy action (if any),
+  3) Inject the resulting EnvObservation into the WorldGraph as pred:/cue: facts,
+  4) Run ONE controller step (Action Center) and remember the last fired policy.
+
+This is like pressing menu 35 multiple times, but with a more compact, per-step summary.
+You can still use menu 35 for detailed, single-step inspection.
+
+[policy-selection] Candidates = dev_gate passes AND trigger(...) returns True.
+[policy-selection] Winner = highest deficit → non_drive → (RL: q | non-RL: stable order).
+[policy-selection] RL adds exploration: epsilon picks a random candidate; otherwise we exploit the winner logic above.
+
+How many closed-loop step(s) would you like to run? [default: 5]: [env-loop] Running 5 closed-loop environment/controller step(s).
+[env-loop] Each step will:
+  1) Advance controller_steps and the temporal soft clock (one drift),
+  2) Call env.reset() (first time) or env.step(last policy action),
+  3) Inject EnvObservation into the WorldGraph as pred:/cue: facts,
+  4) Run ONE controller step (Action Center) and store the last policy name.
+
+[env-loop] Note: environment episode has not started yet; the first step will call env.reset().
+
+[env-loop] Step 1/5
+[env] Reset newborn_goat scenario: episode_index=1 scenario=newborn_goat_first_hour
+[env→working] MAP pred:posture:fallen → w6 (b6) (entity=self, slot=posture) [changed]
+[env→working] MAP pred:proximity:mom:far → w7 (b7) (entity=mom, slot=proximity:mom) [changed]
+[env→working] MAP pred:proximity:shelter:far → w8 (b8) (entity=shelter, slot=proximity:shelter) [changed]
+[env→working] MAP pred:hazard:cliff:far → w9 (b9) (entity=cliff, slot=hazard:cliff) [changed]
+[env→world] KEYFRAME: env_reset(time_since_birth=0.00) | cleared 0 pred slot(s), 0 cue slot(s)
+[env→world] pred:posture:fallen → b3 (attach=now)
+[env→world] pred:proximity:mom:far → b4 (attach=latest)
+[env→world] pred:proximity:shelter:far → b5 (attach=latest)
+[env→world] pred:hazard:cliff:far → b6 (attach=latest)
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
+[env→controller] policy:stand_up (added 3 bindings)
+[pick] best_policy=policy:stand_up best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:recover_fall:0.00]
+[rl-pick] chosen via non-drive tiebreak in deficit near-tie band: best_def=0.000 delta=0.000 → policy:stand_up (nd=2.00, q=+0.00) among [policy:stand_up(def=0.000, nd=2.00, q=+0.00), policy:recover_fall(def=0.000, nd=0.00, q=+0.00)]
+[executed] policy:stand_up (ok, reward=+1.00) binding=w12 (b12)
+[maps] selection_on=WG execute_on=WM
+pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+wg_base: {'base': 'HERE', 'bid': '?'}
+wg_foa:  {'seeds': ['b6', 'b3'], 'size': 4, 'ids': {'b4', 'b3', 'b6', 'b5'}}
+wg_cands:['b3', '?']
+post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+[env-loop] summary envr't step=0 stage=birth posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
+[env-loop] explain posture: initial storyboard setup: stage='birth' starts with posture='fallen' (newborn begins life on the ground).
+[env-loop] explain nipple: initial storyboard setup: nipple_state='hidden' in stage 'birth'; the kid has not yet found or reached the nipple.
+[env-loop] explain zone: zone is 'unknown'; either the environment has not yet established clear cliff/shelter distances or they are in a combination we do not classify, so gates treat it conservatively.
+
+[env-loop] Step 2/5
+[env] env_step=1 (since reset) stage=birth posture=fallen mom_distance=far nipple_state=hidden action='policy:stand_up'
+[env→working] MAP pred:posture:fallen → w6 (b6) (entity=self, slot=posture)
+[env→working] MAP pred:proximity:mom:far → w7 (b7) (entity=mom, slot=proximity:mom)
+[env→working] MAP pred:proximity:shelter:far → w8 (b8) (entity=shelter, slot=proximity:shelter)
+[env→working] MAP pred:hazard:cliff:far → w9 (b9) (entity=cliff, slot=hazard:cliff)
+[env→world] (long-term obs unchanged; no new pred:* bindings written)
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
+[env→controller] policy:stand_up (added 3 bindings)
+[pick] best_policy=policy:stand_up best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:recover_fall:0.00]
+[rl-pick] chosen via non-drive tiebreak in deficit near-tie band: best_def=0.000 delta=0.000 → policy:stand_up (nd=2.00, q=+0.30) among [policy:stand_up(def=0.000, nd=2.00, q=+0.30), policy:recover_fall(def=0.000, nd=0.00, q=+0.00)]
+[executed] policy:stand_up (ok, reward=+1.00) binding=w15 (b15)
+[maps] selection_on=WG execute_on=WM
+pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+wg_base: {'base': 'HERE', 'bid': '?'}
+wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b7', 'b4', 'b5', 'b3'}}
+wg_cands:['b3', '?']
+post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+[env-loop] summary envr't step=1 stage=birth posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
+[env-loop] explain posture: stand_up was requested this tick, but the newborn is still kept fallen by the storyboard (stage='birth'); standing will only appear once the stand-up transition threshold is reached.
+[env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
+[env-loop] explain zone: zone is 'unknown'; either the environment has not yet established clear cliff/shelter distances or they are in a combination we do not classify, so gates treat it conservatively.
+
+[env-loop] Step 3/5
+[env] env_step=2 (since reset) stage=birth posture=fallen mom_distance=far nipple_state=hidden action='policy:stand_up'
+[env→working] MAP pred:posture:fallen → w6 (b6) (entity=self, slot=posture)
+[env→working] MAP pred:proximity:mom:far → w7 (b7) (entity=mom, slot=proximity:mom)
+[env→working] MAP pred:proximity:shelter:far → w8 (b8) (entity=shelter, slot=proximity:shelter)
+[env→working] MAP pred:hazard:cliff:far → w9 (b9) (entity=cliff, slot=hazard:cliff)
+[env→world] (long-term obs unchanged; no new pred:* bindings written)
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
+[env→controller] policy:stand_up (added 3 bindings)
+[pick] best_policy=policy:stand_up best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:recover_fall:0.00]
+[rl-pick] chosen via non-drive tiebreak in deficit near-tie band: best_def=0.000 delta=0.000 → policy:stand_up (nd=2.00, q=+0.51) among [policy:stand_up(def=0.000, nd=2.00, q=+0.51), policy:recover_fall(def=0.000, nd=0.00, q=+0.00)]
+[executed] policy:stand_up (ok, reward=+1.00) binding=w18 (b18)
+[maps] selection_on=WG execute_on=WM
+pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+wg_base: {'base': 'HERE', 'bid': '?'}
+wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b7', 'b4', 'b5', 'b3'}}
+wg_cands:['b3', '?']
+post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+[env-loop] summary envr't step=2 stage=birth posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
+[env-loop] explain posture: stand_up was requested this tick, but the newborn is still kept fallen by the storyboard (stage='birth'); standing will only appear once the stand-up transition threshold is reached.
+[env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
+[env-loop] explain zone: zone is 'unknown'; either the environment has not yet established clear cliff/shelter distances or they are in a combination we do not classify, so gates treat it conservatively.
+
+[env-loop] Step 4/5
+[env] env_step=3 (since reset) stage=struggle posture=fallen mom_distance=far nipple_state=hidden action='policy:stand_up'
+[env→working] MAP pred:posture:fallen → w6 (b6) (entity=self, slot=posture)
+[env→working] MAP pred:proximity:mom:far → w7 (b7) (entity=mom, slot=proximity:mom)
+[env→working] MAP pred:proximity:shelter:far → w8 (b8) (entity=shelter, slot=proximity:shelter)
+[env→working] MAP pred:hazard:cliff:far → w9 (b9) (entity=cliff, slot=hazard:cliff)
+[env→world] KEYFRAME: stage_change 'birth'→'struggle' | cleared 4 pred slot(s), 0 cue slot(s)
+[env→world] pred:posture:fallen → b8 (attach=now)
+[env→world] pred:proximity:mom:far → b9 (attach=latest)
+[env→world] pred:proximity:shelter:far → b10 (attach=latest)
+[env→world] pred:hazard:cliff:far → b11 (attach=latest)
+[wm->column] (auto) stored wm_mapsurface: sig=9d70ac79e80922e6 bid=b12 engram_id=2252a65bb1b849c0... (auto_boundary_stage:birth->struggle)
+[wm-retrieve] (auto) skip: only_excluded_candidate (auto_boundary_stage:birth->struggle)
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
+[env→controller] policy:stand_up (added 3 bindings)
+[pick] best_policy=policy:stand_up best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:recover_fall:0.00]
+[rl-pick] chosen via non-drive tiebreak in deficit near-tie band: best_def=0.000 delta=0.000 → policy:stand_up (nd=2.00, q=+0.66) among [policy:stand_up(def=0.000, nd=2.00, q=+0.66), policy:recover_fall(def=0.000, nd=0.00, q=+0.00)]
+[executed] policy:stand_up (ok, reward=+1.00) binding=w21 (b21)
+[maps] selection_on=WG execute_on=WM
+pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+wg_base: {'base': 'HERE', 'bid': '?'}
+wg_foa:  {'seeds': ['b12', 'b8'], 'size': 4, 'ids': {'b12', 'b10', 'b9', 'b8'}}
+wg_cands:['b8', '?']
+post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
+[env-loop] summary envr't step=3 stage=struggle posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
+[env-loop] explain posture: stand_up was requested this tick, but the newborn is still kept fallen by the storyboard (stage='struggle'); standing will only appear once the stand-up transition threshold is reached.
+[env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
+[env-loop] explain zone: zone is 'unknown'; either the environment has not yet established clear cliff/shelter distances or they are in a combination we do not classify, so gates treat it conservatively.
+
+[env-loop] Step 5/5
+[env] env_step=4 (since reset) stage=first_stand posture=standing mom_distance=far nipple_state=hidden action='policy:stand_up'
+[env→working] MAP pred:posture:standing → w6 (b6) (entity=self, slot=posture) [changed]
+[env→working] MAP pred:proximity:mom:far → w7 (b7) (entity=mom, slot=proximity:mom)
+[env→working] MAP pred:proximity:shelter:far → w8 (b8) (entity=shelter, slot=proximity:shelter)
+[env→working] MAP pred:hazard:cliff:near → w9 (b9) (entity=cliff, slot=hazard:cliff) [changed]
+[env→world] KEYFRAME: stage_change 'struggle'→'first_stand' | cleared 4 pred slot(s), 0 cue slot(s)
+[env→world] pred:posture:standing → b14 (attach=now)
+[env→world] pred:proximity:mom:far → b15 (attach=latest)
+[env→world] pred:proximity:shelter:far → b16 (attach=latest)
+[env→world] pred:hazard:cliff:near → b17 (attach=latest)
+[wm->column] (auto) stored wm_mapsurface: sig=5f00d655bb2a567c bid=b18 engram_id=7ddc3cba7fa84150... (auto_boundary_stage:struggle->first_stand_zone:unknown->unsafe_cliff_near)
+[wm-retrieve] (auto) skip: only_excluded_candidate (auto_boundary_stage:struggle->first_stand_zone:unknown->unsafe_cliff_near)
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=near shelter=far zone=unsafe_cliff_near
+[gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=near shelter=far zone=unsafe_cliff_near
+[env→controller] policy:follow_mom (added 2 bindings)
+[pick] best_policy=policy:follow_mom best_by=rl_exploit(deficit) triggered=[policy:follow_mom] deficits=[policy:follow_mom:0.00] non_drive=[policy:follow_mom:0.00]
+[executed] policy:follow_mom (ok, reward=+0.10) binding=w23 (b23)
+[maps] selection_on=WG execute_on=WM
+pre:  dev_gate: True, trigger: fallback=True when not fallen; posture=standing zone=unsafe_cliff_near (hunger=0.50, fatigue=0.30)
+wg_base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b14'}
+wg_foa:  {'seeds': ['b18', 'b14', 'b12'], 'size': 5, 'ids': {'b16', 'b14', 'b12', 'b18', 'b15'}}
+wg_cands:['b14', '?']
+post: dev_gate: True, trigger: fallback=True when not fallen; posture=standing zone=unsafe_cliff_near (hunger=0.50, fatigue=0.30)
+[env-loop] summary envr't step=4 stage=first_stand posture=standing mom=far nipple=hidden last_policy='policy:follow_mom' zone=unsafe_cliff_near
+[env-loop] explain posture: stand_up action applied by the environment: posture changed fallen→standing as the storyboard moved 'struggle'→'first_stand'.
+[env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
+[env-loop] explain zone: zone changed 'unknown'→'unsafe_cliff_near'; BodyMap now sees the cliff near while shelter is not near, so this geometry is treated as unsafe for resting.
+
+[env-loop] Closed-loop run complete. You can inspect details via Snapshot or the mini-snapshot that follows.
+
+[workingmap] MapSurface entity table
+  ent      node        kind      pos(x,y)         dist_m  class     seen  preds (short)                cues (short)
+  -------  ----------  --------  --------------  ------  --------  ----  --------------------------  ----------------
+  self     w6 (b6)     agent     (  0.00,  0.00) [wm_schematic_v1]    0.00  self         5  posture:standing            
+  cliff    w9 (b9)     hazard    (  2.37,  1.00) [wm_schematic_v1] brg=+23°    1.20  near         5  hazard:cliff:near           
+  mom      w7 (b7)     agent     (  2.08,  0.00) [wm_schematic_v1] brg=+0°    1.00  far          5  proximity:mom:far           
+  shelter  w8 (b8)     shelter   (  5.38, -1.00) [wm_schematic_v1] brg=-11°    5.00  far          5  proximity:shelter:far       
+
+[workingmap] auto snapshot (last 250): last 23 binding(s) of 23 total
+  Legend edges: wm_entity=WM_ROOT→entity (MapSurface membership); wm_scratch=WM_ROOT→WM_SCRATCH (policy scratch root; keeps WM_ROOT clean); wm_creative=WM_ROOT→WM_CREATIVE (counterfactual rollouts); distance_to=WM_SELF→entity (meta has meters/class); then=policy action chain (should hang off WM_SCRATCH)
+  Legend tags : wm:entity / wm:eid:<id> / wm:kind:<kind> mark entities; pred:* on entities = current belief; cue:* on entities = cues present now; meta.wm.pos={x,y,frame}
+  w1 (b1): [] out=0 edges=(none)
+  w2 (b2): [anchor:NOW_ORIGIN] out=0 edges=(none)
+  w3 (b3): [anchor:NOW, anchor:NOW_ORIGIN, anchor:WM_ROOT] out=6 edges=wm_scratch:w4 (b4), wm_creative:w5 (b5), wm_entity:w6 (b6), wm_entity:w7 (b7), wm_entity:w8 (b8), wm_entity:w9 (b9)
+  w4 (b4): [anchor:WM_SCRATCH, wm:scratch] out=5 edges=then:w10 (b10), then:w13 (b13), then:w16 (b16), then:w19 (b19), then:w22 (b22)
+  w5 (b5): [anchor:WM_CREATIVE, wm:creative] out=0 edges=(none)
+  w6 (b6): [anchor:WM_SELF, pred:posture:standing, wm:eid:self, wm:entity, wm:kind:agent] out=3 edges=distance_to:w7 (b7) meters=1.00 class=far, distance_to:w8 (b8) meters=5.00 class=far, distance_to:w9 (b9) meters=1.20 class=near
+  w7 (b7): [anchor:WM_ENT_MOM, pred:proximity:mom:far, wm:eid:mom, wm:entity, wm:kind:agent] out=0 edges=(none)
+  w8 (b8): [anchor:WM_ENT_SHELTER, pred:proximity:shelter:far, wm:eid:shelter, wm:entity, wm:kind:shelter] out=0 edges=(none)
+  w9 (b9): [anchor:WM_ENT_CLIFF, pred:hazard:cliff:near, wm:eid:cliff, wm:entity, wm:kind:hazard] out=0 edges=(none)
+  w10 (b10): [action:push_up] out=1 edges=then:w11 (b11)
+  w11 (b11): [action:extend_legs] out=1 edges=then:w12 (b12)
+  w12 (b12): [pred:posture:standing] out=0 edges=(none)
+  w13 (b13): [action:push_up] out=1 edges=then:w14 (b14)
+  w14 (b14): [action:extend_legs] out=1 edges=then:w15 (b15)
+  w15 (b15): [pred:posture:standing] out=0 edges=(none)
+  w16 (b16): [action:push_up] out=1 edges=then:w17 (b17)
+  w17 (b17): [action:extend_legs] out=1 edges=then:w18 (b18)
+  w18 (b18): [pred:posture:standing] out=0 edges=(none)
+  w19 (b19): [action:push_up] out=1 edges=then:w20 (b20)
+  w20 (b20): [action:extend_legs] out=1 edges=then:w21 (b21)
+  w21 (b21): [pred:posture:standing] out=0 edges=(none)
+  w22 (b22): [action:look_around] out=1 edges=then:w23 (b23)
+  w23 (b23): [pred:alert] out=0 edges=(none)
+
+
+[skills-hud] Learned policy values after env-loop:
+(terminology: hud==heads-up-display; n==number times policy executed; rate==% times we counted policy as successful;
+  last==reward value that policy received the last time it executed; q==learned value estimate;
+  EMA==exponential moving average of rewards; q_new = (1-alpha_smoothing_factor)*q_old + alpha*reward (alpha ~0.3))
+(if RL=enabled, epsilon is theoretical % times to choose randomly, 'explore_rate' is measured % of random choices;
+   delta=0 then q used only for exact ties otherwise deficit values within delta range are considered tied and q used to decide)
+NOTE: deficit here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).
+Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled)
+RL: enabled=True epsilon=0.050 delta=0.000 (explore=0, exploit=5, explore_rate=0.00)
+Skill HUD (top 2 by q=EMA reward):
+   1) policy:stand_up     n=  4  rate=1.00  q=+0.76  last=+1.00
+   2) policy:follow_mom   n=  1  rate=1.00  q=+0.03  last=+0.10
+
+Values of time measures, nodes and links at this point:
+[time] controller_steps=5, cos_to_last_boundary=0.9408, temporal_epochs=0, autonomic_ticks=0, age_days=0.0000, cog_cycles=0
+[world] last 19 binding(s):
+  b1: [anchor:NOW_ORIGIN]
+      edges: then:b2, then:b3
+  b2: [pred:posture:fallen]
+      edges: (none)
+  b3: [pred:posture:fallen]
+      edges: then:b4, then:b7, then:b8
+  b4: [pred:proximity:mom:far]
+      edges: then:b5
+  b5: [pred:proximity:shelter:far]
+      edges: then:b6
+  b6: [pred:hazard:cliff:far]
+      edges: (none)
+  b7: [action:stand_up]
+      edges: then:b8
+  b8: [pred:posture:fallen]
+      edges: then:b9, then:b12, then:b13, then:b14
+  b9: [pred:proximity:mom:far]
+      edges: then:b10
+  b10: [pred:proximity:shelter:far]
+      edges: then:b11
+  b11: [pred:hazard:cliff:far]
+      edges: (none)
+  b12: [cue:wm:mapsurface_snapshot, idx:stage:struggle, idx:zone:unknown]
+      edges: (none)
+  b13: [action:stand_up]
+      edges: then:b14
+  b14: [anchor:NOW, pred:posture:standing]
+      edges: then:b15, then:b18, then:b19
+  b15: [pred:proximity:mom:far]
+      edges: then:b16
+  b16: [pred:proximity:shelter:far]
+      edges: then:b17
+  b17: [pred:hazard:cliff:near]
+      edges: (none)
+  b18: [cue:wm:mapsurface_snapshot, idx:stage:first_stand, idx:zone:unsafe_cliff_near]
+      edges: (none)
+  b19: [action:follow_mom]
+      edges: (none)
+
+-----
+
+
+Please press any key (* stops this scroll pause) to continue with menu (above screen will scroll)....
+    [hints for text selection instead of numerical selection]
+
+    # Quick Start & Tutorial
+    1) Understanding bindings, edges, predicates, policies [understanding, tagging]
+    2) Help: System Docs and/or Tutorial with demo tour [help, tutorial, demo]
+
+    # Quick Start / Overview
+    3) Snapshot (bindings + edges + ctx + policies) [snapshot, display]
+    4) World stats [world, stats]
+    5) Recent bindings (last 5) [last, bindings]
+    6) Drives & drive tags [drives]
+    7) Skill ledger [skills]
+    8) Temporal probe (epoch/hash/cos/hamming) [temporal, probe]
+
+    # Act / Simulate
+    9) Instinct step (Action Center) [instinct, act]
+    10) Autonomic tick (emit interoceptive cues) [autonomic, tick]
+    11) Simulate fall (add posture:fallen and try recovery) [fall, simulate]
+
+    # Simulation of the Environment (HybridEnvironment demo)
+    35) Environment step (HybridEnvironment → WorldGraph demo) [env, hybrid]
+    37) Run n environment steps (closed-loop timeline) [envloop, envrun]
+    38) Inspect BodyMap (summary from BodyMap helpers) [bodymap, bsnap]
+    39) Spatial scene demo (NOW-near + resting-in-shelter?) [spatial, near]
+
+    # Perception & Memory (Cues & Engrams)
+    12) Input [sensory] cue [sensory, cue]
+    13) Capture scene → tiny engram (signal bridge) [capture, scene]
+    14) Resolve engrams on a binding [resolve, engrams]
+    15) Inspect engram by id (or binding) [engram, ei]
+    16) List all engrams [engrams-all, list-engrams]
+    17) Search engrams (by name / epoch) [search-engrams, find-engrams]
+    18) Delete engram by bid or eid [delete-engram, del-engram]
+    19) Attach existing engram to a binding [attach-engram, ae]
+
+    # Graph Inspect / Build / Plan
+    20) Inspect binding details [inspect, details]
+    21) List predicates [listpredicates, listpreds]
+    22) [Add] predicate [add, predicate]
+    23) Connect two bindings (src, dst, relation) [connect, link]
+    24) Delete edge (source, destn, relation) [delete, rm]
+    25) Plan from NOW -> <predicate> [plan]
+    26) Planner strategy (toggle BFS ↔ Dijkstra) [planner, strategy]
+    27) Export and display interactive graph with options [pyvis, graph]
+
+    # Save / System / Help
+    28) Export snapshot (text only) [export snapshot]
+    29) Save session → path [save]
+    30) Load session → path [load]
+    31) Run preflight now [preflight]
+    32) Quit [quit, exit]
+    33) Lines of Python code LOC by directory [loc, sloc]
+    34) Reset current saved session [reset]
+    36) Toggle mini-snapshot after each menu selection [mini, msnap]
+
+    # Memories
+    40) Configure episode starting state (drives + age_days) [config-episode, cfg-epi]
+    41) Retired: WorkingMap & WorldGraph settings, toggle RL policy
+    43) WorkingMap snapshot (last N bindings; optional clear) [wsnap, wmsnap]
+    44) Store MapSurface snapshot to Column + WG pointer (dedup vs last) [wstore, wmstore]
+    45) List recent wm_mapsurface engrams (Column)
+    46) Pick best wm_mapsurface engram for current stage/zone (read-only) [wpick, wpickwm]
+    47) Load wm_mapsurface engram into WorkingMap (replace MapSurface) [wload, wmload]
+
+    Select: Selection: WorkingMap snapshot
+
+Show last N bindings (default=15): [workingmap] layers
+  MapSurface: root=w3 (b3) entities=4
+  Scratch  : root=w4 (b4)
+  Creative : root=w5 (b5) enabled=True candidates=3
+  Creative candidates (best first): trig=Y means policy trigger satisfied; trig=N means blocked
+(Note: The 'score' value is a simple ranking signal for this display, not RL skill value or deficit calculation.)
+     1) policy:follow_mom  trig=Y score=  2.20  move/fallback; escape_cliff; mom_far
+     2) policy:suckle      trig=N score=  0.00  not_triggered
+     3) policy:recover_miss trig=N score=  0.00  not_triggered
+
+[workingmap] MapSurface entity table
+  ent      node        kind      pos(x,y)         dist_m  class     seen  preds (short)                cues (short)
+  -------  ----------  --------  --------------  ------  --------  ----  --------------------------  ----------------
+  self     w6 (b6)     agent     (  0.00,  0.00) [wm_schematic_v1]    0.00  self         5  posture:standing            
+  cliff    w9 (b9)     hazard    (  2.37,  1.00) [wm_schematic_v1] brg=+23°    1.20  near         5  hazard:cliff:near           
+  mom      w7 (b7)     agent     (  2.08,  0.00) [wm_schematic_v1] brg=+0°    1.00  far          5  proximity:mom:far           
+  shelter  w8 (b8)     shelter   (  5.38, -1.00) [wm_schematic_v1] brg=-11°    5.00  far          5  proximity:shelter:far       
+
+[workingmap] snapshot: last 15 binding(s) of 23 total
+  Legend edges: wm_entity=WM_ROOT→entity (MapSurface membership); wm_scratch=WM_ROOT→WM_SCRATCH (policy scratch root; keeps WM_ROOT clean); wm_creative=WM_ROOT→WM_CREATIVE (counterfactual rollouts); distance_to=WM_SELF→entity (meta has meters/class); then=policy action chain (should hang off WM_SCRATCH)
+  Legend tags : wm:entity / wm:eid:<id> / wm:kind:<kind> mark entities; pred:* on entities = current belief; cue:* on entities = cues present now; meta.wm.pos={x,y,frame}
+  w9 (b9): [anchor:WM_ENT_CLIFF, pred:hazard:cliff:near, wm:eid:cliff, wm:entity, wm:kind:hazard] out=0 edges=(none)
+  w10 (b10): [action:push_up] out=1 edges=then:w11 (b11)
+  w11 (b11): [action:extend_legs] out=1 edges=then:w12 (b12)
+  w12 (b12): [pred:posture:standing] out=0 edges=(none)
+  w13 (b13): [action:push_up] out=1 edges=then:w14 (b14)
+  w14 (b14): [action:extend_legs] out=1 edges=then:w15 (b15)
+  w15 (b15): [pred:posture:standing] out=0 edges=(none)
+  w16 (b16): [action:push_up] out=1 edges=then:w17 (b17)
+  w17 (b17): [action:extend_legs] out=1 edges=then:w18 (b18)
+  w18 (b18): [pred:posture:standing] out=0 edges=(none)
+  w19 (b19): [action:push_up] out=1 edges=then:w20 (b20)
+  w20 (b20): [action:extend_legs] out=1 edges=then:w21 (b21)
+  w21 (b21): [pred:posture:standing] out=0 edges=(none)
+  w22 (b22): [action:look_around] out=1 edges=then:w23 (b23)
+  w23 (b23): [pred:alert] out=0 edges=(none)
+
+[workingmap] MapSurface payload (wm_mapsurface_v1; JSON-safe)
+{
+  "schema": "wm_mapsurface_v1",
+  "header": {
+    "schema": "wm_mapsurface_v1",
+    "profile": "Mountain Goat",
+    "controller_steps": 5,
+    "ticks": 0,
+    "boundary_no": 0,
+    "boundary_vhash64": "a1b18062bf47745a",
+    "tvec64": "b1b103423b47741b",
+    "run_last_env_step": 4,
+    "body": {
+      "stale": false,
+      "posture": "standing",
+      "mom_distance": "far",
+      "nipple_state": "hidden",
+      "zone": "unsafe_cliff_near"
+    }
+  },
+  "entities": [
+    {
+      "eid": "self",
+      "kind": "agent",
+      "pos": {
+        "x": 0.0,
+        "y": 0.0,
+        "frame": "wm_schematic_v1"
+      },
+      "dist_m": 0.0,
+      "dist_class": "self",
+      "last_seen_step": 5,
+      "preds": [
+        "posture:standing"
+      ],
+      "cues": []
+    },
+    {
+      "eid": "cliff",
+      "kind": "hazard",
+      "pos": {
+        "x": 2.365372081092811,
+        "y": 1.0,
+        "frame": "wm_schematic_v1"
+      },
+      "dist_m": 1.2,
+      "dist_class": "near",
+      "last_seen_step": 5,
+      "preds": [
+        "hazard:cliff:near"
+      ],
+      "cues": []
+    },
+    {
+      "eid": "mom",
+      "kind": "agent",
+      "pos": {
+        "x": 2.0794415416798357,
+        "y": 0.0,
+        "frame": "wm_schematic_v1"
+      },
+      "dist_m": 1.0,
+      "dist_class": "far",
+      "last_seen_step": 5,
+      "preds": [
+        "proximity:mom:far"
+      ],
+      "cues": []
+    },
+    {
+      "eid": "shelter",
+      "kind": "shelter",
+      "pos": {
+        "x": 5.375278407684165,
+        "y": -1.0,
+        "frame": "wm_schematic_v1"
+      },
+      "dist_m": 5.0,
+      "dist_class": "far",
+      "last_seen_step": 5,
+      "preds": [
+        "proximity:shelter:far"
+      ],
+      "cues": []
+    }
+  ],
+  "relations": [
+    {
+      "rel": "distance_to",
+      "src": "self",
+      "dst": "mom",
+      "meters": 1.0,
+      "class": "far",
+      "frame": "wm_schematic_v1"
+    },
+    {
+      "rel": "distance_to",
+      "src": "self",
+      "dst": "shelter",
+      "meters": 5.0,
+      "class": "far",
+      "frame": "wm_schematic_v1"
+    },
+    {
+      "rel": "distance_to",
+      "src": "self",
+      "dst": "cliff",
+      "meters": 1.2,
+      "class": "near",
+      "frame": "wm_schematic_v1"
+    }
+  ]
+}
+
+Clear WorkingMap now? [y/N]: 
+Values of time measures, nodes and links at this point:
+[time] controller_steps=5, cos_to_last_boundary=0.9408, temporal_epochs=0, autonomic_ticks=0, age_days=0.0000, cog_cycles=0
+[world] last 19 binding(s):
+  b1: [anchor:NOW_ORIGIN]
+      edges: then:b2, then:b3
+  b2: [pred:posture:fallen]
+      edges: (none)
+  b3: [pred:posture:fallen]
+      edges: then:b4, then:b7, then:b8
+  b4: [pred:proximity:mom:far]
+      edges: then:b5
+  b5: [pred:proximity:shelter:far]
+      edges: then:b6
+  b6: [pred:hazard:cliff:far]
+      edges: (none)
+  b7: [action:stand_up]
+      edges: then:b8
+  b8: [pred:posture:fallen]
+      edges: then:b9, then:b12, then:b13, then:b14
+  b9: [pred:proximity:mom:far]
+      edges: then:b10
+  b10: [pred:proximity:shelter:far]
+      edges: then:b11
+  b11: [pred:hazard:cliff:far]
+      edges: (none)
+  b12: [cue:wm:mapsurface_snapshot, idx:stage:struggle, idx:zone:unknown]
+      edges: (none)
+  b13: [action:stand_up]
+      edges: then:b14
+  b14: [anchor:NOW, pred:posture:standing]
+      edges: then:b15, then:b18, then:b19
+  b15: [pred:proximity:mom:far]
+      edges: then:b16
+  b16: [pred:proximity:shelter:far]
+      edges: then:b17
+  b17: [pred:hazard:cliff:near]
+      edges: (none)
+  b18: [cue:wm:mapsurface_snapshot, idx:stage:first_stand, idx:zone:unsafe_cliff_near]
+      edges: (none)
+  b19: [action:follow_mom]
+      edges: (none)
+
+-----
+
+
+Please press any key (* stops this scroll pause) to continue with menu (above screen will scroll)....
+    [hints for text selection instead of numerical selection]
+
+    # Quick Start & Tutorial
+    1) Understanding bindings, edges, predicates, policies [understanding, tagging]
+    2) Help: System Docs and/or Tutorial with demo tour [help, tutorial, demo]
+
+    # Quick Start / Overview
+    3) Snapshot (bindings + edges + ctx + policies) [snapshot, display]
+    4) World stats [world, stats]
+    5) Recent bindings (last 5) [last, bindings]
+    6) Drives & drive tags [drives]
+    7) Skill ledger [skills]
+    8) Temporal probe (epoch/hash/cos/hamming) [temporal, probe]
+
+    # Act / Simulate
+    9) Instinct step (Action Center) [instinct, act]
+    10) Autonomic tick (emit interoceptive cues) [autonomic, tick]
+    11) Simulate fall (add posture:fallen and try recovery) [fall, simulate]
+
+    # Simulation of the Environment (HybridEnvironment demo)
+    35) Environment step (HybridEnvironment → WorldGraph demo) [env, hybrid]
+    37) Run n environment steps (closed-loop timeline) [envloop, envrun]
+    38) Inspect BodyMap (summary from BodyMap helpers) [bodymap, bsnap]
+    39) Spatial scene demo (NOW-near + resting-in-shelter?) [spatial, near]
+
+    # Perception & Memory (Cues & Engrams)
+    12) Input [sensory] cue [sensory, cue]
+    13) Capture scene → tiny engram (signal bridge) [capture, scene]
+    14) Resolve engrams on a binding [resolve, engrams]
+    15) Inspect engram by id (or binding) [engram, ei]
+    16) List all engrams [engrams-all, list-engrams]
+    17) Search engrams (by name / epoch) [search-engrams, find-engrams]
+    18) Delete engram by bid or eid [delete-engram, del-engram]
+    19) Attach existing engram to a binding [attach-engram, ae]
+
+    # Graph Inspect / Build / Plan
+    20) Inspect binding details [inspect, details]
+    21) List predicates [listpredicates, listpreds]
+    22) [Add] predicate [add, predicate]
+    23) Connect two bindings (src, dst, relation) [connect, link]
+    24) Delete edge (source, destn, relation) [delete, rm]
+    25) Plan from NOW -> <predicate> [plan]
+    26) Planner strategy (toggle BFS ↔ Dijkstra) [planner, strategy]
+    27) Export and display interactive graph with options [pyvis, graph]
+
+    # Save / System / Help
+    28) Export snapshot (text only) [export snapshot]
+    29) Save session → path [save]
+    30) Load session → path [load]
+    31) Run preflight now [preflight]
+    32) Quit [quit, exit]
+    33) Lines of Python code LOC by directory [loc, sloc]
+    34) Reset current saved session [reset]
+    36) Toggle mini-snapshot after each menu selection [mini, msnap]
+
+    # Memories
+    40) Configure episode starting state (drives + age_days) [config-episode, cfg-epi]
+    41) Retired: WorkingMap & WorldGraph settings, toggle RL policy
+    43) WorkingMap snapshot (last N bindings; optional clear) [wsnap, wmsnap]
+    44) Store MapSurface snapshot to Column + WG pointer (dedup vs last) [wstore, wmstore]
+    45) List recent wm_mapsurface engrams (Column)
+    46) Pick best wm_mapsurface engram for current stage/zone (read-only) [wpick, wpickwm]
+    47) Load wm_mapsurface engram into WorkingMap (replace MapSurface) [wload, wmload]
+
+    Select: 
+Goodbye.

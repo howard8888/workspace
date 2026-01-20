@@ -6740,9 +6740,9 @@ Why is this tutorial after the one on WorldGraph, i.e., rather than being the fi
 ***Note: Code changes will occur over time, but the main ideas below should remain stable with the project***
 
 ## Public surface (importables)
-
 Exports (see `__all__`):  
-`main`, `interactive_loop`, `run_preflight_full`, `snapshot_text`, `export_snapshot`, `world_delete_edge`, `boot_prime_stand`, `save_session`, `versions_dict`, `versions_text`, `choose_contextual_base`, `compute_foa`, `candidate_anchors`, `Ctx`, `__version__`.
+`main`, `interactive_loop`, `run_preflight_full`, `snapshot_text`, `export_snapshot`, `world_delete_edge`, `boot_prime_stand`, `save_session`, `versions_dict`, `versions_text`, `choose_contextual_base`, `compute_foa`, `candidate_anchors`, `Ctx`, `HAL`, `PolicyRuntime`, `__version__`.
+
 
 ### Runtime context (`Ctx`)
 

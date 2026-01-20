@@ -101,7 +101,7 @@ from cca8_env import HybridEnvironment, EnvObservation  # environment simulation
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 __all__ = [
     "main",
     "interactive_loop",
@@ -118,7 +118,10 @@ __all__ = [
     "candidate_anchors",
     "__version__",
     "Ctx",
+    "HAL",
+    "PolicyRuntime",
 ]
+
 NON_WIN_LINUX = False  #set if non-Win, non-macOS, non-Linux/like OS
 PLACEHOLDER_EMBODIMENT = '0.0.0 : none specified'
 
@@ -5030,6 +5033,113 @@ def versions_text() -> str:
     return "\n".join(lines)
 
 
+class TeeTextIO:
+    """File-like stream that duplicates writes into multiple underlying streams.
+
+    Purpose:
+        - Keep interactive output visible in the terminal
+        - Also persist the full transcript to a file (e.g., terminal.txt)
+        - Avoid rewriting existing print(...) calls across the codebase
+
+    Notes:
+        - This affects *all* print() calls that ultimately write to sys.stdout/sys.stderr.
+        - It is safe for interactive sessions (input() relies on stdout.flush()).
+    """
+    def __init__(self, *streams):
+        self._streams = list(streams)
+
+    def write(self, s: str) -> int:
+        '''helper method within class TeeTextIO to mirror text to a 
+        specified file'''
+        for st in self._streams:
+            st.write(s)
+        return len(s)
+
+    def flush(self) -> None:
+        '''helper method within class TeeTextIO to mirror text to a 
+        specified file'''
+        for st in self._streams:
+            try:
+                st.flush()
+            except Exception:
+                pass
+
+    def isatty(self) -> bool:
+        '''helper method within class TeeTextIO to mirror text to a 
+        specified file'''
+        try:
+            return any(getattr(st, "isatty", lambda: False)() for st in self._streams)
+        except Exception:
+            return False
+
+    @property
+    def encoding(self) -> str:
+        '''Keep downstream code happy if it queries sys.stdout.encoding
+        '''
+        try:
+            return getattr(self._streams[0], "encoding", "utf-8") or "utf-8"
+        except Exception:
+            return "utf-8"
+
+
+def install_terminal_tee(path: str = "terminal.txt", *, append: bool = True, also_stderr: bool = True) -> None:
+    """Duplicate stdout (and optionally stderr) to a UTF-8 text file.
+
+    Call this once near program start (inside main) to capture a full transcript
+    of an interactive run without losing on-screen output.
+
+    Args:
+        path: Output file path (e.g., "terminal.txt").
+        append: If True, append; if False, overwrite each run.
+        also_stderr: If True, duplicate stderr too (tracebacks end up in the file).
+    """
+    if getattr(sys, "_cca8_terminal_tee_installed", False):
+        return
+
+    mode = "a" if append else "w"
+    # NOTE:
+    # We intentionally keep this file handle open for the full program lifetime so
+    # stdout/stderr can be tee'd during interactive use. It is closed via atexit
+    # in _cleanup() below. Using `with open(...)` here would close it immediately.
+    f = open(path, mode, encoding="utf-8", errors="replace", buffering=1)  # pylint: disable=consider-using-with
+
+    sys._cca8_terminal_tee_installed = True  # type: ignore[attr-defined]
+
+    # Keep originals so we can restore them at exit.
+    sys._cca8_stdout_orig = sys.stdout  # type: ignore[attr-defined]
+    sys._cca8_stderr_orig = sys.stderr  # type: ignore[attr-defined]
+    sys._cca8_terminal_tee_file = f     # type: ignore[attr-defined]
+
+    sys.stdout = TeeTextIO(sys.stdout, f)
+    if also_stderr:
+        sys.stderr = TeeTextIO(sys.stderr, f)
+
+    import atexit
+    def _cleanup() -> None:
+        # Flush tee streams first, then restore and close.
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+        try:
+            sys.stderr.flush()
+        except Exception:
+            pass
+        try:
+            sys.stdout = sys._cca8_stdout_orig  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            sys.stderr = sys._cca8_stderr_orig  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            f.close()
+        except Exception:
+            pass
+    atexit.register(_cleanup)
+
+
 def print_startup_notices(world) -> None:
     '''print active planner and other statuses at
     startup of the runner
@@ -5594,6 +5704,150 @@ def run_preflight_full(args) -> int:
             bad("engram bridge: column record missing or malformed")
     except Exception as e:
         bad(f"engram bridge failed: {e}")
+
+
+    # Z6b) MapSurface round-trip: store a tiny WorldGraph snapshot into Column, attach pointer, reload, then seed-merge predicates only.
+    #
+    # Why this probe exists:
+    # - In Phase VIII we want priors to matter, which means we must be confident we can:
+    #     (1) store a "surface slate" (pred/cue snapshot) into Column memory,
+    #     (2) attach a stable pointer onto a WorldGraph binding,
+    #     (3) round-trip that pointer through WorldGraph snapshot save/load,
+    #     (4) retrieve and reconstruct the surface (replace mode),
+    #     (5) seed/merge predicates only (no cue leakage) into a live semantic world.
+    try:
+        from cca8_features import FactMeta
+        from cca8_column import mem as _mem
+
+        # (A) Build a tiny "mapsurface" world (tokens match HybridEnvironment.observe()).
+        _ms = cca8_world_graph.WorldGraph()
+        _ms.set_tag_policy("allow")
+        _ms.set_stage("neonate")
+        _ms.ensure_anchor("NOW")
+
+        _ms.add_predicate("posture:fallen", attach="now")
+        _ms.add_predicate("proximity:mom:close", attach="latest")
+        _ms.add_predicate("proximity:shelter:far", attach="latest")
+        _ms.add_predicate("hazard:cliff:near", attach="latest")
+        _ms.add_predicate("nipple:found", attach="latest")
+        _ms.add_cue("vision:silhouette:mom", attach="latest")
+
+        _ms_dict = _ms.to_dict()
+
+        # (B) Store snapshot payload into the Column as one engram.
+        _payload = {"kind": "mapsurface_snapshot", "v": 1, "world": _ms_dict}
+        _fm = FactMeta(
+            name="probe:mapsurface_snapshot_roundtrip",
+            links=[],
+            attrs={"probe": True, "v": 1, "note": "preflight mapsurface round-trip"},
+        )
+        _eid = _mem.assert_fact("probe:mapsurface_snapshot_roundtrip", _payload, _fm)
+
+        if _mem.exists(_eid):
+            ok("mapsurface round-trip: engram stored in column")
+        else:
+            bad("mapsurface round-trip: engram not found after assert_fact")
+
+        # (C) Attach pointer to a binding; ensure pointer survives WorldGraph snapshot reload.
+        _wptr = cca8_world_graph.WorldGraph()
+        _wptr.set_tag_policy("allow")
+        _wptr.set_stage("neonate")
+        _wptr.ensure_anchor("NOW")
+
+        _bid = _wptr.add_predicate("pred:probe:mapsurface_snapshot", attach="now")
+        _wptr.attach_engram(_bid, column="column01", engram_id=_eid, act=1.0, extra_meta={"probe": True})
+
+        _wptr2 = cca8_world_graph.WorldGraph.from_dict(_wptr.to_dict())
+        _b2 = _wptr2._bindings.get(_bid)
+        _pid = (((_b2.engrams or {}).get("column01") or {}).get("id") if _b2 else None)
+
+        if _pid == _eid:
+            ok("mapsurface round-trip: pointer survived WorldGraph.to_dict/from_dict")
+        else:
+            bad("mapsurface round-trip: pointer lost or altered across snapshot reload")
+
+        # (D) Retrieve and reconstruct MapSurface world (replace mode).
+        _rec = _mem.try_get(_eid)
+        _world_blob = (_rec or {}).get("payload", {}).get("world") if isinstance(_rec, dict) else None
+
+        if not isinstance(_world_blob, dict):
+            bad("mapsurface round-trip: engram payload missing world dict")
+        else:
+            _ms2 = cca8_world_graph.WorldGraph.from_dict(_world_blob)
+
+            issues = _ms2.check_invariants(raise_on_error=False)
+            if issues:
+                bad("mapsurface round-trip: reconstructed world invariant issues: " + "; ".join(issues))
+            else:
+                ok("mapsurface round-trip: reconstructed world invariants OK")
+
+            # Expect at least one cue + one hazard predicate to survive.
+            _tags = set()
+            for _bb in _ms2._bindings.values():
+                _tags |= set(getattr(_bb, "tags", []) or [])
+
+            if ("pred:hazard:cliff:near" in _tags) and ("cue:vision:silhouette:mom" in _tags):
+                ok("mapsurface round-trip: replace mode restored expected tags (pred + cue)")
+            else:
+                bad("mapsurface round-trip: replace mode missing expected tags")
+
+            # Cheap structural sanity: bindings and total-edge counts should match.
+            def _edge_total(wg) -> int:
+                return sum(len(getattr(b, "edges", []) or []) for b in getattr(wg, "_bindings", {}).values())
+
+            if len(_ms2._bindings) == len(_ms._bindings) and _edge_total(_ms2) == _edge_total(_ms):
+                ok("mapsurface round-trip: replace mode preserved binding/edge counts")
+            else:
+                bad("mapsurface round-trip: replace mode changed binding/edge counts unexpectedly")
+
+        # (E) Seed/merge mode: copy ONLY predicates into a live semantic world (no cues injected).
+        _live = cca8_world_graph.WorldGraph(memory_mode="semantic")
+        _live.set_tag_policy("allow")
+        _live.set_stage("neonate")
+        _live.ensure_anchor("NOW")
+
+        # Seed an existing fact to exercise semantic consolidation (duplicate should be reused).
+        _live.add_predicate("posture:fallen", attach="now")
+
+        if isinstance(_world_blob, dict):
+            _ms2b = cca8_world_graph.WorldGraph.from_dict(_world_blob)
+
+            _pred_tags: set[str] = set()
+            for _bb in _ms2b._bindings.values():
+                for _t in getattr(_bb, "tags", []) or []:
+                    if isinstance(_t, str) and _t.startswith("pred:"):
+                        _pred_tags.add(_t)
+
+            for _t in sorted(_pred_tags):
+                _live.add_predicate(_t, attach="none")  # seed-only; no sequencing edges needed
+
+            _live_tags = set()
+            for _bb in _live._bindings.values():
+                _live_tags |= set(getattr(_bb, "tags", []) or [])
+
+            if any(t.startswith("cue:") for t in _live_tags):
+                bad("mapsurface round-trip: seed/merge mode leaked cue:* tags into live world")
+            else:
+                ok("mapsurface round-trip: seed/merge seeded predicates only (no cues)")
+
+            if "pred:hazard:cliff:near" in _live_tags and "pred:posture:fallen" in _live_tags:
+                ok("mapsurface round-trip: seed/merge contains expected predicate priors")
+            else:
+                bad("mapsurface round-trip: seed/merge missing expected predicate priors")
+
+        # (F) Cleanup: remove the probe engram so repeated preflights don't bloat column memory.
+        try:
+            _mem.delete(_eid)
+        except Exception:
+            pass
+
+        if _mem.exists(_eid):
+            bad("mapsurface round-trip: cleanup failed (engram still present)")
+        else:
+            ok("mapsurface round-trip: cleanup removed probe engram")
+
+    except Exception as e:
+        bad(f"mapsurface round-trip probe failed: {e}")
 
 
     # Z7) Timekeeping one-liner reasonableness
@@ -13316,6 +13570,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.preflight:
         rc = run_preflight_full(args)
         return rc
+
+    # mirror terminal output to the file terminal.txt -- comment to stop
+    install_terminal_tee("terminal.txt", append=True, also_stderr=True)
 
     ##main operations of program via interactive_loop()
     interactive_loop(args); return 0
