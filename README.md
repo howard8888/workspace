@@ -773,6 +773,174 @@ CCA8 uses several small “maps” as well the large WorldGraph map for its memo
 - **and where heavy data lives** (engrams).
 
 
+
+### Navigation maps and memory pipeline contracts
+
+This subsection distills repeated Q&A from Phase VII–VIII design review into explicit “map contracts” and a quick reading guide
+for env-loop outputs (MapSurface entity table + WorkingMap autosnapshot).
+
+#### One-line roles (“what question does this map answer?”)
+
+- BodyMap: “what is true of my body / peripersonal near-space right now (fast gating)?”
+- WorkingMap.MapSurface: “what do I believe about the scene right now (semantic state table)?”
+- WorkingMap.Scratch: “what did I just try to do, and what outcome did I expect (procedural trace)?”
+- WorkingMap.Creative: “what candidate futures did I simulate (counterfactual rollouts; future)?”
+- WorldGraph (long-term): “what happened over time (episode index + planning skeleton)?”
+- Columns/Engrams: “where does the heavy payload live (stored map instances / scenes / features)?”
+
+---
+
+## A. Dataflow chart: where information goes each step
+
+External world:
+EnvState  →  PerceptionAdapter  →  EnvObservation
+
+Agent-side memory pipeline (normal env-loop):
+EnvObservation
+  → BodyMap update (always; fast scalar/slot cache for gates)
+  → WorkingMap.MapSurface update (if enabled; semantic state table)
+  → WorldGraph injection (if enabled; sparse long-term trace; changes/snapshot + keyframes)
+  → Action Center selects a policy (reads BodyMap + MapSurface/WG neighborhood)
+  → Policy executes (writes action chains + outcomes; may write into WM-first or WG depending on Phase VII knobs)
+  → Selected policy name is fed back to HybridEnvironment.step(action=...)
+
+Keyframes / boundaries:
+- Store MapSurface snapshot → Column engram
+- Create WorldGraph pointer node → indexes that engram (stage/zone/salience tags)
+- Optional auto-retrieve at boundary → apply prior map to WorkingMap (replace or seed/merge)
+
+---
+
+## B. “Chart”: contrasting the navigation maps (contracts)
+
+| Map | Primary purpose | Persistence | Addressing | Update semantics | Typical content | Must-not / pitfalls |
+|---|---|---|---|---|---|---|
+| EnvState (environment) | God’s-eye truth state for the simulator | external; overwritten each env.step | direct fields | full overwrite / deterministic evolution | posture, distances, stage, geometry | agent must never read directly |
+| EnvObservation (message) | what crosses the boundary this tick | transient | list/packet | replaced each tick | raw_sensors + predicates + cues | not “memory”; don’t treat as stored belief |
+| BodyMap | fast gating register (body + near-space) | short-lived, updated every step | direct helpers (body_posture, etc.) | overwrite slots | posture, mom distance, nipple, safety zone | avoid scanning big graphs for gates; keep BM authoritative “now” |
+| WorkingMap.MapSurface | semantic state table / scene sketch | persists across steps; prunable | (entity_id, slot-family) | overwrite per slot-family | entity anchors + slot values; schematic geometry | must not accumulate multiple values for same slot-family |
+| WorkingMap.Scratch | procedural trace (action chains) | ephemeral; accumulates until pruned | structural traversal from WM_SCRATCH | append-only chains | action:* → action:* → pred:* outcome | can bloat; requires TTL/clear rule eventually |
+| WorkingMap.Creative | counterfactual futures (future) | ephemeral | structural traversal from WM_CREATIVE | append rollouts | simulated chains + scores | must not mutate MapSurface “reality” directly |
+| WorldGraph (long-term) | episode index + planning skeleton | long-lived | tags + anchors + edges | append; optionally “changes-mode” for env slots | pred/cue/action/anchor bindings + “then” edges + pointer nodes | don’t rely on “tag exists anywhere” as “true now” (esp. semantic mode) |
+| Columns/Engrams | heavy payload store | long-lived (conceptually) | engram_id | immutable records | MapSurface snapshots, feature payloads, scene blobs | keep payload out of WorldGraph; store pointers only |
+
+---
+
+## C. WorkingMap.MapSurface: semantic addressing (entity × slot-family)
+
+MapSurface behaves like a semantic table implemented on a graph:
+
+- Entity anchor bindings are tagged with:
+  - wm:entity
+  - wm:eid:<entity_id>      (semantic key; e.g., self, mom, cliff)
+  - wm:kind:<kind>          (agent/shelter/hazard/...)
+  - anchor:WM_ENT_*         (human-readable anchor tag)
+
+- Slot-family (attribute channel) is encoded inside pred:* tags:
+  - pred:<slot_family>:<value>
+  - Example: pred:proximity:mom:far
+    - slot-family = proximity:mom
+    - value = far
+
+Contract:
+- An entity anchor may hold many slot-families at once (posture, proximity, hazard, etc.).
+- An entity anchor should hold exactly one value per slot-family (do not keep both far and close).
+
+Practical implication:
+- Updates do not scan all WM_ENT_* roots.
+- Updates key directly by (eid, slot-family) and replace the prior value.
+
+---
+
+## D. WorkingMap.Scratch: how to read action chains
+
+Scratch is structural, not semantic-addressed. It is a subgraph rooted at WM_SCRATCH:
+
+- WM_ROOT --wm_scratch--> WM_SCRATCH
+- WM_SCRATCH has multiple then:* edges to chain heads (one per execution/proposal)
+- Each chain uses then:* edges:
+  action:*  --then-->  action:*  --then-->  pred:* (postcondition/outcome)
+
+Why chains end in pred:*:
+- The final pred:* node is the predicted/claimed outcome (“postcondition”) of the action chain.
+- This makes the trace interpretable and supports later “did the observation confirm it?” checks.
+
+Scratch accumulation:
+- Scratch is allowed to accumulate (for now) because it is a trace.
+- It will eventually need a TTL/clear rule (e.g., clear Scratch at keyframes or keep last N chains).
+
+---
+
+## E. WorkingMap is planar: “layers” are anchored subgraphs
+
+WorkingMap is one graph object (“planar” in implementation terms).
+The “layers” are logical subgraphs separated by anchor nodes and edge conventions:
+
+- WM_ROOT is the hub
+  - WM_ROOT --wm_entity--> WM_ENT_* (MapSurface entities)
+  - WM_ROOT --wm_scratch--> WM_SCRATCH
+  - WM_ROOT --wm_creative--> WM_CREATIVE
+
+So “layers” are not different coordinate dimensions; they are different anchored regions of the same graph.
+
+---
+
+## F. Reading the env-loop MapSurface table + autosnapshot
+
+### 1) MapSurface entity table (the compact “dashboard”)
+
+Typical columns:
+- eid: semantic entity id (self, mom, shelter, cliff, …)
+- bid: WorkingMap node id (w6, w7, …)
+- kind: agent/shelter/hazard/...
+- pos(x,y): schematic position stored in binding.meta["wm"]["pos"] with frame "wm_schematic_v1"
+- brg: bearing (degrees) from self to entity in the schematic frame
+- dist_m: meter-like distance in the schematic frame
+- class: discrete distance/hazard class (near/far/close)
+- preds (short): human-readable short summary of pred:* tags for that entity
+- seen: last controller step when the entity was updated (meta bookkeeping)
+
+Notes:
+- dist_m/brg are schematic (a readable “subway-map” geometry), not physical truth.
+
+### 2) WorkingMap autosnapshot (the literal graph view)
+
+- IDs print as wN (bN):
+  - wN is the WorkingMap display id
+  - (bN) is the internal binding id inside the WorkingMap graph
+  - Do not confuse these with the long-term WorldGraph’s bN ids.
+
+- Start from anchors, not w1:
+  - w1 may be an empty retired binding (e.g., after moving NOW onto WM_ROOT)
+  - w2 may be a leftover NOW_ORIGIN tag
+  - w3 (WM_ROOT) is the correct structural entry point
+
+Legend reminders:
+- “Legend tags” lists tag namespaces you’re seeing (anchor:, wm:, pred:, action:, cue:)
+- “Legend edges” lists edge types you’re seeing (wm_entity, wm_scratch, wm_creative, then, distance_to)
+
+---
+
+## G. Keyframes: what happens at a boundary (short checklist)
+
+At a keyframe boundary (currently stage/zone changes):
+- WorldGraph long-term slot cache may reset and rewrite the stable state slots
+- MapSurface snapshot is stored to Column (dedup by signature)
+- WorldGraph pointer node is written (tags for stage/zone; carries engram pointer)
+- Optional auto-retrieve may run:
+  - replace mode: rebuild surface from snapshot
+  - seed/merge mode: seed predicates only; do not inject cue:* into live state
+- Temporal epoch/boundary tracking updates
+- Scratch is not cleared automatically (yet) → consider a future Scratch TTL rule
+
+---
+
+
+
+
+
+
+
 ### 1) BodyMap (ctx.body_world): “what I believe right now”
 
 BodyMap is a tiny, structured register for body + near-world state (e.g. in the case of the goat calf, its posture, mom distance, nipple state, shelter/cliff distances).
