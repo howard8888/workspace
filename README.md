@@ -936,6 +936,157 @@ At a keyframe boundary (currently stage/zone changes):
 ---
 
 
+## H. Anchors, episodes, and keyframes (how “boundaries” actually work)
+
+This subsection clarifies the “boundary machinery” used by the memory pipeline: anchors (`NOW`, `NOW_ORIGIN`), keyframes,
+and what “new episode” means in the newborn-goat environment loop. These details matter because they determine:
+(i) where new bindings attach, (ii) what gets stored to Columns, and (iii) how we interpret traces.
+
+---
+
+### H1) Anchor semantics: `NOW` vs `NOW_ORIGIN`
+
+CCA8 uses two primary temporal anchors in both WorldGraph and WorkingMap.
+
+- **`NOW`**
+  - The *current-moment* anchor.
+  - Planning / FOA / “what should I do next?” typically begins here.
+  - It can move frequently (step-to-step, or after major events).
+
+- **`NOW_ORIGIN`**
+  - The *episode root* anchor.
+  - It is **pinned once at the start of an episode** and does not move during that episode.
+  - It is useful for whole-episode interpretation (“from the beginning of the story to here”).
+
+Important clarification:
+- “`NOW_ORIGIN` never moves” means **within an episode**.
+- On **a new episode** (environment reset), a **new `NOW_ORIGIN` is created/assigned** for that episode.
+
+---
+
+### H2) “New episode” vs “keyframe”
+
+CCA8 uses the term *keyframe* for a boundary event, but not all keyframes are “new episodes.”
+
+There are two broad kinds:
+
+1) **Episode-start keyframe (env_reset)**
+   - Happens when `HybridEnvironment.reset()` is called.
+   - Starts a new episode.
+   - Establishes the episode’s `NOW_ORIGIN`.
+
+2) **Within-episode keyframes (stage/zone transitions)**
+   - Occur when the environment’s scenario stage changes (e.g., birth → struggle → first_stand),
+     and/or when safety zone changes (unsafe ↔ safe).
+   - These are meaningful segmentation points **inside the same episode**.
+   - They are used as natural storage/retrieval moments for the WM⇄Column pipeline.
+
+So:
+- **All new episodes are keyframes**, but **not all keyframes are new episodes**.
+
+---
+
+### H3) Attach semantics: `attach="now"` vs `attach="latest"` (the “observation block” trick)
+
+When the environment injects an observation into a graph, we deliberately use a simple pattern:
+
+- First predicate attaches with `attach="now"`.
+- Subsequent predicates attach with `attach="latest"`.
+
+This creates one “observation block” anchored to NOW with the remaining facts chained behind it.
+
+A crucial implication:
+- The *first predicate in the list* gets the `attach="now"` treatment.
+- In the current newborn-goat environment, `posture:*` tends to be emitted first, so it often appears as the “now-attached” binding.
+  This is not because posture is magically special; it’s because of observation ordering.
+
+---
+
+### H4) WorkingMap Scratch chains are written directly (not copied)
+
+When a policy executes “into WorkingMap,” it does not generate actions elsewhere and copy them into Scratch later.
+Instead:
+
+- The runner temporarily points WorkingMap’s effective `NOW` at **`WM_SCRATCH`**,
+- the policy executes and creates:
+  - `action:*` bindings and
+  - a final `pred:*` binding representing the **postcondition/outcome**,
+  using `attach="now"` then `attach="latest"` to form a `then:` chain,
+- then the runner restores `NOW` back to **`WM_ROOT`**.
+
+Result:
+- Scratch contains directly-written chains like:
+
+  `action:stand_up → action:push_up → action:extend_legs → pred:posture:standing`
+
+Why Scratch chains end in `pred:*`:
+- The final `pred:*` is the predicted/claimed outcome (postcondition). This makes traces interpretable and supports later mismatch checks
+  (“did the next EnvObservation confirm the predicted outcome?”).
+
+---
+
+### H5) Anchor/navigation hygiene in WorkingMap snapshots (how to read “w1” and friends)
+
+WorkingMap autosnapshots may show:
+- an empty `w1` binding, and/or
+- an old `NOW_ORIGIN` binding that has no edges.
+
+This is typically harmless and reflects anchor migration during initialization:
+- WorkingMap may create a first anchor binding early,
+- then later re-point `NOW`/`NOW_ORIGIN` onto `WM_ROOT` for a clean hub,
+- leaving behind a retired binding with no tags/edges.
+
+Reading rule:
+- Do **not** “start at `w1`”.
+- Start at the structural hub: **`WM_ROOT`** (often the same binding tagged `anchor:NOW`).
+
+---
+
+### H6) Boundary behavior checklist (what is true today vs planned)
+
+**Today (current behavior):**
+- Episode-start keyframe (reset):
+  - establishes `NOW_ORIGIN` for the new episode,
+  - writes the initial observation into memory systems,
+  - begins the WM⇄Column storage cadence.
+- Within-episode keyframes (stage/zone transitions):
+  - trigger MapSurface snapshot storage,
+  - create WorldGraph pointer nodes,
+  - may trigger guarded auto-retrieve.
+- Scratch is **not automatically cleared** yet (it accumulates action chains).
+
+**Planned (likely Phase VIII/IX cleanup):**
+- Add a Scratch TTL/cleanup rule:
+  - clear Scratch at keyframes, OR keep only last N chains.
+- Add a more meaningful auto-retrieve guard:
+  - retrieve priors primarily when cues/preds are sparse, BodyMap is stale, or mismatch is high.
+
+---
+
+### H7) Mini chart: “where to look” when debugging step-by-step traces
+
+| You want to answer… | Look at… | Why |
+|---|---|---|
+| “What does the world say is happening right now?” | EnvObservation + BodyMap | BodyMap is fast “now” truth for gates |
+| “What does the agent believe right now?” | WorkingMap.MapSurface entity table | semantic state table (entity × slot-family) |
+| “What did the agent just try to do?” | WorkingMap.Scratch chains | procedural trace + predicted outcome |
+| “What happened over time (episode trace)?” | WorldGraph | long-lived symbolic trace + anchors |
+| “Where is the heavy memory?” | Column engrams | snapshot payloads; WG holds pointers only |
+| “Why is posture the now-attached env predicate?” | observation ordering + attach pattern | first predicate is attached at NOW, rest chained via LATEST |
+
+---
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
