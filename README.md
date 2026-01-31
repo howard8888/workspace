@@ -1076,6 +1076,67 @@ Reading rule:
 
 ---
 
+### Related to the running of the memory pipeline in environment steps: 
+
+
+#### Debug trace fields in env-loop output: selection_on / execute_on / wg_base / wg_foa / wg_cands
+
+When running closed-loop environment stepping (e.g., menu 37), the runner prints a compact bundle of debug fields
+that clarify “which map was used to decide” versus “which map was written to.”
+
+#### selection_on vs execute_on
+
+- selection_on = which map is used to evaluate:
+  - policy trigger/gate conditions
+  - deficits and non-drive scores
+  - “near NOW” predicate checks
+  - (debug) FOA and candidate anchors
+
+- execute_on = which map is mutated by the winning policy’s execution:
+  - action bindings written
+  - Scratch chains (action:* → ... → pred:* outcome)
+  - any policy-side trace writes
+
+Common pairing in current development:
+- selection_on=WG execute_on=WM
+
+Meaning:
+- We select actions using the long-term WorldGraph (WG) view (plus BodyMap-first values),
+- but we write the execution trace into WorkingMap (WM), keeping WG cleaner and making action traces easy to inspect.
+
+Implication for reading logs:
+- The `pre:` and `post:` explain lines are evaluated on the selection map (WG).
+- Executing on WM does not necessarily change the WG predicates immediately; the environment must confirm changes on the next tick.
+
+#### wg_base (contextual write-base suggestion)
+
+wg_base is a skeleton helper that suggests where a primitive should anchor writes in WG:
+- prefer a “nearest relevant predicate” (e.g., posture:standing) if found
+- else HERE if it exists
+- else NOW
+
+This is printed for transparency. The controller may ignore it today.
+It exists to support future “base-aware writes,” where actions anchor near relevant context rather than always at NOW/LATEST.
+
+#### wg_foa (WorldGraph Focus of Attention)
+
+wg_foa is a skeleton “attention window” on WG:
+- seeds: [LATEST, NOW] plus any cue:* nodes present
+- ids: the union of nodes within max_hops hops of each seed
+- size: len(ids) after computation
+
+It is meant as a simple, inspectable neighborhood used for debugging and as a future building block for planning.
+
+Note: you do not set size directly. You set max_hops; size is derived.
+
+#### wg_cands (candidate planning anchors)
+
+wg_cands is a skeleton list of candidate start anchors for future multi-start planning/search:
+- includes NOW
+- includes HERE if present
+- may include “nearest binding with predicate” for a few target tokens (e.g., posture:standing, stand, mom:close)
+
+Today it is primarily a debug print to show what anchors would be used if we ran K parallel searches.
 
 
 
@@ -1083,11 +1144,108 @@ Reading rule:
 
 
 
+### Mutability and dataflow contracts (Phase VIII evaluation lens)
 
+CCA8 currently uses multiple “maps” (stores) that each serve a different purpose. The main thing to keep clear during Phase VIII is:
+what is mutable, what is append-only, and what should be treated as “truth” versus “intent/trace.”
 
+This section is a compact contract for the dataflow and mutability rules.
 
+---
 
+#### The stores and their mutability contracts
 
+Environment state (truth)
+- Mutable: yes (external), authoritative.
+- Mutated by: HybridEnvironment.step(action=...).
+- Read by: the agent only via EnvObservation (not directly).
+- Purpose: ground truth; confirms/refutes predicted outcomes.
+
+EnvObservation (message)
+- Mutable: replaced each tick (transient).
+- Produced by: HybridEnvironment.reset()/step().
+- Consumed by: BodyMap + WorkingMap.MapSurface (+ optional WorldGraph logging).
+- Purpose: boundary object between world and agent; not “memory.”
+
+BodyMap (fast scalar cache)
+- Mutable: yes, overwrite-style.
+- Updated by: EnvObservation each step.
+- Read by: gates and policies for O(1) decisions.
+- Purpose: fast “reflex register” for posture, nipple_state, mom_distance, and derived safety zone.
+- Note: BodyMap is intended to be simple and authoritative for immediate gating.
+
+WorkingMap.MapSurface (current belief / semantic state table)
+- Mutable: yes, but constrained (overwrite-by-slot-family).
+- Updated by: EnvObservation; optionally by retrieval (replace or seed/merge).
+- Addressing: semantic (entity_id, slot-family) rather than by node id.
+- Purpose: “what do I believe right now?” in a form that is inspectable and action-ready.
+- Contract: do not keep multiple competing values within the same slot-family.
+
+WorkingMap.Scratch (procedural trace / intent + predicted postconditions)
+- Mutable: yes, append-only until pruned.
+- Written by: policy execution (action chains + predicted outcome predicate).
+- Addressing: structural traversal from WM_SCRATCH (not semantic).
+- Purpose: “what did I just try to do?” and “what outcome did I expect?”
+- Key property: Scratch is not truth; it is a trace / hypothesis space.
+- Operational note: Scratch accumulation is acceptable short-term but requires TTL/cleanup later (clear at keyframes or keep last N chains).
+
+WorkingMap.Creative (counterfactual rollouts; future)
+- Mutable: yes, append-only within rollouts; prunable.
+- Written by: future planning/rollout machinery.
+- Purpose: simulated “what-if” sequences that should not mutate MapSurface truth directly.
+
+WorldGraph (long-term trace + index)
+- Mutable: yes, append-style.
+- Written by: environment injection (changes/keyframes), action trace (optional), pointer nodes.
+- Purpose: “what happened over time?” + “how do I index memory?”
+- Key property: WG represents “current-ness” via anchors/chains (NOW/LATEST), not overwriting.
+- Note: WG is the commit log + pointer scaffold; it should remain lightweight.
+
+Columns / Engrams (payload store)
+- Mutable: conceptually no (append-only / immutable records).
+- Written by: snapshot store (e.g., MapSurface snapshot).
+- Read by: retrieval.
+- Purpose: heavy memory payloads (map instances / scenes / structured snapshots).
+- Rule: if memory must “update,” store a new engram and point to it; avoid in-place mutation.
+
+---
+
+#### What Scratch “does” (and why it matters)
+
+Scratch operations have architectural meaning even when they do not change “truth”:
+
+- They record intent and predicted postconditions:
+  action:* → ... → pred:* (postcondition/outcome).
+- They support mismatch evaluation:
+  compare predicted postcondition vs the next EnvObservation update.
+- They prime learning:
+  RL credit (reward updates) can be associated with the executed action chain.
+- They preserve interpretability:
+  the trace shows what the agent tried and what it expected to happen.
+
+---
+
+#### Phase VIII discipline: recommended dataflow rules
+
+For interpretable partial-observability experiments:
+
+- Only EnvObservation should update “truth belief” in BodyMap and MapSurface.
+- Scratch must never be treated as truth; it is trace/hypothesis.
+- WG is a commit log + index; avoid using “tag exists anywhere” as “true now.”
+- Engrams are immutable payloads; changes mean new snapshots + new pointers.
+- Retrieval application modes:
+  - replace: rebuild surface from snapshot (preds + cues)
+  - seed/merge: seed predicates only; do not inject cue:* into live state
+
+---
+
+#### One-line summary (mental model)
+
+- Truth changes only in the environment.
+- Belief lives in MapSurface (plus fast BodyMap cache).
+- Intent and predicted outcomes live in Scratch.
+- History + indices live in WorldGraph.
+- Payloads live in Column Engrams.
 
 
 
