@@ -5049,14 +5049,14 @@ class TeeTextIO:
         self._streams = list(streams)
 
     def write(self, s: str) -> int:
-        '''helper method within class TeeTextIO to mirror text to a 
+        '''helper method within class TeeTextIO to mirror text to a
         specified file'''
         for st in self._streams:
             st.write(s)
         return len(s)
 
     def flush(self) -> None:
-        '''helper method within class TeeTextIO to mirror text to a 
+        '''helper method within class TeeTextIO to mirror text to a
         specified file'''
         for st in self._streams:
             try:
@@ -5065,7 +5065,7 @@ class TeeTextIO:
                 pass
 
     def isatty(self) -> bool:
-        '''helper method within class TeeTextIO to mirror text to a 
+        '''helper method within class TeeTextIO to mirror text to a
         specified file'''
         try:
             return any(getattr(st, "isatty", lambda: False)() for st in self._streams)
@@ -8674,8 +8674,8 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         print("[env-loop] N must be ≥ 1; nothing to do.")
         return
 
-    print(f"[env-loop] Running {n_steps} closed-loop environment/controller step(s).")
-    print("[env-loop] Each step will:")
+    print(f"[env-loop] Running {n_steps} closed-loop cognitive cycle(s) (env↔controller).")
+    print("[env-loop] Each cognitive cycle will:")
     print("  1) Advance controller_steps and the temporal soft clock (one drift),")
     print("  2) Call env.reset() (first time) or env.step(last policy action),")
     print("  3) Inject EnvObservation into the WorldGraph as pred:/cue: facts,")
@@ -8683,10 +8683,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
     if not getattr(ctx, "env_episode_started", False):
         print("[env-loop] Note: environment episode has not started yet; "
-              "the first step will call env.reset().")
-
+              "the first cognitive cycle will call env.reset().")
     for i in range(n_steps):
-        print(f"\n[env-loop] Step {i+1}/{n_steps}")
+        print(f"\n[env-loop] Cognitive Cycle {i+1}/{n_steps}")
 
         # 1) Timekeeping for this controller loop (soft clock only)
         try:
@@ -8937,14 +8936,41 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             except Exception:
                 zone = None
 
+            # Clarify: env_* is storyboard truth; bm_* is the agent’s current belief cache (BodyMap).
+            try:
+                stale = bodymap_is_stale(ctx)
+            except Exception:
+                stale = False
+
+            try:
+                bm_posture = body_posture(ctx) if not stale else None
+            except Exception:
+                bm_posture = None
+
+            # Expected posture: Scratch postcondition written by the last executed policy (if any).
+            expected_posture = None
+            if isinstance(policy_name, str) and policy_name:
+                for w in (getattr(ctx, "working_world", None), world):
+                    if w is None:
+                        continue
+                    _bid, posture_tag, meta = _latest_posture_binding(w, require_policy=True)
+                    if posture_tag and isinstance(meta, dict) and meta.get("policy") == policy_name:
+                        expected_posture = posture_tag.split(":")[-1]
+                        break
+
             line = (
-                f"[env-loop] summary envr't step={step_idx} stage={st.scenario_stage} "
-                f"posture={st.kid_posture} mom={st.mom_distance} "
-                f"nipple={st.nipple_state} last_policy={policy_name!r}"
+                f"[env-loop] summary cognitive_cycle={i+1}/{n_steps} env_step={step_idx} stage={st.scenario_stage} "
+                f"env_posture={st.kid_posture} bm_posture={bm_posture or st.kid_posture} "
+                f"mom={st.mom_distance} nipple={st.nipple_state} last_policy={policy_name!r}"
             )
+            if expected_posture is not None:
+                line += f" expected_posture={expected_posture}"
             if zone is not None:
                 line += f" zone={zone}"
             print(line)
+
+            if expected_posture is not None and str(expected_posture) != str(st.kid_posture):
+                print("[env-loop] note: expected_posture is a Scratch postcondition (hypothesis); env_posture is storyboard truth this tick.")
 
             # Explain why posture ended up as it is at this step.
             try:
@@ -9600,8 +9626,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     11) Simulate fall (add posture:fallen and try recovery) [fall, simulate]
 
     # Simulation of the Environment (HybridEnvironment demo)
-    35) Environment step (HybridEnvironment → WorldGraph demo) [env, hybrid]
-    37) Run n environment steps (closed-loop timeline) [envloop, envrun]
+    35) Cognitive Cycle (HybridEnvironment → WorldGraph demo) [env, hybrid]
+    37) Run n cognitive cycles (closed-loop timeline) [envloop, envrun]
     38) Inspect BodyMap (summary from BodyMap helpers) [bodymap, bsnap]
     39) Spatial scene demo (NOW-near + resting-in-shelter?) [spatial, near]
 
@@ -12000,8 +12026,8 @@ Attach an existing engram id (eid) to a binding id (bid).
 
         #----Menu Selection Code Block------------------------
         elif choice == "35":
-            # Environment step (HybridEnvironment → WorldGraph demo)
-            print("Selection: Environment step (HybridEnvironment → WorldGraph demo)\n")
+            # Cognitive Cycle (HybridEnvironment → WorldGraph demo)
+            print("Selection: Cognitive Cycle (HybridEnvironment → WorldGraph demo)\n")
             print("[policy-selection] Candidates = dev_gate passes AND trigger(...) returns True.")
             print("[policy-selection] Winner = highest deficit → non_drive → (RL: q | non-RL: stable order).")
             print("[policy-selection] RL adds exploration: epsilon picks a random candidate; otherwise we exploit the winner logic above.\n")
@@ -12272,7 +12298,7 @@ What happens conceptually per step
         #----Menu Selection Code Block------------------------
         elif choice == "37":
             # Multi-step environment closed-loop run
-            print("Selection: Run n environment steps (closed-loop timeline)\n")
+            print("Selection: Run n Cognitive Cycles (closed-loop timeline)\n")
             print("""This selection runs several consecutive closed-loop steps between the
 HybridEnvironment (newborn-goat world) and the CCA8 brain.
 
@@ -12613,7 +12639,7 @@ Key ideas
 
   • RL policy selection (epsilon-greedy among triggered candidates):
     -This is policy selection behaviour when multiple policies trigger, i.e., the 'best policy' has to be picked and this
-        can be done under non-RL conditions or RL-conditions (see READMD.md or menu selection "Environment Step" for more details).
+        can be done under non-RL conditions or RL-conditions (see READMD.md or menu selection "Cognitive Cycle" for more details).
         If False == NOT enbabled -- non-RL, i.e., deterministic selection of best policy: DELTA-band deficit values, then non-drive tie-break,
             stable order tie-break.
         IF True == enabled -- RL mode, i.e., epsilon-greedy selection of best policy:

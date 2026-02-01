@@ -1,3 +1,5 @@
+
+Goodbye.
 [planner] Active planner on startup: BFS
 [profile] Hardwired memory pipeline: phase7 daily-driver (no options menu needed).
 
@@ -64,8 +66,8 @@ Please press any key (* stops this scroll pause) to continue with menu (above sc
     11) Simulate fall (add posture:fallen and try recovery) [fall, simulate]
 
     # Simulation of the Environment (HybridEnvironment demo)
-    35) Environment step (HybridEnvironment → WorldGraph demo) [env, hybrid]
-    37) Run n environment steps (closed-loop timeline) [envloop, envrun]
+    35) Cognitive Cycle (HybridEnvironment → WorldGraph demo) [env, hybrid]
+    37) Run n cognitive cycles (closed-loop timeline) [envloop, envrun]
     38) Inspect BodyMap (summary from BodyMap helpers) [bodymap, bsnap]
     39) Spatial scene demo (NOW-near + resting-in-shelter?) [spatial, near]
 
@@ -108,7 +110,7 @@ Please press any key (* stops this scroll pause) to continue with menu (above sc
     46) Pick best wm_mapsurface engram for current stage/zone (read-only) [wpick, wpickwm]
     47) Load wm_mapsurface engram into WorkingMap (replace MapSurface) [wload, wmload]
 
-    Select: Selection: Run n environment steps (closed-loop timeline)
+    Select: Selection: Run n Cognitive Cycles (closed-loop timeline)
 
 This selection runs several consecutive closed-loop steps between the
 HybridEnvironment (newborn-goat world) and the CCA8 brain.
@@ -126,16 +128,16 @@ You can still use menu 35 for detailed, single-step inspection.
 [policy-selection] Winner = highest deficit → non_drive → (RL: q | non-RL: stable order).
 [policy-selection] RL adds exploration: epsilon picks a random candidate; otherwise we exploit the winner logic above.
 
-How many closed-loop step(s) would you like to run? [default: 5]: [env-loop] Running 5 closed-loop environment/controller step(s).
-[env-loop] Each step will:
+How many closed-loop step(s) would you like to run? [default: 5]: [env-loop] Running 5 closed-loop cognitive cycle(s) (env↔controller).
+[env-loop] Each cognitive cycle will:
   1) Advance controller_steps and the temporal soft clock (one drift),
   2) Call env.reset() (first time) or env.step(last policy action),
   3) Inject EnvObservation into the WorldGraph as pred:/cue: facts,
   4) Run ONE controller step (Action Center) and store the last policy name.
 
-[env-loop] Note: environment episode has not started yet; the first step will call env.reset().
+[env-loop] Note: environment episode has not started yet; the first cognitive cycle will call env.reset().
 
-[env-loop] Step 1/5
+[env-loop] Cognitive Cycle 1/5
 [env] Reset newborn_goat scenario: episode_index=1 scenario=newborn_goat_first_hour
 [env→working] MAP pred:posture:fallen → w6 (b6) (entity=self, slot=posture) [changed]
 [env→working] MAP pred:proximity:mom:far → w7 (b7) (entity=mom, slot=proximity:mom) [changed]
@@ -155,15 +157,16 @@ How many closed-loop step(s) would you like to run? [default: 5]: [env-loop] Run
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b6', 'b3'], 'size': 4, 'ids': {'b3', 'b6', 'b4', 'b5'}}
+wg_foa:  {'seeds': ['b6', 'b3'], 'size': 4, 'ids': {'b3', 'b6', 'b5', 'b4'}}
 wg_cands:['b3', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
-[env-loop] summary envr't step=0 stage=birth posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
+[env-loop] summary cognitive_cycle=1/5 env_step=0 stage=birth env_posture=fallen bm_posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' expected_posture=standing zone=unknown
+[env-loop] note: expected_posture is a Scratch postcondition (hypothesis); env_posture is storyboard truth this tick.
 [env-loop] explain posture: initial storyboard setup: stage='birth' starts with posture='fallen' (newborn begins life on the ground).
 [env-loop] explain nipple: initial storyboard setup: nipple_state='hidden' in stage 'birth'; the kid has not yet found or reached the nipple.
 [env-loop] explain zone: zone is 'unknown'; either the environment has not yet established clear cliff/shelter distances or they are in a combination we do not classify, so gates treat it conservatively.
 
-[env-loop] Step 2/5
+[env-loop] Cognitive Cycle 2/5
 [env] env_step=1 (since reset) stage=birth posture=fallen mom_distance=far nipple_state=hidden action='policy:stand_up'
 [env→working] MAP pred:posture:fallen → w6 (b6) (entity=self, slot=posture)
 [env→working] MAP pred:proximity:mom:far → w7 (b7) (entity=mom, slot=proximity:mom)
@@ -179,15 +182,16 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b7', 'b4', 'b5', 'b3'}}
+wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b7', 'b3', 'b5', 'b4'}}
 wg_cands:['b3', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
-[env-loop] summary envr't step=1 stage=birth posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
+[env-loop] summary cognitive_cycle=2/5 env_step=1 stage=birth env_posture=fallen bm_posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' expected_posture=standing zone=unknown
+[env-loop] note: expected_posture is a Scratch postcondition (hypothesis); env_posture is storyboard truth this tick.
 [env-loop] explain posture: stand_up was requested this tick, but the newborn is still kept fallen by the storyboard (stage='birth'); standing will only appear once the stand-up transition threshold is reached.
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone is 'unknown'; either the environment has not yet established clear cliff/shelter distances or they are in a combination we do not classify, so gates treat it conservatively.
 
-[env-loop] Step 3/5
+[env-loop] Cognitive Cycle 3/5
 [env] env_step=2 (since reset) stage=birth posture=fallen mom_distance=far nipple_state=hidden action='policy:stand_up'
 [env→working] MAP pred:posture:fallen → w6 (b6) (entity=self, slot=posture)
 [env→working] MAP pred:proximity:mom:far → w7 (b7) (entity=mom, slot=proximity:mom)
@@ -203,15 +207,16 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b7', 'b4', 'b5', 'b3'}}
+wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b7', 'b3', 'b5', 'b4'}}
 wg_cands:['b3', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
-[env-loop] summary envr't step=2 stage=birth posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
+[env-loop] summary cognitive_cycle=3/5 env_step=2 stage=birth env_posture=fallen bm_posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' expected_posture=standing zone=unknown
+[env-loop] note: expected_posture is a Scratch postcondition (hypothesis); env_posture is storyboard truth this tick.
 [env-loop] explain posture: stand_up was requested this tick, but the newborn is still kept fallen by the storyboard (stage='birth'); standing will only appear once the stand-up transition threshold is reached.
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone is 'unknown'; either the environment has not yet established clear cliff/shelter distances or they are in a combination we do not classify, so gates treat it conservatively.
 
-[env-loop] Step 4/5
+[env-loop] Cognitive Cycle 4/5
 [env] env_step=3 (since reset) stage=struggle posture=fallen mom_distance=far nipple_state=hidden action='policy:stand_up'
 [env→working] MAP pred:posture:fallen → w6 (b6) (entity=self, slot=posture)
 [env→working] MAP pred:proximity:mom:far → w7 (b7) (entity=mom, slot=proximity:mom)
@@ -222,7 +227,7 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [env→world] pred:proximity:mom:far → b9 (attach=latest)
 [env→world] pred:proximity:shelter:far → b10 (attach=latest)
 [env→world] pred:hazard:cliff:far → b11 (attach=latest)
-[wm->column] (auto) stored wm_mapsurface: sig=9d70ac79e80922e6 bid=b12 engram_id=b4e36126eb664569... (auto_boundary_stage:birth->struggle)
+[wm->column] (auto) stored wm_mapsurface: sig=9d70ac79e80922e6 bid=b12 engram_id=63ff30554e774f92... (auto_boundary_stage:birth->struggle)
 [wm-retrieve] (auto) skip: only_excluded_candidate (auto_boundary_stage:birth->struggle)
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
@@ -236,12 +241,13 @@ wg_base: {'base': 'HERE', 'bid': '?'}
 wg_foa:  {'seeds': ['b12', 'b8'], 'size': 4, 'ids': {'b8', 'b10', 'b12', 'b9'}}
 wg_cands:['b8', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
-[env-loop] summary envr't step=3 stage=struggle posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' zone=unknown
+[env-loop] summary cognitive_cycle=4/5 env_step=3 stage=struggle env_posture=fallen bm_posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' expected_posture=standing zone=unknown
+[env-loop] note: expected_posture is a Scratch postcondition (hypothesis); env_posture is storyboard truth this tick.
 [env-loop] explain posture: stand_up was requested this tick, but the newborn is still kept fallen by the storyboard (stage='struggle'); standing will only appear once the stand-up transition threshold is reached.
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone is 'unknown'; either the environment has not yet established clear cliff/shelter distances or they are in a combination we do not classify, so gates treat it conservatively.
 
-[env-loop] Step 5/5
+[env-loop] Cognitive Cycle 5/5
 [env] env_step=4 (since reset) stage=first_stand posture=standing mom_distance=far nipple_state=hidden action='policy:stand_up'
 [env→working] MAP pred:posture:standing → w6 (b6) (entity=self, slot=posture) [changed]
 [env→working] MAP pred:proximity:mom:far → w7 (b7) (entity=mom, slot=proximity:mom)
@@ -252,7 +258,7 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [env→world] pred:proximity:mom:far → b15 (attach=latest)
 [env→world] pred:proximity:shelter:far → b16 (attach=latest)
 [env→world] pred:hazard:cliff:near → b17 (attach=latest)
-[wm->column] (auto) stored wm_mapsurface: sig=5f00d655bb2a567c bid=b18 engram_id=467e2a1fac8f4a79... (auto_boundary_stage:struggle->first_stand_zone:unknown->unsafe_cliff_near)
+[wm->column] (auto) stored wm_mapsurface: sig=5f00d655bb2a567c bid=b18 engram_id=a2b3ab931ea6499e... (auto_boundary_stage:struggle->first_stand_zone:unknown->unsafe_cliff_near)
 [wm-retrieve] (auto) skip: only_excluded_candidate (auto_boundary_stage:struggle->first_stand_zone:unknown->unsafe_cliff_near)
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=near shelter=far zone=unsafe_cliff_near
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=near shelter=far zone=unsafe_cliff_near
@@ -262,10 +268,10 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: True, trigger: fallback=True when not fallen; posture=standing zone=unsafe_cliff_near (hunger=0.50, fatigue=0.30)
 wg_base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b14'}
-wg_foa:  {'seeds': ['b18', 'b14', 'b12'], 'size': 5, 'ids': {'b14', 'b16', 'b12', 'b15', 'b18'}}
+wg_foa:  {'seeds': ['b18', 'b14', 'b12'], 'size': 5, 'ids': {'b18', 'b15', 'b16', 'b14', 'b12'}}
 wg_cands:['b14', '?']
 post: dev_gate: True, trigger: fallback=True when not fallen; posture=standing zone=unsafe_cliff_near (hunger=0.50, fatigue=0.30)
-[env-loop] summary envr't step=4 stage=first_stand posture=standing mom=far nipple=hidden last_policy='policy:follow_mom' zone=unsafe_cliff_near
+[env-loop] summary cognitive_cycle=5/5 env_step=4 stage=first_stand env_posture=standing bm_posture=standing mom=far nipple=hidden last_policy='policy:follow_mom' zone=unsafe_cliff_near
 [env-loop] explain posture: stand_up action applied by the environment: posture changed fallen→standing as the storyboard moved 'struggle'→'first_stand'.
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone changed 'unknown'→'unsafe_cliff_near'; BodyMap now sees the cliff near while shelter is not near, so this geometry is treated as unsafe for resting.
@@ -322,7 +328,7 @@ Skill HUD (top 2 by q=EMA reward):
    2) policy:follow_mom   n=  1  rate=1.00  q=+0.03  last=+0.10
 
 Values of time measures, nodes and links at this point:
-[time] controller_steps=5, cos_to_last_boundary=0.9290, temporal_epochs=0, autonomic_ticks=0, age_days=0.0000, cog_cycles=0
+[time] controller_steps=5, cos_to_last_boundary=0.9237, temporal_epochs=0, autonomic_ticks=0, age_days=0.0000, cog_cycles=0
 [world] last 19 binding(s):
   b1: [anchor:NOW_ORIGIN]
       edges: then:b2, then:b3
@@ -367,3 +373,5 @@ Values of time measures, nodes and links at this point:
 
 
 Please press any key (* stops this scroll pause) to continue with menu (above screen will scroll)....
+
+Goodbye.

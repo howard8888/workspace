@@ -811,6 +811,145 @@ Keyframes / boundaries:
 
 ---
 
+### The CCA8 cognitive cycle (closed-loop env↔controller iteration)
+
+In the CCA8, a cognitive cycle is one iteration of the closed-loop interaction between:
+(1) the environment producing an observation, and
+(2) the agent updating its internal maps, selecting a policy, and executing that policy,
+followed by feeding the selected action back to the environment.
+
+Terminology note:
+- cognitive_cycle is the agent’s “sense → decide → act” iteration (often printed as 1/5, 2/5, … in menu 37).
+- env_step (or step_index) is the environment’s internal 0-indexed counter since the last reset.
+
+At a high level, each cognitive cycle proceeds as follows:
+
+1) Environment produces an observation
+   - HybridEnvironment generates an EnvObservation (predicates/cues + info) based on the current storyboard/world state.
+   - This observation is the only authoritative source for “what is true now” in the agent’s belief state.
+
+2) BodyMap update (fast gating cache)
+   - BodyMap mirrors action-critical scalar/slot values (posture, mom_distance, nipple_state, derived safety zone, staleness).
+   - Gates consult BodyMap for O(1) checks (e.g., unsafe_cliff_near) without graph traversal.
+
+3) WorkingMap update: MapSurface (current belief state table)
+   - EnvObservation facts are written into WorkingMap.MapSurface using semantic addressing:
+     (entity_id, slot-family) → current value
+   - MapSurface overwrites within a slot-family (one current value per channel); it is optimized for “what do I believe right now?”
+
+4) WorldGraph commit and boundary hooks (conditional)
+   - The long-term WorldGraph may receive an observation commit (append-style), especially on keyframes.
+   - Keyframes include:
+     - episode-start (env_reset)
+     - within-episode boundaries (stage/zone transitions)
+   - At keyframes, the WM⇄Column memory pipeline may run:
+     - store a MapSurface snapshot as an engram in Column memory
+     - write/refresh a lightweight pointer/index node in WorldGraph
+     - optional guarded auto-retrieve (replace or seed/merge) to stabilize WorkingMap under partial observability
+   - TemporalContext is stepped each cycle and may take a boundary jump at keyframes.
+
+5) Policy selection (the decision step)
+   - The Action Center evaluates candidate policies:
+     - trigger conditions (is it relevant now?)
+     - gate conditions (is it allowed now?)
+   - Policies are scored (deficit scores, non-drive scores, and optional RL tie-breaks).
+   - The best policy is chosen for this cognitive cycle.
+
+6) Policy execution (procedural trace + predicted postcondition)
+   - The chosen policy is executed on the designated execution map (often WorkingMap).
+   - Execution writes a Scratch chain representing a State–Action–State (S–A–S) trace:
+       action:* → action:* → … → pred:* (postcondition/outcome hypothesis)
+   - The final pred:* node in Scratch represents the expected post-state (a hypothesis), not the confirmed world state.
+   - Confirmation/refutation occurs on the next cognitive cycle when the next EnvObservation arrives.
+
+7) Action feedback to the environment
+   - The chosen policy name/action token is passed to HybridEnvironment.step(action=...),
+     which advances the storyboard and produces the next observation (beginning the next cognitive cycle).
+
+Reading the logs:
+- env_* fields reflect the environment/storyboard truth for that cycle.
+- bm_* fields reflect the agent’s current belief cache after observation injection.
+- expected_* fields reflect policy postconditions written into Scratch (hypotheses) and are intended for prediction-error computation on subsequent cycles.
+
+
+
+### WM ⇄ Column engram pipeline (when we store, retrieve, and apply priors)
+
+CCA8 uses a two-level memory pipeline:
+- WorkingMap.MapSurface is the current belief/state table (semantic addressing by entity × slot-family).
+- Column Engrams store snapshot payloads (e.g., MapSurface snapshots) and are indexed by lightweight pointer bindings in WorldGraph.
+
+This pipeline is *not* executed on every cognitive cycle. It is primarily **keyframe-driven**.
+
+#### When the pipeline runs (trigger policy)
+
+During closed-loop runs (e.g., menu 37), the WM⇄Column pipeline runs at **keyframes**:
+- episode-start keyframe: environment reset (env_reset)
+- within-episode keyframes: scenario stage transitions and/or zone transitions
+
+Non-keyframe cycles typically do not store/retrieve; they just update BodyMap + MapSurface and execute policies.
+
+#### Store (consolidation): MapSurface → Column engram
+
+On a keyframe, after MapSurface has been updated from EnvObservation, we may store a snapshot:
+
+1) Capture: serialize MapSurface into a snapshot payload (predicates + cues + minimal meta).
+2) Assert: write payload to Column memory as an engram (dedup by signature where possible).
+3) Index: create or refresh a lightweight pointer binding in WorldGraph that points to the engram.
+
+Goal:
+- Store coherent “boundary snapshots” rather than every tick, to reduce near-duplicates and make retrieval meaningful.
+
+#### Retrieve: Column engram → WorkingMap (priors)
+
+On a keyframe, we may also attempt auto-retrieve (guarded):
+
+1) Candidate generation:
+   - Use WorldGraph pointer bindings as the searchable index (e.g., stage/zone tags).
+2) Scoring:
+   - Score candidates by overlap with current cues/preds (salience-weighted).
+3) Select:
+   - Choose the best candidate(s).
+   - Exclude the engram just stored on this same keyframe to avoid trivial self-retrieval.
+
+#### Apply modes (how a retrieved map affects current belief)
+
+We support two application modes:
+
+- Replace mode:
+  - Rebuild MapSurface from the retrieved snapshot (preds + cues restored).
+  - Useful when current belief is unreliable/empty or mismatch is high.
+
+- Seed/Merge mode:
+  - Seed MapSurface with predicate priors only.
+  - Do NOT inject cue:* tags into the live state (no cue leakage).
+  - Useful under partial observability: fill gaps without overwriting current observations.
+
+Contract:
+- MapSurface remains the “belief-now” table driven primarily by EnvObservation.
+- Retrieved content is a prior/hypothesis; it must not silently overwrite truth without an explicit mode decision.
+
+#### Ordering within a cognitive cycle (current behavior)
+
+At a keyframe cycle, the typical ordering is:
+
+EnvObservation → BodyMap update → MapSurface update →
+(optional) store snapshot to Column + write WG pointer →
+(optional) auto-retrieve + apply (replace or seed/merge) →
+policy selection → policy execution (Scratch S–A–S chain) → action feedback to env
+
+This ordering ensures that retrieval can influence action selection on that same boundary cycle.
+
+#### Debugging and invariants
+
+- expected_* values written into Scratch are postconditions (hypotheses), not confirmed truth.
+- env_* fields reflect environment/storyboard truth for the current cycle.
+- cue leakage is disallowed in seed/merge mode.
+- “just-stored” exclusion prevents immediate self-retrieval loops.
+
+
+
+
 ## B. “Chart”: contrasting the navigation maps (contracts)
 
 | Map | Primary purpose | Persistence | Addressing | Update semantics | Typical content | Must-not / pitfalls |
@@ -1076,12 +1215,12 @@ Reading rule:
 
 ---
 
-### Related to the running of the memory pipeline in environment steps: 
+### Related to the running of the memory pipeline in Cognitive Cycles: 
 
 
 #### Debug trace fields in env-loop output: selection_on / execute_on / wg_base / wg_foa / wg_cands
 
-When running closed-loop environment stepping (e.g., menu 37), the runner prints a compact bundle of debug fields
+When running closed-loop cognitive cycle stepping (e.g., menu 37), the runner prints a compact bundle of debug fields
 that clarify “which map was used to decide” versus “which map was written to.”
 
 #### selection_on vs execute_on
@@ -1254,7 +1393,7 @@ For interpretable partial-observability experiments:
 
 BodyMap is a tiny, structured register for body + near-world state (e.g. in the case of the goat calf, its posture, mom distance, nipple state, shelter/cliff distances).
 
-- Updated **every environment step** from EnvObservation.
+- Updated **every Cognitive Cycle** from EnvObservation.
 - Used **BodyMap-first** for policy gating (e.g., don’t execute RecoverFall when posture is already standing).
 - Can become “stale” if it hasn’t been updated recently; in that case, some gates fall back to WorldGraph.
 
@@ -2701,7 +2840,7 @@ Design decision (folded in): Attachment semantics are explicit and lowercase: `a
 
 Two runner menu selection entries work together to make the newborn-goat simulation easier to explore:
 
-- **Run N environment steps (closed-loop timeline)**  
+- **Run N Cognitive Cycles (closed-loop timeline)**  
   Runs a short loop between the **HybridEnvironment** and the **Action Center**:
 
   1. If needed, calls `env.reset()` to start a newborn-goat episode.
@@ -6558,7 +6697,7 @@ mom: pred:proximity:mom:far
 
 nipple: pred:nipple:hidden
 
-These are body-side defaults before any environment step runs.
+These are body-side defaults before any Cognitive Cycle runs.
 
 Update from EnvObservation
 
@@ -6614,7 +6753,7 @@ read tags on those bindings,
 
 return a simple string label so policies don’t need to know anything about the BodyMap’s internal structure.
 
-The runner also prints a small BodyMap summary on each environment step:
+The runner also prints a small BodyMap summary on each Cognitive Cycle:
 
 [body] posture='fallen' mom_distance='far' nipple_state='hidden'
 
@@ -10134,7 +10273,7 @@ from cca8_env import (
 
 * **Bookkeeping:**
   
-  * `step_index: int` – environment steps in this episode.
+  * `step_index: int` – Cognitive Cycles in this episode.
 
 Only `HybridEnvironment` and backends mutate `EnvState`; CCA8 never touches it directly.
 
@@ -10201,7 +10340,7 @@ From CCA8’s point of view, **HybridEnvironment *is* “the environment”**: t
   
   * `"birth"` → `"struggle"` → `"first_stand"` → `"first_latch"` → `"rest"`.
 
-* **Time thresholds** (in environment steps) drive the default progression:
+* **Time thresholds** (in Cognitive Cycles) drive the default progression:
   
   * `_BIRTH_TO_STRUGGLE = 3`
   * `_STRUGGLE_MOM_NEAR = 5`
@@ -10278,7 +10417,7 @@ So `env` and `ctx` sit side-by-side in the main loop.
 
 ---
 
-### 7.2 Menu Selection — “Environment step (HybridEnvironment → WorldGraph demo)”
+### 7.2 Menu Selection — “Cognitive Cycle (HybridEnvironment → WorldGraph demo)”
 
 This Menu Selection is a **one-step closed-loop demo** that ties together HybridEnvironment, WorldGraph, the controller, and timekeeping. 
 
@@ -10448,7 +10587,7 @@ emitting cues (e.g., vision:silhouette:mom, drive:cold_skin), and
 
 including small env_meta. It does not update WorldGraph or the agent; it just describes what the agent gets to sense this tick.
 
-Q: How does Menu “Environment step (HybridEnvironment → WorldGraph demo)” use all this?
+Q: How does Menu “Cognitive Cycle (HybridEnvironment → WorldGraph demo)” use all this?
 A: That menu item runs a single closed-loop tick:
 
 HybridEnvironment evolves EnvState via reset or step(action, ctx).
