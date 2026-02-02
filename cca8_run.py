@@ -219,7 +219,22 @@ class Ctx:
     boundary_no: int = 0
     boundary_vhash64: Optional[str] = None
     controller_steps: int = 0
-    cog_cycles: int = 0  # 'productive' cycles: incremented only in Instinct Step when the step wrote new facts, to modify in future when full cog cycle implemented
+    cog_cycles: int = 0  # closed-loop cognitive cycles (env_obs→update→select→execute→act); incremented in menu 35/37 flows
+    # Prediction error v0 (Phase VIII):
+    # - Store the policy-written postcondition for the NEXT env step (hypothesis).
+    # - Next tick, compare to EnvObservation/EnvState and log a mismatch vector.
+    pred_next_posture: Optional[str] = None
+    pred_next_policy: Optional[str] = None
+    pred_err_v0_last: dict[str, int] = field(default_factory=dict)
+
+    # Partial observability knob (Phase VIII):
+    # - Probability in [0.0..1.0] of dropping an observed predicate/cue BEFORE it enters memory.
+    # - Default 0.0 keeps current behavior unchanged.
+    # - A few safety-critical predicate families are protected from dropping (see inject_obs_into_world).
+    obs_mask_prob: float = 0.2    #<-----------------------------------SET obs_mask_prob
+    #obs_mask_prob: float = 0.0
+    obs_mask_verbose: bool = True
+
     last_drive_flags: Optional[set[str]] = None
     env_episode_started: bool = False       # Environment / HybridEnvironment integration
     env_last_action: Optional[str] = None  # last fired policy name for env.step(...)
@@ -2181,6 +2196,7 @@ def should_autoretrieve_mapsurface(
     }
 
 
+
 def maybe_autoretrieve_mapsurface_on_keyframe(
     world,
     ctx: Ctx,
@@ -2192,6 +2208,7 @@ def maybe_autoretrieve_mapsurface_on_keyframe(
     mode: str | None = None,
     top_k: int | None = None,
     max_scan: int = 500,
+    log: bool | None = None,
 ) -> dict[str, Any]:
     """Try to seed WorkingMap from a prior wm_mapsurface engram on a keyframe boundary.
 
@@ -2263,7 +2280,11 @@ def maybe_autoretrieve_mapsurface_on_keyframe(
     except Exception:
         pass
 
-    if bool(getattr(ctx, "wm_mapsurface_autoretrieve_verbose", False)):
+    log_enabled = bool(getattr(ctx, "wm_mapsurface_autoretrieve_verbose", False))
+    if log is not None:
+        log_enabled = bool(log)
+
+    if log_enabled:
         try:
             match = pick.get("match") if isinstance(pick, dict) else None
             score = chosen.get("score")
@@ -7750,27 +7771,92 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
     created_cues: list[str] = []
     token_to_bid: dict[str, str] = {}
 
+    # Pull env meta fields early (not masked; used for keyframe labels later).
+    env_meta = getattr(env_obs, "env_meta", None) or {}
+    stage = env_meta.get("scenario_stage")
+    time_since_birth = env_meta.get("time_since_birth")
+
+    # Partial observability (Phase VIII): optionally drop some observation facts before they enter memory.
+    #
+    # Notes:
+    # - This is a PERCEPTION knob (what crosses the env→agent boundary), not a change to EnvState truth.
+    # - Masking happens BEFORE BodyMap/WorkingMap/WorldGraph writes so it affects "belief-now".
+    # - A small set of safety-critical predicate families is protected so zone classification remains stable.
+    mask_p = float(getattr(ctx, "obs_mask_prob", 0.0) or 0.0)
+    if mask_p > 0.0:
+        mask_p = max(0.0, min(1.0, mask_p))
+        protect_pred_prefixes = ("posture:", "hazard:cliff:", "proximity:shelter:")
+
+        preds_in = getattr(env_obs, "predicates", None)
+        cues_in = getattr(env_obs, "cues", None)
+
+        preds = [t for t in preds_in if isinstance(t, str) and t] if isinstance(preds_in, list) else []
+        cues = [t for t in cues_in if isinstance(t, str) and t] if isinstance(cues_in, list) else []
+
+        def _strip_pred_prefix(tok: str) -> str:
+            return tok[5:] if tok.startswith("pred:") else tok
+
+        dropped_preds = 0
+        dropped_cues = 0
+
+        preds_out: list[str] = []
+        for tok in preds:
+            tok_chk = _strip_pred_prefix(tok)
+            if any(tok_chk.startswith(pfx) for pfx in protect_pred_prefixes):
+                preds_out.append(tok)
+                continue
+            if random.random() < mask_p:
+                dropped_preds += 1
+                continue
+            preds_out.append(tok)
+
+        # Defensive: keep at least one predicate if we had any (avoid “empty observation block” surprises).
+        if (not preds_out) and preds:
+            preds_out = [preds[0]]
+            dropped_preds = max(0, len(preds) - 1)
+
+        cues_out: list[str] = []
+        for tok in cues:
+            if random.random() < mask_p:
+                dropped_cues += 1
+                continue
+            cues_out.append(tok)
+
+        # Apply the masked lists back onto the observation packet.
+        try:
+            setattr(env_obs, "predicates", preds_out)
+            setattr(env_obs, "cues", cues_out)
+        except Exception:
+            pass
+
+        if (dropped_preds or dropped_cues) and bool(getattr(ctx, "obs_mask_verbose", True)):
+            print(
+                f"[obs-mask] dropped preds={dropped_preds}/{len(preds)} cues={dropped_cues}/{len(cues)} "
+                f"p={mask_p:.2f} protected={len(protect_pred_prefixes)}"
+            )
+
     # Always keep BodyMap current (policies are BodyMap-first now).
     try:
         update_body_world_from_obs(ctx, env_obs)
     except Exception:
         # BodyMap update should never be allowed to break env stepping.
         pass
-    # Mirror into WorkingMap (raw per-tick trace) when enabled.
+
+    # Mirror into WorkingMap when enabled.
     try:
         if getattr(ctx, "working_enabled", False):
             inject_obs_into_working_world(ctx, env_obs)
     except Exception:
         pass
 
-    # Allow turning off long-term injection entirely (BodyMap still updates).
+    # Allow turning off long-term injection entirely (BodyMap/WorkingMap still update).
     if not getattr(ctx, "longterm_obs_enabled", True):
         return {"predicates": created_preds, "cues": created_cues, "token_to_bid": token_to_bid}
 
     mode = (getattr(ctx, "longterm_obs_mode", "snapshot") or "snapshot").strip().lower()
     do_changes = mode in ("changes", "dedup", "delta", "state_changes")
 
-    # Normalize (defensive: some probes may include prefixes already)
+    # Normalize (defensive: some probes may include prefixes already) AFTER masking.
     pred_tokens = [
         str(p).replace("pred:", "")
         for p in (getattr(env_obs, "predicates", []) or [])
@@ -7781,11 +7867,6 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         for c in (getattr(env_obs, "cues", []) or [])
         if c is not None
     ]
-
-    # Pull a couple of env meta fields for keyframes (if present)
-    env_meta = getattr(env_obs, "env_meta", None) or {}
-    stage = env_meta.get("scenario_stage")
-    time_since_birth = env_meta.get("time_since_birth")
 
     # In "changes" mode: optionally force a one-tick snapshot at stage transitions/resets
     if do_changes:
@@ -7803,6 +7884,20 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
             if stage is not None and last_stage is not None and stage != last_stage:
                 force_snapshot = True
                 reasons.append(f"stage_change {last_stage!r}→{stage!r}")
+
+        # [KEYFRAME HOOK + ORDERING INVARIANT]
+        # This is the keyframe/boundary detection point for the env→memory injection path.
+        # inject_obs_into_world(...) runs BEFORE policy selection (Action Center), so any keyframe-driven
+        # WM↔Column pipeline that must influence *this same boundary cycle* belongs conceptually here.
+        #
+        # INVARIANT (keyframes):
+        #   EnvObservation -> BodyMap/WorkingMap update -> (keyframe) store snapshot + pointer update ->
+        #   (keyframe) optional retrieve+apply (replace or seed/merge) -> policy selection/execution.
+        #
+        # RESERVED FUTURE SLOT (consolidation/reconsolidation write-back):
+        #   After policy selection+execution, a keyframe may also write new engrams (copy-on-write) and
+        #   update WorldGraph pointers for future retrieval, without mutating the belief state already
+        #   used for action selection in this cycle.  See README: "WM ⇄ Column engram pipeline".
         if force_snapshot:
             old_pred_n = len(getattr(ctx, "lt_obs_slots", {}) or {})
             old_cue_n = len(getattr(ctx, "lt_obs_cues", {}) or {})
@@ -8687,6 +8782,12 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
     for i in range(n_steps):
         print(f"\n[env-loop] Cognitive Cycle {i+1}/{n_steps}")
 
+        # Count one CLOSED-LOOP cognitive cycle (env↔controller iteration).
+        try:
+            ctx.cog_cycles = getattr(ctx, "cog_cycles", 0) + 1
+        except Exception:
+            pass
+
         # 1) Timekeeping for this controller loop (soft clock only)
         try:
             ctx.controller_steps = getattr(ctx, "controller_steps", 0) + 1
@@ -8731,6 +8832,26 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 f"mom_distance={st.mom_distance} nipple_state={st.nipple_state} "
                 f"action={action_for_env!r}"
             )
+
+        # --- Prediction error v0 (no behavior change; just measure + log) ---
+        # Compare last cycle's predicted postcondition (hypothesis) vs this cycle's observed env posture.
+        try:
+            prev_pred = getattr(ctx, "pred_next_posture", None)
+            if isinstance(prev_pred, str) and prev_pred:
+                obs_posture = getattr(getattr(env, "state", None), "kid_posture", None)
+                if isinstance(obs_posture, str) and obs_posture:
+                    mismatch = 0 if obs_posture == prev_pred else 1
+                    err_vec = {"posture": mismatch}
+                    ctx.pred_err_v0_last = err_vec
+                    src = getattr(ctx, "pred_next_policy", None)
+                    src_txt = src if isinstance(src, str) and src else "(n/a)"
+                    print(f"[pred_err] v0 err={err_vec} pred_posture={prev_pred} obs_posture={obs_posture} from={src_txt}")
+                else:
+                    ctx.pred_err_v0_last = {"posture": 1}
+            else:
+                ctx.pred_err_v0_last = {}
+        except Exception:
+            pass
 
         # 3) EnvObservation → WorldGraph + BodyMap
         inj = inject_obs_into_world(world, ctx, env_obs)
@@ -8806,6 +8927,22 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
             # Auto-store MapSurface snapshot at stage/zone boundaries (Option B#3)
             if wm_auto_store and bool(getattr(ctx, "phase7_working_first", False)):
+                reason_kf = (wm_auto_reason or "auto_boundary")
+
+                # Context labels for retrieval filtering
+                try:
+                    stage_kf = getattr(env.state, "scenario_stage", None)
+                except Exception:
+                    stage_kf = None
+                stage_kf = stage_kf if isinstance(stage_kf, str) else None
+                zone_kf = zone_now if isinstance(zone_now, str) else None
+
+                # Boundary type flags (derived from the reason string you already construct)
+                stage_chg = isinstance(reason_kf, str) and ("stage:" in reason_kf)
+                zone_chg = isinstance(reason_kf, str) and ("zone:" in reason_kf)
+
+                # ---- 1) STORE line ----
+                info: dict[str, Any] = {}
                 try:
                     if (
                         bool(getattr(ctx, "working_enabled", True))
@@ -8815,90 +8952,105 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                         info = store_mapsurface_snapshot_v1(
                             world,
                             ctx,
-                            reason=(wm_auto_reason or "auto_boundary"),
+                            reason=reason_kf,
                             attach="now",
                             force=False,
                             quiet=True,
                         )
-                        if info.get("stored"):
-                            print(
-                                "[wm->column] (auto) stored wm_mapsurface: "
-                                f"sig={str(info.get('sig',''))[:16]} bid={info.get('bid')} "
-                                f"engram_id={str(info.get('engram_id',''))[:16]}... "
-                                f"({wm_auto_reason})"
-                            )
+                    else:
+                        info = {"stored": False, "why": "workingmap_disabled_or_missing"}
+                except Exception as e:
+                    info = {"stored": False, "why": f"store_error:{e}"}
 
-                            # --- Auto-retrieve (read path) ---
-                            try:
-                                reason_kf = (wm_auto_reason or "auto_boundary")
+                stored = bool(info.get("stored"))
+                sig16 = str(info.get("sig", ""))[:16] if isinstance(info.get("sig"), str) else ""
+                bid = info.get("bid")
+                eid = info.get("engram_id")
+                why_store = info.get("why")
 
-                                # Context labels for retrieval filtering
-                                stage_kf = None
-                                try:
-                                    stage_kf = getattr(env.state, "scenario_stage", None)
-                                except Exception:
-                                    stage_kf = None
-                                stage_kf = stage_kf if isinstance(stage_kf, str) else None
+                if stored and isinstance(eid, str):
+                    print(f"[wm<->col] store: ok sig={sig16} bid={bid} eid={eid[:8]}… ({reason_kf})")
+                else:
+                    print(f"[wm<->col] store: skip why={why_store} sig={sig16} ({reason_kf})")
 
-                                zone_kf = zone_now if isinstance(zone_now, str) else None
+                # ---- 2) RETRIEVE line + 3) APPLY line ----
+                try:
+                    dec = should_autoretrieve_mapsurface(
+                        ctx,
+                        env_obs,
+                        stage=stage_kf,
+                        zone=zone_kf,
+                        stage_changed=stage_chg,
+                        zone_changed=zone_chg,
+                        boundary_reason=reason_kf,
+                    )
 
-                                # Boundary type flags (derived from reason string you already construct)
-                                stage_chg = isinstance(reason_kf, str) and ("stage:" in reason_kf)
-                                zone_chg = isinstance(reason_kf, str) and ("zone:" in reason_kf)
+                    mode_txt = str(dec.get("mode") or "merge")
+                    top_k = int(dec.get("top_k") or 5)
+                    do_try = bool(dec.get("ok"))
 
-                                dec = should_autoretrieve_mapsurface(
-                                    ctx,
-                                    env_obs,
-                                    stage=stage_kf,
-                                    zone=zone_kf,
-                                    stage_changed=stage_chg,
-                                    zone_changed=zone_chg,
-                                    boundary_reason=reason_kf,
-                                )
+                    if not do_try:
+                        print(f"[wm<->col] retrieve: skip why={dec.get('why')} mode={mode_txt} top_k={top_k} ({reason_kf})")
+                        print(f"[wm<->col] apply: no-op ({dec.get('why')})")
+                    else:
+                        exclude = eid if stored and isinstance(eid, str) else None
 
-                                if not bool(dec.get("ok")):
-                                    if bool(dec.get("verbose")):
-                                        print(f"[wm-retrieve] (auto) guard skip: {dec.get('why')} ({reason_kf})")
-                                else:
-                                    exclude = None
-                                    if isinstance(info, dict) and info.get("stored"):
-                                        exclude = info.get("engram_id")
+                        out = maybe_autoretrieve_mapsurface_on_keyframe(
+                            world,
+                            ctx,
+                            stage=stage_kf,
+                            zone=zone_kf,
+                            exclude_engram_id=exclude,
+                            reason=reason_kf,
+                            mode=mode_txt,
+                            top_k=top_k,
+                            log=False,  # menu 37 owns the standardized log lines
+                        )
 
-                                    out = maybe_autoretrieve_mapsurface_on_keyframe(
-                                        world,
-                                        ctx,
-                                        stage=stage_kf,
-                                        zone=zone_kf,
-                                        exclude_engram_id=exclude if isinstance(exclude, str) else None,
-                                        reason=reason_kf,
-                                        mode=str(dec.get("mode") or ""),
-                                        top_k=int(dec.get("top_k") or 5),
-                                    )
+                        if isinstance(out, dict) and bool(out.get("ok")):
+                            rid = out.get("engram_id")
+                            chosen = out.get("chosen") if isinstance(out.get("chosen"), dict) else {}
+                            pick = out.get("pick") if isinstance(out.get("pick"), dict) else {}
 
-                                    # Note: success printing is already handled inside maybe_autoretrieve_mapsurface_on_keyframe(...)
-                                    # (it prints a detailed line with match/score/src when verbose is enabled).
-                                    if bool(dec.get("verbose")) and isinstance(out, dict) and (not out.get("ok")):
-                                        why = out.get("why") or "no-op"
-                                        print(f"[wm-retrieve] (auto) skip: {why} ({reason_kf})")
+                            match = pick.get("match")
+                            score = chosen.get("score")
+                            op = chosen.get("overlap_preds")
+                            oc = chosen.get("overlap_cues")
+                            src = chosen.get("src")
 
-                            except Exception:
-                                pass
+                            rid_txt = (rid[:8] + "…") if isinstance(rid, str) else "(n/a)"
+                            print(f"[wm<->col] retrieve: ok mode={mode_txt} eid={rid_txt} match={match} score={score} op={op} oc={oc} src={src}")
+
+                            load = out.get("load") if isinstance(out.get("load"), dict) else {}
+                            applied_mode = str(load.get("mode") or mode_txt)
+
+                            if applied_mode == "replace":
+                                ent_n = load.get("entities")
+                                rel_n = load.get("relations")
+                                print(f"[wm<->col] apply: replace entities={ent_n} relations={rel_n}")
+                            else:
+                                ae = load.get("added_entities")
+                                fs = load.get("filled_slots")
+                                ed = load.get("added_edges")
+                                pc = load.get("stored_prior_cues")
+                                print(f"[wm<->col] apply: merge added_entities={ae} filled_slots={fs} added_edges={ed} prior_cues={pc}")
+                        else:
+                            why = out.get("why") if isinstance(out, dict) else "no-op"
+                            print(f"[wm<->col] retrieve: skip why={why} mode={mode_txt} top_k={top_k} ({reason_kf})")
+                            print(f"[wm<->col] apply: no-op ({why})")
+                except Exception as e:
+                    print(f"[wm<->col] retrieve: skip why=error:{e} ({reason_kf})")
+                    print("[wm<->col] apply: no-op (error)")
+
                             # ----- END Auto-retrieve (read path) ----
 
-                        else:
-                            print(
-                                f"[wm->column] (auto) SKIP: {info.get('why','(no reason)')} "
-                                f"sig={str(info.get('sig',''))[:16]}"
-                            )
-                except Exception as e:
-                    print(f"[wm->column] (auto) store failed: {e}")
-
         # 4) Controller response
+        exec_world = None
         policy_name = None
+
         try:
             policy_rt.refresh_loaded(ctx)
 
-            exec_world = None
             if bool(getattr(ctx, "phase7_working_first", False)):
                 if getattr(ctx, "working_world", None) is None:
                     ctx.working_world = init_working_world()
@@ -8923,6 +9075,20 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         except Exception as e:
             print(f"[env→controller] controller step error: {e}")
             ctx.env_last_action = None
+
+        # --- Capture NEXT-step prediction (Scratch postcondition), v0 = posture only ---
+        try:
+            ctx.pred_next_policy = policy_name if isinstance(policy_name, str) and policy_name else None
+            ctx.pred_next_posture = None
+
+            if isinstance(ctx.pred_next_policy, str):
+                w_scan = exec_world if exec_world is not None else world
+                _bid_p, posture_tag, meta_p = _latest_posture_binding(w_scan, require_policy=True)
+                if posture_tag and isinstance(meta_p, dict) and meta_p.get("policy") == ctx.pred_next_policy:
+                    # posture_tag like "pred:posture:standing"
+                    ctx.pred_next_posture = posture_tag.split(":")[-1]
+        except Exception:
+            pass
 
         # start/extend run for the policy we just chose (applied on the NEXT env step)
         if _phase7_enabled():
@@ -9626,8 +9792,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
     11) Simulate fall (add posture:fallen and try recovery) [fall, simulate]
 
     # Simulation of the Environment (HybridEnvironment demo)
-    35) Cognitive Cycle (HybridEnvironment → WorldGraph demo) [env, hybrid]
-    37) Run n cognitive cycles (closed-loop timeline) [envloop, envrun]
+    35) Run 1 Cognitive Cycle (HybridEnvironment → WorldGraph demo) [env, hybrid]
+    37) Run n Cognitive Cycles (closed-loop timeline) [envloop, envrun]
     38) Inspect BodyMap (summary from BodyMap helpers) [bodymap, bsnap]
     39) Spatial scene demo (NOW-near + resting-in-shelter?) [spatial, near]
 
@@ -9890,14 +10056,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
             print("No path found to", args.plan)
         return
 
-    # Optional preflight-lite
-    run_preflight_lite_maybe()
 
-    pretty_scroll = True  #to see changes before terminal menu scrolls over screen
-
-    # Menu 35 keyframe tracker (auto-store MapSurface snapshots on stage/zone change)
-    prev_stage: str | None = None
-    prev_zone: str | None = None
+    run_preflight_lite_maybe()  # optional preflight-lite
+    pretty_scroll = True        #to see changes before terminal menu scrolls over screen
 
 
     # Interactive menu loop  >>>>>>>>>>>>>>>>>>>
@@ -10803,17 +10964,11 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
             result = action_center_step(world, ctx, drives)
             after_n  = len(world._bindings)  #  measure write delta for this path
 
-            # Count a cognitive cycle only if the step produced an output (a real write)
-            # [Cognitive cycles — current definition]
-            # We count a *cognitive cycle* only when this controller step PRODUCED WRITES.
-            # Rationale: today, a “cycle” = perception/decision that changed working memory (WorldGraph).
-            # Waiting/no-op decisions do not increment; those are still controller steps but not cycles.
-            # This is intentionally conservative until we implement an explicit sense→process→act loop.
-            if isinstance(result, dict) and result.get("status") == "ok" and after_n > before_n:
-                try:
-                    ctx.cog_cycles += 1
-                except Exception:
-                    pass
+            # NOTE (Phase VIII terminology alignment):
+            # - ctx.controller_steps counts every Action Center evaluation/execution loop.
+            # - ctx.cog_cycles is reserved for CLOSED-LOOP env↔controller iterations (menu 35/37),
+            #   i.e., EnvObservation → internal update → policy select/execute → action feedback to env.
+            # Therefore: Instinct Step does not increment ctx.cog_cycles.
 
             # Explicit summary of what executed
             if isinstance(result, dict):
@@ -12026,261 +12181,13 @@ Attach an existing engram id (eid) to a binding id (bid).
 
         #----Menu Selection Code Block------------------------
         elif choice == "35":
-            # Cognitive Cycle (HybridEnvironment → WorldGraph demo)
-            print("Selection: Cognitive Cycle (HybridEnvironment → WorldGraph demo)\n")
-            print("[policy-selection] Candidates = dev_gate passes AND trigger(...) returns True.")
-            print("[policy-selection] Winner = highest deficit → non_drive → (RL: q | non-RL: stable order).")
-            print("[policy-selection] RL adds exploration: epsilon picks a random candidate; otherwise we exploit the winner logic above.\n")
-            print("""[guide] This selection runs ONE closed-loop step between the newborn-goat environment and the CCA8 brain.
-
-Key output lines you will see
-----------------------------
-
-  • [env] lines summarize what the environment simulation just did:
-      - on the first call we RESET the newborn_goat_first_hour storyboard
-      - on later calls we STEP the storyboard forward using the last policy action (if any)
-      - "env_step" is the environment’s internal step_index since the last RESET; it is not the count of menu  invocations
-
-  • [env→world] lines show how EnvObservation is injected into the WorldGraph:
-      - each env predicate token (e.g., posture:fallen) becomes a pred:* binding
-      - first injected predicate uses attach=now; subsequent ones use attach=latest (forming a short chain)
-
-  • [env→body] line is a debug bridge: the same EnvObservation also updates BodyMap.
-      - BodyMap is a tiny, agent-centric working map used primarily for gating decisions.
-
-  • [body] line is a short, human-readable summary derived from BodyMap helper functions
-    (posture/mom_distance/nipple_state).
-
-  • [gate:rest] line (when present) is a debug print from the Rest gate:
-      - shows fatigue threshold status, fatigue cue presence, whether BodyMap is stale,
-        and the (cliff/shelter/zone) classification used to veto resting when unsafe.
-
-    - Note on print order: gate debug lines may print BEFORE [env→controller] because triggers are evaluated
-        first (to build the candidate set). Only after trigger evaluation (and any safety filtering) does the
-        controller print the winner and execute it.
-
-  • [env→controller] block shows how the controller responded:
-      - "<policy> (added N bindings)" means the chosen policy executed and wrote N new bindings.
-      - "[executed] ..." is the status/reward/binding id returned from action_center_step(...).
-      - "[pick] ..." is a one-line summary of triggered policies and the best_policy chosen this step.
-            "tie_break=..." appears when deficits tie; it explains the deterministic fallback (stable policy order).
-            "deficits=[...]" shows the current drive-deficit scores for the triggered set (many policies
-                    will be 0.00 until they gain a drive/priority term).
-            "deficits_filtered=[...]" appears when the safety filter reduced the candidate set.
-            "non_drive=[...]" shows small non-drive tie-break scores used when deficits tie
-                (e.g., posture recovery and safety-related priorities).
-            "tie_break=non_drive_priority(deficit_tie)" means deficits tied and non_drive_priority decided the winner;
-                if non_drive also ties, we fall back to stable policy order.
-            "best_by=rl_exploit(non_drive_tiebreak)" may be seen in RL mode. It is a compressed label which means that this
-                step was exploitation (not epsilon exploration) and inside the RL exploit pipeline the best policy deciding
-                stage was not deficits (considered first) but the non-drive values to break the tie.
-            "best_by=rl_explore" may be seen in RL mode. It means that the epsilon probability exploration mode occurred and
-                policy chosen was by chance, although for transparency the deficit and nd (non-deficit) values are still shown.
-
-      - "pre:" and "post:" are the gate explanation before and after execution.
-      - "base:" is a suggested write-base, i.e., where should new writes attach to keep the
-            episode tidy? (diagnostic; may show bid='?' if HERE is not set yet).
-            -no NEAREST_PRED target found near NOW, so it fell back to HERE.
-            -at this time, policies still use their own attach semantics (base is just informational)
-      - "foa:" is the Focus of Attention neighborhood (seeds = NOW/LATEST (+ any cue nodes)).
-            -computed as union of neighborhoods within max_hops=2 (or other small value) around LATEST,
-                NOW and any cue nodes.
-      - "cands:" are candidate anchors for future search/attachment (diagnostic).
-            -e.g., when start off it may show NOW at b1 still, and HERE as ? since not set yet.
-
-        (NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit))
-        (Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled))
-
-  • At the end you may also see a "mini-snapshot" (if enabled) showing:
-      - last bindings/edges
-      - optional posture discrepancy: env posture (from env injection) vs policy-expected posture (from policy write)
-        (a mismatch can be normal immediately after reset (action not yet applied by env);
-         persistent mismatches across multiple steps suggest failed execution or storyboard veto).
-
-What happens conceptually per step
-----------------------------------
-  1) Environment evolves (env.reset / env.step; posture/stage/mom/nipple).
-  2) WorldGraph is updated ([env→world] pred:* and cue:* bindings near NOW/LATEST).
-  3) BodyMap is updated ([env→body] and [body] summaries).
-  4) Controller reacts ([env→controller] policy fire + optional [gate:*] debug lines).
-  5) Timekeeping advances (controller_steps + one temporal drift; shown as a one-line summary).
-
-""")
-
-
-            # Track bindings so we can show notes for any NEW bindings created during this step.
+            # Alias: single-step env↔controller cycle (kept for back-compat; real implementation is menu 37)
+            print("Selection: Run 1 Cognitive Cycle (alias of menu 37)\n")
+            print("(This menu item is intentionally thin so it cannot drift out of sync.)\n")
             try:
-                before_ids = set(world._bindings.keys())
-            except Exception:
-                before_ids = set()
-
-            # Account for one controller decision loop worth of internal time (soft clock only).
-            try:
-                ctx.controller_steps = getattr(ctx, "controller_steps", 0) + 1
-            except Exception:
-                pass
-            if getattr(ctx, "temporal", None):
-                ctx.temporal.step()
-
-            # First call: start a fresh newborn-goat episode in the environment
-            if not ctx.env_episode_started:
-                env_obs, env_info = env.reset()
-                ctx.env_episode_started = True
-                ctx.env_last_action = None  # no action yet on the very first tick
-                print(
-                    f"[env] Reset newborn_goat scenario: "
-                    f"episode_index={env_info.get('episode_index')} "
-                    f"scenario={env_info.get('scenario_name')}"
-                )
-            else:
-                # On subsequent calls, feed the last fired policy back to env.step(...)
-                action_for_env = ctx.env_last_action
-                env_obs, _env_reward, _env_done, env_info = env.step(
-                    action=action_for_env,
-                    ctx=ctx,
-                )
-                # Consume the action so it only affects one environment tick
-                ctx.env_last_action = None
-
-                st = env.state
-                print(
-                    f"[env] env_step={env_info.get('step_index')} (since reset) "
-                    f"stage={st.scenario_stage} posture={st.kid_posture} "
-                    f"mom_distance={st.mom_distance} nipple_state={st.nipple_state} "
-                    f"action={action_for_env!r}"
-                )
-
-            # Map EnvObservation into the CCA8 WorldGraph as pred:* / cue:* tokens.
-            # This uses the shared helper so other code paths can reuse the same semantics.
-            inject_obs_into_world(world, ctx, env_obs)
-
-            # auto-store MapSurface snapshot at keyframes (stage/zone changes) ---
-            try:
-                stage_now = getattr(st, "scenario_stage", None)
-            except Exception:
-                stage_now = None
-            try:
-                zone_now = body_space_zone(ctx)
-            except Exception:
-                zone_now = None
-
-            # Normalize types for mypy + sanity (we only want str|None here)
-            stage_now = stage_now if isinstance(stage_now, str) else None
-            zone_now = zone_now if isinstance(zone_now, str) else None
-
-            stage_changed = (stage_now is not None and stage_now != prev_stage)
-            zone_changed = (zone_now is not None and zone_now != prev_zone)
-
-            if bool(getattr(ctx, "working_enabled", True)) and (stage_changed or zone_changed or (prev_stage is None and prev_zone is None)):
-                why_bits = []
-                if prev_stage is None and stage_now is not None:
-                    why_bits.append(f"start:{stage_now}")
-                elif stage_changed:
-                    why_bits.append(f"stage:{prev_stage}->{stage_now}")
-                if prev_zone is None and zone_now is not None:
-                    why_bits.append(f"zone:{zone_now}")
-                elif zone_changed:
-                    why_bits.append(f"zone:{prev_zone}->{zone_now}")
-
-                reason = "auto_keyframe" + (":" + ",".join(why_bits) if why_bits else "")
-                info = store_mapsurface_snapshot_v1(world, ctx, reason=reason, attach="now", force=False, quiet=True)
-
-                if info.get("stored"):
-                    print(f"[wm->column] auto stored wm_mapsurface: sig={info.get('sig','')[:16]} "
-                          f"bid={info.get('bid')} stage={info.get('stage')} zone={info.get('zone')}")
-                else:
-                    print(f"[wm->column] auto skip: {info.get('why')} sig={info.get('sig','')[:16]}")
-
-                # Auto-retrieve (read path): seed WM from a PRIOR engram for this stage/zone.
-                # We exclude the engram we may have just stored on this same boundary so we don't "retrieve ourselves".
-                try:
-                    exclude = None
-                    if isinstance(info, dict) and info.get("stored"):
-                        exclude = info.get("engram_id")
-                    out = maybe_autoretrieve_mapsurface_on_keyframe(
-                        world,
-                        ctx,
-                        stage=stage_now,
-                        zone=zone_now,
-                        exclude_engram_id=exclude if isinstance(exclude, str) else None,
-                        reason=reason,
-                    )
-                    # Make it visible (merge can be a silent no-op if WM already has those slots).
-                    if bool(getattr(ctx, "wm_mapsurface_autoretrieve_verbose", False)):
-                        if isinstance(out, dict) and out.get("ok"):
-                            eid = str(out.get("engram_id") or "")
-                            load = out.get("load", {}) if isinstance(out.get("load"), dict) else {}
-                            mode_used = str(load.get("mode") or getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge")
-                            print(f"[wm-retrieve] auto {mode_used} engram={eid[:8]}... ({reason})")
-                        else:
-                            why = out.get("why") if isinstance(out, dict) else None
-                            print(f"[wm-retrieve] auto skip: {why or 'no-op'} ({reason})")
-                except Exception:
-                    pass
-
-            prev_stage = stage_now
-            prev_zone = zone_now
-
-            # Show BodyMap summary for this env step (posture/mom_distance/nipple_state)
-            try:
-                bp = body_posture(ctx)
-                md = body_mom_distance(ctx)
-                ns = body_nipple_state(ctx)
-                print(f"[body] posture={bp!r} mom_distance={md!r} nipple_state={ns!r}")
-            except Exception:
-                pass
-
-            # Let the controller see the new facts and maybe act once
-            try:
-                POLICY_RT.refresh_loaded(ctx)
-                fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
-                if fired != "no_match":
-                    print(f"[env→controller] {fired}")
-
-                    # Extract the policy name (first token) so env.step(...) receives a clean action string,
-                    # e.g. "policy:stand_up" or "policy:seek_nipple".
-                    if isinstance(fired, str):
-                        first_token = fired.split()[0]
-                        if isinstance(first_token, str) and first_token.startswith("policy:"):
-                            ctx.env_last_action = first_token
-                        else:
-                            ctx.env_last_action = None
-                    else:
-                        ctx.env_last_action = None
-                else:
-                    ctx.env_last_action = None
+                run_env_closed_loop_steps(env, world, drives, ctx, POLICY_RT, 1)
             except Exception as e:
-                print(f"[env→controller] controller step error: {e}")
-                ctx.env_last_action = None
-
-            # After env + controller, show any meta["note"] attached to NEW bindings.
-            try:
-                after_ids = set(world._bindings.keys())
-                new_ids = list(after_ids - before_ids)
-
-                def _id_key(bid: str) -> int:
-                    # Sort like b1, b2, ..., fall back to 0 for anything weird.
-                    try:
-                        if bid.startswith("b"):
-                            return int(bid[1:])
-                    except Exception:
-                        pass
-                    return 0
-
-                for bid in sorted(new_ids, key=_id_key):
-                    b = world._bindings.get(bid)
-                    if not b:
-                        continue
-                    meta = getattr(b, "meta", None)
-                    if isinstance(meta, dict):
-                        note = meta.get("note")
-                        if note:
-                            print(f"[note] {bid}: {note}")
-            except Exception as e:
-                print(f"[note] error while printing binding notes: {e}")
-
-            # Show a one-line timekeeping summary so users can see controller_steps advancing here too.
-            print_timekeeping_line(ctx)
+                print(f"[env-loop] error while running 1 closed-loop step: {e}")
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -12308,8 +12215,8 @@ For each step we will:
   3) Inject the resulting EnvObservation into the WorldGraph as pred:/cue: facts,
   4) Run ONE controller step (Action Center) and remember the last fired policy.
 
-This is like pressing menu 35 multiple times, but with a more compact, per-step summary.
-You can still use menu 35 for detailed, single-step inspection.
+Tip: run N=1 to single-step the closed-loop cycle.
+
 """)
             print("[policy-selection] Candidates = dev_gate passes AND trigger(...) returns True.")
             print("[policy-selection] Winner = highest deficit → non_drive → (RL: q | non-RL: stable order).")
@@ -12456,6 +12363,25 @@ You can still use menu 35 for detailed, single-step inspection.
                 current_age = float(getattr(ctx, "age_days", 0.0) or 0.0)
             except Exception:
                 current_age = 0.0
+            # Partial observability knob (obs masking)
+            try:
+                cur_p = float(getattr(ctx, "obs_mask_prob", 0.0) or 0.0)
+            except Exception:
+                cur_p = 0.0
+            print()
+            print(f"Partial observability (obs masking): current obs_mask_prob={cur_p:.2f}")
+            print("  0.00 = fully observed (default)")
+            print("  0.10–0.30 = mild partial observability (good starting range)")
+            print("  Protected (never dropped): posture:* , hazard:cliff:* , proximity:shelter:*")
+            s = input("Set obs_mask_prob in [0..1] (blank=keep current): ").strip()
+            if s:
+                try:
+                    v = float(s)
+                    v = max(0.0, min(1.0, v))
+                    ctx.obs_mask_prob = v
+                    print(f"(updated) obs_mask_prob={ctx.obs_mask_prob:.2f}")
+                except ValueError:
+                    print("(warn) invalid obs_mask_prob; keeping current value.")
 
             print("Current values:")
             print(f"  hunger   = {current_hunger:.2f}")

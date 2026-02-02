@@ -333,6 +333,7 @@ A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph 
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
 - [Tutorial on WorkingMap](#tutorial-on-workingmap)
 - [WorkingMap Layer Contracts](#workingmap-layer-contracts)
+- [Prediction error and predictive coding](#prediction-error-and-predictive-coding)
 - [Binding and Edge Representation](#binding-and-edge-representation)
 - [Anchors, LATEST, and Base-Aware Writes](#anchors-latest-and-base-aware-writes)
 - [Tutorial on Drives](#tutorial-on-drives)
@@ -802,8 +803,9 @@ EnvObservation
   → WorldGraph injection (if enabled; sparse long-term trace; changes/snapshot + keyframes)
   → Action Center selects a policy (reads BodyMap + MapSurface/WG neighborhood)
   → Policy executes (writes action chains + outcomes; may write into WM-first or WG depending on Phase VII knobs)
-  → Selected policy name is fed back to HybridEnvironment.step(action=...)
-
+  → Selected policy name is fed back to HybridEnvironment.step(action=...)  
+        Note: In the current runner, the chosen policy is stored and applied on the next env.step call.
+              In the runner implementation, the action is effectively applied at the cycle boundary (stored as ctx.env_last_action and used on the next loop).
 Keyframes / boundaries:
 - Store MapSurface snapshot → Column engram
 - Create WorldGraph pointer node → indexes that engram (stage/zone/salience tags)
@@ -822,49 +824,103 @@ Terminology note:
 - cognitive_cycle is the agent’s “sense → decide → act” iteration (often printed as 1/5, 2/5, … in menu 37).
 - env_step (or step_index) is the environment’s internal 0-indexed counter since the last reset.
 
-At a high level, each cognitive cycle proceeds as follows:
+**Cognitive cycle** = every closed-loop iteration:
+EnvObservation → update internal state (BodyMap/WorkingMap/MapSurface) → select policy → execute policy (Scratch S–A–S chain) → act
 
-1) Environment produces an observation
+**Keyframe cycle** = a cognitive cycle where the “keyframe flag” is true, meaning we additionally run the WM ⇄ Column engram pipeline at the boundary:
+(keyframe) store snapshot → (keyframe) optional retrieve + apply priors
+inserted between MapSurface update and policy selection.
+
+Note: 
+Each cognitive cycle ends by selecting/executing an action that changes the env, then the system immediately starts the next cognitive cycle when the env produces the next EnvObservation.
+
+Whether the next cycle is a keyframe is decided fresh each cycle based on the keyframe triggers (stage/zone boundary, forced snapshot, periodic keyframe, etc.)
+
+Note:
+Predictions/hypotheses exist, are compared to the next observation, and produce a mismatch signal (v0 “prediction error vector” plan is already aligned with this).
+
+An optional internal reprocessing loop exists as a reserved capability, where intermediate results can be fed back into the next cycle’s “input stream” (or internal buffer) instead of (or in addition to) relying purely on fresh external observation. This is the CCA8 analog to the “feed WNM back to association modules” idea in the published papers on the CCA.
+
+In reprocessing mode, the architecture may temporarily down-weight or ignore fresh external observation (attention diverted) and instead iterate on an internal buffer; when external observation is present, EnvObservation remains the authority for ‘truth-now’.
+
+Note: The controller_steps counts every invocation of the Action Center (each time we ask “what should I do?”).
+cog_cycles counts closed-loop env↔controller iterations (EnvObservation → update → select/execute → action feedback).
+In menu 37 runs (and menu 35, which is now an alias that runs one closed-loop step), controller_steps and cog_cycles advance together.
+Outside the env-loop, controller_steps may advance without cog_cycles (e.g., Instinct Step, Autonomic Tick).
+
+
+
+**At a high level, each cognitive cycle proceeds as follows:**
+(Keyframe-only steps are explicitly marked.)
+
+0) Prior cycle ends; this cycle begins
+   - The previous cycle selected/executed an action (or no-op), which the environment applied.
+   - The environment now produces the next EnvObservation, beginning the next cognitive cycle.
+   - Whether this cycle is a keyframe is decided fresh each cycle (env_reset, stage/zone transitions, forced keyframes, etc.).
+
+1) Environment produces an observation (EnvObservation)
    - HybridEnvironment generates an EnvObservation (predicates/cues + info) based on the current storyboard/world state.
+   - If actual robotic embodiment (i.e., non-simulation) then this will be actual, albeit pre-processed, sensory input values.
    - This observation is the only authoritative source for “what is true now” in the agent’s belief state.
 
 2) BodyMap update (fast gating cache)
-   - BodyMap mirrors action-critical scalar/slot values (posture, mom_distance, nipple_state, derived safety zone, staleness).
-   - Gates consult BodyMap for O(1) checks (e.g., unsafe_cliff_near) without graph traversal.
+   - BodyMap mirrors action-critical scalar/slot values (e.g., posture, mom_distance, nipple_state, derived safety zone, staleness).
+   - Gates consult BodyMap for fast O(1) checks (e.g., unsafe_cliff_near) without graph traversal.
 
 3) WorkingMap update: MapSurface (current belief state table)
    - EnvObservation facts are written into WorkingMap.MapSurface using semantic addressing:
      (entity_id, slot-family) → current value
    - MapSurface overwrites within a slot-family (one current value per channel); it is optimized for “what do I believe right now?”
 
-4) WorldGraph commit and boundary hooks (conditional)
-   - The long-term WorldGraph may receive an observation commit (append-style), especially on keyframes.
-   - Keyframes include:
-     - episode-start (env_reset)
-     - within-episode boundaries (stage/zone transitions)
-   - At keyframes, the WM⇄Column memory pipeline may run:
-     - store a MapSurface snapshot as an engram in Column memory
-     - write/refresh a lightweight pointer/index node in WorldGraph
-     - optional guarded auto-retrieve (replace or seed/merge) to stabilize WorkingMap under partial observability
-   - TemporalContext is stepped each cycle and may take a boundary jump at keyframes.
+4) WorldGraph observation logging (optional; per configuration)
+   - The long-term WorldGraph may receive an observation commit (append-style), subject to long-term injection settings:
+     snapshot vs changes, reassert_steps, and related verbosity knobs.
+   - This is distinct from the WM⇄Column keyframe pipeline: WorldGraph logging can occur on ordinary cycles as well.
 
-5) Policy selection (the decision step)
+5) (KEYFRAME) WM ⇄ Column boundary pipeline (conditional; ordering invariant)
+   - If this cycle is a keyframe, run the boundary pipeline BETWEEN MapSurface update and policy selection:
+
+   5a) Store (consolidation): MapSurface → Column engram
+       - Store a MapSurface snapshot as an engram in Column memory.
+       - Write/refresh a lightweight pointer/index node in WorldGraph for later retrieval.
+
+   5b) Optional guarded auto-retrieve + apply (priors): Column → WorkingMap
+       - Optionally retrieve prior MapSurface snapshot(s) and apply them to WorkingMap:
+         - replace mode: rebuild MapSurface from the snapshot
+         - seed/merge mode: seed predicate priors only; do NOT inject cue:* tags into live belief (no cue leakage)
+       - Exclude the engram just stored on this same keyframe (no trivial self-retrieval).
+
+   5c) Temporal boundary bookkeeping (if enabled)
+       - TemporalContext is stepped each cycle and may take a boundary jump at keyframes.
+
+6) Policy selection (the decision step)
    - The Action Center evaluates candidate policies:
      - trigger conditions (is it relevant now?)
      - gate conditions (is it allowed now?)
    - Policies are scored (deficit scores, non-drive scores, and optional RL tie-breaks).
    - The best policy is chosen for this cognitive cycle.
 
-6) Policy execution (procedural trace + predicted postcondition)
+7) Policy execution (procedural trace + predicted postcondition)
    - The chosen policy is executed on the designated execution map (often WorkingMap).
    - Execution writes a Scratch chain representing a State–Action–State (S–A–S) trace:
        action:* → action:* → … → pred:* (postcondition/outcome hypothesis)
    - The final pred:* node in Scratch represents the expected post-state (a hypothesis), not the confirmed world state.
    - Confirmation/refutation occurs on the next cognitive cycle when the next EnvObservation arrives.
 
-7) Action feedback to the environment
+8) (FUTURE, KEYFRAME OPTIONAL) Consolidation/reconsolidation write-back slot (copy-on-write)
+   - After policy selection + execution, a keyframe may optionally run a write-back hook that:
+     - writes new engrams (copy-on-write) and/or patch records (schema/world-model learning), and
+     - updates WorldGraph pointer bindings for future retrieval,
+     WITHOUT changing the belief state that was already used for action selection in this same cycle.
+   - This slot is reserved for future learning/consolidation work (reconsolidation) and is intentionally not required for v0.
+
+9) Action feedback to the environment (completes this cycle)
    - The chosen policy name/action token is passed to HybridEnvironment.step(action=...),
      which advances the storyboard and produces the next observation (beginning the next cognitive cycle).
+     
+10) REPEAT -- START A NEW CYCLE
+   - The next cycle may be an ordinary cognitive cycle or a keyframe cycle, depending on whether the keyframe trigger fires.
+
 
 Reading the logs:
 - env_* fields reflect the environment/storyboard truth for that cycle.
@@ -929,16 +985,98 @@ Contract:
 - MapSurface remains the “belief-now” table driven primarily by EnvObservation.
 - Retrieved content is a prior/hypothesis; it must not silently overwrite truth without an explicit mode decision.
 
-#### Ordering within a cognitive cycle (current behavior)
 
-At a keyframe cycle, the typical ordering is:
 
+#### Ordering within a cognitive cycle (INVARIANT)
+
+Note with regard to terminology: A keyframe is a cognitive cycle that triggers the WM⇄Column boundary pipeline (store/retrieve/apply); non-keyframe cognitive cycles skip those steps.
+In summary:
+**Cognitive cycle** = every closed-loop iteration:
+EnvObservation → update internal state (BodyMap/WorkingMap/MapSurface) → select policy → execute policy (Scratch S–A–S chain) → act
+
+**Keyframe cycle** = a cognitive cycle where the “keyframe flag” is true, meaning we additionally run the WM ⇄ Column engram pipeline at the boundary:
+(keyframe) store snapshot → (keyframe) optional retrieve + apply priors
+inserted between MapSurface update and policy selection.
+
+Note: 
+Each cognitive cycle ends by selecting/executing an action that changes the env, then the system immediately starts the next cognitive cycle when the env produces the next EnvObservation.
+
+Whether the next cycle is a keyframe is decided fresh each cycle based on the keyframe triggers (stage/zone boundary, forced snapshot, periodic keyframe, etc.)
+
+Note:
+Predictions/hypotheses exist, are compared to the next observation, and produce a mismatch signal (v0 “prediction error vector” plan is already aligned with this).
+
+An optional internal reprocessing loop exists as a reserved capability, where intermediate results can be fed back into the next cycle’s “input stream” (or internal buffer) instead of (or in addition to) relying purely on fresh external observation. This is the CCA8 analog to the “feed WNM back to association modules” idea in the published papers on the CCA.
+
+Predictive coding note: predicted postconditions (Scratch) and/or retrieved priors (keyframes) are hypotheses; the next EnvObservation is the refutation/confirmation signal; mismatch is computed and can later drive retrieval guards + reconsolidation. 
+
+Reserved internal-feedback loop: if no actionable output (or persistent mismatch), the architecture may feed intermediate results back into an internal input buffer and reprocess in the next cognitive cycle(s), analogous to the CCA feedback-to-association-modules mechanism.
+
+
+**At a keyframe cycle, this ordering is a MUST:**
+
+PREVIOUS KEYFRAME/COG CYCLE →
 EnvObservation → BodyMap update → MapSurface update →
-(optional) store snapshot to Column + write WG pointer →
-(optional) auto-retrieve + apply (replace or seed/merge) →
-policy selection → policy execution (Scratch S–A–S chain) → action feedback to env
+(keyframe) store snapshot to Column + write/refresh WG pointer →
+(keyframe) optional auto-retrieve + apply (replace or seed/merge) →
+policy selection → policy execution (Scratch S–A–S chain) → action feedback to env 
+→ START NEW KEYFRAME/COG CYCLE
 
-This ordering ensures that retrieval can influence action selection on that same boundary cycle.
+This invariant is intentionally strict:
+
+- Store MUST run after MapSurface has been updated from the current EnvObservation (store coherent boundary truth, not stale belief).
+- Retrieve/apply (if enabled) MUST run before policy selection so priors can influence that same boundary cycle’s action selection.
+- Retrieve MUST exclude the engram just stored on this same keyframe (no trivial self-retrieval).
+- Apply mode MUST be explicit (replace vs seed/merge) to prevent silent “prior overwrote observation truth.”
+
+Reserved future slot (consolidation/reconsolidation write-back):
+- After the decision is made (policy selection + execution), a keyframe may optionally run a write-back hook that:
+  - writes new engrams (copy-on-write) and/or patch records, and
+  - updates WorldGraph pointer bindings for future retrieval,
+  without changing the belief state that was already used for action selection in that same cycle.
+
+#### Future: consolidation + reconsolidation slot (design contract; copy-on-write)
+
+Terminology:
+- Consolidation = boundary snapshot store (MapSurface → Column engram) with a lightweight WorldGraph pointer/index.
+- Reconsolidation = retrieve prior snapshot(s) → integrate new evidence → write a corrected snapshot/patch as a NEW engram (never mutate old).
+
+Engram immutability rule:
+- Column engram payloads are immutable records.
+- Any “update” is represented by asserting a new engram_id and recording ancestry (e.g., parent_eids), plus updating a pointer binding.
+
+Proposed reconsolidation lifecycle (when implemented):
+1) Retrieve:
+   - Select eid_old candidate(s) using WorldGraph pointer bindings (stage/zone/epoch tags + cue/pred overlap scoring).
+   - Apply as priors via an explicit mode (replace or seed/merge).
+2) Integrate:
+   - Across subsequent cycles, EnvObservation continues to overwrite belief-now slots.
+   - Track provenance where helpful (observed vs prior) and record which slot-families were corrected (mismatch bookkeeping).
+3) Decide to write-back:
+   - Triggers may include:
+     - prediction-error/mismatch over a threshold for K cycles,
+     - a successful alignment/merge producing a stable corrected map,
+     - an explicit “commit” policy at a stage/zone boundary.
+4) Write (copy-on-write):
+   - Create eid_new by storing a corrected MapSurface snapshot or a patch record.
+   - Include meta such as:
+     - parent_eids=[...],
+     - reason='reconsolidation',
+     - context tags (stage/zone/epoch),
+     - mismatch summary (what changed and why),
+     - created_at timestamp.
+5) Re-index:
+   - Update/append WorldGraph pointer bindings to prefer eid_new, while retaining eid_old for traceability and comparisons.
+6) Guardrails (non-negotiable):
+   - Never delete/overwrite eid_old automatically.
+   - Never allow immediate self-retrieval loops (exclude eid_new on the same keyframe it was created).
+   - Never inject cue:* from memory into live belief in seed/merge mode (no cue leakage).
+7) Schema/world-model memory (later still):
+   - Prefer patch logs + periodic checkpoints over full-copy snapshots to prevent blowup.
+   - Keep a materialized “latest” plus an immutable patch history so we can audit learning steps.
+
+
+
 
 #### Debugging and invariants
 
@@ -2475,16 +2613,16 @@ CCA8 uses four orthogonal time measures. They serve different purposes and are i
 *Source:* a loop in the runner that evaluates policies once and may write to the WorldGraph. When that write occurs, we mark a **temporal boundary (epoch++)**. :contentReference[oaicite:0]{index=0}
 
 With regards to its effects on timekeeping, **when a Controller Step occurs**:
-i) **controller_steps**: ++ once per controller step  
+i) **controller_steps**: ++ every Action Center evaluation
 ii) **temporal drift**: ++ (one soft-clock drift) per controller step  
 iii) **autonomic ticks**: no change  
 iv) **developmental age**: no change  
-v) **cognitive cycles**: ++ if there is a write to the graph (nb. need to change in the future)
-                               Cognitive cycles are currenlty counted only in Instinct Step (productive writes) (to change in future)
-
+v) **cognitive cycles**: every closed-loop env <--> controller iteration
+                             
+                             
 With regards to terminology and operations that affect controller steps:
 **“Action Center”** = the engine (`PolicyRuntime`).
-**“Controller step”** = one invocation of that engine.
+**“Controller step”** = one invocation of that engine
 **“Instinct step”** = diagnostics + **one controller step**.
 **“Autonomic tick”** = physiology + **one controller step**.
 **“Simulate fall”** = inject fallen + **one controller step** (no drift) (but no cognitive cycle increment)
@@ -2502,16 +2640,20 @@ With regards to terminology and operations that affect controller steps:
 **4) Developmental age (days)** — a coarse developmental measure used for stage gating.  
 *Source variable:* `ctx.age_days` (float), advanced along with autonomic ticks; used by `world.set_stage_from_ctx(ctx)`. :contentReference[oaicite:5]{index=5}
 
-**5) Cognitive cycles** — a derived counter for end-to-end loops that **produced an output**  
-(sense → decide → act that resulted in a write).
+**5) Cognitive cycles** — a derived counter for CLOSED-LOOP env↔controller iterations  
+(EnvObservation → internal update → (keyframe optional store/retrieve/apply) → policy select/execute → action feedback to env).
 
 *Purpose:* progress gating & timeouts (e.g., “if no success in N cycles, switch strategy”), analytics.
 
 *Source variable:* `ctx.cog_cycles` (int).  
-*Runner rule (current build):* increment when an Instinct step **returns `status=="ok"` and the graph grew** (bindings_after > bindings_before).  
-*Contrast with controller steps:* a controller **step** runs every time you invoke the Action Center once; a **cognitive cycle** only increments on steps that actually produced an output/write.
+*Where incremented today:* in the HybridEnvironment closed-loop paths (menu 37), once per env↔controller iteration (ordinary or keyframe).  
+*Not incremented by:* controller-only paths (Instinct Step, Autonomic Tick, Simulate Fall), which can still advance `controller_steps` and temporal drift.
 
-*Recommended invariants:* `cog_cycles ≤ controller_steps`; epochs increment only on boundary jumps (writes or τ-cuts), never decrement.
+*Contrast with controller steps:* `controller_steps` counts every Action Center invocation; within menu 37 runs, we execute exactly one controller step per cognitive cycle, so in those runs `controller_steps` and `cog_cycles` advance together. Outside the env-loop, `controller_steps` may advance without `cog_cycles`.
+
+*Recommended invariants:* `cog_cycles ≤ controller_steps`; epochs (`ctx.boundary_no`) increment only on boundary jumps (writes or τ-cuts), never decrement.
+
+
 
 ### Event boundaries & epochs
 
@@ -2542,9 +2684,6 @@ A thresholded segmentation (“τ-cut”) can also force a boundary when `cos_to
 
 ### Q&A to help you learn this section
 
-Q: What’s the difference between controller_steps and cog_cycles?
-A: controller_steps counts every invocation of the Action Center (each time we ask “what should I do?”). cog_cycles only increments when a controller step actually produced a write to the WorldGraph in the Instinct step. So cog_cycles ≤ controller_steps by design.
-
 Q: When do we increment ticks (autonomic ticks) versus controller_steps?
 A: ticks increment only in the Autonomic Tick path (heartbeat: physiology, drive updates, time-based age). controller_steps increment whenever a controller step runs (Instinct step, Autonomic tick, simulate fall, env-loop, etc.). They are orthogonal measures.
 
@@ -2558,7 +2697,6 @@ Q: Why do we maintain both wall-clock created_at timestamps and a soft temporal 
 A: Wall-clock is great for logs and cross-run inspection, but awkward for unitless similarity and segmentation. The soft temporal vector gives a cheap, unitless notion of “near in time” (via cosine) and supports operations like “time-aware similarity” and “episode segmentation” without relying on wall-clock units.
 
 ---
-
 
 
 
@@ -4225,6 +4363,82 @@ This aligns with the article’s emphasis on verifiers + provenance, without com
 
 
 
+
+
+# Prediction error and predictive coding
+
+
+## Predictive coding (high-level intuition)
+
+- Many theories of cortical computation treat perception as a constant negotiation between:
+  (a) top-down predictions (what I expect to be true next), and
+  (b) bottom-up evidence (what the sensors actually delivered).
+- The useful signal is the mismatch (prediction error). It can:
+  - gate attention and retrieval (“do I need priors?”),
+  - drive consolidation / reconsolidation decisions (“should I store a corrected map?”),
+  - shape action selection (avoid repeating policies that consistently fail to produce their predicted postcondition).
+
+
+
+## CCA8 implementation overview
+
+- In CCA8, predicted outcomes are written as hypotheses, not truth:
+  - WorkingMap.Scratch stores a short S–A–S chain whose final pred:abcd node is the postcondition hypothesis.
+  - EnvObservation remains the authority for “truth-now” when it is present.
+- We compute prediction error by comparing a prior cycle’s hypothesis to the next cycle’s observation.
+
+
+
+### Prediction error v0 (minimal signal; posture only)
+
+- v0 is version 0
+- v0 stores one predicted postcondition component:
+  - predicted next posture (standing vs fallen), attributed to the policy that produced it.
+- On the next cognitive cycle, we compare:
+  - pred_posture (from the last cycle’s Scratch postcondition) vs
+  - obs_posture (from the new EnvObservation / env state report).
+- The resulting error vector is a tiny dict with binary components:
+  - 0 means match
+  - 1 means mismatch
+
+Log line format (example):
+
+[pred_err] v0 err={'posture': 1} pred_posture=standing obs_posture=fallen from=policy:stand_up
+
+
+
+
+
+## Partial observability knob (new section)
+
+
+
+Motivation
+- Real sensory systems are incomplete and noisy.
+- To make priors and retrieval behavior meaningful in CCA8, we need the agent to sometimes *not* receive some facts that are present in the environment.
+- The goal of this knob is experimental:
+  - create missing facts so seed/merge priors can visibly fill gaps,
+  - create prediction mismatches so error signals become informative,
+  - without changing the underlying EnvState truth in the simulator.
+
+Knob: obs_mask_prob (runtime context)
+- ctx.obs_mask_prob is a probability in [0.0..1.0].
+- When > 0, a fraction of EnvObservation predicates/cues are dropped before they are written into memory systems.
+- Default is 0.0 (fully observed), preserving current behavior.
+-Implementation note: masking happens in the runner before BodyMap and WorkingMap are updated, so it directly affects “belief-now” and policy selection (not just long-term logging).
+
+
+Safety guardrails (v0)
+- A small set of safety-critical predicate families is protected from dropping:
+  - posture:*
+  - hazard:cliff:*
+  - proximity:shelter:*
+- This keeps zone classification and basic safety gating stable, even when other facts are missing.
+
+Log line
+When masking actually drops anything, the runner prints:
+
+[obs-mask] dropped preds=2/12 cues=1/4 p=0.20 protected=3
 
 
 
