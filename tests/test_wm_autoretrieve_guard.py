@@ -56,11 +56,16 @@ def test_guard_not_boundary_returns_not_boundary_even_if_enabled():
     assert out["why"] == "not_boundary"
 
 
+
 def test_guard_enabled_boundary_allows_and_normalizes_mode_and_topk():
     ctx = Ctx()
     ctx.wm_mapsurface_autoretrieve_enabled = True
     ctx.wm_mapsurface_autoretrieve_mode = "REPLACE"
     ctx.wm_mapsurface_autoretrieve_top_k = 999  # should clamp to 10
+
+    # Minimal gating: ensure the guard has a reason to attempt retrieval at this boundary.
+    # v0 pred error is the simplest stable trigger for "need_priors".
+    ctx.pred_err_v0_last = {"posture": 1}
 
     out = should_autoretrieve_mapsurface(
         ctx,
@@ -73,6 +78,6 @@ def test_guard_enabled_boundary_allows_and_normalizes_mode_and_topk():
     )
 
     assert out["ok"] is True
-    assert out["why"] == "enabled_boundary"
+    assert out["why"] == "enabled_boundary_pred_err"
     assert out["mode"] == "replace"
     assert out["top_k"] == 10

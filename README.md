@@ -1,11 +1,19 @@
 # CCA8  — Project Documentation -- Compendium (README.md)
 
+
+
 Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 
 
 
 
-# **TL;DR == One-minute summary**
+
+# Executive Overview`
+
+
+
+
+## **TL;DR == One-minute summary**
 
 ● **Simulates a mammalian brain**
 
@@ -25,7 +33,7 @@ Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 
 
 
-# **TL;DR == Five-minute summary**
+## **TL;DR == Five-minute summary**
 
 ● The CCA8 Project is the simulation of a brain inspired by a mountain goat through its lifecycle. It is intended as a testbed of the navigation map-based theory of mammalian brain evolution and functioning (see References for academic citations). 
 
@@ -106,190 +114,191 @@ of birth, and by one week can climb most places its mother can)*
 
 
 
-# **15-minute summary**
+## **15-minute summary**
 
 
+**Goal (what you should accomplish in ~15 minutes)**
 
-## Executive Overview
+In ~15 minutes, you should be able to:
 
-CCA8 aims to simulate early mammalian cognition with a **small symbolic episode index** (the *WorldGraph*) coordinating **rich engrams** (perceptual/temporal content) in a column provider. Symbols are used for **fast indexing & planning**, not as a full knowledge store.
+- start the newborn mountain-goat simulation,
+- run a short closed-loop episode (environment ↔ controller) using **menu 37**,
+- recognize **keyframes**, the **WM⇄Column memory pipeline** (store/retrieve/apply), and **prediction error v0** in the terminal,
+- and optionally flip one knob (**partial observability**) to see priors start to matter.
 
-**Core model:**
+This is intentionally optimized for “I ran it and saw it work” rather than deep theory.
 
-- **Binding** — a node instance that *carries* one or more tags, including `pred:<token>`, plus `meta` and optional `engrams`; bindings can hold predicates pred:<tag>, actions action:<tag>, anchors, cues
 
-- **Edge** — a directed link between bindings with a label (often `"then"`) representing **weak, episode-level causality** (“this led to that”).  
 
-- **WorldGraph** — the directed graph composed of these bindings and edges, supports **BFS planning**.  
+### 0) Start the program (1–2 minutes)
 
-- **Policy (primitive)** — an instinctive behavior with `dev_gate(ctx)` + `trigger(world, drives, ctx)` + `execute(world, ctx, drives)`. Each tick, CCA8 forms a candidate set (dev_gate + trigger + safety filters) and selects ONE winner: drive-urgency “deficit” score → non-drive priority → (if RL enabled: epsilon exploration / learned q tie-break) → stable policy order.
 
-- **Provenance** — when a policy creates a new binding, its name is stamped into `binding.meta["policy"]`.  
+**If you copied all files from GitHub to your local directory the code should readily run:**
 
-- **Autosave/Load** — a JSON snapshot persists (world, drives, skills) with `saved_at`, written via atomic replace.
-  *--> See Tutorial Sections below for more information*
-  
-  
+*>python cca8_run.py*
 
-## Newborn Mountain Goat: stand → mom → nipple → drink (5-step demo)
 
-Here is a concrete example of a short episode you can build by hand or through the menu.
-*(Note: Software may change in the future. If exact menu selections are not available, please choose similar items. Nov, 2025.)*
 
-1) Start or resume
+nb- Optional: If you want to specifically specify a fresh session and the autosave file:
 
-`python cca8_run.py --autosave session.json`
+*>python cca8_run.py --autosave session.json*
 
-Pick **Profile 1: Mountain Goat** when prompted.
 
-2) Note binding IDs you’ll need
+nb- Optional: If you want to resume a prior session:
 
-**Show last 5 bindings**  anytime to grab the newest IDs you create.
+*>python cca8_run.py --load session.json --autosave session.json*
 
-3) (Optional) Prime drives and cues
-* Select 'Autonomic tick' once or twice, then `D` Show drives (aim for `drive:hunger_high`).
 
-* Select Add sensory cue a few times:
-  
-  * `vision` → `silhouette:mom`
-  
-  * `smell` → `milk:scent`
-  
-  * `sound` → `bleat:mom`
-4) Create milestones (add predicates), then wire edges
+nb- Optional: If you want an optional confidence check that all code is operating properly (this will also include
+checks for supported hardware embodiments if you are using this project for a robotics project): 
 
-**A. Stand first**
+*>python cca8_run.py --preflight*  
 
-1. Add predicate → `stand` → note ID, e.g., `b2`.
 
-2. Connect two bindings:
-   
-   * Source: `<NOW_id>` (e.g., `b0`)
-   
-   * Destination: `<stand_id>` (e.g., `b2`)
-   
-   * Relation: `stand_up`
 
-**B. Approach mom**
+     
+**You will now see a welcome screen, and a small menu allowing you to choose simulation of**
+**agents ranging from a Mountain Goat-like brain to a Super-Human-like machine simulation.**
 
-1. Add predicate → `mom:close` → note ID, e.g., `b3`.
 
-2. Connect:
-   
-   * Destination: `<mom_id>` (e.g., `b3`)
-   
-   * Relation: `approach`
+**Choose Profile 1: Mountain Goat**
 
-**C. Find nipple**
+You will now see the Main Menu.
 
-* Source: `<stand_id>` (e.g., `b2`)
-1. Add predicate → `nipple:found` → ID `b4`.
 
-2. Connect `b3 → b4` with relation `search`.
 
-**D. Latch**
 
-1. Add predicate → `nipple:latched` → ID `b5`.
 
-2. Connect `b4 → b5` with relation `latch`.
 
-**E. Drink**
 
-1. Add predicate → `milk:drinking` → ID `b6`.
 
-2. Connect `b5 → b6` with relation `suckle`.
-5) Verify with planning
-* Plan from NOW → `<predicate>`
+### 1) Run a closed-loop newborn-goat episode (5–7 minutes)
 
-* Target: `milk:drinking`
 
-* Expect a path like: NOW (b0) → stand (b2) → mom:close (b3) → nipple:found (b4) → nipple:latched (b5) → milk:drinking (b6)
+**From the main menu:**
 
-----------------------------
+Select menu 37: Run N Cognitive Cycles (closed-loop env↔controller iteration)
 
 
+Enter N = 20 (or N = 25).
 
-**Useful Command-line Quickstarts:**
 
-Start a new simulation: *>python cca8_run.py*
+**What you should see over a short run:**
 
-Start a new simulation and autosave it:  *>python cca8_run.py --autosave mysession.json*
+The Mountain Goat calf starts as fallen on the ground, then StandUp tries to produce standing.
 
-Resume a previous simulation and autosave it to the same file:
-         *>python cca8_run.py  --load mysession.json --autosave mysession.json*
+Mom proximity and nipple availability change by storyboard + action feedback from the agent.
 
-Resume a previous simulation and autosave it to a new file:
-         *>python cca8_run.py  --load mysession.json --autosave newfile.json*
+The trace becomes a readable story (“fell → stood → followed mom → found nipple → latched → rested”), even in early builds.
 
-(Note: the order of --load and --autosave doesn't matter )
 
-Version info (all components): *>python cca8_run.py --about*
 
-Runner (main program) Version only: *>python cca8_run.py --version*
+### 2) How to read the terminal output (2–3 minutes)
 
-Preflight self-testing (four parts):   *>python cca8_run.py --preflight*
 
-Use with robotic embodiment: *>python cca8_run.py --hal --body myrobot*
+**Two counters you will see (different meanings)**
 
+cognitive_cycle=1/N ... (agent loop counter for this run)
 
+env_step=0,1,2,... (environment step index since reset; 0-indexed)
 
-**CCA8 Python Major Modules:**
+**Lines to look for (these are the “heartbeats”)**
 
-cca8_run.py (informal name: "Runner module" or "Main module")
+Environment truth (storyboard state):
 
-cca8_world_graph.py (informal name: "WorldGraph module")
+[env] ... stage=... posture=... mom=... nipple=...
 
-cca8_column.py  (informal name: "Column module")
+Keyframes (stage/zone boundaries):
 
-cca8_controller.py  (informal name: "Controller module")
+[env→world] KEYFRAME: ...
 
-cca8_features.py  (informal name: "Features module")
+[wm<->col] store: ...
 
-cca8_temporal.py (informal name: "Temporal module")
+[wm<->col] retrieve: ...
 
-cca8_env.py (informal name: "Environment module")
+[wm<->col] apply: ...
 
-cca8_test_worlds.py (informal name: "Test Worlds module")
+**Predictive coding / mismatch signal:**
 
+[pred_err] v0 err={'posture': 0|1} pred_posture=... obs_posture=... from=policy:...
 
+0 means “prediction matched observation”
 
+1 means “prediction mismatched observation”
 
+v0 is intentionally minimal (posture only)
 
-### Q&A to help you learn the big picture
+**Per-cycle summary (fast sanity line):**
 
-Q: What is the core split in CCA8’s memory representation?
-A: A small symbolic WorldGraph (~5%) used for fast indexing and planning, and rich engrams (~95%) stored in Columns. The graph knows “what led to what”; the engrams hold heavy perceptual/temporal content.
+[env-loop] summary ... env_step=... stage=... env_posture=... bm_posture=... last_policy=... zone=...
 
-Q: In the 5-step newborn demo, what does the planner actually search over?
-A: It runs BFS from the NOW anchor over directed edges and looks for any binding whose tags contain the target pred:<token> (e.g., pred:milk:drinking). It doesn’t care about engram payloads; only tags and edges matter for planning.
 
-Q: Why is StandUp the first primitive in the newborn goat’s repertoire?
-A: Because standing up is a precondition for almost everything else in the newborn vignette (orienting to mom, seeking the nipple, moving to shelter). It’s both ethologically plausible and structurally convenient: it creates the first meaningful S–A–S pattern (fallen → actions → standing) in the WorldGraph.
 
-Q: Where is provenance recorded in step 5 (drink)?
-A: On each binding created by a policy, e.g.
-binding.meta["policy"] = "policy:seek_nipple" or "policy:suckle". This lets you reconstruct “which policy wrote this node” when reading graphs or debugging.
+### 3) Optional experiment: partial observability (2–3 minutes)
 
-Q: Why did you decide to keep control flow (policies) outside the graph instead of encoding everything as rules in the graph?
-A: To keep the system readable, testable, and flexible. Small, handwritten policies are easy to reason about and modify; the graph records what actually happened (episodes), not entire control logic. This follows the “index vs representation” and “program + data” split, rather than trying to cram cognition into a single giant graph.
 
-Q: Which primitives form “standing”?  
-A: `action:push_up`, `action:extend_legs`, and the predicate `pred:posture:standing` (based on the `posture:standing` tag).
 
-Q: What’s the planner algorithm?  
-A: BFS from NOW to the first pred:<token> match.
+**Optional: If you want to see that priors matter, enable observation masking:**
 
-Q: What’s the key separation in CCA8?  
-A: A compact symbolic episode index** (WorldGraph) for fast lookup/plan, and rich engrams** outside the graph for heavyweight content.
+Go to menu 40: Configure episode starting state (drives + age_days)
 
-Q: Are edges logical implications?  
-A: No—edges encode weak, episode-level causality** (“then”), good for action and recall without heavy inference.
+Set:
 
-Q: Why not store everything in the graph? 
-A: Keeping symbols small avoids brittleness and keeps planning fast, the heavy 95% lives in engrams referenced by bindings.
+obs_mask_prob = 0.20 (leave drives as-is for now)
 
-Q: How does this help planning? 
-A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph is shaped for that.
+(Optional, for reproducible experiments) Also set:
+
+obs_mask_seed = 123
+
+- If obs_mask_seed is set (an int), masking is reproducible across runs.
+- If obs_mask_seed is None/off, masking uses the global RNG (still random).)
+
+
+Run menu 37 again for N = 20.
+
+What you should notice:
+
+Occasional lines like:
+
+[obs-mask] config mode=seeded seed=123 step_ref=... p=0.20 protected=3
+[obs-mask] dropped preds=... cues=... p=0.20 ...
+
+On masked cycles, the WorkingMap update will be missing some facts.
+
+Keyframe retrieval becomes more meaningful (you may see more non-trivial merge/apply summaries).
+
+Tip: set obs_mask_prob back to 0.00 for “fully observed baseline” runs.
+
+
+
+### 4) Quick ways to confirm you “used the system” (2 minutes)
+
+
+
+**After a menu 37 run:**
+
+Display snapshot / world stats (to see NOW/LATEST, counts, drives, CTX timekeeping).
+
+Plan from NOW to a target predicate (e.g., milk:drinking) to confirm the episode index is searchable.
+
+Export interactive graph (HTML) if you want a visual of the episode skeleton.
+
+
+**Where to learn more (after the first run)**
+
+Once you’ve seen one closed-loop episode run successfully, take a look at other sections in this documentation:
+
+
+“Memory Systems in CCA8” (overview of BodyMap / WorkingMap / WorldGraph / Columns)
+
+“Tutorial on Cognitive Cycles” (keyframes vs ordinary cycles; pipeline ordering invariant)
+
+“Tutorial on Timekeeping” (controller_steps vs cog_cycles vs epochs)
+
+“Prediction error and predictive coding” (how v0 is implemented; planned upgrades)
+
+
+
 
 ---
 
@@ -307,9 +316,6 @@ A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph 
 - [Restricted Lexicon (Developmental Vocabulary)](#restricted-lexicon-developmental-vocabulary)
 - [Signal Bridge (WorldGraph ↔ Engrams)](#signal-bridge-worldgraph--engrams)
 - [Architecture](#architecture)
-  - [Modules (lean overview)](#modules-lean-overview)
-  - [Timekeeping in CCA8 (five measures)](#timekeeping-in-cca8-five-measures)
-  - [Data flow (a controller step)](#data-flow-a-controller-step)
 - [Action Selection: Drives, Policies, Action Center](#action-selection-drives-policies-action-center)
 - [Planner Contract](#planner-contract)
 - [Planner: BFS vs Dijkstra (weighted edges)](#planner-bfs-vs-dijkstra-weighted-edges)
@@ -332,7 +338,10 @@ A: BFS over a sparse adjacency list gives shortest-hop paths quickly, the graph 
 
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
 - [Tutorial on WorkingMap](#tutorial-on-workingmap)
+- [Memory Systems in CCA8](#memory-systems-in-cca8)
 - [WorkingMap Layer Contracts](#workingmap-layer-contracts)
+- [Tutorial on Timekeeping](#tutorial-on-timekeeping)
+- [Tutorial on Cognitive Cycles](#tutorial-on-cognitive-cycles)
 - [Prediction error and predictive coding](#prediction-error-and-predictive-coding)
 - [Binding and Edge Representation](#binding-and-edge-representation)
 - [Anchors, LATEST, and Base-Aware Writes](#anchors-latest-and-base-aware-writes)
@@ -761,1236 +770,6 @@ A: JSON keeps sessions portable and debuggable, binary would be smaller but opaq
 
 
 
-
-
-
-## Memory systems in CCA8: BodyMap, WorkingMap, WorldGraph, and Engrams
-
-CCA8 uses several small “maps” as well the large WorldGraph map for its memory store. The key idea is to separate:
-
-- **what must be correct right now** (for action selection),
-- **what we want to keep as a detailed trace** (for debugging / later consolidation),
-- **what we want to keep long-term** (for planning and inspection),
-- **and where heavy data lives** (engrams).
-
-
-
-### Navigation maps and memory pipeline contracts
-
-This subsection distills repeated Q&A from Phase VII–VIII design review into explicit “map contracts” and a quick reading guide
-for env-loop outputs (MapSurface entity table + WorkingMap autosnapshot).
-
-#### One-line roles (“what question does this map answer?”)
-
-- BodyMap: “what is true of my body / peripersonal near-space right now (fast gating)?”
-- WorkingMap.MapSurface: “what do I believe about the scene right now (semantic state table)?”
-- WorkingMap.Scratch: “what did I just try to do, and what outcome did I expect (procedural trace)?”
-- WorkingMap.Creative: “what candidate futures did I simulate (counterfactual rollouts; future)?”
-- WorldGraph (long-term): “what happened over time (episode index + planning skeleton)?”
-- Columns/Engrams: “where does the heavy payload live (stored map instances / scenes / features)?”
-
----
-
-## A. Dataflow chart: where information goes each step
-
-External world:
-EnvState  →  PerceptionAdapter  →  EnvObservation
-
-Agent-side memory pipeline (normal env-loop):
-EnvObservation
-  → BodyMap update (always; fast scalar/slot cache for gates)
-  → WorkingMap.MapSurface update (if enabled; semantic state table)
-  → WorldGraph injection (if enabled; sparse long-term trace; changes/snapshot + keyframes)
-  → Action Center selects a policy (reads BodyMap + MapSurface/WG neighborhood)
-  → Policy executes (writes action chains + outcomes; may write into WM-first or WG depending on Phase VII knobs)
-  → Selected policy name is fed back to HybridEnvironment.step(action=...)  
-        Note: In the current runner, the chosen policy is stored and applied on the next env.step call.
-              In the runner implementation, the action is effectively applied at the cycle boundary (stored as ctx.env_last_action and used on the next loop).
-Keyframes / boundaries:
-- Store MapSurface snapshot → Column engram
-- Create WorldGraph pointer node → indexes that engram (stage/zone/salience tags)
-- Optional auto-retrieve at boundary → apply prior map to WorkingMap (replace or seed/merge)
-
----
-
-### The CCA8 cognitive cycle (closed-loop env↔controller iteration)
-
-In the CCA8, a cognitive cycle is one iteration of the closed-loop interaction between:
-(1) the environment producing an observation, and
-(2) the agent updating its internal maps, selecting a policy, and executing that policy,
-followed by feeding the selected action back to the environment.
-
-Terminology note:
-- cognitive_cycle is the agent’s “sense → decide → act” iteration (often printed as 1/5, 2/5, … in menu 37).
-- env_step (or step_index) is the environment’s internal 0-indexed counter since the last reset.
-
-**Cognitive cycle** = every closed-loop iteration:
-EnvObservation → update internal state (BodyMap/WorkingMap/MapSurface) → select policy → execute policy (Scratch S–A–S chain) → act
-
-**Keyframe cycle** = a cognitive cycle where the “keyframe flag” is true, meaning we additionally run the WM ⇄ Column engram pipeline at the boundary:
-(keyframe) store snapshot → (keyframe) optional retrieve + apply priors
-inserted between MapSurface update and policy selection.
-
-Note: 
-Each cognitive cycle ends by selecting/executing an action that changes the env, then the system immediately starts the next cognitive cycle when the env produces the next EnvObservation.
-
-Whether the next cycle is a keyframe is decided fresh each cycle based on the keyframe triggers (stage/zone boundary, forced snapshot, periodic keyframe, etc.)
-
-Note:
-Predictions/hypotheses exist, are compared to the next observation, and produce a mismatch signal (v0 “prediction error vector” plan is already aligned with this).
-
-An optional internal reprocessing loop exists as a reserved capability, where intermediate results can be fed back into the next cycle’s “input stream” (or internal buffer) instead of (or in addition to) relying purely on fresh external observation. This is the CCA8 analog to the “feed WNM back to association modules” idea in the published papers on the CCA.
-
-In reprocessing mode, the architecture may temporarily down-weight or ignore fresh external observation (attention diverted) and instead iterate on an internal buffer; when external observation is present, EnvObservation remains the authority for ‘truth-now’.
-
-Note: The controller_steps counts every invocation of the Action Center (each time we ask “what should I do?”).
-cog_cycles counts closed-loop env↔controller iterations (EnvObservation → update → select/execute → action feedback).
-In menu 37 runs (and menu 35, which is now an alias that runs one closed-loop step), controller_steps and cog_cycles advance together.
-Outside the env-loop, controller_steps may advance without cog_cycles (e.g., Instinct Step, Autonomic Tick).
-
-
-
-**At a high level, each cognitive cycle proceeds as follows:**
-(Keyframe-only steps are explicitly marked.)
-
-0) Prior cycle ends; this cycle begins
-   - The previous cycle selected/executed an action (or no-op), which the environment applied.
-   - The environment now produces the next EnvObservation, beginning the next cognitive cycle.
-   - Whether this cycle is a keyframe is decided fresh each cycle (env_reset, stage/zone transitions, forced keyframes, etc.).
-
-1) Environment produces an observation (EnvObservation)
-   - HybridEnvironment generates an EnvObservation (predicates/cues + info) based on the current storyboard/world state.
-   - If actual robotic embodiment (i.e., non-simulation) then this will be actual, albeit pre-processed, sensory input values.
-   - This observation is the only authoritative source for “what is true now” in the agent’s belief state.
-
-2) BodyMap update (fast gating cache)
-   - BodyMap mirrors action-critical scalar/slot values (e.g., posture, mom_distance, nipple_state, derived safety zone, staleness).
-   - Gates consult BodyMap for fast O(1) checks (e.g., unsafe_cliff_near) without graph traversal.
-
-3) WorkingMap update: MapSurface (current belief state table)
-   - EnvObservation facts are written into WorkingMap.MapSurface using semantic addressing:
-     (entity_id, slot-family) → current value
-   - MapSurface overwrites within a slot-family (one current value per channel); it is optimized for “what do I believe right now?”
-
-4) WorldGraph observation logging (optional; per configuration)
-   - The long-term WorldGraph may receive an observation commit (append-style), subject to long-term injection settings:
-     snapshot vs changes, reassert_steps, and related verbosity knobs.
-   - This is distinct from the WM⇄Column keyframe pipeline: WorldGraph logging can occur on ordinary cycles as well.
-
-5) (KEYFRAME) WM ⇄ Column boundary pipeline (conditional; ordering invariant)
-   - If this cycle is a keyframe, run the boundary pipeline BETWEEN MapSurface update and policy selection:
-
-   5a) Store (consolidation): MapSurface → Column engram
-       - Store a MapSurface snapshot as an engram in Column memory.
-       - Write/refresh a lightweight pointer/index node in WorldGraph for later retrieval.
-
-   5b) Optional guarded auto-retrieve + apply (priors): Column → WorkingMap
-       - Optionally retrieve prior MapSurface snapshot(s) and apply them to WorkingMap:
-         - replace mode: rebuild MapSurface from the snapshot
-         - seed/merge mode: seed predicate priors only; do NOT inject cue:* tags into live belief (no cue leakage)
-       - Exclude the engram just stored on this same keyframe (no trivial self-retrieval).
-
-   5c) Temporal boundary bookkeeping (if enabled)
-       - TemporalContext is stepped each cycle and may take a boundary jump at keyframes.
-
-6) Policy selection (the decision step)
-   - The Action Center evaluates candidate policies:
-     - trigger conditions (is it relevant now?)
-     - gate conditions (is it allowed now?)
-   - Policies are scored (deficit scores, non-drive scores, and optional RL tie-breaks).
-   - The best policy is chosen for this cognitive cycle.
-
-7) Policy execution (procedural trace + predicted postcondition)
-   - The chosen policy is executed on the designated execution map (often WorkingMap).
-   - Execution writes a Scratch chain representing a State–Action–State (S–A–S) trace:
-       action:* → action:* → … → pred:* (postcondition/outcome hypothesis)
-   - The final pred:* node in Scratch represents the expected post-state (a hypothesis), not the confirmed world state.
-   - Confirmation/refutation occurs on the next cognitive cycle when the next EnvObservation arrives.
-
-8) (FUTURE, KEYFRAME OPTIONAL) Consolidation/reconsolidation write-back slot (copy-on-write)
-   - After policy selection + execution, a keyframe may optionally run a write-back hook that:
-     - writes new engrams (copy-on-write) and/or patch records (schema/world-model learning), and
-     - updates WorldGraph pointer bindings for future retrieval,
-     WITHOUT changing the belief state that was already used for action selection in this same cycle.
-   - This slot is reserved for future learning/consolidation work (reconsolidation) and is intentionally not required for v0.
-
-9) Action feedback to the environment (completes this cycle)
-   - The chosen policy name/action token is passed to HybridEnvironment.step(action=...),
-     which advances the storyboard and produces the next observation (beginning the next cognitive cycle).
-     
-10) REPEAT -- START A NEW CYCLE
-   - The next cycle may be an ordinary cognitive cycle or a keyframe cycle, depending on whether the keyframe trigger fires.
-
-
-Reading the logs:
-- env_* fields reflect the environment/storyboard truth for that cycle.
-- bm_* fields reflect the agent’s current belief cache after observation injection.
-- expected_* fields reflect policy postconditions written into Scratch (hypotheses) and are intended for prediction-error computation on subsequent cycles.
-
-
-
-### WM ⇄ Column engram pipeline (when we store, retrieve, and apply priors)
-
-CCA8 uses a two-level memory pipeline:
-- WorkingMap.MapSurface is the current belief/state table (semantic addressing by entity × slot-family).
-- Column Engrams store snapshot payloads (e.g., MapSurface snapshots) and are indexed by lightweight pointer bindings in WorldGraph.
-
-This pipeline is *not* executed on every cognitive cycle. It is primarily **keyframe-driven**.
-
-#### When the pipeline runs (trigger policy)
-
-During closed-loop runs (e.g., menu 37), the WM⇄Column pipeline runs at **keyframes**:
-- episode-start keyframe: environment reset (env_reset)
-- within-episode keyframes: scenario stage transitions and/or zone transitions
-
-Non-keyframe cycles typically do not store/retrieve; they just update BodyMap + MapSurface and execute policies.
-
-#### Store (consolidation): MapSurface → Column engram
-
-On a keyframe, after MapSurface has been updated from EnvObservation, we may store a snapshot:
-
-1) Capture: serialize MapSurface into a snapshot payload (predicates + cues + minimal meta).
-2) Assert: write payload to Column memory as an engram (dedup by signature where possible).
-3) Index: create or refresh a lightweight pointer binding in WorldGraph that points to the engram.
-
-Goal:
-- Store coherent “boundary snapshots” rather than every tick, to reduce near-duplicates and make retrieval meaningful.
-
-#### Retrieve: Column engram → WorkingMap (priors)
-
-On a keyframe, we may also attempt auto-retrieve (guarded):
-
-1) Candidate generation:
-   - Use WorldGraph pointer bindings as the searchable index (e.g., stage/zone tags).
-2) Scoring:
-   - Score candidates by overlap with current cues/preds (salience-weighted).
-3) Select:
-   - Choose the best candidate(s).
-   - Exclude the engram just stored on this same keyframe to avoid trivial self-retrieval.
-
-#### Apply modes (how a retrieved map affects current belief)
-
-We support two application modes:
-
-- Replace mode:
-  - Rebuild MapSurface from the retrieved snapshot (preds + cues restored).
-  - Useful when current belief is unreliable/empty or mismatch is high.
-
-- Seed/Merge mode:
-  - Seed MapSurface with predicate priors only.
-  - Do NOT inject cue:* tags into the live state (no cue leakage).
-  - Useful under partial observability: fill gaps without overwriting current observations.
-
-Contract:
-- MapSurface remains the “belief-now” table driven primarily by EnvObservation.
-- Retrieved content is a prior/hypothesis; it must not silently overwrite truth without an explicit mode decision.
-
-
-
-#### Ordering within a cognitive cycle (INVARIANT)
-
-Note with regard to terminology: A keyframe is a cognitive cycle that triggers the WM⇄Column boundary pipeline (store/retrieve/apply); non-keyframe cognitive cycles skip those steps.
-In summary:
-**Cognitive cycle** = every closed-loop iteration:
-EnvObservation → update internal state (BodyMap/WorkingMap/MapSurface) → select policy → execute policy (Scratch S–A–S chain) → act
-
-**Keyframe cycle** = a cognitive cycle where the “keyframe flag” is true, meaning we additionally run the WM ⇄ Column engram pipeline at the boundary:
-(keyframe) store snapshot → (keyframe) optional retrieve + apply priors
-inserted between MapSurface update and policy selection.
-
-Note: 
-Each cognitive cycle ends by selecting/executing an action that changes the env, then the system immediately starts the next cognitive cycle when the env produces the next EnvObservation.
-
-Whether the next cycle is a keyframe is decided fresh each cycle based on the keyframe triggers (stage/zone boundary, forced snapshot, periodic keyframe, etc.)
-
-Note:
-Predictions/hypotheses exist, are compared to the next observation, and produce a mismatch signal (v0 “prediction error vector” plan is already aligned with this).
-
-An optional internal reprocessing loop exists as a reserved capability, where intermediate results can be fed back into the next cycle’s “input stream” (or internal buffer) instead of (or in addition to) relying purely on fresh external observation. This is the CCA8 analog to the “feed WNM back to association modules” idea in the published papers on the CCA.
-
-Predictive coding note: predicted postconditions (Scratch) and/or retrieved priors (keyframes) are hypotheses; the next EnvObservation is the refutation/confirmation signal; mismatch is computed and can later drive retrieval guards + reconsolidation. 
-
-Reserved internal-feedback loop: if no actionable output (or persistent mismatch), the architecture may feed intermediate results back into an internal input buffer and reprocess in the next cognitive cycle(s), analogous to the CCA feedback-to-association-modules mechanism.
-
-
-**At a keyframe cycle, this ordering is a MUST:**
-
-PREVIOUS KEYFRAME/COG CYCLE →
-EnvObservation → BodyMap update → MapSurface update →
-(keyframe) store snapshot to Column + write/refresh WG pointer →
-(keyframe) optional auto-retrieve + apply (replace or seed/merge) →
-policy selection → policy execution (Scratch S–A–S chain) → action feedback to env 
-→ START NEW KEYFRAME/COG CYCLE
-
-This invariant is intentionally strict:
-
-- Store MUST run after MapSurface has been updated from the current EnvObservation (store coherent boundary truth, not stale belief).
-- Retrieve/apply (if enabled) MUST run before policy selection so priors can influence that same boundary cycle’s action selection.
-- Retrieve MUST exclude the engram just stored on this same keyframe (no trivial self-retrieval).
-- Apply mode MUST be explicit (replace vs seed/merge) to prevent silent “prior overwrote observation truth.”
-
-Reserved future slot (consolidation/reconsolidation write-back):
-- After the decision is made (policy selection + execution), a keyframe may optionally run a write-back hook that:
-  - writes new engrams (copy-on-write) and/or patch records, and
-  - updates WorldGraph pointer bindings for future retrieval,
-  without changing the belief state that was already used for action selection in that same cycle.
-
-#### Future: consolidation + reconsolidation slot (design contract; copy-on-write)
-
-Terminology:
-- Consolidation = boundary snapshot store (MapSurface → Column engram) with a lightweight WorldGraph pointer/index.
-- Reconsolidation = retrieve prior snapshot(s) → integrate new evidence → write a corrected snapshot/patch as a NEW engram (never mutate old).
-
-Engram immutability rule:
-- Column engram payloads are immutable records.
-- Any “update” is represented by asserting a new engram_id and recording ancestry (e.g., parent_eids), plus updating a pointer binding.
-
-Proposed reconsolidation lifecycle (when implemented):
-1) Retrieve:
-   - Select eid_old candidate(s) using WorldGraph pointer bindings (stage/zone/epoch tags + cue/pred overlap scoring).
-   - Apply as priors via an explicit mode (replace or seed/merge).
-2) Integrate:
-   - Across subsequent cycles, EnvObservation continues to overwrite belief-now slots.
-   - Track provenance where helpful (observed vs prior) and record which slot-families were corrected (mismatch bookkeeping).
-3) Decide to write-back:
-   - Triggers may include:
-     - prediction-error/mismatch over a threshold for K cycles,
-     - a successful alignment/merge producing a stable corrected map,
-     - an explicit “commit” policy at a stage/zone boundary.
-4) Write (copy-on-write):
-   - Create eid_new by storing a corrected MapSurface snapshot or a patch record.
-   - Include meta such as:
-     - parent_eids=[...],
-     - reason='reconsolidation',
-     - context tags (stage/zone/epoch),
-     - mismatch summary (what changed and why),
-     - created_at timestamp.
-5) Re-index:
-   - Update/append WorldGraph pointer bindings to prefer eid_new, while retaining eid_old for traceability and comparisons.
-6) Guardrails (non-negotiable):
-   - Never delete/overwrite eid_old automatically.
-   - Never allow immediate self-retrieval loops (exclude eid_new on the same keyframe it was created).
-   - Never inject cue:* from memory into live belief in seed/merge mode (no cue leakage).
-7) Schema/world-model memory (later still):
-   - Prefer patch logs + periodic checkpoints over full-copy snapshots to prevent blowup.
-   - Keep a materialized “latest” plus an immutable patch history so we can audit learning steps.
-
-
-
-
-#### Debugging and invariants
-
-- expected_* values written into Scratch are postconditions (hypotheses), not confirmed truth.
-- env_* fields reflect environment/storyboard truth for the current cycle.
-- cue leakage is disallowed in seed/merge mode.
-- “just-stored” exclusion prevents immediate self-retrieval loops.
-
-
-
-
-## B. “Chart”: contrasting the navigation maps (contracts)
-
-| Map | Primary purpose | Persistence | Addressing | Update semantics | Typical content | Must-not / pitfalls |
-|---|---|---|---|---|---|---|
-| EnvState (environment) | God’s-eye truth state for the simulator | external; overwritten each env.step | direct fields | full overwrite / deterministic evolution | posture, distances, stage, geometry | agent must never read directly |
-| EnvObservation (message) | what crosses the boundary this tick | transient | list/packet | replaced each tick | raw_sensors + predicates + cues | not “memory”; don’t treat as stored belief |
-| BodyMap | fast gating register (body + near-space) | short-lived, updated every step | direct helpers (body_posture, etc.) | overwrite slots | posture, mom distance, nipple, safety zone | avoid scanning big graphs for gates; keep BM authoritative “now” |
-| WorkingMap.MapSurface | semantic state table / scene sketch | persists across steps; prunable | (entity_id, slot-family) | overwrite per slot-family | entity anchors + slot values; schematic geometry | must not accumulate multiple values for same slot-family |
-| WorkingMap.Scratch | procedural trace (action chains) | ephemeral; accumulates until pruned | structural traversal from WM_SCRATCH | append-only chains | action:* → action:* → pred:* outcome | can bloat; requires TTL/clear rule eventually |
-| WorkingMap.Creative | counterfactual futures (future) | ephemeral | structural traversal from WM_CREATIVE | append rollouts | simulated chains + scores | must not mutate MapSurface “reality” directly |
-| WorldGraph (long-term) | episode index + planning skeleton | long-lived | tags + anchors + edges | append; optionally “changes-mode” for env slots | pred/cue/action/anchor bindings + “then” edges + pointer nodes | don’t rely on “tag exists anywhere” as “true now” (esp. semantic mode) |
-| Columns/Engrams | heavy payload store | long-lived (conceptually) | engram_id | immutable records | MapSurface snapshots, feature payloads, scene blobs | keep payload out of WorldGraph; store pointers only |
-
----
-
-## C. WorkingMap.MapSurface: semantic addressing (entity × slot-family)
-
-MapSurface behaves like a semantic table implemented on a graph:
-
-- Entity anchor bindings are tagged with:
-  - wm:entity
-  - wm:eid:<entity_id>      (semantic key; e.g., self, mom, cliff)
-  - wm:kind:<kind>          (agent/shelter/hazard/...)
-  - anchor:WM_ENT_*         (human-readable anchor tag)
-
-- Slot-family (attribute channel) is encoded inside pred:* tags:
-  - pred:<slot_family>:<value>
-  - Example: pred:proximity:mom:far
-    - slot-family = proximity:mom
-    - value = far
-
-Contract:
-- An entity anchor may hold many slot-families at once (posture, proximity, hazard, etc.).
-- An entity anchor should hold exactly one value per slot-family (do not keep both far and close).
-
-Practical implication:
-- Updates do not scan all WM_ENT_* roots.
-- Updates key directly by (eid, slot-family) and replace the prior value.
-
----
-
-## D. WorkingMap.Scratch: how to read action chains
-
-Scratch is structural, not semantic-addressed. It is a subgraph rooted at WM_SCRATCH:
-
-- WM_ROOT --wm_scratch--> WM_SCRATCH
-- WM_SCRATCH has multiple then:* edges to chain heads (one per execution/proposal)
-- Each chain uses then:* edges:
-  action:*  --then-->  action:*  --then-->  pred:* (postcondition/outcome)
-
-Why chains end in pred:*:
-- The final pred:* node is the predicted/claimed outcome (“postcondition”) of the action chain.
-- This makes the trace interpretable and supports later “did the observation confirm it?” checks.
-
-Scratch accumulation:
-- Scratch is allowed to accumulate (for now) because it is a trace.
-- It will eventually need a TTL/clear rule (e.g., clear Scratch at keyframes or keep last N chains).
-
----
-
-## E. WorkingMap is planar: “layers” are anchored subgraphs
-
-WorkingMap is one graph object (“planar” in implementation terms).
-The “layers” are logical subgraphs separated by anchor nodes and edge conventions:
-
-- WM_ROOT is the hub
-  - WM_ROOT --wm_entity--> WM_ENT_* (MapSurface entities)
-  - WM_ROOT --wm_scratch--> WM_SCRATCH
-  - WM_ROOT --wm_creative--> WM_CREATIVE
-
-So “layers” are not different coordinate dimensions; they are different anchored regions of the same graph.
-
----
-
-## F. Reading the env-loop MapSurface table + autosnapshot
-
-### 1) MapSurface entity table (the compact “dashboard”)
-
-Typical columns:
-- eid: semantic entity id (self, mom, shelter, cliff, …)
-- bid: WorkingMap node id (w6, w7, …)
-- kind: agent/shelter/hazard/...
-- pos(x,y): schematic position stored in binding.meta["wm"]["pos"] with frame "wm_schematic_v1"
-- brg: bearing (degrees) from self to entity in the schematic frame
-- dist_m: meter-like distance in the schematic frame
-- class: discrete distance/hazard class (near/far/close)
-- preds (short): human-readable short summary of pred:* tags for that entity
-- seen: last controller step when the entity was updated (meta bookkeeping)
-
-Notes:
-- dist_m/brg are schematic (a readable “subway-map” geometry), not physical truth.
-
-### 2) WorkingMap autosnapshot (the literal graph view)
-
-- IDs print as wN (bN):
-  - wN is the WorkingMap display id
-  - (bN) is the internal binding id inside the WorkingMap graph
-  - Do not confuse these with the long-term WorldGraph’s bN ids.
-
-- Start from anchors, not w1:
-  - w1 may be an empty retired binding (e.g., after moving NOW onto WM_ROOT)
-  - w2 may be a leftover NOW_ORIGIN tag
-  - w3 (WM_ROOT) is the correct structural entry point
-
-Legend reminders:
-- “Legend tags” lists tag namespaces you’re seeing (anchor:, wm:, pred:, action:, cue:)
-- “Legend edges” lists edge types you’re seeing (wm_entity, wm_scratch, wm_creative, then, distance_to)
-
----
-
-## G. Keyframes: what happens at a boundary (short checklist)
-
-At a keyframe boundary (currently stage/zone changes):
-- WorldGraph long-term slot cache may reset and rewrite the stable state slots
-- MapSurface snapshot is stored to Column (dedup by signature)
-- WorldGraph pointer node is written (tags for stage/zone; carries engram pointer)
-- Optional auto-retrieve may run:
-  - replace mode: rebuild surface from snapshot
-  - seed/merge mode: seed predicates only; do not inject cue:* into live state
-- Temporal epoch/boundary tracking updates
-- Scratch is not cleared automatically (yet) → consider a future Scratch TTL rule
-
----
-
-
-## H. Anchors, episodes, and keyframes (how “boundaries” actually work)
-
-This subsection clarifies the “boundary machinery” used by the memory pipeline: anchors (`NOW`, `NOW_ORIGIN`), keyframes,
-and what “new episode” means in the newborn-goat environment loop. These details matter because they determine:
-(i) where new bindings attach, (ii) what gets stored to Columns, and (iii) how we interpret traces.
-
----
-
-### H1) Anchor semantics: `NOW` vs `NOW_ORIGIN`
-
-CCA8 uses two primary temporal anchors in both WorldGraph and WorkingMap.
-
-- **`NOW`**
-  - The *current-moment* anchor.
-  - Planning / FOA / “what should I do next?” typically begins here.
-  - It can move frequently (step-to-step, or after major events).
-
-- **`NOW_ORIGIN`**
-  - The *episode root* anchor.
-  - It is **pinned once at the start of an episode** and does not move during that episode.
-  - It is useful for whole-episode interpretation (“from the beginning of the story to here”).
-
-Important clarification:
-- “`NOW_ORIGIN` never moves” means **within an episode**.
-- On **a new episode** (environment reset), a **new `NOW_ORIGIN` is created/assigned** for that episode.
-
----
-
-### H2) “New episode” vs “keyframe”
-
-CCA8 uses the term *keyframe* for a boundary event, but not all keyframes are “new episodes.”
-
-There are two broad kinds:
-
-1) **Episode-start keyframe (env_reset)**
-   - Happens when `HybridEnvironment.reset()` is called.
-   - Starts a new episode.
-   - Establishes the episode’s `NOW_ORIGIN`.
-
-2) **Within-episode keyframes (stage/zone transitions)**
-   - Occur when the environment’s scenario stage changes (e.g., birth → struggle → first_stand),
-     and/or when safety zone changes (unsafe ↔ safe).
-   - These are meaningful segmentation points **inside the same episode**.
-   - They are used as natural storage/retrieval moments for the WM⇄Column pipeline.
-
-So:
-- **All new episodes are keyframes**, but **not all keyframes are new episodes**.
-
----
-
-### H3) Attach semantics: `attach="now"` vs `attach="latest"` (the “observation block” trick)
-
-When the environment injects an observation into a graph, we deliberately use a simple pattern:
-
-- First predicate attaches with `attach="now"`.
-- Subsequent predicates attach with `attach="latest"`.
-
-This creates one “observation block” anchored to NOW with the remaining facts chained behind it.
-
-A crucial implication:
-- The *first predicate in the list* gets the `attach="now"` treatment.
-- In the current newborn-goat environment, `posture:*` tends to be emitted first, so it often appears as the “now-attached” binding.
-  This is not because posture is magically special; it’s because of observation ordering.
-
----
-
-### H4) WorkingMap Scratch chains are written directly (not copied)
-
-When a policy executes “into WorkingMap,” it does not generate actions elsewhere and copy them into Scratch later.
-Instead:
-
-- The runner temporarily points WorkingMap’s effective `NOW` at **`WM_SCRATCH`**,
-- the policy executes and creates:
-  - `action:*` bindings and
-  - a final `pred:*` binding representing the **postcondition/outcome**,
-  using `attach="now"` then `attach="latest"` to form a `then:` chain,
-- then the runner restores `NOW` back to **`WM_ROOT`**.
-
-Result:
-- Scratch contains directly-written chains like:
-
-  `action:stand_up → action:push_up → action:extend_legs → pred:posture:standing`
-
-Why Scratch chains end in `pred:*`:
-- The final `pred:*` is the predicted/claimed outcome (postcondition). This makes traces interpretable and supports later mismatch checks
-  (“did the next EnvObservation confirm the predicted outcome?”).
-
----
-
-### H5) Anchor/navigation hygiene in WorkingMap snapshots (how to read “w1” and friends)
-
-WorkingMap autosnapshots may show:
-- an empty `w1` binding, and/or
-- an old `NOW_ORIGIN` binding that has no edges.
-
-This is typically harmless and reflects anchor migration during initialization:
-- WorkingMap may create a first anchor binding early,
-- then later re-point `NOW`/`NOW_ORIGIN` onto `WM_ROOT` for a clean hub,
-- leaving behind a retired binding with no tags/edges.
-
-Reading rule:
-- Do **not** “start at `w1`”.
-- Start at the structural hub: **`WM_ROOT`** (often the same binding tagged `anchor:NOW`).
-
----
-
-### H6) Boundary behavior checklist (what is true today vs planned)
-
-**Today (current behavior):**
-- Episode-start keyframe (reset):
-  - establishes `NOW_ORIGIN` for the new episode,
-  - writes the initial observation into memory systems,
-  - begins the WM⇄Column storage cadence.
-- Within-episode keyframes (stage/zone transitions):
-  - trigger MapSurface snapshot storage,
-  - create WorldGraph pointer nodes,
-  - may trigger guarded auto-retrieve.
-- Scratch is **not automatically cleared** yet (it accumulates action chains).
-
-**Planned (likely Phase VIII/IX cleanup):**
-- Add a Scratch TTL/cleanup rule:
-  - clear Scratch at keyframes, OR keep only last N chains.
-- Add a more meaningful auto-retrieve guard:
-  - retrieve priors primarily when cues/preds are sparse, BodyMap is stale, or mismatch is high.
-
----
-
-### H7) Mini chart: “where to look” when debugging step-by-step traces
-
-| You want to answer… | Look at… | Why |
-|---|---|---|
-| “What does the world say is happening right now?” | EnvObservation + BodyMap | BodyMap is fast “now” truth for gates |
-| “What does the agent believe right now?” | WorkingMap.MapSurface entity table | semantic state table (entity × slot-family) |
-| “What did the agent just try to do?” | WorkingMap.Scratch chains | procedural trace + predicted outcome |
-| “What happened over time (episode trace)?” | WorldGraph | long-lived symbolic trace + anchors |
-| “Where is the heavy memory?” | Column engrams | snapshot payloads; WG holds pointers only |
-| “Why is posture the now-attached env predicate?” | observation ordering + attach pattern | first predicate is attached at NOW, rest chained via LATEST |
-
----
-
-### Related to the running of the memory pipeline in Cognitive Cycles: 
-
-
-#### Debug trace fields in env-loop output: selection_on / execute_on / wg_base / wg_foa / wg_cands
-
-When running closed-loop cognitive cycle stepping (e.g., menu 37), the runner prints a compact bundle of debug fields
-that clarify “which map was used to decide” versus “which map was written to.”
-
-#### selection_on vs execute_on
-
-- selection_on = which map is used to evaluate:
-  - policy trigger/gate conditions
-  - deficits and non-drive scores
-  - “near NOW” predicate checks
-  - (debug) FOA and candidate anchors
-
-- execute_on = which map is mutated by the winning policy’s execution:
-  - action bindings written
-  - Scratch chains (action:* → ... → pred:* outcome)
-  - any policy-side trace writes
-
-Common pairing in current development:
-- selection_on=WG execute_on=WM
-
-Meaning:
-- We select actions using the long-term WorldGraph (WG) view (plus BodyMap-first values),
-- but we write the execution trace into WorkingMap (WM), keeping WG cleaner and making action traces easy to inspect.
-
-Implication for reading logs:
-- The `pre:` and `post:` explain lines are evaluated on the selection map (WG).
-- Executing on WM does not necessarily change the WG predicates immediately; the environment must confirm changes on the next tick.
-
-#### wg_base (contextual write-base suggestion)
-
-wg_base is a skeleton helper that suggests where a primitive should anchor writes in WG:
-- prefer a “nearest relevant predicate” (e.g., posture:standing) if found
-- else HERE if it exists
-- else NOW
-
-This is printed for transparency. The controller may ignore it today.
-It exists to support future “base-aware writes,” where actions anchor near relevant context rather than always at NOW/LATEST.
-
-#### wg_foa (WorldGraph Focus of Attention)
-
-wg_foa is a skeleton “attention window” on WG:
-- seeds: [LATEST, NOW] plus any cue:* nodes present
-- ids: the union of nodes within max_hops hops of each seed
-- size: len(ids) after computation
-
-It is meant as a simple, inspectable neighborhood used for debugging and as a future building block for planning.
-
-Note: you do not set size directly. You set max_hops; size is derived.
-
-#### wg_cands (candidate planning anchors)
-
-wg_cands is a skeleton list of candidate start anchors for future multi-start planning/search:
-- includes NOW
-- includes HERE if present
-- may include “nearest binding with predicate” for a few target tokens (e.g., posture:standing, stand, mom:close)
-
-Today it is primarily a debug print to show what anchors would be used if we ran K parallel searches.
-
-
-
-
-
-
-
-### Mutability and dataflow contracts (Phase VIII evaluation lens)
-
-CCA8 currently uses multiple “maps” (stores) that each serve a different purpose. The main thing to keep clear during Phase VIII is:
-what is mutable, what is append-only, and what should be treated as “truth” versus “intent/trace.”
-
-This section is a compact contract for the dataflow and mutability rules.
-
----
-
-#### The stores and their mutability contracts
-
-Environment state (truth)
-- Mutable: yes (external), authoritative.
-- Mutated by: HybridEnvironment.step(action=...).
-- Read by: the agent only via EnvObservation (not directly).
-- Purpose: ground truth; confirms/refutes predicted outcomes.
-
-EnvObservation (message)
-- Mutable: replaced each tick (transient).
-- Produced by: HybridEnvironment.reset()/step().
-- Consumed by: BodyMap + WorkingMap.MapSurface (+ optional WorldGraph logging).
-- Purpose: boundary object between world and agent; not “memory.”
-
-BodyMap (fast scalar cache)
-- Mutable: yes, overwrite-style.
-- Updated by: EnvObservation each step.
-- Read by: gates and policies for O(1) decisions.
-- Purpose: fast “reflex register” for posture, nipple_state, mom_distance, and derived safety zone.
-- Note: BodyMap is intended to be simple and authoritative for immediate gating.
-
-WorkingMap.MapSurface (current belief / semantic state table)
-- Mutable: yes, but constrained (overwrite-by-slot-family).
-- Updated by: EnvObservation; optionally by retrieval (replace or seed/merge).
-- Addressing: semantic (entity_id, slot-family) rather than by node id.
-- Purpose: “what do I believe right now?” in a form that is inspectable and action-ready.
-- Contract: do not keep multiple competing values within the same slot-family.
-
-WorkingMap.Scratch (procedural trace / intent + predicted postconditions)
-- Mutable: yes, append-only until pruned.
-- Written by: policy execution (action chains + predicted outcome predicate).
-- Addressing: structural traversal from WM_SCRATCH (not semantic).
-- Purpose: “what did I just try to do?” and “what outcome did I expect?”
-- Key property: Scratch is not truth; it is a trace / hypothesis space.
-- Operational note: Scratch accumulation is acceptable short-term but requires TTL/cleanup later (clear at keyframes or keep last N chains).
-
-WorkingMap.Creative (counterfactual rollouts; future)
-- Mutable: yes, append-only within rollouts; prunable.
-- Written by: future planning/rollout machinery.
-- Purpose: simulated “what-if” sequences that should not mutate MapSurface truth directly.
-
-WorldGraph (long-term trace + index)
-- Mutable: yes, append-style.
-- Written by: environment injection (changes/keyframes), action trace (optional), pointer nodes.
-- Purpose: “what happened over time?” + “how do I index memory?”
-- Key property: WG represents “current-ness” via anchors/chains (NOW/LATEST), not overwriting.
-- Note: WG is the commit log + pointer scaffold; it should remain lightweight.
-
-Columns / Engrams (payload store)
-- Mutable: conceptually no (append-only / immutable records).
-- Written by: snapshot store (e.g., MapSurface snapshot).
-- Read by: retrieval.
-- Purpose: heavy memory payloads (map instances / scenes / structured snapshots).
-- Rule: if memory must “update,” store a new engram and point to it; avoid in-place mutation.
-
----
-
-#### What Scratch “does” (and why it matters)
-
-Scratch operations have architectural meaning even when they do not change “truth”:
-
-- They record intent and predicted postconditions:
-  action:* → ... → pred:* (postcondition/outcome).
-- They support mismatch evaluation:
-  compare predicted postcondition vs the next EnvObservation update.
-- They prime learning:
-  RL credit (reward updates) can be associated with the executed action chain.
-- They preserve interpretability:
-  the trace shows what the agent tried and what it expected to happen.
-
----
-
-#### Phase VIII discipline: recommended dataflow rules
-
-For interpretable partial-observability experiments:
-
-- Only EnvObservation should update “truth belief” in BodyMap and MapSurface.
-- Scratch must never be treated as truth; it is trace/hypothesis.
-- WG is a commit log + index; avoid using “tag exists anywhere” as “true now.”
-- Engrams are immutable payloads; changes mean new snapshots + new pointers.
-- Retrieval application modes:
-  - replace: rebuild surface from snapshot (preds + cues)
-  - seed/merge: seed predicates only; do not inject cue:* into live state
-
----
-
-#### One-line summary (mental model)
-
-- Truth changes only in the environment.
-- Belief lives in MapSurface (plus fast BodyMap cache).
-- Intent and predicted outcomes live in Scratch.
-- History + indices live in WorldGraph.
-- Payloads live in Column Engrams.
-
-
-
-
-### 1) BodyMap (ctx.body_world): “what I believe right now”
-
-BodyMap is a tiny, structured register for body + near-world state (e.g. in the case of the goat calf, its posture, mom distance, nipple state, shelter/cliff distances).
-
-- Updated **every Cognitive Cycle** from EnvObservation.
-- Used **BodyMap-first** for policy gating (e.g., don’t execute RecoverFall when posture is already standing).
-- Can become “stale” if it hasn’t been updated recently; in that case, some gates fall back to WorldGraph.
-
-Think of BodyMap as the “fast, always-on” body schema.
-
-
-### 2) WorkingMap (ctx.working_world): short-term **map workspace (MapSurface)** + optional trace
-
-WorkingMap is a separate WorldGraph instance used primarily as an active **map workspace** (stable entities + relations updated in place each tick). A per-tick trace is optional and intended for debugging, not as the default representation.
-
-- It is deliberately **high bandwidth** and may contain repeated predicates/actions.
-- It is capped by `working_max_bindings` so long runs don’t explode memory.
-- It exists so we can keep a rich local trace **without forcing long-term memory** to store every redundant node.
-
-WorkingMap is a good place for future consolidation rules:
-“write everything to WorkingMap → copy/consolidate selected structure into WorldGraph”.
-
-
-### 3) WorldGraph (long-term): symbolic episode index for planning + inspection
-
-WorldGraph is the long-term symbolic episode index.
-
-It contains:
-- **actions and expected outcomes** written by policies (episodic “attempts”),
-- and **selected summaries of environment state** (predicates/cues) that are useful for reasoning and planning.
-
-
-#### Long-term EnvObservation → WorldGraph injection (“snapshot” vs “changes”)
-
-When the environment produces discrete predicates (posture, proximity, hazards, etc.), we can choose how aggressively to log them in the long-term WorldGraph:
-
-- `mode = snapshot`  
-  Write every observed `pred:*` each tick (dense, easy to read, can spam repeated facts).
-
-- `mode = changes`  
-  Treat many env predicates as **state slots** (e.g., `posture`, `proximity:mom`, `hazard:cliff`) and write a new `pred:*` binding only when the slot changes.  
-  This prevents “rewriting the same fact 4000×” while preserving transitions like fallen→standing→fallen.
-
-Optional flexibility knobs:
-- `reassert_steps` — re-emit unchanged slots periodically (so stable facts can be “re-observed” occasionally).
-- `keyframe_on_stage_change` — force a snapshot-like refresh when the environment’s scenario stage changes (birth→struggle→first_stand…).
-
-
-### 4) WorldGraph memory_mode: episodic vs semantic
-
-WorldGraph also has an internal memory mode:
-
-- **episodic**: every add creates a new binding (timeline-first).
-- **semantic (experimental)**: identical pred/cue tags may be consolidated to a canonical binding (clutter reduction).
-
-Important caution: semantic consolidation can make stale facts “look true forever” if code treats “tag exists anywhere” as “true now”.
-The safe trajectory is:
-- use **BodyMap / WorkingMap** for “current tick truth”,
-- use **WorldGraph** for long-term structure and episodes.
-
-
-### 5) Engrams (Column memory): heavy payloads live outside the graph
-
-WorldGraph bindings are small. Rich content (vectors, sensory payloads, scene descriptors) is stored as **engrams** in Column memory.
-Bindings can carry lightweight pointers to these engrams so you can keep the symbolic index compact while still retaining rich data.
-
-
-
-
-
-
-
-### Mammalian / Human memory systems and their CCA8 equivalents (conceptual map)
-
-This table is a *conceptual mapping*, not a claim of exact neuroanatomical equivalence. It is intended to help readers orient themselves: “if I know the human memory taxonomy, where does that live in CCA8?”
-
-| Mammalian / human memory system | What it does (brain-side) | CCA8 equivalent (architecture / simulation) |
-|---|---|---|
-| **Sensory memory** (iconic / echoic / haptic) | Very short-lived sensory traces (sub-second to a few seconds) in primary sensory cortex pipelines | **HybridEnvironment → EnvObservation** as the “incoming perceptual stream” (raw_sensors + predicates + cues). Optionally, capture as **engrams** if you want persistence. The intent is that this stream is transient and can be configured for different time windows. |
-| **Short-term memory** | Passive short holding buffer (~15–30s; classic “7±2” item framing) | **WorkingMap** as a short-term high-bandwidth trace (bounded by max_bindings) plus **BodyMap** as a tiny register. (CCA8 does not yet enforce strict capacity; instead it provides pruning knobs.) |
-| **Working memory (overall)** | Short-term + active processing (“workspace”) | **WorkingMap + PolicyRuntime/Action Center + FOA/base mechanisms**. WorkingMap holds the local trace; PolicyRuntime/Action Center selects what to do next; FOA/base are the “what is currently relevant?” scaffolds. |
-| • Central executive (WM component) | Attention control, selection, coordination | **PolicyRuntime / Action Center** (gating → triggering → executing) plus FOA selection. |
-| • Phonological loop (WM component) | Verbal/auditory rehearsal system | Not a focus in the goat profile; future “human-like” profiles would likely map this to **column/engram payloads** + rehearsal-like controller loops. |
-| • Visuospatial sketchpad (WM component) | Spatial/visual manipulation (“mind’s eye”) | **BodyMap + environment geometry** (near-space posture/mom/shelter/cliff) and (future) richer **engrams** for spatial scenes. |
-| • Episodic buffer (WM component) | Integrates across WM subsystems and links to LTM | A future “bridge” layer: **WorkingMap → consolidation into WorldGraph/Columns** (partially scaffolded today; details still evolving). |
-| **Long-term memory: episodic (explicit/declarative)** | Personal event memory; hippocampal indexing and retrieval | **WorldGraph** as the episode index + methods that reconstruct trajectories (bindings/edges with provenance). (CCA8 episodic details remain a design focus and will evolve.) |
-| **Long-term memory: semantic (explicit/declarative)** | General knowledge/facts consolidated in cortex (semantic hub concepts) | **WorldGraph** as the symbolic index; optionally `memory_mode="semantic"` (experimental). Longer-term, “semantic engrams” belong in **Columns**, with WorldGraph as the pointer/index layer. |
-| **Procedural memory (implicit/non-declarative)** | Skills/habits; basal ganglia + cerebellum involvement | **Controller policies/primitives** and their learned parameters (e.g., skill ledger / q values). This is “how to do things,” not “facts about the world.” |
-| **Priming / classical conditioning (implicit)** | Learned associations (cue → response), often emotion/autonomic linked | **Autonomic + drive/threshold cues + learned primitives**: rising-edge interoceptive cues (`cue:drive:*`), valence tags, and policy selection shaping. (CCA8 currently expresses this via autonomic tick + cue/policy machinery; richer conditioning is future work.) |
-
-Notes:
-- Sensory memory: iconic/echoic/haptic timescales and cortical associations are listed in the companion document; CCA8 treats these as the **incoming observation stream** and can store them longer/shorter as needed.
-- Working memory components and their cognitive roles are listed in the companion document; in CCA8 they map naturally onto “what is currently in focus” + the action selection machinery + short-term traces.
-- Episodic vs semantic vs procedural vs priming/conditioning are listed in the companion document; CCA8’s current equivalents are WorldGraph for episodic/semantic indexing and Controller policies/autonomic machinery for procedural/conditioning-style behavior shaping.
-
-
-
-
-
-## WorkingMap (Working Memory Graph)
-
-CCA8 now maintains a **WorkingMap**, a short-term **map workspace**: a stable MapSurface in place each tick, plus an optional scratch/trace layer for debugging.
-
-
-
-
-### Why a WorkingMap?
-
-WorldGraph can become cluttered quickly when we log repeated predicates (e.g., posture, distances, cues) every tick. Biologically, this mirrors a common separation:
-
-- **working / short‑term memory**: high‑bandwidth, constantly updated, may be pruned
-- **long‑term memory**: lower bandwidth, consolidated, less redundant
-
-WorkingMap lets us record the detailed stream without forcing long‑term memory to store every redundant node.
-
-### Implementation
-
-- `ctx.working_world` is a **separate** `WorldGraph` instance (WorkingMap).
-- Environment observations are mirrored into WorkingMap on each tick (when enabled).
-- WorkingMap is capped by `ctx.working_max_bindings` to prevent unlimited growth.
-- WorkingMap is intended to become the source graph for consolidation policies later:
-  “write everything to WorkingMap → copy/consolidate selected information into WorldGraph”.
-
-
-### WorkingMap.MapSurface (implemented: wm_schematic_v1)
-
-WorkingMap now has an implemented **MapSurface** layer: a stable, updatable map of entities and relations.
-
-**Entity nodes (stable across ticks)**
-- Entities are represented as stable WorkingMap bindings tagged:
-  - `wm:entity`
-  - `wm:eid:<entity_id>`
-  - `wm:kind:<kind>` (e.g., agent/shelter/hazard)
-- The current map instance is rooted at `anchor:WM_ROOT`.
-- `anchor:WM_SELF` is the SELF entity (always present).
-
-**Belief state lives on entities (in-place updates)**
-- Environment predicates are applied as `pred:*` tags **on the relevant entity node**, replacing within a “slot family”:
-  - e.g., SELF carries exactly one of `pred:posture:fallen` / `pred:posture:standing`
-  - CLIFF carries exactly one of `pred:hazard:cliff:far` / `pred:hazard:cliff:near`
-- This prevents per-tick “duplicate predicate nodes” in WorkingMap.
-
-**Geometry is explicit**
-- `WM_SELF --distance_to--> <entity>` edges represent schematic geometry.
-- The edge meta holds:
-  - `meters` (numeric; real if available, otherwise derived from near/far)
-  - `class` (near/far/etc)
-  - `frame` (`wm_schematic_v1`)
-- Each entity stores a 2D schematic coordinate in:
-  - `binding.meta["wm"]["pos"] = {"x": ..., "y": ..., "frame": "wm_schematic_v1"}`
-
-**Schematic coordinate distortion (subway-map style)**
-- Distances are monotonic but distorted (compressed for large distances).
-- Current implementation uses a simple projection (log compression) for x and lane-based y.
-
-**Scratch / micro-action trace (optional)**
-- Policies may still write transient `action:*` and `then` chains into WorkingMap as a scratchpad.
-- This is intentionally separate from the stable MapSurface belief state.
-
-**UI**
-- The env-loop (menu 37) prints:
-  - a MapSurface entity table (entity_id, kind, pos(x,y), dist_m/class, last_seen),
-  - followed by a WorkingMap snapshot where WorkingMap IDs are printed as `wN (bN)`.
-
-
-
-
-
-
-
-### Runner controls
-
-- **Menu #**: Control Panel (RL + memory knobs)
-  - Toggle WorkingMap mirroring + verbosity + size cap
-  - Set WorldGraph `memory_mode` (episodic vs semantic)
-  - Configure long-term env observation injection (changes vs snapshot, reassert_steps, keyframes, verbose reuse)
-
-- **Menu #**: WorkingMap snapshot
-  - Print the last N bindings from WorkingMap
-  - Optionally clear WorkingMap
-
-
-
-
-
-
-
-### Menu Menu Selection — Control Panel (RL policy selection + memory knobs)
-
-This menu selection is the main “knobs and buttons” control panel for CCA8 experiments. It lets you control:
-
-how policies are selected (deterministic vs RL-assisted),
-
-whether EnvObservation is written to WorkingMap, WorldGraph, or both,
-
-how aggressively long-term environment observations are deduplicated,
-
-and (Phase VII) whether the system logs long-term actions as “motor program runs” rather than decision ticks.
-
-**Mental model (what these knobs are really controlling)**
-
-At runtime, it helps to keep three graphs in mind:
-
-BodyMap (ctx.body_world)
-A tiny, safety-critical “what I believe right now” register (posture, mom distance, nipple state, shelter/cliff). Used for gating, safety, and tie-break logic.
-
-WorkingMap (ctx.working_world)
-A short-term raw trace scratchpad (dense, tick-level). It is pruned by working_max_bindings and is intended to hold detail that we do not want to commit to long-term memory.
-
-WorldGraph (world)
-The durable long-term episode index that persists (autosave/save session). It holds a sparse symbolic record for planning/inspection.
-
-EnvObservation injection follows this fixed pipeline:
-
-EnvObservation → BodyMap update (always) → WorkingMap mirror (if enabled) → WorldGraph injection (if enabled)
-
-So WorkingMap is normally a mirror, not a redirect: if WorkingMap and long-term env obs are both enabled, EnvObservation is written to both (WorkingMap every tick, WorldGraph according to its long-term injection settings).
-
-**Presets (long-term env obs)**
-
-Presets are shortcuts that set only the “Long-term EnvObservation → WorldGraph injection” knobs.
-
-bio
-mode=changes, keyframes on, reassert_steps=25
-Rationale: sparse long-term growth, but periodically re-assert stable state slots to mimic re-observation.
-
-sparse
-mode=changes, keyframes on, reassert_steps=0
-Rationale: minimal long-term growth (write only on slot change + keyframes).
-
-debug
-mode=snapshot, verbose on
-Rationale: maximal visibility (writes every env predicate each tick; will be noisy).
-
-**RL policy selection knobs (epsilon-greedy among triggered candidates)**
-
-These knobs only matter when more than one policy is eligible/triggered and we must choose a single winner.
-
-rl_enabled (bool)
-
-OFF: deterministic heuristic selection (deficit → non-drive priority → stable order).
-
-ON: epsilon-greedy selection:
-
-explore (probability epsilon): choose a random policy from the triggered candidate set.
-
-exploit (probability 1 - epsilon): choose by deficit and tie-break logic (see rl_delta below).
-
-rl_epsilon (float in [0.0, 1.0] or None)
-
-Exploration probability.
-
-0.0 means 0% explore (always exploit).
-
-0.10 means 10% explore.
-
-Values are clamped to [0.0, 1.0].
-
-Important: if rl_epsilon is None, the “effective epsilon” falls back to ctx.jump.
-This is a convenience reuse of the existing jump knob (originally meant for TemporalContext boundaries), and it means RL can still explore even if epsilon prints as None.
-
-If you want RL enabled but no randomness, explicitly set:
-
-rl_enabled = on
-
-rl_epsilon = 0.0
-
-rl_delta (float, >= 0.0)
-
-Defines the “near-best deficit band” inside the exploit branch:
-
-Compute best_deficit = max(deficit(policy)) over triggered candidates.
-
-Define near_best as those policies where (best_deficit - deficit(policy)) <= rl_delta.
-
-Meaning:
-
-rl_delta = 0.0: learning/tie-breaks only matter on exact deficit ties (most conservative).
-
-larger rl_delta: more policies qualify as “near-best” and learning can influence more choices.
-
-Within the near-best band, the system breaks ties by:
-
-non-drive priority (explicit tie-break logic),
-
-learned value estimate q (skill ledger),
-
-then stable order as the final deterministic fallback.
-
-**WorkingMap (short-term raw trace)**
-
-working_enabled (bool)
-
-ON: mirror every EnvObservation into WorkingMap (dense per-tick trace).
-
-OFF: WorkingMap exists but receives no new env predicates/cues.
-
-Note: WorkingMap mirroring does not automatically disable long-term injection; if long-term env obs is still enabled, EnvObservation will be written to both.
-
-working_verbose (bool)
-
-ON: prints per-tick [env→working] ... lines for env injection into WorkingMap.
-
-working_max_bindings (int)
-
-Caps WorkingMap size; pruning deletes older non-anchor bindings to prevent unlimited growth.
-
-**Phase VII memory pipeline (experimental)**
-
-These knobs are used to move toward a WorkingMap-first pipeline and “motor program runs, not decision ticks”.
-
-phase7_working_first (bool)
-
-If ON, the controller executes policy writes into WorkingMap rather than into the long-term WorldGraph. This helps keep WorldGraph sparse while WorkingMap remains dense.
-
-This is currently most relevant to the closed-loop environment run (menu 37).
-
-phase7_run_compress (bool)
-
-If ON, long-term WorldGraph records policy actions as compressed “runs” rather than per-tick action spam.
-
-High-level behavior:
-
-If the same policy repeats across consecutive env steps, do not create a new long-term action binding each tick.
-
-Instead, extend one run record (run_len++) and update the run’s end-state pointer.
-
-Split/close the run on boundary signatures (e.g., stage/posture/nipple/zone changes) or when policy changes.
-
-Net effect:
-
-Long-term WorldGraph becomes: keyframe state → run(action) → keyframe state → …
-
-In the menu implementation, enabling run_compress typically turns working_first on automatically (because run compression makes the most sense when dense tick-level detail is kept in WorkingMap).
-
-phase7_run_verbose (bool)
-
-If ON, prints run-compression debug lines such as: start / extend / close run.
-
-phase7_move_longterm_now_to_env (bool)
-
-Controls anchor semantics for long-term NOW in mode=changes.
-
-OFF: NOW only moves when new long-term predicate bindings are written (or at keyframes).
-
-ON: long-term NOW is actively moved to the current environment “state binding” each step (useful for NOW-relative debugging when changes-mode suppresses writes).
-
-**WorldGraph memory_mode (long-term storage strategy)**
-episodic (default)
-
-Every add_predicate(...) / add_cue(...) creates a fresh binding.
-This preserves a literal “event log” timeline (new node per occurrence), which is easiest for ordering and debugging.
-
-semantic (experimental)
-
-Identical pred/cue tokens are consolidated (reused) to reduce clutter.
-This reduces node explosion but changes temporal semantics: repeated occurrences can collapse onto one node. Use with caution if you rely on “the chain itself” as a literal time axis.
-
-**Long-term EnvObservation → WorldGraph injection**
-longterm_obs_enabled (bool)
-
-ON: env predicates/cues are written to WorldGraph (subject to mode settings).
-
-OFF: env predicates/cues are not written to WorldGraph (BodyMap still updates; WorkingMap still mirrors if enabled).
-
-longterm_obs_mode (changes vs snapshot)
-
-snapshot: write every observed env predicate each tick (dense, old behavior).
-
-changes: treat env predicates as “state slots” (posture, proximity:mom, hazard:cliff, …) and write only when a slot changes.
-
-In changes mode, the system deduplicates per slot using a slot cache:
-
-first time a slot is seen → emit (“first”)
-
-slot value changes → emit (“changed”)
-
-unchanged → skip (unless reasserted)
-
-longterm_obs_reassert_steps (int)
-
-In changes mode: re-emit unchanged slots periodically after N controller steps (re-observation).
-
-longterm_obs_keyframe_on_stage_change (bool)
-
-Only meaningful in changes mode.
-
-If ON: when scenario_stage changes (birth → struggle → first_stand …), clear the slot cache so the current state is written again as a keyframe (even if some values are unchanged). This is why you see a KEYFRAME log line and then a “rewrite” of stable predicates at stage boundaries.
-
-longterm_obs_keyframe_log (bool)
-
-If ON: print a one-line KEYFRAME message when a keyframe boundary clears the slot cache (helpful for debugging long-term representation).
-
-longterm_obs_verbose (bool)
-
-In changes mode: print verbose reuse lines when slots are unchanged (can be noisy).
-
-**Clear actions (manual resets without env.reset)**
-Clear WorkingMap now?
-
-Clears WorkingMap (fresh short-term trace window without resetting the environment).
-
-Clear long-term slot cache now?
-
-Clears the long-term slot cache so the next env observation is treated as “first” for each slot (manual keyframe).
-
-**Practical starter configs**
-
-Minimal long-term growth (recommended default for closed-loop runs)
-
-preset: sparse
-
-RL: off
-
-WorkingMap: on
-
-WorldGraph memory_mode: episodic
-
-Phase VII: off
-
-Debug “why didn’t this write?”
-
-preset: debug
-
-WorkingMap verbose: on (briefly)
-
-Phase VII experiment (WorkingMap-first + long-term runs)
-
-WorkingMap: on
-
-Phase VII: working_first=on, run_compress=on, run_verbose=on briefly
-
-long-term env obs: changes + keyframes, reassert=0
-
-WorldGraph: episodic (for now)
-
----
-
-
-
-
-
-
-
-## WorldGraph memory modes: episodic vs semantic
-
-WorldGraph supports two storage modes for predicates/cues:
-
-### Episodic mode (default)
-
-- Each `add_predicate(...)` / `add_cue(...)` creates a **new** binding.
-- Best when you want a rich timeline and do not mind redundancy.
-
-### Semantic mode (consolidated, experimental)
-
-- Identical `pred:` / `cue:` tags are consolidated to a **single** canonical binding.
-- Reduces repeated nodes in long‑term graphs and can improve readability.
-
-**Important note:** If policy code treats “tag exists anywhere in WorldGraph” as meaning “true right now”, semantic mode can make stale facts appear permanently true. The safe trajectory is:
-
-- use **WorkingMap / BodyMap** as the source of “current tick” state,
-- use **WorldGraph (semantic)** as consolidated long‑term structure.
-
-(Note at time of this writing: CCA8 is being developed in that direction; semantic mode is optin and intended for experimentation.)
 
 
 
@@ -2604,99 +1383,6 @@ Q: Where do engrams live?  A: cca8_column.py, referenced by bindings’ engrams.
 
 * * *
 
-## Timekeeping in CCA8 (five measures)
-
-CCA8 uses four orthogonal time measures. They serve different purposes and are intentionally decoupled.
-
-**1) Controller steps** — one Action Center decision/execution loop (aka “instinct step”).  
-*Purpose:* cognition/behavior pacing (not wall-clock).  
-*Source:* a loop in the runner that evaluates policies once and may write to the WorldGraph. When that write occurs, we mark a **temporal boundary (epoch++)**. :contentReference[oaicite:0]{index=0}
-
-With regards to its effects on timekeeping, **when a Controller Step occurs**:
-i) **controller_steps**: ++ every Action Center evaluation
-ii) **temporal drift**: ++ (one soft-clock drift) per controller step  
-iii) **autonomic ticks**: no change  
-iv) **developmental age**: no change  
-v) **cognitive cycles**: every closed-loop env <--> controller iteration
-                             
-                             
-With regards to terminology and operations that affect controller steps:
-**“Action Center”** = the engine (`PolicyRuntime`).
-**“Controller step”** = one invocation of that engine
-**“Instinct step”** = diagnostics + **one controller step**.
-**“Autonomic tick”** = physiology + **one controller step**.
-**“Simulate fall”** = inject fallen + **one controller step** (no drift) (but no cognitive cycle increment)
-
-**2) Temporal drift** — the *soft clock* (unit vector) that drifts a bit each step and jumps at boundaries.  
-*Purpose:* similarity + episode segmentation that’s unitless and cheap (cosine of current vs last-boundary vector).  
-*Drift call:* `ctx.temporal.step()`; *Boundary call:* `ctx.temporal.boundary()`; vectors are re-normalized every time. See module notes on drift vs boundary. :contentReference[oaicite:1]{index=1}  
-*Runner usage:* we drift once per instinct step and once per autonomic tick in the current build; boundary is taken when an instinct step actually writes new facts. :contentReference[oaicite:2]{index=2}
-
-**3) Autonomic ticks** — a fixed-rate heartbeat (physiology/IO), independent of controller latency.  
-*Purpose:* hardware/robotics cadence; advancing drives; dev-age.  
-*Source variable:* `ctx.ticks` (int).  
-*Where incremented today:* the **Autonomic Tick** menu path increments `ticks`, nudges drives, and performs a drift; it can also trigger a thresholded boundary. :contentReference[oaicite:3]{index=3} :contentReference[oaicite:4]{index=4}
-
-**4) Developmental age (days)** — a coarse developmental measure used for stage gating.  
-*Source variable:* `ctx.age_days` (float), advanced along with autonomic ticks; used by `world.set_stage_from_ctx(ctx)`. :contentReference[oaicite:5]{index=5}
-
-**5) Cognitive cycles** — a derived counter for CLOSED-LOOP env↔controller iterations  
-(EnvObservation → internal update → (keyframe optional store/retrieve/apply) → policy select/execute → action feedback to env).
-
-*Purpose:* progress gating & timeouts (e.g., “if no success in N cycles, switch strategy”), analytics.
-
-*Source variable:* `ctx.cog_cycles` (int).  
-*Where incremented today:* in the HybridEnvironment closed-loop paths (menu 37), once per env↔controller iteration (ordinary or keyframe).  
-*Not incremented by:* controller-only paths (Instinct Step, Autonomic Tick, Simulate Fall), which can still advance `controller_steps` and temporal drift.
-
-*Contrast with controller steps:* `controller_steps` counts every Action Center invocation; within menu 37 runs, we execute exactly one controller step per cognitive cycle, so in those runs `controller_steps` and `cog_cycles` advance together. Outside the env-loop, `controller_steps` may advance without `cog_cycles`.
-
-*Recommended invariants:* `cog_cycles ≤ controller_steps`; epochs (`ctx.boundary_no`) increment only on boundary jumps (writes or τ-cuts), never decrement.
-
-
-
-### Event boundaries & epochs
-
-When the controller **actually writes** (graph grew), we take a **boundary jump** and increment `ctx.boundary_no` (epoch). We also update a short fingerprint of the boundary vector (`ctx.boundary_vhash64`) for snapshot readability. :contentReference[oaicite:6]{index=6}  
-A thresholded segmentation (“τ-cut”) can also force a boundary when `cos_to_last_boundary` falls below τ (default shown in code). :contentReference[oaicite:7]{index=7}
-
-### Source fields & helpers at a glance
-
-- **autonomic ticks:** `ctx.ticks` (runner increments) :contentReference[oaicite:8]{index=8}  
-- **developmental age:** `ctx.age_days` (runner increments) & `world.set_stage_from_ctx(ctx)` :contentReference[oaicite:9]{index=9}  
-- **temporal drift:** `ctx.temporal.step()`; **boundary:** `ctx.temporal.boundary()`; **epoch:** `ctx.boundary_no++` :contentReference[oaicite:10]{index=10}  
-- **soft-clock fingerprints:** current `ctx.tvec64()`; last boundary `ctx.boundary_vhash64`; cosine via `ctx.cos_to_last_boundary()` (shown in snapshot/probe UIs). :contentReference[oaicite:11]{index=11}
-
-### Recommended invariants
-
-- Controller-driven mode (today): each instinct **controller step** performs one **temporal drift**; boundary (epoch++) only on a real write. :contentReference[oaicite:12]{index=12}  
-- Autonomic-driven mode (future HAL): **drift** belongs to the heartbeat; controller step reads time but does not drift.  
-- Epochs never decrement; `cos_to_last_boundary` resets ≈1.000 on boundary. :contentReference[oaicite:13]{index=13} 
-  
-  
-
-## Data flow (a controller step)
-
-1. Action Center computes active **drive flags**.  
-2. Evaluates dev gates + triggers to form a candidate set; selects ONE winner by deficit → non_drive → (RL: q tie-break / epsilon explore) → stable order. 
-3. `execute()` appends a **small chain** of predicates + edges to the WorldGraph, stamps `meta.policy`, returns a status dict, and updates the skill ledger.  
-4. Planner (on demand) runs BFS from **NOW** to a target `pred:<token>`.  
-
-### Q&A to help you learn this section
-
-Q: When do we increment ticks (autonomic ticks) versus controller_steps?
-A: ticks increment only in the Autonomic Tick path (heartbeat: physiology, drive updates, time-based age). controller_steps increment whenever a controller step runs (Instinct step, Autonomic tick, simulate fall, env-loop, etc.). They are orthogonal measures.
-
-Q: What is the semantic difference between age_days and ticks?
-A: age_days is a coarse developmental clock (used to set lexicon stage and developmental gates), while ticks is a fine-grained physiological heartbeat counter. Typically age_days advances in proportion to ticks but on a much slower scale.
-
-Q: What does a “temporal boundary” (epoch++) represent?
-A: A boundary is taken when a controller step writes new facts (or when a thresholded τ-cut triggers). It’s a way of saying “a new episode chapter started here” in the soft-clock vector space. We then jump the temporal vector, increment boundary_no (epoch), and reset cos_to_last_boundary to ~1.0.
-
-Q: Why do we maintain both wall-clock created_at timestamps and a soft temporal vector?
-A: Wall-clock is great for logs and cross-run inspection, but awkward for unitless similarity and segmentation. The soft temporal vector gives a cheap, unitless notion of “near in time” (via cosine) and supports operations like “time-aware similarity” and “episode segmentation” without relying on wall-clock units.
-
----
 
 
 
@@ -4266,9 +2952,6 @@ A: The first pred:* tag (if present) is used as the node’s human label in pret
 
 
 
-
-
-
 # WorkingMap Layer Contracts
 
 ## WorkingMap Layer Contracts (MapSurface / Scratch / Creative Layers)
@@ -4359,7 +3042,429 @@ When we implement, each candidate should carry:
 * `score` + `score_breakdown` (why this is good/bad)
 * `provenance` (version, RNG seed, parameters, evaluator name)
 
-This aligns with the article’s emphasis on verifiers + provenance, without committing us to Genie-style learned world models yet.
+This aligns with the CCA7 article’s emphasis on verifiers + provenance, without committing to Genie-style learned world models yet.
+
+
+
+
+
+
+
+
+# Tutorial on Timekeeping
+
+
+## Timekeeping in CCA8 (five measures)
+
+CCA8 uses five orthogonal time measures. They serve different purposes and are intentionally decoupled.
+
+**1) Controller steps** — one Action Center decision/execution loop (aka “instinct step”).  
+*Purpose:* cognition/behavior pacing (not wall-clock).  
+*Source:* a loop in the runner that evaluates policies once and may write to the WorldGraph. When that write occurs, we mark a **temporal boundary (epoch++)**. :contentReference[oaicite:0]{index=0}
+
+With regards to its effects on timekeeping, **when a Controller Step occurs**:
+i) **controller_steps**: ++ every Action Center evaluation
+ii) **temporal drift**: ++ (one soft-clock drift) per controller step  
+iii) **autonomic ticks**: no change  
+iv) **developmental age**: no change  
+v) **cognitive cycles**: no direct change (they are incremented only on closed-loop env↔controller iterations; see item 5 below)
+                            
+                             
+With regards to terminology and operations that affect controller steps:
+**“Action Center”** = the engine (`PolicyRuntime`).
+**“Controller step”** = one invocation of that engine
+**“Instinct step”** = diagnostics + **one controller step**.
+**“Autonomic tick”** = physiology + **one controller step**.
+**“Simulate fall”** = inject fallen + **one controller step** (no drift) (but no cognitive cycle increment)
+
+**2) Temporal drift** — the *soft clock* (unit vector) that drifts a bit each step and jumps at boundaries.  
+*Purpose:* similarity + episode segmentation that’s unitless and cheap (cosine of current vs last-boundary vector).  
+*Drift call:* `ctx.temporal.step()`; *Boundary call:* `ctx.temporal.boundary()`; vectors are re-normalized every time. See module notes on drift vs boundary. :contentReference[oaicite:1]{index=1}  
+*Runner usage:* we drift once per instinct step and once per autonomic tick in the current build; boundary is taken when an instinct step actually writes new facts. :contentReference[oaicite:2]{index=2}
+
+**3) Autonomic ticks** — a fixed-rate heartbeat (physiology/IO), independent of controller latency.  
+*Purpose:* hardware/robotics cadence; advancing drives; dev-age.  
+*Source variable:* `ctx.ticks` (int).  
+*Where incremented today:* the **Autonomic Tick** menu path increments `ticks`, nudges drives, and performs a drift; it can also trigger a thresholded boundary. :contentReference[oaicite:3]{index=3} :contentReference[oaicite:4]{index=4}
+
+**4) Developmental age (days)** — a coarse developmental measure used for stage gating.  
+*Source variable:* `ctx.age_days` (float), advanced along with autonomic ticks; used by `world.set_stage_from_ctx(ctx)`. :contentReference[oaicite:5]{index=5}
+
+**5) Cognitive cycles** — a derived counter for CLOSED-LOOP env↔controller iterations  
+(EnvObservation → internal update → (keyframe optional store/retrieve/apply) → policy select/execute → action feedback to env).
+
+*Purpose:* progress gating & timeouts (e.g., “if no success in N cycles, switch strategy”), analytics.
+
+*Source variable:* `ctx.cog_cycles` (int).  
+*Where incremented today:* in the HybridEnvironment closed-loop paths (menu 37; menu 35 is an alias that runs one closed-loop step), once per env↔controller iteration (ordinary or keyframe).
+*Not incremented by:* controller-only paths (Instinct Step, Autonomic Tick, Simulate Fall), which can still advance `controller_steps` and temporal drift.
+
+*Contrast with controller steps:* `controller_steps` counts every Action Center invocation; within menu 37 runs, we execute exactly one controller step per cognitive cycle, so in those runs `controller_steps` and `cog_cycles` advance together. Outside the env-loop, `controller_steps` may advance without `cog_cycles`.
+
+*Recommended invariants:* `cog_cycles ≤ controller_steps`; epochs (`ctx.boundary_no`) increment only on boundary jumps (writes or τ-cuts), never decrement.
+
+
+
+### Event boundaries & epochs
+
+When the controller **actually writes** (graph grew), we take a **boundary jump** and increment `ctx.boundary_no` (epoch). We also update a short fingerprint of the boundary vector (`ctx.boundary_vhash64`) for snapshot readability. :contentReference[oaicite:6]{index=6}  
+A thresholded segmentation (“τ-cut”) can also force a boundary when `cos_to_last_boundary` falls below τ (default shown in code). :contentReference[oaicite:7]{index=7}
+
+### Source fields & helpers at a glance
+
+- **autonomic ticks:** `ctx.ticks` (runner increments) :contentReference[oaicite:8]{index=8}  
+- **developmental age:** `ctx.age_days` (runner increments) & `world.set_stage_from_ctx(ctx)` :contentReference[oaicite:9]{index=9}  
+- **temporal drift:** `ctx.temporal.step()`; **boundary:** `ctx.temporal.boundary()`; **epoch:** `ctx.boundary_no++` :contentReference[oaicite:10]{index=10}  
+- **soft-clock fingerprints:** current `ctx.tvec64()`; last boundary `ctx.boundary_vhash64`; cosine via `ctx.cos_to_last_boundary()` (shown in snapshot/probe UIs). :contentReference[oaicite:11]{index=11}
+
+### Recommended invariants
+
+- Controller-driven mode (today): each instinct **controller step** performs one **temporal drift**; boundary (epoch++) only on a real write. :contentReference[oaicite:12]{index=12}  
+- Autonomic-driven mode (future HAL): **drift** belongs to the heartbeat; controller step reads time but does not drift.  
+- Epochs never decrement; `cos_to_last_boundary` resets ≈1.000 on boundary. :contentReference[oaicite:13]{index=13} 
+  
+  
+
+## Data flow (a controller step)
+
+1. Action Center computes active **drive flags**.  
+2. Evaluates dev gates + triggers to form a candidate set; selects ONE winner by deficit → non_drive → (RL: q tie-break / epsilon explore) → stable order. 
+3. `execute()` appends a **small chain** of predicates + edges to the WorldGraph, stamps `meta.policy`, returns a status dict, and updates the skill ledger.  
+4. Planner (on demand) runs BFS from **NOW** to a target `pred:<token>`.  
+
+### Q&A to help you learn this section
+
+Q: When do we increment ticks (autonomic ticks) versus controller_steps?
+A: ticks increment only in the Autonomic Tick path (heartbeat: physiology, drive updates, time-based age). controller_steps increment whenever a controller step runs (Instinct step, Autonomic tick, simulate fall, env-loop, etc.). They are orthogonal measures.
+
+Q: What is the semantic difference between age_days and ticks?
+A: age_days is a coarse developmental clock (used to set lexicon stage and developmental gates), while ticks is a fine-grained physiological heartbeat counter. Typically age_days advances in proportion to ticks but on a much slower scale.
+
+Q: What does a “temporal boundary” (epoch++) represent?
+A: A boundary is taken when a controller step writes new facts (or when a thresholded τ-cut triggers). It’s a way of saying “a new episode chapter started here” in the soft-clock vector space. We then jump the temporal vector, increment boundary_no (epoch), and reset cos_to_last_boundary to ~1.0.
+
+Q: Why do we maintain both wall-clock created_at timestamps and a soft temporal vector?
+A: Wall-clock is great for logs and cross-run inspection, but awkward for unitless similarity and segmentation. The soft temporal vector gives a cheap, unitless notion of “near in time” (via cosine) and supports operations like “time-aware similarity” and “episode segmentation” without relying on wall-clock units.
+
+---
+
+
+
+
+
+
+
+
+# Tutorial on Cognitive Cycles]
+
+
+
+
+## A. Dataflow chart: where information goes each step
+
+External world:
+EnvState  →  PerceptionAdapter  →  EnvObservation
+
+Agent-side memory pipeline (normal env-loop):
+EnvObservation
+  → BodyMap update (always; fast scalar/slot cache for gates)
+  → WorkingMap.MapSurface update (if enabled; semantic state table)
+  → WorldGraph injection (if enabled; sparse long-term trace; changes/snapshot + keyframes)
+  → Action Center selects a policy (reads BodyMap + MapSurface/WG neighborhood)
+  → Policy executes (writes action chains + outcomes; may write into WM-first or WG depending on Phase VII knobs)
+  → Selected policy name is fed back to HybridEnvironment.step(action=...)  
+        Note: In the current runner, the chosen policy is stored and applied on the next env.step call.
+              In the runner implementation, the action is effectively applied at the cycle boundary (stored as ctx.env_last_action and used on the next loop).
+Keyframes / boundaries:
+- Store MapSurface snapshot → Column engram
+- Create WorldGraph pointer node → indexes that engram (stage/zone/salience tags)
+- Optional auto-retrieve at boundary → apply prior map to WorkingMap (replace or seed/merge)
+
+---
+
+### The CCA8 cognitive cycle (closed-loop env↔controller iteration)
+
+In the CCA8, a cognitive cycle is one iteration of the closed-loop interaction between:
+(1) the environment producing an observation, and
+(2) the agent updating its internal maps, selecting a policy, and executing that policy,
+followed by feeding the selected action back to the environment.
+
+Terminology note:
+- cognitive_cycle is the agent’s “sense → decide → act” iteration (often printed as 1/5, 2/5, … in menu 37).
+- env_step (or step_index) is the environment’s internal 0-indexed counter since the last reset.
+
+**Cognitive cycle** = every closed-loop iteration:
+EnvObservation → update internal state (BodyMap/WorkingMap/MapSurface) → select policy → execute policy (Scratch S–A–S chain) → act
+
+**Keyframe cycle** = a cognitive cycle where the “keyframe flag” is true, meaning we additionally run the WM ⇄ Column engram pipeline at the boundary:
+(keyframe) store snapshot → (keyframe) optional retrieve + apply priors
+inserted between MapSurface update and policy selection.
+
+Note: 
+Each cognitive cycle ends by selecting/executing an action that changes the env, then the system immediately starts the next cognitive cycle when the env produces the next EnvObservation.
+
+Whether the next cycle is a keyframe is decided fresh each cycle based on the keyframe triggers (stage/zone boundary, forced snapshot, periodic keyframe, etc.)
+
+Note:
+Predictions/hypotheses exist, are compared to the next observation, and produce a mismatch signal (v0 “prediction error vector” plan is already aligned with this).
+
+An optional internal reprocessing loop exists as a reserved capability, where intermediate results can be fed back into the next cycle’s “input stream” (or internal buffer) instead of (or in addition to) relying purely on fresh external observation. This is the CCA8 analog to the “feed WNM back to association modules” idea in the published papers on the CCA.
+
+In reprocessing mode, the architecture may temporarily down-weight or ignore fresh external observation (attention diverted) and instead iterate on an internal buffer; when external observation is present, EnvObservation remains the authority for ‘truth-now’.
+
+Note: The controller_steps counts every invocation of the Action Center (each time we ask “what should I do?”).
+cog_cycles counts closed-loop env↔controller iterations (EnvObservation → update → select/execute → action feedback).
+In menu 37 runs (and menu 35, which is now an alias that runs one closed-loop step), controller_steps and cog_cycles advance together.
+Outside the env-loop, controller_steps may advance without cog_cycles (e.g., Instinct Step, Autonomic Tick).
+
+
+
+**At a high level, each cognitive cycle proceeds as follows:**
+(Keyframe-only steps are explicitly marked.)
+
+0) Prior cycle ends; this cycle begins
+   - The previous cycle selected/executed an action (or no-op), which the environment applied.
+   - The environment now produces the next EnvObservation, beginning the next cognitive cycle.
+   - Whether this cycle is a keyframe is decided fresh each cycle (env_reset, stage/zone transitions, forced keyframes, etc.).
+
+1) Environment produces an observation (EnvObservation)
+   - HybridEnvironment generates an EnvObservation (predicates/cues + info) based on the current storyboard/world state.
+   - If actual robotic embodiment (i.e., non-simulation) then this will be actual, albeit pre-processed, sensory input values.
+   - This observation is the only authoritative source for “what is true now” in the agent’s belief state.
+
+2) BodyMap update (fast gating cache)
+   - BodyMap mirrors action-critical scalar/slot values (e.g., posture, mom_distance, nipple_state, derived safety zone, staleness).
+   - Gates consult BodyMap for fast O(1) checks (e.g., unsafe_cliff_near) without graph traversal.
+
+3) WorkingMap update: MapSurface (current belief state table)
+   - EnvObservation facts are written into WorkingMap.MapSurface using semantic addressing:
+     (entity_id, slot-family) → current value
+   - MapSurface overwrites within a slot-family (one current value per channel); it is optimized for “what do I believe right now?”
+
+4) WorldGraph observation logging (optional; per configuration)
+   - The long-term WorldGraph may receive an observation commit (append-style), subject to long-term injection settings:
+     snapshot vs changes, reassert_steps, and related verbosity knobs.
+   - This is distinct from the WM⇄Column keyframe pipeline: WorldGraph logging can occur on ordinary cycles as well.
+
+5) (KEYFRAME) WM ⇄ Column boundary pipeline (conditional; ordering invariant)
+   - If this cycle is a keyframe, run the boundary pipeline BETWEEN MapSurface update and policy selection:
+
+   5a) Store (consolidation): MapSurface → Column engram
+       - Store a MapSurface snapshot as an engram in Column memory.
+       - Write/refresh a lightweight pointer/index node in WorldGraph for later retrieval.
+
+   5b) Optional guarded auto-retrieve + apply (priors): Column → WorkingMap
+       - Optionally retrieve prior MapSurface snapshot(s) and apply them to WorkingMap:
+         - replace mode: rebuild MapSurface from the snapshot
+         - seed/merge mode: seed predicate priors only; do NOT inject cue:* tags into live belief (no cue leakage)
+       - Exclude the engram just stored on this same keyframe (no trivial self-retrieval).
+
+   5c) Temporal boundary bookkeeping (if enabled)
+       - TemporalContext is stepped each cycle and may take a boundary jump at keyframes.
+
+6) Policy selection (the decision step)
+   - The Action Center evaluates candidate policies:
+     - trigger conditions (is it relevant now?)
+     - gate conditions (is it allowed now?)
+   - Policies are scored (deficit scores, non-drive scores, and optional RL tie-breaks).
+   - The best policy is chosen for this cognitive cycle.
+
+7) Policy execution (procedural trace + predicted postcondition)
+   - The chosen policy is executed on the designated execution map (often WorkingMap).
+   - Execution writes a Scratch chain representing a State–Action–State (S–A–S) trace:
+       action:* → action:* → … → pred:* (postcondition/outcome hypothesis)
+   - The final pred:* node in Scratch represents the expected post-state (a hypothesis), not the confirmed world state.
+   - Confirmation/refutation occurs on the next cognitive cycle when the next EnvObservation arrives.
+
+8) (FUTURE, KEYFRAME OPTIONAL) Consolidation/reconsolidation write-back slot (copy-on-write)
+   - After policy selection + execution, a keyframe may optionally run a write-back hook that:
+     - writes new engrams (copy-on-write) and/or patch records (schema/world-model learning), and
+     - updates WorldGraph pointer bindings for future retrieval,
+     WITHOUT changing the belief state that was already used for action selection in this same cycle.
+   - This slot is reserved for future learning/consolidation work (reconsolidation) and is intentionally not required for v0.
+
+9) Action feedback to the environment (completes this cycle)
+   - The chosen policy name/action token is passed to HybridEnvironment.step(action=...),
+     which advances the storyboard and produces the next observation (beginning the next cognitive cycle).
+     
+10) REPEAT -- START A NEW CYCLE
+   - The next cycle may be an ordinary cognitive cycle or a keyframe cycle, depending on whether the keyframe trigger fires.
+
+
+Reading the logs:
+- env_* fields reflect the environment/storyboard truth for that cycle.
+- bm_* fields reflect the agent’s current belief cache after observation injection.
+- expected_* fields reflect policy postconditions written into Scratch (hypotheses) and are intended for prediction-error computation on subsequent cycles.
+
+
+
+### WM ⇄ Column engram pipeline (when we store, retrieve, and apply priors)
+
+CCA8 uses a two-level memory pipeline:
+- WorkingMap.MapSurface is the current belief/state table (semantic addressing by entity × slot-family).
+- Column Engrams store snapshot payloads (e.g., MapSurface snapshots) and are indexed by lightweight pointer bindings in WorldGraph.
+
+This pipeline is *not* executed on every cognitive cycle. It is primarily **keyframe-driven**.
+
+
+#### When the pipeline runs (trigger policy)
+
+During closed-loop runs (e.g., menu 37), the WM⇄Column pipeline runs at **keyframes**:
+- episode-start keyframe: environment reset (env_reset)
+- within-episode keyframes: scenario stage transitions and/or zone transitions
+
+Non-keyframe cycles typically do not store/retrieve; they just update BodyMap + MapSurface and execute policies.
+
+
+#### Store (consolidation): MapSurface → Column engram
+
+On a keyframe, after MapSurface has been updated from EnvObservation, we may store a snapshot:
+
+1) Capture: serialize MapSurface into a snapshot payload (predicates + cues + minimal meta).
+2) Assert: write payload to Column memory as an engram (dedup by signature where possible).
+3) Index: create or refresh a lightweight pointer binding in WorldGraph that points to the engram.
+
+Goal:
+- Store coherent “boundary snapshots” rather than every tick, to reduce near-duplicates and make retrieval meaningful.
+
+
+#### Retrieve: Column engram → WorkingMap (priors)
+
+On a keyframe, we may also attempt auto-retrieve (guarded):
+
+1) Candidate generation:
+   - Use WorldGraph pointer bindings as the searchable index (e.g., stage/zone tags).
+2) Scoring:
+   - Score candidates by overlap with current cues/preds (salience-weighted).
+3) Select:
+   - Choose the best candidate(s).
+   - Exclude the engram just stored on this same keyframe to avoid trivial self-retrieval.
+
+Guard hook: even at keyframes, auto-retrieve is attempted only when “need_priors” is true
+(missingness, prediction error, or BodyMap staleness). Otherwise retrieval is skipped to preserve a “pure perception” baseline.
+
+
+
+#### Apply modes (how a retrieved map affects current belief)
+
+We support two application modes:
+
+- Replace mode:
+  - Rebuild MapSurface from the retrieved snapshot (preds + cues restored).
+  - Useful when current belief is unreliable/empty or mismatch is high.
+
+- Seed/Merge mode:
+  - Seed MapSurface with predicate priors only.
+  - Do NOT inject cue:* tags into the live state (no cue leakage).
+  - Useful under partial observability: fill gaps without overwriting current observations.
+
+Contract:
+- MapSurface remains the “belief-now” table driven primarily by EnvObservation.
+- Retrieved content is a prior/hypothesis; it must not silently overwrite truth without an explicit mode decision.
+
+
+
+#### Ordering within a cognitive cycle (INVARIANT)
+
+Note with regard to terminology: A keyframe is a cognitive cycle that triggers the WM⇄Column boundary pipeline (store/retrieve/apply); non-keyframe cognitive cycles skip those steps.
+In summary:
+**Cognitive cycle** = every closed-loop iteration:
+EnvObservation → update internal state (BodyMap/WorkingMap/MapSurface) → select policy → execute policy (Scratch S–A–S chain) → act
+
+**Keyframe cycle** = a cognitive cycle where the “keyframe flag” is true, meaning we additionally run the WM ⇄ Column engram pipeline at the boundary:
+(keyframe) store snapshot → (keyframe) optional retrieve + apply priors
+inserted between MapSurface update and policy selection.
+
+Note: 
+Each cognitive cycle ends by selecting/executing an action that changes the env, then the system immediately starts the next cognitive cycle when the env produces the next EnvObservation.
+
+Whether the next cycle is a keyframe is decided fresh each cycle based on the keyframe triggers (stage/zone boundary, forced snapshot, periodic keyframe, etc.)
+
+Note:
+Predictions/hypotheses exist, are compared to the next observation, and produce a mismatch signal (v0 “prediction error vector” plan is already aligned with this).
+
+An optional internal reprocessing loop exists as a reserved capability, where intermediate results can be fed back into the next cycle’s “input stream” (or internal buffer) instead of (or in addition to) relying purely on fresh external observation. This is the CCA8 analog to the “feed WNM back to association modules” idea in the published papers on the CCA.
+
+Predictive coding note: predicted postconditions (Scratch) and/or retrieved priors (keyframes) are hypotheses; the next EnvObservation is the refutation/confirmation signal; mismatch is computed and can later drive retrieval guards + reconsolidation. 
+
+Reserved internal-feedback loop: if no actionable output (or persistent mismatch), the architecture may feed intermediate results back into an internal input buffer and reprocess in the next cognitive cycle(s), analogous to the CCA feedback-to-association-modules mechanism.
+
+
+**At a keyframe cycle, this ordering is a MUST:**
+
+PREVIOUS KEYFRAME/COG CYCLE →
+EnvObservation → BodyMap update → MapSurface update →
+(keyframe) store snapshot to Column + write/refresh WG pointer →
+(keyframe) optional auto-retrieve + apply (replace or seed/merge) →
+policy selection → policy execution (Scratch S–A–S chain) → action feedback to env 
+→ START NEW KEYFRAME/COG CYCLE
+
+This invariant is intentionally strict:
+
+- Store MUST run after MapSurface has been updated from the current EnvObservation (store coherent boundary truth, not stale belief).
+- Retrieve/apply (if enabled) MUST run before policy selection so priors can influence that same boundary cycle’s action selection.
+- Retrieve MUST exclude the engram just stored on this same keyframe (no trivial self-retrieval).
+- Apply mode MUST be explicit (replace vs seed/merge) to prevent silent “prior overwrote observation truth.”
+
+Reserved future slot (consolidation/reconsolidation write-back):
+- After the decision is made (policy selection + execution), a keyframe may optionally run a write-back hook that:
+  - writes new engrams (copy-on-write) and/or patch records, and
+  - updates WorldGraph pointer bindings for future retrieval,
+  without changing the belief state that was already used for action selection in that same cycle.
+
+#### Future: consolidation + reconsolidation slot (design contract; copy-on-write)
+
+Terminology:
+- Consolidation = boundary snapshot store (MapSurface → Column engram) with a lightweight WorldGraph pointer/index.
+- Reconsolidation = retrieve prior snapshot(s) → integrate new evidence → write a corrected snapshot/patch as a NEW engram (never mutate old).
+
+Engram immutability rule:
+- Column engram payloads are immutable records.
+- Any “update” is represented by asserting a new engram_id and recording ancestry (e.g., parent_eids), plus updating a pointer binding.
+
+Proposed reconsolidation lifecycle (when implemented):
+1) Retrieve:
+   - Select eid_old candidate(s) using WorldGraph pointer bindings (stage/zone/epoch tags + cue/pred overlap scoring).
+   - Apply as priors via an explicit mode (replace or seed/merge).
+2) Integrate:
+   - Across subsequent cycles, EnvObservation continues to overwrite belief-now slots.
+   - Track provenance where helpful (observed vs prior) and record which slot-families were corrected (mismatch bookkeeping).
+3) Decide to write-back:
+   - Triggers may include:
+     - prediction-error/mismatch over a threshold for K cycles,
+     - a successful alignment/merge producing a stable corrected map,
+     - an explicit “commit” policy at a stage/zone boundary.
+4) Write (copy-on-write):
+   - Create eid_new by storing a corrected MapSurface snapshot or a patch record.
+   - Include meta such as:
+     - parent_eids=[...],
+     - reason='reconsolidation',
+     - context tags (stage/zone/epoch),
+     - mismatch summary (what changed and why),
+     - created_at timestamp.
+5) Re-index:
+   - Update/append WorldGraph pointer bindings to prefer eid_new, while retaining eid_old for traceability and comparisons.
+6) Guardrails (non-negotiable):
+   - Never delete/overwrite eid_old automatically.
+   - Never allow immediate self-retrieval loops (exclude eid_new on the same keyframe it was created).
+   - Never inject cue:* from memory into live belief in seed/merge mode (no cue leakage).
+7) Schema/world-model memory (later still):
+   - Prefer patch logs + periodic checkpoints over full-copy snapshots to prevent blowup.
+   - Keep a materialized “latest” plus an immutable patch history so we can audit learning steps.
+
+
+
+
+#### Debugging and invariants
+
+- expected_* values written into Scratch are postconditions (hypotheses), not confirmed truth.
+- env_* fields reflect environment/storyboard truth for the current cycle.
+- cue leakage is disallowed in seed/merge mode.
+- “just-stored” exclusion prevents immediate self-retrieval loops.
+
+
+
+
 
 
 
@@ -4378,6 +3483,8 @@ This aligns with the article’s emphasis on verifiers + provenance, without com
   - drive consolidation / reconsolidation decisions (“should I store a corrected map?”),
   - shape action selection (avoid repeating policies that consistently fail to produce their predicted postcondition).
 
+- Phase VIII (implemented): prediction error v0 is now used as a conservative control signal to gate keyframe auto-retrieve
+  (i.e., mismatch can trigger priors). It is not yet used to change policy scoring; it currently affects whether priors are fetched.
 
 
 ## CCA8 implementation overview
@@ -4409,7 +3516,7 @@ Log line format (example):
 
 
 
-## Partial observability knob (new section)
+## Partial observability knob
 
 
 
@@ -4421,25 +3528,45 @@ Motivation
   - create prediction mismatches so error signals become informative,
   - without changing the underlying EnvState truth in the simulator.
 
-Knob: obs_mask_prob (runtime context)
+Knobs (runtime context)
+
+- Masked-step drop counts are recorded in env_meta and used by the retrieval guard as a missingness signal.
+
 - ctx.obs_mask_prob is a probability in [0.0..1.0].
-- When > 0, a fraction of EnvObservation predicates/cues are dropped before they are written into memory systems.
-- Default is 0.0 (fully observed), preserving current behavior.
--Implementation note: masking happens in the runner before BodyMap and WorkingMap are updated, so it directly affects “belief-now” and policy selection (not just long-term logging).
+  - When > 0, a fraction of EnvObservation predicates/cues are dropped before they are written into memory systems.
+  - Default is 0.0 (fully observed), preserving baseline behavior.
 
+- ctx.obs_mask_seed controls reproducibility:
+  - None/off: stochastic masking (uses the global RNG).
+  - int: reproducible masking (uses a deterministic per-step RNG derived from the base seed and the step index).
+  - Purpose: make “which tokens were dropped at step k” reproducible across runs for experiments and debugging.
 
-Safety guardrails (v0)
-- A small set of safety-critical predicate families is protected from dropping:
-  - posture:*
-  - hazard:cliff:*
-  - proximity:shelter:*
-- This keeps zone classification and basic safety gating stable, even when other facts are missing.
+- ctx.obs_mask_verbose controls printing:
+  - True: prints one config line when masking config changes, and per-step drop lines when anything is dropped.
+  - False: masking still occurs, but logs are suppressed.
 
-Log line
-When masking actually drops anything, the runner prints:
+Implementation note:
+- Masking happens in the runner before BodyMap and WorkingMap are updated, so it directly affects “belief-now” and policy selection (not just long-term logging).
 
-[obs-mask] dropped preds=2/12 cues=1/4 p=0.20 protected=3
+Log lines
 
+When masking is enabled (obs_mask_prob > 0), the runner prints a one-time configuration line (or whenever the config changes):
+
+[obs-mask] config mode=seeded seed=123 step_ref=4 p=0.20 protected=3
+
+When masking actually drops anything on a given step, the runner prints a per-step summary:
+
+[obs-mask] mode=seeded seed_eff=... step_ref=4 dropped preds=1/4 cues=0/0 p=0.20
+
+Interpretation:
+
+mode=seeded means a deterministic per-step RNG is being used (reproducible).
+
+mode=global means masking draws from the global RNG (stochastic).
+
+step_ref is the environment step_index when available (otherwise a runner fallback).
+
+seed_eff is the derived per-step seed used for that specific step in seeded mode (printed for traceability).
 
 
 
@@ -4613,26 +3740,39 @@ Because EnvObservation already injected a “truthy” WM for that step, and mer
 
 ---
 
-### Planned: a guard hook (programmatic control of auto-retrieve)
-
-In real-world sensing later, we’ll want auto-retrieve sometimes, and *not* other times. So the plan is to add a single guard function so the decision is centralized and easy to reason about.
-
-**Idea (not the exact final code):**
-
-`should_autoretrieve(ctx, env_obs, *, stage_changed, zone_changed) -> bool`
-
-What it decides:
-- return True when we want to use priors (auto-retrieve allowed)
-- return False when we want “pure perception update” (auto-retrieve suppressed)
-
-Simple examples of future guard logic:
-- allow auto-retrieve when BodyMap is stale, cues are missing, or uncertainty is high
-- suppress auto-retrieve during debugging runs, when sensors are high-confidence, or when we deliberately want a “no priors” baseline
-
-The important design rule:
-> Put the decision in one place (the guard hook), not scattered across the env loop.
 
 
+### Guard hook: minimal gating for auto-retrieve (implemented)
+
+Auto-retrieve is enabled/disabled and mode-selected via runtime context (menu 40):
+
+- `wm_mapsurface_autoretrieve_enabled` (bool): whether we *attempt* retrieval at keyframes
+- `wm_mapsurface_autoretrieve_mode` (`merge` | `replace`): how a retrieved MapSurface snapshot is applied
+
+Even when enabled, we intentionally do NOT attempt retrieval on every keyframe. Phase VIII introduces a conservative
+guard so prediction error and partial observability can matter quantitatively without destabilizing baseline runs.
+
+**Minimal gating policy (Phase VIII):**
+We attempt auto-retrieve only when BOTH are true:
+
+1) This cycle is a keyframe boundary (stage change or zone change), and  
+2) At least one “need priors” signal is present:
+
+- **missingness:** observation is sparse, or obs-mask dropped tokens on this step  
+- **prediction error:** `pred_err_v0_last` has any non-zero component (v0 currently tracks posture mismatch)  
+- **BodyMap staleness:** BodyMap is stale (priors can stabilize belief when fast registers are unreliable)
+
+If none of these are true, retrieval is skipped even on a keyframe—this preserves a clean “pure perception” baseline.
+
+**How this appears in logs**
+- You may see retrieve lines like:
+  - `retrieve: skip why=enabled_boundary_confident ...`
+  - `retrieve: ok mode=merge ...`  (conservative prior fill)
+  - `retrieve: ok mode=replace ...` (strong prior; debug/restore)
+
+The usual early-run skip still applies:
+- `only_excluded_candidate` means the only candidate was the engram just stored on this same boundary
+  (self-retrieval is excluded by design).
 
 
 
@@ -4875,6 +4015,951 @@ Menu numbers may change over time; treat these as “the tools used in this tuto
 Validation / inspection:
 - : inspect a WorldGraph binding to confirm it carries an engram pointer (binding.engrams["column01"])
 - : inspect an engram by id (verify payload/meta)
+
+
+
+
+
+
+
+
+
+
+# Memory systems in CCA8
+
+
+CCA8 uses several small “maps” as well the large WorldGraph map for its memory store. The key idea is to separate:
+
+- **what must be correct right now** (for action selection),
+- **what we want to keep as a detailed trace** (for debugging / later consolidation),
+- **what we want to keep long-term** (for planning and inspection),
+- **and where heavy data lives** (engrams).
+
+
+
+### Navigation maps and memory pipeline contracts
+
+This subsection distills repeated Q&A from Phase VII–VIII design review into explicit “map contracts” and a quick reading guide
+for env-loop outputs (MapSurface entity table + WorkingMap autosnapshot).
+
+#### One-line roles (“what question does this map answer?”)
+
+- BodyMap: “what is true of my body / peripersonal near-space right now (fast gating)?”
+- WorkingMap.MapSurface: “what do I believe about the scene right now (semantic state table)?”
+- WorkingMap.Scratch: “what did I just try to do, and what outcome did I expect (procedural trace)?”
+- WorkingMap.Creative: “what candidate futures did I simulate (counterfactual rollouts; future)?”
+- WorldGraph (long-term): “what happened over time (episode index + planning skeleton)?”
+- Columns/Engrams: “where does the heavy payload live (stored map instances / scenes / features)?”
+
+---
+
+
+## B. “Chart”: contrasting the navigation maps (contracts)
+
+| Map | Primary purpose | Persistence | Addressing | Update semantics | Typical content | Must-not / pitfalls |
+|---|---|---|---|---|---|---|
+| EnvState (environment) | God’s-eye truth state for the simulator | external; overwritten each env.step | direct fields | full overwrite / deterministic evolution | posture, distances, stage, geometry | agent must never read directly |
+| EnvObservation (message) | what crosses the boundary this tick | transient | list/packet | replaced each tick | raw_sensors + predicates + cues | not “memory”; don’t treat as stored belief |
+| BodyMap | fast gating register (body + near-space) | short-lived, updated every step | direct helpers (body_posture, etc.) | overwrite slots | posture, mom distance, nipple, safety zone | avoid scanning big graphs for gates; keep BM authoritative “now” |
+| WorkingMap.MapSurface | semantic state table / scene sketch | persists across steps; prunable | (entity_id, slot-family) | overwrite per slot-family | entity anchors + slot values; schematic geometry | must not accumulate multiple values for same slot-family |
+| WorkingMap.Scratch | procedural trace (action chains) | ephemeral; accumulates until pruned | structural traversal from WM_SCRATCH | append-only chains | action:* → action:* → pred:* outcome | can bloat; requires TTL/clear rule eventually |
+| WorkingMap.Creative | counterfactual futures (future) | ephemeral | structural traversal from WM_CREATIVE | append rollouts | simulated chains + scores | must not mutate MapSurface “reality” directly |
+| WorldGraph (long-term) | episode index + planning skeleton | long-lived | tags + anchors + edges | append; optionally “changes-mode” for env slots | pred/cue/action/anchor bindings + “then” edges + pointer nodes | don’t rely on “tag exists anywhere” as “true now” (esp. semantic mode) |
+| Columns/Engrams | heavy payload store | long-lived (conceptually) | engram_id | immutable records | MapSurface snapshots, feature payloads, scene blobs | keep payload out of WorldGraph; store pointers only |
+
+---
+
+## C. WorkingMap.MapSurface: semantic addressing (entity × slot-family)
+
+MapSurface behaves like a semantic table implemented on a graph:
+
+- Entity anchor bindings are tagged with:
+  - wm:entity
+  - wm:eid:<entity_id>      (semantic key; e.g., self, mom, cliff)
+  - wm:kind:<kind>          (agent/shelter/hazard/...)
+  - anchor:WM_ENT_*         (human-readable anchor tag)
+
+- Slot-family (attribute channel) is encoded inside pred:* tags:
+  - pred:<slot_family>:<value>
+  - Example: pred:proximity:mom:far
+    - slot-family = proximity:mom
+    - value = far
+
+Contract:
+- An entity anchor may hold many slot-families at once (posture, proximity, hazard, etc.).
+- An entity anchor should hold exactly one value per slot-family (do not keep both far and close).
+
+Practical implication:
+- Updates do not scan all WM_ENT_* roots.
+- Updates key directly by (eid, slot-family) and replace the prior value.
+
+---
+
+## D. WorkingMap.Scratch: how to read action chains
+
+Scratch is structural, not semantic-addressed. It is a subgraph rooted at WM_SCRATCH:
+
+- WM_ROOT --wm_scratch--> WM_SCRATCH
+- WM_SCRATCH has multiple then:* edges to chain heads (one per execution/proposal)
+- Each chain uses then:* edges:
+  action:*  --then-->  action:*  --then-->  pred:* (postcondition/outcome)
+
+Why chains end in pred:*:
+- The final pred:* node is the predicted/claimed outcome (“postcondition”) of the action chain.
+- This makes the trace interpretable and supports later “did the observation confirm it?” checks.
+
+Scratch accumulation:
+- Scratch is allowed to accumulate (for now) because it is a trace.
+- It will eventually need a TTL/clear rule (e.g., clear Scratch at keyframes or keep last N chains).
+
+---
+
+## E. WorkingMap is planar: “layers” are anchored subgraphs
+
+WorkingMap is one graph object (“planar” in implementation terms).
+The “layers” are logical subgraphs separated by anchor nodes and edge conventions:
+
+- WM_ROOT is the hub
+  - WM_ROOT --wm_entity--> WM_ENT_* (MapSurface entities)
+  - WM_ROOT --wm_scratch--> WM_SCRATCH
+  - WM_ROOT --wm_creative--> WM_CREATIVE
+
+So “layers” are not different coordinate dimensions; they are different anchored regions of the same graph.
+
+---
+
+## F. Reading the env-loop MapSurface table + autosnapshot
+
+### 1) MapSurface entity table (the compact “dashboard”)
+
+Typical columns:
+- eid: semantic entity id (self, mom, shelter, cliff, …)
+- bid: WorkingMap node id (w6, w7, …)
+- kind: agent/shelter/hazard/...
+- pos(x,y): schematic position stored in binding.meta["wm"]["pos"] with frame "wm_schematic_v1"
+- brg: bearing (degrees) from self to entity in the schematic frame
+- dist_m: meter-like distance in the schematic frame
+- class: discrete distance/hazard class (near/far/close)
+- preds (short): human-readable short summary of pred:* tags for that entity
+- seen: last controller step when the entity was updated (meta bookkeeping)
+
+Notes:
+- dist_m/brg are schematic (a readable “subway-map” geometry), not physical truth.
+
+### 2) WorkingMap autosnapshot (the literal graph view)
+
+- IDs print as wN (bN):
+  - wN is the WorkingMap display id
+  - (bN) is the internal binding id inside the WorkingMap graph
+  - Do not confuse these with the long-term WorldGraph’s bN ids.
+
+- Start from anchors, not w1:
+  - w1 may be an empty retired binding (e.g., after moving NOW onto WM_ROOT)
+  - w2 may be a leftover NOW_ORIGIN tag
+  - w3 (WM_ROOT) is the correct structural entry point
+
+Legend reminders:
+- “Legend tags” lists tag namespaces you’re seeing (anchor:, wm:, pred:, action:, cue:)
+- “Legend edges” lists edge types you’re seeing (wm_entity, wm_scratch, wm_creative, then, distance_to)
+
+---
+
+## G. Keyframes: what happens at a boundary (short checklist)
+
+At a keyframe boundary (currently stage/zone changes):
+- WorldGraph long-term slot cache may reset and rewrite the stable state slots
+- MapSurface snapshot is stored to Column (dedup by signature)
+- WorldGraph pointer node is written (tags for stage/zone; carries engram pointer)
+- Optional auto-retrieve may run:
+  - replace mode: rebuild surface from snapshot
+  - seed/merge mode: seed predicates only; do not inject cue:* into live state
+- Temporal epoch/boundary tracking updates
+- Scratch is not cleared automatically (yet) → consider a future Scratch TTL rule
+
+---
+
+
+## H. Anchors, episodes, and keyframes (how “boundaries” actually work)
+
+This subsection clarifies the “boundary machinery” used by the memory pipeline: anchors (`NOW`, `NOW_ORIGIN`), keyframes,
+and what “new episode” means in the newborn-goat environment loop. These details matter because they determine:
+(i) where new bindings attach, (ii) what gets stored to Columns, and (iii) how we interpret traces.
+
+---
+
+### H1) Anchor semantics: `NOW` vs `NOW_ORIGIN`
+
+CCA8 uses two primary temporal anchors in both WorldGraph and WorkingMap.
+
+- **`NOW`**
+  - The *current-moment* anchor.
+  - Planning / FOA / “what should I do next?” typically begins here.
+  - It can move frequently (step-to-step, or after major events).
+
+- **`NOW_ORIGIN`**
+  - The *episode root* anchor.
+  - It is **pinned once at the start of an episode** and does not move during that episode.
+  - It is useful for whole-episode interpretation (“from the beginning of the story to here”).
+
+Important clarification:
+- “`NOW_ORIGIN` never moves” means **within an episode**.
+- On **a new episode** (environment reset), a **new `NOW_ORIGIN` is created/assigned** for that episode.
+
+---
+
+### H2) “New episode” vs “keyframe”
+
+CCA8 uses the term *keyframe* for a boundary event, but not all keyframes are “new episodes.”
+
+There are two broad kinds:
+
+1) **Episode-start keyframe (env_reset)**
+   - Happens when `HybridEnvironment.reset()` is called.
+   - Starts a new episode.
+   - Establishes the episode’s `NOW_ORIGIN`.
+
+2) **Within-episode keyframes (stage/zone transitions)**
+   - Occur when the environment’s scenario stage changes (e.g., birth → struggle → first_stand),
+     and/or when safety zone changes (unsafe ↔ safe).
+   - These are meaningful segmentation points **inside the same episode**.
+   - They are used as natural storage/retrieval moments for the WM⇄Column pipeline.
+
+So:
+- **All new episodes are keyframes**, but **not all keyframes are new episodes**.
+
+---
+
+### H3) Attach semantics: `attach="now"` vs `attach="latest"` (the “observation block” trick)
+
+When the environment injects an observation into a graph, we deliberately use a simple pattern:
+
+- First predicate attaches with `attach="now"`.
+- Subsequent predicates attach with `attach="latest"`.
+
+This creates one “observation block” anchored to NOW with the remaining facts chained behind it.
+
+A crucial implication:
+- The *first predicate in the list* gets the `attach="now"` treatment.
+- In the current newborn-goat environment, `posture:*` tends to be emitted first, so it often appears as the “now-attached” binding.
+  This is not because posture is magically special; it’s because of observation ordering.
+
+---
+
+### H4) WorkingMap Scratch chains are written directly (not copied)
+
+When a policy executes “into WorkingMap,” it does not generate actions elsewhere and copy them into Scratch later.
+Instead:
+
+- The runner temporarily points WorkingMap’s effective `NOW` at **`WM_SCRATCH`**,
+- the policy executes and creates:
+  - `action:*` bindings and
+  - a final `pred:*` binding representing the **postcondition/outcome**,
+  using `attach="now"` then `attach="latest"` to form a `then:` chain,
+- then the runner restores `NOW` back to **`WM_ROOT`**.
+
+Result:
+- Scratch contains directly-written chains like:
+
+  `action:stand_up → action:push_up → action:extend_legs → pred:posture:standing`
+
+Why Scratch chains end in `pred:*`:
+- The final `pred:*` is the predicted/claimed outcome (postcondition). This makes traces interpretable and supports later mismatch checks
+  (“did the next EnvObservation confirm the predicted outcome?”).
+
+---
+
+### H5) Anchor/navigation hygiene in WorkingMap snapshots (how to read “w1” and friends)
+
+WorkingMap autosnapshots may show:
+- an empty `w1` binding, and/or
+- an old `NOW_ORIGIN` binding that has no edges.
+
+This is typically harmless and reflects anchor migration during initialization:
+- WorkingMap may create a first anchor binding early,
+- then later re-point `NOW`/`NOW_ORIGIN` onto `WM_ROOT` for a clean hub,
+- leaving behind a retired binding with no tags/edges.
+
+Reading rule:
+- Do **not** “start at `w1`”.
+- Start at the structural hub: **`WM_ROOT`** (often the same binding tagged `anchor:NOW`).
+
+---
+
+### H6) Boundary behavior checklist (what is true today vs planned)
+
+**Today (current behavior):**
+- Episode-start keyframe (reset):
+  - establishes `NOW_ORIGIN` for the new episode,
+  - writes the initial observation into memory systems,
+  - begins the WM⇄Column storage cadence.
+- Within-episode keyframes (stage/zone transitions):
+  - trigger MapSurface snapshot storage,
+  - create WorldGraph pointer nodes,
+  - may trigger guarded auto-retrieve.
+- Scratch is **not automatically cleared** yet (it accumulates action chains).
+
+**Planned (likely Phase VIII/IX cleanup):**
+- Add a Scratch TTL/cleanup rule:
+  - clear Scratch at keyframes, OR keep only last N chains.
+- Add a more meaningful auto-retrieve guard:
+  - retrieve priors primarily when cues/preds are sparse, BodyMap is stale, or mismatch is high.
+
+---
+
+### H7) Mini chart: “where to look” when debugging step-by-step traces
+
+| You want to answer… | Look at… | Why |
+|---|---|---|
+| “What does the world say is happening right now?” | EnvObservation + BodyMap | BodyMap is fast “now” truth for gates |
+| “What does the agent believe right now?” | WorkingMap.MapSurface entity table | semantic state table (entity × slot-family) |
+| “What did the agent just try to do?” | WorkingMap.Scratch chains | procedural trace + predicted outcome |
+| “What happened over time (episode trace)?” | WorldGraph | long-lived symbolic trace + anchors |
+| “Where is the heavy memory?” | Column engrams | snapshot payloads; WG holds pointers only |
+| “Why is posture the now-attached env predicate?” | observation ordering + attach pattern | first predicate is attached at NOW, rest chained via LATEST |
+
+---
+
+### Related to the running of the memory pipeline in Cognitive Cycles: 
+
+
+#### Debug trace fields in env-loop output: selection_on / execute_on / wg_base / wg_foa / wg_cands
+
+When running closed-loop cognitive cycle stepping (e.g., menu 37), the runner prints a compact bundle of debug fields
+that clarify “which map was used to decide” versus “which map was written to.”
+
+#### selection_on vs execute_on
+
+- selection_on = which map is used to evaluate:
+  - policy trigger/gate conditions
+  - deficits and non-drive scores
+  - “near NOW” predicate checks
+  - (debug) FOA and candidate anchors
+
+- execute_on = which map is mutated by the winning policy’s execution:
+  - action bindings written
+  - Scratch chains (action:* → ... → pred:* outcome)
+  - any policy-side trace writes
+
+Common pairing in current development:
+- selection_on=WG execute_on=WM
+
+Meaning:
+- We select actions using the long-term WorldGraph (WG) view (plus BodyMap-first values),
+- but we write the execution trace into WorkingMap (WM), keeping WG cleaner and making action traces easy to inspect.
+
+Implication for reading logs:
+- The `pre:` and `post:` explain lines are evaluated on the selection map (WG).
+- Executing on WM does not necessarily change the WG predicates immediately; the environment must confirm changes on the next tick.
+
+#### wg_base (contextual write-base suggestion)
+
+wg_base is a skeleton helper that suggests where a primitive should anchor writes in WG:
+- prefer a “nearest relevant predicate” (e.g., posture:standing) if found
+- else HERE if it exists
+- else NOW
+
+This is printed for transparency. The controller may ignore it today.
+It exists to support future “base-aware writes,” where actions anchor near relevant context rather than always at NOW/LATEST.
+
+#### wg_foa (WorldGraph Focus of Attention)
+
+wg_foa is a skeleton “attention window” on WG:
+- seeds: [LATEST, NOW] plus any cue:* nodes present
+- ids: the union of nodes within max_hops hops of each seed
+- size: len(ids) after computation
+
+It is meant as a simple, inspectable neighborhood used for debugging and as a future building block for planning.
+
+Note: you do not set size directly. You set max_hops; size is derived.
+
+#### wg_cands (candidate planning anchors)
+
+wg_cands is a skeleton list of candidate start anchors for future multi-start planning/search:
+- includes NOW
+- includes HERE if present
+- may include “nearest binding with predicate” for a few target tokens (e.g., posture:standing, stand, mom:close)
+
+Today it is primarily a debug print to show what anchors would be used if we ran K parallel searches.
+
+
+
+
+
+
+
+### Mutability and dataflow contracts (Phase VIII evaluation lens)
+
+CCA8 currently uses multiple “maps” (stores) that each serve a different purpose. The main thing to keep clear during Phase VIII is:
+what is mutable, what is append-only, and what should be treated as “truth” versus “intent/trace.”
+
+This section is a compact contract for the dataflow and mutability rules.
+
+---
+
+#### The stores and their mutability contracts
+
+Environment state (truth)
+- Mutable: yes (external), authoritative.
+- Mutated by: HybridEnvironment.step(action=...).
+- Read by: the agent only via EnvObservation (not directly).
+- Purpose: ground truth; confirms/refutes predicted outcomes.
+
+EnvObservation (message)
+- Mutable: replaced each tick (transient).
+- Produced by: HybridEnvironment.reset()/step().
+- Consumed by: BodyMap + WorkingMap.MapSurface (+ optional WorldGraph logging).
+- Purpose: boundary object between world and agent; not “memory.”
+
+BodyMap (fast scalar cache)
+- Mutable: yes, overwrite-style.
+- Updated by: EnvObservation each step.
+- Read by: gates and policies for O(1) decisions.
+- Purpose: fast “reflex register” for posture, nipple_state, mom_distance, and derived safety zone.
+- Note: BodyMap is intended to be simple and authoritative for immediate gating.
+
+WorkingMap.MapSurface (current belief / semantic state table)
+- Mutable: yes, but constrained (overwrite-by-slot-family).
+- Updated by: EnvObservation; optionally by retrieval (replace or seed/merge).
+- Addressing: semantic (entity_id, slot-family) rather than by node id.
+- Purpose: “what do I believe right now?” in a form that is inspectable and action-ready.
+- Contract: do not keep multiple competing values within the same slot-family.
+
+WorkingMap.Scratch (procedural trace / intent + predicted postconditions)
+- Mutable: yes, append-only until pruned.
+- Written by: policy execution (action chains + predicted outcome predicate).
+- Addressing: structural traversal from WM_SCRATCH (not semantic).
+- Purpose: “what did I just try to do?” and “what outcome did I expect?”
+- Key property: Scratch is not truth; it is a trace / hypothesis space.
+- Operational note: Scratch accumulation is acceptable short-term but requires TTL/cleanup later (clear at keyframes or keep last N chains).
+
+WorkingMap.Creative (counterfactual rollouts; future)
+- Mutable: yes, append-only within rollouts; prunable.
+- Written by: future planning/rollout machinery.
+- Purpose: simulated “what-if” sequences that should not mutate MapSurface truth directly.
+
+WorldGraph (long-term trace + index)
+- Mutable: yes, append-style.
+- Written by: environment injection (changes/keyframes), action trace (optional), pointer nodes.
+- Purpose: “what happened over time?” + “how do I index memory?”
+- Key property: WG represents “current-ness” via anchors/chains (NOW/LATEST), not overwriting.
+- Note: WG is the commit log + pointer scaffold; it should remain lightweight.
+
+Columns / Engrams (payload store)
+- Mutable: conceptually no (append-only / immutable records).
+- Written by: snapshot store (e.g., MapSurface snapshot).
+- Read by: retrieval.
+- Purpose: heavy memory payloads (map instances / scenes / structured snapshots).
+- Rule: if memory must “update,” store a new engram and point to it; avoid in-place mutation.
+
+---
+
+#### What Scratch “does” (and why it matters)
+
+Scratch operations have architectural meaning even when they do not change “truth”:
+
+- They record intent and predicted postconditions:
+  action:* → ... → pred:* (postcondition/outcome).
+- They support mismatch evaluation:
+  compare predicted postcondition vs the next EnvObservation update.
+- They prime learning:
+  RL credit (reward updates) can be associated with the executed action chain.
+- They preserve interpretability:
+  the trace shows what the agent tried and what it expected to happen.
+
+---
+
+#### Phase VIII discipline: recommended dataflow rules
+
+For interpretable partial-observability experiments:
+
+- Only EnvObservation should update “truth belief” in BodyMap and MapSurface.
+- Scratch must never be treated as truth; it is trace/hypothesis.
+- WG is a commit log + index; avoid using “tag exists anywhere” as “true now.”
+- Engrams are immutable payloads; changes mean new snapshots + new pointers.
+- Retrieval application modes:
+  - replace: rebuild surface from snapshot (preds + cues)
+  - seed/merge: seed predicates only; do not inject cue:* into live state
+
+---
+
+#### One-line summary (mental model)
+
+- Truth changes only in the environment.
+- Belief lives in MapSurface (plus fast BodyMap cache).
+- Intent and predicted outcomes live in Scratch.
+- History + indices live in WorldGraph.
+- Payloads live in Column Engrams.
+
+
+
+
+### 1) BodyMap (ctx.body_world): “what I believe right now”
+
+BodyMap is a tiny, structured register for body + near-world state (e.g. in the case of the goat calf, its posture, mom distance, nipple state, shelter/cliff distances).
+
+- Updated **every Cognitive Cycle** from EnvObservation.
+- Used **BodyMap-first** for policy gating (e.g., don’t execute RecoverFall when posture is already standing).
+- Can become “stale” if it hasn’t been updated recently; in that case, some gates fall back to WorldGraph.
+
+Think of BodyMap as the “fast, always-on” body schema.
+
+
+### 2) WorkingMap (ctx.working_world): short-term **map workspace (MapSurface)** + optional trace
+
+WorkingMap is a separate WorldGraph instance used primarily as an active **map workspace** (stable entities + relations updated in place each tick). A per-tick trace is optional and intended for debugging, not as the default representation.
+
+- It is deliberately **high bandwidth** and may contain repeated predicates/actions.
+- It is capped by `working_max_bindings` so long runs don’t explode memory.
+- It exists so we can keep a rich local trace **without forcing long-term memory** to store every redundant node.
+
+WorkingMap is a good place for future consolidation rules:
+“write everything to WorkingMap → copy/consolidate selected structure into WorldGraph”.
+
+
+### 3) WorldGraph (long-term): symbolic episode index for planning + inspection
+
+WorldGraph is the long-term symbolic episode index.
+
+It contains:
+- **actions and expected outcomes** written by policies (episodic “attempts”),
+- and **selected summaries of environment state** (predicates/cues) that are useful for reasoning and planning.
+
+
+#### Long-term EnvObservation → WorldGraph injection (“snapshot” vs “changes”)
+
+When the environment produces discrete predicates (posture, proximity, hazards, etc.), we can choose how aggressively to log them in the long-term WorldGraph:
+
+- `mode = snapshot`  
+  Write every observed `pred:*` each tick (dense, easy to read, can spam repeated facts).
+
+- `mode = changes`  
+  Treat many env predicates as **state slots** (e.g., `posture`, `proximity:mom`, `hazard:cliff`) and write a new `pred:*` binding only when the slot changes.  
+  This prevents “rewriting the same fact 4000×” while preserving transitions like fallen→standing→fallen.
+
+Optional flexibility knobs:
+- `reassert_steps` — re-emit unchanged slots periodically (so stable facts can be “re-observed” occasionally).
+- `keyframe_on_stage_change` — force a snapshot-like refresh when the environment’s scenario stage changes (birth→struggle→first_stand…).
+
+
+### 4) WorldGraph memory_mode: episodic vs semantic
+
+WorldGraph also has an internal memory mode:
+
+- **episodic**: every add creates a new binding (timeline-first).
+- **semantic (experimental)**: identical pred/cue tags may be consolidated to a canonical binding (clutter reduction).
+
+Important caution: semantic consolidation can make stale facts “look true forever” if code treats “tag exists anywhere” as “true now”.
+The safe trajectory is:
+- use **BodyMap / WorkingMap** for “current tick truth”,
+- use **WorldGraph** for long-term structure and episodes.
+
+
+### 5) Engrams (Column memory): heavy payloads live outside the graph
+
+WorldGraph bindings are small. Rich content (vectors, sensory payloads, scene descriptors) is stored as **engrams** in Column memory.
+Bindings can carry lightweight pointers to these engrams so you can keep the symbolic index compact while still retaining rich data.
+
+
+
+
+
+
+
+### Mammalian / Human memory systems and their CCA8 equivalents (conceptual map)
+
+This table is a *conceptual mapping*, not a claim of exact neuroanatomical equivalence. It is intended to help readers orient themselves: “if I know the human memory taxonomy, where does that live in CCA8?”
+
+| Mammalian / human memory system | What it does (brain-side) | CCA8 equivalent (architecture / simulation) |
+|---|---|---|
+| **Sensory memory** (iconic / echoic / haptic) | Very short-lived sensory traces (sub-second to a few seconds) in primary sensory cortex pipelines | **HybridEnvironment → EnvObservation** as the “incoming perceptual stream” (raw_sensors + predicates + cues). Optionally, capture as **engrams** if you want persistence. The intent is that this stream is transient and can be configured for different time windows. |
+| **Short-term memory** | Passive short holding buffer (~15–30s; classic “7±2” item framing) | **WorkingMap** as a short-term high-bandwidth trace (bounded by max_bindings) plus **BodyMap** as a tiny register. (CCA8 does not yet enforce strict capacity; instead it provides pruning knobs.) |
+| **Working memory (overall)** | Short-term + active processing (“workspace”) | **WorkingMap + PolicyRuntime/Action Center + FOA/base mechanisms**. WorkingMap holds the local trace; PolicyRuntime/Action Center selects what to do next; FOA/base are the “what is currently relevant?” scaffolds. |
+| • Central executive (WM component) | Attention control, selection, coordination | **PolicyRuntime / Action Center** (gating → triggering → executing) plus FOA selection. |
+| • Phonological loop (WM component) | Verbal/auditory rehearsal system | Not a focus in the goat profile; future “human-like” profiles would likely map this to **column/engram payloads** + rehearsal-like controller loops. |
+| • Visuospatial sketchpad (WM component) | Spatial/visual manipulation (“mind’s eye”) | **BodyMap + environment geometry** (near-space posture/mom/shelter/cliff) and (future) richer **engrams** for spatial scenes. |
+| • Episodic buffer (WM component) | Integrates across WM subsystems and links to LTM | A future “bridge” layer: **WorkingMap → consolidation into WorldGraph/Columns** (partially scaffolded today; details still evolving). |
+| **Long-term memory: episodic (explicit/declarative)** | Personal event memory; hippocampal indexing and retrieval | **WorldGraph** as the episode index + methods that reconstruct trajectories (bindings/edges with provenance). (CCA8 episodic details remain a design focus and will evolve.) |
+| **Long-term memory: semantic (explicit/declarative)** | General knowledge/facts consolidated in cortex (semantic hub concepts) | **WorldGraph** as the symbolic index; optionally `memory_mode="semantic"` (experimental). Longer-term, “semantic engrams” belong in **Columns**, with WorldGraph as the pointer/index layer. |
+| **Procedural memory (implicit/non-declarative)** | Skills/habits; basal ganglia + cerebellum involvement | **Controller policies/primitives** and their learned parameters (e.g., skill ledger / q values). This is “how to do things,” not “facts about the world.” |
+| **Priming / classical conditioning (implicit)** | Learned associations (cue → response), often emotion/autonomic linked | **Autonomic + drive/threshold cues + learned primitives**: rising-edge interoceptive cues (`cue:drive:*`), valence tags, and policy selection shaping. (CCA8 currently expresses this via autonomic tick + cue/policy machinery; richer conditioning is future work.) |
+
+Notes:
+- Sensory memory: iconic/echoic/haptic timescales and cortical associations are listed in the companion document; CCA8 treats these as the **incoming observation stream** and can store them longer/shorter as needed.
+- Working memory components and their cognitive roles are listed in the companion document; in CCA8 they map naturally onto “what is currently in focus” + the action selection machinery + short-term traces.
+- Episodic vs semantic vs procedural vs priming/conditioning are listed in the companion document; CCA8’s current equivalents are WorldGraph for episodic/semantic indexing and Controller policies/autonomic machinery for procedural/conditioning-style behavior shaping.
+
+
+
+
+
+## WorkingMap (Working Memory Graph)
+
+CCA8 now maintains a **WorkingMap**, a short-term **map workspace**: a stable MapSurface in place each tick, plus an optional scratch/trace layer for debugging.
+
+
+
+
+### Why a WorkingMap?
+
+WorldGraph can become cluttered quickly when we log repeated predicates (e.g., posture, distances, cues) every tick. Biologically, this mirrors a common separation:
+
+- **working / short‑term memory**: high‑bandwidth, constantly updated, may be pruned
+- **long‑term memory**: lower bandwidth, consolidated, less redundant
+
+WorkingMap lets us record the detailed stream without forcing long‑term memory to store every redundant node.
+
+### Implementation
+
+- `ctx.working_world` is a **separate** `WorldGraph` instance (WorkingMap).
+- Environment observations are mirrored into WorkingMap on each tick (when enabled).
+- WorkingMap is capped by `ctx.working_max_bindings` to prevent unlimited growth.
+- WorkingMap is intended to become the source graph for consolidation policies later:
+  “write everything to WorkingMap → copy/consolidate selected information into WorldGraph”.
+
+
+### WorkingMap.MapSurface (implemented: wm_schematic_v1)
+
+WorkingMap now has an implemented **MapSurface** layer: a stable, updatable map of entities and relations.
+
+**Entity nodes (stable across ticks)**
+- Entities are represented as stable WorkingMap bindings tagged:
+  - `wm:entity`
+  - `wm:eid:<entity_id>`
+  - `wm:kind:<kind>` (e.g., agent/shelter/hazard)
+- The current map instance is rooted at `anchor:WM_ROOT`.
+- `anchor:WM_SELF` is the SELF entity (always present).
+
+**Belief state lives on entities (in-place updates)**
+- Environment predicates are applied as `pred:*` tags **on the relevant entity node**, replacing within a “slot family”:
+  - e.g., SELF carries exactly one of `pred:posture:fallen` / `pred:posture:standing`
+  - CLIFF carries exactly one of `pred:hazard:cliff:far` / `pred:hazard:cliff:near`
+- This prevents per-tick “duplicate predicate nodes” in WorkingMap.
+
+**Geometry is explicit**
+- `WM_SELF --distance_to--> <entity>` edges represent schematic geometry.
+- The edge meta holds:
+  - `meters` (numeric; real if available, otherwise derived from near/far)
+  - `class` (near/far/etc)
+  - `frame` (`wm_schematic_v1`)
+- Each entity stores a 2D schematic coordinate in:
+  - `binding.meta["wm"]["pos"] = {"x": ..., "y": ..., "frame": "wm_schematic_v1"}`
+
+**Schematic coordinate distortion (subway-map style)**
+- Distances are monotonic but distorted (compressed for large distances).
+- Current implementation uses a simple projection (log compression) for x and lane-based y.
+
+**Scratch / micro-action trace (optional)**
+- Policies may still write transient `action:*` and `then` chains into WorkingMap as a scratchpad.
+- This is intentionally separate from the stable MapSurface belief state.
+
+**UI**
+- The env-loop (menu 37) prints:
+  - a MapSurface entity table (entity_id, kind, pos(x,y), dist_m/class, last_seen),
+  - followed by a WorkingMap snapshot where WorkingMap IDs are printed as `wN (bN)`.
+
+
+
+
+
+
+
+### Runner controls
+
+- **Menu #**: Control Panel (RL + memory knobs)
+  - Toggle WorkingMap mirroring + verbosity + size cap
+  - Set WorldGraph `memory_mode` (episodic vs semantic)
+  - Configure long-term env observation injection (changes vs snapshot, reassert_steps, keyframes, verbose reuse)
+
+- **Menu #**: WorkingMap snapshot
+  - Print the last N bindings from WorkingMap
+  - Optionally clear WorkingMap
+
+
+
+
+
+
+
+### Menu Menu Selection — Control Panel (RL policy selection + memory knobs)
+
+This menu selection is the main “knobs and buttons” control panel for CCA8 experiments. It lets you control:
+
+how policies are selected (deterministic vs RL-assisted),
+
+whether EnvObservation is written to WorkingMap, WorldGraph, or both,
+
+how aggressively long-term environment observations are deduplicated,
+
+and (Phase VII) whether the system logs long-term actions as “motor program runs” rather than decision ticks.
+
+**Mental model (what these knobs are really controlling)**
+
+At runtime, it helps to keep three graphs in mind:
+
+BodyMap (ctx.body_world)
+A tiny, safety-critical “what I believe right now” register (posture, mom distance, nipple state, shelter/cliff). Used for gating, safety, and tie-break logic.
+
+WorkingMap (ctx.working_world)
+A short-term raw trace scratchpad (dense, tick-level). It is pruned by working_max_bindings and is intended to hold detail that we do not want to commit to long-term memory.
+
+WorldGraph (world)
+The durable long-term episode index that persists (autosave/save session). It holds a sparse symbolic record for planning/inspection.
+
+EnvObservation injection follows this fixed pipeline:
+
+EnvObservation → BodyMap update (always) → WorkingMap mirror (if enabled) → WorldGraph injection (if enabled)
+
+So WorkingMap is normally a mirror, not a redirect: if WorkingMap and long-term env obs are both enabled, EnvObservation is written to both (WorkingMap every tick, WorldGraph according to its long-term injection settings).
+
+**Presets (long-term env obs)**
+
+Presets are shortcuts that set only the “Long-term EnvObservation → WorldGraph injection” knobs.
+
+bio
+mode=changes, keyframes on, reassert_steps=25
+Rationale: sparse long-term growth, but periodically re-assert stable state slots to mimic re-observation.
+
+sparse
+mode=changes, keyframes on, reassert_steps=0
+Rationale: minimal long-term growth (write only on slot change + keyframes).
+
+debug
+mode=snapshot, verbose on
+Rationale: maximal visibility (writes every env predicate each tick; will be noisy).
+
+**RL policy selection knobs (epsilon-greedy among triggered candidates)**
+
+These knobs only matter when more than one policy is eligible/triggered and we must choose a single winner.
+
+rl_enabled (bool)
+
+OFF: deterministic heuristic selection (deficit → non-drive priority → stable order).
+
+ON: epsilon-greedy selection:
+
+explore (probability epsilon): choose a random policy from the triggered candidate set.
+
+exploit (probability 1 - epsilon): choose by deficit and tie-break logic (see rl_delta below).
+
+rl_epsilon (float in [0.0, 1.0] or None)
+
+Exploration probability.
+
+0.0 means 0% explore (always exploit).
+
+0.10 means 10% explore.
+
+Values are clamped to [0.0, 1.0].
+
+Important: if rl_epsilon is None, the “effective epsilon” falls back to ctx.jump.
+This is a convenience reuse of the existing jump knob (originally meant for TemporalContext boundaries), and it means RL can still explore even if epsilon prints as None.
+
+If you want RL enabled but no randomness, explicitly set:
+
+rl_enabled = on
+
+rl_epsilon = 0.0
+
+rl_delta (float, >= 0.0)
+
+Defines the “near-best deficit band” inside the exploit branch:
+
+Compute best_deficit = max(deficit(policy)) over triggered candidates.
+
+Define near_best as those policies where (best_deficit - deficit(policy)) <= rl_delta.
+
+Meaning:
+
+rl_delta = 0.0: learning/tie-breaks only matter on exact deficit ties (most conservative).
+
+larger rl_delta: more policies qualify as “near-best” and learning can influence more choices.
+
+Within the near-best band, the system breaks ties by:
+
+non-drive priority (explicit tie-break logic),
+
+learned value estimate q (skill ledger),
+
+then stable order as the final deterministic fallback.
+
+**WorkingMap (short-term raw trace)**
+
+working_enabled (bool)
+
+ON: mirror every EnvObservation into WorkingMap (dense per-tick trace).
+
+OFF: WorkingMap exists but receives no new env predicates/cues.
+
+Note: WorkingMap mirroring does not automatically disable long-term injection; if long-term env obs is still enabled, EnvObservation will be written to both.
+
+working_verbose (bool)
+
+ON: prints per-tick [env→working] ... lines for env injection into WorkingMap.
+
+working_max_bindings (int)
+
+Caps WorkingMap size; pruning deletes older non-anchor bindings to prevent unlimited growth.
+
+**Phase VII memory pipeline (experimental)**
+
+These knobs are used to move toward a WorkingMap-first pipeline and “motor program runs, not decision ticks”.
+
+phase7_working_first (bool)
+
+If ON, the controller executes policy writes into WorkingMap rather than into the long-term WorldGraph. This helps keep WorldGraph sparse while WorkingMap remains dense.
+
+This is currently most relevant to the closed-loop environment run (menu 37).
+
+phase7_run_compress (bool)
+
+If ON, long-term WorldGraph records policy actions as compressed “runs” rather than per-tick action spam.
+
+High-level behavior:
+
+If the same policy repeats across consecutive env steps, do not create a new long-term action binding each tick.
+
+Instead, extend one run record (run_len++) and update the run’s end-state pointer.
+
+Split/close the run on boundary signatures (e.g., stage/posture/nipple/zone changes) or when policy changes.
+
+Net effect:
+
+Long-term WorldGraph becomes: keyframe state → run(action) → keyframe state → …
+
+In the menu implementation, enabling run_compress typically turns working_first on automatically (because run compression makes the most sense when dense tick-level detail is kept in WorkingMap).
+
+phase7_run_verbose (bool)
+
+If ON, prints run-compression debug lines such as: start / extend / close run.
+
+phase7_move_longterm_now_to_env (bool)
+
+Controls anchor semantics for long-term NOW in mode=changes.
+
+OFF: NOW only moves when new long-term predicate bindings are written (or at keyframes).
+
+ON: long-term NOW is actively moved to the current environment “state binding” each step (useful for NOW-relative debugging when changes-mode suppresses writes).
+
+**WorldGraph memory_mode (long-term storage strategy)**
+episodic (default)
+
+Every add_predicate(...) / add_cue(...) creates a fresh binding.
+This preserves a literal “event log” timeline (new node per occurrence), which is easiest for ordering and debugging.
+
+semantic (experimental)
+
+Identical pred/cue tokens are consolidated (reused) to reduce clutter.
+This reduces node explosion but changes temporal semantics: repeated occurrences can collapse onto one node. Use with caution if you rely on “the chain itself” as a literal time axis.
+
+**Long-term EnvObservation → WorldGraph injection**
+longterm_obs_enabled (bool)
+
+ON: env predicates/cues are written to WorldGraph (subject to mode settings).
+
+OFF: env predicates/cues are not written to WorldGraph (BodyMap still updates; WorkingMap still mirrors if enabled).
+
+longterm_obs_mode (changes vs snapshot)
+
+snapshot: write every observed env predicate each tick (dense, old behavior).
+
+changes: treat env predicates as “state slots” (posture, proximity:mom, hazard:cliff, …) and write only when a slot changes.
+
+In changes mode, the system deduplicates per slot using a slot cache:
+
+first time a slot is seen → emit (“first”)
+
+slot value changes → emit (“changed”)
+
+unchanged → skip (unless reasserted)
+
+longterm_obs_reassert_steps (int)
+
+In changes mode: re-emit unchanged slots periodically after N controller steps (re-observation).
+
+longterm_obs_keyframe_on_stage_change (bool)
+
+Only meaningful in changes mode.
+
+If ON: when scenario_stage changes (birth → struggle → first_stand …), clear the slot cache so the current state is written again as a keyframe (even if some values are unchanged). This is why you see a KEYFRAME log line and then a “rewrite” of stable predicates at stage boundaries.
+
+longterm_obs_keyframe_log (bool)
+
+If ON: print a one-line KEYFRAME message when a keyframe boundary clears the slot cache (helpful for debugging long-term representation).
+
+longterm_obs_verbose (bool)
+
+In changes mode: print verbose reuse lines when slots are unchanged (can be noisy).
+
+**Clear actions (manual resets without env.reset)**
+Clear WorkingMap now?
+
+Clears WorkingMap (fresh short-term trace window without resetting the environment).
+
+Clear long-term slot cache now?
+
+Clears the long-term slot cache so the next env observation is treated as “first” for each slot (manual keyframe).
+
+**Practical starter configs**
+
+Minimal long-term growth (recommended default for closed-loop runs)
+
+preset: sparse
+
+RL: off
+
+WorkingMap: on
+
+WorldGraph memory_mode: episodic
+
+Phase VII: off
+
+Debug “why didn’t this write?”
+
+preset: debug
+
+WorkingMap verbose: on (briefly)
+
+Phase VII experiment (WorkingMap-first + long-term runs)
+
+WorkingMap: on
+
+Phase VII: working_first=on, run_compress=on, run_verbose=on briefly
+
+long-term env obs: changes + keyframes, reassert=0
+
+WorldGraph: episodic (for now)
+
+---
+
+
+
+
+
+
+
+## WorldGraph memory modes: episodic vs semantic
+
+WorldGraph supports two storage modes for predicates/cues:
+
+### Episodic mode (default)
+
+- Each `add_predicate(...)` / `add_cue(...)` creates a **new** binding.
+- Best when you want a rich timeline and do not mind redundancy.
+
+### Semantic mode (consolidated, experimental)
+
+- Identical `pred:` / `cue:` tags are consolidated to a **single** canonical binding.
+- Reduces repeated nodes in long‑term graphs and can improve readability.
+
+**Important note:** If policy code treats “tag exists anywhere in WorldGraph” as meaning “true right now”, semantic mode can make stale facts appear permanently true. The safe trajectory is:
+
+- use **WorkingMap / BodyMap** as the source of “current tick” state,
+- use **WorldGraph (semantic)** as consolidated long‑term structure.
+
+(Note at time of this writing: CCA8 is being developed in that direction; semantic mode is optin and intended for experimentation.)
+
+
+
 
 
 

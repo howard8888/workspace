@@ -227,17 +227,19 @@ class Ctx:
     pred_next_policy: Optional[str] = None
     pred_err_v0_last: dict[str, int] = field(default_factory=dict)
 
-    # Partial observability knob (Phase VIII):
-    # - Probability in [0.0..1.0] of dropping an observed predicate/cue BEFORE it enters memory.
-    # - Default 0.0 keeps current behavior unchanged.
-    # - A few safety-critical predicate families are protected from dropping (see inject_obs_into_world).
-    obs_mask_prob: float = 0.2    #<-----------------------------------SET obs_mask_prob
-    #obs_mask_prob: float = 0.0
-    obs_mask_verbose: bool = True
-
     last_drive_flags: Optional[set[str]] = None
     env_episode_started: bool = False       # Environment / HybridEnvironment integration
     env_last_action: Optional[str] = None  # last fired policy name for env.step(...)
+    # Partial observability / observation masking (Phase VIII)
+    # - obs_mask_prob: independent drop probability for each non-protected token.
+    # - obs_mask_seed: if set, masking uses a deterministic per-step RNG (seeded from base seed + step_ref).
+    # - obs_mask_last_cfg_sig: sentinel so we print the config line once per setting change (no spam).
+    # - A few safety-critical predicate families are protected from dropping (see inject_obs_into_world).
+    #obs_mask_prob: float = 0.2    #<-----------------------------------SET obs_mask_prob
+    obs_mask_prob: float = 0.0
+    obs_mask_verbose: bool = True
+    obs_mask_seed: Optional[int] = None
+    obs_mask_last_cfg_sig: Optional[str] = None
     mini_snapshot: bool = True  #mini-snapshot toggle starting value
     posture_discrepancy_history: list[str] = field(default_factory=list) #per-session list of discrepancies motor command vs what environment reports
 
@@ -2045,40 +2047,25 @@ def should_autoretrieve_mapsurface(
 
         Column engram (wm_mapsurface payload)  →  WorkingMap.MapSurface (as a prior)
 
-    We attempt it at keyframes so the system can "snap into" a previously seen scene configuration
-    without bloating the long-term WorldGraph.
+    We consider it at keyframes so the system can "snap into" a previously seen scene configuration
+    without bloating the long-term WorldGraph. WorldGraph stores only a thin pointer; the heavy
+    MapSurface payload lives in Column memory.
 
-    WorldGraph does NOT store the full engram payload; it stores a thin pointer binding (index tags + engram id).
-    The heavy data lives in Column memory. This hook only decides whether we *try* the retrieval on this boundary.
+    Minimal gating (Phase VIII)
+    ---------------------------
+    Historically this hook was a simple baseline: if enabled + boundary → attempt.
+    We now add a conservative gating rule so *prediction error and partial observability matter*:
 
-    Why we need this hook
-    ---------------------
-    In the current demo environment (HybridEnvironment), observations are rich and frequent, so merge/seed can be
-    a quiet no-op. In future, when we process real-world sensor streams, there will be times we WANT priors and
-    times we DO NOT (debugging, high-confidence perception, deliberate "no priors" baselines, etc.).
+      Attempt auto-retrieve only when ALL are true:
+        1) enabled, and
+        2) this call is occurring on a keyframe boundary (stage/zone boundary), and
+        3) we have evidence priors may help, i.e. at least one of:
+             - missingness: this observation dropped tokens due to obs-mask (or obs packet is very sparse / None)
+             - pred_err:   ctx.pred_err_v0_last has any non-zero component (v0 currently tracks posture mismatch)
+             - stale:      BodyMap is stale (priors can stabilize belief when fast registers are unreliable)
 
-    This function is the one place to put that decision logic so it stays consistent and testable.
-
-    Inputs
-    ------
-    ctx:
-        Runtime context (holds the user-controlled knobs, and is the correct home for programmatic control).
-        Key knobs used today:
-            - ctx.wm_mapsurface_autoretrieve_enabled
-            - ctx.wm_mapsurface_autoretrieve_mode          ("merge" recommended; "replace" debug)
-            - ctx.wm_mapsurface_autoretrieve_top_k         (candidate count)
-            - ctx.wm_mapsurface_autoretrieve_verbose       (logging)
-    env_obs:
-        The current observation packet (may be None in some future integrations).
-        We do not require any particular schema here; we only use it for cheap diagnostics (counts).
-    stage / zone:
-        The best-effort context labels for this keyframe (strings or None).
-        These are used for retrieval filtering and for human-readable diagnostics.
-    stage_changed / zone_changed:
-        Which kind(s) of keyframe boundary caused this hook to run.
-        (Right now CCA8 triggers memory snapshots at stage/zone boundaries.)
-    boundary_reason:
-        Optional string used only for logging/debugging (e.g., "auto_boundary_stage:birth->struggle").
+    This is intentionally conservative: in rich-observation demos, retrieval often becomes a no-op anyway.
+    The gating keeps the logs meaningful and prevents "always retrieve" behavior from dominating experiments.
 
     Returns
     -------
@@ -2086,30 +2073,15 @@ def should_autoretrieve_mapsurface(
       ok:
         True if we should attempt auto-retrieval now.
       why:
-        Short reason string for logs/tests (e.g., "enabled_boundary", "disabled", "not_boundary").
+        Short reason string for logs/tests.
       mode:
         Normalized retrieval mode to use ("merge" or "replace").
       top_k:
-        Candidate budget (int, clamped to 2..10 so exclusion logic can still pick a second-best).
+        Candidate budget (int, clamped to 2..10).
       verbose:
         Whether the caller should print diagnostic lines.
       diag:
-        Small diagnostic dictionary (counts, boundary flags, stage/zone) for optional logging.
-
-    Default policy (Phase VII demo)
-    -------------------------------
-    - If auto-retrieve is disabled → do not attempt.
-    - If this is not a stage/zone boundary → do not attempt.
-    - Otherwise → attempt.
-
-    Future upgrades (expected)
-    --------------------------
-    This is where you will later add:
-      - confidence gating (sensor confidence / missing cues / partial predicates)
-      - BodyMap staleness gating (priors help more when BodyMap is stale)
-      - debug/baseline modes ("no priors" runs)
-      - task-specific suppression (e.g., planning-only phases vs perception-only phases)
-
+        Small diagnostic dictionary (counts, flags, stage/zone) for optional logging.
     """
     enabled = bool(getattr(ctx, "wm_mapsurface_autoretrieve_enabled", False))
     verbose = bool(getattr(ctx, "wm_mapsurface_autoretrieve_verbose", False))
@@ -2141,60 +2113,91 @@ def should_autoretrieve_mapsurface(
         pred_n = 0
         cue_n = 0
 
-    # Decision logic (simple baseline)
-    if not enabled:
-        return {
-            "ok": False,
-            "why": "disabled",
-            "mode": mode_eff,
-            "top_k": top_k,
-            "verbose": verbose,
-            "diag": {
-                "stage": stage,
-                "zone": zone,
-                "stage_changed": bool(stage_changed),
-                "zone_changed": bool(zone_changed),
-                "boundary_reason": boundary_reason,
-                "pred_n": pred_n,
-                "cue_n": cue_n,
-            },
-        }
+    boundary = bool(stage_changed) or bool(zone_changed)
 
-    if not (bool(stage_changed) or bool(zone_changed)):
-        return {
-            "ok": False,
-            "why": "not_boundary",
-            "mode": mode_eff,
-            "top_k": top_k,
-            "verbose": verbose,
-            "diag": {
-                "stage": stage,
-                "zone": zone,
-                "stage_changed": bool(stage_changed),
-                "zone_changed": bool(zone_changed),
-                "boundary_reason": boundary_reason,
-                "pred_n": pred_n,
-                "cue_n": cue_n,
-            },
-        }
-
-    return {
-        "ok": True,
-        "why": "enabled_boundary",
-        "mode": mode_eff,
-        "top_k": top_k,
-        "verbose": verbose,
-        "diag": {
-            "stage": stage,
-            "zone": zone,
-            "stage_changed": bool(stage_changed),
-            "zone_changed": bool(zone_changed),
-            "boundary_reason": boundary_reason,
-            "pred_n": pred_n,
-            "cue_n": cue_n,
-        },
+    diag: dict[str, Any] = {
+        "stage": stage,
+        "zone": zone,
+        "stage_changed": bool(stage_changed),
+        "zone_changed": bool(zone_changed),
+        "boundary_reason": boundary_reason,
+        "pred_n": pred_n,
+        "cue_n": cue_n,
     }
 
+    if not enabled:
+        diag["need_priors"] = False
+        return {"ok": False, "why": "disabled", "mode": mode_eff, "top_k": top_k, "verbose": verbose, "diag": diag}
+
+    if not boundary:
+        diag["need_priors"] = False
+        return {"ok": False, "why": "not_boundary", "mode": mode_eff, "top_k": top_k, "verbose": verbose, "diag": diag}
+
+    # ---- Minimal gating signals (missingness + pred_err + BodyMap staleness) ----
+    body_stale = True
+    try:
+        body_stale = bool(bodymap_is_stale(ctx))
+    except Exception:
+        body_stale = True
+
+    pred_err_any = False
+    pred_err_posture = 0
+    try:
+        pe = getattr(ctx, "pred_err_v0_last", None)
+        if isinstance(pe, dict) and pe:
+            try:
+                pred_err_posture = int(pe.get("posture", 0) or 0)
+            except Exception:
+                pred_err_posture = 0
+            try:
+                pred_err_any = any(int(v or 0) != 0 for v in pe.values())
+            except Exception:
+                pred_err_any = pred_err_posture != 0
+    except Exception:
+        pred_err_any = False
+        pred_err_posture = 0
+
+    mask_dropped_preds = 0
+    mask_dropped_cues = 0
+    try:
+        meta = getattr(env_obs, "env_meta", None) if env_obs is not None else None
+        if isinstance(meta, dict):
+            mask_dropped_preds = int(meta.get("obs_mask_dropped_preds", 0) or 0)
+            mask_dropped_cues = int(meta.get("obs_mask_dropped_cues", 0) or 0)
+    except Exception:
+        mask_dropped_preds = 0
+        mask_dropped_cues = 0
+
+    # Treat a missing/very-sparse obs packet as missingness (priors likely helpful).
+    sparse_obs = (env_obs is None) or (pred_n <= 1 and cue_n <= 0)
+    missingness = sparse_obs or ((mask_dropped_preds + mask_dropped_cues) > 0)
+
+    need_priors = bool(pred_err_any) or bool(missingness) or bool(body_stale)
+
+    diag.update(
+        {
+            "pred_err_any": bool(pred_err_any),
+            "pred_err_posture": int(pred_err_posture),
+            "mask_dropped_preds": int(mask_dropped_preds),
+            "mask_dropped_cues": int(mask_dropped_cues),
+            "bodymap_stale": bool(body_stale),
+            "sparse_obs": bool(sparse_obs),
+            "missingness": bool(missingness),
+            "need_priors": bool(need_priors),
+        }
+    )
+
+    if not need_priors:
+        return {"ok": False, "why": "enabled_boundary_confident", "mode": mode_eff, "top_k": top_k, "verbose": verbose, "diag": diag}
+
+    if pred_err_any:
+        why = "enabled_boundary_pred_err"
+    elif missingness:
+        why = "enabled_boundary_missing"
+    else:
+        why = "enabled_boundary_bodymap_stale"
+
+    return {"ok": True, "why": why, "mode": mode_eff, "top_k": top_k, "verbose": verbose, "diag": diag}
 
 
 def maybe_autoretrieve_mapsurface_on_keyframe(
@@ -7783,7 +7786,13 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
     # - Masking happens BEFORE BodyMap/WorkingMap/WorldGraph writes so it affects "belief-now".
     # - A small set of safety-critical predicate families is protected so zone classification remains stable.
     mask_p = float(getattr(ctx, "obs_mask_prob", 0.0) or 0.0)
-    if mask_p > 0.0:
+    if mask_p <= 0.0:
+        # If masking is off, clear the "config printed" sentinel so re-enabling prints a config line again.
+        try:
+            ctx.obs_mask_last_cfg_sig = None
+        except Exception:
+            pass
+    else:
         mask_p = max(0.0, min(1.0, mask_p))
         protect_pred_prefixes = ("posture:", "hazard:cliff:", "proximity:shelter:")
 
@@ -7796,6 +7805,46 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         def _strip_pred_prefix(tok: str) -> str:
             return tok[5:] if tok.startswith("pred:") else tok
 
+        # Reproducible masking (optional):
+        # If ctx.obs_mask_seed is set, use a per-step deterministic RNG. This prevents unrelated random calls
+        # (e.g., RL exploration) from perturbing the observation-masking pattern.
+        rng = random
+        rng_mode = "global"
+        seed_base = getattr(ctx, "obs_mask_seed", None)
+
+        step_ref = env_meta.get("step_index")
+        if step_ref is None:
+            step_ref = getattr(ctx, "cog_cycles", None)
+        if step_ref is None:
+            step_ref = getattr(ctx, "controller_steps", 0)
+
+        seed_eff: Optional[int] = None
+        if seed_base is not None:
+            try:
+                seed_i = int(seed_base)
+            except Exception:
+                seed_i = None
+            if seed_i is not None:
+                try:
+                    step_i = int(step_ref) if step_ref is not None else 0
+                except Exception:
+                    step_i = 0
+                seed_eff = (seed_i * 1_000_003) ^ step_i
+                rng = random.Random(seed_eff)
+                rng_mode = "seeded"
+
+        verbose = bool(getattr(ctx, "obs_mask_verbose", True))
+        cfg_sig = f"{rng_mode}|{seed_base!r}|{mask_p:.3f}"
+        if verbose and cfg_sig != getattr(ctx, "obs_mask_last_cfg_sig", None):
+            try:
+                ctx.obs_mask_last_cfg_sig = cfg_sig
+            except Exception:
+                pass
+            print(
+                f"[obs-mask] config mode={rng_mode} seed={seed_base!r} step_ref={step_ref!r} "
+                f"p={mask_p:.2f} protected={len(protect_pred_prefixes)}"
+            )
+
         dropped_preds = 0
         dropped_cues = 0
 
@@ -7805,7 +7854,7 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
             if any(tok_chk.startswith(pfx) for pfx in protect_pred_prefixes):
                 preds_out.append(tok)
                 continue
-            if random.random() < mask_p:
+            if rng.random() < mask_p:
                 dropped_preds += 1
                 continue
             preds_out.append(tok)
@@ -7817,7 +7866,7 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
 
         cues_out: list[str] = []
         for tok in cues:
-            if random.random() < mask_p:
+            if rng.random() < mask_p:
                 dropped_cues += 1
                 continue
             cues_out.append(tok)
@@ -7829,10 +7878,22 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         except Exception:
             pass
 
-        if (dropped_preds or dropped_cues) and bool(getattr(ctx, "obs_mask_verbose", True)):
+        # Expose masking stats for downstream gating/diagnostics (e.g., keyframe auto-retrieve).
+        # This lets the keyframe pipeline know whether *this* observation lost tokens.
+        try:
+            if isinstance(env_meta, dict):
+                env_meta["obs_mask_dropped_preds"] = int(dropped_preds)
+                env_meta["obs_mask_dropped_cues"] = int(dropped_cues)
+                env_meta["obs_mask_mode"] = str(rng_mode)
+                env_meta["obs_mask_prob"] = float(mask_p)
+        except Exception:
+            pass
+
+        if verbose and (dropped_preds or dropped_cues):
+            seed_part = f" seed_eff={seed_eff}" if seed_eff is not None else ""
             print(
-                f"[obs-mask] dropped preds={dropped_preds}/{len(preds)} cues={dropped_cues}/{len(cues)} "
-                f"p={mask_p:.2f} protected={len(protect_pred_prefixes)}"
+                f"[obs-mask] mode={rng_mode}{seed_part} step_ref={step_ref!r} "
+                f"dropped preds={dropped_preds}/{len(preds)} cues={dropped_cues}/{len(cues)} p={mask_p:.2f}"
             )
 
     # Always keep BodyMap current (policies are BodyMap-first now).
@@ -9740,12 +9801,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
         ctx.boundary_vhash64 = ctx.tvec64()
     except Exception:
         ctx.boundary_vhash64 = None
-    print_startup_notices(world)
     env = HybridEnvironment()     # Environment simulation: newborn-goat scenario (HybridEnvironment)
     ctx.body_world, ctx.body_ids = init_body_world() # initialize tiny BodyMap (body_world) as a separate WorldGraph instance
     ctx.working_world = init_working_world()
-    apply_hardwired_profile_phase7(ctx, world)
-    print("[profile] Hardwired memory pipeline: phase7 daily-driver (no options menu needed).")
 
     # Optional: start session with a preloaded demo/test world to exercise graph menus.
     # Driven by --demo-world; ignored when --load is used (load takes precedence).
@@ -10045,6 +10103,11 @@ def interactive_loop(args: argparse.Namespace) -> None:
         boot_prime_stand(world, ctx)
     # Pin NOW_ORIGIN to this initial NOW (episode root)
     ensure_now_origin(world)
+    # Startup notices (print here so they appear as part of the session boot block).
+    # This keeps the output grouped: [io] → [boot] → [planner]/[profile] → [preflight-lite].
+    apply_hardwired_profile_phase7(ctx, world)
+    print_startup_notices(world)
+    print("[profile] Hardwired memory pipeline: phase7 daily-driver (no options menu needed).")
 
     # Non-interactive plan flag (one-shot planning and exit)
     if args.plan:
@@ -12363,25 +12426,128 @@ Tip: run N=1 to single-step the closed-loop cycle.
                 current_age = float(getattr(ctx, "age_days", 0.0) or 0.0)
             except Exception:
                 current_age = 0.0
+
             # Partial observability knob (obs masking)
             try:
                 cur_p = float(getattr(ctx, "obs_mask_prob", 0.0) or 0.0)
             except Exception:
                 cur_p = 0.0
+            try:
+                cur_seed = getattr(ctx, "obs_mask_seed", None)
+            except Exception:
+                cur_seed = None
+            cur_mode = "seeded" if cur_seed is not None else "global"
+            try:
+                cur_verbose = bool(getattr(ctx, "obs_mask_verbose", True))
+            except Exception:
+                cur_verbose = True
+
             print()
-            print(f"Partial observability (obs masking): current obs_mask_prob={cur_p:.2f}")
-            print("  0.00 = fully observed (default)")
-            print("  0.10–0.30 = mild partial observability (good starting range)")
+            print(
+                "Partial observability (obs masking): "
+                f"obs_mask_prob={cur_p:.2f} mode={cur_mode} obs_mask_seed={cur_seed!r} verbose={cur_verbose}"
+            )
+            print("  obs_mask_prob:")
+            print("    0.00 = fully observed (default)")
+            print("    0.10–0.30 = mild partial observability (good starting range)")
+            print("  obs_mask_seed:")
+            print("    None = stochastic masking (uses global RNG)")
+            print("    int  = reproducible masking (seeded per env step; independent of RL randomness)")
             print("  Protected (never dropped): posture:* , hazard:cliff:* , proximity:shelter:*")
+
             s = input("Set obs_mask_prob in [0..1] (blank=keep current): ").strip()
             if s:
                 try:
                     v = float(s)
                     v = max(0.0, min(1.0, v))
                     ctx.obs_mask_prob = v
+                    try:
+                        ctx.obs_mask_last_cfg_sig = None
+                    except Exception:
+                        pass
                     print(f"(updated) obs_mask_prob={ctx.obs_mask_prob:.2f}")
                 except ValueError:
                     print("(warn) invalid obs_mask_prob; keeping current value.")
+
+            s = input("Set obs_mask_seed (blank=keep; 'none'/'off'=disable; int=enable): ").strip().lower()
+            if s:
+                if s in ("none", "off", "disable", "disabled"):
+                    ctx.obs_mask_seed = None
+                    try:
+                        ctx.obs_mask_last_cfg_sig = None
+                    except Exception:
+                        pass
+                    print("(updated) obs_mask_seed=None (stochastic/global RNG)")
+                else:
+                    try:
+                        ctx.obs_mask_seed = int(float(s))
+                        try:
+                            ctx.obs_mask_last_cfg_sig = None
+                        except Exception:
+                            pass
+                        print(f"(updated) obs_mask_seed={ctx.obs_mask_seed} (reproducible)")
+                    except ValueError:
+                        print("(warn) invalid obs_mask_seed; keeping current value.")
+
+            rawv = input("obs-mask verbose logs? [Enter=toggle | on | off]: ").strip().lower()
+            if rawv in ("on", "true", "1", "yes", "y"):
+                ctx.obs_mask_verbose = True
+            elif rawv in ("off", "false", "0", "no", "n"):
+                ctx.obs_mask_verbose = False
+            elif rawv == "":
+                ctx.obs_mask_verbose = not bool(getattr(ctx, "obs_mask_verbose", True))
+            print(f"(now) obs_mask_verbose={bool(getattr(ctx, 'obs_mask_verbose', True))}")
+
+            # WM<->Column auto-retrieve enable + mode toggle
+            # WorkingMap↔Column auto-retrieve controls (keyframes)
+            # - merge   = conservative prior (fills missing slot families only; does NOT inject cue:* into belief-now)
+            # - replace = strong prior (clears + rebuilds MapSurface from the snapshot; useful for debug)
+            try:
+                ar_enabled = bool(getattr(ctx, "wm_mapsurface_autoretrieve_enabled", False))
+            except Exception:
+                ar_enabled = False
+            try:
+                ar_mode = str(getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge").strip().lower()
+            except Exception:
+                ar_mode = "merge"
+            if ar_mode == "r":
+                ar_mode = "replace"
+            if ar_mode not in ("merge", "replace"):
+                ar_mode = "merge"
+            print()
+            print(f"WM<->Column auto-retrieve (keyframes): enabled={ar_enabled} mode={ar_mode}")
+            print("  merge   = conservative prior fill (no overwrite; no cue leakage)")
+            print("  replace = rebuild MapSurface from engram snapshot (debug/strong prior)")
+
+            s = input("Set auto-retrieve enabled? [Enter=keep | t=toggle | on | off]: ").strip().lower()
+            if s:
+                if s in ("t", "toggle"):
+                    ar_enabled = not ar_enabled
+                elif s in ("on", "true", "1", "yes", "y"):
+                    ar_enabled = True
+                elif s in ("off", "false", "0", "no", "n", "disable", "disabled"):
+                    ar_enabled = False
+                else:
+                    print("(warn) invalid input; keeping current enabled setting.")
+            try:
+                ctx.wm_mapsurface_autoretrieve_enabled = ar_enabled
+            except Exception:
+                pass
+            s = input("Set auto-retrieve mode? [Enter=keep | t=toggle | merge | replace]: ").strip().lower()
+            if s:
+                if s in ("t", "toggle"):
+                    ar_mode = "replace" if ar_mode == "merge" else "merge"
+                elif s in ("merge", "m"):
+                    ar_mode = "merge"
+                elif s in ("replace", "r"):
+                    ar_mode = "replace"
+                else:
+                    print("(warn) invalid mode; keeping current mode.")
+            try:
+                ctx.wm_mapsurface_autoretrieve_mode = ar_mode
+            except Exception:
+                pass
+            print(f"(now) wm_mapsurface_autoretrieve_enabled={ar_enabled} wm_mapsurface_autoretrieve_mode={ar_mode}")
 
             print("Current values:")
             print(f"  hunger   = {current_hunger:.2f}")
