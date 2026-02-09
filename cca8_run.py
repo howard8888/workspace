@@ -230,6 +230,9 @@ class Ctx:
     last_drive_flags: Optional[set[str]] = None
     env_episode_started: bool = False       # Environment / HybridEnvironment integration
     env_last_action: Optional[str] = None  # last fired policy name for env.step(...)
+    # Console UX: print the env-loop tag legend once per session (menu 35/37).
+    env_loop_legend_printed: bool = False
+
     # Partial observability / observation masking (Phase VIII)
     # - obs_mask_prob: independent drop probability for each non-protected token.
     # - obs_mask_seed: if set, masking uses a deterministic per-step RNG (seeded from base seed + step_ref).
@@ -595,12 +598,13 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
     tail = all_ids[-max(1, int(n)) :]
     print(f"{title}: last {len(tail)} binding(s) of {len(all_ids)} total")
     print(
-    "  Legend edges: wm_entity=WM_ROOT→entity (MapSurface membership); "
-    "wm_scratch=WM_ROOT→WM_SCRATCH (policy scratch root; keeps WM_ROOT clean); "
-    "wm_creative=WM_ROOT→WM_CREATIVE (counterfactual rollouts); "
-    "distance_to=WM_SELF→entity (meta has meters/class); then=policy action chain (should hang off WM_SCRATCH)"
+        "  Legend: edges=wm_entity(root→entity), wm_scratch(root→scratch), wm_creative(root→creative), "
+        "distance_to(self→entity), then(action chain)"
     )
-    print("  Legend tags : wm:entity / wm:eid:<id> / wm:kind:<kind> mark entities; pred:* on entities = current belief; cue:* on entities = cues present now; meta.wm.pos={x,y,frame}")
+    print("          tags=wm:* entity markers; pred:* belief-now; cue:* cues-now; meta.wm.pos={x,y,frame}")
+
+
+
     for bid in tail:
         b = ww._bindings.get(bid)  # pylint: disable=protected-access
         if b is None:
@@ -677,8 +681,7 @@ def print_working_map_layers(ctx, *, title: str = "[workingmap] layers") -> None
 
     # Optional: show candidate summaries if present
     if cands:
-        print("  Creative candidates (best first): trig=Y means policy trigger satisfied; trig=N means blocked")
-        print("(Note: The 'score' value is a simple ranking signal for this display, not RL skill value or deficit calculation.)")
+        print("  Creative candidates: trig=Y/N (trigger satisfied or blocked); score is a display heuristic (not deficit or RL q).")
         try:
             ordered = sorted(cands, key=lambda c: float(getattr(c, "score", 0.0)), reverse=True)
         except Exception:
@@ -4225,7 +4228,7 @@ def boot_prime_stand(world, ctx) -> None:
             attach="now",
             meta={"boot": "init", "added_by": "system"},
         )
-        print(f"[boot] Seeded posture:fallen as {fallen_bid} (NOW -> fallen)")
+        print(f"[boot] Seeded posture:fallen as {fallen_bid} (birth-state binding; anchor:NOW → pred:posture:fallen)")
     except Exception as e:
         print(f"[boot] Could not seed posture:fallen: {e}")
 
@@ -5169,7 +5172,17 @@ def print_startup_notices(world) -> None:
     startup of the runner
     '''
     try:
-        print(f"[planner] Active planner on startup: {world.get_planner().upper()}")
+        planner = str(world.get_planner()).upper()
+        expl = {
+            "BFS": "Breadth-First Search (unweighted shortest path by hop count)",
+            "DIJKSTRA": "Dijkstra (lowest total edge weight; equals BFS when all weights=1)",
+        }.get(planner)
+        if expl:
+            print(f"[planner] Active planner on startup: {planner} — {expl}")
+        else:
+            print(f"[planner] Active planner on startup: {planner}")
+
+
     except Exception as e:
         print(f"unable to retrieve which active planner is running: {e}")
         logging.error(f"Unable to retrieve startup active planner status: {e}", exc_info=True)
@@ -8348,6 +8361,33 @@ def _wm_creative_update(policy_rt, world, drives, ctx, *, exec_world=None) -> No
         pass
 
 
+def print_env_loop_tag_legend_once(ctx: Ctx) -> None:
+    """Print a compact legend for console prefixes (once per session).
+
+    We keep the run output readable for new users, but avoid re-printing the
+    legend every time menu 35/37 is used.
+    """
+    if ctx is None:
+        return
+    if ctx.env_loop_legend_printed:
+        return
+    ctx.env_loop_legend_printed = True
+
+    print("\nLegend (console tags):")
+    print("  [env-loop]      closed-loop driver (one cognitive cycle = env update → policy select → policy act)")
+    print("  [env]           environment events (reset/step; with HAL ON, this would be real sensor I/O)")
+    print("  [env→working]   EnvObservation → WorkingMap (fast scratch / map surface)")
+    print("  [env→world]     EnvObservation → WorldGraph (long-term episode index)")
+    print("  [env→controller] Action Center output (policy selection + execution)")
+    print("  [wm↔col]        WorkingMap ↔ Column (store / retrieve / apply)")
+    print("  [gate:<p>]      gating explanation for policy <p>")
+    print("  [pick]          which policy was selected this cycle")
+    print("  [executed]      policy execution result (effects show up in the NEXT cycle's observation)")
+    print("  [maps]          selection_on=map used to score; execute_on=map used to run actions")
+    print("  [pred_err]      prediction-error summary (expected vs observed) used for retrieval gating")
+    print("  [obs-mask]      partial-observability masking (token drops) when enabled")
+    print("")
+
 def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) -> None:
     """
     Run N closed-loop steps between the HybridEnvironment and the CCA8 brain
@@ -8830,6 +8870,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         print("[env-loop] N must be ≥ 1; nothing to do.")
         return
 
+    print_env_loop_tag_legend_once(ctx)
     print(f"[env-loop] Running {n_steps} closed-loop cognitive cycle(s) (env↔controller).")
     print("[env-loop] Each cognitive cycle will:")
     print("  1) Advance controller_steps and the temporal soft clock (one drift),")
@@ -8838,8 +8879,8 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
     print("  4) Run ONE controller step (Action Center) and store the last policy name.\n")
 
     if not getattr(ctx, "env_episode_started", False):
-        print("[env-loop] Note: environment episode has not started yet; "
-              "the first cognitive cycle will call env.reset().")
+        print("[env-loop] Note: this episode has not started yet; the first cognitive cycle will call env.reset().")
+        print("[env-loop]       (With HAL ON, this is where we'd sample the first real sensor snapshot.)")
     for i in range(n_steps):
         print(f"\n[env-loop] Cognitive Cycle {i+1}/{n_steps}")
 
@@ -9225,7 +9266,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         except Exception:
             pass
 
-    print("\n[env-loop] Closed-loop run complete. "
+    print("\n[env-loop] Closed-loop cognitive cycle complete. "
           "You can inspect details via Snapshot or the mini-snapshot that follows.")
     try:
         if getattr(ctx, "working_enabled", False):
@@ -10072,7 +10113,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
         name, sigma, jump, k = mapping[args.profile]
         ctx.profile, ctx.sigma, ctx.jump = name, sigma, jump
         ctx.winners_k = k
-        print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
+        print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})")
+        print("  sigma/jump = TemporalContext drift/jump noise scales; k = reserved top-k winners knob (future WTA selection).\n")
+
         POLICY_RT.refresh_loaded(ctx)
     else:
         profile = choose_profile(ctx, world)
@@ -10080,7 +10123,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
         sigma, jump, k = profile["ctx_sigma"], profile["ctx_jump"], profile["winners_k"]
         ctx.sigma, ctx.jump = sigma, jump
         ctx.winners_k = k
-        print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
+        print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})")
+        print("  sigma/jump = TemporalContext drift/jump noise scales; k = reserved top-k winners knob (future WTA selection).\n")
+
         POLICY_RT.refresh_loaded(ctx)
     _io_banner(args, loaded_src, loaded_ok)
 
@@ -12269,17 +12314,17 @@ Attach an existing engram id (eid) to a binding id (bid).
         elif choice == "37":
             # Multi-step environment closed-loop run
             print("Selection: Run n Cognitive Cycles (closed-loop timeline)\n")
-            print("""This selection runs several consecutive closed-loop steps between the
+            print("""This selection runs several consecutive closed-loop cognitive cycles between the
 HybridEnvironment (newborn-goat world) and the CCA8 brain.
 
-For each step we will:
+For each cognitive cycle we will:
   1) Advance controller_steps and the temporal soft clock once,
   2) STEP the newborn-goat environment using the last policy action (if any),
   3) Inject the resulting EnvObservation into the WorldGraph as pred:/cue: facts,
   4) Run ONE controller step (Action Center) and remember the last fired policy.
 
-Tip: run N=1 to single-step the closed-loop cycle.
-
+This is like pressing menu 35 multiple times, but with a more compact, per-cycle summary.
+You can still use menu 35 for detailed, single-step inspection.
 """)
             print("[policy-selection] Candidates = dev_gate passes AND trigger(...) returns True.")
             print("[policy-selection] Winner = highest deficit → non_drive → (RL: q | non-RL: stable order).")
@@ -12287,19 +12332,21 @@ Tip: run N=1 to single-step the closed-loop cycle.
 
             # Ask the user for n
             try:
-                n_text = input("How many closed-loop step(s) would you like to run? [default: 5]: ").strip()
+                n_text = input("How many closed-loop cognitive cycle(s) would you like to run? [default: 5]: ").strip()
             except Exception:
                 n_text = ""
             try:
                 n_steps = int(n_text) if n_text else 5
             except ValueError:
                 n_steps = 5
+
             if n_steps <= 0:
                 print("[env-loop] N must be ≥ 1; nothing to do.")
                 loop_helper(args.autosave, world, drives, ctx)
                 continue
 
             run_env_closed_loop_steps(env, world, drives, ctx, POLICY_RT, n_steps)
+
             print()
             print("\n[skills-hud] Learned policy values after env-loop:")
             print("(terminology: hud==heads-up-display; n==number times policy executed; rate==% times we counted policy as successful;")

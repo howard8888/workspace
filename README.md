@@ -234,6 +234,43 @@ v0 is intentionally minimal (posture only)
 
 
 
+### 2b) Terminal tag legend (prefixes) + closed-loop terminology
+
+CCA8 prints many lines with a `[tag]` prefix. These tags are a stable “legend” that lets you skim runs quickly.
+
+**Core env-loop tags**
+- **[env-loop]**: one **closed-loop cognitive cycle** driver iteration (env update → internal updates → policy select/execute).
+- **[env]**: environment-side events and “truth now” (storyboard stage, posture, mom/nipple state, etc.).
+- **[env→working]**: EnvObservation projected into **WorkingMap.MapSurface** (entity/slot updates).
+- **[env→world]**: EnvObservation written into the **WorldGraph** (long-term episode index).
+- **[wm<->col]**: WorkingMap ⇄ Column keyframe pipeline (store / retrieve / apply).
+- **[gate:<policy>]**: a specific gate/trigger’s diagnostic readout (drives, BodyMap stale, zone classification, etc.).
+- **[pick]**: which policy won this cycle and why (deficits / non-drive tie-break / RL note if enabled).
+- **[executed]**: the chosen policy executed (its internal success/reward signal; confirmation is via NEXT cycle’s observation).
+- **[maps]**: which map was used to **select** vs **execute** (e.g., `selection_on=WG execute_on=WM`).
+- **[pred_err]**: prediction error summary (expected vs observed; used for retrieval gating).
+- **[obs-mask]**: partial observability masking (token drops), when enabled.
+
+**Important terminology (to avoid “step” ambiguity)**
+- **Cognitive cycle (closed-loop)**: EnvObservation arrives → maps update → policy select/execute → action fed back to env.  
+  (Printed as “Cognitive Cycle i/N” in menu 37.):contentReference[oaicite:3]{index=3}
+- **env_step / step_index**: the environment’s internal counter since env.reset() (0-indexed).:contentReference[oaicite:4]{index=4}
+- **controller step**: one Action Center invocation (“what should I do now?”). In menu 37, we do one controller step per cognitive cycle.
+
+**Environment simulator vs “world model” (AI literature note)**
+In modern AI literature, a “world model” usually means an agent’s **internal learned predictive model**.
+In CCA8, **HybridEnvironment** is the external **simulated world** (ground truth generator), not the agent’s learned world model.
+CCA8’s internal “world model-ish” content is distributed across:
+- BodyMap (fast “belief now” registers),
+- WorkingMap.MapSurface (entity/slot belief table),
+- WorldGraph (long-term episode index),
+- Columns/Engrams (heavy stored map snapshots),
+plus predicted postconditions in Scratch (hypotheses) and prediction-error signals on the next cycle.
+
+
+
+
+
 ### 3) Optional experiment: partial observability (2–3 minutes)
 
 
@@ -2533,64 +2570,99 @@ Q: Is load failure fatal?  A: No, runner continues with a fresh session.
 
 ## Intro Glossary
 
-- **Predicate** — symbolic fact token (atomic).  
-- **Binding** — node that carries predicate tag(s) and holds meta/engrams/edges.  
-- **Edge** — directed relation labeled `"then"`, encoding episode flow.  
-- **WorldGraph** — the episode index graph.  
-- **Policy** — primitive behavior with `trigger` + `execute`.  
-- **Action Center** — ordered scan of policies, runs first match per controller step  
-- **Drives** — homeostatic variables (hunger/fatigue/warmth) that generate drive flags for triggers.  
-- **Engram** — pointer to heavy content (features/sensory/temporal traces) stored outside the graph.  
-- **Provenance** — `meta.policy` stamp recording which policy created a binding.
-  
-  
 
-**Predicate (tag)**  
-Namespaced symbolic token (string) carried by a binding, e.g., `pred:stand`, `pred:mom:close`, `pred:milk:drinking`. A binding can carry multiple predicates.
 
-**Binding (node / episode)**  
-A time-slice container that holds: predicate tags, lightweight `meta`, and **pointers** to rich engrams (not the engrams themselves).
+This glossary is intentionally “runner-facing”: terms are defined in the way you see them in menu output and snapshots.
 
-**Edge (directed link)**  
-A directed connection `src → dst` with optional relation label (e.g., `approach`, `search`, `latch`, `suckle`). Think temporal/causal adjacency.
+### A) One-line cheat sheet (high frequency terms)
 
-**Anchors**  
-Special bindings (e.g., `NOW`). Use **World stats** to find the actual binding ID (e.g., `NOW=b0`).
+- **HybridEnvironment**: the external (simulated) world; produces observations from actions.
+- **EnvState**: environment “truth” (the simulator’s internal state).
+- **EnvObservation**: the observation packet crossing into the agent (predicates/cues + env_meta).
+- **Closed-loop cognitive cycle**: one env↔agent iteration: observe → update → select/execute → feedback action.
+- **controller step**: one Action Center invocation (policy arbitration + possible write).
+- **ctx (Ctx)**: runtime context object: cross-cycle counters + knobs + caches (the runner↔engine seam).
+- **WorldGraph (WG)**: long-term symbolic episode index: bindings + edges + anchors + pointers to engrams.
+- **Binding**: a node (“episode card”) with tags (pred/cue/action/anchor) plus meta/engrams/edges.
+- **Edge**: directed link `src → dst`, usually label `"then"` for episode flow (label is an annotation).
+- **Anchors**: named pointers into a graph (NOW, NOW_ORIGIN, HERE, etc.).
+- **BodyMap**: fast belief registers for gating (posture, distances, nipple state, zone, staleness).
+- **WorkingMap (WM)**: short-term workspace graph; contains MapSurface + Scratch + Creative subregions.
+- **MapSurface**: WM’s stable entity/slot table (“what I believe now”); updated in-place each cycle.
+- **Scratch**: WM’s procedural trace (state–action–state chains; predicted postconditions).
+- **Engram / Column**: heavy payload store (e.g., MapSurface snapshots); WG stores pointers to these.
+- **Keyframe**: a boundary cycle where we may store/retrieve/apply WM snapshots (WM⇄Column pipeline).
+- **Prediction error (pred_err v0)**: mismatch between predicted postcondition and next observation.
 
-**WorldGraph**  
-Holds bindings + edges and fast tag→binding indexes for planning and lookup (~the compact symbolic 5%).
+---
 
-**Engram (rich memory)**  
-Large payloads stored outside the graph and referenced by pointers from bindings (~the rich 95%). Resolved via the column provider.
+### B) MapSurface terminology: entity vs slot-family (the core idea)
 
-**Column provider**  
-`cca8_column.py` resolves binding→engrams and manages simple engram CRUD for demos.
+**Entity** = “the thing we are talking about.”  
+Examples: `self`, `mom`, `shelter`, `cliff`.
 
-**Policy**  
-Trigger (conditions on predicates/drives/sensory cues) + primitive (callable). Lives in code (`cca8_controller.py`), not in the graph.
+**Slot-family** = “the attribute channel we store for that entity.”  
+Examples: `posture`, `proximity:mom`, `proximity:shelter`, `hazard:cliff`, `nipple`.
 
-**Drives**  
-Scalar homeostatic variables (0–1): `hunger`, `warmth`, `fatigue`. When crossing thresholds, the runner emits drive flags like `drive:hunger_high`.
+**Value** = the current value in that slot-family.  
+Examples: `fallen`, `standing`, `close`, `far`, `hidden`, `found`, `latched`.
 
-**Search knobs**
+Concrete example (EnvObservation token → MapSurface update):
+- EnvObservation predicate `pred:posture:fallen` becomes:
+  - Entity = `self`
+  - Slot-family = `posture`
+  - Value = `fallen`
+MapSurface semantics: overwrite within a slot-family (exactly one current value per slot-family).
 
-* `k`: branch cap during expansion (smaller = decisive, larger = broader).
+---
 
-* `sigma`: small Gaussian jitter to break ties/avoid stagnation.
+### C) Policy selection terms: gate vs trigger vs execute
 
-* `jump`: ε-exploration probability to occasionally take a random plausible move.
+- **Gating (dev/safety gate):** “Is this policy even allowed in the candidate set right now?”
+- **Triggering:** “Given world + drives + BodyMap, does this policy want to run now?”
+- **Executing:** among triggered candidates, choose ONE winner and run it.
 
-**Cues & ticks**
+**Action Center**: the policy runtime that forms the triggered candidate set and selects **one winner**.
+Current selection rule (high-level):
+deficit (drive-urgency) → non-drive tie-break → (if RL enabled: q tie-break inside near-tie band) → stable order.
 
-* **Sensory cue** adds transient evidence (vision/smell/sound/touch).
+---
 
-* **Autonomic tick** updates drives (e.g., hunger rises) and can emit drive flags.
+### D) Timekeeping and counters
 
-**Instinct step**  
-One step chosen by the controller using policies + drives + cues. You can accept/reject proposals.
+- **env_step / step_index**: environment step since last reset (0-indexed).
+- **controller_steps**: count of Action Center invocations.
+- **cog_cycles**: count of “meaningful” cognitive iterations; canonically the env-loop cycle counter.
 
-**Planning**  
-BFS-style search from the `NOW` anchor to any binding carrying a target predicate (`pred:<name>`), traversing directed edges.
+(See “Tutorial on Timekeeping” and “Tutorial on Cognitive Cycles” for the full contract.)
+
+---
+
+### E) Startup knobs you will see in the banner / profile line
+
+- **sigma**: TemporalContext drift noise scale (how fast the soft clock wanders during step()).
+- **jump**: TemporalContext boundary noise scale (how distinct chapters feel after boundary()).
+- **winners_k / k**: reserved “top-k winners” knob for future competitive selection (e.g., WTA / multi-proposal arbitration).
+  Today it is mostly a profile label and a forward-compatible parameter.
+
+---
+
+### F) Attach modes (how new bindings are wired)
+
+- `attach="now"`: create NOW → new edge (then) and update LATEST.
+- `attach="latest"`: create LATEST → new edge (then) and update LATEST.
+- `attach="none"`: create a floating binding (valid but disconnected until you add an edge).
+
+---
+
+### G) “World model” terminology (AI literature vs CCA8)
+
+In common AI usage, a “world model” usually means the agent’s internal learned predictive model.
+In CCA8:
+- HybridEnvironment is the external *simulated world* (truth generator).
+- The internal “world model-ish” belief lives in BodyMap + WorkingMap.MapSurface (+ priors from Column snapshots),
+  with WorldGraph acting as the long-term episode index and pointer scaffold.
+
 
 
 
@@ -3058,6 +3130,7 @@ This aligns with the CCA7 article’s emphasis on verifiers + provenance, withou
 
 CCA8 uses five orthogonal time measures. They serve different purposes and are intentionally decoupled.
 
+
 **1) Controller steps** — one Action Center decision/execution loop (aka “instinct step”).  
 *Purpose:* cognition/behavior pacing (not wall-clock).  
 *Source:* a loop in the runner that evaluates policies once and may write to the WorldGraph. When that write occurs, we mark a **temporal boundary (epoch++)**. :contentReference[oaicite:0]{index=0}
@@ -3077,32 +3150,38 @@ With regards to terminology and operations that affect controller steps:
 **“Autonomic tick”** = physiology + **one controller step**.
 **“Simulate fall”** = inject fallen + **one controller step** (no drift) (but no cognitive cycle increment)
 
+
 **2) Temporal drift** — the *soft clock* (unit vector) that drifts a bit each step and jumps at boundaries.  
 *Purpose:* similarity + episode segmentation that’s unitless and cheap (cosine of current vs last-boundary vector).  
 *Drift call:* `ctx.temporal.step()`; *Boundary call:* `ctx.temporal.boundary()`; vectors are re-normalized every time. See module notes on drift vs boundary. :contentReference[oaicite:1]{index=1}  
 *Runner usage:* we drift once per instinct step and once per autonomic tick in the current build; boundary is taken when an instinct step actually writes new facts. :contentReference[oaicite:2]{index=2}
+
 
 **3) Autonomic ticks** — a fixed-rate heartbeat (physiology/IO), independent of controller latency.  
 *Purpose:* hardware/robotics cadence; advancing drives; dev-age.  
 *Source variable:* `ctx.ticks` (int).  
 *Where incremented today:* the **Autonomic Tick** menu path increments `ticks`, nudges drives, and performs a drift; it can also trigger a thresholded boundary. :contentReference[oaicite:3]{index=3} :contentReference[oaicite:4]{index=4}
 
+
 **4) Developmental age (days)** — a coarse developmental measure used for stage gating.  
 *Source variable:* `ctx.age_days` (float), advanced along with autonomic ticks; used by `world.set_stage_from_ctx(ctx)`. :contentReference[oaicite:5]{index=5}
 
-**5) Cognitive cycles** — a derived counter for CLOSED-LOOP env↔controller iterations  
-(EnvObservation → internal update → (keyframe optional store/retrieve/apply) → policy select/execute → action feedback to env).
 
-*Purpose:* progress gating & timeouts (e.g., “if no success in N cycles, switch strategy”), analytics.
+**5) Cognitive cycles** — a derived counter for “meaningful sense→decide→act” iterations
 
-*Source variable:* `ctx.cog_cycles` (int).  
-*Where incremented today:* in the HybridEnvironment closed-loop paths (menu 37; menu 35 is an alias that runs one closed-loop step), once per env↔controller iteration (ordinary or keyframe).
-*Not incremented by:* controller-only paths (Instinct Step, Autonomic Tick, Simulate Fall), which can still advance `controller_steps` and temporal drift.
+In CCA8, the most canonical “cognitive cycle” is the **closed-loop env↔controller iteration** used by menu 37:
+EnvObservation → internal update (BodyMap/WorkingMap/WorldGraph as configured) → policy select/execute → action feedback to env.:contentReference[oaicite:8]{index=8}
 
-*Contrast with controller steps:* `controller_steps` counts every Action Center invocation; within menu 37 runs, we execute exactly one controller step per cognitive cycle, so in those runs `controller_steps` and `cog_cycles` advance together. Outside the env-loop, `controller_steps` may advance without `cog_cycles`.
+*Source variable:* `ctx.cog_cycles` (int).
 
-*Recommended invariants:* `cog_cycles ≤ controller_steps`; epochs (`ctx.boundary_no`) increment only on boundary jumps (writes or τ-cuts), never decrement.
+*Where incremented today (current runner behavior):*
+- **Env-loop (menu 37; menu 35 alias)**: increments once per closed-loop iteration (ordinary or keyframe).
+- **Controller-only “Instinct step” path:** currently increments **only when the controller wrote new bindings** (i.e., a real state/action update occurred).  
+  (This is a temporary “meaningful write = cycle” definition while we continue to harden the explicit sense→process→act loop.)
 
+*Contrast with controller steps:* `controller_steps` counts every Action Center invocation; in menu 37 runs they typically advance together (1 controller step per closed-loop cycle). Outside the env-loop, `controller_steps` may advance without `cog_cycles` (e.g., no-op decisions), and `cog_cycles` may increment only on a successful write.
+
+*Recommended invariant:* `cog_cycles ≤ controller_steps`.
 
 
 ### Event boundaries & epochs
@@ -3155,7 +3234,7 @@ A: Wall-clock is great for logs and cross-run inspection, but awkward for unitle
 
 
 
-# Tutorial on Cognitive Cycles]
+# Tutorial on Cognitive Cycles
 
 
 
