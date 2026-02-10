@@ -74,6 +74,7 @@ from cca8_controller import (
     PRIMITIVES,
     skill_readout,
     skill_q,
+    update_skill,
     skills_to_dict,
     skills_from_dict,
     HUNGER_HIGH,
@@ -7972,6 +7973,20 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         #   After policy selection+execution, a keyframe may also write new engrams (copy-on-write) and
         #   update WorldGraph pointers for future retrieval, without mutating the belief state already
         #   used for action selection in this cycle.  See README: "WM ⇄ Column engram pipeline".
+
+        # REAL-EMBODIMENT KEYFRAMES (HAL / non-storyboard):
+        #   In real robots there is no storyboard stage. We will therefore support additional keyframe triggers here,
+        #   evaluated ONLY at this boundary hook (never mid-cycle):
+        #
+        #   - periodic: every N controller_steps (ctx.longterm_obs_keyframe_period_steps)
+        #   - surprise: prediction error v0 exceeds threshold or streak (ctx.pred_err_v0_last + knobs)
+        #   - context discontinuity: zone changes (ctx.body_zone / ctx.lt_obs_last_zone)
+        #   - milestones: env_info flags/cues (e.g., reached mom / obtained reward / hazard transition)
+        #
+        # TIME-BASED SAFETY:
+        #   Even the periodic keyframe must be checked only at this boundary hook so we never split a cycle
+        #   while intermediate planner/policy structures are half-written.
+
         if force_snapshot:
             old_pred_n = len(getattr(ctx, "lt_obs_slots", {}) or {})
             old_cue_n = len(getattr(ctx, "lt_obs_cues", {}) or {})
@@ -8379,12 +8394,12 @@ def print_env_loop_tag_legend_once(ctx: Ctx) -> None:
     print("  [env→working]   EnvObservation → WorkingMap (fast scratch / map surface)")
     print("  [env→world]     EnvObservation → WorldGraph (long-term episode index)")
     print("  [env→controller] Action Center output (policy selection + execution)")
-    print("  [wm↔col]        WorkingMap ↔ Column (store / retrieve / apply)")
+    print("  [wm<->col]      WorkingMap ⇄ Column keyframe pipeline (store snapshot → retrieve candidates → apply/merge priors)")
+    print("  [pred_err]      prediction error v0 (expected vs observed); gates auto-retrieve and shapes policy value via penalty on streaks")
     print("  [gate:<p>]      gating explanation for policy <p>")
     print("  [pick]          which policy was selected this cycle")
     print("  [executed]      policy execution result (effects show up in the NEXT cycle's observation)")
     print("  [maps]          selection_on=map used to score; execute_on=map used to run actions")
-    print("  [pred_err]      prediction-error summary (expected vs observed) used for retrieval gating")
     print("  [obs-mask]      partial-observability masking (token drops) when enabled")
     print("")
 
@@ -8937,23 +8952,135 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
         # --- Prediction error v0 (no behavior change; just measure + log) ---
         # Compare last cycle's predicted postcondition (hypothesis) vs this cycle's observed env posture.
+        pred_posture: str | None = None
+        obs_posture: str | None = None
+        err_vec: dict[str, int] = {}
+        src_txt = "(n/a)"
+
         try:
-            prev_pred = getattr(ctx, "pred_next_posture", None)
-            if isinstance(prev_pred, str) and prev_pred:
+            pred_posture = getattr(ctx, "pred_next_posture", None)
+            if isinstance(pred_posture, str) and pred_posture:
                 obs_posture = getattr(getattr(env, "state", None), "kid_posture", None)
                 if isinstance(obs_posture, str) and obs_posture:
-                    mismatch = 0 if obs_posture == prev_pred else 1
+                    mismatch = 0 if obs_posture == pred_posture else 1
                     err_vec = {"posture": mismatch}
                     ctx.pred_err_v0_last = err_vec
                     src = getattr(ctx, "pred_next_policy", None)
                     src_txt = src if isinstance(src, str) and src else "(n/a)"
-                    print(f"[pred_err] v0 err={err_vec} pred_posture={prev_pred} obs_posture={obs_posture} from={src_txt}")
+                    print(
+                        f"[pred_err] v0 err={err_vec} pred_posture={pred_posture} obs_posture={obs_posture} "
+                        f"from={src_txt}"
+                    )
                 else:
-                    ctx.pred_err_v0_last = {"posture": 1}
+                    err_vec = {"posture": 1}
+                    ctx.pred_err_v0_last = err_vec
             else:
+                err_vec = {}
                 ctx.pred_err_v0_last = {}
         except Exception:
+            # If anything goes wrong, keep the signal empty rather than crashing the env-loop.
+            err_vec = {}
+            ctx.pred_err_v0_last = {}
+
+        # ----------------------------------------------------------------------------------
+        # [pred_err] shaping penalty (extinction pressure when postconditions fail)
+        #
+        # Goal:
+        #   If a policy repeatedly predicts a postcondition (v0: posture) and the next env
+        #   observation contradicts it, apply a small negative reward shaping update to that
+        #   policy's skill ledger entry.
+        #
+        # Design notes:
+        #   - We ignore the very first mismatch after reset-like transitions by requiring
+        #     a short mismatch streak (>=2) before applying the penalty.
+        #   - We ALSO append a standardized entry into ctx.posture_discrepancy_history so
+        #     existing non-drive tie-break logic (RecoverFall's discrepancy bonus) can use it
+        #     during menu 37 (which otherwise doesn't build history via mini-snapshots).
+        #
+        # Knobs (optional; safe defaults if absent):
+        #   ctx.pred_err_shaping_enabled : bool   (default True)
+        #   ctx.pred_err_shaping_penalty : float  (default 0.15)
+        # ----------------------------------------------------------------------------------
+        try:
+            shaping_enabled = bool(getattr(ctx, "pred_err_shaping_enabled", True))
+        except Exception:
+            shaping_enabled = True
+
+        try:
+            pen_mag = float(getattr(ctx, "pred_err_shaping_penalty", 0.15) or 0.15)
+        except Exception:
+            pen_mag = 0.15
+
+        try:
+            # v0 is posture-only today; treat any non-zero as a mismatch.
+            v0_posture_err = 0
+            if isinstance(err_vec, dict):
+                try:
+                    v0_posture_err = int(err_vec.get("posture", 0) or 0)
+                except Exception:
+                    v0_posture_err = 0
+
+            if (    # pylint: disable=too-many-boolean-expressions
+                shaping_enabled
+                and v0_posture_err != 0
+                and isinstance(action_for_env, str)
+                and action_for_env
+                and isinstance(obs_posture, str)
+                and isinstance(pred_posture, str)
+            ):
+                # 1) Append a standardized discrepancy entry (so RecoverFall can see streaks in menu 37)
+                entry = (
+                    f"[discrepancy] env posture={obs_posture!r} "
+                    f"vs policy-expected posture={pred_posture!r} from {action_for_env}"
+                )
+                try:
+                    hist = getattr(ctx, "posture_discrepancy_history", [])
+                    if not isinstance(hist, list):
+                        hist = []
+
+                    # Important: we want repeated mismatches to accumulate so streak>=2 can trigger shaping.
+                    hist.append(entry)
+                    if len(hist) > 50:
+                        del hist[:-50]
+
+                    ctx.posture_discrepancy_history = hist
+                except Exception:
+                    pass
+
+                # 2) Compute a short mismatch streak over the newest entries
+                streak = 0
+                try:
+                    hist2 = getattr(ctx, "posture_discrepancy_history", [])
+                    if isinstance(hist2, list) and hist2:
+                        for h in reversed(hist2[-10:]):
+                            s = str(h)
+                            if (
+                                (f"from {action_for_env}" in s)
+                                and ("env posture=" in s and obs_posture in s)
+                                and ("policy-expected posture=" in s and pred_posture in s)
+                            ):
+                                streak += 1
+                            else:
+                                break
+                except Exception:
+                    streak = 0
+
+                # 3) Apply shaping only after the streak threshold (ignore first mismatch)
+                if streak >= 2:
+                    shaping_reward = -abs(pen_mag) * float(v0_posture_err)
+                    update_skill(action_for_env, shaping_reward, ok=False)
+                    try:
+                        q_now = float(skill_q(action_for_env))
+                    except Exception:
+                        q_now = 0.0
+                    print(
+                        f"[pred_err] shaping: policy={action_for_env} reward={shaping_reward:+.2f} "
+                        f"(streak={streak}) q={q_now:+.2f}"
+                    )
+        except Exception:
+            # Shaping must never crash the env-loop.
             pass
+
 
         # 3) EnvObservation → WorldGraph + BodyMap
         inj = inject_obs_into_world(world, ctx, env_obs)

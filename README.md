@@ -243,12 +243,15 @@ CCA8 prints many lines with a `[tag]` prefix. These tags are a stable “legend�
 - **[env]**: environment-side events and “truth now” (storyboard stage, posture, mom/nipple state, etc.).
 - **[env→working]**: EnvObservation projected into **WorkingMap.MapSurface** (entity/slot updates).
 - **[env→world]**: EnvObservation written into the **WorldGraph** (long-term episode index).
-- **[wm<->col]**: WorkingMap ⇄ Column keyframe pipeline (store / retrieve / apply).
+- **[wm<->col]**: WorkingMap ⇄ Column keyframe pipeline:
+- **store** writes a MapSurface snapshot engram + a lightweight pointer binding; **retrieve** ranks past snapshots
+  by context (stage/zone/signature) while excluding the just-stored one; **apply** injects priors (merge/seed) into WorkingMap.
+- **[pred_err]**: prediction error v0 (expected vs observed posture); used for retrieval gating and for action shaping
+  (a small negative reward shaping update is applied after mismatch streaks).
 - **[gate:<policy>]**: a specific gate/trigger’s diagnostic readout (drives, BodyMap stale, zone classification, etc.).
 - **[pick]**: which policy won this cycle and why (deficits / non-drive tie-break / RL note if enabled).
 - **[executed]**: the chosen policy executed (its internal success/reward signal; confirmation is via NEXT cycle’s observation).
 - **[maps]**: which map was used to **select** vs **execute** (e.g., `selection_on=WG execute_on=WM`).
-- **[pred_err]**: prediction error summary (expected vs observed; used for retrieval gating).
 - **[obs-mask]**: partial observability masking (token drops), when enabled.
 
 **Important terminology (to avoid “step” ambiguity)**
@@ -3592,6 +3595,20 @@ Log line format (example):
 [pred_err] v0 err={'posture': 1} pred_posture=standing obs_posture=fallen from=policy:stand_up
 
 
+**Action shaping ( extinction pressure”)**
+
+When the same policy repeatedly predicts a posture postcondition and the next EnvObservation contradicts it,
+CCA8 applies a small **negative shaping reward** to that policy’s skill ledger value (`SkillStat.q`).
+
+- The penalty is applied only after a short mismatch streak (>=2) to avoid punishing the normal “first mismatch after reset”
+  where the environment has not yet consumed the last action.
+- This creates a biologically-inspired “stop repeating actions that do not work” pressure without requiring a full RL backend.
+
+You may see an additional line during menu 37 runs:
+
+[pred_err] shaping: policy=policy:stand_up reward=-0.15 (streak=2) q=+0.42
+
+This shaping affects RL tie-break behavior (`q`) and also feeds the discrepancy-history used by some non-drive tie-breaks.
 
 
 
@@ -3763,7 +3780,40 @@ We also dedup snapshots using a signature so we don’t store the same map 100 t
 
 ---
 
+## WorkingMap <-> Column (wm<->col): what is stored and what “merge” reconstitutes
+
+When you see:
+
+[wm<->col] store: ok sig=... bid=bNN eid=XXXXXXXX…
+
+**eid=... (the payload)** is a Column engram record whose payload is a serialized **wm_mapsurface_v1** snapshot:
+- entities (stable ids like self/mom/shelter/cliff)
+- per-entity slot values (e.g., posture, proximity:mom, hazard:cliff, ...)
+- selected WorkingMap relations that represent spatial/scene structure (when present)
+- minimal context meta (stage, zone, epoch, created_at, etc.)
+
+**sig=... (the signature)** is a compact scene fingerprint derived from MapSurface slot/value content.
+It is used only for deduplication and fast candidate scoring; it is not the memory itself.
+
+**bid=bNN (the pointer binding)** is a lightweight WorldGraph binding that stores the signature and points to the engram id.
+This lets the WorldGraph remain small while Column holds the heavy payload.
+
+### Retrieve
+`retrieve` selects candidate prior snapshots (engrams) using context filters such as stage/zone and similarity scoring,
+and it explicitly excludes the **just-stored** eid to prevent “self-retrieval loops.”
+
+### Apply (merge mode)
+`apply` in merge/seed mode injects priors conservatively into WorkingMap:
+- it does NOT overwrite currently observed slot families
+- it does NOT inject cue:* as “present now” belief (cue leakage guard)
+- it fills only missing slot families and records provenance in meta where helpful
+
+The result is not a time-travel rewrite of truth; it is a **prior** that can be corrected immediately by EnvObservation on subsequent cycles.
+
+
 ### Auto-retrieve: what it means (and what it does NOT mean)
+
+nb. older than above section; revise if necessary
 
 **Auto-retrieve means:**
 At a keyframe (stage/zone boundary), CCA8 automatically tries to pull a previously stored `wm_mapsurface` snapshot from Column memory and apply it to the current WorkingMap as a **prior**.
@@ -5647,6 +5697,29 @@ This section explains how the CCA8 runner uses **anchors**, the **LATEST** point
 
 The goal is that when you say “hang this new fact off the current situation,” the system knows *where* in the WorldGraph that is — not just “whatever node happened to be written last.”
 
+
+## Anchor NOW movement: attach="now" vs WorldGraph.set_now()
+
+Two distinct ideas often get conflated:
+
+### 1) attach="now"
+Creating a new binding with `attach="now"`:
+- adds an edge `NOW --then--> new_binding`
+- updates `LATEST = new_binding`
+- **does not** re-point the NOW anchor itself
+
+So NOW remains a stable anchor binding unless explicitly moved.
+
+### 2) WorldGraph.set_now(...)
+`world.set_now(bid)` **re-points the anchor**:
+- updates the anchors map so NOW points to a different binding id
+- updates anchor tags (removes `anchor:NOW` from the previous binding, adds it to the new one)
+
+In closed-loop runs, NOW may be moved explicitly at keyframes (or continuously in a debugging mode) so that
+“plan from NOW” reflects the current state binding even when long-term env writes are deduplicated.
+
+
+
 ### Anchors vs. LATEST: mental model
 
 The WorldGraph keeps two distinct orientation mechanisms: **anchors** and a **LATEST** pointer.
@@ -7188,6 +7261,27 @@ WorldGraph = “story of my life”
 BodyMap = “how my body is configured right now (and where mom/nipple are relative to me)”
 
 Later phases will expand BodyMap and add a PeripersonalMap, but this v1 gives us a proper place for sensor-fused body state while keeping the main WorldGraph small and semantic.
+
+
+
+## Zone (BodyMap spatial classification) — what it is used for
+
+CCA8 uses a coarse **zone** label derived from BodyMap near-space slots:
+
+- `proximity:shelter:{near|far}`
+- `hazard:cliff:{near|far}`
+
+Current classification (intentionally minimal):
+- **unsafe_cliff_near**: cliff is near AND shelter is not near
+- **safe**: shelter is near AND cliff is not near
+- **unknown**: any other combination (including missing data)
+
+Zone is used as a **gating signal**, not as a long-term semantic fact:
+- example: `policy:rest` is vetoed in `unsafe_cliff_near` even if fatigue is high
+- example: `policy:follow_mom` receives a positive “escape cliff” preference in `unsafe_cliff_near`
+
+This keeps safety decisions fast: policies can consult BodyMap instead of scanning the long-term episodic chain.
+
 
 
 
