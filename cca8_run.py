@@ -306,9 +306,9 @@ class Ctx:
     # Safety / posture retry bookkeeping
     last_standup_step: Optional[int] = None
     last_standup_failed: bool = False
-    # Long-term WorldGraph env-observation injection (STUB)
-    #-This records the user's preference, but is NOT enforced yet: we still inject EnvObservation
-    # into the long-term WorldGraph each tick, exactly as before.
+    # Long-term WorldGraph EnvObservation injection (real knob):
+    # - If False, we skip long-term WorldGraph writes entirely (BodyMap still updates; WorkingMap may still update).
+    # - Keyframes are only relevant when long-term injection is enabled AND mode="changes".
     longterm_obs_enabled: bool = True
 
     # Long-term WorldGraph observation logging controls
@@ -331,12 +331,48 @@ class Ctx:
     longterm_obs_dedup_cues: bool = True
     lt_obs_cues: dict[str, dict[str, Any]] = field(default_factory=dict)
 
-    # If True, force a one-tick snapshot when the env's scenario_stage changes (including resets).
-    longterm_obs_keyframe_on_stage_change: bool = True
+    # Keyframe triggers (Phase IX; long-term obs, changes-mode):
+    # - period_steps: 0 disables periodic keyframes; N>0 triggers when controller_steps % N == 0.
+    # - on_zone_change: treat coarse zone flips as keyframes (safe/unsafe discontinuities).
+    # - on_pred_err: treat sustained pred_err v0 mismatch as a surprise keyframe (streak-based).
+    # - on_milestone: milestone keyframes (env_meta milestones and/or derived slot transitions); off by default.
+    # - on_emotion: strong emotion/arousal keyframes (env_meta emotion/affect; rising-edge into "high"); off by default.
+
+    longterm_obs_keyframe_on_stage_change: bool = False
+    longterm_obs_keyframe_on_zone_change: bool = False
+    #ctx.longterm_obs_keyframe_on_stage_change in presets set to False
+
+
+    longterm_obs_keyframe_period_steps: int = 0
+    #longterm_obs_keyframe_period_steps: int = 10 #toggle: keyframe every 10 cog cycles
+    # Periodic keyframes can be scheduled in two ways:
+    #   - legacy: absolute clock (step_no % period == 0)
+    #   - reset-on-any-keyframe: treat periodic as a "max gap" since last keyframe
+    #       (i.e., if *any* other keyframe happens, restart the periodic counter).
+    # The reset-on-any-keyframe mode reduces "weird mid-episode splits" and prevents periodic
+    # keyframes from clustering right after meaningful milestone boundaries.
+    longterm_obs_keyframe_period_reset_on_any_keyframe: bool = True
+
+    longterm_obs_keyframe_on_pred_err: bool = False
+    #longterm_obs_keyframe_on_pred_err: bool = True   #toggle: keyframe surprise
+    longterm_obs_keyframe_pred_err_min_streak: int = 2
+
+    longterm_obs_keyframe_on_milestone: bool = True  #toggle: milestone keyframes (env_meta + derived transitions)
+    #longterm_obs_keyframe_on_milestone: bool = False
+
+    longterm_obs_keyframe_on_emotion: bool = False
+    longterm_obs_keyframe_emotion_threshold: float = 0.85
+
+    # Keyframe bookkeeping (long-term observation cache)
+    lt_obs_last_zone: Optional[str] = None
+    lt_obs_pred_err_streak: int = 0
+    lt_obs_last_keyframe_step: Optional[int] = None
+    lt_obs_last_milestones: set[str] = field(default_factory=set)
+    lt_obs_last_emotion_label: Optional[str] = None
+    lt_obs_last_emotion_high: bool = False
 
     # If True, print per-token reuse lines when longterm_obs_mode="changes" skips unchanged slots.
     longterm_obs_verbose: bool = False
-
 
     # Private state: per-slot last (token, bid, emit_step) used by longterm_obs_mode="changes".
     lt_obs_slots: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -2041,7 +2077,8 @@ def should_autoretrieve_mapsurface(
     zone: str | None,
     stage_changed: bool,
     zone_changed: bool,
-    boundary_reason: str | None = None,
+    forced_keyframe: bool = False,
+    boundary_reason: str | None = None
 ) -> dict[str, Any]:
     """Guard hook: decide whether CCA8 should attempt MapSurface auto-retrieval *right now*.
 
@@ -2117,7 +2154,7 @@ def should_autoretrieve_mapsurface(
         pred_n = 0
         cue_n = 0
 
-    boundary = bool(stage_changed) or bool(zone_changed)
+    boundary = bool(stage_changed) or bool(zone_changed) or bool(forced_keyframe)
 
     diag: dict[str, Any] = {
         "stage": stage,
@@ -3645,10 +3682,16 @@ def apply_hardwired_profile_phase7(ctx: "Ctx", world) -> None:
         ctx.longterm_obs_enabled = True
         ctx.longterm_obs_mode = "changes"
         ctx.longterm_obs_reassert_steps = 0
-        ctx.longterm_obs_keyframe_on_stage_change = True
+
+        # IMPORTANT:
+        # The Phase VII hardwired profile enables the memory pipeline, but it must NOT override
+        # keyframe trigger knobs (stage/zone/periodic/pred_err/milestone/emotion). Those are
+        # experiment settings on Ctx and should remain under direct user control.
+
         ctx.longterm_obs_verbose = False
     except Exception:
         pass
+
 
     # Low-noise, useful log
     try:
@@ -7778,8 +7821,13 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
       token "resting"           -> slot "resting" (no ":")
 
     Keyframes (only in "changes" mode):
-      - time_since_birth == 0.0 forces a snapshot (reset)
-      - scenario_stage change can force a snapshot if enabled
+      - episode start (env_reset): time_since_birth <= 0.0
+      - stage change (if enabled): env_meta["scenario_stage"] changed
+      - zone change (if enabled): coarse safety zone flip derived from shelter/cliff predicates
+      - periodic (optional): every N controller steps (period_steps > 0)
+      - surprise (optional): pred_err v0 sustained mismatch (streak-based)
+      - milestones (optional): env_meta milestone flags AND/OR derived predicate slot transitions
+      - strong emotion/arousal (optional): env_meta emotion/affect (rising edge into "high"), with a conservative hazard proxy
 
     Even when we skip writing an unchanged token, token_to_bid will still map that token
     to the most recent binding id for its slot (so downstream helpers can still find it).
@@ -7943,10 +7991,30 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         if c is not None
     ]
 
+    keyframe = False
+    keyframe_reasons: list[str] = []
     # In "changes" mode: optionally force a one-tick snapshot at stage transitions/resets
     if do_changes:
         force_snapshot = False
         reasons: list[str] = []
+
+        step_no = int(getattr(ctx, "controller_steps", 0) or 0)
+
+        # ---- Coarse zone (derived from pred tokens; does NOT depend on BodyMap update ordering) ----
+        zone_now = "unknown"
+        shelter = None
+        cliff = None
+        for _tok in pred_tokens:
+            if isinstance(_tok, str) and _tok.startswith("proximity:shelter:"):
+                shelter = _tok.rsplit(":", 1)[-1]
+            elif isinstance(_tok, str) and _tok.startswith("hazard:cliff:"):
+                cliff = _tok.rsplit(":", 1)[-1]
+        if cliff == "near" and shelter != "near":
+            zone_now = "unsafe_cliff_near"
+        elif shelter == "near" and cliff != "near":
+            zone_now = "safe"
+
+        last_zone = getattr(ctx, "lt_obs_last_zone", None)
 
         # Reset keyframe: env.reset() produces time_since_birth == 0.0
         if isinstance(time_since_birth, (int, float)) and float(time_since_birth) <= 0.0:
@@ -7955,10 +8023,215 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
 
         # Stage-change keyframe (optional)
         last_stage = getattr(ctx, "lt_obs_last_stage", None)
-        if getattr(ctx, "longterm_obs_keyframe_on_stage_change", True):
+        if bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True)):
             if stage is not None and last_stage is not None and stage != last_stage:
                 force_snapshot = True
                 reasons.append(f"stage_change {last_stage!r}→{stage!r}")
+
+        # Zone-change keyframe (optional)
+        if bool(getattr(ctx, "longterm_obs_keyframe_on_zone_change", True)):
+            if isinstance(last_zone, str) and zone_now != last_zone:
+                force_snapshot = True
+                reasons.append(f"zone_change {last_zone!r}→{zone_now!r}")
+
+        # Periodic keyframe (optional; safe: evaluated only at this boundary hook)
+        #
+        # Two semantics:
+        #   A) legacy absolute schedule: step_no % period == 0
+        #   B) reset-on-any-keyframe: treat periodic as a max-gap since last keyframe
+        #      (if any other keyframe happens, the periodic counter restarts).
+        try:
+            period = int(getattr(ctx, "longterm_obs_keyframe_period_steps", 0) or 0)
+        except Exception:
+            period = 0
+
+        if period > 0 and step_no > 0:
+            reset_on_any = bool(getattr(ctx, "longterm_obs_keyframe_period_reset_on_any_keyframe", False))
+
+            hit = False
+            if reset_on_any:
+                last_kf = getattr(ctx, "lt_obs_last_keyframe_step", None)
+                last_kf_step = int(last_kf) if isinstance(last_kf, int) else 0
+                if last_kf_step > step_no:
+                    # Defensive: controller_steps can be reset in some flows; treat that as a new epoch.
+                    last_kf_step = 0
+                hit = (step_no - last_kf_step) >= period
+            else:
+                hit = (step_no % period) == 0
+
+            if hit:
+                # If another keyframe is already happening this tick, do NOT add a second "periodic" reason.
+                # In reset-on-any-keyframe mode, the periodic counter will still be reset by that other keyframe.
+                if not force_snapshot:
+                    force_snapshot = True
+                    reasons.append(f"periodic(step={step_no}, period={period})")
+
+        # Surprise keyframe from pred_err v0 (optional; streak-based)
+        if bool(getattr(ctx, "longterm_obs_keyframe_on_pred_err", False)):
+            pe = getattr(ctx, "pred_err_v0_last", None)
+            pe_any = False
+            if isinstance(pe, dict) and pe:
+                try:
+                    pe_any = any(int(v or 0) != 0 for v in pe.values())
+                except Exception:
+                    pe_any = False
+
+            streak = int(getattr(ctx, "lt_obs_pred_err_streak", 0) or 0)
+            streak = (streak + 1) if pe_any else 0
+            ctx.lt_obs_pred_err_streak = streak
+
+            try:
+                min_streak = int(getattr(ctx, "longterm_obs_keyframe_pred_err_min_streak", 2) or 2)
+            except Exception:
+                min_streak = 2
+            min_streak = max(1, min_streak)
+
+            if pe_any and streak >= min_streak:
+                force_snapshot = True
+                reasons.append(f"pred_err_v0(streak={streak})")
+        else:
+            ctx.lt_obs_pred_err_streak = 0
+
+        # Milestone keyframes (HAL + derived from predicate transitions). Off by default.
+        #
+        # Two sources:
+        #   A) env_meta milestone flags (HAL/richer envs) — may be sticky and repeat across ticks → dedup.
+        #   B) derived transition events from predicate slots (storyboard + early HAL) — event-based, no sticky dedup needed.
+        #
+        # Derived events currently recognized:
+        #   - posture:fallen -> posture:standing              => stood_up
+        #   - proximity:mom:* -> proximity:mom:close         => reached_mom
+        #   - (first) nipple:found                           => found_nipple
+        #   - (first) nipple:latched                         => latched_nipple
+        #   - (first) milk:drinking                          => milk_drinking
+        #   - (first) resting                                => rested
+        if bool(getattr(ctx, "longterm_obs_keyframe_on_milestone", False)):
+            ms_events: set[str] = set()
+
+            # --- A) Env-supplied milestone flags (sticky) ---
+            ms_raw = env_meta.get("milestones") or env_meta.get("milestone")
+            ms_list: list[str] = []
+            if isinstance(ms_raw, str) and ms_raw:
+                ms_list = [ms_raw]
+            elif isinstance(ms_raw, list):
+                ms_list = [m for m in ms_raw if isinstance(m, str) and m]
+
+            if ms_list:
+                prev_raw = getattr(ctx, "lt_obs_last_milestones", None)
+                prev: set[str] = {x for x in prev_raw if isinstance(x, str) and x} if isinstance(prev_raw, set) else set()
+                new_ms = {m for m in ms_list if m not in prev}
+                if new_ms:
+                    ms_events |= new_ms
+                    try:
+                        prev |= new_ms
+                        ctx.lt_obs_last_milestones = prev
+                    except Exception:
+                        pass
+
+            # --- B) Derived milestone events (slot transitions) ---
+            try:
+                prev_slots = getattr(ctx, "lt_obs_slots", None)
+                prev_slots = prev_slots if isinstance(prev_slots, dict) else {}
+
+                # Build current slot->token mapping from this observation (pred_tokens has no "pred:" prefix).
+                curr_by_slot: dict[str, str] = {}
+                for tok in pred_tokens:
+                    if not isinstance(tok, str) or not tok:
+                        continue
+                    slot = tok.rsplit(":", 1)[0] if ":" in tok else tok
+                    if slot not in curr_by_slot:
+                        curr_by_slot[slot] = tok
+
+                def _prev_token(slot: str) -> str | None:
+                    p = prev_slots.get(slot)
+                    if isinstance(p, dict):
+                        t = p.get("token")
+                        return t if isinstance(t, str) else None
+                    return None
+
+                # posture transition
+                prev_posture = _prev_token("posture")
+                curr_posture = curr_by_slot.get("posture")
+                if curr_posture == "posture:standing" and prev_posture != "posture:standing":
+                    ms_events.add("stood_up")
+
+                # mom proximity transition
+                prev_mom = _prev_token("proximity:mom")
+                curr_mom = curr_by_slot.get("proximity:mom")
+                if curr_mom == "proximity:mom:close" and prev_mom != "proximity:mom:close":
+                    ms_events.add("reached_mom")
+
+                # nipple milestones
+                prev_nipple = _prev_token("nipple")
+                curr_nipple = curr_by_slot.get("nipple")
+                if curr_nipple == "nipple:found" and prev_nipple != "nipple:found":
+                    ms_events.add("found_nipple")
+                if curr_nipple == "nipple:latched" and prev_nipple != "nipple:latched":
+                    ms_events.add("latched_nipple")
+
+                # milk milestone
+                prev_milk = _prev_token("milk")
+                curr_milk = curr_by_slot.get("milk")
+                if curr_milk == "milk:drinking" and prev_milk != "milk:drinking":
+                    ms_events.add("milk_drinking")
+
+                # resting milestone
+                prev_rest = _prev_token("resting")
+                curr_rest = curr_by_slot.get("resting")
+                if curr_rest == "resting" and prev_rest != "resting":
+                    ms_events.add("rested")
+            except Exception:
+                # Derived milestones are strictly best-effort; never break env injection.
+                pass
+
+            if ms_events:
+                force_snapshot = True
+                reasons.append("milestone:" + ",".join(sorted(ms_events)))
+
+        # Strong emotion keyframe stub (HAL / richer envs). Off by default.
+        # Note: we treat hazard zone as a conservative proxy ("fear") only when env_meta doesn't supply emotion.
+        if bool(getattr(ctx, "longterm_obs_keyframe_on_emotion", False)):
+            label = None
+            intensity = None
+
+            emo_raw = env_meta.get("emotion") or env_meta.get("affect")
+            if isinstance(emo_raw, dict):
+                lab = emo_raw.get("label")
+                inten = emo_raw.get("intensity")
+                label = lab if isinstance(lab, str) and lab else None
+                try:
+                    intensity = float(inten) if inten is not None else None
+                except Exception:
+                    intensity = None
+            elif isinstance(emo_raw, str) and emo_raw:
+                label = emo_raw
+
+            # Proxy if no explicit emotion: unsafe zone -> fear-high
+            if intensity is None and label is None:
+                if zone_now == "unsafe_cliff_near":
+                    label = "fear"
+                    intensity = 1.0
+
+            try:
+                thr = float(getattr(ctx, "longterm_obs_keyframe_emotion_threshold", 0.85) or 0.85)
+            except Exception:
+                thr = 0.85
+
+            high = bool(isinstance(intensity, (int, float)) and float(intensity) >= thr)
+            prev_label = getattr(ctx, "lt_obs_last_emotion_label", None)
+            prev_high = bool(getattr(ctx, "lt_obs_last_emotion_high", False))
+
+            # Rising edge: (not high) -> high, or label changes while high.
+            if high and (label != prev_label or not prev_high):
+                force_snapshot = True
+                inten_txt = f"{float(intensity):.2f}" if isinstance(intensity, (int, float)) else "n/a"
+                reasons.append(f"emotion:{label or 'n/a'}@{inten_txt}")
+
+            try:
+                ctx.lt_obs_last_emotion_label = label if isinstance(label, str) else None
+                ctx.lt_obs_last_emotion_high = high
+            except Exception:
+                pass
 
         # [KEYFRAME HOOK + ORDERING INVARIANT]
         # This is the keyframe/boundary detection point for the env→memory injection path.
@@ -7979,9 +8252,10 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         #   evaluated ONLY at this boundary hook (never mid-cycle):
         #
         #   - periodic: every N controller_steps (ctx.longterm_obs_keyframe_period_steps)
-        #   - surprise: prediction error v0 exceeds threshold or streak (ctx.pred_err_v0_last + knobs)
-        #   - context discontinuity: zone changes (ctx.body_zone / ctx.lt_obs_last_zone)
-        #   - milestones: env_info flags/cues (e.g., reached mom / obtained reward / hazard transition)
+        #   - surprise: pred_err v0 sustained mismatch (ctx.pred_err_v0_last + min_streak)
+        #   - context discontinuity: zone flips (zone_now derived here vs ctx.lt_obs_last_zone)
+        #   - milestones: env_meta milestones and/or derived slot transitions (goal-relevant outcomes)
+        #   - emotion/arousal: env_meta emotion/affect (rising edge into "high"), with a conservative hazard proxy
         #
         # TIME-BASED SAFETY:
         #   Even the periodic keyframe must be checked only at this boundary hook so we never split a cycle
@@ -7999,7 +8273,17 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
             if bool(getattr(ctx, "longterm_obs_keyframe_log", True)):
                 why = ", ".join(reasons) if reasons else "keyframe"
                 print(f"[env→world] KEYFRAME: {why} | cleared {old_pred_n} pred slot(s), {old_cue_n} cue slot(s)")
+            try:
+                ctx.lt_obs_last_keyframe_step = step_no
+            except Exception:
+                pass
+
         ctx.lt_obs_last_stage = stage
+        ctx.lt_obs_last_zone = zone_now
+
+        # For downstream callers (e.g., env-loop) that want a unified keyframe definition:
+        keyframe = bool(force_snapshot)
+        keyframe_reasons = list(reasons)
 
 
     def _slot_key(tok: str) -> str:
@@ -8154,7 +8438,14 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
     except Exception:
         pass
 
-    return {"predicates": created_preds, "cues": created_cues, "token_to_bid": token_to_bid}
+    return {
+        "predicates": created_preds,
+        "cues": created_cues,
+        "token_to_bid": token_to_bid,
+        "keyframe": bool(keyframe),
+        "keyframe_reasons": list(keyframe_reasons),
+        "zone_now": getattr(ctx, "lt_obs_last_zone", None),
+    }
 
 
 def _wm_creative_update(policy_rt, world, drives, ctx, *, exec_world=None) -> None:
@@ -9115,6 +9406,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 (zone_now or "unknown"),
             )
             boundary_changed = (prev_sig is not None) and (prev_sig != curr_sig)
+
             # Stage/zone boundary detection (ignore posture/nipple here to keep storage sparse/readable)
             try:
                 stage_changed = prev_sig[0] != curr_sig[0]
@@ -9122,21 +9414,43 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             except Exception:
                 stage_changed, zone_changed = False, False
 
-            if stage_changed or zone_changed:
-                _ps = prev_sig[0] or "?"
-                _cs = curr_sig[0] or "?"
-                _pz = prev_sig[3] or "?"
-                _cz = curr_sig[3] or "?"
-                parts: list[str] = []
-                if stage_changed:
-                    parts.append(f"stage:{_ps}->{_cs}")
-                if zone_changed:
-                    parts.append(f"zone:{_pz}->{_cz}")
+            # IMPORTANT:
+            # These are "keyframe trigger knobs", but we also treat them as *Phase VII boundary-to-memory* knobs.
+            # If a user disables stage/zone keyframes, they likely want to disable stage/zone-driven WM↔Column auto-store too.
+            allow_stage = bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True))
+            allow_zone  = bool(getattr(ctx, "longterm_obs_keyframe_on_zone_change", True))
+
+            _ps = (prev_sig[0] if isinstance(prev_sig, tuple) else None) or "?"
+            _cs = (curr_sig[0] if isinstance(curr_sig, tuple) else None) or "?"
+            _pz = (prev_sig[3] if isinstance(prev_sig, tuple) else None) or "?"
+            _cz = (curr_sig[3] if isinstance(curr_sig, tuple) else None) or "?"
+
+            parts: list[str] = []
+            if stage_changed and allow_stage:
+                parts.append(f"stage:{_ps}->{_cs}")
+            if zone_changed and allow_zone:
+                parts.append(f"zone:{_pz}->{_cz}")
+
+            if parts:
                 wm_auto_store = True
                 wm_auto_reason = "auto_boundary_" + "_".join(parts)
+
         except Exception:
             boundary_changed = False
 
+        # Additional keyframe triggers (periodic / pred_err / milestone / emotion) come from inject_obs_into_world.
+        inj_kf = bool(inj.get("keyframe")) if isinstance(inj, dict) else False
+        inj_rs = inj.get("keyframe_reasons") if isinstance(inj, dict) else None
+
+        if inj_kf and not wm_auto_store:
+            wm_auto_store = True
+            if isinstance(inj_rs, list) and inj_rs:
+                why = ";".join(str(x) for x in inj_rs[:3])
+                if len(why) > 80:
+                    why = why[:77] + "..."
+                wm_auto_reason = "auto_keyframe_" + why
+            else:
+                wm_auto_reason = "auto_keyframe"
         state_bid = _phase7_pick_state_bid(token_to_bid) if isinstance(token_to_bid, dict) else None
 
         if _phase7_enabled():
@@ -9204,6 +9518,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
                 # ---- 2) RETRIEVE line + 3) APPLY line ----
                 try:
+                    forced_keyframe = bool(wm_auto_store) and not (bool(stage_chg) or bool(zone_chg))
                     dec = should_autoretrieve_mapsurface(
                         ctx,
                         env_obs,
@@ -9211,9 +9526,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                         zone=zone_kf,
                         stage_changed=stage_chg,
                         zone_changed=zone_chg,
+                        forced_keyframe=forced_keyframe,
                         boundary_reason=reason_kf,
                     )
-
                     mode_txt = str(dec.get("mode") or "merge")
                     top_k = int(dec.get("top_k") or 5)
                     do_try = bool(dec.get("ok"))
@@ -12809,152 +13124,136 @@ You can still use menu 35 for detailed, single-step inspection.
         #----Menu Selection Code Block------------------------
         elif choice == "41":
             print("Menu 41 retired. Memory pipeline is hardwired (Phase VII daily-driver).")
+            # If later we decide for this menu selection to be interactive again, we should also update the
+            #   unreachable “Current settings / presets” prints so they display zone/pred_err/milestone/emotion
+            #   keyframe knobs (not just stage).
+            print("""[guide] This menu is the main "knobs and buttons" reference card for CCA8 experiments.
+
+NOTE (current runner behavior)
+------------------------------
+Menu 41 is currently "reference-only":
+- The Phase VII daily-driver memory pipeline is hardwired at startup (see apply_hardwired_profile_phase7).
+- This menu prints a cheat sheet and returns to the main menu (it does not run an interactive edit flow right now).
+
+Mental model you should have to understand these settings
+---------------------------------------------------------
+
+At runtime it helps to keep FOUR memory structures in mind:
+
+1) BodyMap (ctx.body_world)
+   - Tiny, safety-critical belief-now register (posture, mom distance, nipple/milk, shelter/cliff).
+   - Updated on every EnvObservation tick; read by gates and tie-break logic.
+
+2) WorkingMap (ctx.working_world)
+   - Short-term working memory with three layers:
+     - MapSurface (WM_ROOT + entity nodes): stable, overwrite-by-slot-family belief table.
+     - Scratch (WM_SCRATCH): policy action chains + predicted postconditions (hypotheses).
+     - Creative (WM_CREATIVE): counterfactual rollouts (future; inspect-only scaffolding today).
+   - By default this is NOT a dense tick-log: MapSurface updates entity nodes in place.
+     (Optional: ctx.working_trace=True appends a legacy per-tick trace for debugging.)
+
+3) WorldGraph (world)
+   - Durable long-term episode index that persists (autosave / save session).
+   - Receives EnvObservation injection (subject to the "long-term env obs" knobs).
+   - Receives policy writes unless Phase VII working_first is enabled (then policies execute into WorkingMap).
+
+4) Columns / Engrams (cca8_column.mem)
+   - Heavy payload store (append-only / immutable records).
+   - WorldGraph/WorkingMap bindings hold only pointers (binding.engrams["column01"]["id"]=...).
+
+Fixed dataflow (env → agent boundary)
+-------------------------------------
+EnvObservation → BodyMap update (always) → WorkingMap mirror (if enabled) → WorldGraph injection (if enabled)
+
+Keyframes are decided at the env→memory boundary hook (inject_obs_into_world) BEFORE policy selection.
+
+Cue-slot de-duplication (long-term)
+-----------------------------------
+In changes-mode we can de-duplicate repeated cue tokens:
+- rising edge (absent→present) writes a cue:* binding
+- held cues do not create new bindings; they bump prominence on the last cue binding
+- if a cue disappears and later reappears, a new cue:* binding is written again
+
+Long-term EnvObservation → WorldGraph injection
+-----------------------------------------------
+longterm_obs_enabled (bool)
+  ON  : write env predicates/cues to WorldGraph (subject to mode settings)
+  OFF : skip long-term WorldGraph writes (BodyMap still updates; WorkingMap still mirrors if enabled)
+
+longterm_obs_mode ("snapshot" vs "changes")
+  snapshot : write every observed predicate each tick (dense; old behavior)
+  changes  : treat predicates as state-slots (posture, proximity:mom, hazard:cliff, ...)
+             write only when a slot changes (plus optional re-asserts/keyframes)
+
+longterm_obs_reassert_steps (int)
+  In changes mode: re-emit an unchanged slot after N controller steps (a "re-observation" cadence).
+
+longterm_obs_dedup_cues (bool)
+  In changes mode: write cue:* only on rising-edge (absent→present); held cues bump prominence instead.
+
+longterm_obs_verbose (bool)
+  In changes mode: print verbose per-slot reuse lines when slots are unchanged (can be noisy).
+
+Keyframes (episode boundaries)
+------------------------------
+In changes mode we maintain per-slot caches (ctx.lt_obs_slots and ctx.lt_obs_cues).
+A keyframe clears those caches so the current state is written again as a clean boundary snapshot.
+
+Keyframe triggers (Phase IX; evaluated ONLY at the env→memory boundary hook):
+  - env_reset: time_since_birth <= 0.0
+  - stage_change: scenario_stage changed (longterm_obs_keyframe_on_stage_change)
+  - zone_change: coarse safety zone flip (longterm_obs_keyframe_on_zone_change)
+  - periodic: every N controller steps (longterm_obs_keyframe_period_steps)
+  - surprise: pred_err v0 sustained mismatch (longterm_obs_keyframe_on_pred_err + min_streak)
+  - milestones: env_meta milestones and/or derived slot transitions (longterm_obs_keyframe_on_milestone)
+  - emotion/arousal: env_meta emotion/affect (rising-edge into "high") with threshold
+                     (longterm_obs_keyframe_on_emotion + emotion_threshold)
+
+Keyframe semantics (what "happens at a boundary"):
+  - clear long-term slot caches (so the next observation writes as "first" for each slot)
+  - (if Phase VII WM<->Column pipeline is enabled) boundary store/retrieve/apply can run:
+        store snapshot → optional retrieve candidates → apply priors (replace or seed/merge)
+    Reserved future: post-execution write-back / reconsolidation slot.
+
+Manual keyframe (without env.reset):
+  - clearing ctx.lt_obs_slots (and ctx.lt_obs_cues) forces the next env observation to be treated as "first".
+
+Phase VII memory pipeline knobs (WorkingMap-first + run compression)
+--------------------------------------------------------------------
+phase7_working_first (bool)
+  OFF: policies write into WorldGraph (action/preds accumulate there)
+  ON : policies execute into WorkingMap.Scratch; WorldGraph stays sparse (env keyframes + pointers + runs)
+
+phase7_run_compress (bool)
+  If ON: long-term WorldGraph action logging collapses repeated identical policies into one "run" node:
+    state → action(run_len=3) → state
+  A boundary (stage/posture/nipple/zone signature change) or policy change closes the run.
+
+phase7_move_longterm_now_to_env (bool)
+  OFF: long-term NOW moves only when new bindings are written (or at keyframes)
+  ON : long-term NOW is actively moved to the current env state binding each step (debug-friendly)
+
+RL policy selection (epsilon-greedy among triggered candidates)
+--------------------------------------------------------------
+rl_enabled (bool)
+  OFF: deterministic winner: deficit → non-drive tie-break → stable order
+  ON : epsilon-greedy: explore with probability epsilon; otherwise exploit:
+       deficit near-tie band (rl_delta) → non-drive tie-break → learned q → stable order
+
+rl_epsilon (float|None)
+  Exploration probability in [0..1]. If None, we use ctx.jump as a convenience default.
+
+rl_delta (float)
+  Defines the deficit near-tie band within which q is allowed to decide among candidates.
+
+(For full examples and the authoritative contract, see README.md: keyframes, WM<->Column pipeline, and cognitive cycles.)
+""")
 
             # Control panel: RL policy selection + WorkingMap + long-term WorldGraph obs injection
             print("Selection: Control Panel (RL policy selection + memory knobs)\n")
-            print("""[guide] This menu is the main "knobs and buttons" control panel for CCA8 experiments.
-
-Mental Model You Should Have to Understand these Settings
----------------------------------------------------------
-
-At runtime you should consider three graphs operating in the CCA8 simulation:
-
-1. WorkingMap ( ctx.working_world ) -- This is a short-term raw trace scratchpad. In a way, analagous to mammalian
-    short-term memory (a component of WM)/ Working Memory, although for real Working Memory need all the associated
-    processing methods. Keep in mind that in the CCA8 we are not limited to the biological constraints of the brain.
-
-   -WorkingMap receives all the raw inputs. It is designed to be a dense, clock tick-level recording, pruned by
-        working_max_bindings and only certain parts of it later consolidated to WorldGraph.
-
-2. WorldGraph ( world ) -- This is the large, durable knowledge representation that persists (autosave/ save session).
-        It is analagous to the mammalian neocortex (as well as other areas).
-
-   -WorldGraph receives the EnvObservation injection (i.e., processed simulated environment sensory signals) predicates and cues,
-    which depend on the "Long-term env obs" knob settings.
-   -WorldGraph receives all the policy writes unless the "Phase VII working_first" is enabled, in which case policy writes go
-    to the WorkingMap instead.
-
-3. BodyMap ( ctx.body_world ) -- This is a small, safety-critical map of the agent's body and surroundings, i.e., in the present
-   moment. It is used largely at present for gating and tie-break of what is the best policy to choose, and zone classf'n.
-
-   -Note that in the brain our egocentric maps, i.e., map of the agent's body and relation to immediate surroundings, is largely
-    within the posterior parietal cortex, where vision, touch, proprioception are all integrated to create an egocentric
-    reference frame. On the other hand, in the hippocampus there is largely an allocentric map, i.e., a 'bird's-eye view' of the
-    world, using its grid and place cells to map the layout of the environment independent of the body's orientation (e.g., if
-    the agent turns 180 degrees the map still stays the same). At the time of writing, we don't have a clear analogous
-    hippocampal map, but instead use the WorldGraph and the WorkingMap for this purpose.
-
-4. Cue-slot Deduplication -- Just as we avoiding filling up WorldGraph with the same predicate bindings over and over again (e.g.,
-    mountain goat trying to stand up 5 times will otherwise give 5 sets of these predicate bindings) (and we use 'prominence' instead
-    to count how many times nodes are activated), we can de-duplicate repeated sensory cues so we don't have dozens of the same cue
-    bindings created for the same episode.
-    -If a cue appears that wasn't then we write a cue:* binding.
-    -If a cue repeats then we don't create additional bindings but increment prominence.
-    -If it disappears and then reappears later, then we do write another cue:* binding.
+            #print("""[guide] This menu is the main "knobs and buttons" control panel for CCA8 experiments.
 
 
-Key ideas
----------
-  • WorkingMap (ctx.working_world): short-term raw trace. If enabled, every EnvObservation is mirrored here
-    (episodic, write-everything). It is capped by working_max_bindings via pruning.
-    -If ENABLED=TRUE ( ctx.working_enabled) then every EnvObservation is mirrored into WorkingMap (pred + cue).
-        Note: inject_obs_into_world(...) first injects into BodyMap update (always), then WorkingMap mirror (if enabled), then
-            WorldGraph (if enabled)
-        Note: Long-term env obs enabled = TRUE (default setting) + if WorkingMap enabled = TRUE then same preds, cues to both.
-        Note: This writing occurs according to mode = changes/snapshot, plus keyframes, etc.
-        Note: If Long-term env obs enabled = FALSE (ctx.longterm_obs_enabled=False) then preds, cues go only to WorkingMap.
-    -If WorkingMap ENABLED=FALSE then WorkingMap exists but won't gent new injections of cues and predicates from the simulated processed environment.
-    -verbose = TRUE then prints '[env->working] pred:... ->bid ' lines each tick.
-    -max_bindings ( ctx.working_max_bindings) is how large WorkingMap is allowed to get and then will delete older nodes but
-        keeps anchors.
-    -note: if working_enabled=True and longterm_obs_enabled=True then same EnvObservation written to WorkingMap and WorldGraph
-
-  • WorldGraph memory_mode:
-      episodic = every add_predicate/add_cue call creates a new binding (dense episodic trace).
-        -every add_predicate(...) creates a new binding even if that tag already exists.
-        -each time somehting happens it becomes a new node in the graph even if the same tag as before, and thus graph essentially
-            acts as a literal event log; in a literal timeline you can count occurrences, see ordering, attach metadata to
-            certain instances of the event; the keyframe segmentation however stays visible.
-      semantic = reuse identical pred/cue bindings to reduce clutter (experimental).
-        -if an identical tag already exists, reuse that existing binding id instead of allocating a new one.
-        -do not have a literal timeline, i.e., repeated events collapse and you lose 'how many times/when exactly aspect'.
-        -labeled experimental at time of writing since reduces clutter but changes temporal semantics
-
-  • Long-term EnvObservation → WorldGraph injection (this is enforced):
-      mode=changes => write pred:* only when a state-slot changes (posture, proximity:mom, hazard:cliff, ...).
-                      optional reassert_steps can re-emit unchanged slots periodically.
-                      -note that only pred:* is slot-deduped; cues remain episodic so repeated cues written unless
-                        use WorldGraph memory_mode=semantic or disable long-term env injection.
-      mode=snapshot => write every observed pred:* each tick (old behavior).
-      keyframe_on_stage_change forces a one-tick "fresh snapshot" when scenario_stage changes (helps separate contexts).
-      -IF ENABLED=FALSE ( ctx.longterm_obs_enabled=False ) then envrt preds, cues do not get wirtten to worldGraph
-        (but BodyMap still updates and WorkingMap updates based on its own settings).
-      -IF ENABLED=SNAPSHOT then write all preds each tick (old write-everything behavior).
-      -IF ENABLED=CHANGES then write preds only when its "state slot" changes or optional reassert/keyframes change.
-            -IF reassert_steps=TRUE then even if a slot is unchanged, re-emit it after N controller steps, i.e., this
-                allows a period 're-observation'
-            -IF keyframe_on_stage=TRUE then when scenario_stage changes (e.g., birth-> struggle), it clears the slot
-                cache so the next tick writes a fresh snapshot, i.e., keyframe segmentation
-       [mental model for understanding the 'changes mode' -- it uses a 'slot cache' to avoid rewriting the same state over
-        and over again. If ctx.longterm_obs_mode="changes" then each environtment predicate token treated as (slot, value)
-        e.g., pred token proximity:mom:far therefore slot key is 'proximity:mom', and this way get, e.g., proximity:mom,
-        posture, hazard:cliff, etc. 'state slots'
-        -once have idea of state slots can understand if slot never been seen then emit('first'); if slot token differs then
-        emit('changed') but if token identical then skip (unless reassert_steps forces periodic re-write).  ]
-       -VERBOSE then prints reuse lines for each unchanged predicate slot.
-
-  • RL policy selection (epsilon-greedy among triggered candidates):
-    -This is policy selection behaviour when multiple policies trigger, i.e., the 'best policy' has to be picked and this
-        can be done under non-RL conditions or RL-conditions (see READMD.md or menu selection "Cognitive Cycle" for more details).
-        If False == NOT enbabled -- non-RL, i.e., deterministic selection of best policy: DELTA-band deficit values, then non-drive tie-break,
-            stable order tie-break.
-        IF True == enabled -- RL mode, i.e., epsilon-greedy selection of best policy:
-            IF EPSILON (ctx.rl_epsilon) == True, then certain % that by luck will "explore" rather than follow decifict
-                heuristic, and randomly pick a best policy; epsilon 0 to 1, thus .1 means 10% chance explore, 90% chance exploit
-                Note: 10% chance among all triggered candidate policies (i.e., policy still has to be triggered).
-            IF  EPSILON == 0.0 then 0% explore, 100% exploitation, i.e, deterministic selection of best policy
-            -RL exploitation to decide best policy: deficit values within DELTA band, then non_drive values, then learned q values,
-                then stable order.
-        -JUMP is an older knob ( ctx.jump ) is event-boundary jump scale for TemporalContext soft-clock whereby
-            sigma=per-tick drift, jump ='bigger change' at boundarie, how much we change when a boundary appears
-            IF EPSILON == None then effective_epsilon = ctx.jump, e.g., see something printed out like 'epsilon=None, effective=0.200',
-                which means you didn't set rl_epsilon so the software is using jump =0.200 as the exploration probability
-        ==> If want RL enabled but no randomness then set rl_enabled = ON, rl_epsilon = 0.0 (otherwise will get rl_epsilon = <jump value>
-        ==> If want RL to choose among policies even when deficits differ a bit, set a larger DELTA
-
-
-Settings
---------
-
--Current Settings -- what the current settings are. You can change them in the sections which follow.
-- Note that to speed up entry of settings, you can pess Enter to keep current values.
-
--Presets are quick configure shortcuts that set the long-term env obs injection knobs with the settings as shown
-    for you to choose, e.g., bio sets changes enabled=True, keyframes True and reassert every 25 steps  versus
-    e.g., debug sets snapshots enabled=True and verbose=True, so writes every predicate each tick
-
---Phase7 s/w dev't  -- these settings are software development phase7 (scaffolding for converting the architecture's memory pipeline to
-    model described above); they are OFF by default.
-    -working_first - OFF by default and thus policies write into long-term WorldGraph (action/preds accumulate there).
-    -working_first=ON then policies execute into WorkingMap instead, and WorldGraph stays sparser with mostly keyframes,
-        cues, 'runs', once run_compress is on
-    -run_compress =TRUE then WorldGraph stops logging each repeated policy execution as its own action node, but instead
-        keeps one 'open run' per repeated policy and just updates its metadata.
-        e.g., instead of state=fallen -> action stand_up -> action stand_up -> action stand_up -> state=standing,
-        you get:  state=fallen -> action stand_up(run len=3) -> state=standing
-        -key idea is that one node represents a contiguous run of the same policy
-        -if a boundary occurs (stage/posture/nipple/zone signature changes, e.g.) or the policy changes, then close
-            the old run and start a new run node
-    -move_longterm_NOW-to_env -- moves long-term NOW to env state each step; about anchor semantics
-        -in changes mode, if env didn't change then don't write a new predicate which means NOW might not move
-        -if OFF then NOW only moves when something is written or at keyframes
-        -if ON then NOW actively repositioned to current env's binding state each step, and NOW behaves like currrent world pointer.
-
--Clear WorkingMap -- resets WorkMap which can be useful when you want to start a fresh short-term window with resetting the
-    environment.
--Clear long-term slot cache now -- a manual keyframe so that the next env observation is treated as 'first'
-
-""")
 
             loop_helper(args.autosave, world, drives, ctx)
             continue
@@ -13021,13 +13320,13 @@ Settings
                 ctx.longterm_obs_enabled = True
                 ctx.longterm_obs_mode = "changes"
                 ctx.longterm_obs_reassert_steps = 25
-                ctx.longterm_obs_keyframe_on_stage_change = True
+                ctx.longterm_obs_keyframe_on_stage_change = False
                 ctx.longterm_obs_verbose = False
             elif preset in ("sparse", "minimal"):
                 ctx.longterm_obs_enabled = True
                 ctx.longterm_obs_mode = "changes"
                 ctx.longterm_obs_reassert_steps = 0
-                ctx.longterm_obs_keyframe_on_stage_change = True
+                ctx.longterm_obs_keyframe_on_stage_change = False
                 ctx.longterm_obs_verbose = False
             elif preset in ("debug", "trace"):
                 ctx.longterm_obs_enabled = True
@@ -13174,11 +13473,12 @@ Settings
 
             raw_kf = input("keyframe_on_stage_change? [Enter=toggle | on | off]: ").strip().lower()
             if raw_kf in ("on", "true", "1", "yes", "y"):
-                ctx.longterm_obs_keyframe_on_stage_change = True
+                ctx.longterm_obs_keyframe_on_stage_change = False
             elif raw_kf in ("off", "false", "0", "no", "n"):
                 ctx.longterm_obs_keyframe_on_stage_change = False
             elif raw_kf == "":
-                ctx.longterm_obs_keyframe_on_stage_change = not bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True))
+                #ctx.longterm_obs_keyframe_on_stage_change = not bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True))
+                ctx.longterm_obs_keyframe_on_stage_change = False
 
             raw_lv = input("longterm_obs_verbose (show reuse lines)? [Enter=toggle | on | off]: ").strip().lower()
             if raw_lv in ("on", "true", "1", "yes", "y"):

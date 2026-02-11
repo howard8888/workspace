@@ -208,9 +208,9 @@ Environment truth (storyboard state):
 
 [env] ... stage=... posture=... mom=... nipple=...
 
-Keyframes (stage/zone boundaries):
+Keyframes (episode boundaries) (for example):
 
-[env→world] KEYFRAME: ...
+[env→world] KEYFRAME: periodic(step=20, period=10)
 
 [wm<->col] store: ...
 
@@ -3595,7 +3595,7 @@ Log line format (example):
 [pred_err] v0 err={'posture': 1} pred_posture=standing obs_posture=fallen from=policy:stand_up
 
 
-**Action shaping ( extinction pressure”)**
+**Action shaping ("extinction pressure”)**
 
 When the same policy repeatedly predicts a posture postcondition and the next EnvObservation contradicts it,
 CCA8 applies a small **negative shaping reward** to that policy’s skill ledger value (`SkillStat.q`).
@@ -4293,19 +4293,191 @@ Legend reminders:
 
 ---
 
-## G. Keyframes: what happens at a boundary (short checklist)
 
-At a keyframe boundary (currently stage/zone changes):
-- WorldGraph long-term slot cache may reset and rewrite the stable state slots
-- MapSurface snapshot is stored to Column (dedup by signature)
-- WorldGraph pointer node is written (tags for stage/zone; carries engram pointer)
-- Optional auto-retrieve may run:
-  - replace mode: rebuild surface from snapshot
-  - seed/merge mode: seed predicates only; do not inject cue:* into live state
-- Temporal epoch/boundary tracking updates
-- Scratch is not cleared automatically (yet) → consider a future Scratch TTL rule
+
+
+## G. Keyframes (episode boundaries): what they do and how they are triggered
+
+A **keyframe** is a special cognitive cycle that we treat as an **episode boundary** (think: “video keyframe”).
+Most cycles are ordinary “sense → update → choose action.” A keyframe cycle is a boundary cycle where we also run
+boundary-only bookkeeping and (optionally) boundary-only memory operations.
+
+Keyframes exist for two practical reasons:
+
+1) **Trace hygiene**  
+   In long-term WorldGraph observation logging (`longterm_obs_mode="changes"`), we normally write only slot changes.
+   A keyframe resets the long-term slot/cue de-dup caches so the next injection can cleanly re-assert stable facts
+   at the new boundary (without spamming every tick).
+
+2) **Memory boundary semantics**  
+   Keyframes are the natural cycles where we run the **WM⇄Column boundary pipeline** (store/retrieve/apply),
+   so priors can influence action selection *at the boundary* without doing heavy memory work on every tick.
 
 ---
+
+### G1) What a keyframe does (boundary semantics)
+
+At a keyframe boundary, the runner may do all of the following (depending on which knobs are enabled):
+
+- **Emit a KEYFRAME log line**: `[env→world] KEYFRAME: <reasons> | cleared ...`
+- **Clear long-term observation caches** (changes-mode): `ctx.lt_obs_slots` (and cue cache) are cleared.
+  This forces the next boundary observation write to behave “snapshot-like” for one tick.
+- **Trigger the WM⇄Column boundary pipeline** (if enabled in your Phase VII/VIII knobs):
+  - store a WorkingMap.MapSurface snapshot to Column (dedup by signature),
+  - write/refresh a thin WorldGraph pointer binding,
+  - optional guarded auto-retrieve + apply (replace or seed/merge).
+- **Temporal bookkeeping** may also treat boundaries as “chapter points” (epoch/boundary tracking), but this is conceptually
+  separate from keyframes: keyframes are *memory/segmentation boundaries*, while TemporalContext is a *soft clock*.
+
+---
+
+### G2) Keyframe triggers (Phase IX)
+
+A keyframe is decided **once per cognitive cycle** at the env→memory boundary hook
+(`inject_obs_into_world(...)`) **before** policy selection. This is deliberate:
+we do not want to split a cycle while a policy is half-written.
+
+Keyframe trigger families (any can force a keyframe this cycle):
+
+
+#### 1) Episode-start keyframe (env reset)
+- Trigger: `env.reset()` produces `time_since_birth <= 0.0`.
+- Reason string example: `env_reset(time_since_birth=0.00)`
+
+
+#### 2) Context discontinuity keyframes (storyboard boundaries)
+- **Stage change** (default ON): scenario stage changed (birth → struggle → first_stand → ...).
+  - Knob: `ctx.longterm_obs_keyframe_on_stage_change`
+- **Zone change** (default ON): coarse safety zone label changed (e.g., safe ↔ unsafe_cliff_near).
+  - Knob: `ctx.longterm_obs_keyframe_on_zone_change`
+
+These are the main storyboard “chapter boundaries.”
+
+
+#### 3) Periodic keyframes (optional; “max-gap” scheduling)
+
+Periodic keyframes exist to guarantee occasional episode boundaries when the world is quiet (robotics / long stretches without milestones).
+
+- Knob: `ctx.longterm_obs_keyframe_period_steps` (0 disables)
+- Optional knob: `ctx.longterm_obs_keyframe_period_reset_on_any_keyframe`
+  - `False` = legacy absolute schedule: fire when `controller_steps % period == 0`
+  - `True`  = reset-on-any-keyframe (recommended): treat periodic as a “max gap since last keyframe”
+    - if any other keyframe happens (env_reset, milestone, surprise, stage/zone, emotion), restart the periodic counter
+    - periodic fires when `(controller_steps - last_keyframe_step) >= period`
+    - if another keyframe already fired on this cycle, we do **not** add an extra “periodic” reason line, but the periodic counter still resets
+
+Reason string example: `periodic(step=20, period=10)`
+
+
+#### 4) Surprise keyframes (optional; prediction error v0)
+- Trigger: sustained mismatch signal (streak-based).
+- Knobs:
+  - `ctx.longterm_obs_keyframe_on_pred_err`
+  - `ctx.longterm_obs_keyframe_pred_err_min_streak`
+- Reason string example: `pred_err_v0(streak=2)`
+
+
+#### 5) Goal milestone keyframes (optional; derived or HAL-supplied)
+
+Milestones are **event-based segmentation** (“something that matters happened”), not just “state changed.”
+
+Two inputs are supported:
+
+A) **HAL / rich env milestones** (deduped):
+- env_meta may carry `milestones=["reached_mom", "obtained_reward", ...]`.
+- Keyframe fires on *new* milestone strings.
+
+B) **Derived milestones from predicate transitions** (no manual milestone lists):
+- Derived by comparing previous vs current slot values (works well in storyboard and early HAL).
+- Current derived milestone set (v0):
+  - `posture:fallen → posture:standing`            ⇒ `stood_up`
+  - `proximity:mom:* → proximity:mom:close`        ⇒ `reached_mom`
+  - `nipple:* → nipple:found`                      ⇒ `found_nipple`
+  - `nipple:* → nipple:latched`                    ⇒ `latched_nipple`
+  - `milk:* → milk:drinking`                       ⇒ `milk_drinking`
+  - `(absent) → resting`                           ⇒ `rested`
+
+Knob: `ctx.longterm_obs_keyframe_on_milestone`
+
+Reason string example: `milestone:stood_up,reached_mom`
+
+#### 6) Strong emotion keyframes (optional; HAL / richer envs)
+- Trigger: rising edge into a high-intensity affect state, or an affect-label switch while still “high.”
+- Inputs:
+  - env_meta may carry `emotion` / `affect` as either:
+    - dict: `{"label": "fear", "intensity": 0.93}`, or
+    - string label: `"fear"` (intensity optional).
+  - If env_meta supplies nothing, we allow a conservative proxy:
+    - unsafe zone ⇒ `fear` at intensity `1.0` (so you can debug this even before real affect plumbing).
+- Knobs:
+  - `ctx.longterm_obs_keyframe_on_emotion`
+  - `ctx.longterm_obs_keyframe_emotion_threshold` (default ~0.85)
+
+Reason string example: `emotion:fear@1.00`
+
+---
+
+### G3) Keyframes as “memory boundaries” (WM⇄Column pipeline ordering invariant)
+
+Keyframes are the *only* cycles where we allow boundary-only memory operations to run automatically.
+
+**Ordering invariant (keyframes):**
+EnvObservation → BodyMap update → MapSurface update →
+(keyframe) store snapshot + pointer update →
+(keyframe) optional retrieve+apply (replace or seed/merge) →
+policy selection → policy execution → action feedback → next cycle
+
+This is strict on purpose:
+- Store must see the current MapSurface (coherent “belief-now bundle”).
+- Retrieve/apply must run before selection if you want priors to influence that boundary’s action.
+- Retrieve excludes the engram just stored on the same keyframe (no trivial self-retrieval).
+- Seed/merge mode must not inject cue:* as “present now” (no cue leakage).
+
+**Reserved future slot (write-back / reconsolidation):**
+After policy execution, a keyframe may later add a *post-execution* write-back hook that:
+- writes new engrams (copy-on-write) and/or patch records,
+- updates pointer bindings,
+without changing the belief state already used for action selection in that same cycle.
+
+---
+
+### G4) HAL / robotics: how keyframes generalize beyond storyboard
+
+In real robots there is no storyboard stage like `"first_stand"`. Keyframes still work; you just lean on the non-storyboard triggers:
+
+- **Zone/context discontinuities** derived from sensor fusion:
+  - hazard near/far thresholds, doorway crossed, cliff-edge detected, traction lost, dock-visible, etc.
+- **Milestones** emitted by HAL or derived from predicates:
+  - `contact_made`, `object_grasped`, `reached_dock`, `human_detected`, `task_success`, `task_fail`, etc.
+- **Strong emotion / arousal** from interoception + safety monitors:
+  - high “fear” / high “urgency” / high “startle” / high “pain”
+- **Periodic** keyframes as a throttle for expensive ops:
+  - store/retrieve/apply every N decisions or every N seconds (if you later anchor to wall-clock ticks)
+- **Surprise** keyframes:
+  - prediction error streaks (e.g., repeated mismatch between expected and observed posture/pose/contacts)
+
+Practical robotics usage:
+- Keyframes become the safe moments to run heavier memory operations (map snapshotting, retrieval, consolidation),
+  because the boundary hook is the one place we guarantee we are not mid-write in a policy/action chain.
+
+---
+
+### G5) What you should see in the terminal
+
+On a keyframe boundary, expect a line like:
+
+- `[env→world] KEYFRAME: stage_change 'struggle'→'first_stand' | cleared ...`
+- `[env→world] KEYFRAME: milestone:stood_up | cleared ...`
+- `[env→world] KEYFRAME: emotion:fear@1.00 | cleared ...`
+
+If WM⇄Column auto-store/retrieve/apply is enabled, you may also see:
+
+- `[wm<->col] store: ... (auto_keyframe_...)`
+- `[wm<->col] retrieve: ...`
+- `[wm<->col] apply: ...`
+
+---
+
 
 
 ## H. Anchors, episodes, and keyframes (how “boundaries” actually work)
