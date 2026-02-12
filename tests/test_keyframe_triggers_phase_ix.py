@@ -192,3 +192,73 @@ def test_keyframe_emotion_stub_triggers_when_enabled():
     r = inject_obs_into_world(w, ctx, obs)
     assert r.get("keyframe", False)
     assert any("emotion:" in str(x) for x in (r.get("keyframe_reasons") or []))
+
+
+def test_keyframe_periodic_suppressed_while_sleeping_nondreaming():
+    w = _mk_world()
+    ctx = Ctx()
+    ctx.longterm_obs_mode = "changes"
+
+    # isolate: only periodic is relevant here
+    ctx.longterm_obs_keyframe_on_stage_change = False
+    ctx.longterm_obs_keyframe_on_zone_change = False
+    ctx.longterm_obs_keyframe_on_pred_err = False
+    ctx.longterm_obs_keyframe_on_milestone = False
+    ctx.longterm_obs_keyframe_on_emotion = False
+
+    ctx.longterm_obs_keyframe_period_steps = 3
+    ctx.longterm_obs_keyframe_period_suppress_when_sleeping_nondreaming = True
+    ctx.longterm_obs_keyframe_period_suppress_when_sleeping_dreaming = False
+
+    obs = _ObsStub(
+        predicates=["posture:fallen", "proximity:shelter:far", "hazard:cliff:far", "sleeping:non_dreaming"],
+        env_meta={"scenario_stage": "x", "time_since_birth": 1.0},
+    )
+
+    ctx.controller_steps = 1
+    r1 = inject_obs_into_world(w, ctx, obs)
+    assert not r1.get("keyframe", False)
+
+    ctx.controller_steps = 2
+    r2 = inject_obs_into_world(w, ctx, obs)
+    assert not r2.get("keyframe", False)
+
+    # Would normally fire periodic here, but should be suppressed
+    ctx.controller_steps = 3
+    r3 = inject_obs_into_world(w, ctx, obs)
+    assert not r3.get("keyframe", False)
+
+
+def test_keyframe_periodic_suppressed_while_sleeping_dreaming():
+    w = _mk_world()
+    ctx = Ctx()
+    ctx.longterm_obs_mode = "changes"
+
+    # isolate: only periodic is relevant here
+    ctx.longterm_obs_keyframe_on_stage_change = False
+    ctx.longterm_obs_keyframe_on_zone_change = False
+    ctx.longterm_obs_keyframe_on_pred_err = False
+    ctx.longterm_obs_keyframe_on_milestone = False
+    ctx.longterm_obs_keyframe_on_emotion = False
+
+    ctx.longterm_obs_keyframe_period_steps = 3
+    ctx.longterm_obs_keyframe_period_suppress_when_sleeping_nondreaming = False
+    ctx.longterm_obs_keyframe_period_suppress_when_sleeping_dreaming = True
+
+    obs = _ObsStub(
+        predicates=["posture:fallen", "proximity:shelter:far", "hazard:cliff:far", "sleeping:dreaming"],
+        env_meta={"scenario_stage": "x", "time_since_birth": 1.0},
+    )
+
+    ctx.controller_steps = 1
+    r1 = inject_obs_into_world(w, ctx, obs)
+    assert not r1.get("keyframe", False)
+
+    ctx.controller_steps = 2
+    r2 = inject_obs_into_world(w, ctx, obs)
+    assert not r2.get("keyframe", False)
+
+    # Would normally fire periodic here, but should be suppressed
+    ctx.controller_steps = 3
+    r3 = inject_obs_into_world(w, ctx, obs)
+    assert not r3.get("keyframe", False)

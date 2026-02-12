@@ -245,8 +245,12 @@ class Ctx:
     obs_mask_seed: Optional[int] = None
     obs_mask_last_cfg_sig: Optional[str] = None
     mini_snapshot: bool = True  #mini-snapshot toggle starting value
-    posture_discrepancy_history: list[str] = field(default_factory=list) #per-session list of discrepancies motor command vs what environment reports
+    # Env-loop (menu 37) per-cycle footer summary.
+    # This is intentionally pragmatic and subject to change as Phase IX evolves.
+    env_loop_cycle_summary: bool = True
+    env_loop_cycle_summary_max_items: int = 6
 
+    posture_discrepancy_history: list[str] = field(default_factory=list) #per-session list of discrepancies motor command vs what environment reports
     # BodyMap: tiny body+near-world map (separate WorldGraph instance)
     body_world: Optional[cca8_world_graph.WorldGraph] = None
     body_ids: dict[str, str] = field(default_factory=dict)
@@ -352,6 +356,17 @@ class Ctx:
     # The reset-on-any-keyframe mode reduces "weird mid-episode splits" and prevents periodic
     # keyframes from clustering right after meaningful milestone boundaries.
     longterm_obs_keyframe_period_reset_on_any_keyframe: bool = True
+    # Optional: suppress periodic keyframes while sleeping.
+    #
+    # Motivation (robotics / HAL):
+    #   - Periodic keyframes are a "max-gap" safety net when the world is quiet.
+    #   - During sleep, we may prefer NOT to inject arbitrary episode boundaries.
+    #
+    # Sleep detection is best-effort (future-facing):
+    #   - env_meta may supply: sleep_state/sleep_mode (str) OR sleeping/dreaming (bool)
+    #   - or predicates may include: sleeping:non_dreaming / sleeping:dreaming (plus rem/nrem aliases)
+    longterm_obs_keyframe_period_suppress_when_sleeping_nondreaming: bool = False
+    longterm_obs_keyframe_period_suppress_when_sleeping_dreaming: bool = False
 
     longterm_obs_keyframe_on_pred_err: bool = False
     #longterm_obs_keyframe_on_pred_err: bool = True   #toggle: keyframe surprise
@@ -7966,15 +7981,22 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         pass
 
     # Mirror into WorkingMap when enabled.
+    # Keep the returned dict so callers (e.g., env-loop footer) can summarize what happened.
+    working_inj = None
     try:
         if getattr(ctx, "working_enabled", False):
-            inject_obs_into_working_world(ctx, env_obs)
+            working_inj = inject_obs_into_working_world(ctx, env_obs)
     except Exception:
-        pass
+        working_inj = None
 
     # Allow turning off long-term injection entirely (BodyMap/WorkingMap still update).
     if not getattr(ctx, "longterm_obs_enabled", True):
-        return {"predicates": created_preds, "cues": created_cues, "token_to_bid": token_to_bid}
+        return {
+            "predicates": created_preds,
+            "cues": created_cues,
+            "token_to_bid": token_to_bid,
+            "working": working_inj,
+        }
 
     mode = (getattr(ctx, "longterm_obs_mode", "snapshot") or "snapshot").strip().lower()
     do_changes = mode in ("changes", "dedup", "delta", "state_changes")
@@ -8058,6 +8080,73 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
                 hit = (step_no - last_kf_step) >= period
             else:
                 hit = (step_no % period) == 0
+
+            # Optional suppression: do not fire periodic keyframes while sleeping.
+            #
+            # We detect sleep state best-effort from either:
+            #   A) env_meta: sleep_state/sleep_mode (str), or sleeping/dreaming (bool)
+            #   B) predicate tokens: sleeping:non_dreaming / sleeping:dreaming (rem/nrem aliases allowed)
+            if hit:
+                sup_nd = bool(getattr(ctx, "longterm_obs_keyframe_period_suppress_when_sleeping_nondreaming", False))
+                sup_dr = bool(getattr(ctx, "longterm_obs_keyframe_period_suppress_when_sleeping_dreaming", False))
+
+                if sup_nd or sup_dr:
+                    sleep_kind: str | None = None
+
+                    # A) env_meta string label
+                    try:
+                        sm = env_meta.get("sleep_state") or env_meta.get("sleep_mode") or env_meta.get("sleep")
+                    except Exception:
+                        sm = None
+
+                    if isinstance(sm, str) and sm.strip():
+                        s = sm.strip().lower().replace(" ", "_")
+                        if s in ("dreaming", "rem", "rem_sleep", "sleep_rem"):
+                            sleep_kind = "dreaming"
+                        elif s in ("non_dreaming", "nondreaming", "nrem", "nrem_sleep", "sleep_nrem", "non_rem"):
+                            sleep_kind = "non_dreaming"
+
+                    # A2) env_meta boolean flags
+                    if sleep_kind is None:
+                        try:
+                            sleeping_flag = env_meta.get("sleeping")
+                            dreaming_flag = env_meta.get("dreaming")
+                        except Exception:
+                            sleeping_flag = None
+                            dreaming_flag = None
+
+                        if isinstance(sleeping_flag, bool) and sleeping_flag:
+                            sleep_kind = "dreaming" if bool(dreaming_flag) else "non_dreaming"
+
+                    # B) predicate tokens
+                    if sleep_kind is None:
+                        try:
+                            toks = {t.strip().lower() for t in pred_tokens if isinstance(t, str) and t.strip()}
+                        except Exception:
+                            toks = set()
+
+                        if (
+                            "sleeping:dreaming" in toks
+                            or "sleep:dreaming" in toks
+                            or "sleeping:rem" in toks
+                            or "sleep:rem" in toks
+                        ):
+                            sleep_kind = "dreaming"
+                        elif (
+                            "sleeping:non_dreaming" in toks
+                            or "sleep:non_dreaming" in toks
+                            or "sleeping:nrem" in toks
+                            or "sleep:nrem" in toks
+                        ):
+                            sleep_kind = "non_dreaming"
+                        elif ("sleeping" in toks) or ("sleep" in toks):
+                            # If sleep is present but untyped, treat as non-dreaming by default.
+                            sleep_kind = "non_dreaming"
+
+                    if (sleep_kind == "non_dreaming") and sup_nd:
+                        hit = False
+                    elif (sleep_kind == "dreaming") and sup_dr:
+                        hit = False
 
             if hit:
                 # If another keyframe is already happening this tick, do NOT add a second "periodic" reason.
@@ -8442,6 +8531,7 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         "predicates": created_preds,
         "cues": created_cues,
         "token_to_bid": token_to_bid,
+        "working": working_inj,
         "keyframe": bool(keyframe),
         "keyframe_reasons": list(keyframe_reasons),
         "zone_now": getattr(ctx, "lt_obs_last_zone", None),
@@ -8693,6 +8783,261 @@ def print_env_loop_tag_legend_once(ctx: Ctx) -> None:
     print("  [maps]          selection_on=map used to score; execute_on=map used to run actions")
     print("  [obs-mask]      partial-observability masking (token drops) when enabled")
     print("")
+
+
+def _print_cog_cycle_footer(*,
+                            ctx: "Ctx",
+                            drives,
+                            env_obs,
+                            prev_state,
+                            curr_state,
+                            env_step: int | None,
+                            zone: str | None,
+                            inj: dict[str, Any] | None,
+                            fired_txt: str | None,
+                            col_store_txt: str | None,
+                            col_retrieve_txt: str | None,
+                            col_apply_txt: str | None,
+                            action_applied_this_step: str | None,
+                            next_action_for_env: str | None,
+                            cycle_no: int,
+                            cycle_total: int) -> None:
+    """
+    Print a compact, end-of-cycle footer intended for fast human scanning.
+
+    Intent
+    ------
+    Menu 37 (closed-loop env↔controller runs) produces many diagnostic lines. This footer is the
+    "cheap digest" line-set that lets a maintainer quickly see what happened in *this* cognitive
+    cycle in terms of the architecture:
+
+      inputs → MapSurface deltas → Scratch writes → WorldGraph writes → Column ops → action
+
+    The footer is intentionally pragmatic and will evolve as Phase IX/robotics/HAL integration evolves.
+    Treat it as a reading aid, not a stable API.
+
+    Notes
+    -----
+    - "MapSurface deltas" are derived from EnvState diffs (authoritative simulator truth). MapSurface is
+      driven by EnvObservation, so EnvState changes correspond to slot-family changes (posture, proximity,
+      hazard, nipple, etc.).
+    - "Scratch writes" are summarized from the policy runtime's returned text (added bindings, executed line).
+    - Column ops are summarized from the wm<->col store/retrieve/apply block when it ran this cycle.
+    """
+    if not bool(getattr(ctx, "env_loop_cycle_summary", True)):
+        return
+
+    try:
+        max_items = int(getattr(ctx, "env_loop_cycle_summary_max_items", 6) or 6)
+    except Exception:
+        max_items = 6
+
+    def _sf(x) -> str:
+        try:
+            return f"{float(x):.2f}"
+        except Exception:
+            return "n/a"
+
+    def _fmt_items(items, *, prefix: str = "", limit: int = 6) -> str:
+        if not items:
+            return "(none)"
+        out = []
+        for it in items:
+            if isinstance(it, str) and it:
+                out.append(f"{prefix}{it}")
+        if not out:
+            return "(none)"
+        if len(out) <= limit:
+            return ", ".join(out)
+        head = ", ".join(out[:limit])
+        return f"{head}, +{len(out) - limit} more"
+
+    def _get_state_attr(st, name: str):
+        try:
+            return getattr(st, name, None)
+        except Exception:
+            return None
+
+    def _surface_deltas(ps, cs) -> list[str]:
+        # These correspond to the newborn-goat "big slots" that map cleanly onto MapSurface slot-families.
+        fields = [
+            ("posture", "kid_posture"),
+            ("mom", "mom_distance"),
+            ("shelter", "shelter_distance"),
+            ("cliff", "cliff_distance"),
+            ("nipple", "nipple_state"),
+        ]
+        out: list[str] = []
+        for label, attr in fields:
+            a = _get_state_attr(ps, attr) if ps is not None else None
+            b = _get_state_attr(cs, attr) if cs is not None else None
+            if ps is None:
+                out.append(f"{label}={b}")
+            else:
+                if a != b:
+                    out.append(f"{label} {a}→{b}")
+        return out
+
+    def _parse_fired(txt: str | None) -> dict[str, Any]:
+        # fired text is produced by PolicyRuntime.consider_and_maybe_fire(...).
+        out: dict[str, Any] = {"policy": None, "added": None, "reward": None, "sel_on": None, "exec_on": None}
+        if not (isinstance(txt, str) and txt.strip()):
+            return out
+        import re  # local import (matches existing style in this file)
+        lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+        if not lines:
+            return out
+
+        # First line: "policy:xyz (added N bindings)"
+        first = lines[0]
+        parts = first.split()
+        if parts and parts[0].startswith("policy:"):
+            out["policy"] = parts[0]
+        m = re.search(r"added\s+(\d+)\s+bindings", first)
+        if m:
+            try:
+                out["added"] = int(m.group(1))
+            except Exception:
+                out["added"] = None
+
+        for ln in lines:
+            if ln.startswith("[executed]"):
+                # Example: [executed] policy:follow_mom (ok, reward=+0.10) binding=w38 (b38)
+                m2 = re.search(r"reward=([+\-]?\d+(?:\.\d+)?)", ln)
+                if m2:
+                    try:
+                        out["reward"] = float(m2.group(1))
+                    except Exception:
+                        out["reward"] = None
+            if ln.startswith("[maps]"):
+                # Example: [maps] selection_on=WG execute_on=WM
+                if "selection_on=" in ln:
+                    try:
+                        out["sel_on"] = ln.split("selection_on=", 1)[1].split()[0].strip()
+                    except Exception:
+                        pass
+                if "execute_on=" in ln:
+                    try:
+                        out["exec_on"] = ln.split("execute_on=", 1)[1].split()[0].strip()
+                    except Exception:
+                        pass
+        return out
+
+    # Keyframe indicator: best-effort. (Keyframe reasons still appear in the KEYFRAME log line above.)
+    is_kf = False
+    try:
+        is_kf = (getattr(ctx, "lt_obs_last_keyframe_step", None) == getattr(ctx, "controller_steps", None))
+    except Exception:
+        is_kf = False
+
+    st_stage = _get_state_attr(curr_state, "scenario_stage")
+    st_post  = _get_state_attr(curr_state, "kid_posture")
+    st_mom   = _get_state_attr(curr_state, "mom_distance")
+    st_nip   = _get_state_attr(curr_state, "nipple_state")
+
+    dr_h = _sf(getattr(drives, "hunger", None))
+    dr_f = _sf(getattr(drives, "fatigue", None))
+    dr_w = _sf(getattr(drives, "warmth", None))
+
+    # WG write summary (env injection)
+    wg_preds: list[str] = []
+    wg_cues: list[str] = []
+    if isinstance(inj, dict):
+        p = inj.get("predicates")
+        c = inj.get("cues")
+        if isinstance(p, list):
+            wg_preds = [x for x in p if isinstance(x, str) and x]
+        if isinstance(c, list):
+            wg_cues = [x for x in c if isinstance(x, str) and x]
+
+    # EnvObservation input summary (what crossed the env→agent boundary this tick)
+    obs_preds: list[str] = []
+    obs_cues: list[str] = []
+    obs_drop_p = 0
+    obs_drop_c = 0
+    if env_obs is not None:
+        try:
+            pr = getattr(env_obs, "predicates", None)
+            if isinstance(pr, list):
+                obs_preds = [str(x).replace("pred:", "", 1) for x in pr if isinstance(x, str) and x]
+        except Exception:
+            obs_preds = []
+
+        try:
+            cr = getattr(env_obs, "cues", None)
+            if isinstance(cr, list):
+                obs_cues = [str(x).replace("cue:", "", 1) for x in cr if isinstance(x, str) and x]
+        except Exception:
+            obs_cues = []
+
+        try:
+            em = getattr(env_obs, "env_meta", None)
+            if isinstance(em, dict):
+                obs_drop_p = int(em.get("obs_mask_dropped_preds", 0) or 0)
+                obs_drop_c = int(em.get("obs_mask_dropped_cues", 0) or 0)
+        except Exception:
+            obs_drop_p = 0
+            obs_drop_c = 0
+
+    fired_info = _parse_fired(fired_txt)
+
+    # ---- line 1: inputs
+    kf_txt = "KF" if is_kf else "--"
+    step_txt = str(env_step) if isinstance(env_step, int) else "?"
+    zone_txt = zone if isinstance(zone, str) else "?"
+
+    mask_txt = ""
+    if (obs_drop_p or obs_drop_c) and (obs_drop_p >= 0 and obs_drop_c >= 0):
+        mask_txt = f" mask_drop(p={obs_drop_p} c={obs_drop_c})"
+
+    print(
+        f"[cycle] IN   {kf_txt} cycle={cycle_no}/{cycle_total} env_step={step_txt} "
+        f"stage={st_stage} posture={st_post} mom={st_mom} nipple={st_nip} zone={zone_txt} "
+        f"drives(h={dr_h} f={dr_f} w={dr_w}) applied_action={action_applied_this_step!r} "
+        f"obs(p={len(obs_preds)} c={len(obs_cues)}){mask_txt}"
+    )
+
+    if obs_preds or obs_cues:
+        pred_txt = _fmt_items(obs_preds, prefix="", limit=max_items)
+        cue_txt = _fmt_items(obs_cues, prefix="", limit=max_items)
+        print(f"[cycle] OBS  preds: {pred_txt} | cues: {cue_txt}")
+
+    # ---- line 2: WorkingMap summary (surface deltas + scratch writes)
+    deltas = _surface_deltas(prev_state, curr_state)
+    delta_txt = _fmt_items(deltas, prefix="", limit=max_items) if deltas else "(no surface slot change)"
+    pol = fired_info.get("policy") or next_action_for_env
+    added = fired_info.get("added")
+    exec_on = fired_info.get("exec_on")
+    scratch_txt = "(no policy fired)"
+    if isinstance(pol, str) and pol:
+        if isinstance(added, int):
+            scratch_txt = f"{pol} +{added} binding(s)"
+        else:
+            scratch_txt = f"{pol}"
+        if exec_on:
+            scratch_txt += f" (exec_on={exec_on})"
+    print(f"[cycle] WM   surfaceΔ: {delta_txt} | scratch: {scratch_txt}")
+
+    # ---- line 3: WorldGraph writes this tick
+    wg_txt = f"preds+{len(wg_preds)} cues+{len(wg_cues)}"
+    wg_pred_txt = _fmt_items(wg_preds, prefix="pred:", limit=max_items)
+    wg_cue_txt = _fmt_items(wg_cues, prefix="cue:", limit=max_items)
+    print(f"[cycle] WG   wrote {wg_txt} | {wg_pred_txt} | {wg_cue_txt}")
+
+    # ---- line 4: Column ops (only meaningful on keyframes)
+    if col_store_txt or col_retrieve_txt or col_apply_txt:
+        cs = col_store_txt or "store: (n/a)"
+        cr = col_retrieve_txt or "retrieve: (n/a)"
+        ca = col_apply_txt or "apply: (n/a)"
+        print(f"[cycle] COL  {cs} | {cr} | {ca}")
+    else:
+        print("[cycle] COL  (no wm<->col ops this cycle)")
+
+    # ---- line 5: action recap
+    r = fired_info.get("reward")
+    rtxt = f"{r:+.2f}" if isinstance(r, (int, float)) else "n/a"
+    print(f"[cycle] ACT  executed={pol!r} reward={rtxt} next_action={next_action_for_env!r}")
+
 
 def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) -> None:
     """
@@ -9189,6 +9534,12 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         print("[env-loop]       (With HAL ON, this is where we'd sample the first real sensor snapshot.)")
     for i in range(n_steps):
         print(f"\n[env-loop] Cognitive Cycle {i+1}/{n_steps}")
+        # Per-cycle capture for the footer summary (reset each cycle).
+        fired_txt = None
+        inj = None
+        col_store_txt = None
+        col_retrieve_txt = None
+        col_apply_txt = None
 
         # Count one CLOSED-LOOP cognitive cycle (env↔controller iteration).
         try:
@@ -9513,8 +9864,10 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
                 if stored and isinstance(eid, str):
                     print(f"[wm<->col] store: ok sig={sig16} bid={bid} eid={eid[:8]}… ({reason_kf})")
+                    col_store_txt = f"store ok sig={sig16} eid={eid[:8]}…"
                 else:
                     print(f"[wm<->col] store: skip why={why_store} sig={sig16} ({reason_kf})")
+                    col_store_txt = f"store skip why={why_store} sig={sig16}"
 
                 # ---- 2) RETRIEVE line + 3) APPLY line ----
                 try:
@@ -9535,7 +9888,10 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
                     if not do_try:
                         print(f"[wm<->col] retrieve: skip why={dec.get('why')} mode={mode_txt} top_k={top_k} ({reason_kf})")
+                        col_retrieve_txt = f"retrieve skip why={dec.get('why')} mode={mode_txt} top_k={top_k}"
+
                         print(f"[wm<->col] apply: no-op ({dec.get('why')})")
+                        col_apply_txt = f"apply no-op ({dec.get('why')})"
                     else:
                         exclude = eid if stored and isinstance(eid, str) else None
 
@@ -9564,6 +9920,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
                             rid_txt = (rid[:8] + "…") if isinstance(rid, str) else "(n/a)"
                             print(f"[wm<->col] retrieve: ok mode={mode_txt} eid={rid_txt} match={match} score={score} op={op} oc={oc} src={src}")
+                            col_retrieve_txt = f"retrieve ok mode={mode_txt} eid={rid_txt} match={match} score={score}"
 
                             load = out.get("load") if isinstance(out.get("load"), dict) else {}
                             applied_mode = str(load.get("mode") or mode_txt)
@@ -9572,19 +9929,25 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                                 ent_n = load.get("entities")
                                 rel_n = load.get("relations")
                                 print(f"[wm<->col] apply: replace entities={ent_n} relations={rel_n}")
+                                col_apply_txt = f"apply replace ent={ent_n} rel={rel_n}"
                             else:
                                 ae = load.get("added_entities")
                                 fs = load.get("filled_slots")
                                 ed = load.get("added_edges")
                                 pc = load.get("stored_prior_cues")
                                 print(f"[wm<->col] apply: merge added_entities={ae} filled_slots={fs} added_edges={ed} prior_cues={pc}")
+                                col_apply_txt = f"apply merge ent+{ae} slots+{fs} edges+{ed} prior_cues={pc}"
                         else:
                             why = out.get("why") if isinstance(out, dict) else "no-op"
                             print(f"[wm<->col] retrieve: skip why={why} mode={mode_txt} top_k={top_k} ({reason_kf})")
+                            col_retrieve_txt = f"retrieve skip why={why} mode={mode_txt} top_k={top_k}"
                             print(f"[wm<->col] apply: no-op ({why})")
+                            col_apply_txt = f"apply no-op ({why})"
                 except Exception as e:
                     print(f"[wm<->col] retrieve: skip why=error:{e} ({reason_kf})")
+                    col_retrieve_txt = f"retrieve skip error:{e}"
                     print("[wm<->col] apply: no-op (error)")
+                    col_apply_txt = "apply no-op (error)"
 
                             # ----- END Auto-retrieve (read path) ----
 
@@ -9601,6 +9964,8 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 exec_world = ctx.working_world
             _wm_creative_update(policy_rt, world, drives, ctx, exec_world=exec_world)
             fired = policy_rt.consider_and_maybe_fire(world, drives, ctx, exec_world=exec_world)
+            fired_txt = fired if isinstance(fired, str) else None
+
             if fired != "no_match":
                 print(f"[env→controller] {fired}")
 
@@ -9703,6 +10068,28 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 zone_expl = _explain_zone_change(prev_state, st, zone, ctx)
                 if zone_expl:
                     print(f"[env-loop] explain zone: {zone_expl}")
+            except Exception:
+                pass
+            # End-of-cycle footer: compact digest for fast scanning (Phase IX).
+            try:
+                _print_cog_cycle_footer(
+                    ctx=ctx,
+                    drives=drives,
+                    env_obs=env_obs,
+                    prev_state=prev_state,
+                    curr_state=st,
+                    env_step=step_idx,
+                    zone=zone,
+                    inj=inj if isinstance(inj, dict) else None,
+                    fired_txt=fired_txt if isinstance(fired_txt, str) else None,
+                    col_store_txt=col_store_txt,
+                    col_retrieve_txt=col_retrieve_txt,
+                    col_apply_txt=col_apply_txt,
+                    action_applied_this_step=action_for_env,
+                    next_action_for_env=getattr(ctx, "env_last_action", None),
+                    cycle_no=i + 1,
+                    cycle_total=n_steps,
+                )
             except Exception:
                 pass
         except Exception:

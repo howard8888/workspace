@@ -233,6 +233,32 @@ v0 is intentionally minimal (posture only)
 [env-loop] summary ... env_step=... stage=... env_posture=... bm_posture=... last_policy=... zone=...
 
 
+### How to Read the Cognitive Cycle Summary (at time of writing)
+
+During **menu 37** closed-loop runs, each cognitive cycle ends with a short **footer block** intended for fast human scanning.
+This footer is intentionally pragmatic and is **under constant development** as Phase IX evolves; treat it as a reading aid,
+not a stable API.
+
+You will see lines with the prefix:
+
+- `[cycle] IN`  — “important inputs” for this cycle: env_step, stage, posture, mom/nipple, zone, drives, and the action that
+  the environment applied on this tick (the action was chosen on the prior cycle).
+- `[cycle] WM`  — **WorkingMap** summary:
+  - `surfaceΔ` lists coarse slot changes (posture / proximity / hazard / nipple) derived from EnvState truth.
+  - `scratch` reports which policy executed and how many bindings it wrote (typically into **WM_SCRATCH** when execute_on=WM).
+- `[cycle] WG`  — **WorldGraph** long-term injection summary: how many `pred:*` and `cue:*` bindings were written this tick
+  (in `changes` mode, this may be `preds+0` when slots are unchanged).
+- `[cycle] COL` — **WM⇄Column** keyframe pipeline summary (store / retrieve / apply). If no keyframe-triggered memory ops ran,
+  the footer will say so explicitly.
+- `[cycle] ACT` — action recap: executed policy name, reward if present in logs, and the **next** action string that will be
+  fed back to `env.step(...)` on the next cycle.
+
+As the system matures (HAL/robotics, richer perception, more WorkingMap semantics), the exact fields may change — the guiding
+principle is constant: **show the smallest digest that lets you visually confirm the architecture is behaving as intended**.
+
+
+
+
 
 ### 2b) Terminal tag legend (prefixes) + closed-loop terminology
 
@@ -4367,6 +4393,17 @@ Periodic keyframes exist to guarantee occasional episode boundaries when the wor
     - if another keyframe already fired on this cycle, we do **not** add an extra “periodic” reason line, but the periodic counter still resets
 
 Reason string example: `periodic(step=20, period=10)`
+
+
+- Optional knobs (sleep suppression; robotics/HAL):
+  - `ctx.longterm_obs_keyframe_period_suppress_when_sleeping_nondreaming`
+  - `ctx.longterm_obs_keyframe_period_suppress_when_sleeping_dreaming`
+
+  When enabled, periodic keyframes are suppressed if the observation indicates the agent is sleeping in that mode.
+  Sleep state can be supplied either as:
+  - `env_meta`: `sleep_state`/`sleep_mode` (string) or `sleeping`/`dreaming` (bool), or
+  - predicates such as `sleeping:non_dreaming` / `sleeping:dreaming` (with `rem`/`nrem` aliases allowed).
+
 
 
 #### 4) Surprise keyframes (optional; prediction error v0)
