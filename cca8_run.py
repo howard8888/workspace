@@ -96,6 +96,7 @@ from cca8_controller import body_shelter_is_near   # pylint: disable=unused-impo
 from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
 from cca8_env import HybridEnvironment, EnvObservation  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
+from cca8_features import FactMeta
 
 
 # --- Public API index, version, global variables and constants ----------------------------------------
@@ -267,6 +268,7 @@ class Ctx:
     working_trace: bool = False          # debug only: also append a per-tick trace (can grow quickly)
     wm_entities: dict[str, str] = field(default_factory=dict)            # entity_id -> binding id (in working_world)
     wm_last_env_cues: dict[str, set[str]] = field(default_factory=dict)  # entity_id -> last injected cue tags
+    wm_last_navpatch_sigs: dict[str, set[str]] = field(default_factory=dict)  # entity_id -> last injected NavPatch sig16 set
 
     # WorkingMap Creative layer (counterfactual rollouts / imagined futures)
     # - Does not change policy selection yet (purely inspectable scaffolding for Option B).
@@ -279,6 +281,47 @@ class Ctx:
     wm_mapsurface_last_sig: Optional[str] = None
     wm_mapsurface_last_engram_id: Optional[str] = None
     wm_mapsurface_last_world_bid: Optional[str] = None
+    # NavPatches (Phase X; NavPatch plan v5)
+    # - EnvObservation may include processed local navigation map fragments (nav_patches).
+    # - WorkingMap entities can own patch references via binding.meta['wm']['patch_refs'].
+    # - We can store patch payloads as separate Column engrams (dedup by content signature).
+    navpatch_enabled: bool = True
+    navpatch_store_to_column: bool = True
+    navpatch_verbose: bool = False
+    navpatch_sig_to_eid: dict[str, str] = field(default_factory=dict)  # sig(hex) -> engram_id
+    navpatch_last_log: dict[str, Any] = field(default_factory=dict)
+
+    # NavPatch (Phase X scaffolding): predictive matching loop + traceability
+    # navpatch_enabled gates the entire matching pipeline. When enabled, EnvObservation.nav_patches
+    # is treated as a stream of local "scene patches" that can be matched to prior prototypes stored
+    # as Column engrams. This is not used for policy selection yet; it exists for logging and for
+    # later WorkingMap integration.
+
+    # NavPatch matching (Phase X): diagnostic top-K match traces (predictive coding hooks).
+    navpatch_match_top_k: int = 3
+    navpatch_match_accept_score: float = 0.85
+    navpatch_match_ambiguous_margin: float = 0.05  # if best-second < margin, mark match as ambiguous (do not hallucinate certainty)
+    navpatch_last_matches: list[dict[str, Any]] = field(default_factory=list)
+
+    # NavPatch priors (Phase X 2.2a): top-down bias terms (OFF by default)
+    # -------------------------------------------------------------------
+    # These priors are used ONLY inside the NavPatch matching loop to bias which stored
+    # prototype a new patch best matches. They do not affect policy selection yet.
+    #
+    # Design constraints:
+    #   - Priors must never override strong evidence. We enforce this via an "error guard":
+    #     if raw matching error exceeds navpatch_priors_error_guard, we refuse to call a match
+    #     "near" even if priors would raise the posterior score.
+    navpatch_priors_enabled: bool = True
+    navpatch_priors_hazard_bias: float = 0.05
+    navpatch_priors_error_guard: float = 0.45
+    # Precision weighting (Phase X 2.2b): evidence reliability weights (v1 uses tags vs extent).
+    navpatch_precision_tags: float = 0.75
+    navpatch_precision_extent: float = 0.25
+    navpatch_precision_tags_birth: float = 0.60     # lower precision early → more ambiguity
+    navpatch_precision_tags_struggle: float = 0.65  # slightly better than birth, still degraded
+    navpatch_last_priors: dict[str, Any] = field(default_factory=dict)
+
     # MapSurface auto-retrieve (Option B6/B7)
     # - When enabled, on keyframes (stage/zone boundary) we try to seed WorkingMap from a prior
     #   wm_mapsurface engram (default mode="merge" so it behaves as a conservative prior).
@@ -346,7 +389,6 @@ class Ctx:
     longterm_obs_keyframe_on_zone_change: bool = False
     #ctx.longterm_obs_keyframe_on_stage_change in presets set to False
 
-
     longterm_obs_keyframe_period_steps: int = 0
     #longterm_obs_keyframe_period_steps: int = 10 #toggle: keyframe every 10 cog cycles
     # Periodic keyframes can be scheduled in two ways:
@@ -392,6 +434,15 @@ class Ctx:
     # Private state: per-slot last (token, bid, emit_step) used by longterm_obs_mode="changes".
     lt_obs_slots: dict[str, dict[str, Any]] = field(default_factory=dict)
     lt_obs_last_stage: Optional[str] = None
+
+    # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
+    # ---------------------------------------------------------------------
+    # When enabled, each closed-loop env step appends a JSON-safe dict record to ctx.cycle_json_records,
+    # and optionally writes it to ctx.cycle_json_path as JSONL (one record per line).
+    cycle_json_enabled: bool = False
+    cycle_json_path: Optional[str] = None
+    cycle_json_max_records: int = 2000
+    cycle_json_records: list[dict[str, Any]] = field(default_factory=list)
 
 
     def reset_controller_steps(self) -> None:
@@ -781,8 +832,15 @@ def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface
         return (0, "") if eid == "self" else (1, eid)
 
     print(title)
-    print("  ent      node        kind      pos(x,y)         dist_m  class     seen  preds (short)                cues (short)")
-    print("  -------  ----------  --------  --------------  ------  --------  ----  --------------------------  ----------------")
+    print("  ent      node        kind      pos(x,y)         dist_m  class     seen patches             preds (short)                cues (short)")
+    print("  -------  ----------  --------  --------------  ------  --------  ---- ------------------  --------------------------  ----------------")
+
+    # Footer summary counters (NavPatch visibility; keeps logs readable during long runs)
+    ent_rows = 0
+    ent_with_patches = 0
+    patch_refs_total = 0
+    uniq_sig16: set[str] = set()
+    uniq_patch_eids: set[str] = set()
 
     for eid, bid in sorted(ent_map.items(), key=_sort_key):
         if not isinstance(bid, str):
@@ -809,6 +867,22 @@ def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface
         dist_m = wmm.get("dist_m") if isinstance(wmm, dict) else None
         dist_class = wmm.get("dist_class") if isinstance(wmm, dict) else None
         last_seen = wmm.get("last_seen_step") if isinstance(wmm, dict) else None
+        patch_refs = wmm.get("patch_refs") if isinstance(wmm, dict) else None
+
+        # Summary bookkeeping (count only rows we actually render)
+        ent_rows += 1
+        if isinstance(patch_refs, list) and patch_refs:
+            ent_with_patches += 1
+            patch_refs_total += len(patch_refs)
+            for ref in patch_refs:
+                if not isinstance(ref, dict):
+                    continue
+                s16 = ref.get("sig16")
+                if isinstance(s16, str) and s16:
+                    uniq_sig16.add(s16)
+                peid = ref.get("engram_id")
+                if isinstance(peid, str) and peid:
+                    uniq_patch_eids.add(peid)
 
         node_disp = f"{_wm_display_id(bid)} ({bid})"
 
@@ -820,6 +894,13 @@ def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface
         dist_txt = f"{float(dist_m):6.2f}" if isinstance(dist_m, (int, float)) else "  n/a "
         cls_txt = str(dist_class) if isinstance(dist_class, str) else "n/a"
         seen_txt = f"{int(last_seen):4d}" if isinstance(last_seen, int) else " n/a"
+        patch_n = len(patch_refs) if isinstance(patch_refs, list) else 0
+        patch_sig16 = None
+        if patch_n and isinstance(patch_refs[0], dict):
+            v = patch_refs[0].get("sig16")
+            if isinstance(v, str) and v:
+                patch_sig16 = v
+        patch_txt = f"{patch_n}:{patch_sig16}" if patch_n and patch_sig16 else ("0" if patch_n == 0 else str(patch_n))
         frame_txt = str(frame) if isinstance(frame, str) else ""
         #to clear pylint #0612: Unused variable "frame_txt" will append frame to pos_txt
         if isinstance(frame, str) and frame_txt:
@@ -844,7 +925,13 @@ def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface
 
         print(
             f"  {eid:<7}  {node_disp:<10}  {kind:<8}  {pos_txt:<14}  {dist_txt:>6}  {cls_txt:<8}  {seen_txt:>4}  "
-            f"{pred_txt:<26}  {cue_txt}"
+            f"{patch_txt:<18}  {pred_txt:<26}  {cue_txt}"
+        )
+
+    if ent_rows:
+        print(
+            f"  [patches] ent_with={ent_with_patches}/{ent_rows} refs_total={patch_refs_total} "
+            f"uniq_sig16={len(uniq_sig16)} uniq_eid={len(uniq_patch_eids)}"
         )
 
 
@@ -998,6 +1085,7 @@ def serialize_mapsurface_v1(ctx: Ctx, *, include_internal_ids: bool = False) -> 
         dist_m = wmm.get("dist_m") if isinstance(wmm, dict) else None
         dist_class = wmm.get("dist_class") if isinstance(wmm, dict) else None
         last_seen = wmm.get("last_seen_step") if isinstance(wmm, dict) else None
+        patch_refs = wmm.get("patch_refs") if isinstance(wmm, dict) else None
 
         rec: dict[str, Any] = {
             "eid": eid,
@@ -1013,6 +1101,11 @@ def serialize_mapsurface_v1(ctx: Ctx, *, include_internal_ids: bool = False) -> 
             "preds": preds,
             "cues": cues,
         }
+
+        if isinstance(patch_refs, list):
+            # patch_refs are JSON-safe dicts (sig/engram_id/role/frame/tags).
+            rec["patch_refs"] = patch_refs
+
         if include_internal_ids:
             rec["bid"] = bid
         return rec
@@ -1263,7 +1356,6 @@ def store_mapsurface_snapshot_v1(world, ctx: Ctx, *, reason: str, attach: str = 
         raise ValueError("attach must be None|'now'|'none'")
 
     # Store engram in Column + attach pointer to the WorldGraph binding
-    from cca8_features import FactMeta  # local import OK
 
     attrs = {
         "schema": payload.get("schema"),
@@ -1293,6 +1385,125 @@ def store_mapsurface_snapshot_v1(world, ctx: Ctx, *, reason: str, attach: str = 
         print(f"[wm->column] stored wm_mapsurface: sig={sig[:16]} bid={bid} engram_id={engram_id[:16]}... stage={stage} zone={zone}")
 
     return {"stored": True, "sig": sig, "bid": bid, "engram_id": engram_id, "stage": stage, "zone": zone}
+
+
+# -----------------------------------------------------------------------------
+# NavPatch v1 helpers (Phase X; NavPatch plan v5)
+# -----------------------------------------------------------------------------
+
+def _navpatch_core_v1(patch: dict[str, Any]) -> dict[str, Any]:
+    """Return the stable core of a NavPatch payload for signatures/dedup.
+
+    A NavPatch is a compact, local navigation map fragment intended to be:
+      - JSON-safe (dict/list/str/int/float/bool/None only)
+      - stable under repeated observation of the same structure
+      - composable (map-of-maps) via links/transforms in later phases
+
+    This helper strips volatile fields (timestamps, match traces, etc.) so the
+    same structural patch yields the same signature across cycles.
+
+    Parameters
+    ----------
+    patch:
+        JSON-safe dict produced by PerceptionAdapter (env-side) or by later
+        agent-side processing.
+
+    Returns
+    -------
+    dict
+        Canonicalized core dict used for hashing.
+    """
+    if not isinstance(patch, dict):
+        return {"schema": "navpatch_v1", "error": "not_dict"}
+
+    schema = patch.get("schema") if isinstance(patch.get("schema"), str) else "navpatch_v1"
+
+    core: dict[str, Any] = {
+        "schema": schema,
+        "local_id": patch.get("local_id") if isinstance(patch.get("local_id"), str) else None,
+        "entity_id": patch.get("entity_id") if isinstance(patch.get("entity_id"), str) else None,
+        "role": patch.get("role") if isinstance(patch.get("role"), str) else None,
+        "frame": patch.get("frame") if isinstance(patch.get("frame"), str) else None,
+    }
+
+    extent = patch.get("extent")
+    if isinstance(extent, dict):
+        core["extent"] = {
+            k: extent.get(k)
+            for k in sorted(extent)
+            if isinstance(k, str) and isinstance(extent.get(k), (str, int, float, bool, type(None)))
+        }
+
+    tags = patch.get("tags")
+    if isinstance(tags, list):
+        core["tags"] = sorted({t for t in tags if isinstance(t, str) and t})
+
+    layers = patch.get("layers")
+    if isinstance(layers, dict):
+        core["layers"] = {
+            k: layers.get(k)
+            for k in sorted(layers)
+            if isinstance(k, str) and isinstance(layers.get(k), (str, int, float, bool, type(None)))
+        }
+
+    links = patch.get("links")
+    if isinstance(links, list):
+        core["links"] = [x for x in links if isinstance(x, (str, int, float, bool, type(None), dict, list))]
+
+    return core
+
+
+def navpatch_payload_sig_v1(patch: dict[str, Any]) -> str:
+    """Stable content signature for a NavPatch payload."""
+    core = _navpatch_core_v1(patch)
+    blob = json.dumps(core, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def store_navpatch_engram_v1(ctx: Ctx, patch: dict[str, Any], *, reason: str) -> dict[str, Any]:
+    """Store a NavPatch payload into Column memory, with per-run dedup by content signature.
+
+    Dedup strategy (v0):
+      - Deduplicate within a single run using ctx.navpatch_sig_to_eid.
+      - Later we can replace this with a Column-side signature index if/when Column is persisted.
+    """
+    sig = navpatch_payload_sig_v1(patch)
+    sig16 = sig[:16]
+
+    cache = getattr(ctx, "navpatch_sig_to_eid", None)
+    if isinstance(cache, dict):
+        existing = cache.get(sig)
+        if isinstance(existing, str) and existing:
+            return {"stored": False, "sig": sig, "sig16": sig16, "engram_id": existing, "reason": "dedup_cache"}
+
+    attrs: dict[str, Any] = {
+        "schema": patch.get("schema") if isinstance(patch.get("schema"), str) else "navpatch_v1",
+        "sig": sig,
+        "sig16": sig16,
+        "reason": reason,
+    }
+
+    for k in ("entity_id", "role", "frame", "local_id"):
+        v = patch.get(k)
+        if isinstance(v, str) and v:
+            attrs[k] = v
+
+    tags = patch.get("tags")
+    if isinstance(tags, list):
+        attrs["tags"] = [t for t in tags if isinstance(t, str) and t][:12]
+
+    fm = FactMeta(name="navpatch", links=[], attrs=attrs).with_time(ctx)
+    engram_id = column_mem.assert_fact("navpatch", patch, fm)
+
+    if isinstance(cache, dict):
+        cache[sig] = engram_id
+    else:
+        try:
+            ctx.navpatch_sig_to_eid = {sig: engram_id}
+        except Exception:
+            pass
+
+    return {"stored": True, "sig": sig, "sig16": sig16, "engram_id": engram_id, "reason": reason}
 
 
 def _wm_entity_anchor_name(entity_id: str) -> str:
@@ -3167,7 +3378,7 @@ def _bindings_with_cue(world, token: str) -> List[str]:
 def any_cue_tokens_present(world, tokens: List[str]) -> bool:
     """Return True if **any** `cue:<token>` exists anywhere in the graph.
     """
-    return any(_bindings_with_cue(world, tok) for tok in tokens)
+    return any(bool(_bindings_with_cue(world, tok)) for tok in tokens)
 
 
 def has_pred_near_now(world, token: str, hops: int = 3) -> bool:
@@ -3181,7 +3392,7 @@ def has_pred_near_now(world, token: str, hops: int = 3) -> bool:
 
 def any_pred_present(world, tokens: List[str]) -> bool:
     """Return True if any pred:<token> in `tokens` exists anywhere in the graph."""
-    return any(_bindings_with_pred(world, tok) for tok in tokens)
+    return any(bool(_bindings_with_pred(world, tok)) for tok in tokens)
 
 
 def neighbors_near_self(world) -> List[str]:
@@ -5812,7 +6023,6 @@ def run_preflight_full(args) -> int:
     #     (4) retrieve and reconstruct the surface (replace mode),
     #     (5) seed/merge predicates only (no cue leakage) into a live semantic world.
     try:
-        from cca8_features import FactMeta
         from cca8_column import mem as _mem
 
         # (A) Build a tiny "mapsurface" world (tokens match HybridEnvironment.observe()).
@@ -7268,6 +7478,569 @@ def _prune_working_world(ctx) -> None:
         ww.delete_binding(binding_to_delete)
         all_ids.remove(binding_to_delete)
 
+# -----------------------------------------------------------------------------
+# NavPatch (Phase X): predictive matching loop (priors OFF baseline)
+# -----------------------------------------------------------------------------
+
+def _navpatch_tag_jaccard(tags_a: Any, tags_b: Any) -> float:
+    a: set[str] = set()
+    b: set[str] = set()
+
+    if isinstance(tags_a, list):
+        for t in tags_a:
+            if isinstance(t, str) and t:
+                a.add(t)
+
+    if isinstance(tags_b, list):
+        for t in tags_b:
+            if isinstance(t, str) and t:
+                b.add(t)
+
+    u = a | b
+    return (len(a & b) / float(len(u))) if u else 1.0
+
+
+def _navpatch_extent_sim(ext_a: Any, ext_b: Any) -> float:
+    # If we don't have numeric extents on both sides, do not penalize.
+    if not (isinstance(ext_a, dict) and isinstance(ext_b, dict)):
+        return 1.0
+
+    keys = ("x0", "y0", "x1", "y1")
+    a_vals: dict[str, float] = {}
+    b_vals: dict[str, float] = {}
+
+    for k in keys:
+        av = ext_a.get(k)
+        bv = ext_b.get(k)
+        if not isinstance(av, (int, float)) or not isinstance(bv, (int, float)):
+            return 1.0
+        a_vals[k] = float(av)
+        b_vals[k] = float(bv)
+
+    # Normalize by the larger span so the score is scale-insensitive.
+    span_a = max(abs(a_vals["x1"] - a_vals["x0"]), abs(a_vals["y1"] - a_vals["y0"]), 1.0)
+    span_b = max(abs(b_vals["x1"] - b_vals["x0"]), abs(b_vals["y1"] - b_vals["y0"]), 1.0)
+    denom = max(span_a, span_b, 1.0)
+
+    diff_sum = 0.0
+    for k in keys:
+        diff_sum += abs(a_vals[k] - b_vals[k]) / denom
+
+    # diff_sum in [0..~4]; convert to similarity in [0..1]
+    sim = 1.0 - min(1.0, diff_sum / 4.0)
+    return float(max(0.0, min(1.0, sim)))
+
+
+def navpatch_similarity_v1(patch_a: dict[str, Any], patch_b: dict[str, Any]) -> float:
+    """Similarity score in [0,1] based on tag overlap + (optional) extent overlap.
+
+    This is intentionally simple (priors OFF baseline). It is only for debugging/top-K traces now.
+    """
+    a = _navpatch_core_v1(patch_a)
+    b = _navpatch_core_v1(patch_b)
+
+    role_a = a.get("role")
+    role_b = b.get("role")
+    if isinstance(role_a, str) and isinstance(role_b, str) and role_a and role_b and role_a != role_b:
+        return 0.0
+
+    tag_sim = _navpatch_tag_jaccard(a.get("tags"), b.get("tags"))
+    ext_sim = _navpatch_extent_sim(a.get("extent"), b.get("extent"))
+
+    score = 0.75 * tag_sim + 0.25 * ext_sim
+    return float(max(0.0, min(1.0, score)))
+
+
+def navpatch_priors_bundle_v1(ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
+    """Compute a lightweight top-down priors bundle for NavPatch matching (v1.1).
+
+    Purpose
+    -------
+    This bundle is the “top-down context” for the patch matching loop. It is:
+      - JSON-safe (so we can store it in cycle_log.jsonl),
+      - traceable (sig16 stable fingerprint),
+      - intentionally small (no heavy payload).
+
+    v1.1 additions
+    -------------
+    Adds a minimal precision vector so we can weight evidence vs priors in a stable way.
+
+    Precision is not “Friston math” here; it is simply a tunable reliability weight:
+      - tags precision  : how much we trust symbolic tag overlap (salience/texture-like channel)
+      - extent precision: how much we trust geometric overlap (schematic geometry channel)
+
+    We make tags precision stage-sensitive:
+      - birth/struggle → lower tags precision (more ambiguity)
+      - later stages   → default tags precision
+
+    Fields (v1.1)
+    ------------
+    v:
+        Schema label: "navpatch_priors_v1".
+    enabled:
+        True when priors were requested by ctx.navpatch_priors_enabled.
+    sig16:
+        Stable 16-hex signature of the bundle contents (for traceability).
+    stage:
+        Env meta stage string when present (e.g., "birth", "struggle").
+    zone:
+        BodyMap coarse zone label when available (e.g., "unsafe_cliff_near", "safe", "unknown").
+    hazard_bias:
+        Positive bias applied to hazard-like candidates when the zone is unsafe.
+    err_guard:
+        Evidence-first guardrail: if evidence error > err_guard, priors must not force a confident match.
+    precision:
+        Per-layer evidence reliability weights (v1.1: {"tags": f, "extent": f}).
+    """
+    stage: str | None = None
+    try:
+        meta = getattr(env_obs, "env_meta", None)
+        if isinstance(meta, dict):
+            s = meta.get("scenario_stage")
+            stage = s if isinstance(s, str) and s else None
+    except Exception:
+        stage = None
+
+    zone: str | None = None
+    try:
+        z = body_space_zone(ctx)
+        zone = z if isinstance(z, str) and z else None
+    except Exception:
+        zone = None
+
+    # ---- hazard prior (v1) ----
+    hazard_bias = 0.0
+    try:
+        hb = float(getattr(ctx, "navpatch_priors_hazard_bias", 0.0) or 0.0)
+    except Exception:
+        hb = 0.0
+    if zone == "unsafe_cliff_near":
+        hazard_bias = hb
+
+    # ---- evidence-first guard (v1) ----
+    try:
+        guard = float(getattr(ctx, "navpatch_priors_error_guard", 0.45) or 0.45)
+    except Exception:
+        guard = 0.45
+    guard = max(0.0, min(1.0, float(guard)))
+
+    # ---- precision vector (v1.1) ----
+    try:
+        tags_prec = float(getattr(ctx, "navpatch_precision_tags", 0.75) or 0.75)
+    except Exception:
+        tags_prec = 0.75
+    try:
+        ext_prec = float(getattr(ctx, "navpatch_precision_extent", 0.25) or 0.25)
+    except Exception:
+        ext_prec = 0.25
+
+    if stage == "birth":
+        try:
+            tags_prec = min(tags_prec, float(getattr(ctx, "navpatch_precision_tags_birth", tags_prec) or tags_prec))
+        except Exception:
+            pass
+    elif stage == "struggle":
+        try:
+            tags_prec = min(tags_prec, float(getattr(ctx, "navpatch_precision_tags_struggle", tags_prec) or tags_prec))
+        except Exception:
+            pass
+
+    tags_prec = max(0.0, min(1.0, float(tags_prec)))
+    ext_prec = max(0.0, min(1.0, float(ext_prec)))
+    precision = {"tags": tags_prec, "extent": ext_prec}
+
+    core = {
+        "v": "navpatch_priors_v1",
+        "enabled": True,
+        "stage": stage,
+        "zone": zone,
+        "hazard_bias": float(hazard_bias),
+        "err_guard": float(guard),
+        "precision": precision,
+    }
+    blob = json.dumps(core, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    sig16 = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+    out = dict(core)
+    out["sig16"] = sig16
+    return out
+
+
+def navpatch_candidate_prior_bias_v1(priors: dict[str, Any], cand_payload: dict[str, Any], cand_attrs: dict[str, Any]) -> float:
+    """Return the additive prior bias term for a candidate NavPatch prototype (v1).
+
+    v1 semantics:
+      - If priors carries a positive hazard_bias and the candidate looks "hazard-like"
+        (role == "hazard" OR any tag starts with "hazard:"), return hazard_bias.
+      - Otherwise return 0.0.
+    """
+    if not isinstance(priors, dict) or not priors.get("enabled", False):
+        return 0.0
+
+    try:
+        hazard_bias = float(priors.get("hazard_bias", 0.0) or 0.0)
+    except Exception:
+        hazard_bias = 0.0
+    if hazard_bias == 0.0:
+        return 0.0
+
+    role = None
+    try:
+        r = cand_attrs.get("role") if isinstance(cand_attrs, dict) else None
+        if isinstance(r, str) and r:
+            role = r
+        else:
+            r2 = cand_payload.get("role") if isinstance(cand_payload, dict) else None
+            role = r2 if isinstance(r2, str) and r2 else None
+    except Exception:
+        role = None
+
+    tags: list[str] = []
+    try:
+        t = cand_payload.get("tags") if isinstance(cand_payload, dict) else None
+        if isinstance(t, list):
+            tags = [x for x in t if isinstance(x, str) and x]
+        else:
+            t2 = cand_attrs.get("tags") if isinstance(cand_attrs, dict) else None
+            if isinstance(t2, list):
+                tags = [x for x in t2 if isinstance(x, str) and x]
+    except Exception:
+        tags = []
+
+    hazard_like = (role == "hazard") or any(isinstance(t, str) and t.startswith("hazard:") for t in tags)
+    return float(hazard_bias) if hazard_like else 0.0
+
+
+def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list[dict[str, Any]]:
+    """Compute a top-K candidate match trace for EnvObservation.nav_patches.
+
+    This implements Phase X “predictive matching” (v1.1):
+      - store observed patches as navpatch engrams (deduped by signature),
+      - rank other stored prototypes as candidate interpretations (top-K),
+      - apply priors as a *small bias term* (hazard_bias),
+      - weight evidence by a tiny precision vector (tags vs extent),
+      - classify match confidence as commit vs ambiguous vs unknown.
+
+    Self-exclusion
+    --------------
+    If we stored (or dedup-reused) the current patch engram this tick, the Column scan will contain it.
+    We must exclude that engram_id from candidate ranking so we do not trivially match the patch to itself.
+    """
+    if ctx is None or not bool(getattr(ctx, "navpatch_enabled", False)):
+        return []
+
+    patches = getattr(env_obs, "nav_patches", None) or []
+    if not isinstance(patches, list) or not patches:
+        try:
+            ctx.navpatch_last_matches = []
+        except Exception:
+            pass
+        return []
+
+    # Config (keep terminal readable; clamp)
+    try:
+        top_k = int(getattr(ctx, "navpatch_match_top_k", 3) or 3)
+    except Exception:
+        top_k = 3
+    top_k = max(1, min(10, top_k))
+
+    try:
+        accept = float(getattr(ctx, "navpatch_match_accept_score", 0.85) or 0.85)
+    except Exception:
+        accept = 0.85
+    accept = max(0.0, min(1.0, accept))
+
+    try:
+        amb_margin = float(getattr(ctx, "navpatch_match_ambiguous_margin", 0.05) or 0.05)
+    except Exception:
+        amb_margin = 0.05
+    amb_margin = max(0.0, min(1.0, amb_margin))
+
+    # Priors bundle (Phase X 2.2a): OFF by default.
+    priors_enabled = bool(getattr(ctx, "navpatch_priors_enabled", False))
+    priors: dict[str, Any] = {"v": "navpatch_priors_v1", "enabled": False, "sig16": None}
+
+    if priors_enabled:
+        priors = navpatch_priors_bundle_v1(ctx, env_obs)
+
+    try:
+        ctx.navpatch_last_priors = dict(priors)
+    except Exception:
+        pass
+
+    # Precision weights (Phase X 2.2b): used even when priors are off (as stable knobs).
+    prec_tags = None
+    prec_ext = None
+    if isinstance(priors, dict) and isinstance(priors.get("precision"), dict):
+        p = priors.get("precision")  # type: ignore[assignment]
+        try:
+            prec_tags = float(p.get("tags"))  # type: ignore[union-attr]
+        except Exception:
+            prec_tags = None
+        try:
+            prec_ext = float(p.get("extent"))  # type: ignore[union-attr]
+        except Exception:
+            prec_ext = None
+
+    if prec_tags is None:
+        try:
+            prec_tags = float(getattr(ctx, "navpatch_precision_tags", 0.75) or 0.75)
+        except Exception:
+            prec_tags = 0.75
+    if prec_ext is None:
+        try:
+            prec_ext = float(getattr(ctx, "navpatch_precision_extent", 0.25) or 0.25)
+        except Exception:
+            prec_ext = 0.25
+
+    prec_tags = max(0.0, min(1.0, float(prec_tags)))
+    prec_ext = max(0.0, min(1.0, float(prec_ext)))
+
+    # Candidate prototype records (best-effort; Column is RAM-local)
+    try:
+        proto_recs = column_mem.find(name_contains="navpatch", has_attr="sig", limit=500)
+    except Exception:
+        proto_recs = []
+
+    out: list[dict[str, Any]] = []
+
+    for p in patches:
+        if not isinstance(p, dict):
+            continue
+
+        sig = navpatch_payload_sig_v1(p)
+        sig16 = sig[:16]
+
+        # Ensure an engram exists (or reuse cached) if storage is enabled.
+        stored_flag: bool | None = None
+        engram_id: str | None = None
+        if bool(getattr(ctx, "navpatch_store_to_column", False)):
+            try:
+                st = store_navpatch_engram_v1(ctx, p, reason="env_obs")
+                if isinstance(st, dict):
+                    stored_flag = bool(st.get("stored")) if "stored" in st else None
+                    eid = st.get("engram_id")
+                    if isinstance(eid, str) and eid:
+                        engram_id = eid
+            except Exception:
+                pass
+
+        # Precompute observed patch core once (stable keys only).
+        obs_core = _navpatch_core_v1(p)
+
+        # Score top-K prototypes.
+        # Tuple: (score_post, score_evidence, score_unweighted, prior_bias, tag_sim, ext_sim, engram_id)
+        scored: list[tuple[float, float, float, float, float, float, str]] = []
+        role_p = p.get("role")
+
+        for rec in proto_recs:
+            if not isinstance(rec, dict):
+                continue
+
+            eid = rec.get("id")
+            if not isinstance(eid, str) or not eid:
+                continue
+
+            # Self-exclusion
+            if isinstance(engram_id, str) and engram_id and eid == engram_id:
+                continue
+
+            payload = rec.get("payload")
+            if not isinstance(payload, dict):
+                continue
+
+            meta = rec.get("meta") if isinstance(rec.get("meta"), dict) else {}
+            attrs = meta.get("attrs") if isinstance(meta.get("attrs"), dict) else {}
+
+            role_r = attrs.get("role") if isinstance(attrs, dict) else None
+            if (
+                isinstance(role_p, str) and role_p
+                and isinstance(role_r, str) and role_r
+                and role_p != role_r
+            ):
+                continue
+
+            proto_core = _navpatch_core_v1(payload)
+
+            # Evidence channels (v1.1): tags vs extent
+            tag_sim = float(_navpatch_tag_jaccard(obs_core.get("tags"), proto_core.get("tags")))
+            ext_sim = float(_navpatch_extent_sim(obs_core.get("extent"), proto_core.get("extent")))
+
+            tag_sim = max(0.0, min(1.0, tag_sim))
+            ext_sim = max(0.0, min(1.0, ext_sim))
+
+            # Unweighted evidence score (diagnostic; does not change with precision)
+            score_unw = 0.5 * tag_sim + 0.5 * ext_sim
+
+            # Precision-weighted evidence score
+            err_tags = 1.0 - tag_sim
+            err_ext = 1.0 - ext_sim
+            denom = float(prec_tags + prec_ext)
+            if denom > 0.0:
+                err_weighted = (float(prec_tags) * err_tags + float(prec_ext) * err_ext) / denom
+            else:
+                err_weighted = 0.5 * (err_tags + err_ext)
+            score_evidence = 1.0 - err_weighted
+            score_evidence = max(0.0, min(1.0, float(score_evidence)))
+
+            prior_bias = float(navpatch_candidate_prior_bias_v1(priors, payload, attrs)) if priors_enabled else 0.0
+            score_post = max(0.0, min(1.0, float(score_evidence + prior_bias)))
+
+            scored.append((score_post, score_evidence, score_unw, float(prior_bias), tag_sim, ext_sim, eid))
+
+        scored.sort(key=lambda t: (-t[0], t[6]))
+
+        top_list = [
+            {
+                "engram_id": eid,
+                "score": float(score_post),
+                "score_raw": float(score_evidence),
+                "score_unweighted": float(score_unw),
+                "prior_bias": float(prior_bias),
+                "err": float(1.0 - score_post),
+                "err_raw": float(1.0 - score_evidence),
+                "err_unweighted": float(1.0 - score_unw),
+                "tag_sim": float(tag_sim),
+                "ext_sim": float(ext_sim),
+            }
+            for (score_post, score_evidence, score_unw, prior_bias, tag_sim, ext_sim, eid) in scored[:top_k]
+        ]
+
+        # Add normalized weights (posterior proxy) for future graded belief work.
+        if top_list:
+            s_post = float(sum(c["score"] for c in top_list))
+            s_raw = float(sum(c["score_raw"] for c in top_list))
+            for c in top_list:
+                c["w"] = (float(c["score"]) / s_post) if s_post > 0.0 else (1.0 / float(len(top_list)))
+                c["w_raw"] = (float(c["score_raw"]) / s_raw) if s_raw > 0.0 else (1.0 / float(len(top_list)))
+
+        best = top_list[0] if top_list else None
+        best_score = float(best.get("score", 0.0)) if isinstance(best, dict) else 0.0
+        best_score_raw = float(best.get("score_raw", 0.0)) if isinstance(best, dict) else 0.0
+        best_err_raw = float(1.0 - best_score_raw)
+
+        second = top_list[1] if len(top_list) > 1 else None
+        margin = (best_score - float(second.get("score", 0.0))) if isinstance(second, dict) else None
+        margin_raw = (best_score_raw - float(second.get("score_raw", 0.0))) if isinstance(second, dict) else None
+
+        # Decision labels are for logs/JSON traces, not control logic yet.
+        decision: str | None = None
+        decision_note: str | None = None
+
+        if stored_flag is False:
+            decision = "reuse_exact"
+        else:
+            if best is None:
+                decision = "new_no_candidates"
+            else:
+                if priors_enabled:
+                    try:
+                        guard = float(priors.get("err_guard", 0.45) or 0.45)
+                    except Exception:
+                        guard = 0.45
+                    guard = max(0.0, min(1.0, float(guard)))
+
+                    if best_err_raw > guard:
+                        decision = "new_novel"
+                        decision_note = "guard_high_err"
+                    else:
+                        decision = "new_near_match" if best_score >= accept else "new_novel"
+                else:
+                    decision = "new_near_match" if best_score >= accept else "new_novel"
+
+        # Commit classification (Phase X 2.2c-style semantics, without changing control yet).
+        commit = "unknown"
+        if decision == "reuse_exact":
+            commit = "commit"
+        elif decision_note == "guard_high_err":
+            commit = "unknown"
+        elif best is None:
+            commit = "unknown"
+        else:
+            if best_score >= accept:
+                if isinstance(margin, float) and margin < amb_margin:
+                    commit = "ambiguous"
+                    if decision_note is None:
+                        decision_note = "ambiguous_low_margin"
+                else:
+                    commit = "commit"
+            else:
+                commit = "unknown"
+
+        rec_out = {
+            "sig": sig,
+            "sig16": sig16,
+            "priors_sig16": (priors.get("sig16") if isinstance(priors, dict) else None),
+            "local_id": p.get("local_id"),
+            "entity_id": p.get("entity_id"),
+            "role": p.get("role"),
+            "stored": stored_flag,
+            "engram_id": engram_id,
+            "decision": decision,
+            "decision_note": decision_note,
+            "commit": commit,
+            "margin": float(margin) if isinstance(margin, float) else None,
+            "margin_raw": float(margin_raw) if isinstance(margin_raw, float) else None,
+            "best": best,
+            "top_k": top_list,
+        }
+        out.append(rec_out)
+
+        # Attach trace back onto the patch itself (JSON-safe).
+        try:
+            p["sig"] = sig
+            p["sig16"] = sig16
+            p["match"] = {
+                "decision": decision,
+                "decision_note": decision_note,
+                "commit": commit,
+                "margin": rec_out.get("margin"),
+                "priors_sig16": rec_out.get("priors_sig16"),
+                "best": best,
+                "top_k": top_list,
+            }
+        except Exception:
+            pass
+
+    try:
+        ctx.navpatch_last_matches = out
+    except Exception:
+        pass
+    return out
+
+
+
+
+# -----------------------------------------------------------------------------
+# Per-cycle JSON record helper (Phase X)
+# -----------------------------------------------------------------------------
+
+def append_cycle_json_record(ctx: Ctx, record: dict[str, Any]) -> None:
+    """Append a per-cycle JSON-safe record to ctx and optionally write it as JSONL."""
+    if ctx is None or not bool(getattr(ctx, "cycle_json_enabled", False)):
+        return
+
+    max_n = int(getattr(ctx, "cycle_json_max_records", 0) or 0)
+    if max_n <= 0:
+        max_n = 2000
+
+    buf = getattr(ctx, "cycle_json_records", None)
+    if not isinstance(buf, list):
+        ctx.cycle_json_records = []
+        buf = ctx.cycle_json_records
+    buf.append(record)
+    if len(buf) > max_n:
+        del buf[:-max_n]
+
+    path = getattr(ctx, "cycle_json_path", None)
+    if not isinstance(path, str) or not path.strip():
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n")
+    except Exception:
+        return
+
 
 def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
     """
@@ -7720,6 +8493,110 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
         except Exception:
             pass
 
+        # --- NavPatches: processed local navmap fragments (Phase X; plan v5) ---
+        # These are *not* raw pixels. They are small, structured maplets that can be stored
+        # as separate Column engrams and referenced from MapSurface entity nodes.
+        if bool(getattr(ctx, "navpatch_enabled", False)):
+            patches_in = getattr(env_obs, "nav_patches", None) or []
+            refs_by_ent: dict[str, list[dict[str, Any]]] = {}
+            sigs_by_ent: dict[str, set[str]] = {}
+
+            if isinstance(patches_in, list):
+                for p in patches_in:
+                    if not isinstance(p, dict):
+                        continue
+
+                    ent_raw = p.get("entity_id") or p.get("entity") or "self"
+                    try:
+                        ent = str(ent_raw).strip().lower() or "self"
+                    except Exception:
+                        ent = "self"
+
+                    sig = navpatch_payload_sig_v1(p)
+                    sig16 = sig[:16]
+
+                    engram_id: str | None = None
+                    if bool(getattr(ctx, "navpatch_store_to_column", False)):
+                        try:
+                            st = store_navpatch_engram_v1(ctx, p, reason="env_obs")
+                            engram_id = st.get("engram_id") if isinstance(st, dict) else None
+                        except Exception:
+                            engram_id = None
+
+                    ref: dict[str, Any] = {
+                        "sig16": sig16,
+                        "sig": sig,
+                        "engram_id": engram_id,
+                        "local_id": p.get("local_id"),
+                        "role": p.get("role"),
+                        "frame": p.get("frame"),
+                    }
+
+                    tags = p.get("tags")
+                    if isinstance(tags, list):
+                        ref["tags"] = [t for t in tags if isinstance(t, str) and t][:8]
+
+                    refs_by_ent.setdefault(ent, []).append(ref)
+                    sigs_by_ent.setdefault(ent, set()).add(sig16)
+
+            # Attach refs to WM entities (replace per tick, like cues)
+            for ent, refs in refs_by_ent.items():
+                kind = None
+                try:
+                    roles = {r.get("role") for r in refs if isinstance(r, dict)}
+                    if "hazard" in roles or ent in ("cliff", "drop", "danger"):
+                        kind = "hazard"
+                    elif "shelter" in roles or ent == "shelter":
+                        kind = "shelter"
+                    elif ent in ("mom", "mother", "self"):
+                        kind = "agent"
+                except Exception:
+                    kind = None
+
+                bid = _ensure_entity(ent, kind_hint=kind)
+                b = ww._bindings.get(bid)
+                if b is not None:
+                    if not isinstance(getattr(b, "meta", None), dict):
+                        b.meta = {}
+                    wmm = b.meta.setdefault("wm", {})
+                    if isinstance(wmm, dict):
+                        wmm["patch_refs"] = list(refs)
+                        try:
+                            if refs and isinstance(refs[0], dict):
+                                fr = refs[0].get("frame")
+                                if isinstance(fr, str) and fr:
+                                    wmm["patch_frame"] = fr
+                        except Exception:
+                            pass
+
+                try:
+                    ctx.wm_last_navpatch_sigs[ent] = set(sigs_by_ent.get(ent, set()))
+                except Exception:
+                    pass
+
+                if bool(getattr(ctx, "navpatch_verbose", False)):
+                    try:
+                        disp = f"{_wm_display_id(bid)} ({bid})"
+                        print(f"[env→working] PATCH x{len(refs)} → {disp} (entity={ent})")
+                    except Exception:
+                        pass
+
+            # Clear patch_refs for entities that had patches last tick but none now
+            try:
+                for ent in list((getattr(ctx, "wm_last_navpatch_sigs", {}) or {}).keys()):
+                    if ent in refs_by_ent:
+                        continue
+                    bid = (getattr(ctx, "wm_entities", {}) or {}).get(ent)
+                    if isinstance(bid, str) and bid in ww._bindings:
+                        b = ww._bindings.get(bid)
+                        if b is not None and isinstance(getattr(b, "meta", None), dict):
+                            wmm = b.meta.get("wm")
+                            if isinstance(wmm, dict):
+                                wmm.pop("patch_refs", None)
+                    ctx.wm_last_navpatch_sigs.pop(ent, None)
+            except Exception:
+                pass
+
         # --- Coordinates + distance edges (schematic map) ---
         raw = getattr(env_obs, "raw_sensors", {}) or {}
         for ent, bid in (getattr(ctx, "wm_entities", {}) or {}).items():
@@ -7986,6 +8863,14 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
     try:
         if getattr(ctx, "working_enabled", False):
             working_inj = inject_obs_into_working_world(ctx, env_obs)
+    except Exception:
+        working_inj = None
+
+    # NavPatch predictive matching loop (Phase X baseline; priors OFF).
+    # This only records traceability metadata and stores new patch engrams in Column.
+    # It must never break env stepping.
+    try:
+        navpatch_predictive_match_loop_v1(ctx, env_obs)
     except Exception:
         working_inj = None
 
@@ -8997,10 +9882,26 @@ def _print_cog_cycle_footer(*,
         f"obs(p={len(obs_preds)} c={len(obs_cues)}){mask_txt}"
     )
 
-    if obs_preds or obs_cues:
-        pred_txt = _fmt_items(obs_preds, prefix="", limit=max_items)
-        cue_txt = _fmt_items(obs_cues, prefix="", limit=max_items)
-        print(f"[cycle] OBS  preds: {pred_txt} | cues: {cue_txt}")
+    # ---- line 1b: observation detail (preds/cues + navpatch summary)
+    patches_in = getattr(env_obs, "nav_patches", None) or []
+    patch_n = len(patches_in) if isinstance(patches_in, list) else 0
+    uniq_sig16: set[str] = set()
+
+    if patch_n:
+        for p in patches_in:
+            if not isinstance(p, dict):
+                continue
+            try:
+                uniq_sig16.add(navpatch_payload_sig_v1(p)[:16])
+            except Exception:
+                pass
+
+    nav_txt = f"nav_patches={patch_n} uniq_sig16={len(uniq_sig16)}"
+
+    if obs_preds or obs_cues or patch_n:
+        pred_txt = _fmt_items(obs_preds, prefix="", limit=max_items) if obs_preds else "(none)"
+        cue_txt = _fmt_items(obs_cues, prefix="", limit=max_items) if obs_cues else "(none)"
+        print(f"[cycle] OBS  preds: {pred_txt} | cues: {cue_txt} | {nav_txt}")
 
     # ---- line 2: WorkingMap summary (surface deltas + scratch writes)
     deltas = _surface_deltas(prev_state, curr_state)
@@ -9726,6 +10627,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
         # 3) EnvObservation → WorldGraph + BodyMap
         inj = inject_obs_into_world(world, ctx, env_obs)
+
         try:
             token_to_bid = inj.get("token_to_bid", {}) if isinstance(inj, dict) else {}
         except Exception:
@@ -10092,6 +10994,49 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 )
             except Exception:
                 pass
+        except Exception:
+            pass
+
+        # Per-cycle JSON record (Phase X scaffolding): replayable debug trace.
+        # This is OFF by default; enable by setting ctx.cycle_json_enabled=True and (optionally)
+        # ctx.cycle_json_path="cycle_log.jsonl".
+        try:
+            if bool(getattr(ctx, "cycle_json_enabled", False)):
+                st = env.state
+                try:
+                    zone_now = body_space_zone(ctx)
+                except Exception:
+                    zone_now = None
+
+                rec = {
+                    "controller_steps": int(getattr(ctx, "controller_steps", 0) or 0),
+                    "env_step": env_info.get("step_index"),
+                    "scenario_stage": getattr(st, "scenario_stage", None),
+                    "posture": getattr(st, "kid_posture", None),
+                    "mom_distance": getattr(st, "mom_distance", None),
+                    "nipple_state": getattr(st, "nipple_state", None),
+                    "zone": zone_now,
+                    "action_applied": action_for_env,
+                    "policy_fired": policy_name,
+                    "obs": {
+                        "predicates": list(getattr(env_obs, "predicates", []) or []),
+                        "cues": list(getattr(env_obs, "cues", []) or []),
+                        "nav_patches": list(getattr(env_obs, "nav_patches", []) or []),
+                        "env_meta": dict(getattr(env_obs, "env_meta", {}) or {}),
+                    },
+                    "wg_wrote": {
+                        "predicates": list((inj or {}).get("predicates", []) or []),
+                        "cues": list((inj or {}).get("cues", []) or []),
+                    },
+                    "navpatch_matches": list(getattr(ctx, "navpatch_last_matches", []) or []),
+                    "navpatch_priors": dict(getattr(ctx, "navpatch_last_priors", {}) or {}),
+                    "drives": {
+                        "hunger": float(getattr(drives, "hunger", 0.0) or 0.0),
+                        "fatigue": float(getattr(drives, "fatigue", 0.0) or 0.0),
+                        "warmth": float(getattr(drives, "warmth", 0.0) or 0.0),
+                    },
+                }
+                append_cycle_json_record(ctx, rec)
         except Exception:
             pass
 
@@ -10657,6 +11602,7 @@ def candidate_anchors(world, ctx) -> list[str]:  # pylint: disable=unused-argume
 def interactive_loop(args: argparse.Namespace) -> None:
     """Main interactive loop.
     """
+
     # Build initial world/drives fresh
     world = cca8_world_graph.WorldGraph()
     #drives = Drives()  #Drives(hunger=0.7, fatigue=0.2, warmth=0.6) at time of writing comment
@@ -10665,6 +11611,14 @@ def interactive_loop(args: argparse.Namespace) -> None:
     drives = Drives(hunger=0.5, fatigue=0.3, warmth=0.6)  # moderate fatigue so fallback 'follow_mom' can win
 
     ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
+    # Phase X (NavPatch) defaults: enable in the interactive runner.
+    # Unit tests or external callers can keep this OFF unless they explicitly opt in.
+    ctx.navpatch_enabled = True
+    # Phase X: per-cycle JSON trace (JSONL) logging (optional)
+    ctx.cycle_json_enabled = True
+    ctx.cycle_json_path = "cycle_log.jsonl"   # set to None for in-memory only
+    ctx.cycle_json_max_records = 2000         # ring buffer size
+
     ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump) # temporal soft clock (added)
     ctx.tvec_last_boundary = ctx.temporal.vector()  # seed “last boundary”
     try:

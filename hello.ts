@@ -1,7 +1,7 @@
 /*  cca8_demo.ts
     CCA8 Intro Screens Demo (TypeScript / Node.js)
 
-    Save as:   cca8_demo.ts
+    Save as:   cca8_demo.ts 
     Compile:   tsc cca8_demo.ts
     Run:       node cca8_demo.js
 
