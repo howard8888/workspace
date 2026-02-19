@@ -74,6 +74,7 @@ from cca8_controller import (
     PRIMITIVES,
     skill_readout,
     skill_q,
+    update_skill,
     skills_to_dict,
     skills_from_dict,
     HUNGER_HIGH,
@@ -95,6 +96,7 @@ from cca8_controller import body_shelter_is_near   # pylint: disable=unused-impo
 from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
 from cca8_env import HybridEnvironment, EnvObservation  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
+from cca8_features import FactMeta
 
 
 # --- Public API index, version, global variables and constants ----------------------------------------
@@ -230,6 +232,9 @@ class Ctx:
     last_drive_flags: Optional[set[str]] = None
     env_episode_started: bool = False       # Environment / HybridEnvironment integration
     env_last_action: Optional[str] = None  # last fired policy name for env.step(...)
+    # Console UX: print the env-loop tag legend once per session (menu 35/37).
+    env_loop_legend_printed: bool = False
+
     # Partial observability / observation masking (Phase VIII)
     # - obs_mask_prob: independent drop probability for each non-protected token.
     # - obs_mask_seed: if set, masking uses a deterministic per-step RNG (seeded from base seed + step_ref).
@@ -241,8 +246,12 @@ class Ctx:
     obs_mask_seed: Optional[int] = None
     obs_mask_last_cfg_sig: Optional[str] = None
     mini_snapshot: bool = True  #mini-snapshot toggle starting value
-    posture_discrepancy_history: list[str] = field(default_factory=list) #per-session list of discrepancies motor command vs what environment reports
+    # Env-loop (menu 37) per-cycle footer summary.
+    # This is intentionally pragmatic and subject to change as Phase IX evolves.
+    env_loop_cycle_summary: bool = True
+    env_loop_cycle_summary_max_items: int = 6
 
+    posture_discrepancy_history: list[str] = field(default_factory=list) #per-session list of discrepancies motor command vs what environment reports
     # BodyMap: tiny body+near-world map (separate WorldGraph instance)
     body_world: Optional[cca8_world_graph.WorldGraph] = None
     body_ids: dict[str, str] = field(default_factory=dict)
@@ -259,6 +268,7 @@ class Ctx:
     working_trace: bool = False          # debug only: also append a per-tick trace (can grow quickly)
     wm_entities: dict[str, str] = field(default_factory=dict)            # entity_id -> binding id (in working_world)
     wm_last_env_cues: dict[str, set[str]] = field(default_factory=dict)  # entity_id -> last injected cue tags
+    wm_last_navpatch_sigs: dict[str, set[str]] = field(default_factory=dict)  # entity_id -> last injected NavPatch sig16 set
 
     # WorkingMap Creative layer (counterfactual rollouts / imagined futures)
     # - Does not change policy selection yet (purely inspectable scaffolding for Option B).
@@ -271,6 +281,47 @@ class Ctx:
     wm_mapsurface_last_sig: Optional[str] = None
     wm_mapsurface_last_engram_id: Optional[str] = None
     wm_mapsurface_last_world_bid: Optional[str] = None
+    # NavPatches (Phase X; NavPatch plan v5)
+    # - EnvObservation may include processed local navigation map fragments (nav_patches).
+    # - WorkingMap entities can own patch references via binding.meta['wm']['patch_refs'].
+    # - We can store patch payloads as separate Column engrams (dedup by content signature).
+    navpatch_enabled: bool = True
+    navpatch_store_to_column: bool = True
+    navpatch_verbose: bool = False
+    navpatch_sig_to_eid: dict[str, str] = field(default_factory=dict)  # sig(hex) -> engram_id
+    navpatch_last_log: dict[str, Any] = field(default_factory=dict)
+
+    # NavPatch (Phase X scaffolding): predictive matching loop + traceability
+    # navpatch_enabled gates the entire matching pipeline. When enabled, EnvObservation.nav_patches
+    # is treated as a stream of local "scene patches" that can be matched to prior prototypes stored
+    # as Column engrams. This is not used for policy selection yet; it exists for logging and for
+    # later WorkingMap integration.
+
+    # NavPatch matching (Phase X): diagnostic top-K match traces (predictive coding hooks).
+    navpatch_match_top_k: int = 3
+    navpatch_match_accept_score: float = 0.85
+    navpatch_match_ambiguous_margin: float = 0.05  # if best-second < margin, mark match as ambiguous (do not hallucinate certainty)
+    navpatch_last_matches: list[dict[str, Any]] = field(default_factory=list)
+
+    # NavPatch priors (Phase X 2.2a): top-down bias terms (OFF by default)
+    # -------------------------------------------------------------------
+    # These priors are used ONLY inside the NavPatch matching loop to bias which stored
+    # prototype a new patch best matches. They do not affect policy selection yet.
+    #
+    # Design constraints:
+    #   - Priors must never override strong evidence. We enforce this via an "error guard":
+    #     if raw matching error exceeds navpatch_priors_error_guard, we refuse to call a match
+    #     "near" even if priors would raise the posterior score.
+    navpatch_priors_enabled: bool = True
+    navpatch_priors_hazard_bias: float = 0.05
+    navpatch_priors_error_guard: float = 0.45
+    # Precision weighting (Phase X 2.2b): evidence reliability weights (v1 uses tags vs extent).
+    navpatch_precision_tags: float = 0.75
+    navpatch_precision_extent: float = 0.25
+    navpatch_precision_tags_birth: float = 0.60     # lower precision early → more ambiguity
+    navpatch_precision_tags_struggle: float = 0.65  # slightly better than birth, still degraded
+    navpatch_last_priors: dict[str, Any] = field(default_factory=dict)
+
     # MapSurface auto-retrieve (Option B6/B7)
     # - When enabled, on keyframes (stage/zone boundary) we try to seed WorkingMap from a prior
     #   wm_mapsurface engram (default mode="merge" so it behaves as a conservative prior).
@@ -302,9 +353,9 @@ class Ctx:
     # Safety / posture retry bookkeeping
     last_standup_step: Optional[int] = None
     last_standup_failed: bool = False
-    # Long-term WorldGraph env-observation injection (STUB)
-    #-This records the user's preference, but is NOT enforced yet: we still inject EnvObservation
-    # into the long-term WorldGraph each tick, exactly as before.
+    # Long-term WorldGraph EnvObservation injection (real knob):
+    # - If False, we skip long-term WorldGraph writes entirely (BodyMap still updates; WorkingMap may still update).
+    # - Keyframes are only relevant when long-term injection is enabled AND mode="changes".
     longterm_obs_enabled: bool = True
 
     # Long-term WorldGraph observation logging controls
@@ -327,16 +378,71 @@ class Ctx:
     longterm_obs_dedup_cues: bool = True
     lt_obs_cues: dict[str, dict[str, Any]] = field(default_factory=dict)
 
-    # If True, force a one-tick snapshot when the env's scenario_stage changes (including resets).
-    longterm_obs_keyframe_on_stage_change: bool = True
+    # Keyframe triggers (Phase IX; long-term obs, changes-mode):
+    # - period_steps: 0 disables periodic keyframes; N>0 triggers when controller_steps % N == 0.
+    # - on_zone_change: treat coarse zone flips as keyframes (safe/unsafe discontinuities).
+    # - on_pred_err: treat sustained pred_err v0 mismatch as a surprise keyframe (streak-based).
+    # - on_milestone: milestone keyframes (env_meta milestones and/or derived slot transitions); off by default.
+    # - on_emotion: strong emotion/arousal keyframes (env_meta emotion/affect; rising-edge into "high"); off by default.
+
+    longterm_obs_keyframe_on_stage_change: bool = False
+    longterm_obs_keyframe_on_zone_change: bool = False
+    #ctx.longterm_obs_keyframe_on_stage_change in presets set to False
+
+    longterm_obs_keyframe_period_steps: int = 0
+    #longterm_obs_keyframe_period_steps: int = 10 #toggle: keyframe every 10 cog cycles
+    # Periodic keyframes can be scheduled in two ways:
+    #   - legacy: absolute clock (step_no % period == 0)
+    #   - reset-on-any-keyframe: treat periodic as a "max gap" since last keyframe
+    #       (i.e., if *any* other keyframe happens, restart the periodic counter).
+    # The reset-on-any-keyframe mode reduces "weird mid-episode splits" and prevents periodic
+    # keyframes from clustering right after meaningful milestone boundaries.
+    longterm_obs_keyframe_period_reset_on_any_keyframe: bool = True
+    # Optional: suppress periodic keyframes while sleeping.
+    #
+    # Motivation (robotics / HAL):
+    #   - Periodic keyframes are a "max-gap" safety net when the world is quiet.
+    #   - During sleep, we may prefer NOT to inject arbitrary episode boundaries.
+    #
+    # Sleep detection is best-effort (future-facing):
+    #   - env_meta may supply: sleep_state/sleep_mode (str) OR sleeping/dreaming (bool)
+    #   - or predicates may include: sleeping:non_dreaming / sleeping:dreaming (plus rem/nrem aliases)
+    longterm_obs_keyframe_period_suppress_when_sleeping_nondreaming: bool = False
+    longterm_obs_keyframe_period_suppress_when_sleeping_dreaming: bool = False
+
+    longterm_obs_keyframe_on_pred_err: bool = False
+    #longterm_obs_keyframe_on_pred_err: bool = True   #toggle: keyframe surprise
+    longterm_obs_keyframe_pred_err_min_streak: int = 2
+
+    longterm_obs_keyframe_on_milestone: bool = True  #toggle: milestone keyframes (env_meta + derived transitions)
+    #longterm_obs_keyframe_on_milestone: bool = False
+
+    longterm_obs_keyframe_on_emotion: bool = False
+    longterm_obs_keyframe_emotion_threshold: float = 0.85
+
+    # Keyframe bookkeeping (long-term observation cache)
+    lt_obs_last_zone: Optional[str] = None
+    lt_obs_pred_err_streak: int = 0
+    lt_obs_last_keyframe_step: Optional[int] = None
+    lt_obs_last_milestones: set[str] = field(default_factory=set)
+    lt_obs_last_emotion_label: Optional[str] = None
+    lt_obs_last_emotion_high: bool = False
 
     # If True, print per-token reuse lines when longterm_obs_mode="changes" skips unchanged slots.
     longterm_obs_verbose: bool = False
 
-
     # Private state: per-slot last (token, bid, emit_step) used by longterm_obs_mode="changes".
     lt_obs_slots: dict[str, dict[str, Any]] = field(default_factory=dict)
     lt_obs_last_stage: Optional[str] = None
+
+    # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
+    # ---------------------------------------------------------------------
+    # When enabled, each closed-loop env step appends a JSON-safe dict record to ctx.cycle_json_records,
+    # and optionally writes it to ctx.cycle_json_path as JSONL (one record per line).
+    cycle_json_enabled: bool = False
+    cycle_json_path: Optional[str] = None
+    cycle_json_max_records: int = 2000
+    cycle_json_records: list[dict[str, Any]] = field(default_factory=list)
 
 
     def reset_controller_steps(self) -> None:
@@ -595,12 +701,13 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
     tail = all_ids[-max(1, int(n)) :]
     print(f"{title}: last {len(tail)} binding(s) of {len(all_ids)} total")
     print(
-    "  Legend edges: wm_entity=WM_ROOT→entity (MapSurface membership); "
-    "wm_scratch=WM_ROOT→WM_SCRATCH (policy scratch root; keeps WM_ROOT clean); "
-    "wm_creative=WM_ROOT→WM_CREATIVE (counterfactual rollouts); "
-    "distance_to=WM_SELF→entity (meta has meters/class); then=policy action chain (should hang off WM_SCRATCH)"
+        "  Legend: edges=wm_entity(root→entity), wm_scratch(root→scratch), wm_creative(root→creative), "
+        "distance_to(self→entity), then(action chain)"
     )
-    print("  Legend tags : wm:entity / wm:eid:<id> / wm:kind:<kind> mark entities; pred:* on entities = current belief; cue:* on entities = cues present now; meta.wm.pos={x,y,frame}")
+    print("          tags=wm:* entity markers; pred:* belief-now; cue:* cues-now; meta.wm.pos={x,y,frame}")
+
+
+
     for bid in tail:
         b = ww._bindings.get(bid)  # pylint: disable=protected-access
         if b is None:
@@ -677,8 +784,7 @@ def print_working_map_layers(ctx, *, title: str = "[workingmap] layers") -> None
 
     # Optional: show candidate summaries if present
     if cands:
-        print("  Creative candidates (best first): trig=Y means policy trigger satisfied; trig=N means blocked")
-        print("(Note: The 'score' value is a simple ranking signal for this display, not RL skill value or deficit calculation.)")
+        print("  Creative candidates: trig=Y/N (trigger satisfied or blocked); score is a display heuristic (not deficit or RL q).")
         try:
             ordered = sorted(cands, key=lambda c: float(getattr(c, "score", 0.0)), reverse=True)
         except Exception:
@@ -726,8 +832,15 @@ def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface
         return (0, "") if eid == "self" else (1, eid)
 
     print(title)
-    print("  ent      node        kind      pos(x,y)         dist_m  class     seen  preds (short)                cues (short)")
-    print("  -------  ----------  --------  --------------  ------  --------  ----  --------------------------  ----------------")
+    print("  ent      node        kind      pos(x,y)         dist_m  class     seen patches             preds (short)                cues (short)")
+    print("  -------  ----------  --------  --------------  ------  --------  ---- ------------------  --------------------------  ----------------")
+
+    # Footer summary counters (NavPatch visibility; keeps logs readable during long runs)
+    ent_rows = 0
+    ent_with_patches = 0
+    patch_refs_total = 0
+    uniq_sig16: set[str] = set()
+    uniq_patch_eids: set[str] = set()
 
     for eid, bid in sorted(ent_map.items(), key=_sort_key):
         if not isinstance(bid, str):
@@ -754,6 +867,22 @@ def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface
         dist_m = wmm.get("dist_m") if isinstance(wmm, dict) else None
         dist_class = wmm.get("dist_class") if isinstance(wmm, dict) else None
         last_seen = wmm.get("last_seen_step") if isinstance(wmm, dict) else None
+        patch_refs = wmm.get("patch_refs") if isinstance(wmm, dict) else None
+
+        # Summary bookkeeping (count only rows we actually render)
+        ent_rows += 1
+        if isinstance(patch_refs, list) and patch_refs:
+            ent_with_patches += 1
+            patch_refs_total += len(patch_refs)
+            for ref in patch_refs:
+                if not isinstance(ref, dict):
+                    continue
+                s16 = ref.get("sig16")
+                if isinstance(s16, str) and s16:
+                    uniq_sig16.add(s16)
+                peid = ref.get("engram_id")
+                if isinstance(peid, str) and peid:
+                    uniq_patch_eids.add(peid)
 
         node_disp = f"{_wm_display_id(bid)} ({bid})"
 
@@ -765,6 +894,13 @@ def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface
         dist_txt = f"{float(dist_m):6.2f}" if isinstance(dist_m, (int, float)) else "  n/a "
         cls_txt = str(dist_class) if isinstance(dist_class, str) else "n/a"
         seen_txt = f"{int(last_seen):4d}" if isinstance(last_seen, int) else " n/a"
+        patch_n = len(patch_refs) if isinstance(patch_refs, list) else 0
+        patch_sig16 = None
+        if patch_n and isinstance(patch_refs[0], dict):
+            v = patch_refs[0].get("sig16")
+            if isinstance(v, str) and v:
+                patch_sig16 = v
+        patch_txt = f"{patch_n}:{patch_sig16}" if patch_n and patch_sig16 else ("0" if patch_n == 0 else str(patch_n))
         frame_txt = str(frame) if isinstance(frame, str) else ""
         #to clear pylint #0612: Unused variable "frame_txt" will append frame to pos_txt
         if isinstance(frame, str) and frame_txt:
@@ -789,7 +925,13 @@ def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface
 
         print(
             f"  {eid:<7}  {node_disp:<10}  {kind:<8}  {pos_txt:<14}  {dist_txt:>6}  {cls_txt:<8}  {seen_txt:>4}  "
-            f"{pred_txt:<26}  {cue_txt}"
+            f"{patch_txt:<18}  {pred_txt:<26}  {cue_txt}"
+        )
+
+    if ent_rows:
+        print(
+            f"  [patches] ent_with={ent_with_patches}/{ent_rows} refs_total={patch_refs_total} "
+            f"uniq_sig16={len(uniq_sig16)} uniq_eid={len(uniq_patch_eids)}"
         )
 
 
@@ -943,6 +1085,7 @@ def serialize_mapsurface_v1(ctx: Ctx, *, include_internal_ids: bool = False) -> 
         dist_m = wmm.get("dist_m") if isinstance(wmm, dict) else None
         dist_class = wmm.get("dist_class") if isinstance(wmm, dict) else None
         last_seen = wmm.get("last_seen_step") if isinstance(wmm, dict) else None
+        patch_refs = wmm.get("patch_refs") if isinstance(wmm, dict) else None
 
         rec: dict[str, Any] = {
             "eid": eid,
@@ -958,6 +1101,11 @@ def serialize_mapsurface_v1(ctx: Ctx, *, include_internal_ids: bool = False) -> 
             "preds": preds,
             "cues": cues,
         }
+
+        if isinstance(patch_refs, list):
+            # patch_refs are JSON-safe dicts (sig/engram_id/role/frame/tags).
+            rec["patch_refs"] = patch_refs
+
         if include_internal_ids:
             rec["bid"] = bid
         return rec
@@ -1208,7 +1356,6 @@ def store_mapsurface_snapshot_v1(world, ctx: Ctx, *, reason: str, attach: str = 
         raise ValueError("attach must be None|'now'|'none'")
 
     # Store engram in Column + attach pointer to the WorldGraph binding
-    from cca8_features import FactMeta  # local import OK
 
     attrs = {
         "schema": payload.get("schema"),
@@ -1238,6 +1385,125 @@ def store_mapsurface_snapshot_v1(world, ctx: Ctx, *, reason: str, attach: str = 
         print(f"[wm->column] stored wm_mapsurface: sig={sig[:16]} bid={bid} engram_id={engram_id[:16]}... stage={stage} zone={zone}")
 
     return {"stored": True, "sig": sig, "bid": bid, "engram_id": engram_id, "stage": stage, "zone": zone}
+
+
+# -----------------------------------------------------------------------------
+# NavPatch v1 helpers (Phase X; NavPatch plan v5)
+# -----------------------------------------------------------------------------
+
+def _navpatch_core_v1(patch: dict[str, Any]) -> dict[str, Any]:
+    """Return the stable core of a NavPatch payload for signatures/dedup.
+
+    A NavPatch is a compact, local navigation map fragment intended to be:
+      - JSON-safe (dict/list/str/int/float/bool/None only)
+      - stable under repeated observation of the same structure
+      - composable (map-of-maps) via links/transforms in later phases
+
+    This helper strips volatile fields (timestamps, match traces, etc.) so the
+    same structural patch yields the same signature across cycles.
+
+    Parameters
+    ----------
+    patch:
+        JSON-safe dict produced by PerceptionAdapter (env-side) or by later
+        agent-side processing.
+
+    Returns
+    -------
+    dict
+        Canonicalized core dict used for hashing.
+    """
+    if not isinstance(patch, dict):
+        return {"schema": "navpatch_v1", "error": "not_dict"}
+
+    schema = patch.get("schema") if isinstance(patch.get("schema"), str) else "navpatch_v1"
+
+    core: dict[str, Any] = {
+        "schema": schema,
+        "local_id": patch.get("local_id") if isinstance(patch.get("local_id"), str) else None,
+        "entity_id": patch.get("entity_id") if isinstance(patch.get("entity_id"), str) else None,
+        "role": patch.get("role") if isinstance(patch.get("role"), str) else None,
+        "frame": patch.get("frame") if isinstance(patch.get("frame"), str) else None,
+    }
+
+    extent = patch.get("extent")
+    if isinstance(extent, dict):
+        core["extent"] = {
+            k: extent.get(k)
+            for k in sorted(extent)
+            if isinstance(k, str) and isinstance(extent.get(k), (str, int, float, bool, type(None)))
+        }
+
+    tags = patch.get("tags")
+    if isinstance(tags, list):
+        core["tags"] = sorted({t for t in tags if isinstance(t, str) and t})
+
+    layers = patch.get("layers")
+    if isinstance(layers, dict):
+        core["layers"] = {
+            k: layers.get(k)
+            for k in sorted(layers)
+            if isinstance(k, str) and isinstance(layers.get(k), (str, int, float, bool, type(None)))
+        }
+
+    links = patch.get("links")
+    if isinstance(links, list):
+        core["links"] = [x for x in links if isinstance(x, (str, int, float, bool, type(None), dict, list))]
+
+    return core
+
+
+def navpatch_payload_sig_v1(patch: dict[str, Any]) -> str:
+    """Stable content signature for a NavPatch payload."""
+    core = _navpatch_core_v1(patch)
+    blob = json.dumps(core, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def store_navpatch_engram_v1(ctx: Ctx, patch: dict[str, Any], *, reason: str) -> dict[str, Any]:
+    """Store a NavPatch payload into Column memory, with per-run dedup by content signature.
+
+    Dedup strategy (v0):
+      - Deduplicate within a single run using ctx.navpatch_sig_to_eid.
+      - Later we can replace this with a Column-side signature index if/when Column is persisted.
+    """
+    sig = navpatch_payload_sig_v1(patch)
+    sig16 = sig[:16]
+
+    cache = getattr(ctx, "navpatch_sig_to_eid", None)
+    if isinstance(cache, dict):
+        existing = cache.get(sig)
+        if isinstance(existing, str) and existing:
+            return {"stored": False, "sig": sig, "sig16": sig16, "engram_id": existing, "reason": "dedup_cache"}
+
+    attrs: dict[str, Any] = {
+        "schema": patch.get("schema") if isinstance(patch.get("schema"), str) else "navpatch_v1",
+        "sig": sig,
+        "sig16": sig16,
+        "reason": reason,
+    }
+
+    for k in ("entity_id", "role", "frame", "local_id"):
+        v = patch.get(k)
+        if isinstance(v, str) and v:
+            attrs[k] = v
+
+    tags = patch.get("tags")
+    if isinstance(tags, list):
+        attrs["tags"] = [t for t in tags if isinstance(t, str) and t][:12]
+
+    fm = FactMeta(name="navpatch", links=[], attrs=attrs).with_time(ctx)
+    engram_id = column_mem.assert_fact("navpatch", patch, fm)
+
+    if isinstance(cache, dict):
+        cache[sig] = engram_id
+    else:
+        try:
+            ctx.navpatch_sig_to_eid = {sig: engram_id}
+        except Exception:
+            pass
+
+    return {"stored": True, "sig": sig, "sig16": sig16, "engram_id": engram_id, "reason": reason}
 
 
 def _wm_entity_anchor_name(entity_id: str) -> str:
@@ -2037,7 +2303,8 @@ def should_autoretrieve_mapsurface(
     zone: str | None,
     stage_changed: bool,
     zone_changed: bool,
-    boundary_reason: str | None = None,
+    forced_keyframe: bool = False,
+    boundary_reason: str | None = None
 ) -> dict[str, Any]:
     """Guard hook: decide whether CCA8 should attempt MapSurface auto-retrieval *right now*.
 
@@ -2113,7 +2380,7 @@ def should_autoretrieve_mapsurface(
         pred_n = 0
         cue_n = 0
 
-    boundary = bool(stage_changed) or bool(zone_changed)
+    boundary = bool(stage_changed) or bool(zone_changed) or bool(forced_keyframe)
 
     diag: dict[str, Any] = {
         "stage": stage,
@@ -3111,7 +3378,7 @@ def _bindings_with_cue(world, token: str) -> List[str]:
 def any_cue_tokens_present(world, tokens: List[str]) -> bool:
     """Return True if **any** `cue:<token>` exists anywhere in the graph.
     """
-    return any(_bindings_with_cue(world, tok) for tok in tokens)
+    return any(bool(_bindings_with_cue(world, tok)) for tok in tokens)
 
 
 def has_pred_near_now(world, token: str, hops: int = 3) -> bool:
@@ -3125,7 +3392,7 @@ def has_pred_near_now(world, token: str, hops: int = 3) -> bool:
 
 def any_pred_present(world, tokens: List[str]) -> bool:
     """Return True if any pred:<token> in `tokens` exists anywhere in the graph."""
-    return any(_bindings_with_pred(world, tok) for tok in tokens)
+    return any(bool(_bindings_with_pred(world, tok)) for tok in tokens)
 
 
 def neighbors_near_self(world) -> List[str]:
@@ -3641,10 +3908,16 @@ def apply_hardwired_profile_phase7(ctx: "Ctx", world) -> None:
         ctx.longterm_obs_enabled = True
         ctx.longterm_obs_mode = "changes"
         ctx.longterm_obs_reassert_steps = 0
-        ctx.longterm_obs_keyframe_on_stage_change = True
+
+        # IMPORTANT:
+        # The Phase VII hardwired profile enables the memory pipeline, but it must NOT override
+        # keyframe trigger knobs (stage/zone/periodic/pred_err/milestone/emotion). Those are
+        # experiment settings on Ctx and should remain under direct user control.
+
         ctx.longterm_obs_verbose = False
     except Exception:
         pass
+
 
     # Low-noise, useful log
     try:
@@ -4225,7 +4498,7 @@ def boot_prime_stand(world, ctx) -> None:
             attach="now",
             meta={"boot": "init", "added_by": "system"},
         )
-        print(f"[boot] Seeded posture:fallen as {fallen_bid} (NOW -> fallen)")
+        print(f"[boot] Seeded posture:fallen as {fallen_bid} (birth-state binding; anchor:NOW → pred:posture:fallen)")
     except Exception as e:
         print(f"[boot] Could not seed posture:fallen: {e}")
 
@@ -5169,7 +5442,17 @@ def print_startup_notices(world) -> None:
     startup of the runner
     '''
     try:
-        print(f"[planner] Active planner on startup: {world.get_planner().upper()}")
+        planner = str(world.get_planner()).upper()
+        expl = {
+            "BFS": "Breadth-First Search (unweighted shortest path by hop count)",
+            "DIJKSTRA": "Dijkstra (lowest total edge weight; equals BFS when all weights=1)",
+        }.get(planner)
+        if expl:
+            print(f"[planner] Active planner on startup: {planner} — {expl}")
+        else:
+            print(f"[planner] Active planner on startup: {planner}")
+
+
     except Exception as e:
         print(f"unable to retrieve which active planner is running: {e}")
         logging.error(f"Unable to retrieve startup active planner status: {e}", exc_info=True)
@@ -5740,7 +6023,6 @@ def run_preflight_full(args) -> int:
     #     (4) retrieve and reconstruct the surface (replace mode),
     #     (5) seed/merge predicates only (no cue leakage) into a live semantic world.
     try:
-        from cca8_features import FactMeta
         from cca8_column import mem as _mem
 
         # (A) Build a tiny "mapsurface" world (tokens match HybridEnvironment.observe()).
@@ -7196,6 +7478,569 @@ def _prune_working_world(ctx) -> None:
         ww.delete_binding(binding_to_delete)
         all_ids.remove(binding_to_delete)
 
+# -----------------------------------------------------------------------------
+# NavPatch (Phase X): predictive matching loop (priors OFF baseline)
+# -----------------------------------------------------------------------------
+
+def _navpatch_tag_jaccard(tags_a: Any, tags_b: Any) -> float:
+    a: set[str] = set()
+    b: set[str] = set()
+
+    if isinstance(tags_a, list):
+        for t in tags_a:
+            if isinstance(t, str) and t:
+                a.add(t)
+
+    if isinstance(tags_b, list):
+        for t in tags_b:
+            if isinstance(t, str) and t:
+                b.add(t)
+
+    u = a | b
+    return (len(a & b) / float(len(u))) if u else 1.0
+
+
+def _navpatch_extent_sim(ext_a: Any, ext_b: Any) -> float:
+    # If we don't have numeric extents on both sides, do not penalize.
+    if not (isinstance(ext_a, dict) and isinstance(ext_b, dict)):
+        return 1.0
+
+    keys = ("x0", "y0", "x1", "y1")
+    a_vals: dict[str, float] = {}
+    b_vals: dict[str, float] = {}
+
+    for k in keys:
+        av = ext_a.get(k)
+        bv = ext_b.get(k)
+        if not isinstance(av, (int, float)) or not isinstance(bv, (int, float)):
+            return 1.0
+        a_vals[k] = float(av)
+        b_vals[k] = float(bv)
+
+    # Normalize by the larger span so the score is scale-insensitive.
+    span_a = max(abs(a_vals["x1"] - a_vals["x0"]), abs(a_vals["y1"] - a_vals["y0"]), 1.0)
+    span_b = max(abs(b_vals["x1"] - b_vals["x0"]), abs(b_vals["y1"] - b_vals["y0"]), 1.0)
+    denom = max(span_a, span_b, 1.0)
+
+    diff_sum = 0.0
+    for k in keys:
+        diff_sum += abs(a_vals[k] - b_vals[k]) / denom
+
+    # diff_sum in [0..~4]; convert to similarity in [0..1]
+    sim = 1.0 - min(1.0, diff_sum / 4.0)
+    return float(max(0.0, min(1.0, sim)))
+
+
+def navpatch_similarity_v1(patch_a: dict[str, Any], patch_b: dict[str, Any]) -> float:
+    """Similarity score in [0,1] based on tag overlap + (optional) extent overlap.
+
+    This is intentionally simple (priors OFF baseline). It is only for debugging/top-K traces now.
+    """
+    a = _navpatch_core_v1(patch_a)
+    b = _navpatch_core_v1(patch_b)
+
+    role_a = a.get("role")
+    role_b = b.get("role")
+    if isinstance(role_a, str) and isinstance(role_b, str) and role_a and role_b and role_a != role_b:
+        return 0.0
+
+    tag_sim = _navpatch_tag_jaccard(a.get("tags"), b.get("tags"))
+    ext_sim = _navpatch_extent_sim(a.get("extent"), b.get("extent"))
+
+    score = 0.75 * tag_sim + 0.25 * ext_sim
+    return float(max(0.0, min(1.0, score)))
+
+
+def navpatch_priors_bundle_v1(ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
+    """Compute a lightweight top-down priors bundle for NavPatch matching (v1.1).
+
+    Purpose
+    -------
+    This bundle is the “top-down context” for the patch matching loop. It is:
+      - JSON-safe (so we can store it in cycle_log.jsonl),
+      - traceable (sig16 stable fingerprint),
+      - intentionally small (no heavy payload).
+
+    v1.1 additions
+    -------------
+    Adds a minimal precision vector so we can weight evidence vs priors in a stable way.
+
+    Precision is not “Friston math” here; it is simply a tunable reliability weight:
+      - tags precision  : how much we trust symbolic tag overlap (salience/texture-like channel)
+      - extent precision: how much we trust geometric overlap (schematic geometry channel)
+
+    We make tags precision stage-sensitive:
+      - birth/struggle → lower tags precision (more ambiguity)
+      - later stages   → default tags precision
+
+    Fields (v1.1)
+    ------------
+    v:
+        Schema label: "navpatch_priors_v1".
+    enabled:
+        True when priors were requested by ctx.navpatch_priors_enabled.
+    sig16:
+        Stable 16-hex signature of the bundle contents (for traceability).
+    stage:
+        Env meta stage string when present (e.g., "birth", "struggle").
+    zone:
+        BodyMap coarse zone label when available (e.g., "unsafe_cliff_near", "safe", "unknown").
+    hazard_bias:
+        Positive bias applied to hazard-like candidates when the zone is unsafe.
+    err_guard:
+        Evidence-first guardrail: if evidence error > err_guard, priors must not force a confident match.
+    precision:
+        Per-layer evidence reliability weights (v1.1: {"tags": f, "extent": f}).
+    """
+    stage: str | None = None
+    try:
+        meta = getattr(env_obs, "env_meta", None)
+        if isinstance(meta, dict):
+            s = meta.get("scenario_stage")
+            stage = s if isinstance(s, str) and s else None
+    except Exception:
+        stage = None
+
+    zone: str | None = None
+    try:
+        z = body_space_zone(ctx)
+        zone = z if isinstance(z, str) and z else None
+    except Exception:
+        zone = None
+
+    # ---- hazard prior (v1) ----
+    hazard_bias = 0.0
+    try:
+        hb = float(getattr(ctx, "navpatch_priors_hazard_bias", 0.0) or 0.0)
+    except Exception:
+        hb = 0.0
+    if zone == "unsafe_cliff_near":
+        hazard_bias = hb
+
+    # ---- evidence-first guard (v1) ----
+    try:
+        guard = float(getattr(ctx, "navpatch_priors_error_guard", 0.45) or 0.45)
+    except Exception:
+        guard = 0.45
+    guard = max(0.0, min(1.0, float(guard)))
+
+    # ---- precision vector (v1.1) ----
+    try:
+        tags_prec = float(getattr(ctx, "navpatch_precision_tags", 0.75) or 0.75)
+    except Exception:
+        tags_prec = 0.75
+    try:
+        ext_prec = float(getattr(ctx, "navpatch_precision_extent", 0.25) or 0.25)
+    except Exception:
+        ext_prec = 0.25
+
+    if stage == "birth":
+        try:
+            tags_prec = min(tags_prec, float(getattr(ctx, "navpatch_precision_tags_birth", tags_prec) or tags_prec))
+        except Exception:
+            pass
+    elif stage == "struggle":
+        try:
+            tags_prec = min(tags_prec, float(getattr(ctx, "navpatch_precision_tags_struggle", tags_prec) or tags_prec))
+        except Exception:
+            pass
+
+    tags_prec = max(0.0, min(1.0, float(tags_prec)))
+    ext_prec = max(0.0, min(1.0, float(ext_prec)))
+    precision = {"tags": tags_prec, "extent": ext_prec}
+
+    core = {
+        "v": "navpatch_priors_v1",
+        "enabled": True,
+        "stage": stage,
+        "zone": zone,
+        "hazard_bias": float(hazard_bias),
+        "err_guard": float(guard),
+        "precision": precision,
+    }
+    blob = json.dumps(core, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    sig16 = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+    out = dict(core)
+    out["sig16"] = sig16
+    return out
+
+
+def navpatch_candidate_prior_bias_v1(priors: dict[str, Any], cand_payload: dict[str, Any], cand_attrs: dict[str, Any]) -> float:
+    """Return the additive prior bias term for a candidate NavPatch prototype (v1).
+
+    v1 semantics:
+      - If priors carries a positive hazard_bias and the candidate looks "hazard-like"
+        (role == "hazard" OR any tag starts with "hazard:"), return hazard_bias.
+      - Otherwise return 0.0.
+    """
+    if not isinstance(priors, dict) or not priors.get("enabled", False):
+        return 0.0
+
+    try:
+        hazard_bias = float(priors.get("hazard_bias", 0.0) or 0.0)
+    except Exception:
+        hazard_bias = 0.0
+    if hazard_bias == 0.0:
+        return 0.0
+
+    role = None
+    try:
+        r = cand_attrs.get("role") if isinstance(cand_attrs, dict) else None
+        if isinstance(r, str) and r:
+            role = r
+        else:
+            r2 = cand_payload.get("role") if isinstance(cand_payload, dict) else None
+            role = r2 if isinstance(r2, str) and r2 else None
+    except Exception:
+        role = None
+
+    tags: list[str] = []
+    try:
+        t = cand_payload.get("tags") if isinstance(cand_payload, dict) else None
+        if isinstance(t, list):
+            tags = [x for x in t if isinstance(x, str) and x]
+        else:
+            t2 = cand_attrs.get("tags") if isinstance(cand_attrs, dict) else None
+            if isinstance(t2, list):
+                tags = [x for x in t2 if isinstance(x, str) and x]
+    except Exception:
+        tags = []
+
+    hazard_like = (role == "hazard") or any(isinstance(t, str) and t.startswith("hazard:") for t in tags)
+    return float(hazard_bias) if hazard_like else 0.0
+
+
+def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list[dict[str, Any]]:
+    """Compute a top-K candidate match trace for EnvObservation.nav_patches.
+
+    This implements Phase X “predictive matching” (v1.1):
+      - store observed patches as navpatch engrams (deduped by signature),
+      - rank other stored prototypes as candidate interpretations (top-K),
+      - apply priors as a *small bias term* (hazard_bias),
+      - weight evidence by a tiny precision vector (tags vs extent),
+      - classify match confidence as commit vs ambiguous vs unknown.
+
+    Self-exclusion
+    --------------
+    If we stored (or dedup-reused) the current patch engram this tick, the Column scan will contain it.
+    We must exclude that engram_id from candidate ranking so we do not trivially match the patch to itself.
+    """
+    if ctx is None or not bool(getattr(ctx, "navpatch_enabled", False)):
+        return []
+
+    patches = getattr(env_obs, "nav_patches", None) or []
+    if not isinstance(patches, list) or not patches:
+        try:
+            ctx.navpatch_last_matches = []
+        except Exception:
+            pass
+        return []
+
+    # Config (keep terminal readable; clamp)
+    try:
+        top_k = int(getattr(ctx, "navpatch_match_top_k", 3) or 3)
+    except Exception:
+        top_k = 3
+    top_k = max(1, min(10, top_k))
+
+    try:
+        accept = float(getattr(ctx, "navpatch_match_accept_score", 0.85) or 0.85)
+    except Exception:
+        accept = 0.85
+    accept = max(0.0, min(1.0, accept))
+
+    try:
+        amb_margin = float(getattr(ctx, "navpatch_match_ambiguous_margin", 0.05) or 0.05)
+    except Exception:
+        amb_margin = 0.05
+    amb_margin = max(0.0, min(1.0, amb_margin))
+
+    # Priors bundle (Phase X 2.2a): OFF by default.
+    priors_enabled = bool(getattr(ctx, "navpatch_priors_enabled", False))
+    priors: dict[str, Any] = {"v": "navpatch_priors_v1", "enabled": False, "sig16": None}
+
+    if priors_enabled:
+        priors = navpatch_priors_bundle_v1(ctx, env_obs)
+
+    try:
+        ctx.navpatch_last_priors = dict(priors)
+    except Exception:
+        pass
+
+    # Precision weights (Phase X 2.2b): used even when priors are off (as stable knobs).
+    prec_tags = None
+    prec_ext = None
+    if isinstance(priors, dict) and isinstance(priors.get("precision"), dict):
+        p = priors.get("precision")  # type: ignore[assignment]
+        try:
+            prec_tags = float(p.get("tags"))  # type: ignore[union-attr]
+        except Exception:
+            prec_tags = None
+        try:
+            prec_ext = float(p.get("extent"))  # type: ignore[union-attr]
+        except Exception:
+            prec_ext = None
+
+    if prec_tags is None:
+        try:
+            prec_tags = float(getattr(ctx, "navpatch_precision_tags", 0.75) or 0.75)
+        except Exception:
+            prec_tags = 0.75
+    if prec_ext is None:
+        try:
+            prec_ext = float(getattr(ctx, "navpatch_precision_extent", 0.25) or 0.25)
+        except Exception:
+            prec_ext = 0.25
+
+    prec_tags = max(0.0, min(1.0, float(prec_tags)))
+    prec_ext = max(0.0, min(1.0, float(prec_ext)))
+
+    # Candidate prototype records (best-effort; Column is RAM-local)
+    try:
+        proto_recs = column_mem.find(name_contains="navpatch", has_attr="sig", limit=500)
+    except Exception:
+        proto_recs = []
+
+    out: list[dict[str, Any]] = []
+
+    for p in patches:
+        if not isinstance(p, dict):
+            continue
+
+        sig = navpatch_payload_sig_v1(p)
+        sig16 = sig[:16]
+
+        # Ensure an engram exists (or reuse cached) if storage is enabled.
+        stored_flag: bool | None = None
+        engram_id: str | None = None
+        if bool(getattr(ctx, "navpatch_store_to_column", False)):
+            try:
+                st = store_navpatch_engram_v1(ctx, p, reason="env_obs")
+                if isinstance(st, dict):
+                    stored_flag = bool(st.get("stored")) if "stored" in st else None
+                    eid = st.get("engram_id")
+                    if isinstance(eid, str) and eid:
+                        engram_id = eid
+            except Exception:
+                pass
+
+        # Precompute observed patch core once (stable keys only).
+        obs_core = _navpatch_core_v1(p)
+
+        # Score top-K prototypes.
+        # Tuple: (score_post, score_evidence, score_unweighted, prior_bias, tag_sim, ext_sim, engram_id)
+        scored: list[tuple[float, float, float, float, float, float, str]] = []
+        role_p = p.get("role")
+
+        for rec in proto_recs:
+            if not isinstance(rec, dict):
+                continue
+
+            eid = rec.get("id")
+            if not isinstance(eid, str) or not eid:
+                continue
+
+            # Self-exclusion
+            if isinstance(engram_id, str) and engram_id and eid == engram_id:
+                continue
+
+            payload = rec.get("payload")
+            if not isinstance(payload, dict):
+                continue
+
+            meta = rec.get("meta") if isinstance(rec.get("meta"), dict) else {}
+            attrs = meta.get("attrs") if isinstance(meta.get("attrs"), dict) else {}
+
+            role_r = attrs.get("role") if isinstance(attrs, dict) else None
+            if (
+                isinstance(role_p, str) and role_p
+                and isinstance(role_r, str) and role_r
+                and role_p != role_r
+            ):
+                continue
+
+            proto_core = _navpatch_core_v1(payload)
+
+            # Evidence channels (v1.1): tags vs extent
+            tag_sim = float(_navpatch_tag_jaccard(obs_core.get("tags"), proto_core.get("tags")))
+            ext_sim = float(_navpatch_extent_sim(obs_core.get("extent"), proto_core.get("extent")))
+
+            tag_sim = max(0.0, min(1.0, tag_sim))
+            ext_sim = max(0.0, min(1.0, ext_sim))
+
+            # Unweighted evidence score (diagnostic; does not change with precision)
+            score_unw = 0.5 * tag_sim + 0.5 * ext_sim
+
+            # Precision-weighted evidence score
+            err_tags = 1.0 - tag_sim
+            err_ext = 1.0 - ext_sim
+            denom = float(prec_tags + prec_ext)
+            if denom > 0.0:
+                err_weighted = (float(prec_tags) * err_tags + float(prec_ext) * err_ext) / denom
+            else:
+                err_weighted = 0.5 * (err_tags + err_ext)
+            score_evidence = 1.0 - err_weighted
+            score_evidence = max(0.0, min(1.0, float(score_evidence)))
+
+            prior_bias = float(navpatch_candidate_prior_bias_v1(priors, payload, attrs)) if priors_enabled else 0.0
+            score_post = max(0.0, min(1.0, float(score_evidence + prior_bias)))
+
+            scored.append((score_post, score_evidence, score_unw, float(prior_bias), tag_sim, ext_sim, eid))
+
+        scored.sort(key=lambda t: (-t[0], t[6]))
+
+        top_list = [
+            {
+                "engram_id": eid,
+                "score": float(score_post),
+                "score_raw": float(score_evidence),
+                "score_unweighted": float(score_unw),
+                "prior_bias": float(prior_bias),
+                "err": float(1.0 - score_post),
+                "err_raw": float(1.0 - score_evidence),
+                "err_unweighted": float(1.0 - score_unw),
+                "tag_sim": float(tag_sim),
+                "ext_sim": float(ext_sim),
+            }
+            for (score_post, score_evidence, score_unw, prior_bias, tag_sim, ext_sim, eid) in scored[:top_k]
+        ]
+
+        # Add normalized weights (posterior proxy) for future graded belief work.
+        if top_list:
+            s_post = float(sum(c["score"] for c in top_list))
+            s_raw = float(sum(c["score_raw"] for c in top_list))
+            for c in top_list:
+                c["w"] = (float(c["score"]) / s_post) if s_post > 0.0 else (1.0 / float(len(top_list)))
+                c["w_raw"] = (float(c["score_raw"]) / s_raw) if s_raw > 0.0 else (1.0 / float(len(top_list)))
+
+        best = top_list[0] if top_list else None
+        best_score = float(best.get("score", 0.0)) if isinstance(best, dict) else 0.0
+        best_score_raw = float(best.get("score_raw", 0.0)) if isinstance(best, dict) else 0.0
+        best_err_raw = float(1.0 - best_score_raw)
+
+        second = top_list[1] if len(top_list) > 1 else None
+        margin = (best_score - float(second.get("score", 0.0))) if isinstance(second, dict) else None
+        margin_raw = (best_score_raw - float(second.get("score_raw", 0.0))) if isinstance(second, dict) else None
+
+        # Decision labels are for logs/JSON traces, not control logic yet.
+        decision: str | None = None
+        decision_note: str | None = None
+
+        if stored_flag is False:
+            decision = "reuse_exact"
+        else:
+            if best is None:
+                decision = "new_no_candidates"
+            else:
+                if priors_enabled:
+                    try:
+                        guard = float(priors.get("err_guard", 0.45) or 0.45)
+                    except Exception:
+                        guard = 0.45
+                    guard = max(0.0, min(1.0, float(guard)))
+
+                    if best_err_raw > guard:
+                        decision = "new_novel"
+                        decision_note = "guard_high_err"
+                    else:
+                        decision = "new_near_match" if best_score >= accept else "new_novel"
+                else:
+                    decision = "new_near_match" if best_score >= accept else "new_novel"
+
+        # Commit classification (Phase X 2.2c-style semantics, without changing control yet).
+        commit = "unknown"
+        if decision == "reuse_exact":
+            commit = "commit"
+        elif decision_note == "guard_high_err":
+            commit = "unknown"
+        elif best is None:
+            commit = "unknown"
+        else:
+            if best_score >= accept:
+                if isinstance(margin, float) and margin < amb_margin:
+                    commit = "ambiguous"
+                    if decision_note is None:
+                        decision_note = "ambiguous_low_margin"
+                else:
+                    commit = "commit"
+            else:
+                commit = "unknown"
+
+        rec_out = {
+            "sig": sig,
+            "sig16": sig16,
+            "priors_sig16": (priors.get("sig16") if isinstance(priors, dict) else None),
+            "local_id": p.get("local_id"),
+            "entity_id": p.get("entity_id"),
+            "role": p.get("role"),
+            "stored": stored_flag,
+            "engram_id": engram_id,
+            "decision": decision,
+            "decision_note": decision_note,
+            "commit": commit,
+            "margin": float(margin) if isinstance(margin, float) else None,
+            "margin_raw": float(margin_raw) if isinstance(margin_raw, float) else None,
+            "best": best,
+            "top_k": top_list,
+        }
+        out.append(rec_out)
+
+        # Attach trace back onto the patch itself (JSON-safe).
+        try:
+            p["sig"] = sig
+            p["sig16"] = sig16
+            p["match"] = {
+                "decision": decision,
+                "decision_note": decision_note,
+                "commit": commit,
+                "margin": rec_out.get("margin"),
+                "priors_sig16": rec_out.get("priors_sig16"),
+                "best": best,
+                "top_k": top_list,
+            }
+        except Exception:
+            pass
+
+    try:
+        ctx.navpatch_last_matches = out
+    except Exception:
+        pass
+    return out
+
+
+
+
+# -----------------------------------------------------------------------------
+# Per-cycle JSON record helper (Phase X)
+# -----------------------------------------------------------------------------
+
+def append_cycle_json_record(ctx: Ctx, record: dict[str, Any]) -> None:
+    """Append a per-cycle JSON-safe record to ctx and optionally write it as JSONL."""
+    if ctx is None or not bool(getattr(ctx, "cycle_json_enabled", False)):
+        return
+
+    max_n = int(getattr(ctx, "cycle_json_max_records", 0) or 0)
+    if max_n <= 0:
+        max_n = 2000
+
+    buf = getattr(ctx, "cycle_json_records", None)
+    if not isinstance(buf, list):
+        ctx.cycle_json_records = []
+        buf = ctx.cycle_json_records
+    buf.append(record)
+    if len(buf) > max_n:
+        del buf[:-max_n]
+
+    path = getattr(ctx, "cycle_json_path", None)
+    if not isinstance(path, str) or not path.strip():
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n")
+    except Exception:
+        return
+
 
 def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
     """
@@ -7648,6 +8493,110 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
         except Exception:
             pass
 
+        # --- NavPatches: processed local navmap fragments (Phase X; plan v5) ---
+        # These are *not* raw pixels. They are small, structured maplets that can be stored
+        # as separate Column engrams and referenced from MapSurface entity nodes.
+        if bool(getattr(ctx, "navpatch_enabled", False)):
+            patches_in = getattr(env_obs, "nav_patches", None) or []
+            refs_by_ent: dict[str, list[dict[str, Any]]] = {}
+            sigs_by_ent: dict[str, set[str]] = {}
+
+            if isinstance(patches_in, list):
+                for p in patches_in:
+                    if not isinstance(p, dict):
+                        continue
+
+                    ent_raw = p.get("entity_id") or p.get("entity") or "self"
+                    try:
+                        ent = str(ent_raw).strip().lower() or "self"
+                    except Exception:
+                        ent = "self"
+
+                    sig = navpatch_payload_sig_v1(p)
+                    sig16 = sig[:16]
+
+                    engram_id: str | None = None
+                    if bool(getattr(ctx, "navpatch_store_to_column", False)):
+                        try:
+                            st = store_navpatch_engram_v1(ctx, p, reason="env_obs")
+                            engram_id = st.get("engram_id") if isinstance(st, dict) else None
+                        except Exception:
+                            engram_id = None
+
+                    ref: dict[str, Any] = {
+                        "sig16": sig16,
+                        "sig": sig,
+                        "engram_id": engram_id,
+                        "local_id": p.get("local_id"),
+                        "role": p.get("role"),
+                        "frame": p.get("frame"),
+                    }
+
+                    tags = p.get("tags")
+                    if isinstance(tags, list):
+                        ref["tags"] = [t for t in tags if isinstance(t, str) and t][:8]
+
+                    refs_by_ent.setdefault(ent, []).append(ref)
+                    sigs_by_ent.setdefault(ent, set()).add(sig16)
+
+            # Attach refs to WM entities (replace per tick, like cues)
+            for ent, refs in refs_by_ent.items():
+                kind = None
+                try:
+                    roles = {r.get("role") for r in refs if isinstance(r, dict)}
+                    if "hazard" in roles or ent in ("cliff", "drop", "danger"):
+                        kind = "hazard"
+                    elif "shelter" in roles or ent == "shelter":
+                        kind = "shelter"
+                    elif ent in ("mom", "mother", "self"):
+                        kind = "agent"
+                except Exception:
+                    kind = None
+
+                bid = _ensure_entity(ent, kind_hint=kind)
+                b = ww._bindings.get(bid)
+                if b is not None:
+                    if not isinstance(getattr(b, "meta", None), dict):
+                        b.meta = {}
+                    wmm = b.meta.setdefault("wm", {})
+                    if isinstance(wmm, dict):
+                        wmm["patch_refs"] = list(refs)
+                        try:
+                            if refs and isinstance(refs[0], dict):
+                                fr = refs[0].get("frame")
+                                if isinstance(fr, str) and fr:
+                                    wmm["patch_frame"] = fr
+                        except Exception:
+                            pass
+
+                try:
+                    ctx.wm_last_navpatch_sigs[ent] = set(sigs_by_ent.get(ent, set()))
+                except Exception:
+                    pass
+
+                if bool(getattr(ctx, "navpatch_verbose", False)):
+                    try:
+                        disp = f"{_wm_display_id(bid)} ({bid})"
+                        print(f"[env→working] PATCH x{len(refs)} → {disp} (entity={ent})")
+                    except Exception:
+                        pass
+
+            # Clear patch_refs for entities that had patches last tick but none now
+            try:
+                for ent in list((getattr(ctx, "wm_last_navpatch_sigs", {}) or {}).keys()):
+                    if ent in refs_by_ent:
+                        continue
+                    bid = (getattr(ctx, "wm_entities", {}) or {}).get(ent)
+                    if isinstance(bid, str) and bid in ww._bindings:
+                        b = ww._bindings.get(bid)
+                        if b is not None and isinstance(getattr(b, "meta", None), dict):
+                            wmm = b.meta.get("wm")
+                            if isinstance(wmm, dict):
+                                wmm.pop("patch_refs", None)
+                    ctx.wm_last_navpatch_sigs.pop(ent, None)
+            except Exception:
+                pass
+
         # --- Coordinates + distance edges (schematic map) ---
         raw = getattr(env_obs, "raw_sensors", {}) or {}
         for ent, bid in (getattr(ctx, "wm_entities", {}) or {}).items():
@@ -7764,8 +8713,13 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
       token "resting"           -> slot "resting" (no ":")
 
     Keyframes (only in "changes" mode):
-      - time_since_birth == 0.0 forces a snapshot (reset)
-      - scenario_stage change can force a snapshot if enabled
+      - episode start (env_reset): time_since_birth <= 0.0
+      - stage change (if enabled): env_meta["scenario_stage"] changed
+      - zone change (if enabled): coarse safety zone flip derived from shelter/cliff predicates
+      - periodic (optional): every N controller steps (period_steps > 0)
+      - surprise (optional): pred_err v0 sustained mismatch (streak-based)
+      - milestones (optional): env_meta milestone flags AND/OR derived predicate slot transitions
+      - strong emotion/arousal (optional): env_meta emotion/affect (rising edge into "high"), with a conservative hazard proxy
 
     Even when we skip writing an unchanged token, token_to_bid will still map that token
     to the most recent binding id for its slot (so downstream helpers can still find it).
@@ -7904,15 +8858,30 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         pass
 
     # Mirror into WorkingMap when enabled.
+    # Keep the returned dict so callers (e.g., env-loop footer) can summarize what happened.
+    working_inj = None
     try:
         if getattr(ctx, "working_enabled", False):
-            inject_obs_into_working_world(ctx, env_obs)
+            working_inj = inject_obs_into_working_world(ctx, env_obs)
+    except Exception:
+        working_inj = None
+
+    # NavPatch predictive matching loop (Phase X baseline; priors OFF).
+    # This only records traceability metadata and stores new patch engrams in Column.
+    # It must never break env stepping.
+    try:
+        navpatch_predictive_match_loop_v1(ctx, env_obs)
     except Exception:
         pass
 
     # Allow turning off long-term injection entirely (BodyMap/WorkingMap still update).
     if not getattr(ctx, "longterm_obs_enabled", True):
-        return {"predicates": created_preds, "cues": created_cues, "token_to_bid": token_to_bid}
+        return {
+            "predicates": created_preds,
+            "cues": created_cues,
+            "token_to_bid": token_to_bid,
+            "working": working_inj,
+        }
 
     mode = (getattr(ctx, "longterm_obs_mode", "snapshot") or "snapshot").strip().lower()
     do_changes = mode in ("changes", "dedup", "delta", "state_changes")
@@ -7929,10 +8898,30 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         if c is not None
     ]
 
+    keyframe = False
+    keyframe_reasons: list[str] = []
     # In "changes" mode: optionally force a one-tick snapshot at stage transitions/resets
     if do_changes:
         force_snapshot = False
         reasons: list[str] = []
+
+        step_no = int(getattr(ctx, "controller_steps", 0) or 0)
+
+        # ---- Coarse zone (derived from pred tokens; does NOT depend on BodyMap update ordering) ----
+        zone_now = "unknown"
+        shelter = None
+        cliff = None
+        for _tok in pred_tokens:
+            if isinstance(_tok, str) and _tok.startswith("proximity:shelter:"):
+                shelter = _tok.rsplit(":", 1)[-1]
+            elif isinstance(_tok, str) and _tok.startswith("hazard:cliff:"):
+                cliff = _tok.rsplit(":", 1)[-1]
+        if cliff == "near" and shelter != "near":
+            zone_now = "unsafe_cliff_near"
+        elif shelter == "near" and cliff != "near":
+            zone_now = "safe"
+
+        last_zone = getattr(ctx, "lt_obs_last_zone", None)
 
         # Reset keyframe: env.reset() produces time_since_birth == 0.0
         if isinstance(time_since_birth, (int, float)) and float(time_since_birth) <= 0.0:
@@ -7941,10 +8930,282 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
 
         # Stage-change keyframe (optional)
         last_stage = getattr(ctx, "lt_obs_last_stage", None)
-        if getattr(ctx, "longterm_obs_keyframe_on_stage_change", True):
+        if bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True)):
             if stage is not None and last_stage is not None and stage != last_stage:
                 force_snapshot = True
                 reasons.append(f"stage_change {last_stage!r}→{stage!r}")
+
+        # Zone-change keyframe (optional)
+        if bool(getattr(ctx, "longterm_obs_keyframe_on_zone_change", True)):
+            if isinstance(last_zone, str) and zone_now != last_zone:
+                force_snapshot = True
+                reasons.append(f"zone_change {last_zone!r}→{zone_now!r}")
+
+        # Periodic keyframe (optional; safe: evaluated only at this boundary hook)
+        #
+        # Two semantics:
+        #   A) legacy absolute schedule: step_no % period == 0
+        #   B) reset-on-any-keyframe: treat periodic as a max-gap since last keyframe
+        #      (if any other keyframe happens, the periodic counter restarts).
+        try:
+            period = int(getattr(ctx, "longterm_obs_keyframe_period_steps", 0) or 0)
+        except Exception:
+            period = 0
+
+        if period > 0 and step_no > 0:
+            reset_on_any = bool(getattr(ctx, "longterm_obs_keyframe_period_reset_on_any_keyframe", False))
+
+            hit = False
+            if reset_on_any:
+                last_kf = getattr(ctx, "lt_obs_last_keyframe_step", None)
+                last_kf_step = int(last_kf) if isinstance(last_kf, int) else 0
+                if last_kf_step > step_no:
+                    # Defensive: controller_steps can be reset in some flows; treat that as a new epoch.
+                    last_kf_step = 0
+                hit = (step_no - last_kf_step) >= period
+            else:
+                hit = (step_no % period) == 0
+
+            # Optional suppression: do not fire periodic keyframes while sleeping.
+            #
+            # We detect sleep state best-effort from either:
+            #   A) env_meta: sleep_state/sleep_mode (str), or sleeping/dreaming (bool)
+            #   B) predicate tokens: sleeping:non_dreaming / sleeping:dreaming (rem/nrem aliases allowed)
+            if hit:
+                sup_nd = bool(getattr(ctx, "longterm_obs_keyframe_period_suppress_when_sleeping_nondreaming", False))
+                sup_dr = bool(getattr(ctx, "longterm_obs_keyframe_period_suppress_when_sleeping_dreaming", False))
+
+                if sup_nd or sup_dr:
+                    sleep_kind: str | None = None
+
+                    # A) env_meta string label
+                    try:
+                        sm = env_meta.get("sleep_state") or env_meta.get("sleep_mode") or env_meta.get("sleep")
+                    except Exception:
+                        sm = None
+
+                    if isinstance(sm, str) and sm.strip():
+                        s = sm.strip().lower().replace(" ", "_")
+                        if s in ("dreaming", "rem", "rem_sleep", "sleep_rem"):
+                            sleep_kind = "dreaming"
+                        elif s in ("non_dreaming", "nondreaming", "nrem", "nrem_sleep", "sleep_nrem", "non_rem"):
+                            sleep_kind = "non_dreaming"
+
+                    # A2) env_meta boolean flags
+                    if sleep_kind is None:
+                        try:
+                            sleeping_flag = env_meta.get("sleeping")
+                            dreaming_flag = env_meta.get("dreaming")
+                        except Exception:
+                            sleeping_flag = None
+                            dreaming_flag = None
+
+                        if isinstance(sleeping_flag, bool) and sleeping_flag:
+                            sleep_kind = "dreaming" if bool(dreaming_flag) else "non_dreaming"
+
+                    # B) predicate tokens
+                    if sleep_kind is None:
+                        try:
+                            toks = {t.strip().lower() for t in pred_tokens if isinstance(t, str) and t.strip()}
+                        except Exception:
+                            toks = set()
+
+                        if (
+                            "sleeping:dreaming" in toks
+                            or "sleep:dreaming" in toks
+                            or "sleeping:rem" in toks
+                            or "sleep:rem" in toks
+                        ):
+                            sleep_kind = "dreaming"
+                        elif (
+                            "sleeping:non_dreaming" in toks
+                            or "sleep:non_dreaming" in toks
+                            or "sleeping:nrem" in toks
+                            or "sleep:nrem" in toks
+                        ):
+                            sleep_kind = "non_dreaming"
+                        elif ("sleeping" in toks) or ("sleep" in toks):
+                            # If sleep is present but untyped, treat as non-dreaming by default.
+                            sleep_kind = "non_dreaming"
+
+                    if (sleep_kind == "non_dreaming") and sup_nd:
+                        hit = False
+                    elif (sleep_kind == "dreaming") and sup_dr:
+                        hit = False
+
+            if hit:
+                # If another keyframe is already happening this tick, do NOT add a second "periodic" reason.
+                # In reset-on-any-keyframe mode, the periodic counter will still be reset by that other keyframe.
+                if not force_snapshot:
+                    force_snapshot = True
+                    reasons.append(f"periodic(step={step_no}, period={period})")
+
+        # Surprise keyframe from pred_err v0 (optional; streak-based)
+        if bool(getattr(ctx, "longterm_obs_keyframe_on_pred_err", False)):
+            pe = getattr(ctx, "pred_err_v0_last", None)
+            pe_any = False
+            if isinstance(pe, dict) and pe:
+                try:
+                    pe_any = any(int(v or 0) != 0 for v in pe.values())
+                except Exception:
+                    pe_any = False
+
+            streak = int(getattr(ctx, "lt_obs_pred_err_streak", 0) or 0)
+            streak = (streak + 1) if pe_any else 0
+            ctx.lt_obs_pred_err_streak = streak
+
+            try:
+                min_streak = int(getattr(ctx, "longterm_obs_keyframe_pred_err_min_streak", 2) or 2)
+            except Exception:
+                min_streak = 2
+            min_streak = max(1, min_streak)
+
+            if pe_any and streak >= min_streak:
+                force_snapshot = True
+                reasons.append(f"pred_err_v0(streak={streak})")
+        else:
+            ctx.lt_obs_pred_err_streak = 0
+
+        # Milestone keyframes (HAL + derived from predicate transitions). Off by default.
+        #
+        # Two sources:
+        #   A) env_meta milestone flags (HAL/richer envs) — may be sticky and repeat across ticks → dedup.
+        #   B) derived transition events from predicate slots (storyboard + early HAL) — event-based, no sticky dedup needed.
+        #
+        # Derived events currently recognized:
+        #   - posture:fallen -> posture:standing              => stood_up
+        #   - proximity:mom:* -> proximity:mom:close         => reached_mom
+        #   - (first) nipple:found                           => found_nipple
+        #   - (first) nipple:latched                         => latched_nipple
+        #   - (first) milk:drinking                          => milk_drinking
+        #   - (first) resting                                => rested
+        if bool(getattr(ctx, "longterm_obs_keyframe_on_milestone", False)):
+            ms_events: set[str] = set()
+
+            # --- A) Env-supplied milestone flags (sticky) ---
+            ms_raw = env_meta.get("milestones") or env_meta.get("milestone")
+            ms_list: list[str] = []
+            if isinstance(ms_raw, str) and ms_raw:
+                ms_list = [ms_raw]
+            elif isinstance(ms_raw, list):
+                ms_list = [m for m in ms_raw if isinstance(m, str) and m]
+
+            if ms_list:
+                prev_raw = getattr(ctx, "lt_obs_last_milestones", None)
+                prev: set[str] = {x for x in prev_raw if isinstance(x, str) and x} if isinstance(prev_raw, set) else set()
+                new_ms = {m for m in ms_list if m not in prev}
+                if new_ms:
+                    ms_events |= new_ms
+                    try:
+                        prev |= new_ms
+                        ctx.lt_obs_last_milestones = prev
+                    except Exception:
+                        pass
+
+            # --- B) Derived milestone events (slot transitions) ---
+            try:
+                prev_slots = getattr(ctx, "lt_obs_slots", None)
+                prev_slots = prev_slots if isinstance(prev_slots, dict) else {}
+
+                # Build current slot->token mapping from this observation (pred_tokens has no "pred:" prefix).
+                curr_by_slot: dict[str, str] = {}
+                for tok in pred_tokens:
+                    if not isinstance(tok, str) or not tok:
+                        continue
+                    slot = tok.rsplit(":", 1)[0] if ":" in tok else tok
+                    if slot not in curr_by_slot:
+                        curr_by_slot[slot] = tok
+
+                def _prev_token(slot: str) -> str | None:
+                    p = prev_slots.get(slot)
+                    if isinstance(p, dict):
+                        t = p.get("token")
+                        return t if isinstance(t, str) else None
+                    return None
+
+                # posture transition
+                prev_posture = _prev_token("posture")
+                curr_posture = curr_by_slot.get("posture")
+                if curr_posture == "posture:standing" and prev_posture != "posture:standing":
+                    ms_events.add("stood_up")
+
+                # mom proximity transition
+                prev_mom = _prev_token("proximity:mom")
+                curr_mom = curr_by_slot.get("proximity:mom")
+                if curr_mom == "proximity:mom:close" and prev_mom != "proximity:mom:close":
+                    ms_events.add("reached_mom")
+
+                # nipple milestones
+                prev_nipple = _prev_token("nipple")
+                curr_nipple = curr_by_slot.get("nipple")
+                if curr_nipple == "nipple:found" and prev_nipple != "nipple:found":
+                    ms_events.add("found_nipple")
+                if curr_nipple == "nipple:latched" and prev_nipple != "nipple:latched":
+                    ms_events.add("latched_nipple")
+
+                # milk milestone
+                prev_milk = _prev_token("milk")
+                curr_milk = curr_by_slot.get("milk")
+                if curr_milk == "milk:drinking" and prev_milk != "milk:drinking":
+                    ms_events.add("milk_drinking")
+
+                # resting milestone
+                prev_rest = _prev_token("resting")
+                curr_rest = curr_by_slot.get("resting")
+                if curr_rest == "resting" and prev_rest != "resting":
+                    ms_events.add("rested")
+            except Exception:
+                # Derived milestones are strictly best-effort; never break env injection.
+                pass
+
+            if ms_events:
+                force_snapshot = True
+                reasons.append("milestone:" + ",".join(sorted(ms_events)))
+
+        # Strong emotion keyframe stub (HAL / richer envs). Off by default.
+        # Note: we treat hazard zone as a conservative proxy ("fear") only when env_meta doesn't supply emotion.
+        if bool(getattr(ctx, "longterm_obs_keyframe_on_emotion", False)):
+            label = None
+            intensity = None
+
+            emo_raw = env_meta.get("emotion") or env_meta.get("affect")
+            if isinstance(emo_raw, dict):
+                lab = emo_raw.get("label")
+                inten = emo_raw.get("intensity")
+                label = lab if isinstance(lab, str) and lab else None
+                try:
+                    intensity = float(inten) if inten is not None else None
+                except Exception:
+                    intensity = None
+            elif isinstance(emo_raw, str) and emo_raw:
+                label = emo_raw
+
+            # Proxy if no explicit emotion: unsafe zone -> fear-high
+            if intensity is None and label is None:
+                if zone_now == "unsafe_cliff_near":
+                    label = "fear"
+                    intensity = 1.0
+
+            try:
+                thr = float(getattr(ctx, "longterm_obs_keyframe_emotion_threshold", 0.85) or 0.85)
+            except Exception:
+                thr = 0.85
+
+            high = bool(isinstance(intensity, (int, float)) and float(intensity) >= thr)
+            prev_label = getattr(ctx, "lt_obs_last_emotion_label", None)
+            prev_high = bool(getattr(ctx, "lt_obs_last_emotion_high", False))
+
+            # Rising edge: (not high) -> high, or label changes while high.
+            if high and (label != prev_label or not prev_high):
+                force_snapshot = True
+                inten_txt = f"{float(intensity):.2f}" if isinstance(intensity, (int, float)) else "n/a"
+                reasons.append(f"emotion:{label or 'n/a'}@{inten_txt}")
+
+            try:
+                ctx.lt_obs_last_emotion_label = label if isinstance(label, str) else None
+                ctx.lt_obs_last_emotion_high = high
+            except Exception:
+                pass
 
         # [KEYFRAME HOOK + ORDERING INVARIANT]
         # This is the keyframe/boundary detection point for the env→memory injection path.
@@ -7959,6 +9220,21 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         #   After policy selection+execution, a keyframe may also write new engrams (copy-on-write) and
         #   update WorldGraph pointers for future retrieval, without mutating the belief state already
         #   used for action selection in this cycle.  See README: "WM ⇄ Column engram pipeline".
+
+        # REAL-EMBODIMENT KEYFRAMES (HAL / non-storyboard):
+        #   In real robots there is no storyboard stage. We will therefore support additional keyframe triggers here,
+        #   evaluated ONLY at this boundary hook (never mid-cycle):
+        #
+        #   - periodic: every N controller_steps (ctx.longterm_obs_keyframe_period_steps)
+        #   - surprise: pred_err v0 sustained mismatch (ctx.pred_err_v0_last + min_streak)
+        #   - context discontinuity: zone flips (zone_now derived here vs ctx.lt_obs_last_zone)
+        #   - milestones: env_meta milestones and/or derived slot transitions (goal-relevant outcomes)
+        #   - emotion/arousal: env_meta emotion/affect (rising edge into "high"), with a conservative hazard proxy
+        #
+        # TIME-BASED SAFETY:
+        #   Even the periodic keyframe must be checked only at this boundary hook so we never split a cycle
+        #   while intermediate planner/policy structures are half-written.
+
         if force_snapshot:
             old_pred_n = len(getattr(ctx, "lt_obs_slots", {}) or {})
             old_cue_n = len(getattr(ctx, "lt_obs_cues", {}) or {})
@@ -7971,7 +9247,17 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
             if bool(getattr(ctx, "longterm_obs_keyframe_log", True)):
                 why = ", ".join(reasons) if reasons else "keyframe"
                 print(f"[env→world] KEYFRAME: {why} | cleared {old_pred_n} pred slot(s), {old_cue_n} cue slot(s)")
+            try:
+                ctx.lt_obs_last_keyframe_step = step_no
+            except Exception:
+                pass
+
         ctx.lt_obs_last_stage = stage
+        ctx.lt_obs_last_zone = zone_now
+
+        # For downstream callers (e.g., env-loop) that want a unified keyframe definition:
+        keyframe = bool(force_snapshot)
+        keyframe_reasons = list(reasons)
 
 
     def _slot_key(tok: str) -> str:
@@ -8126,7 +9412,15 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
     except Exception:
         pass
 
-    return {"predicates": created_preds, "cues": created_cues, "token_to_bid": token_to_bid}
+    return {
+        "predicates": created_preds,
+        "cues": created_cues,
+        "token_to_bid": token_to_bid,
+        "working": working_inj,
+        "keyframe": bool(keyframe),
+        "keyframe_reasons": list(keyframe_reasons),
+        "zone_now": getattr(ctx, "lt_obs_last_zone", None),
+    }
 
 
 def _wm_creative_update(policy_rt, world, drives, ctx, *, exec_world=None) -> None:
@@ -8346,6 +9640,304 @@ def _wm_creative_update(policy_rt, world, drives, ctx, *, exec_world=None) -> No
         ctx.wm_creative_last_pick = out[0] if out else None
     except Exception:
         pass
+
+
+def print_env_loop_tag_legend_once(ctx: Ctx) -> None:
+    """Print a compact legend for console prefixes (once per session).
+
+    We keep the run output readable for new users, but avoid re-printing the
+    legend every time menu 35/37 is used.
+    """
+    if ctx is None:
+        return
+    if ctx.env_loop_legend_printed:
+        return
+    ctx.env_loop_legend_printed = True
+
+    print("\nLegend (console tags):")
+    print("  [env-loop]      closed-loop driver (one cognitive cycle = env update → policy select → policy act)")
+    print("  [env]           environment events (reset/step; with HAL ON, this would be real sensor I/O)")
+    print("  [env→working]   EnvObservation → WorkingMap (fast scratch / map surface)")
+    print("  [env→world]     EnvObservation → WorldGraph (long-term episode index)")
+    print("  [env→controller] Action Center output (policy selection + execution)")
+    print("  [wm<->col]      WorkingMap ⇄ Column keyframe pipeline (store snapshot → retrieve candidates → apply/merge priors)")
+    print("  [pred_err]      prediction error v0 (expected vs observed); gates auto-retrieve and shapes policy value via penalty on streaks")
+    print("  [gate:<p>]      gating explanation for policy <p>")
+    print("  [pick]          which policy was selected this cycle")
+    print("  [executed]      policy execution result (effects show up in the NEXT cycle's observation)")
+    print("  [maps]          selection_on=map used to score; execute_on=map used to run actions")
+    print("  [obs-mask]      partial-observability masking (token drops) when enabled")
+    print("")
+
+
+def _print_cog_cycle_footer(*,
+                            ctx: "Ctx",
+                            drives,
+                            env_obs,
+                            prev_state,
+                            curr_state,
+                            env_step: int | None,
+                            zone: str | None,
+                            inj: dict[str, Any] | None,
+                            fired_txt: str | None,
+                            col_store_txt: str | None,
+                            col_retrieve_txt: str | None,
+                            col_apply_txt: str | None,
+                            action_applied_this_step: str | None,
+                            next_action_for_env: str | None,
+                            cycle_no: int,
+                            cycle_total: int) -> None:
+    """
+    Print a compact, end-of-cycle footer intended for fast human scanning.
+
+    Intent
+    ------
+    Menu 37 (closed-loop env↔controller runs) produces many diagnostic lines. This footer is the
+    "cheap digest" line-set that lets a maintainer quickly see what happened in *this* cognitive
+    cycle in terms of the architecture:
+
+      inputs → MapSurface deltas → Scratch writes → WorldGraph writes → Column ops → action
+
+    The footer is intentionally pragmatic and will evolve as Phase IX/robotics/HAL integration evolves.
+    Treat it as a reading aid, not a stable API.
+
+    Notes
+    -----
+    - "MapSurface deltas" are derived from EnvState diffs (authoritative simulator truth). MapSurface is
+      driven by EnvObservation, so EnvState changes correspond to slot-family changes (posture, proximity,
+      hazard, nipple, etc.).
+    - "Scratch writes" are summarized from the policy runtime's returned text (added bindings, executed line).
+    - Column ops are summarized from the wm<->col store/retrieve/apply block when it ran this cycle.
+    """
+    if not bool(getattr(ctx, "env_loop_cycle_summary", True)):
+        return
+
+    try:
+        max_items = int(getattr(ctx, "env_loop_cycle_summary_max_items", 6) or 6)
+    except Exception:
+        max_items = 6
+
+    def _sf(x) -> str:
+        try:
+            return f"{float(x):.2f}"
+        except Exception:
+            return "n/a"
+
+    def _fmt_items(items, *, prefix: str = "", limit: int = 6) -> str:
+        if not items:
+            return "(none)"
+        out = []
+        for it in items:
+            if isinstance(it, str) and it:
+                out.append(f"{prefix}{it}")
+        if not out:
+            return "(none)"
+        if len(out) <= limit:
+            return ", ".join(out)
+        head = ", ".join(out[:limit])
+        return f"{head}, +{len(out) - limit} more"
+
+    def _get_state_attr(st, name: str):
+        try:
+            return getattr(st, name, None)
+        except Exception:
+            return None
+
+    def _surface_deltas(ps, cs) -> list[str]:
+        # These correspond to the newborn-goat "big slots" that map cleanly onto MapSurface slot-families.
+        fields = [
+            ("posture", "kid_posture"),
+            ("mom", "mom_distance"),
+            ("shelter", "shelter_distance"),
+            ("cliff", "cliff_distance"),
+            ("nipple", "nipple_state"),
+        ]
+        out: list[str] = []
+        for label, attr in fields:
+            a = _get_state_attr(ps, attr) if ps is not None else None
+            b = _get_state_attr(cs, attr) if cs is not None else None
+            if ps is None:
+                out.append(f"{label}={b}")
+            else:
+                if a != b:
+                    out.append(f"{label} {a}→{b}")
+        return out
+
+    def _parse_fired(txt: str | None) -> dict[str, Any]:
+        # fired text is produced by PolicyRuntime.consider_and_maybe_fire(...).
+        out: dict[str, Any] = {"policy": None, "added": None, "reward": None, "sel_on": None, "exec_on": None}
+        if not (isinstance(txt, str) and txt.strip()):
+            return out
+        import re  # local import (matches existing style in this file)
+        lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+        if not lines:
+            return out
+
+        # First line: "policy:xyz (added N bindings)"
+        first = lines[0]
+        parts = first.split()
+        if parts and parts[0].startswith("policy:"):
+            out["policy"] = parts[0]
+        m = re.search(r"added\s+(\d+)\s+bindings", first)
+        if m:
+            try:
+                out["added"] = int(m.group(1))
+            except Exception:
+                out["added"] = None
+
+        for ln in lines:
+            if ln.startswith("[executed]"):
+                # Example: [executed] policy:follow_mom (ok, reward=+0.10) binding=w38 (b38)
+                m2 = re.search(r"reward=([+\-]?\d+(?:\.\d+)?)", ln)
+                if m2:
+                    try:
+                        out["reward"] = float(m2.group(1))
+                    except Exception:
+                        out["reward"] = None
+            if ln.startswith("[maps]"):
+                # Example: [maps] selection_on=WG execute_on=WM
+                if "selection_on=" in ln:
+                    try:
+                        out["sel_on"] = ln.split("selection_on=", 1)[1].split()[0].strip()
+                    except Exception:
+                        pass
+                if "execute_on=" in ln:
+                    try:
+                        out["exec_on"] = ln.split("execute_on=", 1)[1].split()[0].strip()
+                    except Exception:
+                        pass
+        return out
+
+    # Keyframe indicator: best-effort. (Keyframe reasons still appear in the KEYFRAME log line above.)
+    is_kf = False
+    try:
+        is_kf = (getattr(ctx, "lt_obs_last_keyframe_step", None) == getattr(ctx, "controller_steps", None))
+    except Exception:
+        is_kf = False
+
+    st_stage = _get_state_attr(curr_state, "scenario_stage")
+    st_post  = _get_state_attr(curr_state, "kid_posture")
+    st_mom   = _get_state_attr(curr_state, "mom_distance")
+    st_nip   = _get_state_attr(curr_state, "nipple_state")
+
+    dr_h = _sf(getattr(drives, "hunger", None))
+    dr_f = _sf(getattr(drives, "fatigue", None))
+    dr_w = _sf(getattr(drives, "warmth", None))
+
+    # WG write summary (env injection)
+    wg_preds: list[str] = []
+    wg_cues: list[str] = []
+    if isinstance(inj, dict):
+        p = inj.get("predicates")
+        c = inj.get("cues")
+        if isinstance(p, list):
+            wg_preds = [x for x in p if isinstance(x, str) and x]
+        if isinstance(c, list):
+            wg_cues = [x for x in c if isinstance(x, str) and x]
+
+    # EnvObservation input summary (what crossed the env→agent boundary this tick)
+    obs_preds: list[str] = []
+    obs_cues: list[str] = []
+    obs_drop_p = 0
+    obs_drop_c = 0
+    if env_obs is not None:
+        try:
+            pr = getattr(env_obs, "predicates", None)
+            if isinstance(pr, list):
+                obs_preds = [str(x).replace("pred:", "", 1) for x in pr if isinstance(x, str) and x]
+        except Exception:
+            obs_preds = []
+
+        try:
+            cr = getattr(env_obs, "cues", None)
+            if isinstance(cr, list):
+                obs_cues = [str(x).replace("cue:", "", 1) for x in cr if isinstance(x, str) and x]
+        except Exception:
+            obs_cues = []
+
+        try:
+            em = getattr(env_obs, "env_meta", None)
+            if isinstance(em, dict):
+                obs_drop_p = int(em.get("obs_mask_dropped_preds", 0) or 0)
+                obs_drop_c = int(em.get("obs_mask_dropped_cues", 0) or 0)
+        except Exception:
+            obs_drop_p = 0
+            obs_drop_c = 0
+
+    fired_info = _parse_fired(fired_txt)
+
+    # ---- line 1: inputs
+    kf_txt = "KF" if is_kf else "--"
+    step_txt = str(env_step) if isinstance(env_step, int) else "?"
+    zone_txt = zone if isinstance(zone, str) else "?"
+
+    mask_txt = ""
+    if (obs_drop_p or obs_drop_c) and (obs_drop_p >= 0 and obs_drop_c >= 0):
+        mask_txt = f" mask_drop(p={obs_drop_p} c={obs_drop_c})"
+
+    print(
+        f"[cycle] IN   {kf_txt} cycle={cycle_no}/{cycle_total} env_step={step_txt} "
+        f"stage={st_stage} posture={st_post} mom={st_mom} nipple={st_nip} zone={zone_txt} "
+        f"drives(h={dr_h} f={dr_f} w={dr_w}) applied_action={action_applied_this_step!r} "
+        f"obs(p={len(obs_preds)} c={len(obs_cues)}){mask_txt}"
+    )
+
+    # ---- line 1b: observation detail (preds/cues + navpatch summary)
+    patches_in = getattr(env_obs, "nav_patches", None) or []
+    patch_n = len(patches_in) if isinstance(patches_in, list) else 0
+    uniq_sig16: set[str] = set()
+
+    if patch_n:
+        for p in patches_in:
+            if not isinstance(p, dict):
+                continue
+            try:
+                uniq_sig16.add(navpatch_payload_sig_v1(p)[:16])
+            except Exception:
+                pass
+
+    nav_txt = f"nav_patches={patch_n} uniq_sig16={len(uniq_sig16)}"
+
+    if obs_preds or obs_cues or patch_n:
+        pred_txt = _fmt_items(obs_preds, prefix="", limit=max_items) if obs_preds else "(none)"
+        cue_txt = _fmt_items(obs_cues, prefix="", limit=max_items) if obs_cues else "(none)"
+        print(f"[cycle] OBS  preds: {pred_txt} | cues: {cue_txt} | {nav_txt}")
+
+    # ---- line 2: WorkingMap summary (surface deltas + scratch writes)
+    deltas = _surface_deltas(prev_state, curr_state)
+    delta_txt = _fmt_items(deltas, prefix="", limit=max_items) if deltas else "(no surface slot change)"
+    pol = fired_info.get("policy") or next_action_for_env
+    added = fired_info.get("added")
+    exec_on = fired_info.get("exec_on")
+    scratch_txt = "(no policy fired)"
+    if isinstance(pol, str) and pol:
+        if isinstance(added, int):
+            scratch_txt = f"{pol} +{added} binding(s)"
+        else:
+            scratch_txt = f"{pol}"
+        if exec_on:
+            scratch_txt += f" (exec_on={exec_on})"
+    print(f"[cycle] WM   surfaceΔ: {delta_txt} | scratch: {scratch_txt}")
+
+    # ---- line 3: WorldGraph writes this tick
+    wg_txt = f"preds+{len(wg_preds)} cues+{len(wg_cues)}"
+    wg_pred_txt = _fmt_items(wg_preds, prefix="pred:", limit=max_items)
+    wg_cue_txt = _fmt_items(wg_cues, prefix="cue:", limit=max_items)
+    print(f"[cycle] WG   wrote {wg_txt} | {wg_pred_txt} | {wg_cue_txt}")
+
+    # ---- line 4: Column ops (only meaningful on keyframes)
+    if col_store_txt or col_retrieve_txt or col_apply_txt:
+        cs = col_store_txt or "store: (n/a)"
+        cr = col_retrieve_txt or "retrieve: (n/a)"
+        ca = col_apply_txt or "apply: (n/a)"
+        print(f"[cycle] COL  {cs} | {cr} | {ca}")
+    else:
+        print("[cycle] COL  (no wm<->col ops this cycle)")
+
+    # ---- line 5: action recap
+    r = fired_info.get("reward")
+    rtxt = f"{r:+.2f}" if isinstance(r, (int, float)) else "n/a"
+    print(f"[cycle] ACT  executed={pol!r} reward={rtxt} next_action={next_action_for_env!r}")
 
 
 def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) -> None:
@@ -8830,6 +10422,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         print("[env-loop] N must be ≥ 1; nothing to do.")
         return
 
+    print_env_loop_tag_legend_once(ctx)
     print(f"[env-loop] Running {n_steps} closed-loop cognitive cycle(s) (env↔controller).")
     print("[env-loop] Each cognitive cycle will:")
     print("  1) Advance controller_steps and the temporal soft clock (one drift),")
@@ -8838,10 +10431,16 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
     print("  4) Run ONE controller step (Action Center) and store the last policy name.\n")
 
     if not getattr(ctx, "env_episode_started", False):
-        print("[env-loop] Note: environment episode has not started yet; "
-              "the first cognitive cycle will call env.reset().")
+        print("[env-loop] Note: this episode has not started yet; the first cognitive cycle will call env.reset().")
+        print("[env-loop]       (With HAL ON, this is where we'd sample the first real sensor snapshot.)")
     for i in range(n_steps):
         print(f"\n[env-loop] Cognitive Cycle {i+1}/{n_steps}")
+        # Per-cycle capture for the footer summary (reset each cycle).
+        fired_txt = None
+        inj = None
+        col_store_txt = None
+        col_retrieve_txt = None
+        col_apply_txt = None
 
         # Count one CLOSED-LOOP cognitive cycle (env↔controller iteration).
         try:
@@ -8896,26 +10495,139 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
         # --- Prediction error v0 (no behavior change; just measure + log) ---
         # Compare last cycle's predicted postcondition (hypothesis) vs this cycle's observed env posture.
+        pred_posture: str | None = None
+        obs_posture: str | None = None
+        err_vec: dict[str, int] = {}
+        src_txt = "(n/a)"
+
         try:
-            prev_pred = getattr(ctx, "pred_next_posture", None)
-            if isinstance(prev_pred, str) and prev_pred:
+            pred_posture = getattr(ctx, "pred_next_posture", None)
+            if isinstance(pred_posture, str) and pred_posture:
                 obs_posture = getattr(getattr(env, "state", None), "kid_posture", None)
                 if isinstance(obs_posture, str) and obs_posture:
-                    mismatch = 0 if obs_posture == prev_pred else 1
+                    mismatch = 0 if obs_posture == pred_posture else 1
                     err_vec = {"posture": mismatch}
                     ctx.pred_err_v0_last = err_vec
                     src = getattr(ctx, "pred_next_policy", None)
                     src_txt = src if isinstance(src, str) and src else "(n/a)"
-                    print(f"[pred_err] v0 err={err_vec} pred_posture={prev_pred} obs_posture={obs_posture} from={src_txt}")
+                    print(
+                        f"[pred_err] v0 err={err_vec} pred_posture={pred_posture} obs_posture={obs_posture} "
+                        f"from={src_txt}"
+                    )
                 else:
-                    ctx.pred_err_v0_last = {"posture": 1}
+                    err_vec = {"posture": 1}
+                    ctx.pred_err_v0_last = err_vec
             else:
+                err_vec = {}
                 ctx.pred_err_v0_last = {}
         except Exception:
+            # If anything goes wrong, keep the signal empty rather than crashing the env-loop.
+            err_vec = {}
+            ctx.pred_err_v0_last = {}
+
+        # ----------------------------------------------------------------------------------
+        # [pred_err] shaping penalty (extinction pressure when postconditions fail)
+        #
+        # Goal:
+        #   If a policy repeatedly predicts a postcondition (v0: posture) and the next env
+        #   observation contradicts it, apply a small negative reward shaping update to that
+        #   policy's skill ledger entry.
+        #
+        # Design notes:
+        #   - We ignore the very first mismatch after reset-like transitions by requiring
+        #     a short mismatch streak (>=2) before applying the penalty.
+        #   - We ALSO append a standardized entry into ctx.posture_discrepancy_history so
+        #     existing non-drive tie-break logic (RecoverFall's discrepancy bonus) can use it
+        #     during menu 37 (which otherwise doesn't build history via mini-snapshots).
+        #
+        # Knobs (optional; safe defaults if absent):
+        #   ctx.pred_err_shaping_enabled : bool   (default True)
+        #   ctx.pred_err_shaping_penalty : float  (default 0.15)
+        # ----------------------------------------------------------------------------------
+        try:
+            shaping_enabled = bool(getattr(ctx, "pred_err_shaping_enabled", True))
+        except Exception:
+            shaping_enabled = True
+
+        try:
+            pen_mag = float(getattr(ctx, "pred_err_shaping_penalty", 0.15) or 0.15)
+        except Exception:
+            pen_mag = 0.15
+
+        try:
+            # v0 is posture-only today; treat any non-zero as a mismatch.
+            v0_posture_err = 0
+            if isinstance(err_vec, dict):
+                try:
+                    v0_posture_err = int(err_vec.get("posture", 0) or 0)
+                except Exception:
+                    v0_posture_err = 0
+
+            if (    # pylint: disable=too-many-boolean-expressions
+                shaping_enabled
+                and v0_posture_err != 0
+                and isinstance(action_for_env, str)
+                and action_for_env
+                and isinstance(obs_posture, str)
+                and isinstance(pred_posture, str)
+            ):
+                # 1) Append a standardized discrepancy entry (so RecoverFall can see streaks in menu 37)
+                entry = (
+                    f"[discrepancy] env posture={obs_posture!r} "
+                    f"vs policy-expected posture={pred_posture!r} from {action_for_env}"
+                )
+                try:
+                    hist = getattr(ctx, "posture_discrepancy_history", [])
+                    if not isinstance(hist, list):
+                        hist = []
+
+                    # Important: we want repeated mismatches to accumulate so streak>=2 can trigger shaping.
+                    hist.append(entry)
+                    if len(hist) > 50:
+                        del hist[:-50]
+
+                    ctx.posture_discrepancy_history = hist
+                except Exception:
+                    pass
+
+                # 2) Compute a short mismatch streak over the newest entries
+                streak = 0
+                try:
+                    hist2 = getattr(ctx, "posture_discrepancy_history", [])
+                    if isinstance(hist2, list) and hist2:
+                        for h in reversed(hist2[-10:]):
+                            s = str(h)
+                            if (
+                                (f"from {action_for_env}" in s)
+                                and ("env posture=" in s and obs_posture in s)
+                                and ("policy-expected posture=" in s and pred_posture in s)
+                            ):
+                                streak += 1
+                            else:
+                                break
+                except Exception:
+                    streak = 0
+
+                # 3) Apply shaping only after the streak threshold (ignore first mismatch)
+                if streak >= 2:
+                    shaping_reward = -abs(pen_mag) * float(v0_posture_err)
+                    update_skill(action_for_env, shaping_reward, ok=False)
+                    try:
+                        q_now = float(skill_q(action_for_env))
+                    except Exception:
+                        q_now = 0.0
+                    print(
+                        f"[pred_err] shaping: policy={action_for_env} reward={shaping_reward:+.2f} "
+                        f"(streak={streak}) q={q_now:+.2f}"
+                    )
+        except Exception:
+            # Shaping must never crash the env-loop.
             pass
+
 
         # 3) EnvObservation → WorldGraph + BodyMap
         inj = inject_obs_into_world(world, ctx, env_obs)
+
         try:
             token_to_bid = inj.get("token_to_bid", {}) if isinstance(inj, dict) else {}
         except Exception:
@@ -8947,6 +10659,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 (zone_now or "unknown"),
             )
             boundary_changed = (prev_sig is not None) and (prev_sig != curr_sig)
+
             # Stage/zone boundary detection (ignore posture/nipple here to keep storage sparse/readable)
             try:
                 stage_changed = prev_sig[0] != curr_sig[0]
@@ -8954,21 +10667,43 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             except Exception:
                 stage_changed, zone_changed = False, False
 
-            if stage_changed or zone_changed:
-                _ps = prev_sig[0] or "?"
-                _cs = curr_sig[0] or "?"
-                _pz = prev_sig[3] or "?"
-                _cz = curr_sig[3] or "?"
-                parts: list[str] = []
-                if stage_changed:
-                    parts.append(f"stage:{_ps}->{_cs}")
-                if zone_changed:
-                    parts.append(f"zone:{_pz}->{_cz}")
+            # IMPORTANT:
+            # These are "keyframe trigger knobs", but we also treat them as *Phase VII boundary-to-memory* knobs.
+            # If a user disables stage/zone keyframes, they likely want to disable stage/zone-driven WM↔Column auto-store too.
+            allow_stage = bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True))
+            allow_zone  = bool(getattr(ctx, "longterm_obs_keyframe_on_zone_change", True))
+
+            _ps = (prev_sig[0] if isinstance(prev_sig, tuple) else None) or "?"
+            _cs = (curr_sig[0] if isinstance(curr_sig, tuple) else None) or "?"
+            _pz = (prev_sig[3] if isinstance(prev_sig, tuple) else None) or "?"
+            _cz = (curr_sig[3] if isinstance(curr_sig, tuple) else None) or "?"
+
+            parts: list[str] = []
+            if stage_changed and allow_stage:
+                parts.append(f"stage:{_ps}->{_cs}")
+            if zone_changed and allow_zone:
+                parts.append(f"zone:{_pz}->{_cz}")
+
+            if parts:
                 wm_auto_store = True
                 wm_auto_reason = "auto_boundary_" + "_".join(parts)
+
         except Exception:
             boundary_changed = False
 
+        # Additional keyframe triggers (periodic / pred_err / milestone / emotion) come from inject_obs_into_world.
+        inj_kf = bool(inj.get("keyframe")) if isinstance(inj, dict) else False
+        inj_rs = inj.get("keyframe_reasons") if isinstance(inj, dict) else None
+
+        if inj_kf and not wm_auto_store:
+            wm_auto_store = True
+            if isinstance(inj_rs, list) and inj_rs:
+                why = ";".join(str(x) for x in inj_rs[:3])
+                if len(why) > 80:
+                    why = why[:77] + "..."
+                wm_auto_reason = "auto_keyframe_" + why
+            else:
+                wm_auto_reason = "auto_keyframe"
         state_bid = _phase7_pick_state_bid(token_to_bid) if isinstance(token_to_bid, dict) else None
 
         if _phase7_enabled():
@@ -9031,11 +10766,14 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
                 if stored and isinstance(eid, str):
                     print(f"[wm<->col] store: ok sig={sig16} bid={bid} eid={eid[:8]}… ({reason_kf})")
+                    col_store_txt = f"store ok sig={sig16} eid={eid[:8]}…"
                 else:
                     print(f"[wm<->col] store: skip why={why_store} sig={sig16} ({reason_kf})")
+                    col_store_txt = f"store skip why={why_store} sig={sig16}"
 
                 # ---- 2) RETRIEVE line + 3) APPLY line ----
                 try:
+                    forced_keyframe = bool(wm_auto_store) and not (bool(stage_chg) or bool(zone_chg))
                     dec = should_autoretrieve_mapsurface(
                         ctx,
                         env_obs,
@@ -9043,16 +10781,19 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                         zone=zone_kf,
                         stage_changed=stage_chg,
                         zone_changed=zone_chg,
+                        forced_keyframe=forced_keyframe,
                         boundary_reason=reason_kf,
                     )
-
                     mode_txt = str(dec.get("mode") or "merge")
                     top_k = int(dec.get("top_k") or 5)
                     do_try = bool(dec.get("ok"))
 
                     if not do_try:
                         print(f"[wm<->col] retrieve: skip why={dec.get('why')} mode={mode_txt} top_k={top_k} ({reason_kf})")
+                        col_retrieve_txt = f"retrieve skip why={dec.get('why')} mode={mode_txt} top_k={top_k}"
+
                         print(f"[wm<->col] apply: no-op ({dec.get('why')})")
+                        col_apply_txt = f"apply no-op ({dec.get('why')})"
                     else:
                         exclude = eid if stored and isinstance(eid, str) else None
 
@@ -9081,6 +10822,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
                             rid_txt = (rid[:8] + "…") if isinstance(rid, str) else "(n/a)"
                             print(f"[wm<->col] retrieve: ok mode={mode_txt} eid={rid_txt} match={match} score={score} op={op} oc={oc} src={src}")
+                            col_retrieve_txt = f"retrieve ok mode={mode_txt} eid={rid_txt} match={match} score={score}"
 
                             load = out.get("load") if isinstance(out.get("load"), dict) else {}
                             applied_mode = str(load.get("mode") or mode_txt)
@@ -9089,19 +10831,25 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                                 ent_n = load.get("entities")
                                 rel_n = load.get("relations")
                                 print(f"[wm<->col] apply: replace entities={ent_n} relations={rel_n}")
+                                col_apply_txt = f"apply replace ent={ent_n} rel={rel_n}"
                             else:
                                 ae = load.get("added_entities")
                                 fs = load.get("filled_slots")
                                 ed = load.get("added_edges")
                                 pc = load.get("stored_prior_cues")
                                 print(f"[wm<->col] apply: merge added_entities={ae} filled_slots={fs} added_edges={ed} prior_cues={pc}")
+                                col_apply_txt = f"apply merge ent+{ae} slots+{fs} edges+{ed} prior_cues={pc}"
                         else:
                             why = out.get("why") if isinstance(out, dict) else "no-op"
                             print(f"[wm<->col] retrieve: skip why={why} mode={mode_txt} top_k={top_k} ({reason_kf})")
+                            col_retrieve_txt = f"retrieve skip why={why} mode={mode_txt} top_k={top_k}"
                             print(f"[wm<->col] apply: no-op ({why})")
+                            col_apply_txt = f"apply no-op ({why})"
                 except Exception as e:
                     print(f"[wm<->col] retrieve: skip why=error:{e} ({reason_kf})")
+                    col_retrieve_txt = f"retrieve skip error:{e}"
                     print("[wm<->col] apply: no-op (error)")
+                    col_apply_txt = "apply no-op (error)"
 
                             # ----- END Auto-retrieve (read path) ----
 
@@ -9118,6 +10866,8 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 exec_world = ctx.working_world
             _wm_creative_update(policy_rt, world, drives, ctx, exec_world=exec_world)
             fired = policy_rt.consider_and_maybe_fire(world, drives, ctx, exec_world=exec_world)
+            fired_txt = fired if isinstance(fired, str) else None
+
             if fired != "no_match":
                 print(f"[env→controller] {fired}")
 
@@ -9222,10 +10972,75 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                     print(f"[env-loop] explain zone: {zone_expl}")
             except Exception:
                 pass
+            # End-of-cycle footer: compact digest for fast scanning (Phase IX).
+            try:
+                _print_cog_cycle_footer(
+                    ctx=ctx,
+                    drives=drives,
+                    env_obs=env_obs,
+                    prev_state=prev_state,
+                    curr_state=st,
+                    env_step=step_idx,
+                    zone=zone,
+                    inj=inj if isinstance(inj, dict) else None,
+                    fired_txt=fired_txt if isinstance(fired_txt, str) else None,
+                    col_store_txt=col_store_txt,
+                    col_retrieve_txt=col_retrieve_txt,
+                    col_apply_txt=col_apply_txt,
+                    action_applied_this_step=action_for_env,
+                    next_action_for_env=getattr(ctx, "env_last_action", None),
+                    cycle_no=i + 1,
+                    cycle_total=n_steps,
+                )
+            except Exception:
+                pass
         except Exception:
             pass
 
-    print("\n[env-loop] Closed-loop run complete. "
+        # Per-cycle JSON record (Phase X scaffolding): replayable debug trace.
+        # This is OFF by default; enable by setting ctx.cycle_json_enabled=True and (optionally)
+        # ctx.cycle_json_path="cycle_log.jsonl".
+        try:
+            if bool(getattr(ctx, "cycle_json_enabled", False)):
+                st = env.state
+                try:
+                    zone_now = body_space_zone(ctx)
+                except Exception:
+                    zone_now = None
+
+                rec = {
+                    "controller_steps": int(getattr(ctx, "controller_steps", 0) or 0),
+                    "env_step": env_info.get("step_index"),
+                    "scenario_stage": getattr(st, "scenario_stage", None),
+                    "posture": getattr(st, "kid_posture", None),
+                    "mom_distance": getattr(st, "mom_distance", None),
+                    "nipple_state": getattr(st, "nipple_state", None),
+                    "zone": zone_now,
+                    "action_applied": action_for_env,
+                    "policy_fired": policy_name,
+                    "obs": {
+                        "predicates": list(getattr(env_obs, "predicates", []) or []),
+                        "cues": list(getattr(env_obs, "cues", []) or []),
+                        "nav_patches": list(getattr(env_obs, "nav_patches", []) or []),
+                        "env_meta": dict(getattr(env_obs, "env_meta", {}) or {}),
+                    },
+                    "wg_wrote": {
+                        "predicates": list((inj or {}).get("predicates", []) or []),
+                        "cues": list((inj or {}).get("cues", []) or []),
+                    },
+                    "navpatch_matches": list(getattr(ctx, "navpatch_last_matches", []) or []),
+                    "navpatch_priors": dict(getattr(ctx, "navpatch_last_priors", {}) or {}),
+                    "drives": {
+                        "hunger": float(getattr(drives, "hunger", 0.0) or 0.0),
+                        "fatigue": float(getattr(drives, "fatigue", 0.0) or 0.0),
+                        "warmth": float(getattr(drives, "warmth", 0.0) or 0.0),
+                    },
+                }
+                append_cycle_json_record(ctx, rec)
+        except Exception:
+            pass
+
+    print("\n[env-loop] Closed-loop cognitive cycle complete. "
           "You can inspect details via Snapshot or the mini-snapshot that follows.")
     try:
         if getattr(ctx, "working_enabled", False):
@@ -9787,6 +11602,7 @@ def candidate_anchors(world, ctx) -> list[str]:  # pylint: disable=unused-argume
 def interactive_loop(args: argparse.Namespace) -> None:
     """Main interactive loop.
     """
+
     # Build initial world/drives fresh
     world = cca8_world_graph.WorldGraph()
     #drives = Drives()  #Drives(hunger=0.7, fatigue=0.2, warmth=0.6) at time of writing comment
@@ -9795,6 +11611,14 @@ def interactive_loop(args: argparse.Namespace) -> None:
     drives = Drives(hunger=0.5, fatigue=0.3, warmth=0.6)  # moderate fatigue so fallback 'follow_mom' can win
 
     ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
+    # Phase X (NavPatch) defaults: enable in the interactive runner.
+    # Unit tests or external callers can keep this OFF unless they explicitly opt in.
+    ctx.navpatch_enabled = True
+    # Phase X: per-cycle JSON trace (JSONL) logging (optional)
+    ctx.cycle_json_enabled = True
+    ctx.cycle_json_path = "cycle_log.jsonl"   # set to None for in-memory only
+    ctx.cycle_json_max_records = 2000         # ring buffer size
+
     ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump) # temporal soft clock (added)
     ctx.tvec_last_boundary = ctx.temporal.vector()  # seed “last boundary”
     try:
@@ -10072,7 +11896,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
         name, sigma, jump, k = mapping[args.profile]
         ctx.profile, ctx.sigma, ctx.jump = name, sigma, jump
         ctx.winners_k = k
-        print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
+        print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})")
+        print("  sigma/jump = TemporalContext drift/jump noise scales; k = reserved top-k winners knob (future WTA selection).\n")
+
         POLICY_RT.refresh_loaded(ctx)
     else:
         profile = choose_profile(ctx, world)
@@ -10080,7 +11906,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
         sigma, jump, k = profile["ctx_sigma"], profile["ctx_jump"], profile["winners_k"]
         ctx.sigma, ctx.jump = sigma, jump
         ctx.winners_k = k
-        print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})\n")
+        print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})")
+        print("  sigma/jump = TemporalContext drift/jump noise scales; k = reserved top-k winners knob (future WTA selection).\n")
+
         POLICY_RT.refresh_loaded(ctx)
     _io_banner(args, loaded_src, loaded_ok)
 
@@ -12269,17 +14097,17 @@ Attach an existing engram id (eid) to a binding id (bid).
         elif choice == "37":
             # Multi-step environment closed-loop run
             print("Selection: Run n Cognitive Cycles (closed-loop timeline)\n")
-            print("""This selection runs several consecutive closed-loop steps between the
+            print("""This selection runs several consecutive closed-loop cognitive cycles between the
 HybridEnvironment (newborn-goat world) and the CCA8 brain.
 
-For each step we will:
+For each cognitive cycle we will:
   1) Advance controller_steps and the temporal soft clock once,
   2) STEP the newborn-goat environment using the last policy action (if any),
   3) Inject the resulting EnvObservation into the WorldGraph as pred:/cue: facts,
   4) Run ONE controller step (Action Center) and remember the last fired policy.
 
-Tip: run N=1 to single-step the closed-loop cycle.
-
+This is like pressing menu 35 multiple times, but with a more compact, per-cycle summary.
+You can still use menu 35 for detailed, single-step inspection.
 """)
             print("[policy-selection] Candidates = dev_gate passes AND trigger(...) returns True.")
             print("[policy-selection] Winner = highest deficit → non_drive → (RL: q | non-RL: stable order).")
@@ -12287,19 +14115,21 @@ Tip: run N=1 to single-step the closed-loop cycle.
 
             # Ask the user for n
             try:
-                n_text = input("How many closed-loop step(s) would you like to run? [default: 5]: ").strip()
+                n_text = input("How many closed-loop cognitive cycle(s) would you like to run? [default: 5]: ").strip()
             except Exception:
                 n_text = ""
             try:
                 n_steps = int(n_text) if n_text else 5
             except ValueError:
                 n_steps = 5
+
             if n_steps <= 0:
                 print("[env-loop] N must be ≥ 1; nothing to do.")
                 loop_helper(args.autosave, world, drives, ctx)
                 continue
 
             run_env_closed_loop_steps(env, world, drives, ctx, POLICY_RT, n_steps)
+
             print()
             print("\n[skills-hud] Learned policy values after env-loop:")
             print("(terminology: hud==heads-up-display; n==number times policy executed; rate==% times we counted policy as successful;")
@@ -12635,152 +14465,136 @@ Tip: run N=1 to single-step the closed-loop cycle.
         #----Menu Selection Code Block------------------------
         elif choice == "41":
             print("Menu 41 retired. Memory pipeline is hardwired (Phase VII daily-driver).")
+            # If later we decide for this menu selection to be interactive again, we should also update the
+            #   unreachable “Current settings / presets” prints so they display zone/pred_err/milestone/emotion
+            #   keyframe knobs (not just stage).
+            print("""[guide] This menu is the main "knobs and buttons" reference card for CCA8 experiments.
+
+NOTE (current runner behavior)
+------------------------------
+Menu 41 is currently "reference-only":
+- The Phase VII daily-driver memory pipeline is hardwired at startup (see apply_hardwired_profile_phase7).
+- This menu prints a cheat sheet and returns to the main menu (it does not run an interactive edit flow right now).
+
+Mental model you should have to understand these settings
+---------------------------------------------------------
+
+At runtime it helps to keep FOUR memory structures in mind:
+
+1) BodyMap (ctx.body_world)
+   - Tiny, safety-critical belief-now register (posture, mom distance, nipple/milk, shelter/cliff).
+   - Updated on every EnvObservation tick; read by gates and tie-break logic.
+
+2) WorkingMap (ctx.working_world)
+   - Short-term working memory with three layers:
+     - MapSurface (WM_ROOT + entity nodes): stable, overwrite-by-slot-family belief table.
+     - Scratch (WM_SCRATCH): policy action chains + predicted postconditions (hypotheses).
+     - Creative (WM_CREATIVE): counterfactual rollouts (future; inspect-only scaffolding today).
+   - By default this is NOT a dense tick-log: MapSurface updates entity nodes in place.
+     (Optional: ctx.working_trace=True appends a legacy per-tick trace for debugging.)
+
+3) WorldGraph (world)
+   - Durable long-term episode index that persists (autosave / save session).
+   - Receives EnvObservation injection (subject to the "long-term env obs" knobs).
+   - Receives policy writes unless Phase VII working_first is enabled (then policies execute into WorkingMap).
+
+4) Columns / Engrams (cca8_column.mem)
+   - Heavy payload store (append-only / immutable records).
+   - WorldGraph/WorkingMap bindings hold only pointers (binding.engrams["column01"]["id"]=...).
+
+Fixed dataflow (env → agent boundary)
+-------------------------------------
+EnvObservation → BodyMap update (always) → WorkingMap mirror (if enabled) → WorldGraph injection (if enabled)
+
+Keyframes are decided at the env→memory boundary hook (inject_obs_into_world) BEFORE policy selection.
+
+Cue-slot de-duplication (long-term)
+-----------------------------------
+In changes-mode we can de-duplicate repeated cue tokens:
+- rising edge (absent→present) writes a cue:* binding
+- held cues do not create new bindings; they bump prominence on the last cue binding
+- if a cue disappears and later reappears, a new cue:* binding is written again
+
+Long-term EnvObservation → WorldGraph injection
+-----------------------------------------------
+longterm_obs_enabled (bool)
+  ON  : write env predicates/cues to WorldGraph (subject to mode settings)
+  OFF : skip long-term WorldGraph writes (BodyMap still updates; WorkingMap still mirrors if enabled)
+
+longterm_obs_mode ("snapshot" vs "changes")
+  snapshot : write every observed predicate each tick (dense; old behavior)
+  changes  : treat predicates as state-slots (posture, proximity:mom, hazard:cliff, ...)
+             write only when a slot changes (plus optional re-asserts/keyframes)
+
+longterm_obs_reassert_steps (int)
+  In changes mode: re-emit an unchanged slot after N controller steps (a "re-observation" cadence).
+
+longterm_obs_dedup_cues (bool)
+  In changes mode: write cue:* only on rising-edge (absent→present); held cues bump prominence instead.
+
+longterm_obs_verbose (bool)
+  In changes mode: print verbose per-slot reuse lines when slots are unchanged (can be noisy).
+
+Keyframes (episode boundaries)
+------------------------------
+In changes mode we maintain per-slot caches (ctx.lt_obs_slots and ctx.lt_obs_cues).
+A keyframe clears those caches so the current state is written again as a clean boundary snapshot.
+
+Keyframe triggers (Phase IX; evaluated ONLY at the env→memory boundary hook):
+  - env_reset: time_since_birth <= 0.0
+  - stage_change: scenario_stage changed (longterm_obs_keyframe_on_stage_change)
+  - zone_change: coarse safety zone flip (longterm_obs_keyframe_on_zone_change)
+  - periodic: every N controller steps (longterm_obs_keyframe_period_steps)
+  - surprise: pred_err v0 sustained mismatch (longterm_obs_keyframe_on_pred_err + min_streak)
+  - milestones: env_meta milestones and/or derived slot transitions (longterm_obs_keyframe_on_milestone)
+  - emotion/arousal: env_meta emotion/affect (rising-edge into "high") with threshold
+                     (longterm_obs_keyframe_on_emotion + emotion_threshold)
+
+Keyframe semantics (what "happens at a boundary"):
+  - clear long-term slot caches (so the next observation writes as "first" for each slot)
+  - (if Phase VII WM<->Column pipeline is enabled) boundary store/retrieve/apply can run:
+        store snapshot → optional retrieve candidates → apply priors (replace or seed/merge)
+    Reserved future: post-execution write-back / reconsolidation slot.
+
+Manual keyframe (without env.reset):
+  - clearing ctx.lt_obs_slots (and ctx.lt_obs_cues) forces the next env observation to be treated as "first".
+
+Phase VII memory pipeline knobs (WorkingMap-first + run compression)
+--------------------------------------------------------------------
+phase7_working_first (bool)
+  OFF: policies write into WorldGraph (action/preds accumulate there)
+  ON : policies execute into WorkingMap.Scratch; WorldGraph stays sparse (env keyframes + pointers + runs)
+
+phase7_run_compress (bool)
+  If ON: long-term WorldGraph action logging collapses repeated identical policies into one "run" node:
+    state → action(run_len=3) → state
+  A boundary (stage/posture/nipple/zone signature change) or policy change closes the run.
+
+phase7_move_longterm_now_to_env (bool)
+  OFF: long-term NOW moves only when new bindings are written (or at keyframes)
+  ON : long-term NOW is actively moved to the current env state binding each step (debug-friendly)
+
+RL policy selection (epsilon-greedy among triggered candidates)
+--------------------------------------------------------------
+rl_enabled (bool)
+  OFF: deterministic winner: deficit → non-drive tie-break → stable order
+  ON : epsilon-greedy: explore with probability epsilon; otherwise exploit:
+       deficit near-tie band (rl_delta) → non-drive tie-break → learned q → stable order
+
+rl_epsilon (float|None)
+  Exploration probability in [0..1]. If None, we use ctx.jump as a convenience default.
+
+rl_delta (float)
+  Defines the deficit near-tie band within which q is allowed to decide among candidates.
+
+(For full examples and the authoritative contract, see README.md: keyframes, WM<->Column pipeline, and cognitive cycles.)
+""")
 
             # Control panel: RL policy selection + WorkingMap + long-term WorldGraph obs injection
             print("Selection: Control Panel (RL policy selection + memory knobs)\n")
-            print("""[guide] This menu is the main "knobs and buttons" control panel for CCA8 experiments.
-
-Mental Model You Should Have to Understand these Settings
----------------------------------------------------------
-
-At runtime you should consider three graphs operating in the CCA8 simulation:
-
-1. WorkingMap ( ctx.working_world ) -- This is a short-term raw trace scratchpad. In a way, analagous to mammalian
-    short-term memory (a component of WM)/ Working Memory, although for real Working Memory need all the associated
-    processing methods. Keep in mind that in the CCA8 we are not limited to the biological constraints of the brain.
-
-   -WorkingMap receives all the raw inputs. It is designed to be a dense, clock tick-level recording, pruned by
-        working_max_bindings and only certain parts of it later consolidated to WorldGraph.
-
-2. WorldGraph ( world ) -- This is the large, durable knowledge representation that persists (autosave/ save session).
-        It is analagous to the mammalian neocortex (as well as other areas).
-
-   -WorldGraph receives the EnvObservation injection (i.e., processed simulated environment sensory signals) predicates and cues,
-    which depend on the "Long-term env obs" knob settings.
-   -WorldGraph receives all the policy writes unless the "Phase VII working_first" is enabled, in which case policy writes go
-    to the WorkingMap instead.
-
-3. BodyMap ( ctx.body_world ) -- This is a small, safety-critical map of the agent's body and surroundings, i.e., in the present
-   moment. It is used largely at present for gating and tie-break of what is the best policy to choose, and zone classf'n.
-
-   -Note that in the brain our egocentric maps, i.e., map of the agent's body and relation to immediate surroundings, is largely
-    within the posterior parietal cortex, where vision, touch, proprioception are all integrated to create an egocentric
-    reference frame. On the other hand, in the hippocampus there is largely an allocentric map, i.e., a 'bird's-eye view' of the
-    world, using its grid and place cells to map the layout of the environment independent of the body's orientation (e.g., if
-    the agent turns 180 degrees the map still stays the same). At the time of writing, we don't have a clear analogous
-    hippocampal map, but instead use the WorldGraph and the WorkingMap for this purpose.
-
-4. Cue-slot Deduplication -- Just as we avoiding filling up WorldGraph with the same predicate bindings over and over again (e.g.,
-    mountain goat trying to stand up 5 times will otherwise give 5 sets of these predicate bindings) (and we use 'prominence' instead
-    to count how many times nodes are activated), we can de-duplicate repeated sensory cues so we don't have dozens of the same cue
-    bindings created for the same episode.
-    -If a cue appears that wasn't then we write a cue:* binding.
-    -If a cue repeats then we don't create additional bindings but increment prominence.
-    -If it disappears and then reappears later, then we do write another cue:* binding.
+            #print("""[guide] This menu is the main "knobs and buttons" control panel for CCA8 experiments.
 
 
-Key ideas
----------
-  • WorkingMap (ctx.working_world): short-term raw trace. If enabled, every EnvObservation is mirrored here
-    (episodic, write-everything). It is capped by working_max_bindings via pruning.
-    -If ENABLED=TRUE ( ctx.working_enabled) then every EnvObservation is mirrored into WorkingMap (pred + cue).
-        Note: inject_obs_into_world(...) first injects into BodyMap update (always), then WorkingMap mirror (if enabled), then
-            WorldGraph (if enabled)
-        Note: Long-term env obs enabled = TRUE (default setting) + if WorkingMap enabled = TRUE then same preds, cues to both.
-        Note: This writing occurs according to mode = changes/snapshot, plus keyframes, etc.
-        Note: If Long-term env obs enabled = FALSE (ctx.longterm_obs_enabled=False) then preds, cues go only to WorkingMap.
-    -If WorkingMap ENABLED=FALSE then WorkingMap exists but won't gent new injections of cues and predicates from the simulated processed environment.
-    -verbose = TRUE then prints '[env->working] pred:... ->bid ' lines each tick.
-    -max_bindings ( ctx.working_max_bindings) is how large WorkingMap is allowed to get and then will delete older nodes but
-        keeps anchors.
-    -note: if working_enabled=True and longterm_obs_enabled=True then same EnvObservation written to WorkingMap and WorldGraph
-
-  • WorldGraph memory_mode:
-      episodic = every add_predicate/add_cue call creates a new binding (dense episodic trace).
-        -every add_predicate(...) creates a new binding even if that tag already exists.
-        -each time somehting happens it becomes a new node in the graph even if the same tag as before, and thus graph essentially
-            acts as a literal event log; in a literal timeline you can count occurrences, see ordering, attach metadata to
-            certain instances of the event; the keyframe segmentation however stays visible.
-      semantic = reuse identical pred/cue bindings to reduce clutter (experimental).
-        -if an identical tag already exists, reuse that existing binding id instead of allocating a new one.
-        -do not have a literal timeline, i.e., repeated events collapse and you lose 'how many times/when exactly aspect'.
-        -labeled experimental at time of writing since reduces clutter but changes temporal semantics
-
-  • Long-term EnvObservation → WorldGraph injection (this is enforced):
-      mode=changes => write pred:* only when a state-slot changes (posture, proximity:mom, hazard:cliff, ...).
-                      optional reassert_steps can re-emit unchanged slots periodically.
-                      -note that only pred:* is slot-deduped; cues remain episodic so repeated cues written unless
-                        use WorldGraph memory_mode=semantic or disable long-term env injection.
-      mode=snapshot => write every observed pred:* each tick (old behavior).
-      keyframe_on_stage_change forces a one-tick "fresh snapshot" when scenario_stage changes (helps separate contexts).
-      -IF ENABLED=FALSE ( ctx.longterm_obs_enabled=False ) then envrt preds, cues do not get wirtten to worldGraph
-        (but BodyMap still updates and WorkingMap updates based on its own settings).
-      -IF ENABLED=SNAPSHOT then write all preds each tick (old write-everything behavior).
-      -IF ENABLED=CHANGES then write preds only when its "state slot" changes or optional reassert/keyframes change.
-            -IF reassert_steps=TRUE then even if a slot is unchanged, re-emit it after N controller steps, i.e., this
-                allows a period 're-observation'
-            -IF keyframe_on_stage=TRUE then when scenario_stage changes (e.g., birth-> struggle), it clears the slot
-                cache so the next tick writes a fresh snapshot, i.e., keyframe segmentation
-       [mental model for understanding the 'changes mode' -- it uses a 'slot cache' to avoid rewriting the same state over
-        and over again. If ctx.longterm_obs_mode="changes" then each environtment predicate token treated as (slot, value)
-        e.g., pred token proximity:mom:far therefore slot key is 'proximity:mom', and this way get, e.g., proximity:mom,
-        posture, hazard:cliff, etc. 'state slots'
-        -once have idea of state slots can understand if slot never been seen then emit('first'); if slot token differs then
-        emit('changed') but if token identical then skip (unless reassert_steps forces periodic re-write).  ]
-       -VERBOSE then prints reuse lines for each unchanged predicate slot.
-
-  • RL policy selection (epsilon-greedy among triggered candidates):
-    -This is policy selection behaviour when multiple policies trigger, i.e., the 'best policy' has to be picked and this
-        can be done under non-RL conditions or RL-conditions (see READMD.md or menu selection "Cognitive Cycle" for more details).
-        If False == NOT enbabled -- non-RL, i.e., deterministic selection of best policy: DELTA-band deficit values, then non-drive tie-break,
-            stable order tie-break.
-        IF True == enabled -- RL mode, i.e., epsilon-greedy selection of best policy:
-            IF EPSILON (ctx.rl_epsilon) == True, then certain % that by luck will "explore" rather than follow decifict
-                heuristic, and randomly pick a best policy; epsilon 0 to 1, thus .1 means 10% chance explore, 90% chance exploit
-                Note: 10% chance among all triggered candidate policies (i.e., policy still has to be triggered).
-            IF  EPSILON == 0.0 then 0% explore, 100% exploitation, i.e, deterministic selection of best policy
-            -RL exploitation to decide best policy: deficit values within DELTA band, then non_drive values, then learned q values,
-                then stable order.
-        -JUMP is an older knob ( ctx.jump ) is event-boundary jump scale for TemporalContext soft-clock whereby
-            sigma=per-tick drift, jump ='bigger change' at boundarie, how much we change when a boundary appears
-            IF EPSILON == None then effective_epsilon = ctx.jump, e.g., see something printed out like 'epsilon=None, effective=0.200',
-                which means you didn't set rl_epsilon so the software is using jump =0.200 as the exploration probability
-        ==> If want RL enabled but no randomness then set rl_enabled = ON, rl_epsilon = 0.0 (otherwise will get rl_epsilon = <jump value>
-        ==> If want RL to choose among policies even when deficits differ a bit, set a larger DELTA
-
-
-Settings
---------
-
--Current Settings -- what the current settings are. You can change them in the sections which follow.
-- Note that to speed up entry of settings, you can pess Enter to keep current values.
-
--Presets are quick configure shortcuts that set the long-term env obs injection knobs with the settings as shown
-    for you to choose, e.g., bio sets changes enabled=True, keyframes True and reassert every 25 steps  versus
-    e.g., debug sets snapshots enabled=True and verbose=True, so writes every predicate each tick
-
---Phase7 s/w dev't  -- these settings are software development phase7 (scaffolding for converting the architecture's memory pipeline to
-    model described above); they are OFF by default.
-    -working_first - OFF by default and thus policies write into long-term WorldGraph (action/preds accumulate there).
-    -working_first=ON then policies execute into WorkingMap instead, and WorldGraph stays sparser with mostly keyframes,
-        cues, 'runs', once run_compress is on
-    -run_compress =TRUE then WorldGraph stops logging each repeated policy execution as its own action node, but instead
-        keeps one 'open run' per repeated policy and just updates its metadata.
-        e.g., instead of state=fallen -> action stand_up -> action stand_up -> action stand_up -> state=standing,
-        you get:  state=fallen -> action stand_up(run len=3) -> state=standing
-        -key idea is that one node represents a contiguous run of the same policy
-        -if a boundary occurs (stage/posture/nipple/zone signature changes, e.g.) or the policy changes, then close
-            the old run and start a new run node
-    -move_longterm_NOW-to_env -- moves long-term NOW to env state each step; about anchor semantics
-        -in changes mode, if env didn't change then don't write a new predicate which means NOW might not move
-        -if OFF then NOW only moves when something is written or at keyframes
-        -if ON then NOW actively repositioned to current env's binding state each step, and NOW behaves like currrent world pointer.
-
--Clear WorkingMap -- resets WorkMap which can be useful when you want to start a fresh short-term window with resetting the
-    environment.
--Clear long-term slot cache now -- a manual keyframe so that the next env observation is treated as 'first'
-
-""")
 
             loop_helper(args.autosave, world, drives, ctx)
             continue
@@ -12847,13 +14661,13 @@ Settings
                 ctx.longterm_obs_enabled = True
                 ctx.longterm_obs_mode = "changes"
                 ctx.longterm_obs_reassert_steps = 25
-                ctx.longterm_obs_keyframe_on_stage_change = True
+                ctx.longterm_obs_keyframe_on_stage_change = False
                 ctx.longterm_obs_verbose = False
             elif preset in ("sparse", "minimal"):
                 ctx.longterm_obs_enabled = True
                 ctx.longterm_obs_mode = "changes"
                 ctx.longterm_obs_reassert_steps = 0
-                ctx.longterm_obs_keyframe_on_stage_change = True
+                ctx.longterm_obs_keyframe_on_stage_change = False
                 ctx.longterm_obs_verbose = False
             elif preset in ("debug", "trace"):
                 ctx.longterm_obs_enabled = True
@@ -13000,11 +14814,12 @@ Settings
 
             raw_kf = input("keyframe_on_stage_change? [Enter=toggle | on | off]: ").strip().lower()
             if raw_kf in ("on", "true", "1", "yes", "y"):
-                ctx.longterm_obs_keyframe_on_stage_change = True
+                ctx.longterm_obs_keyframe_on_stage_change = False
             elif raw_kf in ("off", "false", "0", "no", "n"):
                 ctx.longterm_obs_keyframe_on_stage_change = False
             elif raw_kf == "":
-                ctx.longterm_obs_keyframe_on_stage_change = not bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True))
+                #ctx.longterm_obs_keyframe_on_stage_change = not bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True))
+                ctx.longterm_obs_keyframe_on_stage_change = False
 
             raw_lv = input("longterm_obs_verbose (show reuse lines)? [Enter=toggle | on | off]: ").strip().lower()
             if raw_lv in ("on", "true", "1", "yes", "y"):

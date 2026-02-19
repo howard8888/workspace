@@ -208,9 +208,9 @@ Environment truth (storyboard state):
 
 [env] ... stage=... posture=... mom=... nipple=...
 
-Keyframes (stage/zone boundaries):
+Keyframes (episode boundaries) (for example):
 
-[env→world] KEYFRAME: ...
+[env→world] KEYFRAME: periodic(step=20, period=10)
 
 [wm<->col] store: ...
 
@@ -231,6 +231,72 @@ v0 is intentionally minimal (posture only)
 **Per-cycle summary (fast sanity line):**
 
 [env-loop] summary ... env_step=... stage=... env_posture=... bm_posture=... last_policy=... zone=...
+
+
+### How to Read the Cognitive Cycle Summary (at time of writing)
+
+During **menu 37** closed-loop runs, each cognitive cycle ends with a short **footer block** intended for fast human scanning.
+This footer is intentionally pragmatic and is **under constant development** as Phase IX evolves; treat it as a reading aid,
+not a stable API.
+
+You will see lines with the prefix:
+
+- `[cycle] IN`  — “important inputs” for this cycle: env_step, stage, posture, mom/nipple, zone, drives, and the action that
+  the environment applied on this tick (the action was chosen on the prior cycle).
+- `[cycle] WM`  — **WorkingMap** summary:
+  - `surfaceΔ` lists coarse slot changes (posture / proximity / hazard / nipple) derived from EnvState truth.
+  - `scratch` reports which policy executed and how many bindings it wrote (typically into **WM_SCRATCH** when execute_on=WM).
+- `[cycle] WG`  — **WorldGraph** long-term injection summary: how many `pred:*` and `cue:*` bindings were written this tick
+  (in `changes` mode, this may be `preds+0` when slots are unchanged).
+- `[cycle] COL` — **WM⇄Column** keyframe pipeline summary (store / retrieve / apply). If no keyframe-triggered memory ops ran,
+  the footer will say so explicitly.
+- `[cycle] ACT` — action recap: executed policy name, reward if present in logs, and the **next** action string that will be
+  fed back to `env.step(...)` on the next cycle.
+
+As the system matures (HAL/robotics, richer perception, more WorkingMap semantics), the exact fields may change — the guiding
+principle is constant: **show the smallest digest that lets you visually confirm the architecture is behaving as intended**.
+
+
+
+
+
+### 2b) Terminal tag legend (prefixes) + closed-loop terminology
+
+CCA8 prints many lines with a `[tag]` prefix. These tags are a stable “legend” that lets you skim runs quickly.
+
+**Core env-loop tags**
+- **[env-loop]**: one **closed-loop cognitive cycle** driver iteration (env update → internal updates → policy select/execute).
+- **[env]**: environment-side events and “truth now” (storyboard stage, posture, mom/nipple state, etc.).
+- **[env→working]**: EnvObservation projected into **WorkingMap.MapSurface** (entity/slot updates).
+- **[env→world]**: EnvObservation written into the **WorldGraph** (long-term episode index).
+- **[wm<->col]**: WorkingMap ⇄ Column keyframe pipeline:
+- **store** writes a MapSurface snapshot engram + a lightweight pointer binding; **retrieve** ranks past snapshots
+  by context (stage/zone/signature) while excluding the just-stored one; **apply** injects priors (merge/seed) into WorkingMap.
+- **[pred_err]**: prediction error v0 (expected vs observed posture); used for retrieval gating and for action shaping
+  (a small negative reward shaping update is applied after mismatch streaks).
+- **[gate:<policy>]**: a specific gate/trigger’s diagnostic readout (drives, BodyMap stale, zone classification, etc.).
+- **[pick]**: which policy won this cycle and why (deficits / non-drive tie-break / RL note if enabled).
+- **[executed]**: the chosen policy executed (its internal success/reward signal; confirmation is via NEXT cycle’s observation).
+- **[maps]**: which map was used to **select** vs **execute** (e.g., `selection_on=WG execute_on=WM`).
+- **[obs-mask]**: partial observability masking (token drops), when enabled.
+
+**Important terminology (to avoid “step” ambiguity)**
+- **Cognitive cycle (closed-loop)**: EnvObservation arrives → maps update → policy select/execute → action fed back to env.  
+  (Printed as “Cognitive Cycle i/N” in menu 37.):contentReference[oaicite:3]{index=3}
+- **env_step / step_index**: the environment’s internal counter since env.reset() (0-indexed).:contentReference[oaicite:4]{index=4}
+- **controller step**: one Action Center invocation (“what should I do now?”). In menu 37, we do one controller step per cognitive cycle.
+
+**Environment simulator vs “world model” (AI literature note)**
+In modern AI literature, a “world model” usually means an agent’s **internal learned predictive model**.
+In CCA8, **HybridEnvironment** is the external **simulated world** (ground truth generator), not the agent’s learned world model.
+CCA8’s internal “world model-ish” content is distributed across:
+- BodyMap (fast “belief now” registers),
+- WorkingMap.MapSurface (entity/slot belief table),
+- WorldGraph (long-term episode index),
+- Columns/Engrams (heavy stored map snapshots),
+plus predicted postconditions in Scratch (hypotheses) and prediction-error signals on the next cycle.
+
+
 
 
 
@@ -2533,64 +2599,99 @@ Q: Is load failure fatal?  A: No, runner continues with a fresh session.
 
 ## Intro Glossary
 
-- **Predicate** — symbolic fact token (atomic).  
-- **Binding** — node that carries predicate tag(s) and holds meta/engrams/edges.  
-- **Edge** — directed relation labeled `"then"`, encoding episode flow.  
-- **WorldGraph** — the episode index graph.  
-- **Policy** — primitive behavior with `trigger` + `execute`.  
-- **Action Center** — ordered scan of policies, runs first match per controller step  
-- **Drives** — homeostatic variables (hunger/fatigue/warmth) that generate drive flags for triggers.  
-- **Engram** — pointer to heavy content (features/sensory/temporal traces) stored outside the graph.  
-- **Provenance** — `meta.policy` stamp recording which policy created a binding.
-  
-  
 
-**Predicate (tag)**  
-Namespaced symbolic token (string) carried by a binding, e.g., `pred:stand`, `pred:mom:close`, `pred:milk:drinking`. A binding can carry multiple predicates.
 
-**Binding (node / episode)**  
-A time-slice container that holds: predicate tags, lightweight `meta`, and **pointers** to rich engrams (not the engrams themselves).
+This glossary is intentionally “runner-facing”: terms are defined in the way you see them in menu output and snapshots.
 
-**Edge (directed link)**  
-A directed connection `src → dst` with optional relation label (e.g., `approach`, `search`, `latch`, `suckle`). Think temporal/causal adjacency.
+### A) One-line cheat sheet (high frequency terms)
 
-**Anchors**  
-Special bindings (e.g., `NOW`). Use **World stats** to find the actual binding ID (e.g., `NOW=b0`).
+- **HybridEnvironment**: the external (simulated) world; produces observations from actions.
+- **EnvState**: environment “truth” (the simulator’s internal state).
+- **EnvObservation**: the observation packet crossing into the agent (predicates/cues + env_meta).
+- **Closed-loop cognitive cycle**: one env↔agent iteration: observe → update → select/execute → feedback action.
+- **controller step**: one Action Center invocation (policy arbitration + possible write).
+- **ctx (Ctx)**: runtime context object: cross-cycle counters + knobs + caches (the runner↔engine seam).
+- **WorldGraph (WG)**: long-term symbolic episode index: bindings + edges + anchors + pointers to engrams.
+- **Binding**: a node (“episode card”) with tags (pred/cue/action/anchor) plus meta/engrams/edges.
+- **Edge**: directed link `src → dst`, usually label `"then"` for episode flow (label is an annotation).
+- **Anchors**: named pointers into a graph (NOW, NOW_ORIGIN, HERE, etc.).
+- **BodyMap**: fast belief registers for gating (posture, distances, nipple state, zone, staleness).
+- **WorkingMap (WM)**: short-term workspace graph; contains MapSurface + Scratch + Creative subregions.
+- **MapSurface**: WM’s stable entity/slot table (“what I believe now”); updated in-place each cycle.
+- **Scratch**: WM’s procedural trace (state–action–state chains; predicted postconditions).
+- **Engram / Column**: heavy payload store (e.g., MapSurface snapshots); WG stores pointers to these.
+- **Keyframe**: a boundary cycle where we may store/retrieve/apply WM snapshots (WM⇄Column pipeline).
+- **Prediction error (pred_err v0)**: mismatch between predicted postcondition and next observation.
 
-**WorldGraph**  
-Holds bindings + edges and fast tag→binding indexes for planning and lookup (~the compact symbolic 5%).
+---
 
-**Engram (rich memory)**  
-Large payloads stored outside the graph and referenced by pointers from bindings (~the rich 95%). Resolved via the column provider.
+### B) MapSurface terminology: entity vs slot-family (the core idea)
 
-**Column provider**  
-`cca8_column.py` resolves binding→engrams and manages simple engram CRUD for demos.
+**Entity** = “the thing we are talking about.”  
+Examples: `self`, `mom`, `shelter`, `cliff`.
 
-**Policy**  
-Trigger (conditions on predicates/drives/sensory cues) + primitive (callable). Lives in code (`cca8_controller.py`), not in the graph.
+**Slot-family** = “the attribute channel we store for that entity.”  
+Examples: `posture`, `proximity:mom`, `proximity:shelter`, `hazard:cliff`, `nipple`.
 
-**Drives**  
-Scalar homeostatic variables (0–1): `hunger`, `warmth`, `fatigue`. When crossing thresholds, the runner emits drive flags like `drive:hunger_high`.
+**Value** = the current value in that slot-family.  
+Examples: `fallen`, `standing`, `close`, `far`, `hidden`, `found`, `latched`.
 
-**Search knobs**
+Concrete example (EnvObservation token → MapSurface update):
+- EnvObservation predicate `pred:posture:fallen` becomes:
+  - Entity = `self`
+  - Slot-family = `posture`
+  - Value = `fallen`
+MapSurface semantics: overwrite within a slot-family (exactly one current value per slot-family).
 
-* `k`: branch cap during expansion (smaller = decisive, larger = broader).
+---
 
-* `sigma`: small Gaussian jitter to break ties/avoid stagnation.
+### C) Policy selection terms: gate vs trigger vs execute
 
-* `jump`: ε-exploration probability to occasionally take a random plausible move.
+- **Gating (dev/safety gate):** “Is this policy even allowed in the candidate set right now?”
+- **Triggering:** “Given world + drives + BodyMap, does this policy want to run now?”
+- **Executing:** among triggered candidates, choose ONE winner and run it.
 
-**Cues & ticks**
+**Action Center**: the policy runtime that forms the triggered candidate set and selects **one winner**.
+Current selection rule (high-level):
+deficit (drive-urgency) → non-drive tie-break → (if RL enabled: q tie-break inside near-tie band) → stable order.
 
-* **Sensory cue** adds transient evidence (vision/smell/sound/touch).
+---
 
-* **Autonomic tick** updates drives (e.g., hunger rises) and can emit drive flags.
+### D) Timekeeping and counters
 
-**Instinct step**  
-One step chosen by the controller using policies + drives + cues. You can accept/reject proposals.
+- **env_step / step_index**: environment step since last reset (0-indexed).
+- **controller_steps**: count of Action Center invocations.
+- **cog_cycles**: count of “meaningful” cognitive iterations; canonically the env-loop cycle counter.
 
-**Planning**  
-BFS-style search from the `NOW` anchor to any binding carrying a target predicate (`pred:<name>`), traversing directed edges.
+(See “Tutorial on Timekeeping” and “Tutorial on Cognitive Cycles” for the full contract.)
+
+---
+
+### E) Startup knobs you will see in the banner / profile line
+
+- **sigma**: TemporalContext drift noise scale (how fast the soft clock wanders during step()).
+- **jump**: TemporalContext boundary noise scale (how distinct chapters feel after boundary()).
+- **winners_k / k**: reserved “top-k winners” knob for future competitive selection (e.g., WTA / multi-proposal arbitration).
+  Today it is mostly a profile label and a forward-compatible parameter.
+
+---
+
+### F) Attach modes (how new bindings are wired)
+
+- `attach="now"`: create NOW → new edge (then) and update LATEST.
+- `attach="latest"`: create LATEST → new edge (then) and update LATEST.
+- `attach="none"`: create a floating binding (valid but disconnected until you add an edge).
+
+---
+
+### G) “World model” terminology (AI literature vs CCA8)
+
+In common AI usage, a “world model” usually means the agent’s internal learned predictive model.
+In CCA8:
+- HybridEnvironment is the external *simulated world* (truth generator).
+- The internal “world model-ish” belief lives in BodyMap + WorkingMap.MapSurface (+ priors from Column snapshots),
+  with WorldGraph acting as the long-term episode index and pointer scaffold.
+
 
 
 
@@ -3058,6 +3159,7 @@ This aligns with the CCA7 article’s emphasis on verifiers + provenance, withou
 
 CCA8 uses five orthogonal time measures. They serve different purposes and are intentionally decoupled.
 
+
 **1) Controller steps** — one Action Center decision/execution loop (aka “instinct step”).  
 *Purpose:* cognition/behavior pacing (not wall-clock).  
 *Source:* a loop in the runner that evaluates policies once and may write to the WorldGraph. When that write occurs, we mark a **temporal boundary (epoch++)**. :contentReference[oaicite:0]{index=0}
@@ -3077,32 +3179,38 @@ With regards to terminology and operations that affect controller steps:
 **“Autonomic tick”** = physiology + **one controller step**.
 **“Simulate fall”** = inject fallen + **one controller step** (no drift) (but no cognitive cycle increment)
 
+
 **2) Temporal drift** — the *soft clock* (unit vector) that drifts a bit each step and jumps at boundaries.  
 *Purpose:* similarity + episode segmentation that’s unitless and cheap (cosine of current vs last-boundary vector).  
 *Drift call:* `ctx.temporal.step()`; *Boundary call:* `ctx.temporal.boundary()`; vectors are re-normalized every time. See module notes on drift vs boundary. :contentReference[oaicite:1]{index=1}  
 *Runner usage:* we drift once per instinct step and once per autonomic tick in the current build; boundary is taken when an instinct step actually writes new facts. :contentReference[oaicite:2]{index=2}
+
 
 **3) Autonomic ticks** — a fixed-rate heartbeat (physiology/IO), independent of controller latency.  
 *Purpose:* hardware/robotics cadence; advancing drives; dev-age.  
 *Source variable:* `ctx.ticks` (int).  
 *Where incremented today:* the **Autonomic Tick** menu path increments `ticks`, nudges drives, and performs a drift; it can also trigger a thresholded boundary. :contentReference[oaicite:3]{index=3} :contentReference[oaicite:4]{index=4}
 
+
 **4) Developmental age (days)** — a coarse developmental measure used for stage gating.  
 *Source variable:* `ctx.age_days` (float), advanced along with autonomic ticks; used by `world.set_stage_from_ctx(ctx)`. :contentReference[oaicite:5]{index=5}
 
-**5) Cognitive cycles** — a derived counter for CLOSED-LOOP env↔controller iterations  
-(EnvObservation → internal update → (keyframe optional store/retrieve/apply) → policy select/execute → action feedback to env).
 
-*Purpose:* progress gating & timeouts (e.g., “if no success in N cycles, switch strategy”), analytics.
+**5) Cognitive cycles** — a derived counter for “meaningful sense→decide→act” iterations
 
-*Source variable:* `ctx.cog_cycles` (int).  
-*Where incremented today:* in the HybridEnvironment closed-loop paths (menu 37; menu 35 is an alias that runs one closed-loop step), once per env↔controller iteration (ordinary or keyframe).
-*Not incremented by:* controller-only paths (Instinct Step, Autonomic Tick, Simulate Fall), which can still advance `controller_steps` and temporal drift.
+In CCA8, the most canonical “cognitive cycle” is the **closed-loop env↔controller iteration** used by menu 37:
+EnvObservation → internal update (BodyMap/WorkingMap/WorldGraph as configured) → policy select/execute → action feedback to env.:contentReference[oaicite:8]{index=8}
 
-*Contrast with controller steps:* `controller_steps` counts every Action Center invocation; within menu 37 runs, we execute exactly one controller step per cognitive cycle, so in those runs `controller_steps` and `cog_cycles` advance together. Outside the env-loop, `controller_steps` may advance without `cog_cycles`.
+*Source variable:* `ctx.cog_cycles` (int).
 
-*Recommended invariants:* `cog_cycles ≤ controller_steps`; epochs (`ctx.boundary_no`) increment only on boundary jumps (writes or τ-cuts), never decrement.
+*Where incremented today (current runner behavior):*
+- **Env-loop (menu 37; menu 35 alias)**: increments once per closed-loop iteration (ordinary or keyframe).
+- **Controller-only “Instinct step” path:** currently increments **only when the controller wrote new bindings** (i.e., a real state/action update occurred).  
+  (This is a temporary “meaningful write = cycle” definition while we continue to harden the explicit sense→process→act loop.)
 
+*Contrast with controller steps:* `controller_steps` counts every Action Center invocation; in menu 37 runs they typically advance together (1 controller step per closed-loop cycle). Outside the env-loop, `controller_steps` may advance without `cog_cycles` (e.g., no-op decisions), and `cog_cycles` may increment only on a successful write.
+
+*Recommended invariant:* `cog_cycles ≤ controller_steps`.
 
 
 ### Event boundaries & epochs
@@ -3155,7 +3263,7 @@ A: Wall-clock is great for logs and cross-run inspection, but awkward for unitle
 
 
 
-# Tutorial on Cognitive Cycles]
+# Tutorial on Cognitive Cycles
 
 
 
@@ -3513,6 +3621,20 @@ Log line format (example):
 [pred_err] v0 err={'posture': 1} pred_posture=standing obs_posture=fallen from=policy:stand_up
 
 
+**Action shaping ("extinction pressure”)**
+
+When the same policy repeatedly predicts a posture postcondition and the next EnvObservation contradicts it,
+CCA8 applies a small **negative shaping reward** to that policy’s skill ledger value (`SkillStat.q`).
+
+- The penalty is applied only after a short mismatch streak (>=2) to avoid punishing the normal “first mismatch after reset”
+  where the environment has not yet consumed the last action.
+- This creates a biologically-inspired “stop repeating actions that do not work” pressure without requiring a full RL backend.
+
+You may see an additional line during menu 37 runs:
+
+[pred_err] shaping: policy=policy:stand_up reward=-0.15 (streak=2) q=+0.42
+
+This shaping affects RL tie-break behavior (`q`) and also feeds the discrepancy-history used by some non-drive tie-breaks.
 
 
 
@@ -3684,7 +3806,40 @@ We also dedup snapshots using a signature so we don’t store the same map 100 t
 
 ---
 
+## WorkingMap <-> Column (wm<->col): what is stored and what “merge” reconstitutes
+
+When you see:
+
+[wm<->col] store: ok sig=... bid=bNN eid=XXXXXXXX…
+
+**eid=... (the payload)** is a Column engram record whose payload is a serialized **wm_mapsurface_v1** snapshot:
+- entities (stable ids like self/mom/shelter/cliff)
+- per-entity slot values (e.g., posture, proximity:mom, hazard:cliff, ...)
+- selected WorkingMap relations that represent spatial/scene structure (when present)
+- minimal context meta (stage, zone, epoch, created_at, etc.)
+
+**sig=... (the signature)** is a compact scene fingerprint derived from MapSurface slot/value content.
+It is used only for deduplication and fast candidate scoring; it is not the memory itself.
+
+**bid=bNN (the pointer binding)** is a lightweight WorldGraph binding that stores the signature and points to the engram id.
+This lets the WorldGraph remain small while Column holds the heavy payload.
+
+### Retrieve
+`retrieve` selects candidate prior snapshots (engrams) using context filters such as stage/zone and similarity scoring,
+and it explicitly excludes the **just-stored** eid to prevent “self-retrieval loops.”
+
+### Apply (merge mode)
+`apply` in merge/seed mode injects priors conservatively into WorkingMap:
+- it does NOT overwrite currently observed slot families
+- it does NOT inject cue:* as “present now” belief (cue leakage guard)
+- it fills only missing slot families and records provenance in meta where helpful
+
+The result is not a time-travel rewrite of truth; it is a **prior** that can be corrected immediately by EnvObservation on subsequent cycles.
+
+
 ### Auto-retrieve: what it means (and what it does NOT mean)
+
+nb. older than above section; revise if necessary
 
 **Auto-retrieve means:**
 At a keyframe (stage/zone boundary), CCA8 automatically tries to pull a previously stored `wm_mapsurface` snapshot from Column memory and apply it to the current WorkingMap as a **prior**.
@@ -4042,14 +4197,123 @@ CCA8 uses several small “maps” as well the large WorldGraph map for its memo
 This subsection distills repeated Q&A from Phase VII–VIII design review into explicit “map contracts” and a quick reading guide
 for env-loop outputs (MapSurface entity table + WorkingMap autosnapshot).
 
+
+
+
 #### One-line roles (“what question does this map answer?”)
 
-- BodyMap: “what is true of my body / peripersonal near-space right now (fast gating)?”
-- WorkingMap.MapSurface: “what do I believe about the scene right now (semantic state table)?”
-- WorkingMap.Scratch: “what did I just try to do, and what outcome did I expect (procedural trace)?”
-- WorkingMap.Creative: “what candidate futures did I simulate (counterfactual rollouts; future)?”
-- WorldGraph (long-term): “what happened over time (episode index + planning skeleton)?”
-- Columns/Engrams: “where does the heavy payload live (stored map instances / scenes / features)?”
+
+- BodyMap:
+  “What is true of my body and peripersonal near-space right now?”
+  Fast, overwrite-style, used for gating and safety.
+
+- WorkingMap.MapSurface:
+  “What do I believe about the current scene right now?”
+  Stable entity+relation map updated in place (overwrite-by-slot-family, not append-log).
+
+- WorkingMap.Scratch:
+  “What did I just try to do, and what outcome did I expect?”
+  Procedural trace and short-lived reasoning scaffolding (action chains + predicted postconditions).
+
+- WorkingMap.Creative:
+  “What candidate futures did I simulate?”
+  Counterfactual rollouts that must not directly mutate MapSurface truth.
+
+- WorldGraph:
+  “What happened over time, and how do I index and traverse episodes?”
+  Long-lived, sparse episode skeleton + pointer scaffold.
+
+- Columns / Engrams:
+  “Where does the heavy representational payload live?”
+  Immutable stored map instances, sensory features, and scene descriptors.
+
+---
+
+#### NavPatch: the map substrate that makes “everything is a navigation map” concrete
+
+CCA8 uses an explicit WorkingMap entity table because it is inspectable and action-ready.
+However, the goal is not a brittle symbol graph. The goal is to treat entities as *handles* into
+richer map structure.
+
+A **NavPatch** is a compact local navigation map fragment that can be owned by an entity or shared
+across entities. It is the unit that allows:
+
+- entity geometry and structure (e.g., “rectangular block”) to be represented as map content,
+- sensory evidence to be represented as map layers without storing raw pixels,
+- approximate matching and merging (non-brittle reuse),
+- hierarchical composition (“concepts link to other navmaps”).
+
+NavPatch is not a new “memory place”; it is content that can live:
+- transiently inside WorkingMap for fast use, and/or
+- persistently as Column engrams, indexed by thin pointers in WorldGraph.
+
+A minimal NavPatch contract (v0):
+- patch_id: stable identifier (local or engram id)
+- frame: coordinate frame label (e.g., self_local, allocentric_stub)
+- extent: patch bounds in that frame (meters or normalized units)
+- representation:
+  - either a small grid with layered fields (occupancy / hazard / affordance / salience),
+  - or a vector form (polygons / line segments / keypoints),
+  - or both (hybrid)
+- links:
+  - transforms to other patches (pose constraints, adjacency, containment)
+  - optional semantic links to “concept patches” (map-of-maps)
+
+---
+
+#### Memory pipeline component contracts
+
+These contracts define the interfaces between modules so we can evolve the internals while keeping
+the system stable and testable.
+
+Environment side:
+- EnvState:
+  Ground-truth simulator state. Agent must never read it directly.
+- PerceptionAdapter:
+  EnvState → EnvObservation
+  May include a stub “raw sensor” layer plus a processed navmap layer.
+
+Boundary packet:
+- EnvObservation:
+  The only per-tick message the agent receives.
+  Contains:
+  - raw_sensors (optional; stubbed in simulation)
+  - predicates (discrete state tokens)
+  - cues (transient evidence tokens)
+  - env_meta (stage/zone/time, etc.)
+
+Agent side updates (per tick):
+- BodyMap updater:
+  EnvObservation → BodyMap
+  Overwrite-style. Must stay small and authoritative for gating.
+
+- WorkingMap updater:
+  EnvObservation (+ optional retrieved priors) → WorkingMap.MapSurface
+  Overwrite-by-slot-family. Must not accumulate multiple competing values within a slot-family.
+
+  Optional:
+  - updates / creates NavPatches and attaches them to entities
+  - stores only summaries in MapSurface slots (the heavy patch can be stored elsewhere)
+
+Keyframes:
+- Keyframe detector:
+  Uses env_meta + gating signals (missingness, prediction error, staleness) to decide boundaries.
+
+- Snapshot store:
+  WorkingMap.MapSurface → Column MapEngram (heavy payload)
+  WorldGraph ← thin pointer binding tagged by context and carrying engram_id
+
+Retrieval as priors:
+- Candidate selection:
+  WorldGraph pointer bindings filtered by context, scored by overlap and signatures.
+- Prior injection:
+  - merge/seed: fill only missing slot families and relations; never inject cue:* as “present now”
+  - replace: rebuild MapSurface from snapshot (debug / strong prior)
+
+Immutability:
+- Column engrams are immutable records.
+- Any update is stored as a new engram, with ancestry recorded in meta, and indexed by a new pointer.
+
 
 ---
 
@@ -4164,19 +4428,202 @@ Legend reminders:
 
 ---
 
-## G. Keyframes: what happens at a boundary (short checklist)
 
-At a keyframe boundary (currently stage/zone changes):
-- WorldGraph long-term slot cache may reset and rewrite the stable state slots
-- MapSurface snapshot is stored to Column (dedup by signature)
-- WorldGraph pointer node is written (tags for stage/zone; carries engram pointer)
-- Optional auto-retrieve may run:
-  - replace mode: rebuild surface from snapshot
-  - seed/merge mode: seed predicates only; do not inject cue:* into live state
-- Temporal epoch/boundary tracking updates
-- Scratch is not cleared automatically (yet) → consider a future Scratch TTL rule
+
+
+## G. Keyframes (episode boundaries): what they do and how they are triggered
+
+A **keyframe** is a special cognitive cycle that we treat as an **episode boundary** (think: “video keyframe”).
+Most cycles are ordinary “sense → update → choose action.” A keyframe cycle is a boundary cycle where we also run
+boundary-only bookkeeping and (optionally) boundary-only memory operations.
+
+Keyframes exist for two practical reasons:
+
+1) **Trace hygiene**  
+   In long-term WorldGraph observation logging (`longterm_obs_mode="changes"`), we normally write only slot changes.
+   A keyframe resets the long-term slot/cue de-dup caches so the next injection can cleanly re-assert stable facts
+   at the new boundary (without spamming every tick).
+
+2) **Memory boundary semantics**  
+   Keyframes are the natural cycles where we run the **WM⇄Column boundary pipeline** (store/retrieve/apply),
+   so priors can influence action selection *at the boundary* without doing heavy memory work on every tick.
 
 ---
+
+### G1) What a keyframe does (boundary semantics)
+
+At a keyframe boundary, the runner may do all of the following (depending on which knobs are enabled):
+
+- **Emit a KEYFRAME log line**: `[env→world] KEYFRAME: <reasons> | cleared ...`
+- **Clear long-term observation caches** (changes-mode): `ctx.lt_obs_slots` (and cue cache) are cleared.
+  This forces the next boundary observation write to behave “snapshot-like” for one tick.
+- **Trigger the WM⇄Column boundary pipeline** (if enabled in your Phase VII/VIII knobs):
+  - store a WorkingMap.MapSurface snapshot to Column (dedup by signature),
+  - write/refresh a thin WorldGraph pointer binding,
+  - optional guarded auto-retrieve + apply (replace or seed/merge).
+- **Temporal bookkeeping** may also treat boundaries as “chapter points” (epoch/boundary tracking), but this is conceptually
+  separate from keyframes: keyframes are *memory/segmentation boundaries*, while TemporalContext is a *soft clock*.
+
+---
+
+### G2) Keyframe triggers (Phase IX)
+
+A keyframe is decided **once per cognitive cycle** at the env→memory boundary hook
+(`inject_obs_into_world(...)`) **before** policy selection. This is deliberate:
+we do not want to split a cycle while a policy is half-written.
+
+Keyframe trigger families (any can force a keyframe this cycle):
+
+
+#### 1) Episode-start keyframe (env reset)
+- Trigger: `env.reset()` produces `time_since_birth <= 0.0`.
+- Reason string example: `env_reset(time_since_birth=0.00)`
+
+
+#### 2) Context discontinuity keyframes (storyboard boundaries)
+- **Stage change** (default ON): scenario stage changed (birth → struggle → first_stand → ...).
+  - Knob: `ctx.longterm_obs_keyframe_on_stage_change`
+- **Zone change** (default ON): coarse safety zone label changed (e.g., safe ↔ unsafe_cliff_near).
+  - Knob: `ctx.longterm_obs_keyframe_on_zone_change`
+
+These are the main storyboard “chapter boundaries.”
+
+
+#### 3) Periodic keyframes (optional; “max-gap” scheduling)
+
+Periodic keyframes exist to guarantee occasional episode boundaries when the world is quiet (robotics / long stretches without milestones).
+
+- Knob: `ctx.longterm_obs_keyframe_period_steps` (0 disables)
+- Optional knob: `ctx.longterm_obs_keyframe_period_reset_on_any_keyframe`
+  - `False` = legacy absolute schedule: fire when `controller_steps % period == 0`
+  - `True`  = reset-on-any-keyframe (recommended): treat periodic as a “max gap since last keyframe”
+    - if any other keyframe happens (env_reset, milestone, surprise, stage/zone, emotion), restart the periodic counter
+    - periodic fires when `(controller_steps - last_keyframe_step) >= period`
+    - if another keyframe already fired on this cycle, we do **not** add an extra “periodic” reason line, but the periodic counter still resets
+
+Reason string example: `periodic(step=20, period=10)`
+
+
+- Optional knobs (sleep suppression; robotics/HAL):
+  - `ctx.longterm_obs_keyframe_period_suppress_when_sleeping_nondreaming`
+  - `ctx.longterm_obs_keyframe_period_suppress_when_sleeping_dreaming`
+
+  When enabled, periodic keyframes are suppressed if the observation indicates the agent is sleeping in that mode.
+  Sleep state can be supplied either as:
+  - `env_meta`: `sleep_state`/`sleep_mode` (string) or `sleeping`/`dreaming` (bool), or
+  - predicates such as `sleeping:non_dreaming` / `sleeping:dreaming` (with `rem`/`nrem` aliases allowed).
+
+
+
+#### 4) Surprise keyframes (optional; prediction error v0)
+- Trigger: sustained mismatch signal (streak-based).
+- Knobs:
+  - `ctx.longterm_obs_keyframe_on_pred_err`
+  - `ctx.longterm_obs_keyframe_pred_err_min_streak`
+- Reason string example: `pred_err_v0(streak=2)`
+
+
+#### 5) Goal milestone keyframes (optional; derived or HAL-supplied)
+
+Milestones are **event-based segmentation** (“something that matters happened”), not just “state changed.”
+
+Two inputs are supported:
+
+A) **HAL / rich env milestones** (deduped):
+- env_meta may carry `milestones=["reached_mom", "obtained_reward", ...]`.
+- Keyframe fires on *new* milestone strings.
+
+B) **Derived milestones from predicate transitions** (no manual milestone lists):
+- Derived by comparing previous vs current slot values (works well in storyboard and early HAL).
+- Current derived milestone set (v0):
+  - `posture:fallen → posture:standing`            ⇒ `stood_up`
+  - `proximity:mom:* → proximity:mom:close`        ⇒ `reached_mom`
+  - `nipple:* → nipple:found`                      ⇒ `found_nipple`
+  - `nipple:* → nipple:latched`                    ⇒ `latched_nipple`
+  - `milk:* → milk:drinking`                       ⇒ `milk_drinking`
+  - `(absent) → resting`                           ⇒ `rested`
+
+Knob: `ctx.longterm_obs_keyframe_on_milestone`
+
+Reason string example: `milestone:stood_up,reached_mom`
+
+#### 6) Strong emotion keyframes (optional; HAL / richer envs)
+- Trigger: rising edge into a high-intensity affect state, or an affect-label switch while still “high.”
+- Inputs:
+  - env_meta may carry `emotion` / `affect` as either:
+    - dict: `{"label": "fear", "intensity": 0.93}`, or
+    - string label: `"fear"` (intensity optional).
+  - If env_meta supplies nothing, we allow a conservative proxy:
+    - unsafe zone ⇒ `fear` at intensity `1.0` (so you can debug this even before real affect plumbing).
+- Knobs:
+  - `ctx.longterm_obs_keyframe_on_emotion`
+  - `ctx.longterm_obs_keyframe_emotion_threshold` (default ~0.85)
+
+Reason string example: `emotion:fear@1.00`
+
+---
+
+### G3) Keyframes as “memory boundaries” (WM⇄Column pipeline ordering invariant)
+
+Keyframes are the *only* cycles where we allow boundary-only memory operations to run automatically.
+
+**Ordering invariant (keyframes):**
+EnvObservation → BodyMap update → MapSurface update →
+(keyframe) store snapshot + pointer update →
+(keyframe) optional retrieve+apply (replace or seed/merge) →
+policy selection → policy execution → action feedback → next cycle
+
+This is strict on purpose:
+- Store must see the current MapSurface (coherent “belief-now bundle”).
+- Retrieve/apply must run before selection if you want priors to influence that boundary’s action.
+- Retrieve excludes the engram just stored on the same keyframe (no trivial self-retrieval).
+- Seed/merge mode must not inject cue:* as “present now” (no cue leakage).
+
+**Reserved future slot (write-back / reconsolidation):**
+After policy execution, a keyframe may later add a *post-execution* write-back hook that:
+- writes new engrams (copy-on-write) and/or patch records,
+- updates pointer bindings,
+without changing the belief state already used for action selection in that same cycle.
+
+---
+
+### G4) HAL / robotics: how keyframes generalize beyond storyboard
+
+In real robots there is no storyboard stage like `"first_stand"`. Keyframes still work; you just lean on the non-storyboard triggers:
+
+- **Zone/context discontinuities** derived from sensor fusion:
+  - hazard near/far thresholds, doorway crossed, cliff-edge detected, traction lost, dock-visible, etc.
+- **Milestones** emitted by HAL or derived from predicates:
+  - `contact_made`, `object_grasped`, `reached_dock`, `human_detected`, `task_success`, `task_fail`, etc.
+- **Strong emotion / arousal** from interoception + safety monitors:
+  - high “fear” / high “urgency” / high “startle” / high “pain”
+- **Periodic** keyframes as a throttle for expensive ops:
+  - store/retrieve/apply every N decisions or every N seconds (if you later anchor to wall-clock ticks)
+- **Surprise** keyframes:
+  - prediction error streaks (e.g., repeated mismatch between expected and observed posture/pose/contacts)
+
+Practical robotics usage:
+- Keyframes become the safe moments to run heavier memory operations (map snapshotting, retrieval, consolidation),
+  because the boundary hook is the one place we guarantee we are not mid-write in a policy/action chain.
+
+---
+
+### G5) What you should see in the terminal
+
+On a keyframe boundary, expect a line like:
+
+- `[env→world] KEYFRAME: stage_change 'struggle'→'first_stand' | cleared ...`
+- `[env→world] KEYFRAME: milestone:stood_up | cleared ...`
+- `[env→world] KEYFRAME: emotion:fear@1.00 | cleared ...`
+
+If WM⇄Column auto-store/retrieve/apply is enabled, you may also see:
+
+- `[wm<->col] store: ... (auto_keyframe_...)`
+- `[wm<->col] retrieve: ...`
+- `[wm<->col] apply: ...`
+
+---
+
 
 
 ## H. Anchors, episodes, and keyframes (how “boundaries” actually work)
@@ -5567,6 +6014,29 @@ Once we’re both happy with this conceptual foundation, the next step is to:
 This section explains how the CCA8 runner uses **anchors**, the **LATEST** pointer, and the new **base-aware write** logic to keep episodes tidy and meaningful when adding new bindings.
 
 The goal is that when you say “hang this new fact off the current situation,” the system knows *where* in the WorldGraph that is — not just “whatever node happened to be written last.”
+
+
+## Anchor NOW movement: attach="now" vs WorldGraph.set_now()
+
+Two distinct ideas often get conflated:
+
+### 1) attach="now"
+Creating a new binding with `attach="now"`:
+- adds an edge `NOW --then--> new_binding`
+- updates `LATEST = new_binding`
+- **does not** re-point the NOW anchor itself
+
+So NOW remains a stable anchor binding unless explicitly moved.
+
+### 2) WorldGraph.set_now(...)
+`world.set_now(bid)` **re-points the anchor**:
+- updates the anchors map so NOW points to a different binding id
+- updates anchor tags (removes `anchor:NOW` from the previous binding, adds it to the new one)
+
+In closed-loop runs, NOW may be moved explicitly at keyframes (or continuously in a debugging mode) so that
+“plan from NOW” reflects the current state binding even when long-term env writes are deduplicated.
+
+
 
 ### Anchors vs. LATEST: mental model
 
@@ -7109,6 +7579,27 @@ WorldGraph = “story of my life”
 BodyMap = “how my body is configured right now (and where mom/nipple are relative to me)”
 
 Later phases will expand BodyMap and add a PeripersonalMap, but this v1 gives us a proper place for sensor-fused body state while keeping the main WorldGraph small and semantic.
+
+
+
+## Zone (BodyMap spatial classification) — what it is used for
+
+CCA8 uses a coarse **zone** label derived from BodyMap near-space slots:
+
+- `proximity:shelter:{near|far}`
+- `hazard:cliff:{near|far}`
+
+Current classification (intentionally minimal):
+- **unsafe_cliff_near**: cliff is near AND shelter is not near
+- **safe**: shelter is near AND cliff is not near
+- **unknown**: any other combination (including missing data)
+
+Zone is used as a **gating signal**, not as a long-term semantic fact:
+- example: `policy:rest` is vetoed in `unsafe_cliff_near` even if fatigue is high
+- example: `policy:follow_mom` receives a positive “escape cliff” preference in `unsafe_cliff_near`
+
+This keeps safety decisions fast: policies can consult BodyMap instead of scanning the long-term episodic chain.
+
 
 
 
