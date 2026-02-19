@@ -22,6 +22,9 @@ coverage.xml
 # Code documentation for internal usage
 doc_*.*
 example_*.txt
+echo cycle_log.jsonl
+echo terminal.txt
+
 
 # Build/dist
 build/
