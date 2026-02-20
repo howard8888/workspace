@@ -4197,14 +4197,123 @@ CCA8 uses several small “maps” as well the large WorldGraph map for its memo
 This subsection distills repeated Q&A from Phase VII–VIII design review into explicit “map contracts” and a quick reading guide
 for env-loop outputs (MapSurface entity table + WorkingMap autosnapshot).
 
+
+
+
 #### One-line roles (“what question does this map answer?”)
 
-- BodyMap: “what is true of my body / peripersonal near-space right now (fast gating)?”
-- WorkingMap.MapSurface: “what do I believe about the scene right now (semantic state table)?”
-- WorkingMap.Scratch: “what did I just try to do, and what outcome did I expect (procedural trace)?”
-- WorkingMap.Creative: “what candidate futures did I simulate (counterfactual rollouts; future)?”
-- WorldGraph (long-term): “what happened over time (episode index + planning skeleton)?”
-- Columns/Engrams: “where does the heavy payload live (stored map instances / scenes / features)?”
+
+- BodyMap:
+  “What is true of my body and peripersonal near-space right now?”
+  Fast, overwrite-style, used for gating and safety.
+
+- WorkingMap.MapSurface:
+  “What do I believe about the current scene right now?”
+  Stable entity+relation map updated in place (overwrite-by-slot-family, not append-log).
+
+- WorkingMap.Scratch:
+  “What did I just try to do, and what outcome did I expect?”
+  Procedural trace and short-lived reasoning scaffolding (action chains + predicted postconditions).
+
+- WorkingMap.Creative:
+  “What candidate futures did I simulate?”
+  Counterfactual rollouts that must not directly mutate MapSurface truth.
+
+- WorldGraph:
+  “What happened over time, and how do I index and traverse episodes?”
+  Long-lived, sparse episode skeleton + pointer scaffold.
+
+- Columns / Engrams:
+  “Where does the heavy representational payload live?”
+  Immutable stored map instances, sensory features, and scene descriptors.
+
+---
+
+#### NavPatch: the map substrate that makes “everything is a navigation map” concrete
+
+CCA8 uses an explicit WorkingMap entity table because it is inspectable and action-ready.
+However, the goal is not a brittle symbol graph. The goal is to treat entities as *handles* into
+richer map structure.
+
+A **NavPatch** is a compact local navigation map fragment that can be owned by an entity or shared
+across entities. It is the unit that allows:
+
+- entity geometry and structure (e.g., “rectangular block”) to be represented as map content,
+- sensory evidence to be represented as map layers without storing raw pixels,
+- approximate matching and merging (non-brittle reuse),
+- hierarchical composition (“concepts link to other navmaps”).
+
+NavPatch is not a new “memory place”; it is content that can live:
+- transiently inside WorkingMap for fast use, and/or
+- persistently as Column engrams, indexed by thin pointers in WorldGraph.
+
+A minimal NavPatch contract (v0):
+- patch_id: stable identifier (local or engram id)
+- frame: coordinate frame label (e.g., self_local, allocentric_stub)
+- extent: patch bounds in that frame (meters or normalized units)
+- representation:
+  - either a small grid with layered fields (occupancy / hazard / affordance / salience),
+  - or a vector form (polygons / line segments / keypoints),
+  - or both (hybrid)
+- links:
+  - transforms to other patches (pose constraints, adjacency, containment)
+  - optional semantic links to “concept patches” (map-of-maps)
+
+---
+
+#### Memory pipeline component contracts
+
+These contracts define the interfaces between modules so we can evolve the internals while keeping
+the system stable and testable.
+
+Environment side:
+- EnvState:
+  Ground-truth simulator state. Agent must never read it directly.
+- PerceptionAdapter:
+  EnvState → EnvObservation
+  May include a stub “raw sensor” layer plus a processed navmap layer.
+
+Boundary packet:
+- EnvObservation:
+  The only per-tick message the agent receives.
+  Contains:
+  - raw_sensors (optional; stubbed in simulation)
+  - predicates (discrete state tokens)
+  - cues (transient evidence tokens)
+  - env_meta (stage/zone/time, etc.)
+
+Agent side updates (per tick):
+- BodyMap updater:
+  EnvObservation → BodyMap
+  Overwrite-style. Must stay small and authoritative for gating.
+
+- WorkingMap updater:
+  EnvObservation (+ optional retrieved priors) → WorkingMap.MapSurface
+  Overwrite-by-slot-family. Must not accumulate multiple competing values within a slot-family.
+
+  Optional:
+  - updates / creates NavPatches and attaches them to entities
+  - stores only summaries in MapSurface slots (the heavy patch can be stored elsewhere)
+
+Keyframes:
+- Keyframe detector:
+  Uses env_meta + gating signals (missingness, prediction error, staleness) to decide boundaries.
+
+- Snapshot store:
+  WorkingMap.MapSurface → Column MapEngram (heavy payload)
+  WorldGraph ← thin pointer binding tagged by context and carrying engram_id
+
+Retrieval as priors:
+- Candidate selection:
+  WorldGraph pointer bindings filtered by context, scored by overlap and signatures.
+- Prior injection:
+  - merge/seed: fill only missing slot families and relations; never inject cue:* as “present now”
+  - replace: rebuild MapSurface from snapshot (debug / strong prior)
+
+Immutability:
+- Column engrams are immutable records.
+- Any update is stored as a new engram, with ancestry recorded in meta, and indexed by a new pointer.
+
 
 ---
 
