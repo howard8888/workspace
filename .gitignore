@@ -68,3 +68,5 @@ session*.json
 
 hello.js
 hello.ts
+cycle_log.jsonl
+terminal.txt
