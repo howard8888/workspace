@@ -1667,6 +1667,13 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
 
         eps_f = max(0.0, min(1.0, eps_f))
 
+        # Phase X: expose triggered set to the runner for optional EFE scoring/logging.
+        try:
+            if ctx is not None:
+                ctx.ac_triggered_policies = [p.name for p in triggered]
+        except Exception:
+            pass
+
         # Epsilon exploration: pick a random triggered policy.
         if eps_f > 0.0 and random.random() < eps_f:
             chosen = random.choice(triggered)

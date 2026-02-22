@@ -285,6 +285,7 @@ CCA8 prints many lines with a `[tag]` prefix. These tags are a stable “legend�
   (Printed as “Cognitive Cycle i/N” in menu 37.):contentReference[oaicite:3]{index=3}
 - **env_step / step_index**: the environment’s internal counter since env.reset() (0-indexed).:contentReference[oaicite:4]{index=4}
 - **controller step**: one Action Center invocation (“what should I do now?”). In menu 37, we do one controller step per cognitive cycle.
+- **avPatch**: a lightweight recognition layer on top of MapSurface
 
 **Environment simulator vs “world model” (AI literature note)**
 In modern AI literature, a “world model” usually means an agent’s **internal learned predictive model**.
@@ -387,7 +388,6 @@ Once you’ve seen one closed-loop episode run successfully, take a look at othe
 - [Planner: BFS vs Dijkstra (weighted edges)](#planner-bfs-vs-dijkstra-weighted-edges)
 - [Persistence: Autosave/Load](#persistence-autosaveload)
 - [Runner, menus, and CLI](#runner-menus-and-cli)
-- [Logging & Unit Tests](#logging--unit-tests)
 - [Preflight (four-part self-test)](#preflight-four-part-self-test)
 - [CCA8 as a Robotic Cognitive Operating System (RCOS)](#cca8-as-a-robotic-cognitive-operating-system-rcos)
 - [Hardware Abstraction Layer (HAL)](#hardware-abstraction-layer-hal)
@@ -402,12 +402,14 @@ Once you’ve seen one closed-loop episode run successfully, take a look at othe
 
 **Tutorials and technical deep dives**
 
+- [Logging & Unit Tests](#logging--unit-tests)
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
 - [Tutorial on WorkingMap](#tutorial-on-workingmap)
 - [Memory Systems in CCA8](#memory-systems-in-cca8)
 - [WorkingMap Layer Contracts](#workingmap-layer-contracts)
 - [Tutorial on Timekeeping](#tutorial-on-timekeeping)
 - [Tutorial on Cognitive Cycles](#tutorial-on-cognitive-cycles)
+- [Tutorial on NavPatch: MapSurface patches and matching](#tutorial-on-navpatch-mapsurface-patches-and-matching)
 - [Prediction error and predictive coding](#prediction-error-and-predictive-coding)
 - [Binding and Edge Representation](#binding-and-edge-representation)
 - [Anchors, LATEST, and Base-Aware Writes](#anchors-latest-and-base-aware-writes)
@@ -619,6 +621,19 @@ The planner checks each popped node’s tags for a goal predicate (`pred:<token>
 * The first `pred:*` tag is used as the default UI label, if absent, the `id` is shown.
 
 * Snapshots must restore `latest`, anchor ids, and advance the internal `bN` counter beyond any loaded ids.
+
+
+
+
+
+
+**NavPatch: patch-level recognition on MapSurface**
+
+**NavPatch**, a lightweight recognition layer on top of MapSurface: each cycle we extract observed patches (e.g., scene/mom/shelter/cliff), match them against stored prototypes (top-K + confidence), optionally bias matching with priors *only under ambiguity*, and record prediction error when evidence disagrees. The main deliverable is traceability: runs become easy to debug and evaluate via the human-readable `terminal.txt` and the machine-parsable per-cycle `cycle_log.jsonl`. See the deep dive: [Phase X — NavPatch](#phase-x--navpatch).
+
+
+
+
 
 **Scale & performance notes**
 
@@ -1790,118 +1805,6 @@ A: Use `--plan pred:<token>` from the CLI for a one-shot plan.
 
 
 
-# Logging & Unit Tests
-
-
-
-## Logging (minimal, already enabled)
-
-The runner initializes logging once at startup:
-
-- Writes to **`cca8_run.log`** (UTF-8) and also echoes to the console.
-- One INFO line per run (runner version, Python, platform).
-- You can expand logging later by sprinkling `logging.info(...)` / `warning(...)` where useful.
-
-**Change level or file:**
-
-Edit `cca8_run.py` in `main(...)` where `logging.basicConfig(...)` is called.
-
-## Tail the log while you run (Windows PowerShell):
-
-Get-Content .\cca8_run.log -Wait
-
-
-
-## Unit tests (pytest)
-
-We keep tests under tests/.
-
-Preflight runs pytest first (so failures stop you early).
-
-Stdout from tests is captured by default; enable prints byrunning pytest with -s (see below).
-
-Run preflight (will run tests first):
-
-Copy code
-
-python cca8_run.py --preflight
-
-Run tests directly (show prints):
-
-Copy code
-
-pytest -q -s
-
-Included starter tests:
-
-- `tests/test_smoke.py` — basic reasonableness (asserts True).
-- `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → pred:stand exists.
-- `tests/test_inspect_binding_details.py` — uses a small demo world and asserts that inspect-binding reports edge degrees as expected by the “Inspect binding details” menu.
-- `tests/test_phase_vi_c_spatial.py` — checks that the newborn-goat environment’s **spatial movement and safety gating** behave as described: `follow_mom` moves the kid off the cliff and into shelter, and the Rest gate respects BodyMap’s safety zone (vetoes rest near the cliff, allows rest when shelter is near and the cliff is far).
-
-
-The demo world for these tests is built via `cca8_test_worlds.build_demo_world_for_inspect()`, which creates a tiny, deterministic WorldGraph (anchors NOW/HERE, stand/fallen/cue_mom/rest predicates, and a single engram pointer) that you can also use interactively via `--demo-world`.
-Unit tests (pytest)
-
-
-
-## Preflight (four-part self-test)
-
-Run all checks and exit:
-
-`> python cca8_run.py --preflight`
-
-**What runs**
-
-1) **Unit tests (pytest + coverage).**  
-   Prints a normal pytest summary. Coverage is percent of **executable** lines
-   (comments/docstrings ignored). Ordinary code—including `print(...)` /
-   `input(...)`—counts toward coverage. Target ≥30%.  
-   *Note: console vs footer may differ by ~1% due to reporter rounding.*  
-
-2) **Scenario checks (whole-flow).**  
-   Deterministic probes that catch issues unit tests miss:
-   
-   - Core imports & symbols present; version printouts
-   - Fresh-world invariants and NOW anchor
-   - `set_now` tag housekeeping (old NOW tag removed, new NOW tagged)
-   - Accessory files exist (e.g., README, images)
-   - Optional PyVis availability
-   - Planner probes (BFS/Dijkstra toggle), attach semantics (now/latest)
-   - Cue normalization, action metrics aggregation
-   - Lexicon strictness (neonate stage rejects off-vocab), engram bridge
-   - Action helpers summary is printable
-
-3) **Robotics hardware preflight (stub).**  
-   Reports HAL/body flag status. Example line:  
-   `[preflight hardware] PASS  - NO-TEST: HAL=OFF (no embodiment); body=0.0.0 : none specified — pending integration`
-   Note: Pending integration of HALs.
-
-4) **System-functionality fitness (stub).**  
-   Placeholder for end-to-end task demos (will exercise cognitive + HAL paths).
-   Note: Pending integration of HALS.
-
-**Footer format & exit code**
-
-The last line gives a compact verdict and returns a process exit code:
-
-[preflight] RESULT: PASS | tests=118/118 | coverage=33% (≥30) |  
-probes=41/41 | hardware_checks=0 | system_fitness_assessments=0 | elapsed=00:02
-
-- `PASS/FAIL` reflects both pytest and probe results.  
-- `probes` counts scenario checks (part 2).  
-- `hardware_checks` / `system_fitness_assessments` are **0** until those lanes are implemented.
-
-**Artifacts**
-
-- JUnit XML: `.coverage/junit.xml`  
-- Coverage XML: `.coverage/coverage.xml` (console prints a human summary)
-
-**Tip:** a lightweight *startup* check can be toggled with
-`CCA8_PREFLIGHT=off` (disables the “lite” banner probe at launch).
-
-
-
 ### Q&A to help you learn this section
 
 Q: What does --preflight actually guarantee when it says PASS?
@@ -2508,6 +2411,7 @@ A: REQ = behavior the system must provide, ADR = why a design choice was made am
 # Roadmap
 
 * Enrich engrams and column providers, add minimal perception‑to‑predicate pipelines.
+* Phase X NavPatch: patch-aware episode indexing + goat_foraging_* task family + ablations (priors/precision/EFE) for interpretable eval.
 * Add “landmarks” and heuristics for long‑distance plans (A* when we add weights).
 * Optional database or CSR backend if the graph grows beyond memory.
 * Exporters: NetworkX/GraphML for interoperability, continue shipping the Pyvis HTML for quick, zero‑install visualization.
@@ -2710,6 +2614,406 @@ Q: Provenance?  A: meta.policy records which policy created the node.
 
 
 # TUTORIALS AND TECHNICAL DEEP DIVES
+
+
+
+
+
+# Logging & Unit Tests
+
+
+
+## Logging
+
+CCA8 intentionally produces **three complementary trace streams**, plus optional state snapshots:
+
+1) **`cca8_run.log`** — structured Python logging (best for warnings/errors and developer breadcrumbs).
+2) **`terminal.txt`** — a verbatim terminal transcript (best for human “story” review and sharing runs).
+3) **`cycle_log.jsonl`** — a per-cycle machine-parsable trace (best for analysis, plots, and regression tests).
+
+In addition, `--autosave <file>.json` produces **state checkpoints** (not an execution trace).
+
+
+
+### 1) `cca8_run.log` (structured Python logging)
+
+
+What it is:
+- Configured in `cca8_run.py` `main(...)` via `logging.basicConfig(...)`.
+- Writes to **`cca8_run.log`** (UTF-8) and also echoes to the console.
+- Intended for: exceptions/tracebacks, “this should never happen” conditions, and low-noise breadcrumbs.
+
+How to change it:
+- Edit `main(...)` in `cca8_run.py` where `logging.basicConfig(...)` is called (log level, filename, etc.).
+
+Tail the log while you run (Windows PowerShell):
+- `Get-Content .\cca8_run.log -Wait`
+
+
+
+### 2) `terminal.txt` (terminal transcript)
+
+
+What it is:
+- A tee-style transcript of everything printed to stdout (and optionally stderr).
+- Installed in `cca8_run.py` `main(...)` via `install_terminal_tee("terminal.txt", append=True, also_stderr=True)`.
+
+Why it exists:
+- It’s the easiest artifact to skim for “does the run tell a coherent story?”
+- It’s also easy to share (no screenshots needed).
+
+Operational notes:
+- It appends by default. Delete the file (or change `append=False`) when you want a clean run transcript.
+- If you want to disable it entirely, comment out the `install_terminal_tee(...)` call in `main(...)`.
+
+
+
+### 3) `cycle_log.jsonl` (per-cycle JSONL trace)
+
+
+What it is:
+- One JSON object per closed-loop environment step (JSONL = JSON Lines).
+- Designed for downstream parsing/plotting and for regression-style comparisons.
+
+Where it is configured:
+- In the interactive runner (`interactive_loop(...)`) via:
+  - `ctx.cycle_json_enabled` (on/off)
+  - `ctx.cycle_json_path` (file path; if None, file writing is disabled)
+  - `ctx.cycle_json_max_records` (ring buffer size for `ctx.cycle_json_records`)
+
+Operational notes:
+- JSONL is append-only. Delete/rotate `cycle_log.jsonl` between experiments if you want clean traces.
+- If you set `ctx.cycle_json_path = None`, the runner still keeps an in-memory ring buffer
+  (`ctx.cycle_json_records`) up to `ctx.cycle_json_max_records` entries.
+
+Record schema (v0; evolves over time):
+- v: record schema/version (if present)
+- episode_index / cycle_idx (or controller_steps) + env_meta (stage/zone/time, etc.)
+- obs: predicates, cues, and (optional) nav_patches (Phase X)
+- navpatch_matches: top-K candidates + chosen + commit/margin (Phase X)
+- navpatch_priors: priors bundle + precision weights (Phase X)
+- policy_fired / action_selected + drives (and other small scalars)
+- (optional) efe_scores: per-policy (risk, ambiguity, preference, total) diagnostic bundle
+- (optional) memory_ops summary: stored/deduped engram ids, pointer bids, etc.
+
+
+### 4) Autosave snapshots (state checkpoints, not a log)
+
+
+What it is:
+- `--autosave session.json` overwrites a single snapshot file after completed actions.
+- It is intended for “resume from here”, not for “analyze every step”.
+
+Related menu features:
+- Manual Save Session writes the same snapshot format as autosave.
+- Reset (with autosave set) deletes the autosave file and reinitializes state.
+
+
+### 5) Other debug artifacts
+
+
+- Interactive **HTML graph export** (menu) provides a visual snapshot of the WorldGraph.
+- `--preflight` prints to the console and also logs details to `cca8_run.log`.
+
+
+
+
+## JSON (why we use it heavily)
+
+
+CCA8 uses JSON (and JSONL) as a “lowest-friction” structured data representation across the project.
+
+Why JSON works well for CCA8:
+
+- It is supported by the Python standard library (`json`) with no extra dependencies.
+- It is language-agnostic: the same artifacts are easy to read from Python, JS, Go, Rust, etc.
+- It is diff-friendly and inspectable in plain text editors (great for debugging and code review).
+- It fits our needs for:
+  - autosave session snapshots (portable state checkpoints),
+  - per-cycle traces (`cycle_log.jsonl`) for analysis/regression,
+  - metadata dictionaries on nodes/edges/engrams (exportable without custom serializers).
+
+Why JSONL (JSON Lines) is used for traces:
+
+- One record per line enables streaming + append-only logging.
+- You can process huge runs without loading the full file into memory.
+- A partially-written file is still usable (everything up to the last complete line parses).
+
+We intentionally avoid Python-specific formats (e.g., pickle) for saved artifacts because portability and inspectability matter more than raw speed at the time of writing.  However, Python's Pickle is a binary-format and can be many times faster than using JSON, so it may be used in some areas of future versions of the CCA8 where data structures have grown exponentially. Note that Python Pickle is not language-agnostic and is a binary format more difficult for human inspection.
+
+
+
+### Tiny “same data” examples across common formats
+
+Example case: one closed-loop step summary with an env step, a fired policy, a zone, and two predicates.
+
+Consider the representation in different popular formats:
+
+
+
+JSON (JavaScript Object Notation)(object):
+
+{"env_step": 5, "policy_fired": "policy:stand_up", "zone": "unsafe_cliff_near",
+ "predicates": ["posture:standing", "hazard:cliff:near"]}
+
+
+JSONL/ NDJSON  (one JSON object per line):
+
+{"env_step":5,"policy_fired":"policy:stand_up","zone":"unsafe_cliff_near","predicates":["posture:standing","hazard:cliff:near"]}
+
+
+
+TOML (Tom's Obvious Minimal Language) (useful for settings, similar to INI file syntax):
+
+env_step = 5
+policy_fired = "policy:stand_up"
+zone = "unsafe_cliff_near"
+predicates = ["posture:standing", "hazard:cliff:near"]
+
+
+
+INI (initialization format; legacy Windows/system settings; no native lists):
+
+[status]
+env_step = 5
+policy_fired = policy:stand_up
+zone = unsafe_cliff_near
+predicates = posture:standing; hazard:cliff:near
+
+
+
+TOON (Token-Oriented Object Notation) (useful to save tokens for usage with LLMs):
+
+env_step: 5
+policy_fired: policy:stand_up
+zone: unsafe_cliff_near
+predicates[2]: posture:standing,hazard:cliff:near
+
+
+
+YAML (YAML Ain't Markup Language/ Yet Another Markup Language) (human-friendly, indentation-significant):
+
+env_step: 5
+policy_fired: policy:stand_up
+zone: unsafe_cliff_near
+predicates: [posture:standing, hazard:cliff:near]
+
+
+XML (eXtensible Markup Language) (tag-based, verbose but explicit and hierarchical):
+
+<step env_step="5" policy_fired="policy:stand_up" zone="unsafe_cliff_near">
+  <pred>posture:standing</pred><pred>hazard:cliff:near</pred>
+</step>
+
+
+
+OR another possible way of expressing in XML:
+
+
+<status>
+  <env_step>5</env_step>
+  <policy_fired>policy:stand_up</policy_fired>
+  <zone>unsafe_cliff_near</zone>
+  <predicates>
+    <item>posture:standing</item>
+    <item>hazard:cliff:near</item>
+  </predicates>
+</status>
+
+
+
+
+CSV (Comma-Separated Values) (text-based, flat structure, can inspect in spreadsheets):
+
+env_step,policy_fired,zone,predicates
+5,policy:stand_up,unsafe_cliff_near,"posture:standing;hazard:cliff:near"
+
+
+
+PICKLE (not an acroynym but refers to preserving objects) (Python-specific binary serialization, .pkl file):
+
+
+e.g., write the same example case as a Pickle file:
+
+import pickle
+obj = {
+    "env_step": 5,
+    "policy_fired": "policy:stand_up",
+    "zone": "unsafe_cliff_near",
+    "predicates": ["posture:standing", "hazard:cliff:near"] }
+with open("step.pkl", "wb") as f:
+    pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+e.g., write the same example as a Pickle in-memory structre and then display as Base64 text:
+
+import base64
+import pickle
+obj = {
+    "env_step": 5,
+    "policy_fired": "policy:stand_up",
+    "zone": "unsafe_cliff_near",
+    "predicates": ["posture:standing", "hazard:cliff:near"]}
+b = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+print(base64.b64encode(b).decode("ascii"))
+
+Base-64 output:
+gAWVhgAAAAAAAAB9lCiMCGVudl9zdGVwlEsFjAxwb2xpY3lfZmlyZWSUjA9wb2xpY3k6c3RhbmRfdXCUjAR6b25llIwRdW5zYWZlX2NsaWZmX25lYXKUjApwcmVkaWNhdGVzlF2UKIwQcG9zdHVyZTpzdGFuZGluZ5SMEWhhemFyZDpjbGlmZjpuZWFylGV1Lg==
+
+
+Not considered in initial software development of the CCA8 but might be considered in aspects of future implementations:
+
+Protobuf (Protocol Buffers) (Google-developed format; faster and smaller than JSON):
+
+-actually need pre-defined schema
+- smaller and faster than JSON but may not be smaller or faster than Pickle
+-however, more of a transferable format than Pickle
+
+
+
+Msgpack (MessagePack) (binary-like JSON essentially):
+
+-not faster or smaller than Pickle but much better for sharing data with others
+
+
+
+
+Parquet (Apache; instead of storing rows in CSV this stores as columns):
+
+-industry standard for Apache Spark and data science
+-less usueful for non-tabular data with arbitrary nested state graphs
+
+
+
+
+HDF5 (Hierarchical Data Format) (useful for billions of entries):
+
+- useful for very large numeric arrays/ tensors with chunking and compression
+- as the CCA8 scales in data generation size, to avoid the need to re-write future versions
+        of the CCA8 into Rust or C++ code, can combine Python with
+        HDF5 data format and use Python high-level vectorized libraries that have C/C++
+        or CUDA cores -- get near-native performance while still retaining the Python 'glue code'
+        (with the option of coding custom some low-level algorithms in C/CUDA where needed)
+- JSON slowest < Pickle and MessagePack fast < HDF5 ultrafast speeds
+- also much lower memory usage since lazy loading
+- can also be the smallest file size since supports GZIP or LZF compression at the 'chunk' level
+- can attach metadata directly to the data in this format
+
+
+import h5py
+import numpy as np
+# Creating an HDF5 file
+with h5py.File("data.h5", "w") as f:
+    # Metadata attributes
+    f.attrs["env_step"] = 5
+    f.attrs["policy_fired"] = "policy:stand_up"
+    # The actual data array
+    predicates = np.array(["posture:standing", "hazard:cliff:near"], dtype='S')
+    f.create_dataset("predicates", data=predicates)
+# Reading just one piece of metadata without loading the array:
+with h5py.File("data.h5", "r") as f:
+    print(f.attrs["env_step"]) 
+
+
+
+
+
+## Unit tests (pytest)
+
+We keep tests under tests/.
+
+Preflight runs pytest first (so failures stop you early).
+
+Stdout from tests is captured by default; enable prints byrunning pytest with -s (see below).
+
+Run preflight (will run tests first):
+
+Copy code
+
+python cca8_run.py --preflight
+
+Run tests directly (show prints):
+
+Copy code
+
+pytest -q -s
+
+Included starter tests:
+
+- `tests/test_smoke.py` — basic reasonableness (asserts True).
+- `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → pred:stand exists.
+- `tests/test_inspect_binding_details.py` — uses a small demo world and asserts that inspect-binding reports edge degrees as expected by the “Inspect binding details” menu.
+- `tests/test_phase_vi_c_spatial.py` — checks that the newborn-goat environment’s **spatial movement and safety gating** behave as described: `follow_mom` moves the kid off the cliff and into shelter, and the Rest gate respects BodyMap’s safety zone (vetoes rest near the cliff, allows rest when shelter is near and the cliff is far).
+
+
+The demo world for these tests is built via `cca8_test_worlds.build_demo_world_for_inspect()`, which creates a tiny, deterministic WorldGraph (anchors NOW/HERE, stand/fallen/cue_mom/rest predicates, and a single engram pointer) that you can also use interactively via `--demo-world`.
+Unit tests (pytest)
+
+
+
+## Preflight (four-part self-test)
+
+Run all checks and exit:
+
+`> python cca8_run.py --preflight`
+
+**What runs**
+
+1) **Unit tests (pytest + coverage).**  
+   Prints a normal pytest summary. Coverage is percent of **executable** lines
+   (comments/docstrings ignored). Ordinary code—including `print(...)` /
+   `input(...)`—counts toward coverage. Target ≥30%.  
+   *Note: console vs footer may differ by ~1% due to reporter rounding.*  
+
+2) **Scenario checks (whole-flow).**  
+   Deterministic probes that catch issues unit tests miss:
+   
+   - Core imports & symbols present; version printouts
+   - Fresh-world invariants and NOW anchor
+   - `set_now` tag housekeeping (old NOW tag removed, new NOW tagged)
+   - Accessory files exist (e.g., README, images)
+   - Optional PyVis availability
+   - Planner probes (BFS/Dijkstra toggle), attach semantics (now/latest)
+   - Cue normalization, action metrics aggregation
+   - Lexicon strictness (neonate stage rejects off-vocab), engram bridge
+   - Action helpers summary is printable
+
+3) **Robotics hardware preflight (stub).**  
+   Reports HAL/body flag status. Example line:  
+   `[preflight hardware] PASS  - NO-TEST: HAL=OFF (no embodiment); body=0.0.0 : none specified — pending integration`
+   Note: Pending integration of HALs.
+
+4) **System-functionality fitness (stub).**  
+   Placeholder for end-to-end task demos (will exercise cognitive + HAL paths).
+   Note: Pending integration of HALS.
+
+**Footer format & exit code**
+
+The last line gives a compact verdict and returns a process exit code:
+
+for example:
+
+[preflight] RESULT: PASS | tests=118/118 | coverage=33% (≥30) |  
+probes=41/41 | hardware_checks=0 | system_fitness_assessments=0 | elapsed=00:02
+
+- `PASS/FAIL` reflects both pytest and probe results.  
+- `probes` counts scenario checks (part 2).  
+- `hardware_checks` / `system_fitness_assessments` are **0** until those lanes are implemented.
+
+**Artifacts**
+
+- JUnit XML: `.coverage/junit.xml`  
+- Coverage XML: `.coverage/coverage.xml` (console prints a human summary)
+
+**Tip:** a lightweight *startup* check can be toggled with
+`CCA8_PREFLIGHT=off` (disables the “lite” banner probe at launch).
+
+
+
+
+
+
+
 
 # Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts
 
@@ -3576,6 +3880,216 @@ Proposed reconsolidation lifecycle (when implemented):
 
 
 
+# Tutorial on NavPatch: MapSurface patches and matching
+
+NavPatch is the Phase X layer that treats parts of perception as matchable, reusable “patch prototypes”.
+
+Design goals:
+- improve generalization across local geometric motifs (terrain/hazards/affordances),
+- keep WorldGraph thin (symbols + pointers) while Columns hold heavier patch payloads,
+- keep decisions traceable (top-K matches, priors applied, error/uncertainty, margins).
+
+---
+
+## 0) Implementation status (v5.5)
+
+Status key: DONE = implemented in code; PARTIAL = plumbing/stub implemented; TODO = not implemented yet.
+
+DONE
+- EnvObservation.nav_patches + PerceptionAdapter patch stubs (Phase 2.1).
+- Patch signature (patch_sig / sig16) + per-run de-dup (Phase 1.2).
+- Store navpatch_v1 engrams in Column; attach patch_refs to WorkingMap entities (Phases 1.1, 3.1).
+- Include patch_refs in wm_mapsurface snapshots; add terminal visibility (MapSurface table “patches” column + footer).
+- Predictive match traces: top-K candidates + self-exclusion (Phase 2.2).
+- Priors bundle v1 (hazard_bias + err_guard) (Phase 2.2a).
+- Precision-weighted evidence scoring v1 (tags vs extent) with commit/ambiguous/unknown + decision margin (Phases 2.2b, 2.2c).
+- Per-cycle JSON trace logging (ring buffer + optional JSONL file) capturing patches/matches/priors (Phase 2.2d).
+- EFE-style policy scoring stub (efe_scores_v1: risk, ambiguity, preference, total) included in JSON/JSONL (diagnostic only).
+- Unit tests for signature/dedup/JSON logging; repo hygiene (ignore cycle_log.jsonl; remove accidental hello.*).
+
+PARTIAL
+- Use match-trace confidence (commit/ambiguous/unknown + margins + weights) inside control (policy selection).
+- Persist ambiguous hypotheses into WorkingMap.Scratch.
+
+TODO (next)
+- Persist top-K hypotheses into WorkingMap.Scratch when commit != "commit", and thread commit/margins into cautious action selection.
+- Patch-aware WorldGraph indexing beyond wm_mapsurface pointers (thin patch_sig/tag summaries on pointer nodes).
+- Patch consolidation/reconsolidation (ancestry, copy-on-write semantics).
+- Learned policy scaffolding and evaluation tasks (goat_foraging_*).
+
+---
+
+## 1) What problem NavPatch solves
+
+MapSurface is a compact “what is here now” sketch. It is excellent for action selection and gating,
+but it needs a mechanism to:
+- recognize recurring local motifs (e.g., “cliff edge”, “shelter alcove”, “mom silhouette”),
+- decide when a motif is ambiguous vs confident,
+- and record why a match was chosen (for debugging and later learning).
+
+NavPatch supplies that recognition loop and makes it visible in logs.
+
+---
+
+## 2) Relationship to WorkingMap.MapSurface
+
+MapSurface holds a small, inspectable “scene sketch” of entities and slot-families.
+
+NavPatch is the optional patch layer that:
+- extracts local “patch” observations each tick (EnvObservation.nav_patches),
+- matches them to stored prototypes (Column navpatch_v1 engrams),
+- and attaches patch_refs back onto MapSurface entities (keeping MapSurface light).
+
+(See “WorkingMap Layer Contracts” for the MapSurface/Scratch/Creative split and invariants.)
+
+---
+
+## 3) Data model (conceptual)
+
+A NavPatch is a small, JSON-safe dict. The core fields are intended to be stable enough that we can:
+- hash them into a deterministic signature (sig) for de-dup and retrieval scoring,
+- store them as Column engrams (navpatch_v1),
+- and reference them from MapSurface snapshots (wm_mapsurface_v1) via patch_refs.
+
+### 3.1 Minimal navpatch_v1 shape
+
+Typical fields (v1-ish):
+- v: schema/version string or int (evolution hook)
+- sig / sig16: stable signature of the canonical “core” (excludes volatile timing fields)
+- local_id: local identifier within the current observation tick (optional)
+- entity_id: MapSurface entity id this patch is attached to (optional)
+- role: coarse role label (scene/mom/shelter/cliff/terrain/goal, …)
+- frame: coordinate frame label (self_local / allocentric_stub, …)
+- extent: patch bounds in that frame (meters or normalized units)
+- tags: small, discrete features (e.g., ["hazard:cliff", "traversable", "stable_footing"])
+
+Optional trace hook (added by matching, not required in incoming obs):
+- match: {commit, margin, best, top_k, priors_sig16, decision_note}
+
+### 3.2 Patch references (patch_refs)
+
+Storage strategy (recommended): Option B — store patches as separate navpatch_v1 engrams;
+MapSurface stores only references:
+
+- MapSurface entity record carries meta.wm.patch_refs = [<navpatch_eid>, ...]
+- wm_mapsurface_v1 snapshots store patch_refs per entity (not full patch geometry)
+- WorldGraph stays thin: pointer bindings index episode snapshots (and later: patch_sig summaries)
+
+This preserves the principle: WorldGraph thin, Columns heavy.
+
+---
+
+## 4) Predictive matching loop (baseline v1)
+
+Baseline matching loop:
+1) extract observed patches from EnvObservation.nav_patches,
+2) retrieve candidate prototypes from Column (by signature similarity / tags),
+3) compute similarity + a simple prediction error (diff) measure,
+4) record top-K candidates + decision margin,
+5) decide: reuse an existing prototype, or mark unknown/create a new prototype.
+
+### 4.1 Priors bundle + error-dominance guardrail (predictive coding)
+
+Recognition is not purely bottom-up:
+- a lightweight priors bundle can bias matching when evidence is ambiguous (v1 = hazard bias),
+- but if prediction error is high, priors must not “force” a match.
+
+Guardrail:
+- if raw error > err_guard ⇒ classify as unknown/new, regardless of prior bias.
+
+### 4.2 Precision weighting (tags vs extent) (v1)
+
+We treat evidence as a small set of channels and weight each channel by a precision/reliability term.
+
+v1 implementation uses two channels:
+- tags similarity (semantic features)
+- extent similarity (coarse geometry)
+
+We compute a weighted error:
+- err_weighted = w_tags * err_tags + w_extent * err_extent
+and derive a score from it (e.g., score = 1 - err_weighted).
+
+Interpretation:
+- low precision (noisy evidence) ⇒ priors matter more and ambiguity is more likely,
+- high precision ⇒ evidence dominates and overrides prior bias.
+
+### 4.3 Commit semantics (Phase 2.2c hook)
+
+Each patch match emits a commit classification:
+- commit: confident reuse (or exact match)
+- ambiguous: best candidate is above accept threshold but margin vs runner-up is small
+- unknown: error too high or below accept threshold (do not hallucinate certainty)
+
+These signals are currently logged (terminal + JSONL). Next slice: persist ambiguous hypotheses into Scratch and use them in control.
+
+---
+
+## 5) Storage + de-dup (Column navpatch_v1)
+
+- Each stored patch gets a deterministic signature (sig / sig16) derived from its canonical core.
+- Per-run de-dup prevents “store the same patch 100 times in a row”:
+  - if sig already stored in this run, reuse the existing navpatch eid.
+- MapSurface stores patch_refs (ids) so wm_mapsurface snapshots stay compact.
+
+---
+
+## 6) Traceability (terminal + JSONL)
+
+Human-readable:
+- terminal logs show per-cycle patch counts and match summaries (what was seen, what matched, what changed).
+- MapSurface table can show a patches column + a footer summary (counts + sig16).
+
+Machine-readable:
+- cycle_log.jsonl emits one record per cycle including:
+  - observed patches (nav_patches),
+  - navpatch_matches (top-K and chosen + commit/margin),
+  - navpatch_priors (bundle/signature + precision weights),
+  - policy_fired, drives,
+  - (optional) diagnostic EFE scoring fields.
+
+This JSONL trace is the evaluation substrate and regression artifact for Phase X.
+
+---
+
+## 7) Diagnostic EFE policy scoring stub (optional)
+
+We include a trace-only Expected Free Energy (EFE) scoring hook (Friston / Active Inference compatibility).
+
+v0 decomposition (per candidate policy π):
+- risk(π): expected hazard cost (falls, predator cues, energy/time loss)
+- ambiguity(π): expected remaining uncertainty (e.g., fraction of ambiguous patches)
+- preference(π): expected drive improvement
+
+Total (minimized):
+- G(π) = w_risk*risk + w_amb*ambiguity - w_pref*preference
+
+Important: this is diagnostic only right now (selection unchanged). Future integration (OFF by default):
+use EFE total as a tie-break among already-triggered policies, never bypassing safety gates.
+
+---
+
+## 8) Roadmap hooks (next slices)
+
+Immediate next steps (v5.5 priority order):
+1) Persist top-K hypotheses into WorkingMap.Scratch when commit != "commit", and add a cautious probe/vantage policy hook.
+2) Patch-aware WorldGraph indexing: pointer nodes carry small patch_sig/tag summaries for patch-driven retrieval.
+3) Evaluation scaffolding (goat_foraging_*):
+   - goat_foraging_01: multiple paths to bushes with at least one hazard (choose safe path).
+   - goat_foraging_02: ambiguous terrain at distance (priors bias recognition; high error yields unknown).
+   - goat_foraging_03: out-of-distribution hazard (prediction error triggers caution/exploration).
+
+NavPatch-specific ablations (for later):
+- EPI only (baseline)
+- NavPatch perception only (no episodic retrieval)
+- NavPatch + EPI (full)
+- NavPatch but no patch memory (patches transient only)
+- priors OFF vs priors ON
+- precision schedules vs uniform precision
+- EFE scoring stub on/off (w_amb>0 vs w_amb=0)
+
+
+
+
 
 
 # Prediction error and predictive coding
@@ -3593,6 +4107,10 @@ Proposed reconsolidation lifecycle (when implemented):
 
 - Phase VIII (implemented): prediction error v0 is now used as a conservative control signal to gate keyframe auto-retrieve
   (i.e., mismatch can trigger priors). It is not yet used to change policy scoring; it currently affects whether priors are fetched.
+  
+- Phase X (NavPatch): prediction error becomes patch-level (tags vs extent), is precision-weighted, and emits
+  commit/ambiguous/unknown signals + margins for traceability. We also add an optional diagnostic EFE scoring stub
+  (risk/ambiguity/preference/total) in the JSONL trace; selection remains unchanged unless explicitly enabled.
 
 
 ## CCA8 implementation overview
@@ -3815,6 +4333,7 @@ When you see:
 **eid=... (the payload)** is a Column engram record whose payload is a serialized **wm_mapsurface_v1** snapshot:
 - entities (stable ids like self/mom/shelter/cliff)
 - per-entity slot values (e.g., posture, proximity:mom, hazard:cliff, ...)
+- (Phase X) per-entity patch_refs (navpatch engram ids), when present
 - selected WorkingMap relations that represent spatial/scene structure (when present)
 - minimal context meta (stage, zone, epoch, created_at, etc.)
 
@@ -3942,15 +4461,19 @@ The usual early-run skip still applies:
 A MapSurface snapshot is serialized into a JSON-safe dict (but stored as a Python dict, not a JSON string):
 
 - schema: "wm_mapsurface_v1"
+
 - header:
   - controller_steps / ticks / boundary_no / boundary_vhash64 / tvec64 (when available)
   - a small BodyMap readout (posture / mom_distance / nipple_state / zone) for indexing/debug
+  
 - entities: one record per MapSurface entity (stable ids)
   - eid, kind
   - pos: {x, y, frame} (wm_schematic_v1)
   - dist_m, dist_class
   - preds: ["posture:standing", ...]  (pred:* tags on the entity, without the "pred:" prefix)
   - cues:  ["vision:silhouette:mom", ...] (cue:* tags on the entity, without the "cue:" prefix)
+  - patch_refs: ["<navpatch_eid>", ...] (optional; Phase X; ids of navpatch_v1 engrams)
+
 - relations: distance_to edges from SELF → other entities
   - {rel="distance_to", src="self", dst="<eid>", meters, class, frame}
 
@@ -4247,17 +4770,27 @@ NavPatch is not a new “memory place”; it is content that can live:
 - transiently inside WorkingMap for fast use, and/or
 - persistently as Column engrams, indexed by thin pointers in WorldGraph.
 
-A minimal NavPatch contract (v0):
-- patch_id: stable identifier (local or engram id)
-- frame: coordinate frame label (e.g., self_local, allocentric_stub)
+
+A minimal NavPatch contract (v5.5-ish):
+
+- v: schema/version (evolution hook)
+- sig / sig16: stable signature of the canonical “core” (excludes volatile timing fields)
+- role: coarse role label (scene/mom/shelter/cliff/terrain/goal, …)
+- frame: coordinate frame label (self_local / allocentric_stub, …)
 - extent: patch bounds in that frame (meters or normalized units)
-- representation:
-  - either a small grid with layered fields (occupancy / hazard / affordance / salience),
-  - or a vector form (polygons / line segments / keypoints),
-  - or both (hybrid)
-- links:
-  - transforms to other patches (pose constraints, adjacency, containment)
-  - optional semantic links to “concept patches” (map-of-maps)
+- tags: small, discrete features (e.g., hazard/traversable/support cues)
+
+Optional (trace + linking hooks):
+- local_id: local identifier within the current observation tick
+- entity_id: MapSurface entity id this patch attaches to
+- match: {commit, margin, best, top_k, priors_sig16, decision_note}
+- links: transforms to other patches (pose constraints, adjacency, containment)
+
+Storage recommendation (Phase X):
+- Store patches as separate Column engrams (navpatch_v1).
+- MapSurface entities store only patch_refs (engram ids), so wm_mapsurface snapshots stay compact.
+
+
 
 ---
 
@@ -4280,6 +4813,7 @@ Boundary packet:
   - raw_sensors (optional; stubbed in simulation)
   - predicates (discrete state tokens)
   - cues (transient evidence tokens)
+  - nav_patches (optional; processed patch dicts for NavPatch/MapSurface attachment)
   - env_meta (stage/zone/time, etc.)
 
 Agent side updates (per tick):
@@ -5286,6 +5820,75 @@ Controls anchor semantics for long-term NOW in mode=changes.
 OFF: NOW only moves when new long-term predicate bindings are written (or at keyframes).
 
 ON: long-term NOW is actively moved to the current environment “state binding” each step (useful for NOW-relative debugging when changes-mode suppresses writes).
+
+**Phase X (NavPatch + per-cycle JSON trace + EFE diagnostic)**
+
+These knobs are used for NavPatch (patch matching + traceability) and for per-cycle JSON logging.
+Most of these live on ctx as fields; some may be exposed in the control panel menu over time.
+
+NavPatch (patch matching)
+navpatch_enabled (bool)
+
+OFF: ignore EnvObservation.nav_patches (no patch matching; no patch_refs).
+
+ON: run the NavPatch matching loop each env step and attach patch_refs to MapSurface entities.
+
+navpatch_store_to_column (bool)
+
+OFF: do not store navpatch_v1 engrams (patch matching still runs for diagnostics).
+
+ON: store patches as Column engrams (navpatch_v1) and dedup by patch signature.
+
+navpatch_match_top_k (int)
+How many candidate prototypes to keep in the top-K trace.
+
+navpatch_match_accept_score (float)
+Acceptance threshold: scores below this classify as unknown/new.
+
+navpatch_match_ambiguous_margin (float)
+If best - second_best < margin (and score is above accept), classify as ambiguous (avoid hallucinated certainty).
+
+NavPatch priors (predictive coding v1)
+navpatch_priors_enabled (bool)
+If ON: apply prior bias terms during matching (v1 = hazard bias).
+
+navpatch_priors_hazard_bias (float)
+Additive bias term used to prefer hazard-relevant interpretations under ambiguity.
+
+navpatch_priors_error_guard (float)
+Error-dominance guardrail: if raw error exceeds this guard, priors are bypassed and the patch is unknown/new.
+
+Precision weighting (v1 = tags vs extent)
+navpatch_precision_tags (float)
+navpatch_precision_extent (float)
+Weights for evidence channels (semantic tags vs coarse extent). These can be stage-dependent.
+
+Per-cycle JSON trace (cycle_log.jsonl)
+cycle_json_enabled (bool)
+If ON: append a JSON-safe per-cycle record into ctx.cycle_json_records, and optionally write JSONL.
+
+cycle_json_path (str or None)
+If set to a file path: append one JSON object per line (JSONL). If None: keep in-memory ring buffer only.
+
+cycle_json_max_records (int)
+Ring buffer length for ctx.cycle_json_records.
+
+EFE scoring (diagnostic only)
+efe_enabled (bool)
+If ON: compute EFE-style scores for candidate policies (risk/ambiguity/preference/total) and log them.
+
+efe_verbose (bool)
+If ON (and efe_enabled): print a one-line [efe] summary in the terminal output.
+
+efe_selection_enabled (bool)
+Future hook: if ON, allow EFE total to act as a tie-break among already-triggered policies (must remain OFF by default).
+
+efe_w_risk / efe_w_ambiguity / efe_w_preference (floats)
+Weights for EFE_total = w_risk*risk + w_amb*ambiguity - w_pref*preference.
+
+
+
+
 
 **WorldGraph memory_mode (long-term storage strategy)**
 episodic (default)
@@ -11182,6 +11785,10 @@ In `observe(env_state)` it:
 
 * Populates `env_meta` with `time_since_birth` and `scenario_stage`.
 
+* (Phase X) Emits stub **nav_patches** (optional): a small list of patch dicts (role/tags/extent)
+  for NavPatch matching and MapSurface patch_refs.
+  
+  
 PerceptionAdapter knows nothing about WorldGraph or policies; it just turns `EnvState` into `EnvObservation`.
 
 ---

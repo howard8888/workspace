@@ -322,6 +322,28 @@ class Ctx:
     navpatch_precision_tags_struggle: float = 0.65  # slightly better than birth, still degraded
     navpatch_last_priors: dict[str, Any] = field(default_factory=dict)
 
+    # ---------------------------------------------------------------------
+    # EFE policy scoring (Phase X): diagnostic scaffolding (trace-only)
+    # ---------------------------------------------------------------------
+    # EFE is diagnostic only right now; it does NOT affect policy selection.
+    #
+    # Storage convention:
+    #   - ctx.efe_last: full JSON-safe bundle returned by compute_efe_scores_stub_v1(...)
+    #   - ctx.efe_last_scores: list of per-policy score rows (usually ctx.efe_last["scores"])
+    efe_enabled: bool = False
+    efe_selection_enabled: bool = False
+    efe_verbose: bool = False
+
+    efe_w_risk: float = 1.0
+    efe_w_ambiguity: float = 1.0
+    efe_w_preference: float = 1.0
+
+    efe_last: dict[str, Any] = field(default_factory=dict)
+    efe_last_scores: list[dict[str, Any]] = field(default_factory=list)
+
+    # Bridge from ActionCenter/controller: last triggered policy names (for EFE scoring candidates).
+    ac_triggered_policies: list[str] = field(default_factory=list)
+
     # MapSurface auto-retrieve (Option B6/B7)
     # - When enabled, on keyframes (stage/zone boundary) we try to seed WorkingMap from a prior
     #   wm_mapsurface engram (default mode="merge" so it behaves as a conservative prior).
@@ -3961,6 +3983,344 @@ def apply_hardwired_profile_phase7(ctx: "Ctx", world) -> None:
         pass
 
 
+# -----------------------------------------------------------------------------
+# EFE policy scoring (Phase X 2.2b): diagnostic stub (no selection changes)
+# -----------------------------------------------------------------------------
+
+_EFE_SCORES_VERSION = "efe_scores_v1"
+
+
+def _clamp01(x: float) -> float:
+    try:
+        v = float(x)
+    except Exception:
+        return 0.0
+    if v < 0.0:
+        return 0.0
+    if v > 1.0:
+        return 1.0
+    return v
+
+
+def _norm_deficit(val: float, thresh: float) -> float:
+    """Normalize how far ABOVE a threshold we are into [0,1]."""
+    try:
+        v = float(val)
+        t = float(thresh)
+    except Exception:
+        return 0.0
+    if v <= t:
+        return 0.0
+    denom = (1.0 - t) if (1.0 - t) > 1e-9 else 1e-9
+    return _clamp01((v - t) / denom)
+
+
+def _norm_cold(warmth: float, cold_thresh: float = 0.30) -> float:
+    """Normalize how far BELOW the cold threshold we are into [0,1]."""
+    try:
+        w = float(warmth)
+        t = float(cold_thresh)
+    except Exception:
+        return 0.0
+    if w >= t:
+        return 0.0
+    denom = t if t > 1e-9 else 1e-9
+    return _clamp01((t - w) / denom)
+
+
+def _efe_zone_from_ctx(ctx) -> str:
+    """
+    Best-effort zone label used as a safety proxy for the EFE stub.
+
+    Preference order:
+      1) BodyMap-derived zone (if available)
+      2) navpatch_priors["zone"] (already JSON-safe and present in cycle logs)
+      3) "unknown"
+    """
+    # (1) BodyMap if possible
+    try:
+        if ctx is not None:
+            z = body_space_zone(ctx)
+            if isinstance(z, str) and z:
+                return z
+    except Exception:
+        pass
+
+    # (2) navpatch priors bundle
+    try:
+        priors = getattr(ctx, "navpatch_last_priors", None)
+        if isinstance(priors, dict):
+            z = priors.get("zone")
+            if isinstance(z, str) and z:
+                return z
+    except Exception:
+        pass
+
+    return "unknown"
+
+
+def _efe_stage_from_ctx(ctx) -> str:
+    """Stage is useful context, but we keep it optional and best-effort."""
+    try:
+        priors = getattr(ctx, "navpatch_last_priors", None)
+        if isinstance(priors, dict):
+            st = priors.get("stage")
+            if isinstance(st, str) and st:
+                return st
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _efe_global_ambiguity_from_navpatch(ctx) -> float:
+    """
+    Use NavPatch matching residuals as a proxy for perceptual ambiguity.
+
+    We treat best-match error (best['err'] in [0,1]) as a local mismatch signal.
+    This is NOT yet the commit/ambiguous classification (that is Step 2); it is
+    simply "how well did the patch match its nearest stored prototype?"
+    """
+    matches = getattr(ctx, "navpatch_last_matches", None)
+    if not isinstance(matches, list) or not matches:
+        return 0.0
+
+    errs: list[float] = []
+    for rec in matches:
+        if not isinstance(rec, dict):
+            continue
+        best = rec.get("best")
+        if not isinstance(best, dict):
+            continue
+        err = best.get("err")
+        if isinstance(err, (int, float)):
+            errs.append(float(err))
+
+    if not errs:
+        return 0.0
+    return _clamp01(sum(errs) / max(1, len(errs)))
+
+
+def _efe_risk_stub_v1(policy_name: str, *, zone: str) -> float:
+    """
+    Risk proxy: map coarse zone + policy semantics into a [0,1] cost.
+
+    This is intentionally tiny and transparent. We will revise once we have
+    a richer environment (goat_foraging_* tasks) and real movement policies.
+    """
+    base = {"unsafe_cliff_near": 0.80, "safe": 0.10, "unknown": 0.40}.get(zone, 0.40)
+
+    # Heuristic adjustments by policy role (very small; keep readable)
+    if policy_name == "policy:rest":
+        base += 0.20  # resting while unsafe is a bad idea
+    elif policy_name == "policy:follow_mom":
+        base -= 0.20  # movement away from danger tends to reduce risk
+    elif policy_name in ("policy:stand_up", "policy:recover_fall"):
+        base -= 0.10  # recovery actions reduce immediate risk of being prone
+    elif policy_name == "policy:seek_nipple":
+        base += 0.05  # mild: attention diverted (stub)
+
+    return _clamp01(base)
+
+
+def _efe_preference_stub_v1(policy_name: str, drives: Drives, ctx, *, zone: str, amb_global: float) -> float:
+    """
+    Preference proxy: expected "goodness" of an action given drives + safety context.
+
+    Returns a [0,1] value (higher is more preferred).
+    """
+    hunger = float(getattr(drives, "hunger", 0.0) or 0.0)
+    fatigue = float(getattr(drives, "fatigue", 0.0) or 0.0)
+    warmth = float(getattr(drives, "warmth", 1.0) or 1.0)
+
+    hunger_need = _norm_deficit(hunger, float(HUNGER_HIGH))
+    fatigue_need = _norm_deficit(fatigue, float(FATIGUE_HIGH))
+    cold_need = _norm_cold(warmth, 0.30)
+
+    # Safety posture signal (BodyMap-first via controller helper)
+    fallen = False
+    try:
+        fallen = bool(_fallen_near_now(None if ctx is None else getattr(ctx, "working_world", None), ctx, max_hops=3))  # best-effort
+    except Exception:
+        try:
+            fallen = bool(_fallen_near_now(None, ctx, max_hops=3))
+        except Exception:
+            fallen = False
+
+    # Policy-specific preference
+    if policy_name == "policy:seek_nipple":
+        return _clamp01(1.00 * hunger_need)
+
+    if policy_name == "policy:rest":
+        return _clamp01(1.00 * fatigue_need + 0.25 * cold_need)
+
+    if policy_name in ("policy:stand_up", "policy:recover_fall"):
+        return 1.0 if fallen else 0.0
+
+    if policy_name == "policy:follow_mom":
+        # When unsafe, moving is strongly preferred; otherwise it is a mild default preference.
+        return 0.60 if zone == "unsafe_cliff_near" else 0.20
+
+    if policy_name == "policy:explore_check":
+        # Epistemic-ish bias: when ambiguity is high, exploring becomes more attractive.
+        return _clamp01(0.10 + 0.40 * float(amb_global))
+
+    return 0.0
+
+
+def _efe_ambiguity_stub_v1(policy_name: str, *, amb_global: float) -> float:
+    """
+    Ambiguity proxy: start from global perceptual ambiguity and apply tiny policy deltas.
+
+    Lower is better (it is a cost term).
+    """
+    a = _clamp01(float(amb_global))
+
+    if policy_name == "policy:explore_check":
+        a -= 0.20
+    elif policy_name == "policy:follow_mom":
+        a -= 0.10
+    elif policy_name == "policy:rest":
+        a += 0.10
+
+    return _clamp01(a)
+
+
+def compute_efe_scores_stub_v1(_world, drives: Drives, ctx, candidates: list[str], *, triggered_all: list[str] | None = None) -> dict[str, Any]:
+    """
+    Compute a small, JSON-safe EFE-style scoring bundle for candidate policies.
+
+    Output (JSON-safe):
+      {
+        "v": "efe_scores_v1",
+        "enabled": true,
+        "stage": "...",
+        "zone": "...",
+        "amb_global": 0.23,
+        "weights": {"risk": 1.0, "ambiguity": 1.0, "preference": 1.0},
+        "candidates": [...],
+        "triggered_all": [...],          # optional
+        "scores": [
+            {"policy": "...", "risk": .., "ambiguity": .., "preference": .., "total": .., "rank": 1},
+            ...
+        ],
+      }
+
+    Convention:
+      - risk/ambiguity are costs (lower is better)
+      - preference is a value (higher is better)
+      - total is minimized: total = w_risk*risk + w_amb*ambiguity - w_pref*preference
+    """
+    zone = _efe_zone_from_ctx(ctx)
+    stage = _efe_stage_from_ctx(ctx)
+    amb_global = _efe_global_ambiguity_from_navpatch(ctx)
+
+    try:
+        w_r = float(getattr(ctx, "efe_w_risk", 1.0))
+    except Exception:
+        w_r = 1.0
+    try:
+        w_a = float(getattr(ctx, "efe_w_ambiguity", 1.0))
+    except Exception:
+        w_a = 1.0
+    try:
+        w_p = float(getattr(ctx, "efe_w_preference", 1.0))
+    except Exception:
+        w_p = 1.0
+
+    # De-dupe candidates while preserving order
+    seen: set[str] = set()
+    cand: list[str] = []
+    for nm in candidates:
+        if isinstance(nm, str) and nm and nm not in seen:
+            seen.add(nm)
+            cand.append(nm)
+
+    rows: list[dict[str, Any]] = []
+    for nm in cand:
+        r = _efe_risk_stub_v1(nm, zone=zone)
+        a = _efe_ambiguity_stub_v1(nm, amb_global=amb_global)
+        p = _efe_preference_stub_v1(nm, drives, ctx, zone=zone, amb_global=amb_global)
+        total = (w_r * r) + (w_a * a) - (w_p * p)
+
+        rows.append(
+            {
+                "policy": nm,
+                "risk": float(r),
+                "ambiguity": float(a),
+                "preference": float(p),
+                "total": float(total),
+            }
+        )
+
+    rows.sort(key=lambda d: float(d.get("total", 0.0)))
+    for i, d in enumerate(rows, 1):
+        d["rank"] = i
+
+    out: dict[str, Any] = {
+        "v": _EFE_SCORES_VERSION,
+        "enabled": True,
+        "stage": stage,
+        "zone": zone,
+        "amb_global": float(amb_global),
+        "weights": {"risk": float(w_r), "ambiguity": float(w_a), "preference": float(w_p)},
+        "candidates": list(cand),
+        "scores": rows,
+    }
+    if isinstance(triggered_all, list):
+        out["triggered_all"] = [x for x in triggered_all if isinstance(x, str)]
+    return out
+
+
+def _efe_render_summary_line(ctx, *, max_policies: int = 5) -> str:
+    """
+    Render a compact, single-line EFE summary for terminal logs.
+
+    Only prints when ctx.efe_enabled is True. This is meant to be "one more lens"
+    next to deficit/non-drive/RL notes, not a new control rule yet.
+    """
+    if ctx is None or not bool(getattr(ctx, "efe_enabled", False)):
+        return ""
+
+    efe = getattr(ctx, "efe_last", None)
+    if not isinstance(efe, dict):
+        return ""
+
+    zone = efe.get("zone", "unknown")
+    amb = efe.get("amb_global", None)
+    try:
+        amb_txt = f"{float(amb):.2f}"
+    except Exception:
+        amb_txt = "n/a"
+
+    scores = efe.get("scores", None)
+    if not isinstance(scores, list) or not scores:
+        return f"[efe] zone={zone} amb={amb_txt} (no scores)\n"
+
+    parts: list[str] = []
+    lim = max(1, int(max_policies))
+    for row in scores[:lim]:
+        if not isinstance(row, dict):
+            continue
+        nm = row.get("policy")
+        if not isinstance(nm, str):
+            continue
+        try:
+            tot = float(row.get("total", 0.0))
+            r = float(row.get("risk", 0.0))
+            a = float(row.get("ambiguity", 0.0))
+            p = float(row.get("preference", 0.0))
+            parts.append(f"{nm}(G={tot:+.2f} r={r:.2f} a={a:.2f} p={p:.2f})")
+        except Exception:
+            parts.append(f"{nm}(G=n/a)")
+
+    if not parts:
+        return f"[efe] zone={zone} amb={amb_txt} (no scores)\n"
+
+    if len(scores) > lim:
+        parts.append("...")
+
+    return f"[efe] zone={zone} amb={amb_txt} " + " | ".join(parts) + "\n"
+
 
 @dataclass
 class PolicyGate:
@@ -4005,6 +4365,12 @@ class PolicyRuntime:
 
         # capture the full triggered set (before any safety-only filtering)
         triggered_all = [p.name for p in matches]
+        # Remember what triggered this cycle (Phase X): useful for traces and later ambiguity/commit logic.
+        try:
+            if ctx is not None:
+                ctx.ac_triggered_policies = list(triggered_all)
+        except Exception:
+            pass
 
         # If fallen near NOW (BodyMap-first), force safety-only gates
         if _fallen_near_now(world, ctx, max_hops=3):
@@ -4012,6 +4378,26 @@ class PolicyRuntime:
             matches = [p for p in matches if p.name in safety_only]
             if not matches:
                 return "no_match"
+
+        # --- EFE policy scoring stub (Phase X 2.2b): compute + store (selection unchanged) ---
+        try:
+            if ctx is not None and bool(getattr(ctx, "efe_enabled", False)):
+                cand_names = [p.name for p in matches]
+                ctx.efe_last = compute_efe_scores_stub_v1(world, drives, ctx, cand_names, triggered_all=triggered_all)
+                ctx.efe_last_scores = list(ctx.efe_last.get("scores", [])) if isinstance(ctx.efe_last, dict) else []
+            else:
+                # keep previous values from leaking into logs when EFE is off
+                if ctx is not None:
+                    ctx.efe_last = {}
+                    ctx.efe_last_scores = []
+        except Exception:
+            # Diagnostics only: never let EFE break the controller.
+            try:
+                if ctx is not None:
+                    ctx.efe_last = {"v": _EFE_SCORES_VERSION, "enabled": False, "error": "efe_compute_exception"}
+                    ctx.efe_last_scores = []
+            except Exception:
+                pass
 
         # Choose by drive-deficit
         # NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).
@@ -4361,6 +4747,13 @@ class PolicyRuntime:
         post_expl = gate_for_label.explain(world, drives, ctx) if gate_for_label.explain else "explain: (not provided)"
         rl_line = (rl_pick_note + "\n") if rl_pick_note else ""
 
+        efe_line = ""
+        try:
+            if ctx is not None and bool(getattr(ctx, "efe_verbose", False)) and bool(getattr(ctx, "efe_enabled", False)):
+                efe_line = _efe_render_summary_line(ctx, max_policies=5)
+        except Exception:
+            efe_line = ""
+
         # Where did we execute the chosen policy?
         where_exec = "WG"
         try:
@@ -4374,6 +4767,7 @@ class PolicyRuntime:
             f"{label} (added {delta_n} bindings)\n"
             f"{pick_debug_line}"
             f"{rl_line}"
+            f"{efe_line}"
             f"{exec_line}"
             f"{maps_line}"
             f"pre:  {pre_expl}\n"
@@ -7908,11 +8302,31 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
 
         # Add normalized weights (posterior proxy) for future graded belief work.
         if top_list:
-            s_post = float(sum(c["score"] for c in top_list))
-            s_raw = float(sum(c["score_raw"] for c in top_list))
+            s_post = 0.0
+            s_raw = 0.0
             for c in top_list:
-                c["w"] = (float(c["score"]) / s_post) if s_post > 0.0 else (1.0 / float(len(top_list)))
-                c["w_raw"] = (float(c["score_raw"]) / s_raw) if s_raw > 0.0 else (1.0 / float(len(top_list)))
+                try:
+                    s_post += float(c.get("score", 0.0) or 0.0)
+                except Exception:
+                    pass
+                try:
+                    s_raw += float(c.get("score_raw", 0.0) or 0.0)
+                except Exception:
+                    pass
+
+            n = float(len(top_list))
+            for c in top_list:
+                try:
+                    v = float(c.get("score", 0.0) or 0.0)
+                except Exception:
+                    v = 0.0
+                c["w"] = (v / s_post) if s_post > 0.0 else (1.0 / n)
+
+                try:
+                    v = float(c.get("score_raw", 0.0) or 0.0)
+                except Exception:
+                    v = 0.0
+                c["w_raw"] = (v / s_raw) if s_raw > 0.0 else (1.0 / n)
 
         best = top_list[0] if top_list else None
         best_score = float(best.get("score", 0.0)) if isinstance(best, dict) else 0.0
@@ -8016,7 +8430,17 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
 # -----------------------------------------------------------------------------
 
 def append_cycle_json_record(ctx: Ctx, record: dict[str, Any]) -> None:
-    """Append a per-cycle JSON-safe record to ctx and optionally write it as JSONL."""
+    """Append a per-cycle JSON-safe record to ctx and optionally write it as JSONL.
+
+    Design:
+      - Always appends to an in-memory ring buffer (ctx.cycle_json_records).
+      - If ctx.cycle_json_path is a non-empty string, appends a single JSON object per line (JSONL).
+      - Never raises: logging-only on failure so the runner stays interactive.
+
+    Notes:
+      - File path is interpreted relative to the process working directory unless absolute.
+      - The file is created on first successful open(..., "a", ...).
+    """
     if ctx is None or not bool(getattr(ctx, "cycle_json_enabled", False)):
         return
 
@@ -8035,10 +8459,15 @@ def append_cycle_json_record(ctx: Ctx, record: dict[str, Any]) -> None:
     path = getattr(ctx, "cycle_json_path", None)
     if not isinstance(path, str) or not path.strip():
         return
+
+    abs_path = os.path.abspath(path)
     try:
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n")
-    except Exception:
+        os.makedirs(os.path.dirname(abs_path) or ".", exist_ok=True)
+        line = json.dumps(record, sort_keys=True, ensure_ascii=False)
+        with open(abs_path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception as e:
+        logging.error("[cycle_json] write failed path=%r: %s", abs_path, e, exc_info=True)
         return
 
 
@@ -10866,6 +11295,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 exec_world = ctx.working_world
             _wm_creative_update(policy_rt, world, drives, ctx, exec_world=exec_world)
             fired = policy_rt.consider_and_maybe_fire(world, drives, ctx, exec_world=exec_world)
+
             fired_txt = fired if isinstance(fired, str) else None
 
             if fired != "no_match":
@@ -11008,16 +11438,31 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 except Exception:
                     zone_now = None
 
+                # Robustify a few fields so JSON dumping never surprises us.
+                policy_fired_val = policy_name if isinstance(policy_name, str) else None
+
+                efe_last = getattr(ctx, "efe_last", None)
+                if not isinstance(efe_last, dict):
+                    efe_last = {}
+
+                efe_scores = getattr(ctx, "efe_last_scores", None)
+                if not isinstance(efe_scores, list):
+                    efe_scores = []
+
+                navpatch_priors = getattr(ctx, "navpatch_last_priors", None)
+                if not isinstance(navpatch_priors, dict):
+                    navpatch_priors = {}
+
                 rec = {
                     "controller_steps": int(getattr(ctx, "controller_steps", 0) or 0),
-                    "env_step": env_info.get("step_index"),
+                    "env_step": env_info.get("step_index") if isinstance(env_info, dict) else None,
                     "scenario_stage": getattr(st, "scenario_stage", None),
                     "posture": getattr(st, "kid_posture", None),
                     "mom_distance": getattr(st, "mom_distance", None),
                     "nipple_state": getattr(st, "nipple_state", None),
                     "zone": zone_now,
                     "action_applied": action_for_env,
-                    "policy_fired": policy_name,
+                    "policy_fired": policy_fired_val,
                     "obs": {
                         "predicates": list(getattr(env_obs, "predicates", []) or []),
                         "cues": list(getattr(env_obs, "cues", []) or []),
@@ -11029,7 +11474,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                         "cues": list((inj or {}).get("cues", []) or []),
                     },
                     "navpatch_matches": list(getattr(ctx, "navpatch_last_matches", []) or []),
-                    "navpatch_priors": dict(getattr(ctx, "navpatch_last_priors", {}) or {}),
+                    "navpatch_priors": navpatch_priors,
+                    "efe": efe_last,
+                    "efe_scores": efe_scores,
                     "drives": {
                         "hunger": float(getattr(drives, "hunger", 0.0) or 0.0),
                         "fatigue": float(getattr(drives, "fatigue", 0.0) or 0.0),
@@ -11037,8 +11484,8 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                     },
                 }
                 append_cycle_json_record(ctx, rec)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error("[cycle_json] record build/append failed: %s", e, exc_info=True)
 
     print("\n[env-loop] Closed-loop cognitive cycle complete. "
           "You can inspect details via Snapshot or the mini-snapshot that follows.")
@@ -11618,6 +12065,12 @@ def interactive_loop(args: argparse.Namespace) -> None:
     ctx.cycle_json_enabled = True
     ctx.cycle_json_path = "cycle_log.jsonl"   # set to None for in-memory only
     ctx.cycle_json_max_records = 2000         # ring buffer size
+
+    ctx.efe_enabled = True
+    ctx.efe_verbose = False  # keep noise low; the env-loop will still print one [efe] line per step
+    ctx.efe_w_risk = 1.0
+    ctx.efe_w_ambiguity = 1.0
+    ctx.efe_w_preference = 1.0
 
     ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump) # temporal soft clock (added)
     ctx.tvec_last_boundary = ctx.temporal.vector()  # seed “last boundary”
