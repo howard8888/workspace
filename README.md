@@ -402,7 +402,6 @@ Once you’ve seen one closed-loop episode run successfully, take a look at othe
 
 **Tutorials and technical deep dives**
 
-- [Logging & Unit Tests](#logging--unit-tests)
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
 - [Tutorial on WorkingMap](#tutorial-on-workingmap)
 - [Memory Systems in CCA8](#memory-systems-in-cca8)
@@ -426,8 +425,7 @@ Once you’ve seen one closed-loop episode run successfully, take a look at othe
 - [Tutorial on Column Module Technical Features](#tutorial-on-column-module-technical-features)
 - [Tutorial on Approach to Simulation of the Environment](#tutorial-on-approach-to-simulation-of-the-environment)
 - [Tutorial on Environment Module Technical Features](#tutorial-on-environment-module-technical-features)
-- [Planner contract (for maintainers)](#planner-contract-for-maintainers)
-- [Persistence contract](#persistence-contract)
+- [Logging & Unit Tests](#logging--unit-tests)
 
 **References and Notes**
 
@@ -2615,403 +2613,6 @@ Q: Provenance?  A: meta.policy records which policy created the node.
 
 
 # TUTORIALS AND TECHNICAL DEEP DIVES
-
-
-
-
-
-# Logging & Unit Tests
-
-
-
-## Logging
-
-CCA8 intentionally produces **three complementary trace streams**, plus optional state snapshots:
-
-1) **`cca8_run.log`** — structured Python logging (best for warnings/errors and developer breadcrumbs).
-2) **`terminal.txt`** — a verbatim terminal transcript (best for human “story” review and sharing runs).
-3) **`cycle_log.jsonl`** — a per-cycle machine-parsable trace (best for analysis, plots, and regression tests).
-
-In addition, `--autosave <file>.json` produces **state checkpoints** (not an execution trace).
-
-
-
-### 1) `cca8_run.log` (structured Python logging)
-
-
-What it is:
-- Configured in `cca8_run.py` `main(...)` via `logging.basicConfig(...)`.
-- Writes to **`cca8_run.log`** (UTF-8) and also echoes to the console.
-- Intended for: exceptions/tracebacks, “this should never happen” conditions, and low-noise breadcrumbs.
-
-How to change it:
-- Edit `main(...)` in `cca8_run.py` where `logging.basicConfig(...)` is called (log level, filename, etc.).
-
-Tail the log while you run (Windows PowerShell):
-- `Get-Content .\cca8_run.log -Wait`
-
-
-
-### 2) `terminal.txt` (terminal transcript)
-
-
-What it is:
-- A tee-style transcript of everything printed to stdout (and optionally stderr).
-- Installed in `cca8_run.py` `main(...)` via `install_terminal_tee("terminal.txt", append=True, also_stderr=True)`.
-
-Why it exists:
-- It’s the easiest artifact to skim for “does the run tell a coherent story?”
-- It’s also easy to share (no screenshots needed).
-
-Operational notes:
-- It appends by default. Delete the file (or change `append=False`) when you want a clean run transcript.
-- If you want to disable it entirely, comment out the `install_terminal_tee(...)` call in `main(...)`.
-
-
-
-### 3) `cycle_log.jsonl` (per-cycle JSONL trace)
-
-
-What it is:
-- One JSON object per closed-loop environment step (JSONL = JSON Lines).
-- Designed for downstream parsing/plotting and for regression-style comparisons.
-
-Where it is configured:
-- In the interactive runner (`interactive_loop(...)`) via:
-  - `ctx.cycle_json_enabled` (on/off)
-  - `ctx.cycle_json_path` (file path; if None, file writing is disabled)
-  - `ctx.cycle_json_max_records` (ring buffer size for `ctx.cycle_json_records`)
-
-Operational notes:
-- JSONL is append-only. Delete/rotate `cycle_log.jsonl` between experiments if you want clean traces.
-- If you set `ctx.cycle_json_path = None`, the runner still keeps an in-memory ring buffer
-  (`ctx.cycle_json_records`) up to `ctx.cycle_json_max_records` entries.
-
-Record schema (v0; evolves over time):
-- v: record schema/version (if present)
-- episode_index / cycle_idx (or controller_steps) + env_meta (stage/zone/time, etc.)
-- obs: predicates, cues, and (optional) nav_patches (Phase X)
-- navpatch_matches: top-K candidates + chosen + commit/margin (Phase X)
-- navpatch_priors: priors bundle + precision weights (Phase X)
-- policy_fired / action_selected + drives (and other small scalars)
-- (optional) efe_scores: per-policy (risk, ambiguity, preference, total) diagnostic bundle
-- (optional) memory_ops summary: stored/deduped engram ids, pointer bids, etc.
-
-
-### 4) Autosave snapshots (state checkpoints, not a log)
-
-
-What it is:
-- `--autosave session.json` overwrites a single snapshot file after completed actions.
-- It is intended for “resume from here”, not for “analyze every step”.
-
-Related menu features:
-- Manual Save Session writes the same snapshot format as autosave.
-- Reset (with autosave set) deletes the autosave file and reinitializes state.
-
-
-### 5) Other debug artifacts
-
-
-- Interactive **HTML graph export** (menu) provides a visual snapshot of the WorldGraph.
-- `--preflight` prints to the console and also logs details to `cca8_run.log`.
-
-
-
-
-## JSON (why we use it heavily)
-
-
-CCA8 uses JSON (and JSONL) as a “lowest-friction” structured data representation across the project.
-
-Why JSON works well for CCA8:
-
-- It is supported by the Python standard library (`json`) with no extra dependencies.
-- It is language-agnostic: the same artifacts are easy to read from Python, JS, Go, Rust, etc.
-- It is diff-friendly and inspectable in plain text editors (great for debugging and code review).
-- It fits our needs for:
-  - autosave session snapshots (portable state checkpoints),
-  - per-cycle traces (`cycle_log.jsonl`) for analysis/regression,
-  - metadata dictionaries on nodes/edges/engrams (exportable without custom serializers).
-
-Why JSONL (JSON Lines) is used for traces:
-
-- One record per line enables streaming + append-only logging.
-- You can process huge runs without loading the full file into memory.
-- A partially-written file is still usable (everything up to the last complete line parses).
-
-We intentionally avoid Python-specific formats (e.g., pickle) for saved artifacts because portability and inspectability matter more than raw speed at the time of writing.  However, Python's Pickle is a binary-format and can be many times faster than using JSON, so it may be used in some areas of future versions of the CCA8 where data structures have grown exponentially. Note that Python Pickle is not language-agnostic and is a binary format more difficult for human inspection.
-
-
-
-### Tiny “same data” examples across common formats
-
-Example case: one closed-loop step summary with an env step, a fired policy, a zone, and two predicates.
-
-Consider the representation in different popular formats:
-
-
-
-JSON (JavaScript Object Notation)(object):
-
-{"env_step": 5, "policy_fired": "policy:stand_up", "zone": "unsafe_cliff_near",
- "predicates": ["posture:standing", "hazard:cliff:near"]}
-
-
-JSONL/ NDJSON  (one JSON object per line):
-
-{"env_step":5,"policy_fired":"policy:stand_up","zone":"unsafe_cliff_near","predicates":["posture:standing","hazard:cliff:near"]}
-
-
-
-TOML (Tom's Obvious Minimal Language) (useful for settings, similar to INI file syntax):
-
-env_step = 5
-policy_fired = "policy:stand_up"
-zone = "unsafe_cliff_near"
-predicates = ["posture:standing", "hazard:cliff:near"]
-
-
-
-INI (initialization format; legacy Windows/system settings; no native lists):
-
-[status]
-env_step = 5
-policy_fired = policy:stand_up
-zone = unsafe_cliff_near
-predicates = posture:standing; hazard:cliff:near
-
-
-
-TOON (Token-Oriented Object Notation) (useful to save tokens for usage with LLMs):
-
-env_step: 5
-policy_fired: policy:stand_up
-zone: unsafe_cliff_near
-predicates[2]: posture:standing,hazard:cliff:near
-
-
-
-YAML (YAML Ain't Markup Language/ Yet Another Markup Language) (human-friendly, indentation-significant):
-
-env_step: 5
-policy_fired: policy:stand_up
-zone: unsafe_cliff_near
-predicates: [posture:standing, hazard:cliff:near]
-
-
-XML (eXtensible Markup Language) (tag-based, verbose but explicit and hierarchical):
-
-<step env_step="5" policy_fired="policy:stand_up" zone="unsafe_cliff_near">
-  <pred>posture:standing</pred><pred>hazard:cliff:near</pred>
-</step>
-
-
-
-OR another possible way of expressing in XML:
-
-
-<status>
-  <env_step>5</env_step>
-  <policy_fired>policy:stand_up</policy_fired>
-  <zone>unsafe_cliff_near</zone>
-  <predicates>
-    <item>posture:standing</item>
-    <item>hazard:cliff:near</item>
-  </predicates>
-</status>
-
-
-
-
-CSV (Comma-Separated Values) (text-based, flat structure, can inspect in spreadsheets):
-
-env_step,policy_fired,zone,predicates
-5,policy:stand_up,unsafe_cliff_near,"posture:standing;hazard:cliff:near"
-
-
-
-PICKLE (not an acroynym but refers to preserving objects) (Python-specific binary serialization, .pkl file):
-
-
-e.g., write the same example case as a Pickle file:
-
-import pickle
-obj = {
-    "env_step": 5,
-    "policy_fired": "policy:stand_up",
-    "zone": "unsafe_cliff_near",
-    "predicates": ["posture:standing", "hazard:cliff:near"] }
-with open("step.pkl", "wb") as f:
-    pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-
-e.g., write the same example as a Pickle in-memory structre and then display as Base64 text:
-
-import base64
-import pickle
-obj = {
-    "env_step": 5,
-    "policy_fired": "policy:stand_up",
-    "zone": "unsafe_cliff_near",
-    "predicates": ["posture:standing", "hazard:cliff:near"]}
-b = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
-print(base64.b64encode(b).decode("ascii"))
-
-Base-64 output:
-gAWVhgAAAAAAAAB9lCiMCGVudl9zdGVwlEsFjAxwb2xpY3lfZmlyZWSUjA9wb2xpY3k6c3RhbmRfdXCUjAR6b25llIwRdW5zYWZlX2NsaWZmX25lYXKUjApwcmVkaWNhdGVzlF2UKIwQcG9zdHVyZTpzdGFuZGluZ5SMEWhhemFyZDpjbGlmZjpuZWFylGV1Lg==
-
-
-Not considered in initial software development of the CCA8 but might be considered in aspects of future implementations:
-
-Protobuf (Protocol Buffers) (Google-developed format; faster and smaller than JSON):
-
--actually need pre-defined schema
-- smaller and faster than JSON but may not be smaller or faster than Pickle
--however, more of a transferable format than Pickle
-
-
-
-Msgpack (MessagePack) (binary-like JSON essentially):
-
--not faster or smaller than Pickle but much better for sharing data with others
-
-
-
-
-Parquet (Apache; instead of storing rows in CSV this stores as columns):
-
--industry standard for Apache Spark and data science
--less usueful for non-tabular data with arbitrary nested state graphs
-
-
-
-
-HDF5 (Hierarchical Data Format) (useful for billions of entries):
-
-- useful for very large numeric arrays/ tensors with chunking and compression
-- as the CCA8 scales in data generation size, to avoid the need to re-write future versions
-        of the CCA8 into Rust or C++ code, can combine Python with
-        HDF5 data format and use Python high-level vectorized libraries that have C/C++
-        or CUDA cores -- get near-native performance while still retaining the Python 'glue code'
-        (with the option of coding custom some low-level algorithms in C/CUDA where needed)
-- JSON slowest < Pickle and MessagePack fast < HDF5 ultrafast speeds
-- also much lower memory usage since lazy loading
-- can also be the smallest file size since supports GZIP or LZF compression at the 'chunk' level
-- can attach metadata directly to the data in this format
-
-
-import h5py
-import numpy as np
-# Creating an HDF5 file
-with h5py.File("data.h5", "w") as f:
-    # Metadata attributes
-    f.attrs["env_step"] = 5
-    f.attrs["policy_fired"] = "policy:stand_up"
-    # The actual data array
-    predicates = np.array(["posture:standing", "hazard:cliff:near"], dtype='S')
-    f.create_dataset("predicates", data=predicates)
-# Reading just one piece of metadata without loading the array:
-with h5py.File("data.h5", "r") as f:
-    print(f.attrs["env_step"]) 
-
-
-
-
-
-## Unit tests (pytest)
-
-We keep tests under tests/.
-
-Preflight runs pytest first (so failures stop you early).
-
-Stdout from tests is captured by default; enable prints byrunning pytest with -s (see below).
-
-Run preflight (will run tests first):
-
-Copy code
-
-python cca8_run.py --preflight
-
-Run tests directly (show prints):
-
-Copy code
-
-pytest -q -s
-
-Included starter tests:
-
-- `tests/test_smoke.py` — basic reasonableness (asserts True).
-- `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → pred:stand exists.
-- `tests/test_inspect_binding_details.py` — uses a small demo world and asserts that inspect-binding reports edge degrees as expected by the “Inspect binding details” menu.
-- `tests/test_phase_vi_c_spatial.py` — checks that the newborn-goat environment’s **spatial movement and safety gating** behave as described: `follow_mom` moves the kid off the cliff and into shelter, and the Rest gate respects BodyMap’s safety zone (vetoes rest near the cliff, allows rest when shelter is near and the cliff is far).
-
-
-The demo world for these tests is built via `cca8_test_worlds.build_demo_world_for_inspect()`, which creates a tiny, deterministic WorldGraph (anchors NOW/HERE, stand/fallen/cue_mom/rest predicates, and a single engram pointer) that you can also use interactively via `--demo-world`.
-Unit tests (pytest)
-
-
-
-## Preflight (four-part self-test)
-
-Run all checks and exit:
-
-`> python cca8_run.py --preflight`
-
-**What runs**
-
-1) **Unit tests (pytest + coverage).**  
-   Prints a normal pytest summary. Coverage is percent of **executable** lines
-   (comments/docstrings ignored). Ordinary code—including `print(...)` /
-   `input(...)`—counts toward coverage. Target ≥30%.  
-   *Note: console vs footer may differ by ~1% due to reporter rounding.*  
-
-2) **Scenario checks (whole-flow).**  
-   Deterministic probes that catch issues unit tests miss:
-   
-   - Core imports & symbols present; version printouts
-   - Fresh-world invariants and NOW anchor
-   - `set_now` tag housekeeping (old NOW tag removed, new NOW tagged)
-   - Accessory files exist (e.g., README, images)
-   - Optional PyVis availability
-   - Planner probes (BFS/Dijkstra toggle), attach semantics (now/latest)
-   - Cue normalization, action metrics aggregation
-   - Lexicon strictness (neonate stage rejects off-vocab), engram bridge
-   - Action helpers summary is printable
-
-3) **Robotics hardware preflight (stub).**  
-   Reports HAL/body flag status. Example line:  
-   `[preflight hardware] PASS  - NO-TEST: HAL=OFF (no embodiment); body=0.0.0 : none specified — pending integration`
-   Note: Pending integration of HALs.
-
-4) **System-functionality fitness (stub).**  
-   Placeholder for end-to-end task demos (will exercise cognitive + HAL paths).
-   Note: Pending integration of HALS.
-
-**Footer format & exit code**
-
-The last line gives a compact verdict and returns a process exit code:
-
-for example:
-
-[preflight] RESULT: PASS | tests=118/118 | coverage=33% (≥30) |  
-probes=41/41 | hardware_checks=0 | system_fitness_assessments=0 | elapsed=00:02
-
-- `PASS/FAIL` reflects both pytest and probe results.  
-- `probes` counts scenario checks (part 2).  
-- `hardware_checks` / `system_fitness_assessments` are **0** until those lanes are implemented.
-
-**Artifacts**
-
-- JUnit XML: `.coverage/junit.xml`  
-- Coverage XML: `.coverage/coverage.xml` (console prints a human summary)
-
-**Tip:** a lightweight *startup* check can be toggled with
-`CCA8_PREFLIGHT=off` (disables the “lite” banner probe at launch).
-
-
-
-
 
 
 
@@ -12055,71 +11656,394 @@ It’s a minimal “world ↔ brain” loop for inspection and debugging.
 
 
 
+# Logging & Unit Tests
 
 
 
-# Planner contract (for maintainers)
+## Logging
 
-Input:
+CCA8 intentionally produces **three complementary trace streams**, plus optional state snapshots:
 
-* `start_id`: usually the NOW anchor.
-* `goal_token`: a predicate token like `pred:nurse`.
+1) **`cca8_run.log`** — structured Python logging (best for warnings/errors and developer breadcrumbs).
+2) **`terminal.txt`** — a verbatim terminal transcript (best for human “story” review and sharing runs).
+3) **`cycle_log.jsonl`** — a per-cycle machine-parsable trace (best for analysis, plots, and regression tests).
 
-Output:
-
-* Path as a list of ids, or `None` if unreachable.
-
-Rules:
-
-* BFS over `edges` with visited‑on‑enqueue.
-* Parent map records the first discoverer.
-* Stop‑on‑pop or stop‑on‑discovery are both acceptable (we currently stop‑on‑pop).
-* The pretty printer reconstructs `id[label] --edge--> id[label]` for readability.
-  
-  
-
-***Q&A to help you learn this section***
-
-Q: Start node for plans?   
-A: The NOW anchor (binding id) unless explicitly overridden.
-
-Q: Stop condition?   
-A: When the planner pops a binding whose tags include the target `pred:<token>`.
-
-Q: Visited bookkeeping?   
-A: Visited-on-enqueue with a parent map to reconstruct the shortest path.
-
-Q: Can we switch to weighted search later?   
-A: Yes—swap BFS with Dijkstra/A* once edges carry costs/heuristics or... consider library component.
+In addition, `--autosave <file>.json` produces **state checkpoints** (not an execution trace).
 
 
 
+### 1) `cca8_run.log` (structured Python logging)
+
+
+What it is:
+- Configured in `cca8_run.py` `main(...)` via `logging.basicConfig(...)`.
+- Writes to **`cca8_run.log`** (UTF-8) and also echoes to the console.
+- Intended for: exceptions/tracebacks, “this should never happen” conditions, and low-noise breadcrumbs.
+
+How to change it:
+- Edit `main(...)` in `cca8_run.py` where `logging.basicConfig(...)` is called (log level, filename, etc.).
+
+Tail the log while you run (Windows PowerShell):
+- `Get-Content .\cca8_run.log -Wait`
+
+
+
+### 2) `terminal.txt` (terminal transcript)
+
+
+What it is:
+- A tee-style transcript of everything printed to stdout (and optionally stderr).
+- Installed in `cca8_run.py` `main(...)` via `install_terminal_tee("terminal.txt", append=True, also_stderr=True)`.
+
+Why it exists:
+- It’s the easiest artifact to skim for “does the run tell a coherent story?”
+- It’s also easy to share (no screenshots needed).
+
+Operational notes:
+- It appends by default. Delete the file (or change `append=False`) when you want a clean run transcript.
+- If you want to disable it entirely, comment out the `install_terminal_tee(...)` call in `main(...)`.
+
+
+
+### 3) `cycle_log.jsonl` (per-cycle JSONL trace)
+
+
+What it is:
+- One JSON object per closed-loop environment step (JSONL = JSON Lines).
+- Designed for downstream parsing/plotting and for regression-style comparisons.
+
+Where it is configured:
+- In the interactive runner (`interactive_loop(...)`) via:
+  - `ctx.cycle_json_enabled` (on/off)
+  - `ctx.cycle_json_path` (file path; if None, file writing is disabled)
+  - `ctx.cycle_json_max_records` (ring buffer size for `ctx.cycle_json_records`)
+
+Operational notes:
+- JSONL is append-only. Delete/rotate `cycle_log.jsonl` between experiments if you want clean traces.
+- If you set `ctx.cycle_json_path = None`, the runner still keeps an in-memory ring buffer
+  (`ctx.cycle_json_records`) up to `ctx.cycle_json_max_records` entries.
+
+Record schema (v0; evolves over time):
+- v: record schema/version (if present)
+- episode_index / cycle_idx (or controller_steps) + env_meta (stage/zone/time, etc.)
+- obs: predicates, cues, and (optional) nav_patches (Phase X)
+- navpatch_matches: top-K candidates + chosen + commit/margin (Phase X)
+- navpatch_priors: priors bundle + precision weights (Phase X)
+- policy_fired / action_selected + drives (and other small scalars)
+- (optional) efe_scores: per-policy (risk, ambiguity, preference, total) diagnostic bundle
+- (optional) memory_ops summary: stored/deduped engram ids, pointer bids, etc.
+
+
+### 4) Autosave snapshots (state checkpoints, not a log)
+
+
+What it is:
+- `--autosave session.json` overwrites a single snapshot file after completed actions.
+- It is intended for “resume from here”, not for “analyze every step”.
+
+Related menu features:
+- Manual Save Session writes the same snapshot format as autosave.
+- Reset (with autosave set) deletes the autosave file and reinitializes state.
+
+
+### 5) Other debug artifacts
+
+
+- Interactive **HTML graph export** (menu) provides a visual snapshot of the WorldGraph.
+- `--preflight` prints to the console and also logs details to `cca8_run.log`.
+
+
+
+
+### JSON (why we use it heavily)
+
+
+CCA8 uses JSON (and JSONL) as a “lowest-friction” structured data representation across the project.
+
+Why JSON works well for CCA8:
+
+- It is supported by the Python standard library (`json`) with no extra dependencies.
+- It is language-agnostic: the same artifacts are easy to read from Python, JS, Go, Rust, etc.
+- It is diff-friendly and inspectable in plain text editors (great for debugging and code review).
+- It fits our needs for:
+  - autosave session snapshots (portable state checkpoints),
+  - per-cycle traces (`cycle_log.jsonl`) for analysis/regression,
+  - metadata dictionaries on nodes/edges/engrams (exportable without custom serializers).
+
+Why JSONL (JSON Lines) is used for traces:
+
+- One record per line enables streaming + append-only logging.
+- You can process huge runs without loading the full file into memory.
+- A partially-written file is still usable (everything up to the last complete line parses).
+
+We intentionally avoid Python-specific formats (e.g., pickle) for saved artifacts because portability and inspectability matter more than raw speed at the time of writing.  However, Python's Pickle is a binary-format and can be many times faster than using JSON, so it may be used in some areas of future versions of the CCA8 where data structures have grown exponentially. Note that Python Pickle is not language-agnostic and is a binary format more difficult for human inspection.
+
+
+
+### Tiny “same data” examples across common formats
+
+Example case: one closed-loop step summary with an env step, a fired policy, a zone, and two predicates.
+
+Consider the representation in different popular formats:
+
+
+
+JSON (JavaScript Object Notation)(object):
+
+{"env_step": 5, "policy_fired": "policy:stand_up", "zone": "unsafe_cliff_near",
+ "predicates": ["posture:standing", "hazard:cliff:near"]}
+
+
+JSONL/ NDJSON  (one JSON object per line):
+
+{"env_step":5,"policy_fired":"policy:stand_up","zone":"unsafe_cliff_near","predicates":["posture:standing","hazard:cliff:near"]}
+
+
+
+TOML (Tom's Obvious Minimal Language) (useful for settings, similar to INI file syntax):
+
+env_step = 5
+policy_fired = "policy:stand_up"
+zone = "unsafe_cliff_near"
+predicates = ["posture:standing", "hazard:cliff:near"]
+
+
+
+INI (initialization format; legacy Windows/system settings; no native lists):
+
+[status]
+env_step = 5
+policy_fired = policy:stand_up
+zone = unsafe_cliff_near
+predicates = posture:standing; hazard:cliff:near
+
+
+
+TOON (Token-Oriented Object Notation) (useful to save tokens for usage with LLMs):
+
+env_step: 5
+policy_fired: policy:stand_up
+zone: unsafe_cliff_near
+predicates[2]: posture:standing,hazard:cliff:near
+
+
+
+YAML (YAML Ain't Markup Language/ Yet Another Markup Language) (human-friendly, indentation-significant):
+
+env_step: 5
+policy_fired: policy:stand_up
+zone: unsafe_cliff_near
+predicates: [posture:standing, hazard:cliff:near]
+
+
+XML (eXtensible Markup Language) (tag-based, verbose but explicit and hierarchical):
+
+<step env_step="5" policy_fired="policy:stand_up" zone="unsafe_cliff_near">
+  <pred>posture:standing</pred><pred>hazard:cliff:near</pred>
+</step>
+
+
+
+OR another possible way of expressing in XML:
+
+
+<status>
+  <env_step>5</env_step>
+  <policy_fired>policy:stand_up</policy_fired>
+  <zone>unsafe_cliff_near</zone>
+  <predicates>
+    <item>posture:standing</item>
+    <item>hazard:cliff:near</item>
+  </predicates>
+</status>
+
+
+
+
+CSV (Comma-Separated Values) (text-based, flat structure, can inspect in spreadsheets):
+
+env_step,policy_fired,zone,predicates
+5,policy:stand_up,unsafe_cliff_near,"posture:standing;hazard:cliff:near"
+
+
+
+PICKLE (not an acroynym but refers to preserving objects) (Python-specific binary serialization, .pkl file):
+
+
+e.g., write the same example case as a Pickle file:
+
+import pickle
+obj = {
+    "env_step": 5,
+    "policy_fired": "policy:stand_up",
+    "zone": "unsafe_cliff_near",
+    "predicates": ["posture:standing", "hazard:cliff:near"] }
+with open("step.pkl", "wb") as f:
+    pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+e.g., write the same example as a Pickle in-memory structre and then display as Base64 text:
+
+import base64
+import pickle
+obj = {
+    "env_step": 5,
+    "policy_fired": "policy:stand_up",
+    "zone": "unsafe_cliff_near",
+    "predicates": ["posture:standing", "hazard:cliff:near"]}
+b = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+print(base64.b64encode(b).decode("ascii"))
+
+Base-64 output:
+gAWVhgAAAAAAAAB9lCiMCGVudl9zdGVwlEsFjAxwb2xpY3lfZmlyZWSUjA9wb2xpY3k6c3RhbmRfdXCUjAR6b25llIwRdW5zYWZlX2NsaWZmX25lYXKUjApwcmVkaWNhdGVzlF2UKIwQcG9zdHVyZTpzdGFuZGluZ5SMEWhhemFyZDpjbGlmZjpuZWFylGV1Lg==
+
+
+Not considered in initial software development of the CCA8 but might be considered in aspects of future implementations:
+
+Protobuf (Protocol Buffers) (Google-developed format; faster and smaller than JSON):
+
+-actually need pre-defined schema
+- smaller and faster than JSON but may not be smaller or faster than Pickle
+-however, more of a transferable format than Pickle
+
+
+
+Msgpack (MessagePack) (binary-like JSON essentially):
+
+-not faster or smaller than Pickle but much better for sharing data with others
+
+
+
+
+Parquet (Apache; instead of storing rows in CSV this stores as columns):
+
+-industry standard for Apache Spark and data science
+-less usueful for non-tabular data with arbitrary nested state graphs
+
+
+
+
+HDF5 (Hierarchical Data Format) (useful for billions of entries):
+
+- useful for very large numeric arrays/ tensors with chunking and compression
+- as the CCA8 scales in data generation size, to avoid the need to re-write future versions
+        of the CCA8 into Rust or C++ code, can combine Python with
+        HDF5 data format and use Python high-level vectorized libraries that have C/C++
+        or CUDA cores -- get near-native performance while still retaining the Python 'glue code'
+        (with the option of coding custom some low-level algorithms in C/CUDA where needed)
+- JSON slowest < Pickle and MessagePack fast < HDF5 ultrafast speeds
+- also much lower memory usage since lazy loading
+- can also be the smallest file size since supports GZIP or LZF compression at the 'chunk' level
+- can attach metadata directly to the data in this format
+
+
+import h5py
+import numpy as np
+with h5py.File("data.h5", "w") as f:
+    f.attrs["env_step"] = 5
+    f.attrs["policy_fired"] = "policy:stand_up"
+    predicates = np.array(["posture:standing", "hazard:cliff:near"], dtype='S')
+    f.create_dataset("predicates", data=predicates)
+with h5py.File("data.h5", "r") as f:
+    print(f.attrs["env_step"]) 
 
 
 
 
 
+## Unit tests (pytest)
 
-# Persistence contract
+We keep tests under tests/.
 
-* `WorldGraph.to_dict()` produces a serializable shape with bindings, their edges, anchors, and the next id counter.
-* `WorldGraph.from_dict()` restores the same and advances the counter past any loaded ids so new bindings don’t collide.
-* The runner writes snapshots atomically and includes minor controller and skill state for debugging.
+Preflight runs pytest first (so failures stop you early).
 
-Design decision (ADR-0003 folded in): We chose JSON over a binary format to keep field debugging simple and to make saved sessions portable across machines and Python versions.
+Stdout from tests is captured by default; enable prints byrunning pytest with -s (see below).
+
+Run preflight (will run tests first):
+
+Copy code
+
+python cca8_run.py --preflight
+
+Run tests directly (show prints):
+
+Copy code
+
+pytest -q -s
+
+Included starter tests:
+
+- `tests/test_smoke.py` — basic reasonableness (asserts True).
+- `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → pred:stand exists.
+- `tests/test_inspect_binding_details.py` — uses a small demo world and asserts that inspect-binding reports edge degrees as expected by the “Inspect binding details” menu.
+- `tests/test_phase_vi_c_spatial.py` — checks that the newborn-goat environment’s **spatial movement and safety gating** behave as described: `follow_mom` moves the kid off the cliff and into shelter, and the Rest gate respects BodyMap’s safety zone (vetoes rest near the cliff, allows rest when shelter is near and the cliff is far).
+
+
+The demo world for these tests is built via `cca8_test_worlds.build_demo_world_for_inspect()`, which creates a tiny, deterministic WorldGraph (anchors NOW/HERE, stand/fallen/cue_mom/rest predicates, and a single engram pointer) that you can also use interactively via `--demo-world`.
+Unit tests (pytest)
 
 
 
-***Q&A to help you learn this section***
+## Preflight (four-part self-test)
 
-Q: What are the versioning expectations of the JSON shape?   
-A: Keep it stable, if fields change, bump a version field and handle compatibility in `from_dict()`.
+Run all checks and exit:
 
-Q: Does loading mutate counters?   
-A: Yes—counters advance so newly created bindings get fresh ids.
+`> python cca8_run.py --preflight`
 
-Q: What else does the runner persist beyond the world?   
-A: Drives and small controller telemetry to aid debugging.
+**What runs**
+
+1) **Unit tests (pytest + coverage).**  
+   Prints a normal pytest summary. Coverage is percent of **executable** lines
+   (comments/docstrings ignored). Ordinary code—including `print(...)` /
+   `input(...)`—counts toward coverage. Target ≥30%.  
+   *Note: console vs footer may differ by ~1% due to reporter rounding.*  
+
+2) **Scenario checks (whole-flow).**  
+   Deterministic probes that catch issues unit tests miss:
+   
+   - Core imports & symbols present; version printouts
+   - Fresh-world invariants and NOW anchor
+   - `set_now` tag housekeeping (old NOW tag removed, new NOW tagged)
+   - Accessory files exist (e.g., README, images)
+   - Optional PyVis availability
+   - Planner probes (BFS/Dijkstra toggle), attach semantics (now/latest)
+   - Cue normalization, action metrics aggregation
+   - Lexicon strictness (neonate stage rejects off-vocab), engram bridge
+   - Action helpers summary is printable
+
+3) **Robotics hardware preflight (stub).**  
+   Reports HAL/body flag status. Example line:  
+   `[preflight hardware] PASS  - NO-TEST: HAL=OFF (no embodiment); body=0.0.0 : none specified — pending integration`
+   Note: Pending integration of HALs.
+
+4) **System-functionality fitness (stub).**  
+   Placeholder for end-to-end task demos (will exercise cognitive + HAL paths).
+   Note: Pending integration of HALS.
+
+**Footer format & exit code**
+
+The last line gives a compact verdict and returns a process exit code:
+
+for example:
+
+[preflight] RESULT: PASS | tests=118/118 | coverage=33% (≥30) |  
+probes=41/41 | hardware_checks=0 | system_fitness_assessments=0 | elapsed=00:02
+
+- `PASS/FAIL` reflects both pytest and probe results.  
+- `probes` counts scenario checks (part 2).  
+- `hardware_checks` / `system_fitness_assessments` are **0** until those lanes are implemented.
+
+**Artifacts**
+
+- JUnit XML: `.coverage/junit.xml`  
+- Coverage XML: `.coverage/coverage.xml` (console prints a human summary)
+
+**Tip:** a lightweight *startup* check can be toggled with
+`CCA8_PREFLIGHT=off` (disables the “lite” banner probe at launch).
+
+
+
+
 
 
 
