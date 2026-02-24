@@ -4,7 +4,9 @@
 
 Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 
-
+NOTE: This README.md file exceeds the 512K GitHub rendering limit. Therefore, some topics
+    are not accessible by scrolling, but via the Table of Contents which will link you
+    to another similar README.md file.
 
 
 
@@ -2615,6 +2617,9 @@ Q: Provenance?  A: meta.policy records which policy created the node.
 # TUTORIALS AND TECHNICAL DEEP DIVES
 
 
+NOTE: This README.md file exceeds the 512K GitHub rendering limit. Therefore, some topics
+    are not accessible by scrolling, but via the Table of Contents which will link you
+    to another similar README.md file.
 
 
 # Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts
