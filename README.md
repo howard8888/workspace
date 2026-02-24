@@ -12068,9 +12068,6 @@ Tresp, V. et al., Tensor Brain -- [[2109.13392] The Tensor Brain: A Unified Theo
 
 
 
-
-
-
 # Developer and Maintainer Notes
 
 
