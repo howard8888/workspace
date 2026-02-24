@@ -142,7 +142,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # --none at this time at program startup --
 
 # CCA8 Module Imports
-# --none at this time at program startup --
+from cca8_navpatch import GRID_ENCODING_V1, CELL_UNKNOWN, CELL_TRAVERSABLE, CELL_HAZARD, CELL_GOAL
 
 # --- Public API index, version, global variables and constants ----------------------------------------
 #nb version number of different modules are unique to that module
@@ -292,6 +292,7 @@ class EnvObservation:
     Note: these are *observations*, not beliefs. WorldGraph+Columns are where
     CCA8 turns observations into internal state and memory.
     """
+
     raw_sensors: Dict[str, Any] = field(default_factory=dict)
     predicates: List[str] = field(default_factory=list)
     cues: List[str] = field(default_factory=list)
@@ -678,6 +679,35 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         # These are designed to be stored as separate Column engrams later.
         patches: List[Dict[str, Any]] = []
 
+        # --- grid_v1 evidence (Phase X) ---
+        # The storyboard has no vision or geometry engine. We still emit deterministic
+        # toy grids so the NavPatch -> SurfaceGrid -> derived slot-family pipeline is
+        # end-to-end and testable.
+        grid_w = 16
+        grid_h = 16
+        self_x = grid_w // 2
+        self_y = grid_h // 2
+
+        def _blank_grid(fill: int = CELL_UNKNOWN) -> List[int]:
+            return [int(fill)] * (grid_w * grid_h)
+
+
+        def _paint_band_x(cells: List[int], *, x0: int, x1: int, code: int) -> None:
+            # Paint a vertical band (inclusive) across all rows, clipped to the grid.
+            xx0 = max(0, min(grid_w - 1, int(x0)))
+            xx1 = max(0, min(grid_w - 1, int(x1)))
+            if xx1 < xx0:
+                xx0, xx1 = xx1, xx0
+            for y in range(grid_h):
+                base = y * grid_w
+                for x in range(xx0, xx1 + 1):
+                    cells[base + x] = int(code)
+
+
+        def _paint_point(cells: List[int], *, x: int, y: int, code: int) -> None:
+            if 0 <= x < grid_w and 0 <= y < grid_h:
+                cells[y * grid_w + x] = int(code)
+
 
         # --- raw channels ---
         dx = env_state.mom_position[0] - env_state.kid_position[0]
@@ -753,6 +783,13 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
 
         #nav_patches = self._stub_nav_patches(env_state)   #commented out since variable not used
 
+
+        # --- NavPatch grid payload v1 (Phase X Step 11) ---
+        grid_w = 16
+        grid_h = 16
+        self_x = grid_w // 2
+        self_y = grid_h // 2
+
         # Scene-level patch (zone + position)
         try:
             patches.append({
@@ -761,6 +798,12 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
                 "entity_id": "scene",
                 "role": "scene",
                 "frame": "ego_schematic_v1",
+                "grid_encoding_v": GRID_ENCODING_V1,
+                "grid_w": grid_w,
+                "grid_h": grid_h,
+                "grid_origin": [self_x, self_y],
+                "grid_resolution": 1.0,
+                "grid_cells": [CELL_TRAVERSABLE] * (grid_w * grid_h),
                 "extent": {"type": "aabb", "x0": -2.0, "y0": -2.0, "x1": 2.0, "y1": 2.0},
                 "tags": [
                     f"zone:{env_state.zone}",
@@ -773,14 +816,21 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         except Exception:
             pass
 
+
         # Entity-linked patches (hazard/shelter/mom)
-        def _add_simple_patch(local_id: str, entity_id: str, role: str, tags: list[str]) -> None:
+        def _add_simple_patch(local_id: str, entity_id: str, role: str, tags: list[str], grid_cells: list[int]) -> None:
             patches.append({
                 "schema": "navpatch_v1",
                 "local_id": local_id,
                 "entity_id": entity_id,
                 "role": role,
                 "frame": "ego_schematic_v1",
+                "grid_encoding_v": GRID_ENCODING_V1,
+                "grid_w": grid_w,
+                "grid_h": grid_h,
+                "grid_origin": [self_x, self_y],
+                "grid_resolution": 1.0,
+                "grid_cells": list(grid_cells),
                 "extent": {"type": "aabb", "x0": -1.0, "y0": -1.0, "x1": 1.0, "y1": 1.0},
                 "tags": list(tags),
                 "layers": {},
@@ -788,9 +838,24 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
             })
 
         try:
-            _add_simple_patch("p_cliff", "cliff", "hazard", [f"hazard:cliff:{env_state.cliff_distance}"])
-            _add_simple_patch("p_shelter", "shelter", "shelter", [f"proximity:shelter:{env_state.shelter_distance}"])
-            _add_simple_patch("p_mom", "mom", "agent", [f"proximity:mom:{env_state.mom_distance}"])
+            # Cliff: if near, paint a hazard band on the +X side close enough to trigger hazard:near.
+            cliff_cells = _blank_grid(CELL_UNKNOWN)
+            if env_state.cliff_distance == "near":
+                _paint_band_x(cliff_cells, x0=self_x + 2, x1=grid_w - 1, code=CELL_HAZARD)
+            _add_simple_patch("p_cliff", "cliff", "hazard", [f"hazard:cliff:{env_state.cliff_distance}"], cliff_cells)
+
+            # Shelter: if near, paint a goal band on the -X side (a "safe niche" attractor).
+            shelter_cells = _blank_grid(CELL_UNKNOWN)
+            if env_state.shelter_distance in ("near", "touching"):
+                _paint_band_x(shelter_cells, x0=0, x1=max(0, self_x - 2), code=CELL_GOAL)
+            _add_simple_patch("p_shelter", "shelter", "shelter", [f"proximity:shelter:{env_state.shelter_distance}"], shelter_cells)
+
+            # Mom: paint a single goal point one cell toward the mom direction (coarse bearing only).
+            mom_cells = _blank_grid(CELL_UNKNOWN)
+            sx = 0 if dx == 0.0 else (1 if dx > 0.0 else -1)
+            sy = 0 if dy == 0.0 else (1 if dy > 0.0 else -1)
+            _paint_point(mom_cells, x=self_x + sx, y=self_y + sy, code=CELL_GOAL)
+            _add_simple_patch("p_mom", "mom", "agent", [f"proximity:mom:{env_state.mom_distance}"], mom_cells)
         except Exception:
             pass
 

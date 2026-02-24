@@ -97,6 +97,7 @@ from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
 from cca8_env import HybridEnvironment, EnvObservation  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
 from cca8_features import FactMeta
+from cca8_navpatch import SurfaceGridV1, compose_surfacegrid_v1, derive_grid_slot_families_v1, grid_overlap_fraction_v1
 
 
 # --- Public API index, version, global variables and constants ----------------------------------------
@@ -291,6 +292,36 @@ class Ctx:
     navpatch_sig_to_eid: dict[str, str] = field(default_factory=dict)  # sig(hex) -> engram_id
     navpatch_last_log: dict[str, Any] = field(default_factory=dict)
 
+    # WorkingMap SurfaceGrid (Phase X v5.9): composed topological grid + derived slot-families
+    # -------------------------------------------------------------------------------
+    # SurfaceGrid is the single composed grid per tick built from active NavPatch instances.
+    # It is NOT stored into the long-term WorldGraph; it is a WorkingMap view designed to be
+    # cheap to build/scan and easy to render for inspection.
+    wm_surfacegrid_enabled: bool = True
+    wm_surfacegrid_verbose: bool = False
+    wm_surfacegrid_w: int = 16
+    wm_surfacegrid_h: int = 16
+    wm_surfacegrid_self_radius: int = 2
+    wm_surfacegrid: Optional[SurfaceGridV1] = None
+    wm_surfacegrid_sig16: Optional[str] = None
+    wm_surfacegrid_last_input_sig16: list[str] = field(default_factory=list)
+    wm_surfacegrid_dirty: bool = True
+    wm_surfacegrid_dirty_reasons: list[str] = field(default_factory=list)
+    wm_surfacegrid_compose_ms: float = 0.0
+    wm_surfacegrid_last_ascii: Optional[str] = None
+
+    # --- WM.Grid → predicates (Phase X Step 13) -----------------------------------------
+    # These are deterministic “derived facts” from SurfaceGrid. They are NOT cues and are
+    # never emitted as cue:* tokens.
+    wm_grid_to_preds_enabled: bool = True
+
+    # Last computed slot-family dict from derive_grid_slot_families_v1(...)
+    # Keys are small/stable (e.g., "hazard:near", "terrain:traversable_near", "goal:dir").
+    wm_grid_slot_families: dict[str, Any] = field(default_factory=dict)
+
+    # The concrete pred:* tags written onto the MapSurface SELF binding this tick (for inspection/traces).
+    wm_grid_pred_tags: list[str] = field(default_factory=list)
+
     # NavPatch (Phase X scaffolding): predictive matching loop + traceability
     # navpatch_enabled gates the entire matching pipeline. When enabled, EnvObservation.nav_patches
     # is treated as a stream of local "scene patches" that can be matched to prior prototypes stored
@@ -318,6 +349,7 @@ class Ctx:
     # Precision weighting (Phase X 2.2b): evidence reliability weights (v1 uses tags vs extent).
     navpatch_precision_tags: float = 0.75
     navpatch_precision_extent: float = 0.25
+    navpatch_precision_grid: float = 0.0
     navpatch_precision_tags_birth: float = 0.60     # lower precision early → more ambiguity
     navpatch_precision_tags_struggle: float = 0.65  # slightly better than birth, still degraded
     navpatch_last_priors: dict[str, Any] = field(default_factory=dict)
@@ -1448,6 +1480,52 @@ def _navpatch_core_v1(patch: dict[str, Any]) -> dict[str, Any]:
         "frame": patch.get("frame") if isinstance(patch.get("frame"), str) else None,
     }
 
+    # Grid payload (Phase X v5.9): include topology core in the signature.
+    # Signature rules: include grid_encoding_v, grid_w, grid_h, and grid_cells (or a stable digest).
+    ge = patch.get("grid_encoding_v")
+    if isinstance(ge, str) and ge:
+        core["grid_encoding_v"] = ge
+
+    gw = patch.get("grid_w")
+    gh = patch.get("grid_h")
+    if isinstance(gw, int) and isinstance(gh, int) and gw > 0 and gh > 0:
+        core["grid_w"] = int(gw)
+        core["grid_h"] = int(gh)
+
+        cells = patch.get("grid_cells")
+        if isinstance(cells, list) and len(cells) == int(gw) * int(gh):
+            norm: list[int] = []
+            ok = True
+            for c in cells:
+                if isinstance(c, int):
+                    norm.append(int(c))
+                else:
+                    ok = False
+                    break
+            if ok:
+                core["grid_cells"] = norm
+            else:
+                # Fallback: keep a stable digest so the signature still changes with topology.
+                try:
+                    blob = json.dumps(cells, separators=(",", ":"), ensure_ascii=False)
+                    core["grid_cells_digest"] = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+                except Exception:
+                    pass
+        elif isinstance(cells, list) and cells:
+            try:
+                blob = json.dumps(cells, separators=(",", ":"), ensure_ascii=False)
+                core["grid_cells_digest"] = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+            except Exception:
+                pass
+
+    # Optional (v1): origin/resolution are stable geometry parameters.
+    go = patch.get("grid_origin")
+    if isinstance(go, list) and len(go) == 2 and all(isinstance(v, (int, float)) for v in go):
+        core["grid_origin"] = [float(go[0]), float(go[1])]
+    gr = patch.get("grid_resolution")
+    if isinstance(gr, (int, float)):
+        core["grid_resolution"] = float(gr)
+
     extent = patch.get("extent")
     if isinstance(extent, dict):
         core["extent"] = {
@@ -1459,6 +1537,37 @@ def _navpatch_core_v1(patch: dict[str, Any]) -> dict[str, Any]:
     tags = patch.get("tags")
     if isinstance(tags, list):
         core["tags"] = sorted({t for t in tags if isinstance(t, str) and t})
+
+    # --- Grid payload core (Phase X Step 11) ---
+    ge = patch.get("grid_encoding_v")
+    if isinstance(ge, str) and ge:
+        core["grid_encoding_v"] = ge
+
+    gw = patch.get("grid_w")
+    gh = patch.get("grid_h")
+    if isinstance(gw, int) and isinstance(gh, int) and gw > 0 and gh > 0:
+        core["grid_w"] = int(gw)
+        core["grid_h"] = int(gh)
+
+        cells = patch.get("grid_cells")
+        if isinstance(cells, list) and len(cells) == int(gw) * int(gh) and all(isinstance(c, int) for c in cells):
+            # Keep explicit cells for small grids so 1-cell changes affect sig directly.
+            if len(cells) <= 1024:
+                core["grid_cells"] = [int(c) for c in cells]
+            else:
+                blob = json.dumps(cells, separators=(",", ":"), ensure_ascii=False)
+                core["grid_cells_digest"] = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+        elif isinstance(cells, list) and cells:
+            blob = json.dumps(cells, separators=(",", ":"), ensure_ascii=False)
+            core["grid_cells_digest"] = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    go = patch.get("grid_origin")
+    if isinstance(go, list) and len(go) == 2 and all(isinstance(v, (int, float)) for v in go):
+        core["grid_origin"] = [float(go[0]), float(go[1])]
+
+    gr = patch.get("grid_resolution")
+    if isinstance(gr, (int, float)):
+        core["grid_resolution"] = float(gr)
 
     layers = patch.get("layers")
     if isinstance(layers, dict):
@@ -4365,6 +4474,21 @@ class PolicyRuntime:
 
         # capture the full triggered set (before any safety-only filtering)
         triggered_all = [p.name for p in matches]
+
+        # Step 13 (minimal behavior hook):
+        # If the composed SurfaceGrid says hazard is near, suppress the *fallback* follow_mom policy.
+        # This makes a visible behavioral change in unsafe cycles without inventing new policies yet.
+        try:
+            slots = getattr(ctx, "wm_grid_slot_families", None)
+            hazard_near = bool(slots.get("hazard:near", False)) if isinstance(slots, dict) else False
+        except Exception:
+            hazard_near = False
+
+        if hazard_near:
+            matches = [p for p in matches if p.name != "policy:follow_mom"]
+            if not matches:
+                return "no_match"
+
         # Remember what triggered this cycle (Phase X): useful for traces and later ambiguity/commit logic.
         try:
             if ctx is not None:
@@ -7962,6 +8086,12 @@ def navpatch_priors_bundle_v1(ctx: Ctx, env_obs: EnvObservation) -> dict[str, An
     Precision is not “Friston math” here; it is simply a tunable reliability weight:
       - tags precision  : how much we trust symbolic tag overlap (salience/texture-like channel)
       - extent precision: how much we trust geometric overlap (schematic geometry channel)
+      - grid precision
+      code:
+        tags_prec = max(0.0, min(1.0, float(tags_prec)))
+        ext_prec = max(0.0, min(1.0, float(ext_prec)))
+        grid_prec = max(0.0, min(1.0, float(grid_prec)))
+        precision = {"tags": tags_prec, "extent": ext_prec, "grid": grid_prec}
 
     We make tags precision stage-sensitive:
       - birth/struggle → lower tags precision (more ambiguity)
@@ -8039,9 +8169,15 @@ def navpatch_priors_bundle_v1(ctx: Ctx, env_obs: EnvObservation) -> dict[str, An
         except Exception:
             pass
 
+    try:
+        grid_prec = float(getattr(ctx, "navpatch_precision_grid", 0.0) or 0.0)
+    except Exception:
+        grid_prec = 0.0
+
     tags_prec = max(0.0, min(1.0, float(tags_prec)))
     ext_prec = max(0.0, min(1.0, float(ext_prec)))
-    precision = {"tags": tags_prec, "extent": ext_prec}
+    grid_prec = max(0.0, min(1.0, float(grid_prec)))
+    precision = {"tags": tags_prec, "extent": ext_prec, "grid": grid_prec}
 
     core = {
         "v": "navpatch_priors_v1",
@@ -8259,9 +8395,23 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
             # Evidence channels (v1.1): tags vs extent
             tag_sim = float(_navpatch_tag_jaccard(obs_core.get("tags"), proto_core.get("tags")))
             ext_sim = float(_navpatch_extent_sim(obs_core.get("extent"), proto_core.get("extent")))
-
             tag_sim = max(0.0, min(1.0, tag_sim))
             ext_sim = max(0.0, min(1.0, ext_sim))
+            grid_sim: float | None = None
+            try:
+                obs_cells = p.get("grid_cells")
+                cand_cells = payload.get("grid_cells")
+                if (
+                    isinstance(obs_cells, list)
+                    and isinstance(cand_cells, list)
+                    and len(obs_cells) == len(cand_cells)
+                    and bool(obs_cells)
+                ):
+                    grid_sim = float(grid_overlap_fraction_v1(obs_cells, cand_cells))
+            except Exception:
+                grid_sim = None
+            if grid_sim is not None:
+                grid_sim = max(0.0, min(1.0, float(grid_sim)))
 
             # Unweighted evidence score (diagnostic; does not change with precision)
             score_unw = 0.5 * tag_sim + 0.5 * ext_sim
@@ -8471,6 +8621,99 @@ def append_cycle_json_record(ctx: Ctx, record: dict[str, Any]) -> None:
         return
 
 
+def wm_apply_grid_slot_families_to_mapsurface_v1(working_world, self_bid: str, slots: dict[str, Any]) -> list[str]:
+    """Apply Step-13 grid-derived slot-families onto WM.MapSurface (SELF), deterministically.
+
+    Intent
+    ------
+    SurfaceGrid is the topological substrate; MapSurface is the action-ready sketch.
+    This helper writes a *very small*, stable set of pred:* tags onto the existing
+    MapSurface SELF binding using overwrite-by-slot-family semantics.
+
+    Design constraints
+    ------------------
+    - Must NOT create new bindings or edges (no uncontrolled growth).
+    - Must NOT emit cue:* (no cue leakage).
+    - Must be deterministic: same `slots` -> same written tags.
+    - Overwrite-by-family: each derived family replaces its previous value each tick.
+
+    Slot mapping (v1)
+    -----------------
+    - slots["hazard:near"] == True        -> "pred:hazard:near"     (otherwise absent)
+    - slots["terrain:traversable_near"]   -> "pred:terrain:traversable_near" (otherwise absent)
+    - slots["goal:dir"] == "NE"/"E"/...   -> "pred:goal:dir:<dir8>" (otherwise absent)
+
+    Parameters
+    ----------
+    working_world
+        The WorkingMap WorldGraph instance (ctx.working_world).
+    self_bid
+        Binding id of the MapSurface SELF node in the working_world.
+    slots
+        Dict produced by derive_grid_slot_families_v1(...).
+
+    Returns
+    -------
+    list[str]
+        The pred:* tags written this tick (for logging / JSON traces / debugging).
+    """
+    if working_world is None or not isinstance(self_bid, str) or not self_bid:
+        return []
+
+    bindings = getattr(working_world, "_bindings", None)
+    if not isinstance(bindings, dict) or self_bid not in bindings:
+        return []
+
+    b = bindings.get(self_bid)
+    raw = getattr(b, "tags", None)
+
+    # Normalize to a set for editing (keep other tags intact).
+    if isinstance(raw, set):
+        tset = set(t for t in raw if isinstance(t, str))
+        out_kind = "set"
+    elif isinstance(raw, list):
+        tset = set(t for t in raw if isinstance(t, str))
+        out_kind = "list"
+    else:
+        tset = set()
+        out_kind = "list"
+
+    # Overwrite-by-family: remove prior derived tags (only our tiny namespace).
+    def _drop_prefix(prefix: str) -> None:
+        nonlocal tset
+        tset = set(t for t in tset if not (isinstance(t, str) and t.startswith(prefix)))
+
+    _drop_prefix("pred:goal:dir:")
+    if "pred:hazard:near" in tset:
+        tset.discard("pred:hazard:near")
+    if "pred:terrain:traversable_near" in tset:
+        tset.discard("pred:terrain:traversable_near")
+
+    written: list[str] = []
+
+    if bool(slots.get("hazard:near", False)):
+        tset.add("pred:hazard:near")
+        written.append("pred:hazard:near")
+
+    if bool(slots.get("terrain:traversable_near", False)):
+        tset.add("pred:terrain:traversable_near")
+        written.append("pred:terrain:traversable_near")
+
+    gd = slots.get("goal:dir")
+    if isinstance(gd, str) and gd:
+        tag = f"pred:goal:dir:{gd}"
+        tset.add(tag)
+        written.append(tag)
+
+    # Write back, preserving the original container kind where possible.
+    if out_kind == "set":
+        b.tags = set(tset)
+    else:
+        b.tags = sorted(tset)
+
+    return written
+
+
 def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
     """
     Mirror EnvObservation into WorkingMap.
@@ -8651,16 +8894,15 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             return ("self", "unknown")
 
         head = parts[0]
-
+        if head == "grid" and len(parts) >= 2:
+            return ("self", f"grid:{parts[1]}")
         if head == "posture":
             return ("self", "posture")
         if head in ("nipple", "milk"):
             return ("self", head)
-
         if head == "proximity" and len(parts) >= 3:
             ent = parts[1]
             return (ent, f"proximity:{ent}")
-
         if head == "hazard" and len(parts) >= 3:
             ent = parts[1]
             return (ent, f"hazard:{ent}")
@@ -8820,12 +9062,56 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
         _upsert_edge(root_bid, self_bid, "wm_entity", {"created_by": "wm_mapsurface"})
         _set_pos(self_bid, 0.0, 0.0, dist_m=0.0, dist_class="self")
 
+        # --- WM.SurfaceGrid (Phase X): compose once-per-tick and derive grid predicates ---
+        derived_grid_preds: list[str] = []
+        try:
+            nav_patches = getattr(env_obs, "nav_patches", None) or []
+            if isinstance(nav_patches, list) and nav_patches:
+                gw = None
+                gh = None
+                for pp in nav_patches:
+                    if not isinstance(pp, dict):
+                        continue
+                    w = pp.get("grid_w")
+                    h = pp.get("grid_h")
+                    if isinstance(w, int) and isinstance(h, int) and w > 0 and h > 0:
+                        gw = int(w)
+                        gh = int(h)
+                        break
+                if gw is None or gh is None:
+                    gw, gh = (9, 9)
+
+                sg = compose_surfacegrid_v1(nav_patches, grid_w=int(gw), grid_h=int(gh))
+                ctx.wm_surfacegrid = sg
+                try:
+                    ctx.wm_surfacegrid_sig16 = sg.sig16_v1()
+                except Exception:
+                    ctx.wm_surfacegrid_sig16 = None
+
+                slots = derive_grid_slot_families_v1(sg, self_xy=None, r=2, include_goal_dir=True)
+                ctx.wm_surfacegrid_slots = dict(slots) if isinstance(slots, dict) else {}
+
+                hz = bool(slots.get("hazard:near", False)) if isinstance(slots, dict) else False
+                tr = bool(slots.get("terrain:traversable_near", False)) if isinstance(slots, dict) else False
+                gd = slots.get("goal:dir") if isinstance(slots, dict) else None
+                gd = gd if isinstance(gd, str) and gd else None
+
+                derived_grid_preds = [
+                    "grid:hazard:near" if hz else "grid:hazard:clear",
+                    "grid:terrain:traversable_near" if tr else "grid:terrain:traversable_none",
+                    f"grid:goal_dir:{gd}" if gd is not None else "grid:goal_dir:none",
+                ]
+        except Exception:
+            derived_grid_preds = []
+
         # --- Predicates: update entity tags in place ---
         pred_tokens = [
             str(p).replace("pred:", "", 1)
             for p in (getattr(env_obs, "predicates", []) or [])
             if p is not None
         ]
+        if derived_grid_preds:
+            pred_tokens.extend(derived_grid_preds)
         for tok in pred_tokens:
             ent, slot_prefix = _entity_from_pred(tok)
             kind = "hazard" if slot_prefix.startswith("hazard:") else None
@@ -9025,6 +9311,120 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
                     ctx.wm_last_navpatch_sigs.pop(ent, None)
             except Exception:
                 pass
+
+        # --- WorkingMap SurfaceGrid (Phase X Step 12) -----------------------------------------
+        # Compose a single topological SurfaceGrid once per tick from EnvObservation.nav_patches.
+        # We cache by the sorted list of patch sig16 values so unchanged patch-sets can skip recompute.
+        if bool(getattr(ctx, "wm_surfacegrid_enabled", False)):
+            grid_w = int(getattr(ctx, "wm_surfacegrid_w", 16) or 16)
+            grid_h = int(getattr(ctx, "wm_surfacegrid_h", 16) or 16)
+            if grid_w <= 0:
+                grid_w = 16
+            if grid_h <= 0:
+                grid_h = 16
+
+            patches_in = getattr(env_obs, "nav_patches", None) or []
+
+            # Deterministic input signature list for caching (sig16 of each patch core).
+            sig16s: list[str] = []
+            if isinstance(patches_in, list):
+                for p in patches_in:
+                    if not isinstance(p, dict):
+                        continue
+                    try:
+                        s = navpatch_payload_sig_v1(p)
+                        if isinstance(s, str) and s:
+                            sig16s.append(s[:16])
+                    except Exception:
+                        continue
+            sig16s.sort()
+
+            prev = getattr(ctx, "wm_surfacegrid_last_input_sig16", None)
+            prev_sig16s = list(prev) if isinstance(prev, list) else []
+
+            reasons: list[str] = []
+            dirty = bool(getattr(ctx, "wm_surfacegrid_dirty", True))
+
+            if prev_sig16s != sig16s:
+                dirty = True
+                reasons.append("patches_changed")
+
+            prev_grid = getattr(ctx, "wm_surfacegrid", None)
+            if prev_grid is None:
+                dirty = True
+                reasons.append("grid_missing")
+            else:
+                try:
+                    pw = int(getattr(prev_grid, "grid_w", 0) or 0)
+                    ph = int(getattr(prev_grid, "grid_h", 0) or 0)
+                    if pw != grid_w or ph != grid_h:
+                        dirty = True
+                        reasons.append("dims_changed")
+                except Exception:
+                    dirty = True
+                    reasons.append("grid_check_error")
+
+            if dirty:
+                t0 = time.perf_counter()
+                try:
+                    sg = compose_surfacegrid_v1(patches_in if isinstance(patches_in, list) else [], grid_w=grid_w, grid_h=grid_h)
+                except Exception:
+                    sg = compose_surfacegrid_v1([], grid_w=grid_w, grid_h=grid_h)
+                    reasons.append("compose_error")
+
+                dt_ms = (time.perf_counter() - t0) * 1000.0
+
+                ctx.wm_surfacegrid = sg
+                try:
+                    ctx.wm_surfacegrid_sig16 = sg.sig16_v1()
+                except Exception:
+                    ctx.wm_surfacegrid_sig16 = None
+
+                ctx.wm_surfacegrid_last_input_sig16 = list(sig16s)
+                ctx.wm_surfacegrid_compose_ms = float(dt_ms)
+                ctx.wm_surfacegrid_dirty = False
+                ctx.wm_surfacegrid_dirty_reasons = reasons or ["dirty"]
+
+                if bool(getattr(ctx, "wm_surfacegrid_verbose", False)):
+                    try:
+                        ctx.wm_surfacegrid_last_ascii = sg.ascii_v1()
+                    except Exception:
+                        ctx.wm_surfacegrid_last_ascii = None
+                else:
+                    ctx.wm_surfacegrid_last_ascii = None
+            else:
+                # Cache hit: keep the prior SurfaceGrid and report that we did not recompute.
+                ctx.wm_surfacegrid_compose_ms = 0.0
+                ctx.wm_surfacegrid_dirty = False
+                ctx.wm_surfacegrid_dirty_reasons = ["cache_hit"]
+
+        # --- Step 13: Grid → predicates (slot-families) ---------------------------------
+        # We derive a tiny stable set of “map facts” from SurfaceGrid and write them onto
+        # the MapSurface SELF node only (overwrite-by-family). This keeps WM inspectable.
+        if bool(getattr(ctx, "wm_grid_to_preds_enabled", False)):
+            sg_now = getattr(ctx, "wm_surfacegrid", None)
+            if sg_now is not None:
+                try:
+                    slots = derive_grid_slot_families_v1(sg_now, self_xy=None, r=2, include_goal_dir=True)
+                except Exception:
+                    slots = {}
+                ctx.wm_grid_slot_families = dict(slots) if isinstance(slots, dict) else {}
+
+                try:
+                    ent = getattr(ctx, "wm_entities", {}) or {}
+                    self_bid = ent.get("self") if isinstance(ent, dict) else None
+                    if isinstance(self_bid, str) and self_bid:
+                        ctx.wm_grid_pred_tags = wm_apply_grid_slot_families_to_mapsurface_v1(ww, self_bid, ctx.wm_grid_slot_families)
+                    else:
+                        ctx.wm_grid_pred_tags = []
+                except Exception:
+                    ctx.wm_grid_pred_tags = []
+            else:
+                ctx.wm_grid_slot_families = {}
+                ctx.wm_grid_pred_tags = []
+        else:
+            ctx.wm_grid_slot_families = {}
+            ctx.wm_grid_pred_tags = []
 
         # --- Coordinates + distance edges (schematic map) ---
         raw = getattr(env_obs, "raw_sensors", {}) or {}
@@ -10347,6 +10747,28 @@ def _print_cog_cycle_footer(*,
         if exec_on:
             scratch_txt += f" (exec_on={exec_on})"
     print(f"[cycle] WM   surfaceΔ: {delta_txt} | scratch: {scratch_txt}")
+
+    # [cycle] SG — SurfaceGrid HUD (Phase X Step 12)
+    if bool(getattr(ctx, "wm_surfacegrid_enabled", False)):
+        sg_sig16 = getattr(ctx, "wm_surfacegrid_sig16", None)
+        sg_sig16 = sg_sig16 if isinstance(sg_sig16, str) and sg_sig16 else "(none)"
+        try:
+            sg_ms = float(getattr(ctx, "wm_surfacegrid_compose_ms", 0.0) or 0.0)
+        except Exception:
+            sg_ms = 0.0
+
+        reasons = getattr(ctx, "wm_surfacegrid_dirty_reasons", None)
+        reasons = reasons if isinstance(reasons, list) else []
+        reason_txt = ",".join(str(r) for r in reasons[:3] if r)
+        reason_txt = f" ({reason_txt})" if reason_txt else ""
+
+        print(f"[cycle] SG   surfacegrid_sig16={sg_sig16} compose_ms={sg_ms:.2f}{reason_txt}")
+
+        # Optional ASCII dump only when verbose and we actually recomposed this tick.
+        if bool(getattr(ctx, "wm_surfacegrid_verbose", False)) and sg_ms > 0.0:
+            ascii_txt = getattr(ctx, "wm_surfacegrid_last_ascii", None)
+            if isinstance(ascii_txt, str) and ascii_txt:
+                print("[cycle] SG   ascii:\n" + ascii_txt)
 
     # ---- line 3: WorldGraph writes this tick
     wg_txt = f"preds+{len(wg_preds)} cues+{len(wg_cues)}"

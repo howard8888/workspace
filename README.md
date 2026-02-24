@@ -407,6 +407,7 @@ Once you’ve seen one closed-loop episode run successfully, take a look at othe
 - [Tutorial on WorkingMap](#tutorial-on-workingmap)
 - [Memory Systems in CCA8](#memory-systems-in-cca8)
 - [WorkingMap Layer Contracts](#workingmap-layer-contracts)
+- [Design principle: multi-scale navigation is first-class](#design-principle-multi-scale-navigation-is-first-class)
 - [Tutorial on Timekeeping](#tutorial-on-timekeeping)
 - [Tutorial on Cognitive Cycles](#tutorial-on-cognitive-cycles)
 - [Tutorial on NavPatch: MapSurface patches and matching](#tutorial-on-navpatch-mapsurface-patches-and-matching)
@@ -3448,6 +3449,54 @@ When we implement, each candidate should carry:
 * `provenance` (version, RNG seed, parameters, evaluator name)
 
 This aligns with the CCA7 article’s emphasis on verifiers + provenance, without committing to Genie-style learned world models yet.
+
+
+
+
+
+
+
+# Design principle: multi-scale navigation is first-class
+
+
+# Design principle: multi-scale navigation is first-class
+
+CCA8 treats *zooming* (coarse→fine and fine→coarse) and *map switching* as explicit, measurable operations inside the perception→memory→policy loop—not as an afterthought or an accidental byproduct of hierarchical control.
+
+- *Zooming* = choosing a representational scale on purpose:
+  - coarse scene-level planning (“route to bushes”) vs. fine structure-aware navigation (“safe footholds on a ledge”)
+  - includes (a) scale selection, (b) cross-scale consistency (local findings can update the coarse plan), and (c) compute/attention gating
+
+- *Map switching* = selecting which stored map (or map fragments) currently governs interpretation and action:
+  - it is more than “recall”: it is choosing the active hypothesis about the world
+  - retrieval must be guarded to prevent cue leakage into the present-state belief, and priors must not override strong contradictory evidence
+
+Operational commitments (how we build this):
+
+- MapSurface stays compact and action-ready:
+  - it is a *scene sketch* (entities + slot-families + simple relations + schematic geometry for readability)
+  - it is not intended to hold all topology/geometry at every scale
+
+- NavPatches carry the heavy, reusable map content:
+  - patches are local submaps (often entity-owned) representing traversability, hazards, and micro-topology
+  - patches may link to other patches (transforms / adjacency), enabling hierarchical composition (“maps that refer to other maps”) without a monolithic nav graph
+
+- WorldGraph remains thin (“WorldGraph thin, Columns heavy”):
+  - WorldGraph stores pointers to stored map instances (MapEngrams) and patch prototypes (engrams), enabling fast switching without duplicating heavy payloads
+
+- Zoom/switch decisions are traceable:
+  - each cycle should be able to log which map/patch candidates were considered, the commit/ambiguous/unknown outcome + margin, and which policy triggered a zoom or a switch
+
+Starter triggers (non-exhaustive):
+
+- Zoom *down* when:
+  - patch matching is ambiguous, predicted hazard tags are present, local control demands increase (balance/footholds), or a “vantage-seek / probe” policy is chosen
+
+- Zoom *up* when:
+  - local ambiguity resolves and MapSurface can be updated with stable coarse predicates (so planning can resume at the scene level)
+
+- Switch maps when:
+  - sustained prediction error suggests the current hypothesis is wrong, or context boundaries (stage/zone/goal milestones) imply a different stored map should govern interpretation
 
 
 
