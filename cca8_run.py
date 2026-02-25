@@ -330,6 +330,18 @@ class Ctx:
     wm_salience_focus_entities: list[str] = field(default_factory=list)
     wm_salience_last_events: list[dict[str, Any]] = field(default_factory=list)
 
+    # Step 14 nice-to-have:
+    # If an inspect/probe action runs, we can "lock" an entity into focus for a few ticks so it stays visible.
+    wm_salience_inspect_focus_ttl: int = 4
+
+    # Which policy names count as "inspect/probe" (future Step 15+). Leave as-is unless you add a probe policy.
+    wm_salience_inspect_policy_names: list[str] = field(
+        default_factory=lambda: ["policy:explore_check", "policy:inspect", "policy:probe"] )
+
+    # Forced focus TTL map: entity_id -> remaining ticks. This is display/attention only (does not change belief).
+    wm_salience_forced_focus: dict[str, int] = field(default_factory=dict)
+    wm_salience_forced_reason: dict[str, str] = field(default_factory=dict)
+
     # SurfaceGrid ASCII presentation controls (display-only; does not change grid semantics).
     wm_surfacegrid_ascii_sparse: bool = True         # hide '.' cells (traversable) to keep prints uncluttered
     wm_surfacegrid_ascii_show_entities: bool = True  # overlay @/M/S/C marks for salient entities
@@ -3896,25 +3908,21 @@ def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
     )
 
 
-def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool: #pylint: disable=unused-argument
+def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool:  # pylint: disable=unused-argument
     """
     FollowMom gate: permissive fallback when the kid is not fallen *and not resting*.
 
-    Purpose
-    -------
-    FollowMom is our default "do something mild" policy when nothing else is urgent.
-    During the storyboard "rest" phase, we want quiescence: no repeated scratch writes
-    and no spurious movement intent while the kid is already resting safely.
+    Intent:
+      - FollowMom is a mild default policy when nothing else is urgent.
+      - During storyboard rest, we want quiescence (no repeated scratch writes and no spurious action).
 
-    Conditions (v1)
-    --------------
-    - If BodyMap is fresh:
-        * posture == 'fallen'   -> False  (safety layer handles this)
-        * posture == 'resting'  -> False  (quiescence while resting)
-        * otherwise             -> True
-    - If BodyMap is stale/unavailable:
-        * if a 'resting' predicate is near NOW in the selection world -> False
-        * otherwise -> True
+    Rules (v1):
+      - If BodyMap is fresh:
+          posture in {"fallen","resting"} -> False
+          else -> True
+      - If BodyMap is stale:
+          pred:resting near NOW -> False
+          else -> True
     """
     try:
         if ctx is not None and not bodymap_is_stale(ctx):
@@ -3922,7 +3930,6 @@ def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool: #py
             if bp in ("fallen", "resting"):
                 return False
     except Exception:
-        # On any BodyMap issue, stay permissive; safety override still protects truly fallen configs.
         pass
 
     # Fallback when BodyMap is stale/unavailable: suppress FollowMom if the graph near NOW says we're resting.
@@ -3935,7 +3942,7 @@ def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool: #py
     return True
 
 
-def _gate_follow_mom_explain_body_space(world, drives: Drives, ctx) -> str: #pylint: disable=unused-argument
+def _gate_follow_mom_explain_body_space(world, drives: Drives, ctx) -> str:  # pylint: disable=unused-argument
     """
     Human-readable explanation matching _gate_follow_mom_trigger_body_space.
     """
@@ -4827,6 +4834,29 @@ class PolicyRuntime:
             label = result.get("policy") if isinstance(result, dict) and "policy" in result else chosen.name
         except Exception as e:
             return f"{chosen.name} (error: {e})"
+
+        # Step 14 nice-to-have:
+        # If an inspect/probe policy ran, keep its inspected entity in focus for a few ticks.
+        try:
+            if ctx is not None:
+                inspect_pols = getattr(ctx, "wm_salience_inspect_policy_names", None)
+                if isinstance(inspect_pols, list) and label in inspect_pols:
+                    target = None
+                    if isinstance(result, dict):
+                        # Future probe policies can set any of these fields explicitly.
+                        for k in ("inspected_entity", "inspect_entity", "target_entity", "entity_id"):
+                            v = result.get(k)
+                            if isinstance(v, str) and v.strip():
+                                target = v.strip().lower()
+                                break
+                    if target is None:
+                        target = _wm_guess_inspected_entity_v1(ctx)
+
+                    if isinstance(target, str) and target:
+                        ttl = getattr(ctx, "wm_salience_inspect_focus_ttl", 4)
+                        wm_salience_force_focus_entity_v1(ctx, target, ttl=int(ttl), reason=f"inspect_policy:{label}")
+        except Exception:
+            pass
 
         # Build an explicit [executed] line from the result dict, if available
         exec_line = ""
@@ -8968,6 +8998,97 @@ def render_surfacegrid_ascii_with_salience_v1(ctx: Ctx, ww, sg: SurfaceGridV1, *
     return "\n".join("".join(r) for r in grid)
 
 
+
+def wm_salience_force_focus_entity_v1(ctx: Ctx, entity_id: str, *, ttl: int | None = None, reason: str = "inspect") -> None:
+    """Force an entity into the Step-14 salience focus set for a few ticks.
+
+    This is *attention/display* only:
+      - It affects ctx.wm_salience_focus_entities (what we render as landmarks),
+      - It does NOT change MapSurface beliefs or WorldGraph state.
+
+    The TTL is decremented once per call to wm_salience_tick_v1(...).
+    """
+    if ctx is None or not isinstance(entity_id, str) or not entity_id.strip():
+        return
+
+    eid = entity_id.strip().lower()
+    try:
+        t = int(ttl) if ttl is not None else int(getattr(ctx, "wm_salience_inspect_focus_ttl", 4) or 4)
+    except Exception:
+        t = 4
+    t = max(1, min(50, int(t)))  # keep bounded
+
+    m = getattr(ctx, "wm_salience_forced_focus", None)
+    if not isinstance(m, dict):
+        ctx.wm_salience_forced_focus = {}
+        m = ctx.wm_salience_forced_focus
+
+    try:
+        prev = int(m.get(eid, 0) or 0)
+    except Exception:
+        prev = 0
+    if t > prev:
+        m[eid] = int(t)
+
+    rmap = getattr(ctx, "wm_salience_forced_reason", None)
+    if not isinstance(rmap, dict):
+        ctx.wm_salience_forced_reason = {}
+        rmap = ctx.wm_salience_forced_reason
+    if isinstance(reason, str) and reason:
+        rmap[eid] = reason
+
+
+def _wm_guess_inspected_entity_v1(ctx: Ctx) -> str | None:
+    """Best-effort guess of a probe/inspect target when a policy doesn't specify one.
+
+    Priority order:
+      1) Any NavPatch matches whose commit != 'commit' (ambiguous/unknown). Prefer cliff if present.
+      2) If BodyMap says cliff is near, use cliff.
+      3) If BodyMap has mom distance info, use mom.
+      4) Otherwise None.
+    """
+    # 1) Ambiguous/unknown NavPatch entities (from ctx.navpatch_last_matches)
+    ent_ids: list[str] = []
+    try:
+        matches = getattr(ctx, "navpatch_last_matches", None)
+        if isinstance(matches, list):
+            for rec in matches:
+                if not isinstance(rec, dict):
+                    continue
+                commit = rec.get("commit")
+                if not isinstance(commit, str) or not commit or commit == "commit":
+                    continue
+                eid = rec.get("entity_id")
+                if isinstance(eid, str) and eid.strip():
+                    ent_ids.append(eid.strip().lower())
+    except Exception:
+        ent_ids = []
+
+    if ent_ids:
+        # Prefer high-safety relevance if present.
+        for pref in ("cliff", "shelter", "mom"):
+            if pref in ent_ids:
+                return pref
+        return sorted(set(ent_ids))[0]
+
+    # 2) BodyMap hazard
+    try:
+        if body_cliff_distance(ctx) == "near":
+            return "cliff"
+    except Exception:
+        pass
+
+    # 3) BodyMap mom proximity
+    try:
+        md = body_mom_distance(ctx)
+        if isinstance(md, str) and md:
+            return "mom"
+    except Exception:
+        pass
+
+    return None
+
+
 def _wm_salience_ambiguous_entities_v1(env_obs: EnvObservation) -> set[str]:
     """Extract entities with ambiguous patch matches (commit != 'commit') from env_obs.nav_patches."""
     out: set[str] = set()
@@ -9045,6 +9166,28 @@ def wm_salience_tick_v1(
 
     # Novelty/focus candidates (excluding already forced ones).
     forced = set(focus)
+
+    # Forced focus (inspect/probe): keep these entities in focus for a few ticks even if they stop being "top-K" now.
+    forced_map = getattr(ctx, "wm_salience_forced_focus", None)
+    forced_list: list[tuple[int, str]] = []
+    if isinstance(forced_map, dict) and forced_map:
+        for k, v in forced_map.items():
+            if not isinstance(k, str) or not k.strip():
+                continue
+            try:
+                ttl = int(v)
+            except Exception:
+                continue
+            if ttl > 0:
+                forced_list.append((ttl, k.strip().lower()))
+    # Deterministic order: higher TTL first, then lexical.
+    forced_list.sort(key=lambda t: (-t[0], t[1]))
+    # Keep bounded so focus doesn't explode.
+    for _ttl, e in forced_list[:8]:
+        if e and e not in forced:
+            focus.append(e)
+            forced.add(e)
+
     cand: list[tuple[int, str, str]] = []
     for e in amb:
         if e not in forced and e != "self":
@@ -9125,6 +9268,29 @@ def wm_salience_tick_v1(
             # keep old reason if we are only decaying; drop when ttl hits 0
             if ttl_new <= 0:
                 wmm.pop("salience_reason", None)
+
+    # Decrement forced-focus TTL counters once per tick.
+    try:
+        ff = getattr(ctx, "wm_salience_forced_focus", None)
+        if isinstance(ff, dict) and ff:
+            new_ff: dict[str, int] = {}
+            for e, ttl in ff.items():
+                if not isinstance(e, str) or not e.strip():
+                    continue
+                try:
+                    t = int(ttl)
+                except Exception:
+                    continue
+                t2 = t - 1
+                if t2 > 0:
+                    new_ff[e.strip().lower()] = int(t2)
+            ctx.wm_salience_forced_focus = new_ff
+
+            fr = getattr(ctx, "wm_salience_forced_reason", None)
+            if isinstance(fr, dict) and fr:
+                ctx.wm_salience_forced_reason = {e: str(fr.get(e, "")) for e in new_ff if e in fr}
+    except Exception:
+        pass
 
     return {"focus_entities": list(focus), "events": events}
 
@@ -9495,7 +9661,7 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
         #   - Step 13: Grid → slot-family predicates written onto MapSurface SELF
         # The older inline prototype block was removed to avoid double-compose and misleading cache-hit reporting.
         #
-        # --- WM.SurfaceGrid (Phase X): compose once-per-tick and derive grid predicates ---
+        # --- DELETED PREVIOUSLY: WM.SurfaceGrid (Phase X): compose once-per-tick and derive grid predicates ---
         # deleted this block of code
 
         # --- Predicates: update entity tags in place ---

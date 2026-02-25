@@ -4,9 +4,8 @@
 
 Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 
-NOTE: This README.md file exceeds the 512K GitHub rendering limit. Therefore, some topics
-    are not accessible by scrolling, but via the Table of Contents which will link you
-    to another similar README.md file.
+NOTE: This README is large; if GitHub truncates the preview at the 512 KiB render limit, open the file directly to view the full document.
+
 
 
 
@@ -19,7 +18,7 @@ NOTE: This README.md file exceeds the 512K GitHub rendering limit. Therefore, so
 
 ● **Simulates a mammalian brain**
 
-*The CCA8 project simulates a mammalian brain inspired by a mountain goat across its lifecycle, used as a testbed for a navigation map-based theory of mammalian brain evolution and function.  It aims to: (1) model how vertebrate navigation map mechanisms could evolve into human capacities such as full causal reasoning, full analogical reasoning, and (partially) compositional language; (2) offer a candidate mechanistic account, i.e., explanation, of mammalian cognition; and (3) explore in-model evolution and mechanisms of psychotic and autistic disorders in humans (no clinical claims).*
+*The CCA8 project simulates a mammalian brain inspired by a mountain goat across its lifecycle, used as a testbed for a navigation map-based theory of+ mammalian brain evolution and function.  It aims to: (1) model how vertebrate navigation map mechanisms could evolve into human capacities such as full causal reasoning, full analogical reasoning, and (partially) compositional language; (2) offer a candidate mechanistic account, i.e., explanation, of mammalian cognition; and (3) explore in-model evolution and mechanisms of psychotic and autistic disorders in humans (no clinical claims).*
 
 
 ● **Robotic Cognitive Operating System (RCOS)**
@@ -94,29 +93,18 @@ of birth, and by one week can climb most places its mother can)*
 
 ***Notes:***
 
-- Versions of Python that will work with the code:  check docstring of cca8_run.py or requirements.txt
-   *(at time of writing, tested on Windows 11 Pro with Python 3.11.4)*
-
-- Dependencies required:  check docstring of cca8_run.py or requirements.txt
-     *Software should be able to run on most systems without any issues (GPU and LLM API requirements, if used, are very fail-safe)*
-
-- Windows: *>python cca8_run.py*   will also usually work, depending on Python setup; it will ignore the shebang line
-(*>cca8_run.py* may work if Windows file associations setup for the Python version)
-
-- Mac, Linux:  *>python3 cca8_run.py*
-
-- Virtual environment Venv (*must activate*) (Windows, Mac or Linux):  *>python cca8_run.py*
-
-- Graphical User Interface (GUI): Due to ongoing software development, the CCA8 Simulation is Command-Line Interface (CLI) only.  (Tkinter Windows GUI-based cca8_run.pyw module is available but not supported at this time.)
-
-- Robotics real-world environment: You need to run the Python environment version of cca8_run.py as shown above. In setup, you will be asked to specify the robotics embodiment. (Ensure that the correct hardware abstraction layer (HAL) exists and is installed for the robotics equipment version you are using.)
+- **Requirements / dependencies:** see `requirements.txt` (and the docstring at the top of `cca8_run.py`, if present).
+- **Most portable way to run:** `python cca8_run.py`  
+  *(On some macOS/Linux installs, use `python3 cca8_run.py` if `python` points to Python 2.)*
+- **CLI flags, autosave/load workflow, and menu guide:** see **Runner, menus, and CLI** later in this README.
+- **GUI:** the supported runner is CLI/TUI only at the time of writing (a Tkinter `.pyw` may exist but is not maintained).
+- **Robotics / embodiment:** still launch via `cca8_run.py`; enable HAL with flags when supported (see the HAL section below).
 
 
 
 
 
-
-## **15-minute summary**
+## **TL;DR == 15-minute summary**
 
 
 **Goal (what you should accomplish in ~15 minutes)**
@@ -195,7 +183,8 @@ The trace becomes a readable story (“fell → stood → followed mom → found
 
 
 
-### 2) How to read the terminal output (2–3 minutes)
+### 2) How to quickly read the terminal output (2–3 minutes to understand key outputs)
+
 
 
 **Two counters you will see (different meanings)**
@@ -235,7 +224,8 @@ v0 is intentionally minimal (posture only)
 [env-loop] summary ... env_step=... stage=... env_posture=... bm_posture=... last_policy=... zone=...
 
 
-### How to Read the Cognitive Cycle Summary (at time of writing)
+
+### How to Read the Cognitive Cycle and its Summary (optional: 30-60 minutes)
 
 During **menu 37** closed-loop runs, each cognitive cycle ends with a short **footer block** intended for fast human scanning.
 This footer is intentionally pragmatic and is **under constant development** as Phase IX evolves; treat it as a reading aid,
@@ -262,7 +252,7 @@ principle is constant: **show the smallest digest that lets you visually confirm
 
 
 
-### 2b) Terminal tag legend (prefixes) + closed-loop terminology
+### 2b) Terminal tag legend (prefixes) + closed-loop terminology (optional: 30-60 minutes)
 
 CCA8 prints many lines with a `[tag]` prefix. These tags are a stable “legend” that lets you skim runs quickly.
 
@@ -307,7 +297,7 @@ Phase X adds an explicit, inspectable lookahead hook (**WM1**): given the curren
 
 
 
-### 3) Optional experiment: partial observability (2–3 minutes)
+### 3) Optional experiment: partial observability (optional: 10 minutes)
 
 
 
@@ -384,6 +374,16 @@ Once you’ve seen one closed-loop episode run successfully, take a look at othe
 - [Executive Overview](#executive-overview)
 - [Opening screen (banner) explained](#opening-screen-banner-explained)
 - [Profiles (1–7): overview and implementation notes](#profiles-17-overview-and-implementation-notes)
+- [Introduction to the Memory Pipeline](#introduction-to-the-memory-pipeline)
+- [CCA8 as a Robotic Cognitive Operating System (RCOS)](#cca8-as-a-robotic-cognitive-operating-system-rcos)
+- [Hardware Abstraction Layer (HAL)](#hardware-abstraction-layer-hal)
+- [Hardware preflight lane (status stub)](#hardware-preflight-lane-status-stub)
+- [FAQ / Pitfalls](#faq--pitfalls)
+- [Intro Glossary](#intro-glossary)
+
+**Tutorials and technical deep dives**
+
+- [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
 - [The WorldGraph in detail](#the-worldgraph-in-detail)
 - [Tagging Standard (bindings, predicates, cues, anchors, actions, provenance & engrams)](#tagging-standard-bindings-predicates-cues-anchors-actions-provenance--engrams)
 - [Restricted Lexicon (Developmental Vocabulary)](#restricted-lexicon-developmental-vocabulary)
@@ -395,30 +395,18 @@ Once you’ve seen one closed-loop episode run successfully, take a look at othe
 - [Persistence: Autosave/Load](#persistence-autosaveload)
 - [Runner, menus, and CLI](#runner-menus-and-cli)
 - [Preflight (four-part self-test)](#preflight-four-part-self-test)
-- [CCA8 as a Robotic Cognitive Operating System (RCOS)](#cca8-as-a-robotic-cognitive-operating-system-rcos)
-- [Hardware Abstraction Layer (HAL)](#hardware-abstraction-layer-hal)
-- [Hardware preflight lane (status stub)](#hardware-preflight-lane-status-stub)
-- [How-To Guides](#how-to-guides)
-- [Data schemas (for contributors)](#data-schemas-for-contributors)
-- [Traceability (requirements to code)](#traceability-requirements-to-code)
-- [Roadmap](#roadmap)
-- [Debugging Tips (traceback, pdb, VS Code)](#debugging-tips-traceback-pdb-vs-code)
-- [FAQ / Pitfalls](#faq--pitfalls)
-- [Intro Glossary](#intro-glossary)
-
-**Tutorials and technical deep dives**
-
-- [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
-- [Tutorial on WorkingMap](#tutorial-on-workingmap)
-- [Memory Systems in CCA8](#memory-systems-in-cca8)
+- [Logging](#logging)
 - [WorkingMap Layer Contracts](#workingmap-layer-contracts)
 - [Design principle: multi-scale navigation is first-class](#design-principle-multi-scale-navigation-is-first-class)
 - [Tutorial on Timekeeping](#tutorial-on-timekeeping)
 - [Tutorial on Cognitive Cycles](#tutorial-on-cognitive-cycles)
 - [Tutorial on NavPatch: MapSurface patches and matching](#tutorial-on-navpatch-mapsurface-patches-and-matching)
 - [Prediction error and predictive coding](#prediction-error-and-predictive-coding)
+- [Tutorial on WorkingMap](#tutorial-on-workingmap)
+- [Memory systems in CCA8](#memory-systems-in-cca8)
 - [Binding and Edge Representation](#binding-and-edge-representation)
 - [Anchors, LATEST, and Base-Aware Writes](#anchors-latest-and-base-aware-writes)
+- [Data schemas (for contributors)](#data-schemas-for-contributors)
 - [Tutorial on Drives](#tutorial-on-drives)
 - [Tutorial on WorldGraph Technical Features](#tutorial-on-worldgraph-technical-features)
 - [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
@@ -431,16 +419,17 @@ Once you’ve seen one closed-loop episode run successfully, take a look at othe
 - [Tutorial on Column Module Technical Features](#tutorial-on-column-module-technical-features)
 - [Tutorial on Approach to Simulation of the Environment](#tutorial-on-approach-to-simulation-of-the-environment)
 - [Tutorial on Environment Module Technical Features](#tutorial-on-environment-module-technical-features)
-- [Logging & Unit Tests](#logging--unit-tests)
+- [Traceability (requirements to code)](#traceability-requirements-to-code)
+- [Debugging Tips (traceback, pdb, VS Code)](#debugging-tips-traceback-pdb-vs-code)
 
 **References and Notes**
 
 - [References](#references)
 - [Developer and Maintainer Notes](#developer-and-maintainer-notes)
-  
-  
-  
-  
+
+
+
+
 
 # INTRODUCTION TO THE CAUSAL COGNITIVE ARCHITECTURE 8 (CCA8)
 
@@ -543,6 +532,1041 @@ A: At the time of writing, the difference is mainly in the story and trace they 
 
 Q: How do profiles interact with the rest of the code?
 A: Each profile sets initial parameters in Ctx (sigma, jump, profile label), may run a stub/demo, and then hands control back to the same runner loop. The WorldGraph, controller, and environment interfaces remain the same; only initial configuration and demonstration traces change.
+
+
+
+
+
+
+
+# Introduction to the Memory Pipeline
+
+This section is the “front door” to the CCA8 codebase: **how information flows** from the environment into memory, and how memory drives action selection.
+
+CCA8 is built around a boundary:
+
+- **Outside the agent:** the environment holds a hidden truth state (`EnvState`).
+- **Inside the agent:** CCA8 maintains several internal memories that are updated from observations.
+
+CCA8 never reads `EnvState` directly. Each tick it receives an **`EnvObservation`** and updates memory in a fixed order before choosing a policy.
+
+---
+
+## The core closed-loop step
+
+In the runner, one closed-loop iteration is:
+
+```
+EnvObservation
+  → BodyMap update (fast gating cache)
+  → WorkingMap.MapSurface update (belief state table)
+  → (keyframes only) store / retrieve / apply priors (wm<->col)   # may modify MapSurface
+  → (Phase X) compose WorkingMap.SurfaceGrid (derived) from active NavPatch instances
+  → Action Center selects one policy
+  → Policy executes (writes actions/outcomes back into memory)
+  → env.step(action)
+  → next EnvObservation ...
+```
+
+The ordering discipline is what makes the system debuggable (and later: learnable).
+
+---
+
+## Memory systems in CCA8
+
+CCA8 intentionally uses multiple memory stores; each has a different “shape,” latency budget, and purpose.
+
+### BodyMap: fast dashboard (for gating)
+
+**BodyMap** is small and scalar-ish: posture, mom distance, nipple state, zone classification, etc.
+
+Policies use BodyMap for cheap `trigger()` guards (“should I even consider firing?”).
+
+### WorkingMap: live workspace (belief + structure)
+
+WorkingMap is the agent’s live scene workspace.
+
+In the current architecture, WorkingMap is evolving into a small set of workspaces:
+
+- **WorkingMap.MapSurface** — semantic state table (entities × slot-families).  
+  Think: “self / mom / cliff / shelter” with stable ids and attributes/relations.
+
+- **WorkingMap.SurfaceGrid** *(Phase X / next)* — composed, printable topology map that policies can operate on directly (“where can I move?”).  
+  Built by composing **NavPatch instances** (instances point to immutable prototypes stored in Columns).
+
+- **WorkingMap.Scratch / Creative** — hypotheses, ambiguity bookkeeping, counterfactual traces, and predicted postconditions (later used for prediction error).
+
+### WorldGraph: thin symbolic episode index
+
+**WorldGraph** is a compact, inspectable graph of “what happened,” made of small records called **bindings**.
+
+It stores:
+- lightweight symbols (`pred:*`, `cue:*`, `action:*`, `anchor:*`),
+- “then” edges (episode flow),
+- and optional pointers to heavy memory via `binding.engrams[...]`.
+
+WorldGraph stays thin on purpose: it is an index for planning + retrieval, not a data warehouse.
+
+### Columns: heavy long-term memory (engrams)
+
+Columns store heavy payloads (“engrams”), such as:
+- MapSurface snapshots (`wm_mapsurface_v1`),
+- NavPatch prototypes (`navpatch_v1`),
+- feature payloads and descriptors (as that subsystem matures).
+
+WorldGraph points to Column payloads; it does not inline them.
+
+> Keep this sentence: **WorldGraph tells you where to look; Columns hold what you actually want to look at.**
+
+---
+
+## Keyframes and boundaries
+
+CCA8 does not store/retrieve on every tick. It treats certain moments as **keyframes** (boundaries), such as stage/zone changes.
+
+At a keyframe, CCA8 may:
+- **store** a MapSurface snapshot into Columns,
+- write a thin pointer binding into WorldGraph,
+- and (optionally) **retrieve + apply** a prior snapshot to seed/merge belief.
+
+---
+
+## Minimal vocabulary to read logs
+
+- A **binding** is a small “episode card” (a node in WorldGraph).
+- Tags come in families: `pred:*`, `cue:*`, `action:*`, `anchor:*`.
+- **Anchors** (especially `anchor:NOW`) orient planning.
+- **LATEST** is the “most recent binding” pointer used to chain episode flow.
+
+CCA8 also uses a **restricted lexicon** (developmental vocabulary) so early runs stay symbolically clean and policies remain readable.
+
+---
+
+## Where “world model” prediction fits
+
+In CCA8 terms, “world-model-like” behavior is:
+
+- predicting postconditions under candidate actions,
+- comparing them to later observations (prediction error),
+- and using retrieved priors (engrams) to bias belief + action selection.
+
+Phase VII establishes snapshot consolidation/retrieval (`wm<->col`). Phase X adds explicit topology (SurfaceGrid) and reusable patch prototypes (NavPatches). Scratch is the clean home for hypotheses and counterfactuals.
+
+---
+
+## Reading guide: where the deep dives live
+
+The detailed reference material (WorldGraph internals, tagging rules, runner details, planner contract) lives in **Tutorials and technical deep dives** later in this README.
+
+Recommended next reads:
+- **Tutorial on WorldGraph** → **WorldGraph in detail** → **Tagging Standard**
+- **Signal Bridge (WorldGraph ↔ Engrams)**
+- **Action Selection** and **Planner Contract**
+- **Tutorial on WorkingMap → Phase VII / Phase X** (canonical memory pipeline implementation)
+- **Tutorial on Cognitive Cycles** (timing and invariants)
+
+
+
+
+
+
+
+# CCA8 as a Robotic Cognitive Operating System (RCOS)
+
+## Overview
+
+**CCA8 can be considered in two ways:**
+
+As a **developmental cognitive architecture inspired by early mammalian brains.**
+
+As the **kernel of a Robotic Cognitive Operating System (RCOS)** – a layer that manages embodiment, behavior, and cognition on top of low‑level robot firmware, real‑time OSes, and middleware such as ROS 2.
+
+Traditional operating systems (OS/360, Unix, Windows, Linux) sit between hardware and applications, providing stable abstractions: processes, files, memory, I/O. In robotics today, we typically have:
+
+microcontroller firmware and drivers
+
+a general‑purpose OS (Linux, RTOS)
+
+robotics middleware (e.g., ROS 2) for messaging, topics, services
+
+What is usually missing is an operating system for behavior and cognition – something that:
+
+unifies goals, drives, skills, memory, and action selection
+
+treats the robot’s world as an explicit structure (not just ad‑hoc node graphs and callbacks)
+
+exposes a consistent “app platform” so users can install and compose new behaviors on their embodiment
+
+CCA8 aims to fill this role.
+
+### Position in the stack
+
+You can think of CCA8 as sitting above the hardware and middleware in roughly this shape:
+
++-------------------------------------------------------------+
+|   **User behavior packs / tasks / curricula ("apps") **     
++-------------------------------------------------------------+
+|   **CCA8 RCOS kernel**                                      
+|   - WorldGraph (episodic world model)                       
+|   - ColumnMemory (engrams, traces)                          
+|   - Drives & homeostasis                                    
+|   - Policies (primitive skills) & Action Center             
+|   - Temporal scaffolding (ticks, episodes, age)             
++-------------------------------------------------------------+
+|   **Robot HAL / middleware**                                
+|   - ROS 2, PetitCat-style minimal OS, simulators            
+|   - sense() / act() / status() surfaces                     
++-------------------------------------------------------------+
+|   **Hardware & low-level OS**                               
+|   - motors, joints, sensors, microcontrollers, RTOS/Linux   
++-------------------------------------------------------------+
+
+In this view:
+
+A **HAL or ROS 2 stack plays a role analogous to a BIOS + device drivers in a PC**: it knows how to talk to motors, joints, cameras, etc.
+
+**CCA8 is the cognitive OS**: it knows about episodes, goals, drives, skills, policies, and worlds.
+
+**User-defined skills, policies, and task scripts** are the equivalent of applications.
+
+Small platforms like the PetitCat robot can sit under CCA8 just as well as richer ROS 2 platforms. As long as there is a HAL that implements the expected surfaces, the same CCA8 brain can drive different embodiments.
+
+
+#### What the user gets: an “app platform” for behavior
+
+From a user’s point of view, CCA8 as an RCOS should eventually feel a bit like “Windows for your robot”:
+
+you configure the body and environment,
+
+you install or write behaviors (“apps”),
+
+you specify goals and constraints,
+
+and the RCOS manages the ongoing lifecycle of perception, memory, and action.
+
+Concretely, CCA8 exposes (or is intended to expose) a few stable surfaces.
+
+**1. Embodiment and HAL configuration**
+
+The user (or integrator) plugs a robot into CCA8 by supplying a HAL adapter:
+
+sense() → returns structured observations which can be turned into cues/engram payloads
+
+act(intent) → takes a small set of action tags / parameters (e.g., action:step_forward, action:look_around) and translates them into motors, joint trajectories, or ROS 2 messages
+
+status() → reports health, battery, fault states, etc., which can be reflected as predicates in the WorldGraph
+
+CCA8 does not care whether act(intent) ends up calling ROS 2, a PetitCat‑style mini OS, or direct serial commands. That complexity stays below the RCOS boundary.
+
+**2. Drives, goals, and profiles**
+
+On top of the embodiment, the user configures the internal “needs” and goals:
+
+numeric drives (hunger, fatigue, warmth, safety, etc.) with thresholds
+
+profiles (e.g., “newborn mountain goat”, “explorer bot”) that set default drive parameters, exploration policies, and curricula
+
+optional task‑level goals (e.g., “stay upright”, “follow mom”, “inspect room”, “return to dock”) that guide what “success” means over episodes
+
+Drives are exposed to the controller as tags like drive:hunger_high, which policies can trigger on. This is where “what the robot should care about” gets declared.
+
+**3. Skills and policies as “apps”**
+
+The primary way users extend CCA8 is by installing or authoring policies and skills.
+
+At the lowest level, a primitive policy is just a small behavior object with two methods:
+
+trigger(world, drives) → should this skill run now?
+
+execute(world, drives, ctx) → append a small chain of bindings/edges to the WorldGraph, optionally call the HAL, update drives, and return a status dict.
+
+Policies are registered with the Action Center, which acts as the scheduler:
+
+it inspects the current world + drives
+
+it chooses which policy fires next (safety policies first, then homeostatic needs, then fallbacks)
+
+it tracks provenance and learning signals (skill ledger, rewards)
+
+From a user’s point of view, each policy is a bit like an installed application:
+
+It has a name and version (policy:seek_nipple, policy:avoid_edge).
+
+It declares preconditions (what states/drives it needs).
+
+It leaves a trace in the world (provenance tags, binding chains) for later analysis or learning.
+
+Higher-level skills can be built as small libraries of policies plus helper functions, packaged as Python modules or “behavior packs” that CCA8 discovers and loads.
+
+**4. Task scripts and curricula**
+
+On top of skills, the user writes task scripts that set up experimental or operational episodes. For example:
+
+choose a profile and embodiment (e.g., goat vs. PetitCat)
+
+load a particular world template or terrain
+
+enable a set of skills/policies (e.g., StandUp, FollowMom, AvoidEdge, ExploreRoom)
+
+define stopping conditions and logging preferences
+
+This can be done via:
+
+Python entry points (e.g., cca8_run.py with arguments), and
+
+eventually, configuration files (e.g., YAML/JSON manifests) that describe “what brain, what body, what skills, what goals”.
+
+The intent is that non‑specialist users should be able to say, in effect:
+
+“Here is my robot body, here are the behaviors I want available, and here is what I want it to try to do.”
+
+and let the CCA8 RCOS handle the ongoing cycle of perception → world update → drive update → action selection → embodiment.
+
+**5. Introspection and debugging surfaces**
+
+Like a conventional OS exposes tools such as ps, logs, and debuggers, the CCA8 RCOS exposes (or will expose) introspection surfaces:
+
+WorldGraph views: what bindings and edges are currently active, where “NOW” is, what predicates are true
+
+Skill ledger: per‑policy statistics (counts, rewards, success/fail history)
+
+Drive traces: how internal needs evolved over time and which policies responded
+
+Embodiment traces: what actions were actually sent through the HAL and with what results
+
+These let the user treat behaviors as first‑class, inspectable objects rather than opaque ROS node graphs.
+
+PetitCat and other small embodiments
+
+For small robots such as PetitCat, CCA8’s RCOS view is especially useful:
+
+a minimal robot “OS” handles low‑level timing, motor control, and safety (PetitCat‑like firmware / micro‑OS),
+
+a thin HAL adapter translates between CCA8’s action tags and the robot’s specific capabilities,
+
+the same CCA8 brain can then be reused across simulation and physical hardware, or across different small bodies.
+
+In that sense, CCA8 is not just a simulator of a mountain goat calf, but a general-purpose Robotic Cognitive Operating System designed to be ported to many embodiments while giving users a consistent way to “install” behaviors and tell their robot what they want it to do.
+
+
+
+
+
+
+
+
+# Hardware Abstraction Layer (HAL)
+
+A Hardware Abstraction Layer (HAL) separates *what* the cognitive system wants to do from *how* a specific robot makes it happen. In robotics, a HAL normalizes diverse sensors (camera, IMU, microphones, joint encoders) and actuators (motors, servos, grippers) behind a stable interface: perception enters the stack as time-stamped, unit-annotated measurements; actions leave as parameterized commands with feedback and safety guarantees. This indirection lets the same policy or planner run on simulation today and a very different platform tomorrow (e.g., a wheeled rover vs. a quadruped), without rewriting cognition. A good HAL also handles low-level concerns—synchronization, rate limiting, watchdogs/estops, and health reporting—so higher layers reason in task space, not device idiosyncrasies.
+
+In practice, a HAL defines a few consistent surfaces: **sense()** for bulk sensor pulls or event callbacks, **act(command, params)** for goals in actuator space, and **status()** for state, limits, and faults. It owns the mapping from device coordinates to canonical frames, applies calibration/units, enforces safety envelopes, and returns structured acknowledgements (accepted/Executing/Done/Error) with timestamps. With this contract, cognition can compose behaviors from predicates and policies, while the HAL translates to hardware-specific drivers and transport.
+
+
+
+## CCA8 and future HAL integration
+
+The importance of embodiment in the generation and development to cognition is acknowledged. Embodiment shapes cognition—sensorimotor contingencies, action affordances, latency, noise, and body-centric frames all co-determine how an agent learns and reasons. CCA8’s HAL deliberately _abstracts_ embodiment during core development to decouple variables: it gives us reproducible experiments, deterministic tests, and portability across platforms without rewriting cognition. This isn’t a denial of embodiment; it’s a seam. We mitigate “embodiment debt” by (1) keeping time, units, frames, limits, and latencies explicit in the HAL manifest; (2) expressing actions as **intents** (e.g., move/gaze/manipulate) rather than device torques; (3) mirroring real timing into engrams (`ticks`, `tvec64`, `epoch`) so learning remains time-aware; and (4) swapping in realistic adapters (noise/latency/domain-randomization) when moving from headless runs to hardware. In short, HAL postpones _implementation details_ of a body while preserving the _constraints_ that matter, so embodiment can be reintroduced precisely—at the right layer—without entangling the cognitive core.
+
+While the importance of embodiment to cognition is acknowledged, the CCA8 architecture is structured to drop in a HAL without disturbing cognition. The **Runner** already distinguishes the cognitive context (policies, temporal clock, world graph) from embodiment details; by default HAL is **OFF** and the system runs “headless.” The seams are intentional: (1) **perception bridge** — features/engrams can be filled from HAL sensor streams with time linkage (`ticks`, `tvec64`, `epoch`); (2) **action bridge** — controller **primitives/policies** can emit normalized action intents (e.g., `move_base(dx,dy,theta)`, `gaze(target)`, `manip(grasp=open/close)`), which a HAL adapter maps to device commands; (3) **timing** — the cognitive **TemporalContext** stays procedural and device-agnostic, while the HAL can expose a wall-clock/rt clock when needed.
+
+When a HAL is enabled, CCA8 will load an *embodiment manifest* (sensors, frames, capabilities, limits), bind HAL streams to the **Features** module (creating engrams with temporal fingerprints), and route controller outputs to **act()** with safety interlocks (dead-man, estop, limit checks). This keeps the **WorldGraph** an episodic index (lightweight, device-neutral), lets **policies** remain portable, and confines hardware specialization to HAL adapters. The same simulation you run today can, with a manifest and a driver pack, target different robots with minimal code changes—exactly the portability a HAL is meant to provide.
+
+
+
+### Q&A to help you learn this section
+
+Q: Why is HAL kept separate from the cognitive architecture?
+A: To keep cognition portable and testable. The same WorldGraph/controller stack should run:
+
+in a pure simulation,
+
+on different robots,
+
+or in hybrid sim+sensor regimes
+without rewriting core cognitive logic. HAL localizes sensor/actuator quirks and safety constraints to one layer.
+
+Q: What changes in CCA8 when HAL is turned ON?
+A: Cognition (WorldGraph, controller, TemporalContext) stays the same. The difference is that:
+
+perception features/engrams can be fed from real sensors via the HAL, and
+
+policy actions can be turned into device commands (act()) with safety envelopes (limits, estops, etc.).
+
+Q: Does HAL know about predicates and policies?
+A: No. HAL deals in sensor streams and action intents (move/gaze/manipulate). Policies and predicates remain in CCA8. The runner/bridge is responsible for mapping action:* / policy decisions into HAL act(...) calls.
+
+Q: How does HAL help with sim-to-real transfer?
+A: It defines a stable contract:
+
+sense() → returns normalized, time-stamped sensor data,
+
+act(intent, params) → executes primitive actions in actuator space,
+
+status() → reports health/limits/faults.
+By adhering to this contract in both sim and real deployments, you can reuse cognitive code and gradually swap simulators for real hardware.
+
+
+
+
+
+
+
+# Hardware preflight lane (status stub)
+
+When you run `--preflight`, CCA8 reports HAL/body flags in a dedicated lane.
+This is a **status stub**—no hardware I/O yet.
+
+Example:
+`[preflight hardware] PASS  - NO-TEST: HAL=ON (...); body=0.1.1 hapty — pending integration`
+
+Enable it via CLI:
+`> python cca8_run.py --hal --body hapty`
+
+Future checks will cover: transport handshake (USB/serial/network), sensor
+enumeration, actuator enable/disable, estop/limits, and simple round-trip
+commands (with timestamps and unit checks).
+
+<img title="Goat Embodiment" src="./robot_goat.jpg" alt="robot_goat" style="zoom:25%;" data-align="center">
+
+### Q&A to help you learn this section
+
+Q: What does it mean when hardware preflight prints “NO-TEST: HAL=OFF … pending integration”?
+A: It means the hardware lane ran, but there were no active hardware checks to perform:
+
+HAL is off, or
+
+no body profile is configured.
+It’s a reminder that the HAL lane is wired but not yet doing real transport/sensor tests.
+
+Q: How do I enable the hardware lane for future robots?
+A: Start the runner with --hal --body <name>, e.g.:
+python cca8_run.py --hal --body hapty.
+Once real HAL implementations exist, preflight will use that configuration to check connectivity, sensors, estops, etc.
+
+Q: Will hardware failures make --preflight return non-zero exit codes?
+A: Yes, once implemented. The intention is that:
+
+any serious hardware connectivity/safety issue
+
+should cause the hardware preflight lane to FAIL
+and thus make the overall --preflight exit code non-zero so CI or scripts can react.
+
+Q: Does HAL preflight change anything in the cognitive state?
+A: No. It should only probe transport, sensors, actuators and log health. WorldGraph, drives, and policies should remain unaffected by hardware preflight.
+
+Q: How should I read the “hardware_checks=0” field in the preflight footer today?
+A: Literally: there are currently zero implemented hardware checks. It’s a placeholder count that will increase as real HAL checks (sensor enumeration, estop status, etc.) are added.
+
+
+
+
+
+
+# FAQ / Pitfalls
+
+- **“No path found to `pred:posture:standing`”** — You planned before creating the predicate (or before NOW is connected forward to it). Run one instinct step (menu **12**) first, add the predicate manually, or `--load` a session that already contains it. *(If you see `state:posture_standing`, that’s a legacy token; canonical is `pred:posture:standing`.)*
+- **Repeated “standing” nodes** — Tightened `StandUp.trigger()` prevents refiring when a standing binding exists. If you see repeats, ensure you’re on the updated controller.
+- **Autosave overwrote my old run** — Use a new filename for autosave (e.g., `--autosave session_YYYYMMDD.json`) or keep read-only load + new autosave path.
+- **Loading says file not found** — We continue with a fresh session, the file will be created on your first autosave event.
+  
+  
+
+***Q&A to help you learn this section***
+
+Q: Why “No path found …” on a new session?  A: You planned before adding the predicate, run one instinct step.
+
+Q: Why duplicate “standing” nodes?  A: Old controller, update to guarded StandUp.trigger().
+
+Q: How to keep an old snapshot?  A: Autosave to a new filename.
+Q: Is load failure fatal?  A: No, runner continues with a fresh session.
+
+
+
+
+
+
+
+# Intro Glossary
+
+
+This glossary is intentionally **runner-facing**: terms are defined in the way you see them in menu output, snapshots, and `[tag]` log lines.
+
+### A) One-line cheat sheet (high-frequency terms)
+
+- **HybridEnvironment**: the external (simulated) world; **truth generator** that produces observations from actions.
+- **EnvState**: the environment’s internal hidden truth (what the simulator *really* thinks is happening).
+- **EnvObservation**: the observation packet crossing into the agent (`pred:*` / `cue:*` tokens + `env_meta`).
+- **Closed-loop cognitive cycle**: one env↔agent iteration: observe → update memories → *(keyframes only)* store/retrieve/apply → select/execute policy → feed action back to env.
+- **controller step**: one Action Center invocation (policy arbitration + possible graph/memory writes).
+- **ctx (Ctx)**: runtime context object: cross-cycle counters + knobs + caches (runner↔engine seam; also carries the “last action” fed to `env.step(...)`).
+- **Drives**: numeric needs (hunger/fatigue/warmth/…) that become ephemeral **drive flags** used by policy triggers.
+- **WorldGraph (WG)**: long-term symbolic **episode index**: bindings + edges + anchors + **lightweight pointers** to heavy memory.
+- **Binding**: a node (“episode card”) with tags (`pred/cue/action/anchor`) plus `meta`, `engrams`, and outgoing edges.
+- **Edge**: directed link `src → dst`, usually label `"then"` for episode flow; measurements/costs belong in `edge.meta`.
+- **Anchors**: named pointers into the graph (especially **NOW** and **NOW_ORIGIN**).
+- **LATEST**: the “most recently attached binding” pointer used for default chaining (distinct from NOW; used as a convenient write target).
+- **BodyMap**: fast belief registers for gating/safety (posture, distances, nipple state, zone classification, staleness flags).
+- **WorkingMap (WM)**: live workspace memory; contains **MapSurface** + **Scratch/Creative** subregions; *(Phase X)* also contains **SurfaceGrid**.
+- **MapSurface**: WM’s semantic entity/slot table (“what I believe now” in discrete slots); updated in-place each cycle.
+- **SurfaceGrid** *(Phase X / WIP)*: WM’s policy-facing **topology** view (a composed local map) built from NavPatch instances; used for “where can I move / what is risky?” queries.
+- **Scratch / Creative**: WM’s hypothesis and counterfactual workspace (predicted postconditions, ambiguity bookkeeping, candidate outcomes) — the natural home for “world-model-ish” predictions.
+- **NavPatch**: patch-level recognizer on top of MapSurface: matches local patterns against stored prototypes; supports SurfaceGrid composition and context-based retrieval.
+- **ColumnMemory / Columns**: heavy long-term memory store for **engrams** (e.g., MapSurface snapshots, NavPatch prototypes).
+- **Engram**: a payload stored in Columns (heavy data stays out of the WorldGraph); bindings store pointers only.
+- **MapEngram**: a MapSurface snapshot engram stored at keyframes (often labeled `wm_mapsurface_v1` in logs/metadata).
+- **Keyframe**: a boundary cycle where we may store/retrieve/apply WM snapshots (WM⇄Column pipeline).
+- **Prediction error (`pred_err v0`)**: mismatch between predicted postcondition and next observation (v0 is intentionally minimal); used for retrieval gating and diagnostics.
+- **OutcomeSketch (WM1)**: a small, inspectable lookahead result for a candidate action/policy (risk/progress/uncertainty) computed **without** mutating “truth”.
+
+---
+
+### B) MapSurface terminology: entity vs slot-family (the core idea)
+
+**Entity** = “the thing we are talking about.”  
+Examples: `self`, `mom`, `shelter`, `cliff`.
+
+**Slot-family** = “the attribute channel we store for that entity.”  
+Examples: `posture`, `proximity:mom`, `proximity:shelter`, `hazard:cliff`, `nipple`.
+
+**Value** = the current value in that slot-family.  
+Examples: `fallen`, `standing`, `close`, `far`, `hidden`, `found`, `latched`.
+
+Concrete example (EnvObservation token → MapSurface update):
+
+- EnvObservation predicate `pred:posture:fallen` becomes:
+  - Entity = `self`
+  - Slot-family = `posture`
+  - Value = `fallen`
+
+**MapSurface semantics (important):**
+
+- MapSurface is **slot-overwrite**: within a slot-family there is one “current” value.  
+- If you want to carry multiple competing hypotheses (ambiguity), that belongs in **WM.Scratch / WM.Creative**, not in MapSurface.
+
+---
+
+### C) SurfaceGrid terminology: topology vs semantics
+
+MapSurface answers **“what is true now?”** (semantic slots).  
+SurfaceGrid answers **“where can I go and what does it cost?”** (topology).
+
+In Phase X terms:
+
+- **SurfaceGrid cell / node**: a coarse place-like unit (a local region) the agent can reason over.
+- **Adjacency / traversability**: “can I move from A to B?”, usually with a small **cost/risk** annotation.
+- **Affordance**: a policy-relevant action possibility implied by the grid (e.g., step, climb, avoid, shelter-seek).
+- **Hazard field**: a grid annotation derived from MapSurface hazards (e.g., cliffs/unsafe zones) plus patch priors.
+- **Composition**: each cycle, SurfaceGrid is composed from **NavPatch instances** matched against stored prototypes.  
+  (Intuition: “recognize local terrain motif → instantiate a patch → merge into the current grid.”)
+
+Why we keep both:
+- MapSurface stays small and legible (entities × slots).
+- SurfaceGrid can be richer (connectivity/costs) without bloating the symbolic WorldGraph.
+
+---
+
+### D) NavPatch terminology: prototypes, instances, matching
+
+- **NavPatch prototype**: an *immutable* patch template stored in Columns (long-term memory).  
+  Think: “this is what a safe ledge pattern looks like” (topology + expected semantics).
+- **NavPatch instance**: a prototype **bound to the current situation** (a matched patch “placed” into WorkingMap for this tick).
+- **Match score / confidence**: how well an instance fits the current MapSurface evidence.
+- **Top‑K matching**: keep the best K candidate prototypes (for ambiguity and robustness).
+- **Evidence vs priors** (house rule):  
+  evidence-first; use priors **only when ambiguous** (or under explicit masking/partial observability).
+
+---
+
+### E) WM⇄Column memory pipeline terms: store / retrieve / apply
+
+These appear as `[wm<->col] store/retrieve/apply` in closed-loop logs.
+
+- **store**: at a keyframe, write a **MapSurface snapshot engram** into Columns and write a thin pointer binding into WorldGraph.
+- **retrieve**: find prior snapshots with similar context (stage/zone/signature), typically excluding the just-stored one.
+- **apply**: merge/seed the retrieved snapshot into WorkingMap as a **prior** (especially helpful under partial observability).
+
+Mental model:
+- WorldGraph = “index cards of what happened”
+- Columns = “the heavy notebooks”
+- WM⇄Column pipeline = “save a notebook page, then optionally pull an old page to prime the next moment”
+
+---
+
+### F) Policy selection terms: gate vs trigger vs execute (and why “deficit” matters)
+
+- **Gating (dev/safety gate)**: “Is this policy even allowed into the candidate set right now?”  
+  (Example: neonatal-only policies; or “if fallen, only allow StandUp/RecoverFall.”)
+- **Triggering**: “Given world + drives + BodyMap, does this policy *want* to run now?”
+- **Executing**: among triggered candidates, choose **ONE** winner and run it.
+
+**Action Center**: the runtime that forms the triggered candidate set and selects one winner.
+
+Common log/decision language:
+- **deficit**: drive-urgency score (“how badly do I need to satisfy this drive?”).
+- **non‑drive tie-break**: a deterministic priority used when deficits are similar.
+- **(optional) RL tie-break**: if RL is enabled, a `q` value can break near-ties; epsilon can force exploration.
+
+---
+
+### G) Timekeeping and counters (the “which step?” problem)
+
+- **env_step / step_index**: environment step since last reset (0-indexed).
+- **controller_steps**: count of Action Center invocations.
+- **cog_cycles**: count of closed-loop cycles (canonically the env-loop cycle counter).
+- **epoch / boundary**: a coarse chapter marker used for keyframes and longer-timescale segmentation (see temporal tutorial).
+- **ticks / tvec64**: lightweight timing stamps you’ll see in `binding.meta` (used for traceability more than physics).
+
+---
+
+### H) Startup knobs and common run artifacts
+
+Common CLI knobs:
+- **`--load session.json`**: restore a prior session snapshot (WorldGraph + drives + skill telemetry + counters).
+- **`--autosave session.json`**: write after each completed action (atomic replace).
+- **`--preflight`**: run the four-part self-test (engine wiring + invariants + unit tests + environment probes).
+- **obs_mask_prob / obs_mask_seed** (menu-configurable): partial observability controls (forces priors to matter).
+
+Common files you’ll see during development:
+- **`session.json`**: snapshot (portable, human-readable).
+- **`cycle_log.jsonl`** *(if enabled)*: per-cycle machine-parsable log (useful for evaluation).
+- **Pyvis HTML export**: interactive graph view (debugging/orientation).
+
+---
+
+### I) Attach modes (how new bindings are wired)
+
+- `attach="now"`: create NOW → new edge (`then`) and update LATEST.
+- `attach="latest"`: create LATEST → new edge (`then`) and update LATEST.
+- `attach="none"`: create a floating binding (valid but disconnected until you add an edge).
+
+---
+
+### J) “World model” terminology (AI literature vs CCA8)
+
+In common AI usage, a “world model” usually means the agent’s internal predictive model that supports action-conditioned prediction.
+
+In CCA8:
+- **HybridEnvironment** is the external simulated world (truth generator), not the agent’s world model.
+- Internal “world-model-ish” content is **distributed** across:
+  - **BodyMap** (fast “belief now” safety registers),
+  - **WorkingMap.MapSurface** (semantic belief table),
+  - **WorkingMap.SurfaceGrid** *(Phase X)* (topology for navigation and risk),
+  - **WorkingMap.Scratch / Creative** (predicted postconditions + counterfactual candidates),
+  - **WorldGraph** (thin episode index + pointer scaffold),
+  - **Columns/Engrams** (heavy snapshots and prototypes),
+  - and *(Phase X)* **WM1 / OutcomeSketch** as an explicit, inspectable lookahead hook.
+
+---
+
+### Q&A to help you learn this section
+
+Q: **MapSurface vs SurfaceGrid — aren’t they both “maps”?**  
+A: They serve different roles. **MapSurface** is semantic (“what is true now?” as entity/slot values). **SurfaceGrid** is topological (“where can I go, what is risky, what is adjacent?”). SurfaceGrid is composed from NavPatch instances and is the natural substrate for movement/risk reasoning and short lookahead.
+
+Q: **NavPatch prototype vs instance?**  
+A: Prototype = long-term, immutable template stored in Columns. Instance = prototype matched and bound to the current cycle (lives in WorkingMap for composition/reasoning).
+
+Q: **Engram vs Binding?**  
+A: A **binding** is a small symbolic episode card inside WorldGraph. An **engram** is a heavy payload in Columns. Bindings can point to engrams; they should not inline them.
+
+Q: **Where do predictions live (in CCA8 terms)?**  
+A: Predicted postconditions and counterfactuals belong in **WM.Scratch / WM.Creative** (and are summarized by `pred_err`). In Phase X, a candidate-action lookahead is exposed as **WM1 / OutcomeSketch**.
+
+Q: **Why do we keep WorldGraph “thin”?**  
+A: So planning and indexing remain fast and inspectable. WorldGraph tells you *where to look*; Columns hold *what you actually want to look at*.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+NOTE: This README is large; if GitHub truncates the preview at the 512 KiB render limit, open the file directly to view the full document.
+
+
+
+# TUTORIALS AND TECHNICAL DEEP DIVES
+
+
+NOTE: This README.md file exceeds the 512K GitHub rendering limit. Therefore, some topics
+    are not accessible by scrolling, but via the Table of Contents which will link you
+    to another similar README.md file.
+
+
+# Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts
+
+This tutorial introduces the mental model behind **WorldGraph** and shows how to encode experience in a way that is:
+
+- simple for **planning** (BFS / Dijkstra),
+- clear for **humans** (bindings are little episode cards),
+- and consistent with the **four binding kinds**: anchors, predicates, cues, and actions.
+
+It complements the “WorldGraph in detail” and “Tagging Standard” sections by walking through the *why* and *how* with newborn-goat flavored examples.
+
+---
+
+## 1) Mental model at a glance
+
+WorldGraph is a **compact, symbolic episode index**. Each “moment” is captured as a small record (a **binding**) that carries tags and optional pointers to richer memory (**engrams**). **Edges** connect moments to show how one led to another. Planning is graph search from a temporal **anchor** (usually `NOW`) toward a **goal predicate**.
+
+A readable example path:
+
+born --then--> wobble --then--> posture:standing --then--> nipple:latched --then--> milk:drinking
+In CCA8:
+
+the things on the nodes are tags (predicates, cues, anchors, actions),
+
+the things on the arrows are edge labels (often just "then").
+
+We now treat actions primarily as action:* nodes, not as special edge labels.
+
+
+
+## 2) Why “bindings” and not just “nodes”?
+
+
+
+A binding is more than a bare vertex. It binds together:
+
+lightweight symbols (tags: pred:*, action:*, cue:*, anchor:*),
+
+pointers to engrams (rich memory outside the graph),
+
+and provenance/meta (who created it, when, why),
+
+plus outgoing edges that capture “what happened next”.
+
+Think of each binding as a tiny episode card:
+
+“At this moment, the kid was posture:fallen, we saw vision:silhouette:mom, and the StandUp policy fired.”
+
+That’s why we call it a “binding”: it’s a coherent, inspectable snapshot.
+
+
+
+## 3) What a binding contains (shape)
+
+   Every binding has a unique id like b42. Conceptually it looks like:
+
+jsonc
+Copy code
+{
+  "id": "b42",
+  "tags": [
+    "pred:posture:standing",
+    "cue:vision:silhouette:mom"
+  ],
+  "edges": [
+    { "to": "b43", "label": "then", "meta": {"created_by": "policy:seek_nipple"} }
+  ],
+  "meta": {
+    "policy": "policy:stand_up",
+    "created_at": "2025-11-27T10:09:56",
+    "ticks": 5,
+    "tvec64": "..."
+  },
+  "engrams": {
+    "column01": { "id": "<engram_id>", "act": 1.0 }
+  }
+}
+Invariants that keep the graph healthy:
+
+Ids are unique (bN).
+
+Edges are directed and live on the source binding (edges[] list).
+
+A binding with no edges is a valid sink.
+
+The first pred:* tag (if present) is used as the node label in pretty paths/exports; fallback is the id.
+
+The engine keeps an anchors map (e.g. {"NOW": "b5", "NOW_ORIGIN": "b1"}); the corresponding anchor:* tags are for human readability.
+
+
+
+## 4) Tag families (pred, cue, anchor, action)
+
+   We use exactly four families of tags in the WorldGraph:
+
+Predicates — what is true about body/world
+
+Prefix: pred:
+
+Examples:
+
+pred:posture:fallen, pred:posture:standing, pred:resting
+
+pred:mom:close, pred:nipple:latched, pred:milk:drinking
+
+pred:seeking_mom
+
+Purpose: planner goals and state descriptions.
+
+Cues — evidence, not goals
+
+Prefix: cue:
+
+Examples:
+
+cue:vision:silhouette:mom
+
+cue:scent:milk
+
+cue:drive:hunger_high
+
+Purpose: policy triggers and FOA seeds. We do not plan to cues.
+
+Anchors — orientation markers
+
+Prefix: anchor:
+
+Examples:
+
+anchor:NOW – current focus of attention / local time,
+
+anchor:NOW_ORIGIN – starting point of this episode.
+
+The anchors map is authoritative (anchors["NOW"] = "b5"); tags make them visible in UIs.
+
+Actions — motor / behavioral steps
+
+Prefix: action:
+
+Examples:
+
+action:push_up
+
+action:extend_legs
+
+action:orient_to_mom
+
+Purpose: explicit action nodes between predicate states.
+
+You can think of:
+
+pred:* = nouns/adjectives: what is (posture, proximity, feeding state),
+
+action:* = verbs: what the goat actually did,
+
+cue:* = sensory hints,
+
+anchor:* = index pegs.
+
+
+
+## 5) Edges: “then” glue + optional labels
+
+Edges are directed links between bindings:
+
+jsonc
+Copy code
+{ "to": "b4", "label": "then", "meta": {"created_by": "policy:stand_up"} }
+Design:
+
+Semantics: every edge is conceptually “then” — “this binding tended to be followed by that binding in this episode.”
+
+Label: defaults to "then"; you may use domain labels like "approach", "search", "latch", "suckle" as human-facing aliases ("then (approach)").
+
+Meta: numeric/action metrics belong in edge.meta:
+
+{"meters": 8.5, "duration_s": 3.2, "created_by": "policy:seek_nipple"}.
+
+Algorithms (planner, FOA) treat edges as structure-first:
+
+They look at which nodes are connected, not the exact label string.
+
+Labels can later inform costs (Dijkstra) or filters (“avoid edges marked recover_fall”), but are not required for correctness.
+
+## 6) Anchors: NOW and NOW_ORIGIN
+
+   We use two important anchors in the neonate:
+
+anchor:NOW_ORIGIN
+
+Set once at the start of the episode (birth).
+
+Never moves; a natural starting point for “whole story” plans.
+
+anchor:NOW
+
+Follows the latest stable predicate state (e.g., posture:standing, seeking_mom, resting).
+
+Moved by the runner after successful policy executions.
+
+Common uses:
+
+Planning from NOW: “Given where I am, how do I reach X?”
+
+Planning from NOW_ORIGIN: “What path did I take from birth to X?”
+
+Resetting NOW in experiments (e.g. set NOW=b3 temporarily to explore a local neighborhood).
+
+## 7) S–A–S in practice: a StandUp example
+
+   Consider the simplified StandUp episode:
+
+Start: goat is fallen near NOW_ORIGIN.
+
+StandUp fires:
+
+action:push_up
+
+action:extend_legs
+
+End: goat is standing; NOW moves to this new binding.
+
+WorldGraph after one StandUp:
+
+text
+Copy code
+b1: [anchor:NOW_ORIGIN]
+b2: [pred:posture:fallen]
+b3: [action:push_up]
+b4: [action:extend_legs]
+b5: [anchor:NOW, pred:posture:standing]
+Edges:
+
+text
+Copy code
+b1 --then--> b2    # NOW_ORIGIN → fallen
+b1 --then--> b3    # NOW_ORIGIN → push_up
+b3 --then--> b4    # push_up → extend_legs
+b4 --then--> b5    # extend_legs → standing (NOW)
+From a map perspective, the S–A–S segment is:
+
+text
+Copy code
+[pred:posture:fallen] 
+   → [action:push_up] → [action:extend_legs] 
+   → [pred:posture:standing]
+The standalone b1 anchor plus b2 predicate both represent the “fallen” situation; the actions attach off NOW and lead to a new predicate where NOW is finally placed.
+
+
+
+## 8) Snapshot-style vs delta-style bindings
+
+   Two encoding styles exist; CCA8 uses a snapshot-of-state style by default:
+
+Snapshot-of-state (recommended):
+
+Each predicate binding carries the current body/world facts (posture, proximity, feeding state, etc.).
+
+Stable invariants (e.g., posture:standing) are repeated for a while, only changed when the fact changes.
+
+Transient milestones (nipple:found) are often dropped once a stable state (nipple:latched) is reached.
+
+Delta/minimal (not used today):
+
+Each binding only adds what changed (“found”, then “latched”) without repeating posture/proximity.
+
+Fewer tags per node, but harder to interpret a single binding in isolation.
+
+The snapshot style keeps planning and debugging simple: each pred:* binding is a self-contained “what is true now” card.
+
+
+
+## 9) Building small paths by hand (menu intuition)
+
+Using the runner menus, you can manually build paths that match the tutorial diagrams:
+
+Add predicate (3)
+
+e.g., posture:standing, nipple:latched, milk:drinking.
+
+Connect two bindings (4)
+
+e.g., b2 --latch--> b3.
+
+A typical hand-built path:
+
+text
+Copy code
+NOW(b1) --then--> b2[pred:posture:standing] --latch--> b3[pred:nipple:latched] --suckle--> b4[pred:milk:drinking]
+The planner (Plan to predicate menu) will then find this path when you ask for milk:drinking as the goal.
+
+
+
+## 10) Common pitfalls and tips
+
+    “No path found”:
+    Check that:
+
+You spelled the goal token exactly (pred:posture:standing vs pred:posture_standing),
+
+There is a forward chain of edges from NOW (or your chosen start) to the target binding,
+
+Edges are not reversed (B→A when you meant A→B).
+
+Too many actions on edges:
+It’s tempting to encode everything as labels (--stand_up-->). Prefer to:
+
+make actions into action:* bindings (action:push_up), and
+
+use edge labels mainly as annotations ("then", "latch", "search").
+
+Tagless nodes:
+Bindings with no tags are hard to interpret. Give each meaningful binding at least one pred:*, cue:*, or anchor:* tag.
+
+11) Quick reference cheat sheet (WorldGraph concepts)
+    Binding: id + tags (pred/cue/anchor/action) + edges[] + meta + engrams.
+
+Edge: {"to": dst_id, "label": "then", "meta": {...}}; stored on source binding.
+
+Anchors: NOW, NOW_ORIGIN, HERE → map names to binding ids.
+
+Families: pred:*, action:*, cue:*, anchor:*.
+
+Planner goal: any binding whose tags include pred:<token>.
+
+Snapshot vs delta: we use snapshot-of-state by default.
+
+Source of truth for NOW/NOW_ORIGIN: world.anchors (tags are for readability).
+
+With this picture in mind, the later tutorials (“WorldGraph Technical Features”, “Controller”, “Environment”) should feel much more natural: they’re all just elaborations of this same map—bindings and edges, tagged with four families, driven by policies and the environment.
+
+
+
+### Q&A to help you learn this section
+
+Q: What’s the difference between a “binding” and a generic graph node?
+A: A binding is a rich node: it carries tags (pred/cue/action/anchor), optional engram pointers, provenance (meta), and outgoing edges. It’s closer to an “episode card” than a bare vertex — it describes what was true, what happened next, and how to get to richer memory.
+
+Q: Why do we separate pred:*, cue:*, action:*, and anchor:* families?
+A: To keep semantics clear and algorithms simple. Predicates are facts/states, cues are evidence, actions are behavioral steps, and anchors are orientation points. This separation lets policies and the planner read tags without guessing what a string means.
+
+Q: Why do we treat actions as nodes (action:*) instead of edge labels?
+A: Because in the “everything is a map” view, actions are events in time, not just labels on edges. Recording them as nodes makes it easy to attach engrams, provenance, and additional structure (timing, cost) to actions, and to traverse state–action–state chains uniformly.
+
+Q: What does “snapshot-of-state” style mean here?
+A: It means each pred-binding is intended to be a self-contained state card (“what is true now”: posture, proximity, feeding state, etc.). We may repeat posture:standing across several bindings as the episode unfolds rather than only storing deltas. That makes planning and debugging much easier.
+
+Q: How does the planner know which label to show for a binding?
+A: The first pred:* tag (if present) is used as the node’s human label in pretty paths and exports. If there is no pred:* tag, we fall back to the binding id (bN).
+
+
+
+
 
 
 
@@ -1594,21 +2618,22 @@ Q: Why might a path be missing?  A: Predicate not created yet or the graph is di
 
 **Switching planners**
 
-- **Interactive**: menu item **25) Planner strategy (toggle BFS ↔ Dijkstra)** (if your runner exposes it).
+- **Interactive:** use the *Planner strategy* menu toggle (BFS ↔ Dijkstra). *(Menu numbers may drift as the runner grows.)*
 
-- **Environment**:
-  
-  - Windows (cmd):  
-    `set CCA8_PLANNER=dijkstra && python cca8_run.py --plan goal:whatever`
-  - macOS/Linux (bash/zsh):  
-    `CCA8_PLANNER=dijkstra python3 cca8_run.py --plan goal:whatever`
+- **Environment variable:** set `CCA8_PLANNER=dijkstra` before launch to force Dijkstra by default:
+  - Windows (cmd): `set CCA8_PLANNER=dijkstra`
+  - Windows (PowerShell): `$env:CCA8_PLANNER="dijkstra"`
+  - macOS/Linux (bash/zsh): `export CCA8_PLANNER=dijkstra`
+
+  Then run the runner normally; planning calls will use Dijkstra (see **Runner, menus, and CLI** for launch examples).
 
 - **In code**:
-  
+
   ```python
   world.set_planner("dijkstra")    # or "bfs"
   current = world.get_planner()
   ```
+
 
 # Persistence: Autosave/Load
 
@@ -1677,1297 +2702,188 @@ A: Prevents partial/corrupt snapshots.
 
 # Runner, menus, and CLI
 
-You can explore the graph via an interactive menu. The most useful items while learning are:
+`cca8_run.py` is the interactive “world runner” for the CCA8 simulation. By default it:
 
-* The **“Snapshot”** entry  
-  Prints bindings, edges, drives, CTX, TEMPORAL, and policy telemetry. Shows NOW/LATEST, event boundary (epoch), soft-clock cosine, and which policies are eligible at the current developmental stage. This is your “state of the world and controller” dashboard.
+1) prints a banner and some system info,  
+2) prompts you to pick a developmental **profile** (goat/chimp/human/super),  
+3) starts an interactive menu loop where you can inspect the **WorldGraph**, inject cues/predicates, run the **Action Center** (policies), and (optionally) step the **HybridEnvironment**.
 
-* The **“Drives & drive tags”** entry  
-  Shows numeric drives (`hunger`, `fatigue`, `warmth`) and the derived **drive flags** (`drive:*`) that policies use in `trigger()`. These flags are ephemeral, not written into the graph unless you explicitly create `pred:drive:*` or `cue:drive:*` tags.
+---
 
-* The **“Input [sensory] cue”** entry  
-  Writes a `cue:<channel>:<token>` binding (e.g., `cue:vision:silhouette:mom`) and runs one controller step so you can see how policies respond to evidence. This is the “Sense → Process → Act” entry point.
+## Quick start (interactive)
 
-* The **“Instinct step (Action Center)”** entry  
-  Runs the policy runtime once, with explanatory pre/post text. If a policy fires, you get a small chain of bindings/edges (e.g., the standing chain) and a status dict (`policy, status, reward, notes`).
+Most people should start here:
 
-* The **“Inspect binding details”** entry  
+```bash
+python cca8_run.py
+```
+
+See all supported command-line flags:
+
+```bash
+python cca8_run.py --help
+```
+
+Notes:
+- On Windows, you may also be able to run `cca8_run.py` directly if `.py` is associated with Python.
+- On macOS/Linux you can run `./cca8_run.py` if it’s marked executable, but `python cca8_run.py` is the most portable.
+
+---
+
+## Command-line flags (argparse)
+
+These are the most useful flags while learning / debugging:
+
+- `--about`  
+  Prints version + component info (helpful when sharing bug reports).
+
+- `--version`  
+  Prints just the runner version.
+
+- `--no-intro`  
+  Skips the banner (useful for tight debug loops).
+
+- `--profile {goat,chimp,human,super}`  
+  Picks a profile without prompting.
+
+- `--load <file>.json`  
+  Loads a previously saved session snapshot (WorldGraph + drives + skill stats).
+
+- `--autosave <file>.json`  
+  Writes a snapshot **after each action** (great for “resume exactly here” workflows).
+
+- `--save <file>.json`  
+  Writes a snapshot **on clean exit** (useful when you don’t want frequent overwrites).
+
+- `--plan <PRED>`  
+  Runs a one-shot plan (NOW → goal predicate) and exits. Example:
+  ```bash
+  python cca8_run.py --load session.json --plan pred:posture:standing
+  ```
+
+- `--demo-world`  
+  Starts with a small preloaded demo WorldGraph (great for menu testing and graph inspection).
+
+- `--preflight`  
+  Runs the full self-test suite and exits (see **Preflight (four-part self-test)** below).
+
+- `--no-boot-prime`  
+  Disables the default boot “prime” intent (e.g., the calf/goat stand intent).
+
+- `--hal` and `--body <profile>`  
+  Enables the HAL (embodiment) stub and selects a body profile (future-facing; may be partial).
+
+---
+
+## Session workflow: load / autosave / save
+
+CCA8 uses **JSON snapshots** as the lowest-friction persistence format.
+
+### Resume + keep autosaving (recommended during experiments)
+
+```bash
+python cca8_run.py --load session.json --autosave session.json
+```
+
+### Start fresh but keep an old snapshot (branch your run)
+
+```bash
+python cca8_run.py --load session.json --autosave session_NEXT.json
+```
+
+### Save only on exit (no autosave)
+
+```bash
+python cca8_run.py --load session.json --save session_end.json
+```
+
+Operational notes:
+- Autosave uses **atomic replace** (write `*.tmp`, then rename) to reduce partial/corrupt snapshots.
+- If you forget `--load`, CCA8 starts a fresh session; the first autosave will create the file.
+- If you have autosave set, you can usually “reset” from the UI and keep a clean resume point
+  (some menus also support an `R` shortcut).
+
+---
+
+## Menu highlights (recommended learning path)
+
+Menu numbering may drift as new items are added; the **names** below are the stable guideposts.
+
+Start with these:
+
+* **Snapshot**  
+  Prints bindings, edges, drives, CTX, TEMPORAL, and policy telemetry. Shows NOW/LATEST, event boundary (epoch), soft-clock cosine, and which policies are eligible at the current developmental stage. This is your “state of the world + controller” dashboard.
+
+* **Drives & drive tags**  
+  Shows numeric drives (`hunger`, `fatigue`, `warmth`) and the derived **drive flags** (`drive:*`) that policies use in `trigger()`. These flags are ephemeral and are not written into the graph unless you explicitly create `pred:drive:*` or `cue:drive:*` tags.
+
+* **Input [sensory] cue**  
+  Writes a `cue:<channel>:<token>` binding (for example `cue:vision:silhouette:mom`) and runs one controller step so you can see how policies respond to evidence. This is the most direct “Sense → Process → Act” entry point.
+
+* **Instinct step (Action Center)**  
+  Runs the policy runtime once, with explanatory pre/post text. If a policy fires, you’ll usually see a small chain of bindings/edges plus a compact status dict (`policy`, `status`, `reward`, `notes`).
+
+Once you’re comfortable, these become very useful:
+
+* **Cognitive Cycle (HybridEnvironment → WorldGraph demo)**  
+  Runs one closed-loop tick: env step → perception → WorldGraph update → controller step → action feedback.
+
+* **Run closed-loop cycles (N steps)**  
+  Useful for “does this stabilize?” tests, and for generating `cycle_log.jsonl` traces.
+
+* **Export and display interactive graph (Pyvis HTML)**  
+  Generates a clickable HTML visualization. Use it when the Snapshot output becomes too dense.
+
+* **Inspect binding details**  
   Given a binding id (or `ALL`), shows:
-  
-  - tags (families: `pred:*`, `cue:*`, `anchor:*`),
-  - `meta` as JSON,
-  - a short **Provenance:** summary (`meta.policy/created_by/boot/ticks/epoch`),
-  - attached engrams (slot → short id + act + OK/dangling),
-  - both **outgoing and incoming** edges and a degree line (`out=N in=M`).
-    Use this to audit where a node came from and how it is connected.
+  - tags (`pred:*`, `cue:*`, `anchor:*`, etc.)
+  - `meta` as JSON
+  - a short **Provenance** summary (`meta.policy/created_by/boot/ticks/epoch`)
+  - attached engrams (slot → id/summary)
+  - incoming/outgoing edges and degrees
 
-* The **“List predicates”** entry  
-  Groups all `pred:*` tokens and shows which bindings carry each token. You can optionally filter by substring (e.g., `rest` or `posture`) to reduce clutter. This is a good way to see which planner targets exist.
+Planning and surgery tools (when you start editing graphs by hand):
 
-* The **“Add predicate”** entry  
-  Prompts for a token (e.g., `posture:standing`, without the `pred:` prefix) and an attach mode (`now/latest/none` – default `latest`). It:
-          creates a new binding tagged `pred:<token>`,
+* **Plan to predicate**  
+  Runs the planner from NOW to a target predicate and prints a readable path.
 
-        optionally auto-links it from NOW/LATEST with a `"then"` edge,
+* **Connect bindings / Delete edge**  
+  Lets you manually edit the graph (helpful for controlled experiments, but watch for duplicates).
 
-        stamps provenance (`meta.added_by="user"`, `meta.created_by="menu:add_predicate"`, `meta.created_at=ISO-8601`).
-It’s your primary way to “teach” the graph new states by hand.
+---
 
-* The **“Connect bindings”** entry  
-  Adds a directed edge `src --label--> dst` (default label `then`), with a simple duplicate guard that skips an exact `(src, label, dst)` edge if it already exists. Edges created here carry `meta.created_by="menu:connect"` and a timestamp. Use this to wire episodes with meaningful labels such as `approach`, `search`, `latch`, `suckle`.
-
-* The **“Delete Edge”** entry  
-  Interactive helper for removing edges. It handles different legacy edge layouts and prints how many edges were removed between `src` and `dst` (with an optional label filter). This is the safest way to repair a mistaken link without editing JSON by hand.
-
-* * The **“Plan to predicate”** entry  
-    Asks for a target predicate token (e.g., `posture:standing`) and:
-  - prints the **current planner strategy** (`BFS` or `DIJKSTRA`),
-  - calls `WorldGraph.plan_to_predicate` from the NOW anchor,
-  - prints both the raw id path and a **pretty path** (`b3[posture:standing] --then--> b4[milk:drinking] ...`).
-    With all edges weight=1, BFS and Dijkstra produce the same paths; once you assign weights, Dijkstra uses `edge.meta['weight'/'cost'/'distance'/'duration_s']` as the cost.
-
-* The **“Export and display interactive graph”** entry  
-  Writes a Pyvis HTML file for the current graph, with options for label mode (`id`, `first_pred`, or `id+first_pred`), edge label display, and physics. Open the HTML in your browser to hover nodes/edges and orient yourself visually.
-
-* The **“Save session”** entry  
-  Manual one-shot snapshot to a JSON file you specify. It writes the same shape as autosave (`saved_at`, `world`, `drives`, `skills`) via atomic replace. It does **not** change your `--autosave` setting and is ideal for named checkpoints (e.g., `session_after_first_hours.json`).
-
-* The **“Load session”** entry  
-  Loads a prior JSON snapshot (world, drives, skills) and replaces the current in-memory state. It never overwrites the file on load. After loading, the I/O banner explains whether autosave is ON/OFF and where the next autosaves will go.
-
-* The **“Reset current saved session”** entry  
-  Available only when you started with `--autosave <path>`. After an explicit confirmation (`DELETE` in uppercase), it:
-  
-  - deletes the autosave file at that path,
-  - re-initializes a fresh WorldGraph, Drives, and skill ledger in memory,
-  - keeps `--autosave` pointing at the same path.  
-    From the simulation’s point of view you are now in essentially the same state as a fresh run with `--autosave` set; the **next** action that triggers autosave will create a new snapshot at that path.
-
-Design decision (folded in): The runner offers a quick-exit `--plan <token>` flag when you only need to compute a plan once and exit. In interactive mode, the menu shows a small drives panel because drives are central to policy triggers.
-
-Design decision (folded in): Attachment semantics are explicit and lowercase: `attach="now"`, `attach="latest"`, or `"none"`. This removes ambiguity when auto-wiring the newest binding into the episode chain.
-
-
-
-## Environment loop and episode configuration
-
-Two runner menu selection entries work together to make the newborn-goat simulation easier to explore:
-
-- **Run N Cognitive Cycles (closed-loop timeline)**  
-  Runs a short loop between the **HybridEnvironment** and the **Action Center**:
-
-  1. If needed, calls `env.reset()` to start a newborn-goat episode.
-  2. On each step, calls `env.step(action=ctx.env_last_action, ctx=ctx)`, where `ctx.env_last_action` is the name of the last executed policy (e.g., `policy:stand_up`, `policy:seek_nipple`, `policy:follow_mom`).
-  3. Injects `EnvObservation` into the main WorldGraph and updates BodyMap from the predicates.
-  4. Runs one controller step to select and execute a policy, logging it as `[executed] policy:...`, and stores its name back into `ctx.env_last_action` for the next environment tick.
-
-  The log for each step includes:
-
-  - an `[env]` line (stage, posture, mom/nipple, last action),
-  - `[env→world]` lines (what predicates/cues were written),
-  - `[env→controller]` lines (which policy fired and why),
-  - a compact `[env-loop] summary ...` line, plus:
-    - `explain posture: ...` — why posture stayed fallen/standing/latched/resting,
-    - `explain nipple: ...` — how nipple moved hidden → reachable → latched,
-    - `explain zone: ...` — why geometry is currently classified as unknown / unsafe_cliff_near / safe.
-
-  Together, these lines turn the closed-loop run into a readable text storyboard (“fell, stood, followed mom off the cliff, moved into shelter, latched, rested”).
-
-- **Configure episode starting state (drives + age_days)**  
-  Allows you to adjust the **internal starting conditions** without editing code:
-
-  - `drives.hunger` (0.0–1.0)
-  - `drives.fatigue` (0.0–1.0)
-  - `drives.warmth` (0.0–1.0)
-  - `ctx.age_days` (≥ 0.0)
-
-  The runner:
-
-  1. Prints current values.
-  2. Prompts for new values (blank = keep current), clamping drives to `[0.0, 1.0]` and age to `≥ 0.0`.
-  3. Writes them back into the live `drives` and `ctx` objects.
-  4. Prints an updated summary line.
-
-  This is the main way to explore different behavioural regimes:
-
-  - **Hungry, not tired** → expect `SeekNipple` to dominate once geometry is safe.
-  - **Very tired, moderately hungry** → `Rest` competes strongly once the kid is in shelter.
-  - **Low drives** → permissive `FollowMom` behaviour dominates, moving geometry without strong drive pressure.
-
-After configuring drives and age with menu 40, you can immediately run menu 37 to see how those initial conditions change the closed-loop story.
-
-
-***Q&A to help you learn this section***
-
-Q: What are the most useful menu items while learning?   
-A: Display snapshot, Add predicate, Connect two bindings, Plan from NOW, and the interactive graph export.
-
-Q: Is there a quick way to visualize the graph?   
-A: Yes—export an interactive HTML graph from the menu, labels can show `id`, `first_pred`, or both.
-
-Q: Why does the menu warn about duplicate edges?   
-A: To avoid clutter when auto-attach already created the same `(src, label, dst)` relation.
-
-Q: Can I skip the menu and just plan?   
-A: Use `--plan pred:<token>` from the CLI for a one-shot plan.
-
-
-
-### Q&A to help you learn this section
-
-Q: What does --preflight actually guarantee when it says PASS?
-A: It guarantees that:
-
-all unit tests passed,
-
-basic WorldGraph invariants hold (anchors valid, ids consistent),
-
-planner/attach/cue/engram probes behaved as expected,
-
-and the hardware and system-fitness lanes didn’t report critical issues.
-It’s not a proof of correctness, but it’s a strong “everything basic is wired up” signal.
-
-Q: Why is coverage only ~30% and not 100%?
-A: CCA8 is an evolving research codebase. The goal is to keep coverage high enough (≥30%) to catch regressions in the core engine, not to exhaustively test every UI/menu branch yet. As the code stabilizes, more tests can be added around new features.
-
-Q: If a probe fails but pytest is green, what should I suspect?
-A: Probe failures usually mean a behavioral contract was broken (e.g., NOW not tagged, attach semantics changed, lexicon enforcement drifted). Unit tests check small pieces; probes check whole-flow assumptions. Treat probe failures as “something important in the pipeline changed.”
-
-Q: Can I skip preflight for quick ad-hoc runs?
-A: Yes. Preflight only runs when you explicitly pass --preflight. Normal cca8_run.py runs don’t automatically run tests. There is also a lightweight startup check you can disable with CCA8_PREFLIGHT=off if needed.
-
-Q: Where do the preflight artifacts go, and why do I care?
-A: JUnit XML and coverage XML are written under .coverage/. They’re useful for CI integration, trend tracking (coverage drifting up/down), and investigating test failures without re-running everything interactively.
-
-
-
-
-
-
-
-# CCA8 as a Robotic Cognitive Operating System (RCOS)
-
-## Overview
-
-**CCA8 can be considered in two ways:**
-
-As a **developmental cognitive architecture inspired by early mammalian brains.**
-
-As the **kernel of a Robotic Cognitive Operating System (RCOS)** – a layer that manages embodiment, behavior, and cognition on top of low‑level robot firmware, real‑time OSes, and middleware such as ROS 2.
-
-Traditional operating systems (OS/360, Unix, Windows, Linux) sit between hardware and applications, providing stable abstractions: processes, files, memory, I/O. In robotics today, we typically have:
-
-microcontroller firmware and drivers
-
-a general‑purpose OS (Linux, RTOS)
-
-robotics middleware (e.g., ROS 2) for messaging, topics, services
-
-What is usually missing is an operating system for behavior and cognition – something that:
-
-unifies goals, drives, skills, memory, and action selection
-
-treats the robot’s world as an explicit structure (not just ad‑hoc node graphs and callbacks)
-
-exposes a consistent “app platform” so users can install and compose new behaviors on their embodiment
-
-CCA8 aims to fill this role.
-
-### Position in the stack
-
-You can think of CCA8 as sitting above the hardware and middleware in roughly this shape:
-
-+-------------------------------------------------------------+
-|   **User behavior packs / tasks / curricula ("apps") **     
-+-------------------------------------------------------------+
-|   **CCA8 RCOS kernel**                                      
-|   - WorldGraph (episodic world model)                       
-|   - ColumnMemory (engrams, traces)                          
-|   - Drives & homeostasis                                    
-|   - Policies (primitive skills) & Action Center             
-|   - Temporal scaffolding (ticks, episodes, age)             
-+-------------------------------------------------------------+
-|   **Robot HAL / middleware**                                
-|   - ROS 2, PetitCat-style minimal OS, simulators            
-|   - sense() / act() / status() surfaces                     
-+-------------------------------------------------------------+
-|   **Hardware & low-level OS**                               
-|   - motors, joints, sensors, microcontrollers, RTOS/Linux   
-+-------------------------------------------------------------+
-
-In this view:
-
-A **HAL or ROS 2 stack plays a role analogous to a BIOS + device drivers in a PC**: it knows how to talk to motors, joints, cameras, etc.
-
-**CCA8 is the cognitive OS**: it knows about episodes, goals, drives, skills, policies, and worlds.
-
-**User-defined skills, policies, and task scripts** are the equivalent of applications.
-
-Small platforms like the PetitCat robot can sit under CCA8 just as well as richer ROS 2 platforms. As long as there is a HAL that implements the expected surfaces, the same CCA8 brain can drive different embodiments.
-
-#### What the user gets: an “app platform” for behavior
-
-From a user’s point of view, CCA8 as an RCOS should eventually feel a bit like “Windows for your robot”:
-
-you configure the body and environment,
-
-you install or write behaviors (“apps”),
-
-you specify goals and constraints,
-
-and the RCOS manages the ongoing lifecycle of perception, memory, and action.
-
-Concretely, CCA8 exposes (or is intended to expose) a few stable surfaces.
-
-**1. Embodiment and HAL configuration**
-
-The user (or integrator) plugs a robot into CCA8 by supplying a HAL adapter:
-
-sense() → returns structured observations which can be turned into cues/engram payloads
-
-act(intent) → takes a small set of action tags / parameters (e.g., action:step_forward, action:look_around) and translates them into motors, joint trajectories, or ROS 2 messages
-
-status() → reports health, battery, fault states, etc., which can be reflected as predicates in the WorldGraph
-
-CCA8 does not care whether act(intent) ends up calling ROS 2, a PetitCat‑style mini OS, or direct serial commands. That complexity stays below the RCOS boundary.
-
-**2. Drives, goals, and profiles**
-
-On top of the embodiment, the user configures the internal “needs” and goals:
-
-numeric drives (hunger, fatigue, warmth, safety, etc.) with thresholds
-
-profiles (e.g., “newborn mountain goat”, “explorer bot”) that set default drive parameters, exploration policies, and curricula
-
-optional task‑level goals (e.g., “stay upright”, “follow mom”, “inspect room”, “return to dock”) that guide what “success” means over episodes
-
-Drives are exposed to the controller as tags like drive:hunger_high, which policies can trigger on. This is where “what the robot should care about” gets declared.
-
-**3. Skills and policies as “apps”**
-
-The primary way users extend CCA8 is by installing or authoring policies and skills.
-
-At the lowest level, a primitive policy is just a small behavior object with two methods:
-
-trigger(world, drives) → should this skill run now?
-
-execute(world, drives, ctx) → append a small chain of bindings/edges to the WorldGraph, optionally call the HAL, update drives, and return a status dict.
-
-Policies are registered with the Action Center, which acts as the scheduler:
-
-it inspects the current world + drives
-
-it chooses which policy fires next (safety policies first, then homeostatic needs, then fallbacks)
-
-it tracks provenance and learning signals (skill ledger, rewards)
-
-From a user’s point of view, each policy is a bit like an installed application:
-
-It has a name and version (policy:seek_nipple, policy:avoid_edge).
-
-It declares preconditions (what states/drives it needs).
-
-It leaves a trace in the world (provenance tags, binding chains) for later analysis or learning.
-
-Higher-level skills can be built as small libraries of policies plus helper functions, packaged as Python modules or “behavior packs” that CCA8 discovers and loads.
-
-**4. Task scripts and curricula**
-
-On top of skills, the user writes task scripts that set up experimental or operational episodes. For example:
-
-choose a profile and embodiment (e.g., goat vs. PetitCat)
-
-load a particular world template or terrain
-
-enable a set of skills/policies (e.g., StandUp, FollowMom, AvoidEdge, ExploreRoom)
-
-define stopping conditions and logging preferences
-
-This can be done via:
-
-Python entry points (e.g., cca8_run.py with arguments), and
-
-eventually, configuration files (e.g., YAML/JSON manifests) that describe “what brain, what body, what skills, what goals”.
-
-The intent is that non‑specialist users should be able to say, in effect:
-
-“Here is my robot body, here are the behaviors I want available, and here is what I want it to try to do.”
-
-and let the CCA8 RCOS handle the ongoing cycle of perception → world update → drive update → action selection → embodiment.
-
-**5. Introspection and debugging surfaces**
-
-Like a conventional OS exposes tools such as ps, logs, and debuggers, the CCA8 RCOS exposes (or will expose) introspection surfaces:
-
-WorldGraph views: what bindings and edges are currently active, where “NOW” is, what predicates are true
-
-Skill ledger: per‑policy statistics (counts, rewards, success/fail history)
-
-Drive traces: how internal needs evolved over time and which policies responded
-
-Embodiment traces: what actions were actually sent through the HAL and with what results
-
-These let the user treat behaviors as first‑class, inspectable objects rather than opaque ROS node graphs.
-
-PetitCat and other small embodiments
-
-For small robots such as PetitCat, CCA8’s RCOS view is especially useful:
-
-a minimal robot “OS” handles low‑level timing, motor control, and safety (PetitCat‑like firmware / micro‑OS),
-
-a thin HAL adapter translates between CCA8’s action tags and the robot’s specific capabilities,
-
-the same CCA8 brain can then be reused across simulation and physical hardware, or across different small bodies.
-
-In that sense, CCA8 is not just a simulator of a mountain goat calf, but a general-purpose Robotic Cognitive Operating System designed to be ported to many embodiments while giving users a consistent way to “install” behaviors and tell their robot what they want it to do.
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Hardware Abstraction Layer (HAL)
-
-A Hardware Abstraction Layer (HAL) separates *what* the cognitive system wants to do from *how* a specific robot makes it happen. In robotics, a HAL normalizes diverse sensors (camera, IMU, microphones, joint encoders) and actuators (motors, servos, grippers) behind a stable interface: perception enters the stack as time-stamped, unit-annotated measurements; actions leave as parameterized commands with feedback and safety guarantees. This indirection lets the same policy or planner run on simulation today and a very different platform tomorrow (e.g., a wheeled rover vs. a quadruped), without rewriting cognition. A good HAL also handles low-level concerns—synchronization, rate limiting, watchdogs/estops, and health reporting—so higher layers reason in task space, not device idiosyncrasies.
-
-In practice, a HAL defines a few consistent surfaces: **sense()** for bulk sensor pulls or event callbacks, **act(command, params)** for goals in actuator space, and **status()** for state, limits, and faults. It owns the mapping from device coordinates to canonical frames, applies calibration/units, enforces safety envelopes, and returns structured acknowledgements (accepted/Executing/Done/Error) with timestamps. With this contract, cognition can compose behaviors from predicates and policies, while the HAL translates to hardware-specific drivers and transport.
-
-
-
-## CCA8 and future HAL integration
-
-The importance of embodiment in the generation and development to cognition is acknowledged. Embodiment shapes cognition—sensorimotor contingencies, action affordances, latency, noise, and body-centric frames all co-determine how an agent learns and reasons. CCA8’s HAL deliberately _abstracts_ embodiment during core development to decouple variables: it gives us reproducible experiments, deterministic tests, and portability across platforms without rewriting cognition. This isn’t a denial of embodiment; it’s a seam. We mitigate “embodiment debt” by (1) keeping time, units, frames, limits, and latencies explicit in the HAL manifest; (2) expressing actions as **intents** (e.g., move/gaze/manipulate) rather than device torques; (3) mirroring real timing into engrams (`ticks`, `tvec64`, `epoch`) so learning remains time-aware; and (4) swapping in realistic adapters (noise/latency/domain-randomization) when moving from headless runs to hardware. In short, HAL postpones _implementation details_ of a body while preserving the _constraints_ that matter, so embodiment can be reintroduced precisely—at the right layer—without entangling the cognitive core.
-
-While the importance of embodiment to cognition is acknowledged, the CCA8 architecture is structured to drop in a HAL without disturbing cognition. The **Runner** already distinguishes the cognitive context (policies, temporal clock, world graph) from embodiment details; by default HAL is **OFF** and the system runs “headless.” The seams are intentional: (1) **perception bridge** — features/engrams can be filled from HAL sensor streams with time linkage (`ticks`, `tvec64`, `epoch`); (2) **action bridge** — controller **primitives/policies** can emit normalized action intents (e.g., `move_base(dx,dy,theta)`, `gaze(target)`, `manip(grasp=open/close)`), which a HAL adapter maps to device commands; (3) **timing** — the cognitive **TemporalContext** stays procedural and device-agnostic, while the HAL can expose a wall-clock/rt clock when needed.
-
-When a HAL is enabled, CCA8 will load an *embodiment manifest* (sensors, frames, capabilities, limits), bind HAL streams to the **Features** module (creating engrams with temporal fingerprints), and route controller outputs to **act()** with safety interlocks (dead-man, estop, limit checks). This keeps the **WorldGraph** an episodic index (lightweight, device-neutral), lets **policies** remain portable, and confines hardware specialization to HAL adapters. The same simulation you run today can, with a manifest and a driver pack, target different robots with minimal code changes—exactly the portability a HAL is meant to provide.
-
-
-
-### Q&A to help you learn this section
-
-Q: Why is HAL kept separate from the cognitive architecture?
-A: To keep cognition portable and testable. The same WorldGraph/controller stack should run:
-
-in a pure simulation,
-
-on different robots,
-
-or in hybrid sim+sensor regimes
-without rewriting core cognitive logic. HAL localizes sensor/actuator quirks and safety constraints to one layer.
-
-Q: What changes in CCA8 when HAL is turned ON?
-A: Cognition (WorldGraph, controller, TemporalContext) stays the same. The difference is that:
-
-perception features/engrams can be fed from real sensors via the HAL, and
-
-policy actions can be turned into device commands (act()) with safety envelopes (limits, estops, etc.).
-
-Q: Does HAL know about predicates and policies?
-A: No. HAL deals in sensor streams and action intents (move/gaze/manipulate). Policies and predicates remain in CCA8. The runner/bridge is responsible for mapping action:* / policy decisions into HAL act(...) calls.
-
-Q: How does HAL help with sim-to-real transfer?
-A: It defines a stable contract:
-
-sense() → returns normalized, time-stamped sensor data,
-
-act(intent, params) → executes primitive actions in actuator space,
-
-status() → reports health/limits/faults.
-By adhering to this contract in both sim and real deployments, you can reuse cognitive code and gradually swap simulators for real hardware.
-
-
-
-
-
-
-
-# Hardware preflight lane (status stub)
-
-When you run `--preflight`, CCA8 reports HAL/body flags in a dedicated lane.
-This is a **status stub**—no hardware I/O yet.
-
-Example:
-`[preflight hardware] PASS  - NO-TEST: HAL=ON (...); body=0.1.1 hapty — pending integration`
-
-Enable it via CLI:
-`> python cca8_run.py --hal --body hapty`
-
-Future checks will cover: transport handshake (USB/serial/network), sensor
-enumeration, actuator enable/disable, estop/limits, and simple round-trip
-commands (with timestamps and unit checks).
-
-<img title="Goat Embodiment" src="./robot_goat.jpg" alt="robot_goat" style="zoom:25%;" data-align="center">
-
-### Q&A to help you learn this section
-
-Q: What does it mean when hardware preflight prints “NO-TEST: HAL=OFF … pending integration”?
-A: It means the hardware lane ran, but there were no active hardware checks to perform:
-
-HAL is off, or
-
-no body profile is configured.
-It’s a reminder that the HAL lane is wired but not yet doing real transport/sensor tests.
-
-Q: How do I enable the hardware lane for future robots?
-A: Start the runner with --hal --body <name>, e.g.:
-python cca8_run.py --hal --body hapty.
-Once real HAL implementations exist, preflight will use that configuration to check connectivity, sensors, estops, etc.
-
-Q: Will hardware failures make --preflight return non-zero exit codes?
-A: Yes, once implemented. The intention is that:
-
-any serious hardware connectivity/safety issue
-
-should cause the hardware preflight lane to FAIL
-and thus make the overall --preflight exit code non-zero so CI or scripts can react.
-
-Q: Does HAL preflight change anything in the cognitive state?
-A: No. It should only probe transport, sensors, actuators and log health. WorldGraph, drives, and policies should remain unaffected by hardware preflight.
-
-Q: How should I read the “hardware_checks=0” field in the preflight footer today?
-A: Literally: there are currently zero implemented hardware checks. It’s a placeholder count that will increase as real HAL checks (sensor enumeration, estop status, etc.) are added.
-
-
-
-
-
-
-
-# How-To Guides
-
-### Resume + keep autosaving
-
-```
-cca8_run.py --load session.json --autosave session.json
-```
-
-### Start fresh but keep old snapshot
-
-```
-cca8_run.py --load session.json --autosave session_NEXT.json
-```
+## Quick CLI + menu recipes
 
 ### One-shot planning (no menu)
 
+```bash
+python cca8_run.py --load session.json --plan pred:posture:standing
 ```
-cca8_run.py --load session.json --plan pred:posture:standing
-```
-
-### Add a sensory cue
-
-Menu → **11** → channel `vision`, cue `mom:close` → creates `cue:vision:mom:close` (depending on your input normalization).
-Note: menu **11** adds a **cue** not a pred.
-
-### Show drives (raw + tags)
-
-In the menu, choose **“Drives & drive tags”** (you can also type `drives` or `d` at the prompt).  
-This prints numeric drives and active **drive flags** (`drive:*`, ephemeral). These flags are computed by the controller (`Drives.flags()` / `Drives.predicates()`) and used in policy `trigger()` logic; they are **not persisted** in the WorldGraph unless you explicitly create `pred:drive:*` or `cue:drive:*` tags.
-
-
 
 ### Start with a preloaded demo world (for graph/menu testing)
 
-Sometimes you want a small, deterministic graph to test the graph menus without building everything via instincts first.
+```bash
+python cca8_run.py --demo-world
+```
 
-cca8_run.py --demo-world
+### Add a sensory cue (interactive)
 
+Use the menu entry that prompts for channel + cue token (it creates a `cue:*` tag, not a `pred:*` tag).
 
-
-This:
-
-* Seeds a tiny WorldGraph with 6 bindings and 7 edges (anchors `NOW`/`HERE`, a `stand` predicate, a `fallen` state, a cue-like `vision:silhouette:mom`, and a `state:resting` node with provenance and an engram pointer).
-
-* Prints a short banner such as:
-  `[demo_world] Preloaded demo world (NOW=b1, bindings=6)`
-  at startup.
-
-* Lets you immediately use:
-  
-  * the **“Snapshot”** entry to see the pre-wired edges and tags,
-  
-  * the **“Inspect binding details”** entry (e.g., on the “resting” node) to inspect tags/meta/provenance/engrams and incoming/outgoing edges,
-  
-  * the **“List predicates”**, **“Connect bindings” / “Delete Edge”**, and **“Plan to predicate”** entries, all against the same stable mini-world.
-
-The same demo builder is used by `tests/test_inspect_binding_details.py` via `cca8_test_worlds.build_demo_world_for_inspect()`, so interactive experiments and unit tests share the same graph shape.
-
-
-
-### Export an interactive graph with readable labels
-
-From the main menu choose **Export and display interactive graph (Pyvis HTML)**, then:
-
-* **Node label mode** → `id+first_pred` (shows both `bN` and the first predicate).
-
-* **Edge labels** → `Y` for small graphs, `n` for big graphs to reduce clutter.
-
-* **Physics** → `Y` unless the graph is very large.  
-  Open the saved HTML in your browser and hover nodes/edges for tooltips, the NOW anchor is highlighted to orient you.
-
-### Delete a mistaken edge
-
-If you accidentally created a duplicate or wrong link:
-
-1. Note `src_id` and `dst_id` from the snapshot view.
-
-2. Use the “edge delete” helper (if present in `tools/`) or manually edit the snapshot JSON (`edges[]` on the source binding), then **Load** that edited snapshot.
-
-3. Re-export the graph to confirm the fix.
-   
-   
-
-***Q&A to help you learn this section***
-
-Q: Resume + autosave same file?  A: --load session.json --autosave session.json.
-
-Q: Start fresh but keep old?  A: Autosave to a new filename.
-
-Q: One-shot planning?  A: --load session.json --plan state:posture_standing.
-
-Q: Reset?  A: Press R (with autosave set).
+Tip: if you expected a *predicate* but created a *cue*, check the tag prefix in Snapshot (`cue:` vs `pred:`).
 
 ---
-
-# Data schemas (for contributors)
-
-This section documents the canonical in-memory shapes and their JSON snapshot equivalents. The goal is that a maintainer can read the structures, eyeball a saved session, and reconstruct what happened without digging into code.
-
-## World snapshot (top level)
-
-A saved session is a single JSON object that bundles the world, drives, skills, and a timestamp:
-    {
-      "saved_at": "2025-10-16T12:34:56.789012",
-      "world": {
-        "version": "0.7.x",
-        "next_id": 7,
-        "latest": "b6",
-        "anchors": { "NOW": "b1" },
-        "bindings": {
-          "b1": { "...binding object..." },
-          "b2": { "...binding object..." }
-        }
-      },
-      "drives": { "hunger": 0.70, "fatigue": 0.20, "warmth": 0.60 },
-      "skills": {
-        "policy:stand_up": { "n": 3, "succ": 3, "q": 0.58, "last_reward": 1.0 }
-      }
-    }
-
-
-
-Note: only numeric levels are persisted. **Drive flags** (`drive:*`) are ephemeral controller signals and are not stored in the snapshot. If you need persisted drive state, write `pred:drive:*` (or `cue:drive:*`) explicitly.
-
-**Invariants (top level):**
-
-* `next_id` is the next numeric suffix to allocate (`b{next_id}`), advanced on load to avoid collisions.
-
-* `latest` is the most recently created binding id (used for default attachments).
-
-* `anchors` is a small map of named anchors (e.g., `NOW`, `HERE`) to binding ids.
-
-## Binding (node)
-
-Bindings are the atomic “episode cards” in the graph.
-    {
-      "id": "b42",
-      "tags": [
-        "pred:posture_standing",
-        "cue:vision:silhouette:mom"
-    }
-
-**Invariants (binding):**
-
-* `id` is a string of the form `b<num>`, unique within the world.
-
-* `tags` is a list of strings, at least one tag for a “stateful” node should be a `pred:*` token (e.g., `pred:stand`).
-
-* `meta.policy` records provenance (which policy created the node), `meta` can hold timestamps or light context.
-
-* `engrams` holds **pointers** to rich content (stored outside the WorldGraph).
-
-### Edge (directed link)
-
-Edges are stored **on the source binding** in its `edges[]` list, forming a classic adjacency list.
-    { "to": "b43", "label": "then", "meta": {} }
-
-**Conventions (edge):**
-
-* `to` is the destination binding id.
-
-* `label` is a short relation name. Use `"then"` for episode flow, feel free to add domain labels (e.g., `approach`, `search`, `latch`, `suckle`) when helpful.
-
-* Multiple edges between the same pair are allowed if labels differ, the UI warns when you attempt to add an identical `(src, label, dst)` edge.
-
-## Anchors
-
-Anchors are just bindings with special meaning, referenced in `world.anchors`. Many anchor bindings also carry a tag like `anchor:NOW` for visibility in UIs. Planning typically starts from the `NOW` anchor.
-
-## Drives (controller)
-
-    { "hunger": 0.70, "fatigue": 0.20, "warmth": 0.60 }
-
-The controller may derive helper tags (e.g., `drive:hunger_high`) for policy triggers. If those tags aren’t available, policies should degrade gracefully by using graph state alone.
-
-## Skill ledger (per policy)
-
-A lightweight, per-policy roll-up to support introspection and future learning hooks:
-    "policy:stand_up": { "n": 3, "succ": 3, "q": 0.58, "last_reward": 1.0 }
-
-Field meanings are intentionally minimal: total runs `n`, number succeeded `succ`, an optional running quality estimate `q`, and the last reward.
-
-## Contracts & loader behavior
-
-* **Serialization:** `WorldGraph.to_dict()` emits `version`, `next_id`, `latest`, `anchors`, and `bindings`.
-
-* **Deserialization:** `WorldGraph.from_dict()` restores the structures and **advances** the internal id counter beyond any loaded ids.
-
-* **Sinks:** a binding without `edges` is a valid sink.
-
-* **Labels & pretty print:** when displaying paths or graphs, the first `pred:*` tag is used as a human label if present, otherwise the id is shown.
-  
-  
-
-## Why edges live on the source binding (design rationale)
-
-Storing edges on the source binding gives:
-
-* **O(1) neighbor iteration** for BFS (no global lookups needed).
-
-* **Locality of reasoning:** everything needed to “expand” a node is on that node.
-
-* **Simple persistence:** the snapshot is a direct dump of each binding’s edges.  
-  The trade-off is that reverse lookups (who points _to_ `bK`?) require scanning or a small auxiliary index, in practice we only need forward edges for planning.
-  
-  
-
-***Q&A to help you learn this section***
-
-Q: What’s inside a Binding?  A: id, tags, edges[], meta, engrams.
-
-Q: How are edges stored?  A: On the source binding as {"to", "label", "meta"}.
-
-Q: One drive:* flag example?  A: drive:hunger_high (hunger > 0.6).
-(This is an ephemeral controller flag; for persisted use, write `pred:drive:hunger_high`.)
-
-Q: A skill stat besides n?  A: succ, q, or last_reward.
-
-Q: Where do edges live relative to nodes?  A: On the source binding, inside its `edges[]` list. That’s the adjacency list the planner traverses.
-
-Q: Are duplicate edges allowed? A: The structure allows them, but the UI warns when an identical `(src, label, dst)` already exists so you can skip duplicates.
-
-Q: Which tag shows as the node label in UIs? A: The first `pred:*` tag if present, otherwise the binding id.
-
-Q: How does the loader avoid `bNN` collisions after a load? A: It advances `next_id` past the highest numeric suffix seen in `bindings`.
-
-Q: Do I need to add an edge for a terminal node? A: No. A binding with an empty (or missing) `edges` list is a valid sink.
-
-Q: What makes a predicate “atomic”?A: It’s a single namespaced token (`pred:…`) carried by a binding, we don’t decompose it further inside the graph.
-
-Q: One concrete example of provenance?A: `meta.policy = "policy:stand_up"` on the standing binding created by the StandUp policy.
-
-Q: What is the “skill ledger”?A: Lightweight per-policy stats (counts, success, running q, last reward) to support analytics or future RL.
-
-
-
-
-
-
-
-# Traceability (requirements to code)
-
----------------------------------------------------------------
-
-A traceability lite table maps major requirements to the modules and functions that satisfy them. Keep this short and keep
- it close to code names so a maintainer can jump straight into the right file. Examples:
-
-* REQ‑PLAN‑01: BFS finds a shortest path in edges.Satisfied by `WorldGraph.plan_to_predicate` (BFS), `pretty_path` (display).
-
-* REQ‑POL‑02: Policies run in priority order with small guards.Satisfied by `cca8_controller.ActionCenter`, policy `trigger()` guards, and provenance in `meta`.
-
-* REQ‑PERS‑03: Loading a snapshot advances the id counter.Satisfied by `WorldGraph.from_dict`.
-
-You can expand this list as the codebase grows.
-Note -- Currently paused. To revisit as the codebase grows and requirements stabilize.
-
-
-
-***Q&A to help you learn this section***
-
-Q: How do I keep requirements and code in sync?   
-A: Add a short REQ row and tag the relevant functions/classes with the REQ id in comments.
-
-Q: Where should new ADRs go now that decisions are in-line?   
-A: Summarize in the section where the topic appears and, if large, put the full ADR under `docs/adr/` with a link.
-
-Q: What belongs in a REQ vs. ADR?   
-A: REQ = behavior the system must provide, ADR = why a design choice was made among alternatives. 
-
-
-
-
-
-
-
-# Roadmap
-
-* Enrich engrams and column providers, add minimal perception‑to‑predicate pipelines.
-* Phase X NavPatch: patch-aware episode indexing + goat_foraging_* task family + ablations (priors/precision/EFE) for interpretable eval.
-* Add “landmarks” and heuristics for long‑distance plans (A* when we add weights).
-* Optional database or CSR backend if the graph grows beyond memory.
-* Exporters: NetworkX/GraphML for interoperability, continue shipping the Pyvis HTML for quick, zero‑install visualization.
-
-***Q&A to help you learn this section***
-
-Pending as codebase grows and features stabilize
-
-
-
-
-
-
-
-
-
-## Debugging Tips (traceback, pdb, VS Code)
-
-- **traceback:** In `except Exception:` add `traceback.print_exc()` to print a full stack. Use when a loader/snapshot fails.  
-- **pdb:** Drop `breakpoint()` in code or run `python -m pdb cca8_run.py --load ...`. Commands: `n` (next), `s` (step), `c` (continue), `l` (list), `p`/`pp` (print), `b` (breakpoint), `where`.  
-- **VS Code debugger:** Create `.vscode/launch.json` with args, set breakpoints in the gutter, F5 to start. Great for multi-file stepping.
-* Tracebacks: the runner keeps exceptions readable, copy the stack into an issue if you see unexpected behavior.
-* `pdb`: insert `import pdb, pdb.set_trace()` where needed to inspect bindings and edges.
-* VS Code: run `cca8_run.py` with the debugger and place breakpoints in `plan_to_predicate()` or policy `trigger()`/`execute()`.
-  
-  
-
-A common pitfall is duplicate edges when both auto‑attach and a manual connect create the same relation. The UI warns when you try to add a duplicate, you can also inspect the `edges` list on a binding directly in the debugger.
-
-### Playbook: “No path found”
-
-1. **Verify the predicate exists** (snapshot shows a binding with that `pred:*`).
-
-2. **Check connectivity** (ensure there’s a forward chain of edges from NOW to that binding).
-
-3. **Look for reversed edges** (common error: added `B→A` instead of `A→B`).
-
-4. **Confirm the goal token** (exact `pred:<token>` string, avoid typos/extra spaces).
-
-5. **Inspect layers** (use the interactive graph, the missing hop will be visually obvious).
-
-### Playbook: “Repeated standing”
-
-1. Confirm `StandUp.trigger()` checks for an existing standing predicate.
-
-2. Verify policy order (another policy shouldn’t insert a second standing node as a side effect).
-
-3. Grep recent bindings for `meta.policy` to see who created duplicates.
-   
-   
-
-***Q&A to help you learn this section***
-
-Q: Quick way to print a stack?  A: traceback.print_exc() in except.
-
-Q: Start debugger from CLI?  A: python -m pdb cca8_run.py --load ....
-
-Q: Persistent breakpoint in code?  A: breakpoint() (Python 3.7+).
-
-Q: IDE workflow?  A: VS Code launch config + gutter breakpoints.
-
----
-
-
-
-# FAQ / Pitfalls
-
-- **“No path found to state:posture_standing”** — You planned before creating the state. Run one instinct step (menu **12**) first or `--load` a session that already has it.
-- **Repeated “standing” nodes** — Tightened `StandUp.trigger()` prevents refiring when a standing binding exists. If you see repeats, ensure you’re on the updated controller.
-- **Autosave overwrote my old run** — Use a new filename for autosave (e.g., `--autosave session_YYYYMMDD.json`) or keep read-only load + new autosave path.
-- **Loading says file not found** — We continue with a fresh session, the file will be created on your first autosave event.
-  
-  
-
-***Q&A to help you learn this section***
-
-Q: Why “No path found …” on a new session?  A: You planned before adding the predicate, run one instinct step.
-
-Q: Why duplicate “standing” nodes?  A: Old controller, update to guarded StandUp.trigger().
-
-Q: How to keep an old snapshot?  A: Autosave to a new filename.
-Q: Is load failure fatal?  A: No, runner continues with a fresh session.
-
-
-
-
-
-
-
-## Intro Glossary
-
-
-
-This glossary is intentionally “runner-facing”: terms are defined in the way you see them in menu output and snapshots.
-
-### A) One-line cheat sheet (high frequency terms)
-
-- **HybridEnvironment**: the external (simulated) world; produces observations from actions.
-- **EnvState**: environment “truth” (the simulator’s internal state).
-- **EnvObservation**: the observation packet crossing into the agent (predicates/cues + env_meta).
-- **Closed-loop cognitive cycle**: one env↔agent iteration: observe → update → select/execute → feedback action.
-- **controller step**: one Action Center invocation (policy arbitration + possible write).
-- **ctx (Ctx)**: runtime context object: cross-cycle counters + knobs + caches (the runner↔engine seam).
-- **WorldGraph (WG)**: long-term symbolic episode index: bindings + edges + anchors + pointers to engrams.
-- **Binding**: a node (“episode card”) with tags (pred/cue/action/anchor) plus meta/engrams/edges.
-- **Edge**: directed link `src → dst`, usually label `"then"` for episode flow (label is an annotation).
-- **Anchors**: named pointers into a graph (NOW, NOW_ORIGIN, HERE, etc.).
-- **BodyMap**: fast belief registers for gating (posture, distances, nipple state, zone, staleness).
-- **WorkingMap (WM)**: short-term workspace graph; contains MapSurface + Scratch + Creative subregions.
-- **MapSurface**: WM’s stable entity/slot table (“what I believe now”); updated in-place each cycle.
-- **Scratch**: WM’s procedural trace (state–action–state chains; predicted postconditions).
-- **Engram / Column**: heavy payload store (e.g., MapSurface snapshots); WG stores pointers to these.
-- **Keyframe**: a boundary cycle where we may store/retrieve/apply WM snapshots (WM⇄Column pipeline).
-- **Prediction error (pred_err v0)**: mismatch between predicted postcondition and next observation.
-
----
-
-### B) MapSurface terminology: entity vs slot-family (the core idea)
-
-**Entity** = “the thing we are talking about.”  
-Examples: `self`, `mom`, `shelter`, `cliff`.
-
-**Slot-family** = “the attribute channel we store for that entity.”  
-Examples: `posture`, `proximity:mom`, `proximity:shelter`, `hazard:cliff`, `nipple`.
-
-**Value** = the current value in that slot-family.  
-Examples: `fallen`, `standing`, `close`, `far`, `hidden`, `found`, `latched`.
-
-Concrete example (EnvObservation token → MapSurface update):
-- EnvObservation predicate `pred:posture:fallen` becomes:
-  - Entity = `self`
-  - Slot-family = `posture`
-  - Value = `fallen`
-MapSurface semantics: overwrite within a slot-family (exactly one current value per slot-family).
-
----
-
-### C) Policy selection terms: gate vs trigger vs execute
-
-- **Gating (dev/safety gate):** “Is this policy even allowed in the candidate set right now?”
-- **Triggering:** “Given world + drives + BodyMap, does this policy want to run now?”
-- **Executing:** among triggered candidates, choose ONE winner and run it.
-
-**Action Center**: the policy runtime that forms the triggered candidate set and selects **one winner**.
-Current selection rule (high-level):
-deficit (drive-urgency) → non-drive tie-break → (if RL enabled: q tie-break inside near-tie band) → stable order.
-
----
-
-### D) Timekeeping and counters
-
-- **env_step / step_index**: environment step since last reset (0-indexed).
-- **controller_steps**: count of Action Center invocations.
-- **cog_cycles**: count of “meaningful” cognitive iterations; canonically the env-loop cycle counter.
-
-(See “Tutorial on Timekeeping” and “Tutorial on Cognitive Cycles” for the full contract.)
-
----
-
-### E) Startup knobs you will see in the banner / profile line
-
-- **sigma**: TemporalContext drift noise scale (how fast the soft clock wanders during step()).
-- **jump**: TemporalContext boundary noise scale (how distinct chapters feel after boundary()).
-- **winners_k / k**: reserved “top-k winners” knob for future competitive selection (e.g., WTA / multi-proposal arbitration).
-  Today it is mostly a profile label and a forward-compatible parameter.
-
----
-
-### F) Attach modes (how new bindings are wired)
-
-- `attach="now"`: create NOW → new edge (then) and update LATEST.
-- `attach="latest"`: create LATEST → new edge (then) and update LATEST.
-- `attach="none"`: create a floating binding (valid but disconnected until you add an edge).
-
----
-
-### G) “World model” terminology (AI literature vs CCA8)
-
-In common AI usage, a “world model” usually means the agent’s internal learned predictive model.
-In CCA8:
-- HybridEnvironment is the external *simulated world* (truth generator).
-- The internal “world model-ish” belief lives in BodyMap + WorkingMap.MapSurface (+ priors from Column snapshots),
-  with WorldGraph acting as the long-term episode index and pointer scaffold.
-
-
-
-
-***Q&A to help you learn this section***
-
-Q: Binding vs Predicate?  A: Binding = node container, Predicate = symbolic fact carried by the binding.
-
-Q: Edge label semantics today?  A: "then" = weak episode causality.
-
-Q: Engram?  A: Pointer to heavy content (outside the graph).
-
-Q: Provenance?  A: meta.policy records which policy created the node.
-
-
-
-
-
-# TUTORIALS AND TECHNICAL DEEP DIVES
-
-
-NOTE: This README.md file exceeds the 512K GitHub rendering limit. Therefore, some topics
-    are not accessible by scrolling, but via the Table of Contents which will link you
-    to another similar README.md file.
-
-
-# Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts
-
-This tutorial introduces the mental model behind **WorldGraph** and shows how to encode experience in a way that is:
-
-- simple for **planning** (BFS / Dijkstra),
-- clear for **humans** (bindings are little episode cards),
-- and consistent with the **four binding kinds**: anchors, predicates, cues, and actions.
-
-It complements the “WorldGraph in detail” and “Tagging Standard” sections by walking through the *why* and *how* with newborn-goat flavored examples.
-
----
-
-## 1) Mental model at a glance
-
-WorldGraph is a **compact, symbolic episode index**. Each “moment” is captured as a small record (a **binding**) that carries tags and optional pointers to richer memory (**engrams**). **Edges** connect moments to show how one led to another. Planning is graph search from a temporal **anchor** (usually `NOW`) toward a **goal predicate**.
-
-A readable example path:
-
-born --then--> wobble --then--> posture:standing --then--> nipple:latched --then--> milk:drinking
-In CCA8:
-
-the things on the nodes are tags (predicates, cues, anchors, actions),
-
-the things on the arrows are edge labels (often just "then").
-
-We now treat actions primarily as action:* nodes, not as special edge labels.
-
-## 2) Why “bindings” and not just “nodes”?
-
-
-
-A binding is more than a bare vertex. It binds together:
-
-lightweight symbols (tags: pred:*, action:*, cue:*, anchor:*),
-
-pointers to engrams (rich memory outside the graph),
-
-and provenance/meta (who created it, when, why),
-
-plus outgoing edges that capture “what happened next”.
-
-Think of each binding as a tiny episode card:
-
-“At this moment, the kid was posture:fallen, we saw vision:silhouette:mom, and the StandUp policy fired.”
-
-That’s why we call it a “binding”: it’s a coherent, inspectable snapshot.
-
-## 3) What a binding contains (shape)
-
-   Every binding has a unique id like b42. Conceptually it looks like:
-
-jsonc
-Copy code
-{
-  "id": "b42",
-  "tags": [
-    "pred:posture:standing",
-    "cue:vision:silhouette:mom"
-  ],
-  "edges": [
-    { "to": "b43", "label": "then", "meta": {"created_by": "policy:seek_nipple"} }
-  ],
-  "meta": {
-    "policy": "policy:stand_up",
-    "created_at": "2025-11-27T10:09:56",
-    "ticks": 5,
-    "tvec64": "..."
-  },
-  "engrams": {
-    "column01": { "id": "<engram_id>", "act": 1.0 }
-  }
-}
-Invariants that keep the graph healthy:
-
-Ids are unique (bN).
-
-Edges are directed and live on the source binding (edges[] list).
-
-A binding with no edges is a valid sink.
-
-The first pred:* tag (if present) is used as the node label in pretty paths/exports; fallback is the id.
-
-The engine keeps an anchors map (e.g. {"NOW": "b5", "NOW_ORIGIN": "b1"}); the corresponding anchor:* tags are for human readability.
-
-## 4) Tag families (pred, cue, anchor, action)
-
-   We use exactly four families of tags in the WorldGraph:
-
-Predicates — what is true about body/world
-
-Prefix: pred:
-
-Examples:
-
-pred:posture:fallen, pred:posture:standing, pred:resting
-
-pred:mom:close, pred:nipple:latched, pred:milk:drinking
-
-pred:seeking_mom
-
-Purpose: planner goals and state descriptions.
-
-Cues — evidence, not goals
-
-Prefix: cue:
-
-Examples:
-
-cue:vision:silhouette:mom
-
-cue:scent:milk
-
-cue:drive:hunger_high
-
-Purpose: policy triggers and FOA seeds. We do not plan to cues.
-
-Anchors — orientation markers
-
-Prefix: anchor:
-
-Examples:
-
-anchor:NOW – current focus of attention / local time,
-
-anchor:NOW_ORIGIN – starting point of this episode.
-
-The anchors map is authoritative (anchors["NOW"] = "b5"); tags make them visible in UIs.
-
-Actions — motor / behavioral steps
-
-Prefix: action:
-
-Examples:
-
-action:push_up
-
-action:extend_legs
-
-action:orient_to_mom
-
-Purpose: explicit action nodes between predicate states.
-
-You can think of:
-
-pred:* = nouns/adjectives: what is (posture, proximity, feeding state),
-
-action:* = verbs: what the goat actually did,
-
-cue:* = sensory hints,
-
-anchor:* = index pegs.
-
-
-
-## 5) Edges: “then” glue + optional labels
-
-Edges are directed links between bindings:
-
-jsonc
-Copy code
-{ "to": "b4", "label": "then", "meta": {"created_by": "policy:stand_up"} }
-Design:
-
-Semantics: every edge is conceptually “then” — “this binding tended to be followed by that binding in this episode.”
-
-Label: defaults to "then"; you may use domain labels like "approach", "search", "latch", "suckle" as human-facing aliases ("then (approach)").
-
-Meta: numeric/action metrics belong in edge.meta:
-
-{"meters": 8.5, "duration_s": 3.2, "created_by": "policy:seek_nipple"}.
-
-Algorithms (planner, FOA) treat edges as structure-first:
-
-They look at which nodes are connected, not the exact label string.
-
-Labels can later inform costs (Dijkstra) or filters (“avoid edges marked recover_fall”), but are not required for correctness.
-
-## 6) Anchors: NOW and NOW_ORIGIN
-
-   We use two important anchors in the neonate:
-
-anchor:NOW_ORIGIN
-
-Set once at the start of the episode (birth).
-
-Never moves; a natural starting point for “whole story” plans.
-
-anchor:NOW
-
-Follows the latest stable predicate state (e.g., posture:standing, seeking_mom, resting).
-
-Moved by the runner after successful policy executions.
-
-Common uses:
-
-Planning from NOW: “Given where I am, how do I reach X?”
-
-Planning from NOW_ORIGIN: “What path did I take from birth to X?”
-
-Resetting NOW in experiments (e.g. set NOW=b3 temporarily to explore a local neighborhood).
-
-## 7) S–A–S in practice: a StandUp example
-
-   Consider the simplified StandUp episode:
-
-Start: goat is fallen near NOW_ORIGIN.
-
-StandUp fires:
-
-action:push_up
-
-action:extend_legs
-
-End: goat is standing; NOW moves to this new binding.
-
-WorldGraph after one StandUp:
-
-text
-Copy code
-b1: [anchor:NOW_ORIGIN]
-b2: [pred:posture:fallen]
-b3: [action:push_up]
-b4: [action:extend_legs]
-b5: [anchor:NOW, pred:posture:standing]
-Edges:
-
-text
-Copy code
-b1 --then--> b2    # NOW_ORIGIN → fallen
-b1 --then--> b3    # NOW_ORIGIN → push_up
-b3 --then--> b4    # push_up → extend_legs
-b4 --then--> b5    # extend_legs → standing (NOW)
-From a map perspective, the S–A–S segment is:
-
-text
-Copy code
-[pred:posture:fallen] 
-   → [action:push_up] → [action:extend_legs] 
-   → [pred:posture:standing]
-The standalone b1 anchor plus b2 predicate both represent the “fallen” situation; the actions attach off NOW and lead to a new predicate where NOW is finally placed.
-
-## 8) Snapshot-style vs delta-style bindings
-
-   Two encoding styles exist; CCA8 uses a snapshot-of-state style by default:
-
-Snapshot-of-state (recommended):
-
-Each predicate binding carries the current body/world facts (posture, proximity, feeding state, etc.).
-
-Stable invariants (e.g., posture:standing) are repeated for a while, only changed when the fact changes.
-
-Transient milestones (nipple:found) are often dropped once a stable state (nipple:latched) is reached.
-
-Delta/minimal (not used today):
-
-Each binding only adds what changed (“found”, then “latched”) without repeating posture/proximity.
-
-Fewer tags per node, but harder to interpret a single binding in isolation.
-
-The snapshot style keeps planning and debugging simple: each pred:* binding is a self-contained “what is true now” card.
-
-## 9) Building small paths by hand (menu intuition)
-
-Using the runner menus, you can manually build paths that match the tutorial diagrams:
-
-Add predicate (3)
-
-e.g., posture:standing, nipple:latched, milk:drinking.
-
-Connect two bindings (4)
-
-e.g., b2 --latch--> b3.
-
-A typical hand-built path:
-
-text
-Copy code
-NOW(b1) --then--> b2[pred:posture:standing] --latch--> b3[pred:nipple:latched] --suckle--> b4[pred:milk:drinking]
-The planner (Plan to predicate menu) will then find this path when you ask for milk:drinking as the goal.
-
-## 10) Common pitfalls and tips
-
-    “No path found”:
-    Check that:
-
-You spelled the goal token exactly (pred:posture:standing vs pred:posture_standing),
-
-There is a forward chain of edges from NOW (or your chosen start) to the target binding,
-
-Edges are not reversed (B→A when you meant A→B).
-
-Too many actions on edges:
-It’s tempting to encode everything as labels (--stand_up-->). Prefer to:
-
-make actions into action:* bindings (action:push_up), and
-
-use edge labels mainly as annotations ("then", "latch", "search").
-
-Tagless nodes:
-Bindings with no tags are hard to interpret. Give each meaningful binding at least one pred:*, cue:*, or anchor:* tag.
-
-11) Quick reference cheat sheet (WorldGraph concepts)
-    Binding: id + tags (pred/cue/anchor/action) + edges[] + meta + engrams.
-
-Edge: {"to": dst_id, "label": "then", "meta": {...}}; stored on source binding.
-
-Anchors: NOW, NOW_ORIGIN, HERE → map names to binding ids.
-
-Families: pred:*, action:*, cue:*, anchor:*.
-
-Planner goal: any binding whose tags include pred:<token>.
-
-Snapshot vs delta: we use snapshot-of-state by default.
-
-Source of truth for NOW/NOW_ORIGIN: world.anchors (tags are for readability).
-
-With this picture in mind, the later tutorials (“WorldGraph Technical Features”, “Controller”, “Environment”) should feel much more natural: they’re all just elaborations of this same map—bindings and edges, tagged with four families, driven by policies and the environment.
-
-
 
 ### Q&A to help you learn this section
 
-Q: What’s the difference between a “binding” and a generic graph node?
-A: A binding is a rich node: it carries tags (pred/cue/action/anchor), optional engram pointers, provenance (meta), and outgoing edges. It’s closer to an “episode card” than a bare vertex — it describes what was true, what happened next, and how to get to richer memory.
+Q: Can I skip the menu and just plan?  
+A: Yes — use `--plan pred:<token>` for a one-shot plan and exit.
 
-Q: Why do we separate pred:*, cue:*, action:*, and anchor:* families?
-A: To keep semantics clear and algorithms simple. Predicates are facts/states, cues are evidence, actions are behavioral steps, and anchors are orientation points. This separation lets policies and the planner read tags without guessing what a string means.
+Q: I’m getting “No path found”. Where do I start?  
+A: First confirm your goal token is exact (e.g., `pred:posture:standing`), then Snapshot the graph and verify there is a forward edge chain from NOW to a binding that contains that predicate.
 
-Q: Why do we treat actions as nodes (action:*) instead of edge labels?
-A: Because in the “everything is a map” view, actions are events in time, not just labels on edges. Recording them as nodes makes it easy to attach engrams, provenance, and additional structure (timing, cost) to actions, and to traverse state–action–state chains uniformly.
-
-Q: What does “snapshot-of-state” style mean here?
-A: It means each pred-binding is intended to be a self-contained state card (“what is true now”: posture, proximity, feeding state, etc.). We may repeat posture:standing across several bindings as the episode unfolds rather than only storing deltas. That makes planning and debugging much easier.
-
-Q: How does the planner know which label to show for a binding?
-A: The first pred:* tag (if present) is used as the node’s human label in pretty paths and exports. If there is no pred:* tag, we fall back to the binding id (bN).
-
-
-
+Q: Is there a “known good” graph for debugging menus?  
+A: Yes — `--demo-world` seeds a small deterministic graph that is also used by some unit tests, so interactive experiments and tests share the same baseline.
 
 
 
@@ -3282,23 +3198,25 @@ A: Wall-clock is great for logs and cross-run inspection, but awkward for unitle
 
 ## A. Dataflow chart: where information goes each step
 
-External world:
-EnvState  →  PerceptionAdapter  →  EnvObservation
+This tutorial focuses on **timing**: what must happen before what in a closed-loop run.
 
-Agent-side memory pipeline (normal env-loop):
-EnvObservation
-  → BodyMap update (always; fast scalar/slot cache for gates)
-  → WorkingMap.MapSurface update (if enabled; semantic state table)
-  → WorldGraph injection (if enabled; sparse long-term trace; changes/snapshot + keyframes)
-  → Action Center selects a policy (reads BodyMap + MapSurface/WG neighborhood)
-  → Policy executes (writes action chains + outcomes; may write into WM-first or WG depending on Phase VII knobs)
-  → Selected policy name is fed back to HybridEnvironment.step(action=...)  
-        Note: In the current runner, the chosen policy is stored and applied on the next env.step call.
-              In the runner implementation, the action is effectively applied at the cycle boundary (stored as ctx.env_last_action and used on the next loop).
-Keyframes / boundaries:
-- Store MapSurface snapshot → Column engram
-- Create WorldGraph pointer node → indexes that engram (stage/zone/salience tags)
-- Optional auto-retrieve at boundary → apply prior map to WorkingMap (replace or seed/merge)
+For the canonical “what lives where / what runs when” memory-pipeline description (Phase VII + Phase X), see:
+- **Tutorial on WorkingMap → Phase VII → “Memory pipeline (plain-English): how CCA8 remembers”**
+- **Tutorial on WorkingMap → Phase X → “where SurfaceGrid + NavPatches fit into the loop”**
+
+A minimal orientation sketch:
+
+```
+EnvState (hidden truth)
+  → EnvObservation
+  → BodyMap update
+  → WorkingMap.MapSurface update
+  → (keyframes only) store / retrieve / apply priors (wm<->col)   # may modify MapSurface
+  → (Phase X) compose WorkingMap.SurfaceGrid (derived)
+  → Action selection + policy execution
+  → env.step(action)
+  → next EnvObservation
+```
 
 ---
 
@@ -3314,11 +3232,11 @@ Terminology note:
 - env_step (or step_index) is the environment’s internal 0-indexed counter since the last reset.
 
 **Cognitive cycle** = every closed-loop iteration:
-EnvObservation → update internal state (BodyMap/WorkingMap/MapSurface) → select policy → execute policy (Scratch S–A–S chain) → act
+EnvObservation → update internal maps (BodyMap + WorkingMap.MapSurface, then (Phase X) compose SurfaceGrid) → select policy → execute policy (Scratch S–A–S chain) → act
 
 **Keyframe cycle** = a cognitive cycle where the “keyframe flag” is true, meaning we additionally run the WM ⇄ Column engram pipeline at the boundary:
 (keyframe) store snapshot → (keyframe) optional retrieve + apply priors
-inserted between MapSurface update and policy selection.
+inserted between MapSurface update and policy selection (and before any derived SurfaceGrid composition used by policies).
 
 Note: 
 Each cognitive cycle ends by selecting/executing an action that changes the env, then the system immediately starts the next cognitive cycle when the env produces the next EnvObservation.
@@ -3367,7 +3285,7 @@ Outside the env-loop, controller_steps may advance without cog_cycles (e.g., Ins
    - This is distinct from the WM⇄Column keyframe pipeline: WorldGraph logging can occur on ordinary cycles as well.
 
 5) (KEYFRAME) WM ⇄ Column boundary pipeline (conditional; ordering invariant)
-   - If this cycle is a keyframe, run the boundary pipeline BETWEEN MapSurface update and policy selection:
+   - If this cycle is a keyframe, run the boundary pipeline BETWEEN MapSurface update and SurfaceGrid composition / policy selection:
 
    5a) Store (consolidation): MapSurface → Column engram
        - Store a MapSurface snapshot as an engram in Column memory.
@@ -3381,6 +3299,10 @@ Outside the env-loop, controller_steps may advance without cog_cycles (e.g., Ins
 
    5c) Temporal boundary bookkeeping (if enabled)
        - TemporalContext is stepped each cycle and may take a boundary jump at keyframes.
+
+5d) (Phase X) SurfaceGrid composition (derived; policy-facing topology)
+   - If Phase X is enabled, compose **WorkingMap.SurfaceGrid** from the currently active NavPatch *instances* (and the prototype payloads they reference).
+   - Do this **after** any retrieve+apply step that may have modified MapSurface, so policies see a grid consistent with current belief.
 
 6) Policy selection (the decision step)
    - The Action Center evaluates candidate policies:
@@ -3418,175 +3340,25 @@ Reading the logs:
 
 
 
-### WM ⇄ Column engram pipeline (when we store, retrieve, and apply priors)
+### WM ⇄ Column engram pipeline (store / retrieve / apply priors)
 
-CCA8 uses a two-level memory pipeline:
-- WorkingMap.MapSurface is the current belief/state table (semantic addressing by entity × slot-family).
-- Column Engrams store snapshot payloads (e.g., MapSurface snapshots) and are indexed by lightweight pointer bindings in WorldGraph.
+The WM ⇄ Column (“wm<->col”) pipeline is the **keyframe-only** consolidation + priors mechanism:
+it stores boundary snapshots into long-term memory and can auto-retrieve priors to seed/merge belief.
 
-This pipeline is *not* executed on every cognitive cycle. It is primarily **keyframe-driven**.
+The **canonical** description lives in **Tutorial on WorkingMap (Phase VII + Phase X)**, especially:
 
+- **Keyframes and “boundaries”: when we store a MapSurface snapshot**
+- **WorkingMap <-> Column (wm<->col): what is stored and what “merge” reconstitutes**
 
-#### When the pipeline runs (trigger policy)
+High-level steps at a boundary:
 
-During closed-loop runs (e.g., menu 37), the WM⇄Column pipeline runs at **keyframes**:
-- episode-start keyframe: environment reset (env_reset)
-- within-episode keyframes: scenario stage transitions and/or zone transitions
+1) **Store**: MapSurface snapshot → Column engram, plus a thin pointer/index binding in WorldGraph  
+2) **(Optional) Retrieve**: select candidate prior snapshots (and later: patch prototypes)  
+3) **Apply**: seed/merge priors into WorkingMap without overwriting currently observed slot-families  
 
-Non-keyframe cycles typically do not store/retrieve; they just update BodyMap + MapSurface and execute policies.
+Ordering invariant for a keyframe cycle:
 
-
-#### Store (consolidation): MapSurface → Column engram
-
-On a keyframe, after MapSurface has been updated from EnvObservation, we may store a snapshot:
-
-1) Capture: serialize MapSurface into a snapshot payload (predicates + cues + minimal meta).
-2) Assert: write payload to Column memory as an engram (dedup by signature where possible).
-3) Index: create or refresh a lightweight pointer binding in WorldGraph that points to the engram.
-
-Goal:
-- Store coherent “boundary snapshots” rather than every tick, to reduce near-duplicates and make retrieval meaningful.
-
-
-#### Retrieve: Column engram → WorkingMap (priors)
-
-On a keyframe, we may also attempt auto-retrieve (guarded):
-
-1) Candidate generation:
-   - Use WorldGraph pointer bindings as the searchable index (e.g., stage/zone tags).
-2) Scoring:
-   - Score candidates by overlap with current cues/preds (salience-weighted).
-3) Select:
-   - Choose the best candidate(s).
-   - Exclude the engram just stored on this same keyframe to avoid trivial self-retrieval.
-
-Guard hook: even at keyframes, auto-retrieve is attempted only when “need_priors” is true
-(missingness, prediction error, or BodyMap staleness). Otherwise retrieval is skipped to preserve a “pure perception” baseline.
-
-
-
-#### Apply modes (how a retrieved map affects current belief)
-
-We support two application modes:
-
-- Replace mode:
-  - Rebuild MapSurface from the retrieved snapshot (preds + cues restored).
-  - Useful when current belief is unreliable/empty or mismatch is high.
-
-- Seed/Merge mode:
-  - Seed MapSurface with predicate priors only.
-  - Do NOT inject cue:* tags into the live state (no cue leakage).
-  - Useful under partial observability: fill gaps without overwriting current observations.
-
-Contract:
-- MapSurface remains the “belief-now” table driven primarily by EnvObservation.
-- Retrieved content is a prior/hypothesis; it must not silently overwrite truth without an explicit mode decision.
-
-
-
-#### Ordering within a cognitive cycle (INVARIANT)
-
-Note with regard to terminology: A keyframe is a cognitive cycle that triggers the WM⇄Column boundary pipeline (store/retrieve/apply); non-keyframe cognitive cycles skip those steps.
-In summary:
-**Cognitive cycle** = every closed-loop iteration:
-EnvObservation → update internal state (BodyMap/WorkingMap/MapSurface) → select policy → execute policy (Scratch S–A–S chain) → act
-
-**Keyframe cycle** = a cognitive cycle where the “keyframe flag” is true, meaning we additionally run the WM ⇄ Column engram pipeline at the boundary:
-(keyframe) store snapshot → (keyframe) optional retrieve + apply priors
-inserted between MapSurface update and policy selection.
-
-Note: 
-Each cognitive cycle ends by selecting/executing an action that changes the env, then the system immediately starts the next cognitive cycle when the env produces the next EnvObservation.
-
-Whether the next cycle is a keyframe is decided fresh each cycle based on the keyframe triggers (stage/zone boundary, forced snapshot, periodic keyframe, etc.)
-
-Note:
-Predictions/hypotheses exist, are compared to the next observation, and produce a mismatch signal (v0 “prediction error vector” plan is already aligned with this).
-
-An optional internal reprocessing loop exists as a reserved capability, where intermediate results can be fed back into the next cycle’s “input stream” (or internal buffer) instead of (or in addition to) relying purely on fresh external observation. This is the CCA8 analog to the “feed WNM back to association modules” idea in the published papers on the CCA.
-
-Predictive coding note: predicted postconditions (Scratch) and/or retrieved priors (keyframes) are hypotheses; the next EnvObservation is the refutation/confirmation signal; mismatch is computed and can later drive retrieval guards + reconsolidation. 
-
-Reserved internal-feedback loop: if no actionable output (or persistent mismatch), the architecture may feed intermediate results back into an internal input buffer and reprocess in the next cognitive cycle(s), analogous to the CCA feedback-to-association-modules mechanism.
-
-
-**At a keyframe cycle, this ordering is a MUST:**
-
-PREVIOUS KEYFRAME/COG CYCLE →
-EnvObservation → BodyMap update → MapSurface update →
-(keyframe) store snapshot to Column + write/refresh WG pointer →
-(keyframe) optional auto-retrieve + apply (replace or seed/merge) →
-policy selection → policy execution (Scratch S–A–S chain) → action feedback to env 
-→ START NEW KEYFRAME/COG CYCLE
-
-This invariant is intentionally strict:
-
-- Store MUST run after MapSurface has been updated from the current EnvObservation (store coherent boundary truth, not stale belief).
-- Retrieve/apply (if enabled) MUST run before policy selection so priors can influence that same boundary cycle’s action selection.
-- Retrieve MUST exclude the engram just stored on this same keyframe (no trivial self-retrieval).
-- Apply mode MUST be explicit (replace vs seed/merge) to prevent silent “prior overwrote observation truth.”
-
-Reserved future slot (consolidation/reconsolidation write-back):
-- After the decision is made (policy selection + execution), a keyframe may optionally run a write-back hook that:
-  - writes new engrams (copy-on-write) and/or patch records, and
-  - updates WorldGraph pointer bindings for future retrieval,
-  without changing the belief state that was already used for action selection in that same cycle.
-
-#### Future: consolidation + reconsolidation slot (design contract; copy-on-write)
-
-Terminology:
-- Consolidation = boundary snapshot store (MapSurface → Column engram) with a lightweight WorldGraph pointer/index.
-- Reconsolidation = retrieve prior snapshot(s) → integrate new evidence → write a corrected snapshot/patch as a NEW engram (never mutate old).
-
-Engram immutability rule:
-- Column engram payloads are immutable records.
-- Any “update” is represented by asserting a new engram_id and recording ancestry (e.g., parent_eids), plus updating a pointer binding.
-
-Proposed reconsolidation lifecycle (when implemented):
-1) Retrieve:
-   - Select eid_old candidate(s) using WorldGraph pointer bindings (stage/zone/epoch tags + cue/pred overlap scoring).
-   - Apply as priors via an explicit mode (replace or seed/merge).
-2) Integrate:
-   - Across subsequent cycles, EnvObservation continues to overwrite belief-now slots.
-   - Track provenance where helpful (observed vs prior) and record which slot-families were corrected (mismatch bookkeeping).
-3) Decide to write-back:
-   - Triggers may include:
-     - prediction-error/mismatch over a threshold for K cycles,
-     - a successful alignment/merge producing a stable corrected map,
-     - an explicit “commit” policy at a stage/zone boundary.
-4) Write (copy-on-write):
-   - Create eid_new by storing a corrected MapSurface snapshot or a patch record.
-   - Include meta such as:
-     - parent_eids=[...],
-     - reason='reconsolidation',
-     - context tags (stage/zone/epoch),
-     - mismatch summary (what changed and why),
-     - created_at timestamp.
-5) Re-index:
-   - Update/append WorldGraph pointer bindings to prefer eid_new, while retaining eid_old for traceability and comparisons.
-6) Guardrails (non-negotiable):
-   - Never delete/overwrite eid_old automatically.
-   - Never allow immediate self-retrieval loops (exclude eid_new on the same keyframe it was created).
-   - Never inject cue:* from memory into live belief in seed/merge mode (no cue leakage).
-7) Schema/world-model memory (later still):
-   - Prefer patch logs + periodic checkpoints over full-copy snapshots to prevent blowup.
-   - Keep a materialized “latest” plus an immutable patch history so we can audit learning steps.
-
-
-
-
-#### Debugging and invariants
-
-- expected_* values written into Scratch are postconditions (hypotheses), not confirmed truth.
-- env_* fields reflect environment/storyboard truth for the current cycle.
-- cue leakage is disallowed in seed/merge mode.
-- “just-stored” exclusion prevents immediate self-retrieval loops.
-
-
-
-
-
-
+> observe → update BodyMap/MapSurface → (store/retrieve/apply priors) → policy selection + execution
 
 # Tutorial on NavPatch: MapSurface patches and matching
 
@@ -4599,12 +4371,18 @@ Agent side updates (per tick):
   Overwrite-style. Must stay small and authoritative for gating.
 
 - WorkingMap updater:
-  EnvObservation (+ optional retrieved priors) → WorkingMap.MapSurface
+  EnvObservation → WorkingMap.MapSurface
   Overwrite-by-slot-family. Must not accumulate multiple competing values within a slot-family.
 
-  Optional:
-  - updates / creates NavPatches and attaches them to entities
-  - stores only summaries in MapSurface slots (the heavy patch can be stored elsewhere)
+  Keyframes may then retrieve+apply priors back into MapSurface (predicate-only; no cue leakage).
+
+  (Phase X) Derived topology view:
+  - Compose **WorkingMap.SurfaceGrid** once per tick from active NavPatch *instances* (and the prototype payloads they reference).
+  - SurfaceGrid is a derived view; **MapSurface remains canonical**.
+
+  Optional (Phase X):
+  - update/create NavPatch instances and attach them to entities
+  - store only summaries in MapSurface slots (NavPatch prototypes are heavy payloads and belong in Columns)
 
 Keyframes:
 - Keyframe detector:
@@ -6744,6 +6522,183 @@ More menus (and maybe env injection) can be upgraded to use the same pattern in 
 
 
 
+# Data schemas (for contributors)
+
+This section documents the **canonical in-memory shapes** and their **JSON snapshot equivalents**. The goal is that a maintainer can:
+
+- read the structures,
+- eyeball a saved session,
+- and reconstruct “what happened” without digging through the full codebase.
+
+CCA8 intentionally uses **plain JSON/JSONL** rather than Python-specific formats for portability and human inspectability.
+
+---
+
+## Session snapshot (top level)
+
+A saved session is a single JSON object (written by `--autosave`, `--save`, and “Manual Save Session”):
+
+```json
+{
+  "saved_at": "2025-10-16T12:34:56",
+  "app_version": "cca8_run/0.7.11",
+  "platform": "Windows-10-10.0.22631-SP0",
+  "world": { "...WorldGraph..." },
+  "drives": { "...drive levels..." },
+  "skills": { "...policy telemetry..." }
+}
+```
+
+Notes:
+- `saved_at` is local time (runner clock) at write time.
+- `app_version` and `platform` are informational and help debug “works on my machine” issues.
+
+---
+
+## WorldGraph snapshot (`world`)
+
+The `world` object is a compact episode index: bindings + edges + anchors.
+
+Typical fields:
+
+```json
+{
+  "version": "0.7.x",
+  "next_id": 7,
+  "latest": "b6",
+  "anchors": { "NOW": "b1", "HERE": "b1" },
+  "bindings": {
+    "b1": { "...binding..." },
+    "b2": { "...binding..." }
+  }
+}
+```
+
+**Invariants (world):**
+- `next_id` is the next numeric suffix to allocate (`b{next_id}`), advanced on load to avoid collisions.
+- `latest` is the most recently created binding id (used for some default attachments).
+- `anchors` maps named anchors (e.g., `NOW`, `HERE`) to binding ids.
+- `bindings` is a dict `{binding_id -> binding_object}`.
+
+---
+
+## Binding (node)
+
+Bindings are the atomic “episode cards” in the WorldGraph.
+
+Minimal shape:
+
+```json
+{
+  "id": "b42",
+  "tags": [
+    "pred:posture:standing",
+    "cue:vision:silhouette:mom",
+    "anchor:NOW"
+  ],
+  "meta": {
+    "policy": "policy:stand_up",
+    "ticks": 12,
+    "epoch": 3
+  },
+  "edges": [
+    { "to": "b43", "label": "then", "meta": {} }
+  ],
+  "engrams": {
+    "episodic:image": "e17",
+    "wm:surfacegrid": "e18"
+  }
+}
+```
+
+**Conventions / invariants (binding):**
+- `id` is a string of the form `b<num>`, unique within the world.
+- `tags` is a list of compact string tokens (see Tagging Standard).  
+  A “stateful” binding should usually include at least one `pred:*` tag.
+- `meta` holds light provenance + timestamps (policy name, boot flags, tick counters, epoch, etc.).  
+  This should remain JSON-serializable (dict/str/int/float/bool/lists), no custom objects.
+- `edges` is an adjacency list stored on the **source** binding (directed edges).
+- `engrams` holds **pointers** to rich content stored outside the WorldGraph.  
+  The graph stays small and fast; the engram store can grow.
+
+---
+
+## Edge (directed link)
+
+Edges are stored **on the source binding** in its `edges[]` list:
+
+```json
+{ "to": "b43", "label": "then", "meta": {} }
+```
+
+**Conventions:**
+- `to` is the destination binding id.
+- `label` is a short relation name. Use `"then"` for episode flow; add domain labels when helpful (e.g., `approach`, `search`, `latch`).
+- Multiple edges between the same pair are allowed if labels differ. The UI may warn when you attempt to add an identical `(src, label, dst)` edge.
+
+---
+
+## Drives snapshot (`drives`)
+
+Drives are persisted as numeric levels (usually normalized floats):
+
+```json
+{ "hunger": 0.70, "fatigue": 0.20, "warmth": 0.60 }
+```
+
+Important:
+- Only numeric levels are persisted.
+- **Drive flags** (`drive:*`) are ephemeral controller signals derived each step and are not stored in the snapshot.
+  If you want persisted drive state in the WorldGraph, explicitly write `pred:drive:*` (or `cue:drive:*`) tags.
+
+---
+
+## Skills / policy telemetry snapshot (`skills`)
+
+`skills` is a lightweight policy ledger (counts + running value estimates), keyed by policy name:
+
+```json
+{
+  "policy:stand_up": { "n": 3, "succ": 3, "q": 0.58, "last_reward": 1.0 }
+}
+```
+
+Field intent (typical):
+- `n`: number of times the policy was attempted
+- `succ`: number of “success” outcomes (as defined by that policy)
+- `q`: running value estimate / quality score (implementation-dependent)
+- `last_reward`: last scalar reward recorded for that policy
+
+---
+
+## Policy structure (in code)
+
+Policies are *not* serialized directly, but it helps contributors to know the runtime contract:
+
+A policy typically has:
+- a stable **name** (`policy:*`) used in provenance + skill telemetry,
+- a `trigger(...) -> bool` (or score) that checks whether the policy is eligible in the current context,
+- an `execute(...)` (or `act(...)`) that:
+  - may write bindings/edges/tags into the WorldGraph,
+  - returns a compact result bundle (status, reward, notes),
+  - updates policy telemetry (skills) via the controller.
+
+Design goal: policies should be small, inspectable, and composable — most “memory” should live in the WorldGraph + engrams rather than hidden inside policy code.
+
+---
+
+## Environment observation schema (agent-facing)
+
+The environment is *ground truth* (`EnvState`), but the agent only receives **observations** (`EnvObservation`) via the PerceptionAdapter.
+
+A typical observation packet contains:
+- `predicates: list[str]` — symbolic state (posture, proximity, etc.)
+- `cues: list[str]` — sensory “evidence” tokens
+- `raw_sensors: dict[str, float|int|str]` — optional continuous sensors
+- `env_meta: dict` — stage / zone / other debug metadata
+
+Keeping this packet small and explicit is deliberate: it makes the perception → memory boundary auditable.
+
 
 
 # Tutorial on Drives
@@ -8535,190 +8490,42 @@ Exports (see `__all__`):
 Dataclass carried between engine and CLI:  
 `sigma: float`, `jump: float`, `age_days: float`, `ticks: int`, `profile: str`, `winners_k: Optional[int]`, `hal: Optional[Any]`, `body: str`.
 
-* * *
+---
 
-CLI quick reference
--------------------
+### Where the user-facing run guide lives
 
-    ### About / versions
-    python cca8_run.py --about          # list component versions & paths
-    python cca8_run.py --version        # runner version only
-    
-    ### Start interactive (fresh) with autosave
-    python cca8_run.py --autosave session.json
-    
-    ### Resume from a snapshot (and keep autosaving)
-    python cca8_run.py --load session.json --autosave session.json
-    
-    ### One-shot plan (non-interactive)
-    python cca8_run.py --load session.json --plan pred:milk:drinking
-    
-    ### Full preflight (runs pytest + checks) and exit
-    python cca8_run.py --preflight
-    
-    ### Start with a small preloaded demo world (for graph/menu testing)
-    python cca8_run.py --demo-world
-    
-    Flags you’ll actually use: `--about`, `--version`, `--load`, `--autosave`, `--plan`, `--preflight`, `--no-intro`, `--no-boot-prime`, `--profile {goat,chimp,human,super}`, `--hal`, `--body`, `--demo-world`.
+This tutorial is intentionally **code-facing**.
 
-Interactive menu: the 10 you’ll press most
-------------------------------------------
+For the canonical “how to run CCA8” instructions (CLI flags, autosave/load workflow, preflight, and menu highlights), see:
 
-* **1 World stats** — counts, NOW/LATEST, loaded policies.
+- **Runner, menus, and CLI**
+- **Persistence: Autosave/Load**
+- **Preflight (four-part self-test)**
 
-* **2 Show last 5** — quickest way to grab fresh ids.
+---
 
-* **3 Add predicate** — auto-attach to `LATEST` (uses `WorldGraph.add_predicate`).
+## cca8_run.py — Call Flow (internal wiring)
 
-* **4 Connect two** — `(src, dst, relation)` with duplicate edge guard.
+**High-level call flow**
 
-* **5 Plan from NOW** — pretty path + raw ids.
+```text
+main(argv)
+ ├─ configure logging (+ optional terminal tee)
+ ├─ parse CLI flags into an argparse Namespace
+ ├─ optional: print versions / exit (--about, --version)
+ ├─ optional: run preflight probes / exit (--preflight)
+ ├─ optional: run one-shot planning / exit (--plan ...)
+ └─ interactive_loop(args)  ← primary TUI entry
+```
 
-* **11 Add sensory cue** — adds `cue:*` and nudges controller once.
+**What `interactive_loop(args)` sets up**
 
-* **12 Instinct step** — Action Center --one controller step with pre/post “why” text.
+- Instantiates: `WorldGraph`, `Drives`, `Ctx`, `PolicyRuntime`, and (optionally) `HAL`.
+- Optionally loads a session snapshot (`--load`) and/or seeds a deterministic demo world (`--demo-world`).
+- Optionally runs a boot “prime” step (profile-dependent; can be disabled with `--no-boot-prime`).
+- Enters the TUI menu loop which dispatches to helpers like `snapshot_text(...)`, `export_snapshot(...)`,
+  planner calls, manual graph edits, and environment-loop demos.
 
-* **16 Export snapshot** — writes `world_snapshot.txt`.
-
-* **22 Pyvis export** — interactive HTML graph (label mode, edge labels, physics).
-
-* **25 Planner toggle** — BFS ↔ Dijkstra (weights read from `edge.meta`).
-
-Tip: word aliases work (e.g., type “plan”, “graph”, “save”). The runner maps them to menu numbers.
-
-* * *
-
-Autosave / Load
----------------
-
-* **Autosave** rewrites the JSON atomically after each action.
-
-* **Load** restores `world/drives/skills` and **advances** internal id counter to avoid `bN` collisions.
-
-* **Reset current autosave**: press `R` in the menu (with `--autosave` active).
-
-* * *
-
-Preflight (what it actually checks)
------------------------------------
-
-* Runs **pytest** (optionally with coverage).
-
-* Imports core modules & symbols, prints versions.
-
-* Fresh-world invariants (NOW exists & tagged, edges well-formed).
-
-* Accessory files (e.g., `README.md`, image) present.
-
-* Pyvis availability (optional).
-
-* Planner probes, **attach semantics**, **cue normalization**, **action metrics**, **BFS shortest-hop** reasonableness.
-
-* **Lexicon strictness** (reject illegal tokens at neonate).
-
-* **Engram bridge**: capture→pointer attached→column record retrievable.
-
-* * *
-
-Handy engine helpers (the runner gives you)
--------------------------------------------
-
-* **`world_delete_edge(world, src, dst, rel)`** — robust edge deletion (per-binding or global lists; tolerates legacy keys). Used by the menu delete flow.
-
-* **`boot_prime_stand(world, ctx)`** — at birth, seed or connect a `stand` intent near NOW (idempotent).
-
-* **FOA & base selection** — `compute_foa`, `candidate_anchors`, `choose_contextual_base` (light scaffolding used in the instinct printouts).
-
-* * *
-
-HAL (embodiment) stub
----------------------
-
-`HAL` class carries `body` and exposes stubbed actuators/sensors (`push_up`, `extend_legs`, `orient_to_mom`, etc.). Gate with `--hal` / `--body`. Nothing hardware-critical runs yet.
-
-* * *
-
-## Minimal usage crib (copy/paste)
-
-### A) One-shot CLI flow
-
-    # Fresh session with autosave
-    python cca8_run.py --autosave session.json
-    
-    # Add predicates / cues from the menu, then plan:
-    # 5 → "posture_standing"   # pretty path prints
-    
-    # Export an interactive graph
-    # 22 → choose label mode 'id+first_pred', edge labels Y, physics Y
-
-### B) Resume + one-shot plan
-
-    python cca8_run.py --load session.json --plan pred:milk:drinking
-
-### C) Preflight before a demo
-
-    python cca8_run.py --preflight
-
-Look for “PASS” lines (pytest, invariants, attach semantics, BFS, engram bridge).
-
-
-
-**Troubleshooting quickies**
-
-* **“No path found”** → check exact `pred:<token>`, ensure forward chain from NOW, watch for reversed edges.
-
-* **Duplicate edge warning** → auto-attach plus manual connect; keep one.
-
-* **Two NOW tags** → use `set_now(..., clean_previous=True)` (menu already tidies).
-
-* **Strict lexicon errors** → switch to `warn` while developing or extend `TagLexicon.BASE`.
-
-* * *
-
-**Note: Code changes will occur over time, but the main ideas below should remain stable with the project**
-
-
-
-## cca8_run.py — Call Flow & Usage Cheat-Sheet
-
-**What `main()` does (call flow)**
-    main(argv)
-     ├─ configure logging
-     ├─ parse CLI flags (about/version/load/autosave/plan/preflight/etc.)
-     ├─ if --about: print component versions and exit
-     ├─ if --preflight: run_preflight_full(args) and exit
-     └─ interactive_loop(args)  ← primary entry for the TUI
-
-Typical entry points:
-    # About / versions
-    python cca8_run.py --about
-    python cca8_run.py --version
-    # Fresh session with autosave
-    python cca8_run.py --autosave session.json
-    # Resume + keep autosaving
-    python cca8_run.py --load session.json --autosave session.json
-    # One-shot plan and exit
-    python cca8_run.py --load session.json --plan pred:milk:drinking
-    # Full preflight and exit
-    python cca8_run.py --preflight
-
-
-
-**What `interactive_loop(args)` sets up (at start)**
-    from cca8_world_graph import WorldGraph
-    from cca8_controller import Drives
-    world = WorldGraph()            # empty world
-    drives = Drives()               # controller drives (hunger/fatigue/warmth)
-    ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)  # runtime context
-
-    optional: load snapshot if --load path is provided
-    menu loop: add predicates/cues, connect edges, plan, export, etc.
-
-Menu highlights you’ll actually use during demos:
-
-* **World stats**, **Show last 5**, **Inspect binding**, **Add predicate**, **Connect two**, **Plan from NOW**, **Add sensory cue**, **Instinct step**, **Export snapshot**, **Pyvis export**, **Planner toggle (BFS↔Dijkstra)**.
-  
-  
 
 ## Public surface (functions you can import)
 
@@ -8883,12 +8690,6 @@ Fields (shape):
 
 * **Exports (`__all__`)** you can import:  
   `main`, `interactive_loop`, `run_preflight_full`, `snapshot_text`, `export_snapshot`, `world_delete_edge`, `boot_prime_stand`, `save_session`, `versions_dict`, `versions_text`, `choose_contextual_base`, `compute_foa`, `candidate_anchors`, `__version__`, `Ctx`.
-  
-  
-  
-  
-  
-  
 
 # Tutorial on Controller Module Technical Features
 
@@ -11782,12 +11583,103 @@ It’s a minimal “world ↔ brain” loop for inspection and debugging.
 
 
 
+# Preflight (four-part self-test)
 
-# Logging & Unit Tests
+Run all checks and exit:
+
+```bash
+python cca8_run.py --preflight
+```
+
+Preflight is the fast way to answer: “Is the core loop wired up, and did I break anything obvious?”
+
+---
+
+## What runs
+
+1) **Unit tests (pytest + coverage).**  
+   Prints a normal pytest summary. Coverage is percent of **executable** lines (comments/docstrings ignored). Ordinary code—including `print(...)` / `input(...)`—counts toward coverage. Target ≥30%.  
+   *Note: console vs footer may differ by ~1% due to reporter rounding.*
+
+2) **Scenario checks (whole-flow probes).**  
+   Deterministic probes that catch issues unit tests miss, such as:
+   - core imports & symbols present; version printouts
+   - fresh-world invariants and NOW anchor validity
+   - `set_now` tag housekeeping (old NOW tag removed, new NOW tagged)
+   - accessory files exist (README, images, etc.)
+   - optional PyVis availability
+   - planner probes (BFS/Dijkstra toggle), attach semantics (NOW/LATEST)
+   - cue normalization, action metrics aggregation
+   - lexicon strictness (neonate stage rejects off-vocab), engram bridge presence
+   - action helpers summary is printable
+
+3) **Robotics hardware preflight (stub).**  
+   Reports HAL/body flag status. Example line:  
+   `[preflight hardware] PASS  - NO-TEST: HAL=OFF (no embodiment); body=0.0.0 : none specified — pending integration`
+
+4) **System-functionality fitness (stub).**  
+   Placeholder for end-to-end task demos (will exercise cognitive + HAL paths).
+
+---
+
+## Unit tests (pytest)
+
+Preflight runs pytest first (so failures stop you early). If you’re iterating quickly, you can run tests directly:
+
+```bash
+# Quiet mode, but show print() output (useful for debugging tests)
+pytest -q -s
+```
+
+Notes:
+- Stdout from tests is captured by default; `-s` shows prints live.
+- Preflight also runs coverage and writes artifacts (below).
+
+Included starter tests (typical; evolves over time):
+- `tests/test_smoke.py` — basic reasonableness (asserts True).
+- `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → `pred:posture:standing` exists.
+- `tests/test_inspect_binding_details.py` — uses a small demo world and asserts the inspect-binding report is consistent with the “Inspect binding details” menu contract.
+- `tests/test_phase_vi_c_spatial.py` — checks that the newborn-goat environment’s **spatial movement and safety gating** behave as described (e.g., `follow_mom` moves the kid off the cliff into shelter; rest gating respects BodyMap safety zones).
+
+Tip: the same demo world used in tests is usually available interactively via `--demo-world`, so interactive experiments and unit tests share the same baseline graph shape.
+
+---
+
+## Footer format & exit code
+
+The last line gives a compact verdict and returns a process exit code. Example:
+
+```
+[preflight] RESULT: PASS | tests=118/118 | coverage=33% (≥30) | probes=41/41 | hardware_checks=0 | system_fitness_assessments=0 | elapsed=00:02
+```
+
+- `PASS/FAIL` reflects both pytest and probe results.
+- `probes` counts scenario checks (part 2).
+- `hardware_checks` / `system_fitness_assessments` are **0** until those lanes are implemented.
+
+---
+
+## Artifacts
+
+- JUnit XML: `.coverage/junit.xml`  
+- Coverage XML: `.coverage/coverage.xml` (console prints a human summary)
+
+**Tip:** a lightweight *startup* check can be toggled with `CCA8_PREFLIGHT=off` (disables the “lite” banner probe at launch).
+
+---
+
+## Troubleshooting
+
+- If **pytest is green but a probe fails**, suspect a broken behavioral contract (NOW tagging drift, attach semantics changed, lexicon enforcement drifted, cue normalization changed). Probes are intentionally “whole-flow” and are meant to flag pipeline regressions.
+- If you want the smallest repro for a preflight failure, run with `--no-intro` and attach the relevant snapshot/log artifacts when sharing the bug.
 
 
 
-## Logging
+# Logging
+
+
+
+## Trace streams
 
 CCA8 intentionally produces **three complementary trace streams**, plus optional state snapshots:
 
@@ -12072,107 +11964,119 @@ with h5py.File("data.h5", "w") as f:
     predicates = np.array(["posture:standing", "hazard:cliff:near"], dtype='S')
     f.create_dataset("predicates", data=predicates)
 with h5py.File("data.h5", "r") as f:
-    print(f.attrs["env_step"]) 
+    print(f.attrs["env_step"])
 
 
 
+# Traceability (requirements to code)
 
+CCA8 is evolving quickly, so traceability has to be **lightweight** to stay alive.
 
-## Unit tests (pytest)
+The goal of this section is *not* heavyweight compliance — it’s to help a maintainer answer:
 
-We keep tests under tests/.
+- “Where in the code is requirement X implemented?”
+- “If I change this behavior, what else should I re-test?”
+- “What should I cite when writing a paper / note about this feature?”
 
-Preflight runs pytest first (so failures stop you early).
+---
 
-Stdout from tests is captured by default; enable prints byrunning pytest with -s (see below).
+## Traceability-lite table
 
-Run preflight (will run tests first):
+Keep requirement IDs short and stable. A simple convention that works well:
 
-Copy code
+- `REQ-<SUBSYS>-<NNN>` for requirements / behavioral contracts  
+- `ADR-<NNN>` for “why we chose this design” decisions (put the full writeup under `docs/adr/` if it grows)
 
-python cca8_run.py --preflight
+Example mapping (expand as the codebase grows):
 
-Run tests directly (show prints):
+| Requirement | What it means (short) | Where it lives (examples) |
+|---|---|---|
+| REQ-PLAN-01 | Planner finds a path NOW → goal predicate | `WorldGraph.plan_to_predicate(...)`, planner helpers, pretty-path display |
+| REQ-WG-01 | WorldGraph anchors are valid and NOW is consistent | WorldGraph anchor/tag utilities; preflight probes validating NOW/LATEST invariants |
+| REQ-PERS-01 | Snapshot load/save is atomic and id-safe | snapshot load/save helpers; `WorldGraph.from_dict(...)` advances `next_id` safely |
+| REQ-POL-01 | Policies are gated + run in priority order | `ActionCenter` policy ordering + `trigger()` guards + provenance in `meta` |
+| REQ-OBS-01 | Agent never reads EnvState directly (only EnvObservation) | `HybridEnvironment` + `PerceptionAdapter` boundary; runner wiring |
+| REQ-TRACE-01 | Runs produce human + machine traces | `terminal.txt`, `cca8_run.log`, `cycle_log.jsonl` pipeline (see Logging) |
 
-Copy code
+Guidelines:
+- Put the REQ id in a short comment near the relevant function/class (easy to grep).
+- When a behavioral contract changes, update:
+  1) the REQ row here, and  
+  2) at least one **probe** or **unit test** that asserts the new behavior.
 
-pytest -q -s
+Note: This is intentionally “lite”. If requirements are in flux, it’s better to keep this small than to let it rot.
 
-Included starter tests:
+---
 
-- `tests/test_smoke.py` — basic reasonableness (asserts True).
-- `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → pred:stand exists.
-- `tests/test_inspect_binding_details.py` — uses a small demo world and asserts that inspect-binding reports edge degrees as expected by the “Inspect binding details” menu.
-- `tests/test_phase_vi_c_spatial.py` — checks that the newborn-goat environment’s **spatial movement and safety gating** behave as described: `follow_mom` moves the kid off the cliff and into shelter, and the Rest gate respects BodyMap’s safety zone (vetoes rest near the cliff, allows rest when shelter is near and the cliff is far).
+## Debugging Tips (traceback, pdb, VS Code)
 
+### Fast triage checklist (before opening a debugger)
 
-The demo world for these tests is built via `cca8_test_worlds.build_demo_world_for_inspect()`, which creates a tiny, deterministic WorldGraph (anchors NOW/HERE, stand/fallen/cue_mom/rest predicates, and a single engram pointer) that you can also use interactively via `--demo-world`.
-Unit tests (pytest)
+1) **Reproduce from a snapshot**  
+   If you can, run from a minimal `--load` file and avoid “fresh randomness”.
 
+2) **Check the Snapshot menu output first**  
+   Confirm NOW/LATEST, anchor tags, and that the goal predicate actually exists somewhere in the graph.
 
+3) **Use the right artifact for the right question**
+   - `terminal.txt`: “What story happened?” (best first skim)
+   - `cca8_run.log`: warnings/errors/tracebacks (developer breadcrumbs)
+   - `cycle_log.jsonl`: machine-parseable per-cycle record (best for regressions)
+   - autosave snapshots: “resume exactly here” checkpoints
 
-## Preflight (four-part self-test)
+### Debugger basics
 
-Run all checks and exit:
+- **traceback:** in `except Exception:` add `traceback.print_exc()` to print a full stack (useful when a loader/snapshot fails).
+- **pdb:** drop `breakpoint()` in code or run:
+  ```bash
+  python -m pdb cca8_run.py --load session.json --no-intro
+  ```
+  Handy commands: `n` (next), `s` (step), `c` (continue), `l` (list), `p`/`pp` (print), `b` (breakpoint), `where`.
+- **VS Code debugger:** create `.vscode/launch.json` with args, set breakpoints, press F5. Great for multi-file stepping (planner ↔ controller ↔ env).
 
-`> python cca8_run.py --preflight`
+Common breakpoint targets:
+- planner: `plan_to_predicate(...)`
+- controller: `ActionCenter.step(...)` (or equivalent)
+- policies: `trigger()` and `execute()/act()`
+- snapshot I/O: load/save functions if JSON structure changes
 
-**What runs**
+### Playbook: “No path found”
 
-1) **Unit tests (pytest + coverage).**  
-   Prints a normal pytest summary. Coverage is percent of **executable** lines
-   (comments/docstrings ignored). Ordinary code—including `print(...)` /
-   `input(...)`—counts toward coverage. Target ≥30%.  
-   *Note: console vs footer may differ by ~1% due to reporter rounding.*  
+1. **Verify the predicate exists** (Snapshot shows a binding with that `pred:*`).
+2. **Check connectivity** (ensure there’s a forward chain of edges from NOW to that binding).
+3. **Look for reversed edges** (common error: you added `B→A` instead of `A→B`).
+4. **Confirm the goal token** (exact `pred:<token>` string; avoid typos/extra spaces).
+5. **Inspect layers** (the interactive graph export usually makes the missing hop obvious).
 
-2) **Scenario checks (whole-flow).**  
-   Deterministic probes that catch issues unit tests miss:
-   
-   - Core imports & symbols present; version printouts
-   - Fresh-world invariants and NOW anchor
-   - `set_now` tag housekeeping (old NOW tag removed, new NOW tagged)
-   - Accessory files exist (e.g., README, images)
-   - Optional PyVis availability
-   - Planner probes (BFS/Dijkstra toggle), attach semantics (now/latest)
-   - Cue normalization, action metrics aggregation
-   - Lexicon strictness (neonate stage rejects off-vocab), engram bridge
-   - Action helpers summary is printable
+### Playbook: “Duplicate edges / graph clutter”
 
-3) **Robotics hardware preflight (stub).**  
-   Reports HAL/body flag status. Example line:  
-   `[preflight hardware] PASS  - NO-TEST: HAL=OFF (no embodiment); body=0.0.0 : none specified — pending integration`
-   Note: Pending integration of HALs.
+A common pitfall is duplicate edges when both auto‑attach and a manual connect create the same relation.
 
-4) **System-functionality fitness (stub).**  
-   Placeholder for end-to-end task demos (will exercise cognitive + HAL paths).
-   Note: Pending integration of HALS.
+- The UI warns when you try to add an identical `(src, label, dst)` edge.
+- In a debugger, inspect the `edges[]` list on a binding directly and remove duplicates carefully
+  (or edit a snapshot JSON and reload).
 
-**Footer format & exit code**
+### Playbook: “Policy keeps repeating an action”
 
-The last line gives a compact verdict and returns a process exit code:
+1. Confirm the policy’s `trigger()` checks for an already-satisfied predicate (e.g., don’t “stand up” if already `pred:posture:standing`).
+2. Verify policy order (a higher-priority policy shouldn’t accidentally insert the same predicate as a side effect).
+3. Inspect recent bindings’ `meta.policy` to see which policy created duplicates.
 
-for example:
+---
 
-[preflight] RESULT: PASS | tests=118/118 | coverage=33% (≥30) |  
-probes=41/41 | hardware_checks=0 | system_fitness_assessments=0 | elapsed=00:02
+### Q&A to help you learn this section
 
-- `PASS/FAIL` reflects both pytest and probe results.  
-- `probes` counts scenario checks (part 2).  
-- `hardware_checks` / `system_fitness_assessments` are **0** until those lanes are implemented.
+Q: Quick way to print a stack?  
+A: `traceback.print_exc()` inside an exception handler.
 
-**Artifacts**
+Q: Start the debugger from the CLI?  
+A: `python -m pdb cca8_run.py --load ...`
 
-- JUnit XML: `.coverage/junit.xml`  
-- Coverage XML: `.coverage/coverage.xml` (console prints a human summary)
+Q: Persistent breakpoint in code?  
+A: `breakpoint()` (Python 3.7+).
 
-**Tip:** a lightweight *startup* check can be toggled with
-`CCA8_PREFLIGHT=off` (disables the “lite” banner probe at launch).
-
-
-
-
-
-
+Q: What’s the best “bug report bundle”?  
+A: A minimal snapshot (`--load` file), plus `terminal.txt` and the relevant excerpt from `cca8_run.log`. If it’s a regression across runs, include the `cycle_log.jsonl` slice.
 
 
 
@@ -12197,110 +12101,4 @@ Tresp, V. et al., Tensor Brain -- [[2109.13392] The Tensor Brain: A Unified Theo
 
 # Developer and Maintainer Notes
 
-
-
-## Development Phases
-
-This section summarizes how the CCA8 codebase has been evolving. It is mainly for future maintainers and contributors.
-
-**Phase I – Core kernel and newborn goat skeleton**  
-
-- Stand up `cca8_run.py` (runner), `cca8_world_graph.py` (WorldGraph), `cca8_controller.py` (drives + policies), `cca8_column.py` (engrams), and `cca8_temporal.py` (timekeeping).  
-- Implement a minimal newborn mountain-goat profile: bindings/edges, drives, primitive policies, autosave/load, and the CLI runner.
-
-**Phase II – Testing, preflight, and documentation spine**  
-
-- Add the pytest suite, coverage reporting, and the four-part `--preflight` self-test (unit tests + whole-flow probes).  
-- Grow this README into the main “compendium” for CCA8: overview, architecture, tutorials, contracts, and glossary.
-
-**Phase III – Representation and tagging cleanup**  
-
-- Standardize tag families (`pred:*`, `action:*`, `cue:*`, `anchor:*`) and introduce the stage-aware restricted lexicon.  
-- Move to explicit `action:*` bindings and state–action–state (S–A–S) chains; deprecate legacy `state:*` and `pred:action:*` patterns.  
-- Clarify NOW / NOW_ORIGIN / LATEST semantics and tighten provenance/meta fields on bindings and edges.
-
-**Phase IV – Timekeeping, environment, and BodyMap**  
-
-- Introduce the TemporalContext “soft clock” and the five time measures (controller steps, temporal drift, autonomic ticks, developmental age, cognitive cycles).  
-- Implement the newborn-goat storyboard environment: `EnvState`, `EnvObservation`, `FsmBackend`, `PerceptionAdapter`, and `HybridEnvironment`.  
-- Add BodyMap as a small body-centred graph (posture, mom distance, nipple/nursing state, shelter/cliff) with controller helpers.
-
-**Phase V – RCOS framing and operator tools (current)**  
-
-- Present CCA8 as a Robotic Cognitive Operating System (RCOS) kernel and stabilize the runner / CLI experience.  
-- Extend preflight probes, snapshot/inspect views, BodyMap panels, and spatial “NOW-near” overlays to make internal state easy to audit.  
-- Polish logging, menu wording, and documentation so new users can reproduce the newborn-goat demo and understand how the system fits together.
-  
-  
-
-## Future Development Phases
-
-**Future phases** will extend spatial reasoning, multi-brain / multi-agent profiles,
-learning, and Theory-of-Mind modules on top of this base. (At the time of writing,
-November 2025 these are still design-stage.)
-
-
-### Future Phase  – Two-Stream Processing (Ventral “what” / Dorsal “where/how”) + Binding Hub (design-stage)
-
-**Status:** design-stage, **far future** work — do not schedule until Phase X + WM1 are stable.
-
-Evidence suggests the dorsal/ventral “two-stream” split is a conserved motif across vertebrate lineages, and is not
-a primate-only quirk. In other words: for a goat-like agent, a dorsal **action/spatial** stream and a ventral
-**identity/recognition** stream are likely part of the baseline architecture, not an optional “human upgrade”.
-
-**Design intent for CCA8:** keep “what” and “where” representations separate through at least one tier, then
-introduce an explicit *binding* mechanism (a heteromodal “hub”) that can combine them when the task truly
-requires it. This keeps integrated identity+location queries *explicit* (and therefore measurable), and preserves a
-workspace for symbolic relations instead of pre-binding everything into one structure.
-
-#### Mapping to existing CCA8 concepts
-
-- **Dorsal / “where-how”** (fast, body-centred, action-guiding):
-  - BodyMap (`ctx.body_world`) already functions like a tiny dorsal register (posture, mom distance, nipple state,
-    shelter/cliff safety slots).
-  - The “NOW-near” scene-graph overlays (spatial neighbors) are also dorsal-leaning.
-
-- **Ventral / “what”** (slower, feature-rich, invariant identity):
-  - A future *FeatureMap / ObjectMap* should hold object identity representations and richer perceptual engrams.
-  - This can live as a separate WorldGraph-like structure or as a dedicated engram store (column) indexed by stable
-    object IDs.
-
-- **Binding hub / heteromodal workspace**:
-  - A future binder should explicitly link a ventral identity token to a dorsal location / affordance context.
-  - In CCA terms, this can be represented as either:
-    - a dedicated binding record (cross-index table), and/or
-    - a small “binding episode” node in the main WorldGraph whose role is to *relate* the two streams.
-
-#### Operational rule of thumb (simulation + engineering)
-
-1. **Default: don’t collapse streams early.**
-   - Policies that require fast action should read mostly dorsal state (BodyMap + near-world).
-   - Perceptual learning and semantic enrichment should write mostly ventral state (FeatureMap/ObjectMap).
-
-2. **Make binding an operator, not an accidental side effect.**
-   - Add an explicit API (future) such as:
-     - `bind(what_id, where_id, *, t, confidence, source="...")`
-   - Treat each bind as a first-class event (loggable, inspectable, testable).
-
-3. **Exploit parallelism.**
-   - Dorsal and ventral updates should be able to run concurrently (ideally separate OS processes).
-   - This is aligned with the existing multi-brain scaffolding: “parallelism note: farm processors to separate OS
-     processes” (see cca8_run.py narrative scaffolds).
-
-4. **Instrument query mix.**
-   - Track how often the agent needs integrated “what+where” binding versus stream-local queries.
-   - This will let us validate whether the simulation is operating in a “two-stream-beneficial” regime, and where to
-     spend optimization effort (binder vs caches).
-
-#### Concrete future work items
-
-- Add `ctx.ventral_world` (or `ctx.feature_world`) alongside BodyMap, with a minimal vocabulary for object IDs and
-  feature tags.
-- Add a `cca8_binding.py` (or similar) module that defines:
-  - a binding record schema, plus
-  - simple binding/unbinding operations, plus
-  - debug printouts (so we can see the workspace forming).
-- Add a micro-benchmark / probe in `--preflight` that:
-  - creates N objects with (what, where),
-  - runs a controlled mix of what-only / where-only / integrated queries,
-  - reports the measured ratios and timing (for regression tracking).
+----
