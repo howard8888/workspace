@@ -10,7 +10,7 @@ NOTE: This README.md file exceeds the 512K GitHub rendering limit. Therefore, so
 
 
 
-# Executive Overview`
+# Executive Overview
 
 
 
@@ -290,15 +290,19 @@ CCA8 prints many lines with a `[tag]` prefix. These tags are a stable “legend�
 - **avPatch**: a lightweight recognition layer on top of MapSurface
 
 **Environment simulator vs “world model” (AI literature note)**
-In modern AI literature, a “world model” usually means an agent’s **internal learned predictive model**.
+In modern AI literature, a “world model” usually means an agent’s **internal predictive model** (often learned) that supports action-conditioned prediction.
 In CCA8, **HybridEnvironment** is the external **simulated world** (ground truth generator), not the agent’s learned world model.
-CCA8’s internal “world model-ish” content is distributed across:
-- BodyMap (fast “belief now” registers),
-- WorkingMap.MapSurface (entity/slot belief table),
-- WorldGraph (long-term episode index),
-- Columns/Engrams (heavy stored map snapshots),
-plus predicted postconditions in Scratch (hypotheses) and prediction-error signals on the next cycle.
 
+CCA8’s internal “world model-ish” content is distributed across:
+
+- BodyMap (fast “belief now” safety registers),
+- WorkingMap.MapSurface (entity/slot belief table; semantic index),
+- *(Phase X)* WorkingMap.SurfaceGrid (policy-facing topology; composed each tick from NavPatches),
+- WorkingMap.Scratch / WorkingMap.Creative (predicted postconditions + counterfactual candidates),
+- WorldGraph (long-term episode index + pointer scaffold),
+- Columns/Engrams (heavy payloads: MapEngrams, NavPatch prototypes, and future perceptual feature engrams).
+
+Phase X adds an explicit, inspectable lookahead hook (**WM1**): given the current SurfaceGrid (+ MapSurface context) and a candidate action/policy, produce a small **OutcomeSketch** (risk/progress/uncertainty) without mutating “truth”.
 
 
 
@@ -1440,12 +1444,15 @@ A: (1) Emit a `cue:*` that captures the gist (e.g., `cue:vision:silhouette:mom`)
 
 ## Modules (lean overview)
 
+- **`cca8_run.py`** — CLI & interactive runner: banner/profile, menu actions (inspect, plan, add predicate, instincts), autosave/load, `--plan` flag, `[D] Show drives`.
 - **`cca8_world_graph.py`** — Directed episode graph (bindings, edges, anchors), plus a BFS planner. Serialization via `to_dict()` / `from_dict()`.
 - **`cca8_controller.py`** — Drives (hunger, fatigue, warmth), primitive policies (e.g., `StandUp`), Action Center loop, and a small skill ledger (n, succ, q, last_reward).
-- **`cca8_run.py`** — CLI & interactive runner: banner/profile, menu actions (inspect, plan, add predicate, instincts), autosave/load, `--plan` flag, `[D] Show drives`.
 - **`cca8_column.py`** — Engram provider (stubs now): bindings may reference column content via small pointers.
 - **`cca8_features.py`** — Feature helpers for engrams (schemas/utilities).
 - **`cca8_temporal.py`** — Timestamps and simple period/year tagging (used in binding meta).
+- **`cca8_navpatch.py`** — Navpatch map abilities
+- **`cca8_env.py`** — Generate the environment
+- **`cca8_test_worlds.py`** — Sample test worlds for testing and understanding the simulation software.
   
   
 
@@ -2966,50 +2973,82 @@ A: The first pred:* tag (if present) is used as the node’s human label in pret
 
 # WorkingMap Layer Contracts
 
-## WorkingMap Layer Contracts (MapSurface / Scratch / Creative Layers)
-## For development reference -- will merge later into Tutorial on WorkingMap
+## WorkingMap Layer Contracts (MapSurface / SurfaceGrid / Scratch / Creative Layers)
 
+**Purpose:** Unified working-memory workspace used for perception, action selection, lightweight prediction, and consolidation.
 
-**Purpose:** Unified working memory snapshot used for perception, reasoning, action selection, imagination, and consolidation.
-**Contains:**
+**Contains (by contract):**
 
-* **MapSurface** (visuospatial sketchpad / “what is here now”)
-* **Scratch** (transient reasoning + action chains)
-* **Creative** (counterfactual rollouts / imagined futures)
+* **MapSurface** — compact entity + slot-family “scene sketch” (semantic index; action-ready)
+* **SurfaceGrid** — derived, policy-facing topological grid composed once per tick from active **NavPatch instances** *(Phase X)*
+* **Scratch** — transient reasoning + action traces + ambiguity bookkeeping (“what did I try, and what did I expect?”)
+* **Creative** — imagination / counterfactual rollouts (candidate actions + predicted outcome sketches; must not mutate “truth”)
 
-**Lifecycle:** Exists across steps; layers are refreshed/cleared on different schedules (below).
-**Invariant:** WorkingMap is the *only* place where “rich, moment-to-moment” state lives; WorldGraph stores stable, reusable indexing aspects and long-lived knowledge.
+**Canonical vs derived (Phase X discipline):**
+
+- **Canonical layers:** MapSurface + Scratch (authoritative within the current episode; updated directly from observation + retrieval)
+- **Derived view:** SurfaceGrid (must be reproducible from MapSurface + active patch instances + prototypes; recomposed each cycle)
+
+**Lifecycle:** WorkingMap persists across env steps; individual layers are refreshed/cleared on different schedules (below).
+
+**Invariant:** WorkingMap is the only place where rich moment-to-moment state lives; WorldGraph stores sparse episode structure and thin pointers; heavy payloads live in Columns/Engrams.
 
 ---
 
 ### MapSurface (visuospatial sketchpad)
 
-**Purpose:** A best-current estimate of the *present situation* in a compact, inspectable structure.
+**Purpose:** Best-current estimate of the *present situation* in a compact, inspectable structure (“what is here now?”).
+
 **Writes:**
 
-* Environment→WorkingMap projection (“percepts”, current stage/zone cues, salient objects/relations).
-* WorldGraph→WorkingMap retrieval of stable items needed *right now* (anchors, known entities, stable relations).
+* Environment→WorkingMap projection (percepts; stage/zone cues; salient objects/relations).
+* WorldGraph→WorkingMap retrieval of stable priors needed *right now* (anchors, known entities, stable relations).
+* *(Phase X)* Controlled “grid → predicates” updates derived from SurfaceGrid (cheap gating summaries).
 
 **Reads:**
 
-* Controller / policy selection
-* Gating logic
+* Controller / policy selection (cheap gating)
+* Patch recognition priors (context filters)
 * Consolidation triggers
 
 **Lifecycle:** Refreshed each cognitive cycle (or each env step). Can retain continuity via anchors (NOW/HERE) but should not accumulate long chains.
 
-**Allowed content:** “What is present / believed present” + simple relations (near/far, in_zone, supports, blocked_by).
-**Not allowed:** Long multi-step reasoning traces, multi-option hypothetical futures (those go to Scratch/Creative).
+**Allowed content:** Entities + slot-families + simple relations; patch_refs (thin pointers); a salience set.
+**Not allowed:** Big topology payloads, long multi-step reasoning traces, or multi-option hypothetical futures (those go to Scratch/Creative).
+
+---
+
+### SurfaceGrid (policy-facing topological workspace; derived view — Phase X)
+
+**Purpose:** A **single composed topological grid per tick** that policies can “look at” directly (CCA7-like). It answers:
+“Where can I move right now, and what local routes exist?”
+
+**Writes:**
+
+* Composed once per cycle by overlaying/stitching the currently active NavPatch **instances** at the current zoom level (resolution + crop window).
+* Optionally computes a tiny derived summary (“NavSummary”: hazard proximity, corridor widths, frontier count) for fast gating/logging.
+
+**Reads:**
+
+* Navigation / avoidance policies (local path choice, frontier seeking, wall-following, etc.)
+* World-model lookahead (WM1) when we compare candidate actions
+
+**Lifecycle:** Recomputed each cognitive cycle by default (simple + safe). A dirty-flag fast-path may reuse a cached grid when nothing relevant changed (active patch set, patch pose/extent, zoom window, salient overlay set, or SELF moved enough to pan the window).
+
+**Allowed content:** Small cell tags (traversable / hazard / unknown / goal) + optional sparse overlays for a few salient entities (SELF, main goal, immediate hazards).
+**Not allowed:** Rich identity/semantics (those live in MapSurface) or long-lived storage (store at most a tiny digest for debugging).
 
 ---
 
 ### Scratch (transient reasoning workspace)
 
 **Purpose:** Temporary workspace for reasoning and action sequencing.
+
 **Writes:**
 
 * Intermediate variables (“candidate action”, “goal”, “constraint violated”, “subplan step i”).
 * Short action chains, explanations, diagnostic tags for terminal readability.
+* *(Phase X)* Patch-match traces (commit/ambiguous/unknown + margin) and predicted postconditions (what we expected).
 
 **Reads:**
 
@@ -3026,10 +3065,11 @@ A: The first pred:* tag (if present) is used as the node’s human label in pret
 ### Creative (imagination / counterfactual rollouts)
 
 **Purpose:** Hold *multiple candidate futures* generated from the current state, so we can choose actions via evaluation.
+
 **Writes:**
 
-* “Rollout candidates” produced by simulating hypothetical actions from the current MapSurface (+ optional Scratch context).
-* Each candidate includes: action sequence, predicted outcomes, score, and provenance.
+* “Rollout candidates” produced by simulating hypothetical actions from the current MapSurface (+ optional SurfaceGrid + Scratch context).
+* Each candidate includes: action sequence, **outcome_sketch**, score, and provenance.
 
 **Reads:**
 
@@ -3050,42 +3090,62 @@ When we implement, each candidate should carry:
 
 * `seed_state_id` (what present snapshot it started from)
 * `actions` (list of proposed actions)
-* `predicted_state_summary` (small, inspectable outcome)
+* `outcome_sketch` (small, comparable predicted outcome)
 * `score` + `score_breakdown` (why this is good/bad)
 * `provenance` (version, RNG seed, parameters, evaluator name)
 
-This aligns with the CCA7 article’s emphasis on verifiers + provenance, without committing to Genie-style learned world models yet.
+### OutcomeSketch: what “predicted outcome” should look like (WM1 / Creative)
 
+OutcomeSketch should be:
 
+- **small and screen-readable** (fits in logs)
+- **comparable across candidates** (same keys, same units)
+- **grounded in SurfaceGrid interactions** (risk/progress/uncertainty, not verbose narration)
+- **uncertainty-aware** (weak evidence triggers “probe/zoom” instead of fake certainty)
 
+Recommended starter fields:
+
+- `risk`: hazard proximity/contact likelihood, fall/slip cost proxy, “hazard_band_crossed” flags
+- `progress`: goal distance delta, route quality/corridor width proxy
+- `uncertainty`: patch-match margins, observation confidence, “unknown_cells_fraction”
+- `notes`: a short list of reasons (“acted under ambiguous patch match”, “grid dirty→recomposed”)
+
+This aligns with the CCA7 article’s emphasis on verifiers + provenance, while keeping Phase X lookahead lightweight and inspectable.
 
 
 
 
 # Design principle: multi-scale navigation is first-class
 
+CCA8 treats **zooming** (coarse↔fine) and **map switching** as explicit, measurable operations inside the perception→memory→policy loop—not as an afterthought or an accidental byproduct of hierarchical control.
 
-# Design principle: multi-scale navigation is first-class
-
-CCA8 treats *zooming* (coarse→fine and fine→coarse) and *map switching* as explicit, measurable operations inside the perception→memory→policy loop—not as an afterthought or an accidental byproduct of hierarchical control.
-
-- *Zooming* = choosing a representational scale on purpose:
+- **Zooming** = choosing a representational scale on purpose:
   - coarse scene-level planning (“route to bushes”) vs. fine structure-aware navigation (“safe footholds on a ledge”)
   - includes (a) scale selection, (b) cross-scale consistency (local findings can update the coarse plan), and (c) compute/attention gating
+  - *(Phase X mechanical meaning)* zooming is a controlled change in what **SurfaceGrid** represents:
+    - select a focus region / entity patch (e.g., ledge underfoot)
+    - compose SurfaceGrid at higher resolution or tighter crop
+    - optionally swap in a higher-detail patch grid (same patch, finer representation)
+    - refresh a small set of MapSurface slot-families (“grid → predicates”) for cheap policy gating
 
-- *Map switching* = selecting which stored map (or map fragments) currently governs interpretation and action:
+- **Map switching** = selecting which stored map instance (or map fragments) currently governs interpretation and action:
   - it is more than “recall”: it is choosing the active hypothesis about the world
-  - retrieval must be guarded to prevent cue leakage into the present-state belief, and priors must not override strong contradictory evidence
+  - retrieval must be guarded to prevent cue leakage into present-state belief, and priors must not override strong contradictory evidence
+  - *(Phase X mechanical meaning)* map switching is implemented as:
+    1) retrieve candidate MapEngrams (prior MapSurface snapshots) via WorldGraph pointers
+    2) seed MapSurface conservatively (no cue:* injection; don’t overwrite direct observation slot-families)
+    3) re-run patch matching and recompose SurfaceGrid under the candidate hypothesis
+    4) commit if prediction error falls; otherwise try the next candidate or create a new map
 
 Operational commitments (how we build this):
 
 - MapSurface stays compact and action-ready:
-  - it is a *scene sketch* (entities + slot-families + simple relations + schematic geometry for readability)
+  - it is a *scene sketch* (entities + slot-families + simple relations + patch_refs for priors)
   - it is not intended to hold all topology/geometry at every scale
 
 - NavPatches carry the heavy, reusable map content:
   - patches are local submaps (often entity-owned) representing traversability, hazards, and micro-topology
-  - patches may link to other patches (transforms / adjacency), enabling hierarchical composition (“maps that refer to other maps”) without a monolithic nav graph
+  - patches may link to other patches (transforms / adjacency), enabling hierarchical composition without a monolithic nav graph
 
 - WorldGraph remains thin (“WorldGraph thin, Columns heavy”):
   - WorldGraph stores pointers to stored map instances (MapEngrams) and patch prototypes (engrams), enabling fast switching without duplicating heavy payloads
@@ -3100,13 +3160,6 @@ Starter triggers (non-exhaustive):
 
 - Zoom *up* when:
   - local ambiguity resolves and MapSurface can be updated with stable coarse predicates (so planning can resume at the scene level)
-
-- Switch maps when:
-  - sustained prediction error suggests the current hypothesis is wrong, or context boundaries (stage/zone/goal milestones) imply a different stored map should govern interpretation
-
-
-
-
 
 
 
@@ -3911,30 +3964,41 @@ This is a straightforward way to think about the current CCA8 memory pipeline:
 
 Once EnvObservation crosses the boundary into CCA8, the pipeline splits into a few different memory stores that each have a job.
 
-#### The four “memory places” in the current build
+#### The “memory places” (current build + Phase X additions)
 
-**1) BodyMap = the dashboard**
-BodyMap is tiny and safety-critical: posture, mom distance, nipple state, shelter/cliff distances, zone classification, etc.
+Once EnvObservation crosses into CCA8, it fans out into several internal stores that each have a job.
+
+**Implemented today (Phase VII):**
+
+**1) BodyMap = the dashboard**  
+BodyMap is tiny and safety-critical: posture, mom distance, nipple state, shelter/cliff distances, zone classification, etc.  
 Think of it as: “what I believe about my body and near-space right now.”
 
-**2) WorkingMap (MapSurface) = the scratch paper**
-WorkingMap.MapSurface is the agent’s *live* scene map: “self, mom, cliff, shelter” as stable entities with attributes and relations.
+**2) WorkingMap.MapSurface = the scratch paper**  
+WorkingMap.MapSurface is the agent’s *live* scene map: “self, mom, cliff, shelter” as stable entities with attributes and relations.  
 This is what gets updated in-place each tick.
 
-**3) WorldGraph = the table of contents**
-WorldGraph is the long-term symbolic episode index used for planning and inspection.
+**3) WorldGraph = the table of contents**  
+WorldGraph is the long-term symbolic episode index used for planning and inspection.  
 It stays small on purpose. It stores *what happened* (predicates, actions, cues, weak ‘then’ links), but it does not store heavy scene payloads.
 
-**4) Columns/Engrams = the storage closet**
-Column memory holds the heavy payloads (for us right now: MapSurface snapshots).
+**4) Columns/Engrams = the storage closet**  
+Column memory holds the heavy payloads (right now: MapSurface snapshots).  
 WorldGraph bindings can point to those payloads using engram pointers.
+
+**Phase X (vNext) adds an explicit topology workspace and a patch library:**
+
+- **WorkingMap.SurfaceGrid** — a single composed topological grid per tick that policies can read directly (“where can I move?”).
+- **NavPatches** — modular submaps that feed SurfaceGrid:
+  - **prototypes** live as Column engrams (reusable library, immutable payloads),
+  - **instances** live in WorkingMap (here-and-now pose + evidence + prototype pointer) and are composed into SurfaceGrid.
+- **WorkingMap.Scratch / Creative** become more important for action traces, ambiguity bookkeeping, and counterfactual evaluation.
 
 If you remember one sentence, it’s this:
 
 > **WorldGraph tells you where to look; Columns hold what you actually want to look at.**
 
 ---
-
 ### What happens each env-loop step (the “normal” flow)
 
 Each closed-loop env step looks like:
@@ -3953,6 +4017,36 @@ Each closed-loop env step looks like:
 
 5) **Action Center picks one policy**
    - policies read BodyMap + WorkingMap/WorldGraph neighborhood and choose one action for this tick.
+
+---
+
+### Phase X (vNext): where SurfaceGrid + NavPatches fit into the loop
+
+The “normal flow” above is the Phase VII memory pipeline (MapSurface + snapshots). Phase X extends the *per-tick* loop so the agent has an explicit, printable topology map that policies can operate on directly.
+
+At a high level, each cognitive tick becomes:
+
+A) **Observe → update BodyMap** (overwrite-style)  
+B) **Update MapSurface skeleton** (ensure core entities; update directly observed slot-families; maintain patch_refs + salience)  
+C) **Extract ObservedPatch evidence** (tags + partial grids + confidence; bottom-up patch observation stream)  
+D) **Patch recognition**: match observed patches to stored **NavPatch prototypes** (Columns) → *commit / ambiguous / unknown* (record top-K + margins)  
+E) **Instantiate / update NavPatch instances** (WorkingMap): bind prototype pointer(s) to “here-and-now” pose + evidence + local deltas  
+F) **Compose WM.SurfaceGrid once per tick** (or reuse cached grid if not dirty):  
+   - choose a composition window (centered on SELF or current focus)  
+   - overlay/stitch active patch instances with deterministic conflict rules (e.g., hazard wins)  
+   - compute a few quick derived measures (optional NavSummary)  
+G) **Derive a small set of MapSurface nav predicates** from SurfaceGrid (“grid → predicates”) for cheap policy gating  
+H) **Policy selection + execution**: gate mainly from MapSurface; the winning policy may read SurfaceGrid directly and/or trigger a zoom-down recomposition  
+I) **Record in Scratch**: action attempt, predicted postconditions, match context (“acted under ambiguous patch match”), and prediction error  
+J) **Consolidation triggers** (keyframes / surprise / periodic):  
+   - store a MapEngram snapshot (MapSurface + patch_refs)  
+   - store new NavPatchProtoEngrams for *proto_pending* patches when validated (dedup + gating)  
+   - bind thin pointers in WorldGraph for later retrieval / switching
+
+Two important discipline rules (to keep this robust and non-brittle):
+
+- Policies do **not** rummage through hidden patches. They read **one** composed SurfaceGrid (and a small set of MapSurface slot-families).
+- Stored prototypes are **immutable**. “Update with sensory differences” happens in working memory (instances + composition), not by mutating long-term memory.
 
 ---
 
@@ -3987,10 +4081,13 @@ When you see:
 
 **eid=... (the payload)** is a Column engram record whose payload is a serialized **wm_mapsurface_v1** snapshot:
 - entities (stable ids like self/mom/shelter/cliff)
-- per-entity slot values (e.g., posture, proximity:mom, hazard:cliff, ...)
-- (Phase X) per-entity patch_refs (navpatch engram ids), when present
+- per-entity slot-families (observed + derived summaries; overwrite-by-family)
+- *(Phase X)* per-entity `patch_refs` (thin pointers / sig16s / engram ids for relevant NavPatch prototypes)
+- *(optional)* a tiny `surfacegrid_digest` for debugging/trace (not required; do not treat as “truth”)
 - selected WorkingMap relations that represent spatial/scene structure (when present)
 - minimal context meta (stage, zone, epoch, created_at, etc.)
+
+**Phase X storage discipline:** MapEngrams store **pointers**, not full patch payloads. Heavy patch grids live in separate Column engrams (NavPatch prototypes). This preserves “WorldGraph thin, Columns heavy.”
 
 **sig=... (the signature)** is a compact scene fingerprint derived from MapSurface slot/value content.
 It is used only for deduplication and fast candidate scoring; it is not the memory itself.
@@ -4013,8 +4110,6 @@ The result is not a time-travel rewrite of truth; it is a **prior** that can be 
 
 ### Auto-retrieve: what it means (and what it does NOT mean)
 
-nb. older than above section; revise if necessary
-
 **Auto-retrieve means:**
 At a keyframe (stage/zone boundary), CCA8 automatically tries to pull a previously stored `wm_mapsurface` snapshot from Column memory and apply it to the current WorkingMap as a **prior**.
 
@@ -4033,6 +4128,9 @@ Yes — conceptually:
 So the retrieval direction is:
 
 > **Column engram → WorkingMap MapSurface**
+
+*(Phase X note)* A retrieved MapEngram seeds MapSurface (including `patch_refs`) as a prior; **SurfaceGrid is then recomposed** from active NavPatch instances, so we do not “retrieve a grid” as present truth.
+
 
 **Do we ever retrieve a full engram from WorldGraph?**
 No. WorldGraph never stores the full map payload. It only stores the thin pointer node and tags.
@@ -4389,6 +4487,10 @@ for env-loop outputs (MapSurface entity table + WorkingMap autosnapshot).
   “What do I believe about the current scene right now?”
   Stable entity+relation map updated in place (overwrite-by-slot-family, not append-log).
 
+- WorkingMap.SurfaceGrid *(Phase X)*:
+  “Where can I move right now (topologically)?”
+  Single composed topological grid per tick, built from active NavPatch instances; policies can read it directly.
+
 - WorkingMap.Scratch:
   “What did I just try to do, and what outcome did I expect?”
   Procedural trace and short-lived reasoning scaffolding (action chains + predicted postconditions).
@@ -4410,45 +4512,65 @@ for env-loop outputs (MapSurface entity table + WorkingMap autosnapshot).
 #### NavPatch: the map substrate that makes “everything is a navigation map” concrete
 
 CCA8 uses an explicit WorkingMap entity table because it is inspectable and action-ready.
-However, the goal is not a brittle symbol graph. The goal is to treat entities as *handles* into
-richer map structure.
+However, the goal is not a brittle symbol graph. The goal is to treat entities as *handles* into richer map structure.
 
-A **NavPatch** is a compact local navigation map fragment that can be owned by an entity or shared
-across entities. It is the unit that allows:
+A **NavPatch** is a compact local navigation map fragment that can be owned by an entity or shared across entities. It lets us represent:
 
-- entity geometry and structure (e.g., “rectangular block”) to be represented as map content,
-- sensory evidence to be represented as map layers without storing raw pixels,
-- approximate matching and merging (non-brittle reuse),
-- hierarchical composition (“concepts link to other navmaps”).
+- geometry/topology (“where can I step / what is hazardous”) in a printable form,
+- structured sensory evidence as map content (without storing raw pixels),
+- approximate matching + reuse (non-brittle generalization),
+- hierarchical composition later (“maps that refer to other maps”).
 
-NavPatch is not a new “memory place”; it is content that can live:
-- transiently inside WorkingMap for fast use, and/or
-- persistently as Column engrams, indexed by thin pointers in WorldGraph.
+NavPatch is not a new “memory place”; it is **content** that can live:
+- transiently inside WorkingMap (as **patch instances**) for fast use, and/or
+- persistently as Column engrams (as **patch prototypes**), indexed by thin pointers in WorldGraph.
 
+**Prototype vs instance (Phase X):**
 
-A minimal NavPatch contract (v5.5-ish):
+- **Prototype (Column / Engram)** = reusable template (“ledge segment pattern learned over time”).  
+  Contains the stable payload: topology grid, tags, canonical extent/frame, signatures, and (later) links/adjacency.  
+  Prototypes are **immutable**; learning creates new versions or merged updates, never in-place mutation.
 
-- v: schema/version (evolution hook)
-- sig / sig16: stable signature of the canonical “core” (excludes volatile timing fields)
-- role: coarse role label (scene/mom/shelter/cliff/terrain/goal, …)
-- frame: coordinate frame label (self_local / allocentric_stub, …)
-- extent: patch bounds in that frame (meters or normalized units)
-- tags: small, discrete features (e.g., hazard/traversable/support cues)
+- **Instance (WorkingMap)** = “this patch, here-and-now.”  
+  Contains: a prototype pointer (or top-K hypotheses), a pose/placement in the current scene, and current evidence/match trace.
+
+**Why we separate them:** many WorkingMaps can reuse the same prototype library, while instances bind those prototypes to the current scene and feed SurfaceGrid composition.
+
+A minimal NavPatch contract (Phase X / v1-ish):
+
+- `v`: schema/version
+- `sig` / `sig16`: stable signature of the canonical “core”
+- `role`: coarse role label (scene/mom/shelter/cliff/terrain/goal, …)
+- `frame`: coordinate frame label (self_local / allocentric_stub, …)
+- `extent`: patch bounds in that frame (meters or normalized units)
+- `tags`: small, discrete features (e.g., hazard/traversable/support cues)
+- `grid` *(prototype payload, v1)*: small topology grid (e.g., traversable / hazard / unknown / goal)
 
 Optional (trace + linking hooks):
-- local_id: local identifier within the current observation tick
-- entity_id: MapSurface entity id this patch attaches to
-- match: {commit, margin, best, top_k, priors_sig16, decision_note}
-- links: transforms to other patches (pose constraints, adjacency, containment)
+
+- `local_id`: local identifier within the current observation tick
+- `entity_id`: MapSurface entity id this patch attaches to
+- `match`: {commit, margin, best, top_k, priors_sig16, decision_note}
+- `links` *(later)*: transforms/adjacency to other patches (pose constraints, containment)
 
 Storage recommendation (Phase X):
-- Store patches as separate Column engrams (navpatch_v1).
-- MapSurface entities store only patch_refs (engram ids), so wm_mapsurface snapshots stay compact.
 
-
+- Store **prototypes** as separate Column engrams (e.g., `navpatch_v1` / NavPatchProtoEngram).
+- Store **instances** only in WorkingMap by default (optionally persist later for replay/debug).
+- MapSurface / MapEngrams store only `patch_refs` (thin pointers), so `wm_mapsurface` snapshots stay compact.
 
 ---
 
+#### SurfaceGrid *(Phase X)*: the policy-facing topology workspace
+
+SurfaceGrid is the single composed grid per tick. It is built by composing the currently active NavPatch **instances**
+(and the prototype payloads they reference) into one printable grid at the current zoom level.
+
+- Policies read **one** SurfaceGrid (not “hidden patch rummaging”).
+- MapSurface gets a small number of nav-relevant slot-families derived from the grid (“grid → predicates”).
+- SurfaceGrid is a **local window**, not a single ever-growing global grid.
+
+---
 #### Memory pipeline component contracts
 
 These contracts define the interfaces between modules so we can evolve the internals while keeping
@@ -12119,6 +12241,8 @@ November 2025 these are still design-stage.)
 
 
 ### Future Phase  – Two-Stream Processing (Ventral “what” / Dorsal “where/how”) + Binding Hub (design-stage)
+
+**Status:** design-stage, **far future** work — do not schedule until Phase X + WM1 are stable.
 
 Evidence suggests the dorsal/ventral “two-stream” split is a conserved motif across vertebrate lineages, and is not
 a primate-only quirk. In other words: for a goat-like agent, a dorsal **action/spatial** stream and a ventral

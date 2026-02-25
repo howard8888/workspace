@@ -97,7 +97,16 @@ from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
 from cca8_env import HybridEnvironment, EnvObservation  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
 from cca8_features import FactMeta
-from cca8_navpatch import SurfaceGridV1, compose_surfacegrid_v1, derive_grid_slot_families_v1, grid_overlap_fraction_v1
+from cca8_navpatch import (
+    SurfaceGridV1,
+    compose_surfacegrid_v1,
+    derive_grid_slot_families_v1,
+    grid_overlap_fraction_v1,
+    CELL_UNKNOWN,
+    CELL_TRAVERSABLE,
+    CELL_HAZARD,
+    CELL_GOAL,
+)
 
 
 # --- Public API index, version, global variables and constants ----------------------------------------
@@ -309,6 +318,21 @@ class Ctx:
     wm_surfacegrid_dirty_reasons: list[str] = field(default_factory=list)
     wm_surfacegrid_compose_ms: float = 0.0
     wm_surfacegrid_last_ascii: Optional[str] = None
+    # --- WM.Salience + landmark overlay (Phase X Step 14) -------------------------------
+    # Minimal v1:
+    #   - Store per-entity salience TTL + reason in WM.MapSurface entity meta['wm'].
+    #   - Choose a small focus set (SELF + goals + hazards + up to K novelty/uncertainty items).
+    #   - Render a sparse SurfaceGrid ASCII (hide traversable '.' by default) and overlay landmark letters.
+    wm_salience_enabled: bool = True
+    wm_salience_novelty_ttl: int = 3
+    wm_salience_promote_ttl: int = 8
+    wm_salience_max_items: int = 3
+    wm_salience_focus_entities: list[str] = field(default_factory=list)
+    wm_salience_last_events: list[dict[str, Any]] = field(default_factory=list)
+
+    # SurfaceGrid ASCII presentation controls (display-only; does not change grid semantics).
+    wm_surfacegrid_ascii_sparse: bool = True         # hide '.' cells (traversable) to keep prints uncluttered
+    wm_surfacegrid_ascii_show_entities: bool = True  # overlay @/M/S/C marks for salient entities
 
     # --- WM.Grid → predicates (Phase X Step 13) -----------------------------------------
     # These are deterministic “derived facts” from SurfaceGrid. They are NOT cues and are
@@ -3874,25 +3898,40 @@ def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
 
 def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool: #pylint: disable=unused-argument
     """
-    FollowMom gate: permissive fallback when the kid is not fallen.
+    FollowMom gate: permissive fallback when the kid is not fallen *and not resting*.
 
-    Conditions:
-      • If BodyMap is fresh and posture == 'fallen' → do NOT fire
-        (let StandUp / safety handle that).
-      • Otherwise → True (act as a default "keep moving with mom" policy).
+    Purpose
+    -------
+    FollowMom is our default "do something mild" policy when nothing else is urgent.
+    During the storyboard "rest" phase, we want quiescence: no repeated scratch writes
+    and no spurious movement intent while the kid is already resting safely.
 
-    This keeps FollowMom from fighting the safety layer when the kid is actually
-    down, but otherwise lets it act as the permissive fallback we intended.
+    Conditions (v1)
+    --------------
+    - If BodyMap is fresh:
+        * posture == 'fallen'   -> False  (safety layer handles this)
+        * posture == 'resting'  -> False  (quiescence while resting)
+        * otherwise             -> True
+    - If BodyMap is stale/unavailable:
+        * if a 'resting' predicate is near NOW in the selection world -> False
+        * otherwise -> True
     """
     try:
         if ctx is not None and not bodymap_is_stale(ctx):
             bp = body_posture(ctx)
-            if bp == "fallen":
+            if bp in ("fallen", "resting"):
                 return False
     except Exception:
-        # On any BodyMap issue, stay permissive; the safety override in the
-        # Action Center still protects us from truly fallen configurations.
+        # On any BodyMap issue, stay permissive; safety override still protects truly fallen configs.
         pass
+
+    # Fallback when BodyMap is stale/unavailable: suppress FollowMom if the graph near NOW says we're resting.
+    try:
+        if has_pred_near_now(world, "resting", hops=3):
+            return False
+    except Exception:
+        pass
+
     return True
 
 
@@ -3905,17 +3944,26 @@ def _gate_follow_mom_explain_body_space(world, drives: Drives, ctx) -> str: #pyl
 
     posture = None
     zone = "unknown"
+    bodymap_stale = True
     try:
-        if ctx is not None and not bodymap_is_stale(ctx):
+        bodymap_stale = bodymap_is_stale(ctx) if ctx is not None else True
+        if ctx is not None and not bodymap_stale:
             posture = body_posture(ctx)
             zone = body_space_zone(ctx)
     except Exception:
         posture = posture or "n/a"
         zone = "unknown"
+        bodymap_stale = True
+
+    rest_near_now = False
+    try:
+        rest_near_now = has_pred_near_now(world, "resting", hops=3)
+    except Exception:
+        rest_near_now = False
 
     return (
-        "dev_gate: True, trigger: fallback=True when not fallen; "
-        f"posture={posture or 'n/a'} zone={zone} "
+        "dev_gate: True, trigger: fallback=True when not fallen/resting; "
+        f"bodymap_stale={bodymap_stale} posture={posture or 'n/a'} rest_near_now={rest_near_now} zone={zone} "
         f"(hunger={hunger:.2f}, fatigue={fatigue:.2f})"
     )
 
@@ -8301,6 +8349,8 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
     # Precision weights (Phase X 2.2b): used even when priors are off (as stable knobs).
     prec_tags = None
     prec_ext = None
+    prec_grid = None
+
     if isinstance(priors, dict) and isinstance(priors.get("precision"), dict):
         p = priors.get("precision")  # type: ignore[assignment]
         try:
@@ -8311,6 +8361,10 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
             prec_ext = float(p.get("extent"))  # type: ignore[union-attr]
         except Exception:
             prec_ext = None
+        try:
+            prec_grid = float(p.get("grid"))  # type: ignore[union-attr]
+        except Exception:
+            prec_grid = None
 
     if prec_tags is None:
         try:
@@ -8322,9 +8376,15 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
             prec_ext = float(getattr(ctx, "navpatch_precision_extent", 0.25) or 0.25)
         except Exception:
             prec_ext = 0.25
+    if prec_grid is None:
+        try:
+            prec_grid = float(getattr(ctx, "navpatch_precision_grid", 0.0) or 0.0)
+        except Exception:
+            prec_grid = 0.0
 
     prec_tags = max(0.0, min(1.0, float(prec_tags)))
     prec_ext = max(0.0, min(1.0, float(prec_ext)))
+    prec_grid = max(0.0, min(1.0, float(prec_grid)))
 
     # Candidate prototype records (best-effort; Column is RAM-local)
     try:
@@ -8359,29 +8419,24 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
         obs_core = _navpatch_core_v1(p)
 
         # Score top-K prototypes.
-        # Tuple: (score_post, score_evidence, score_unweighted, prior_bias, tag_sim, ext_sim, engram_id)
-        scored: list[tuple[float, float, float, float, float, float, str]] = []
+        # Tuple: (score_post, score_evidence, score_unweighted, prior_bias, tag_sim, ext_sim, grid_sim, engram_id)
+        scored: list[tuple[float, float, float, float, float, float, float | None, str]] = []
         role_p = p.get("role")
 
         for rec in proto_recs:
             if not isinstance(rec, dict):
                 continue
-
             eid = rec.get("id")
             if not isinstance(eid, str) or not eid:
                 continue
-
             # Self-exclusion
             if isinstance(engram_id, str) and engram_id and eid == engram_id:
                 continue
-
             payload = rec.get("payload")
             if not isinstance(payload, dict):
                 continue
-
             meta = rec.get("meta") if isinstance(rec.get("meta"), dict) else {}
             attrs = meta.get("attrs") if isinstance(meta.get("attrs"), dict) else {}
-
             role_r = attrs.get("role") if isinstance(attrs, dict) else None
             if (
                 isinstance(role_p, str) and role_p
@@ -8391,8 +8446,7 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
                 continue
 
             proto_core = _navpatch_core_v1(payload)
-
-            # Evidence channels (v1.1): tags vs extent
+            # Evidence channels (v1.1): tags vs extent vs grid
             tag_sim = float(_navpatch_tag_jaccard(obs_core.get("tags"), proto_core.get("tags")))
             ext_sim = float(_navpatch_extent_sim(obs_core.get("extent"), proto_core.get("extent")))
             tag_sim = max(0.0, min(1.0, tag_sim))
@@ -8412,28 +8466,34 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
                 grid_sim = None
             if grid_sim is not None:
                 grid_sim = max(0.0, min(1.0, float(grid_sim)))
-
-            # Unweighted evidence score (diagnostic; does not change with precision)
-            score_unw = 0.5 * tag_sim + 0.5 * ext_sim
-
+            # Unweighted evidence score (diagnostic only)
+            if grid_sim is None:
+                score_unw = 0.5 * tag_sim + 0.5 * ext_sim
+            else:
+                score_unw = (tag_sim + ext_sim + float(grid_sim)) / 3.0
             # Precision-weighted evidence score
             err_tags = 1.0 - tag_sim
             err_ext = 1.0 - ext_sim
-            denom = float(prec_tags + prec_ext)
+            err_grid = (1.0 - float(grid_sim)) if grid_sim is not None else 0.0
+            w_tags = float(prec_tags)
+            w_ext = float(prec_ext)
+            w_grid = float(prec_grid) if grid_sim is not None else 0.0
+            denom = float(w_tags + w_ext + w_grid)
             if denom > 0.0:
-                err_weighted = (float(prec_tags) * err_tags + float(prec_ext) * err_ext) / denom
+                err_weighted = (w_tags * err_tags + w_ext * err_ext + w_grid * err_grid) / denom
             else:
-                err_weighted = 0.5 * (err_tags + err_ext)
+                # Fallback: average over available channels
+                if grid_sim is None:
+                    err_weighted = 0.5 * (err_tags + err_ext)
+                else:
+                    err_weighted = (err_tags + err_ext + err_grid) / 3.0
             score_evidence = 1.0 - err_weighted
             score_evidence = max(0.0, min(1.0, float(score_evidence)))
-
             prior_bias = float(navpatch_candidate_prior_bias_v1(priors, payload, attrs)) if priors_enabled else 0.0
             score_post = max(0.0, min(1.0, float(score_evidence + prior_bias)))
+            scored.append((score_post, score_evidence, score_unw, float(prior_bias), tag_sim, ext_sim, grid_sim, eid))
 
-            scored.append((score_post, score_evidence, score_unw, float(prior_bias), tag_sim, ext_sim, eid))
-
-        scored.sort(key=lambda t: (-t[0], t[6]))
-
+        scored.sort(key=lambda t: (-t[0], t[-1]))
         top_list = [
             {
                 "engram_id": eid,
@@ -8446,8 +8506,9 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
                 "err_unweighted": float(1.0 - score_unw),
                 "tag_sim": float(tag_sim),
                 "ext_sim": float(ext_sim),
+                "grid_sim": float(grid_sim) if isinstance(grid_sim, (int, float)) else None,
             }
-            for (score_post, score_evidence, score_unw, prior_bias, tag_sim, ext_sim, eid) in scored[:top_k]
+            for (score_post, score_evidence, score_unw, prior_bias, tag_sim, ext_sim, grid_sim, eid) in scored[:top_k]
         ]
 
         # Add normalized weights (posterior proxy) for future graded belief work.
@@ -8714,6 +8775,360 @@ def wm_apply_grid_slot_families_to_mapsurface_v1(working_world, self_bid: str, s
     return written
 
 
+def _wm_entity_pos_xy_v1(ww, bid: str) -> tuple[float, float] | None:
+    """Best-effort read of WM schematic position from binding.meta['wm']['pos'].
+
+    Returns:
+        (x, y) floats in the WM schematic frame, or None if missing.
+    """
+    try:
+        b = getattr(ww, "_bindings", {}).get(bid)
+        if b is None:
+            return None
+        meta = getattr(b, "meta", None)
+        if not isinstance(meta, dict):
+            return None
+        wmm = meta.get("wm")
+        if not isinstance(wmm, dict):
+            return None
+        pos = wmm.get("pos")
+        if not isinstance(pos, dict):
+            return None
+        x = pos.get("x")
+        y = pos.get("y")
+        if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            return (float(x), float(y))
+    except Exception:
+        return None
+    return None
+
+
+def _wm_entity_kind_v1(ww, bid: str) -> str | None:
+    """Return WM kind tag value (e.g., 'hazard', 'shelter', 'agent') if present."""
+    try:
+        b = getattr(ww, "_bindings", {}).get(bid)
+        if b is None:
+            return None
+        tags = getattr(b, "tags", []) or []
+        for t in tags:
+            if isinstance(t, str) and t.startswith("wm:kind:"):
+                return t.split(":", 2)[2]
+    except Exception:
+        return None
+    return None
+
+
+def _wm_pos_to_grid_cell_v1(x: float, y: float, grid_w: int, grid_h: int) -> tuple[int, int] | None:
+    """Map WM schematic (x,y) to a SurfaceGrid cell, assuming SELF is centered."""
+    try:
+        w = int(grid_w)
+        h = int(grid_h)
+        if w <= 0 or h <= 0:
+            return None
+        cx = w // 2
+        cy = h // 2
+        gx = cx + int(round(float(x)))
+        gy = cy + int(round(float(y)))
+        if 0 <= gx < w and 0 <= gy < h:
+            return (gx, gy)
+    except Exception:
+        return None
+    return None
+
+
+def _surfacegrid_ascii_lines_v1(grid_w: int, grid_h: int, cells: list[int], *, sparse: bool) -> list[str]:
+    """Render grid cells to ASCII lines (v1). Display-only: does not mutate the grid.
+
+    Mapping (v1):
+        unknown -> ' '
+        traversable -> '.' (or ' ' if sparse=True)
+        hazard -> '#'
+        goal -> 'G'
+        4 (blocked/reserved) -> 'X'
+        other -> '?'
+    """
+    w = int(grid_w); h = int(grid_h)
+    if w <= 0 or h <= 0 or len(cells) != w * h:
+        return ["(surfacegrid: invalid dims/cells)"]
+
+    def _ch(v: int) -> str:
+        if v == CELL_UNKNOWN:
+            return " "
+        if v == CELL_TRAVERSABLE:
+            return " " if sparse else "."
+        if v == CELL_HAZARD:
+            return "#"
+        if v == CELL_GOAL:
+            return "G"
+        if v == 4:
+            return "X"
+        return "?"
+
+    out: list[str] = []
+    for y in range(h):
+        base = y * w
+        out.append("".join(_ch(int(cells[base + x])) for x in range(w)))
+    return out
+
+
+def _wm_entity_mark_char_v1(entity_id: str, kind: str | None) -> str:
+    """Choose a single-character mark for an entity in SurfaceGrid ASCII."""
+    eid = (entity_id or "").strip().lower()
+    if eid == "self":
+        return "@"
+    if eid in ("mom", "mother"):
+        return "M"
+    if eid == "shelter":
+        return "S"
+    if eid in ("cliff", "drop", "danger") or (kind == "hazard"):
+        return "C"
+    return "*"
+
+
+def render_surfacegrid_ascii_with_salience_v1(ctx: Ctx, ww, sg: SurfaceGridV1, *, focus_entities: list[str]) -> str:
+    """Render a sparse SurfaceGrid ASCII string and overlay salient entity marks.
+
+    This is display-only: it never changes sg.cells, so Step 13 grid->predicates remains unchanged.
+
+    Overlay rules:
+      - Always mark SELF as '@' at the center cell.
+      - For each focus entity (excluding self), map WM pos(x,y) to a cell and mark it.
+      - Marks overwrite the underlying ASCII character to make landmarks visible.
+    """
+    w = int(getattr(sg, "grid_w", 0) or 0)
+    h = int(getattr(sg, "grid_h", 0) or 0)
+
+    cells = getattr(sg, "grid_cells", None)
+    if not isinstance(cells, list):
+        # Back-compat: some earlier drafts used sg.cells
+        cells = getattr(sg, "cells", None)
+    if not isinstance(cells, list):
+        cells = []
+
+    sparse = bool(getattr(ctx, "wm_surfacegrid_ascii_sparse", True))
+
+    try:
+        cells_i = [int(x) for x in cells]
+    except Exception:
+        cells_i = []
+
+    lines = _surfacegrid_ascii_lines_v1(w, h, cells_i, sparse=sparse)
+
+    if w <= 0 or h <= 0 or len(lines) != h:
+        return "\n".join(lines)
+
+    grid: list[list[str]] = []
+    for row in lines:
+        rr = list(row)
+        if len(rr) < w:
+            rr.extend([" "] * (w - len(rr)))
+        grid.append(rr[:w])
+
+    # SELF at center
+    cx = w // 2
+    cy = h // 2
+    try:
+        grid[cy][cx] = "@"
+    except Exception:
+        pass
+
+    show_entities = bool(getattr(ctx, "wm_surfacegrid_ascii_show_entities", True))
+    if not show_entities:
+        return "\n".join("".join(r) for r in grid)
+
+    for eid in (focus_entities or []):
+        if not isinstance(eid, str):
+            continue
+        ent = eid.strip().lower()
+        if not ent or ent == "self":
+            continue
+
+        bid = (getattr(ctx, "wm_entities", {}) or {}).get(ent)
+        if not isinstance(bid, str):
+            continue
+
+        pos = _wm_entity_pos_xy_v1(ww, bid)
+        if pos is None:
+            continue
+        x, y = pos
+
+        cell = _wm_pos_to_grid_cell_v1(x, y, w, h)
+        if cell is None:
+            continue
+        gx, gy = cell
+
+        kind = _wm_entity_kind_v1(ww, bid)
+        mark = _wm_entity_mark_char_v1(ent, kind)
+
+        try:
+            grid[gy][gx] = mark
+        except Exception:
+            pass
+
+    return "\n".join("".join(r) for r in grid)
+
+
+def _wm_salience_ambiguous_entities_v1(env_obs: EnvObservation) -> set[str]:
+    """Extract entities with ambiguous patch matches (commit != 'commit') from env_obs.nav_patches."""
+    out: set[str] = set()
+    patches = getattr(env_obs, "nav_patches", None) or []
+    if not isinstance(patches, list):
+        return out
+    for p in patches:
+        if not isinstance(p, dict):
+            continue
+        m = p.get("match")
+        if not isinstance(m, dict):
+            continue
+        commit = m.get("commit")
+        if isinstance(commit, str) and commit and commit != "commit":
+            eid = p.get("entity_id")
+            if isinstance(eid, str) and eid.strip():
+                out.add(eid.strip().lower())
+    return out
+
+
+def wm_salience_tick_v1(
+    ctx: Ctx,
+    ww,
+    *,
+    changed_entities: set[str],
+    new_cue_entities: set[str],
+    ambiguous_entities: set[str],
+) -> dict[str, Any]:
+    """One-tick salience update (Phase X Step 14, minimal v1).
+
+    Signals:
+      - changed_entities: any entity whose MapSurface slot-family was overwritten this tick.
+      - new_cue_entities: any entity that gained a new cue this tick.
+      - ambiguous_entities: any entity whose NavPatch match is not committed (commit != 'commit').
+
+    Storage:
+      - Writes per-entity fields under binding.meta['wm']:
+          salience_ttl: int
+          salience_reason: short string (best-effort)
+      - Returns a small dict for traces/printing:
+          {"focus_entities": [...], "events": [...]}  (JSON-safe)
+
+    TTL rules (v1):
+      - Novelty burst: changed or new cue → ttl=max(ttl, novelty_ttl)
+      - Promotion: hazard-relevant or ambiguous → ttl=max(ttl, promote_ttl)
+      - Decay: any entity not refreshed this tick decrements ttl by 1 down to 0
+    """
+    novelty_ttl = max(0, int(getattr(ctx, "wm_salience_novelty_ttl", 3) or 3))
+    promote_ttl = max(novelty_ttl, int(getattr(ctx, "wm_salience_promote_ttl", 8) or 8))
+    k_max = max(0, int(getattr(ctx, "wm_salience_max_items", 3) or 3))
+
+    changed = {e.strip().lower() for e in (changed_entities or set()) if isinstance(e, str) and e.strip()}
+    newc = {e.strip().lower() for e in (new_cue_entities or set()) if isinstance(e, str) and e.strip()}
+    amb = {e.strip().lower() for e in (ambiguous_entities or set()) if isinstance(e, str) and e.strip()}
+
+    # Mandatory baseline: SELF always.
+    focus: list[str] = ["self"]
+
+    # Hazard/goal relevance from BodyMap-first signals (cheap and robust).
+    try:
+        if body_cliff_distance(ctx) == "near":
+            focus.append("cliff")
+    except Exception:
+        pass
+    try:
+        if body_shelter_distance(ctx) in ("near", "touching"):
+            focus.append("shelter")
+    except Exception:
+        pass
+    try:
+        if body_mom_distance(ctx) == "near":
+            focus.append("mom")
+    except Exception:
+        pass
+
+    # Novelty/focus candidates (excluding already forced ones).
+    forced = set(focus)
+    cand: list[tuple[int, str, str]] = []
+    for e in amb:
+        if e not in forced and e != "self":
+            cand.append((3, e, "ambiguous"))
+    for e in changed:
+        if e not in forced and e != "self":
+            cand.append((2, e, "changed"))
+    for e in newc:
+        if e not in forced and e != "self":
+            cand.append((1, e, "new_cue"))
+
+    # Deterministic pick: higher priority first, then lexicographic.
+    cand.sort(key=lambda t: (-t[0], t[1], t[2]))
+    for _prio, e, _why in cand[:k_max]:
+        if e not in forced:
+            focus.append(e)
+            forced.add(e)
+
+    # Apply TTL updates into WM entity meta
+    events: list[dict[str, Any]] = []
+    ent_map = getattr(ctx, "wm_entities", {}) or {}
+    for eid, bid in ent_map.items():
+        if not isinstance(eid, str) or not isinstance(bid, str):
+            continue
+        e = eid.strip().lower()
+        if not e:
+            continue
+
+        b = getattr(ww, "_bindings", {}).get(bid)
+        if b is None:
+            continue
+        if not isinstance(getattr(b, "meta", None), dict):
+            b.meta = {}
+        wmm = b.meta.setdefault("wm", {})
+        if not isinstance(wmm, dict):
+            continue
+
+        prev_ttl = int(wmm.get("salience_ttl", 0) or 0)
+        prev_reason = wmm.get("salience_reason")
+        if not isinstance(prev_reason, str):
+            prev_reason = ""
+
+        refreshed = e in forced
+        reason = ""
+
+        # Choose the strongest reason we have (best-effort)
+        if e in amb:
+            reason = "ambiguous"
+        elif e in changed:
+            reason = "changed"
+        elif e in newc:
+            reason = "new_cue"
+        elif e in ("cliff", "shelter", "mom"):
+            # forced-by-goal/hazard, but no novelty signal this tick
+            reason = "goal/hazard"
+
+        if refreshed:
+            ttl_target = promote_ttl if (e in amb or e == "cliff") else novelty_ttl
+            ttl_new = max(prev_ttl, ttl_target)
+        else:
+            ttl_new = max(0, prev_ttl - 1)
+
+        if ttl_new != prev_ttl or (refreshed and reason and reason != prev_reason):
+            events.append(
+                {
+                    "entity": e,
+                    "ttl_prev": int(prev_ttl),
+                    "ttl_new": int(ttl_new),
+                    "refreshed": bool(refreshed),
+                    "reason": reason,
+                }
+            )
+
+        wmm["salience_ttl"] = int(ttl_new)
+        if reason:
+            wmm["salience_reason"] = reason
+        else:
+            # keep old reason if we are only decaying; drop when ttl hits 0
+            if ttl_new <= 0:
+                wmm.pop("salience_reason", None)
+
+    return {"focus_entities": list(focus), "events": events}
+
+
 def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
     """
     Mirror EnvObservation into WorkingMap.
@@ -8734,6 +9149,18 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             ww = ctx.working_world
         except Exception:
             return {"predicates": [], "cues": []}
+
+    changed_entities: set[str] = set()
+    new_cue_entities: set[str] = set()
+    prev_cues_by_ent: dict[str, set[str]] = {}
+    try:
+        prev = getattr(ctx, "wm_last_env_cues", None)
+        if isinstance(prev, dict):
+            for k, v in prev.items():
+                if isinstance(k, str) and isinstance(v, set):
+                    prev_cues_by_ent[k] = set(v)
+    except Exception:
+        prev_cues_by_ent = {}
 
     meta = {"source": "HybridEnvironment", "controller_steps": getattr(ctx, "controller_steps", None)}
     created_preds: list[str] = []
@@ -9062,47 +9489,14 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
         _upsert_edge(root_bid, self_bid, "wm_entity", {"created_by": "wm_mapsurface"})
         _set_pos(self_bid, 0.0, 0.0, dist_m=0.0, dist_class="self")
 
+        # NOTE (Phase X):
+        # SurfaceGrid composition + grid→predicate derivation happens later in this function:
+        #   - Step 12: WM.SurfaceGrid compose + dirty-cache (ctx.wm_surfacegrid_*)
+        #   - Step 13: Grid → slot-family predicates written onto MapSurface SELF
+        # The older inline prototype block was removed to avoid double-compose and misleading cache-hit reporting.
+        #
         # --- WM.SurfaceGrid (Phase X): compose once-per-tick and derive grid predicates ---
-        derived_grid_preds: list[str] = []
-        try:
-            nav_patches = getattr(env_obs, "nav_patches", None) or []
-            if isinstance(nav_patches, list) and nav_patches:
-                gw = None
-                gh = None
-                for pp in nav_patches:
-                    if not isinstance(pp, dict):
-                        continue
-                    w = pp.get("grid_w")
-                    h = pp.get("grid_h")
-                    if isinstance(w, int) and isinstance(h, int) and w > 0 and h > 0:
-                        gw = int(w)
-                        gh = int(h)
-                        break
-                if gw is None or gh is None:
-                    gw, gh = (9, 9)
-
-                sg = compose_surfacegrid_v1(nav_patches, grid_w=int(gw), grid_h=int(gh))
-                ctx.wm_surfacegrid = sg
-                try:
-                    ctx.wm_surfacegrid_sig16 = sg.sig16_v1()
-                except Exception:
-                    ctx.wm_surfacegrid_sig16 = None
-
-                slots = derive_grid_slot_families_v1(sg, self_xy=None, r=2, include_goal_dir=True)
-                ctx.wm_surfacegrid_slots = dict(slots) if isinstance(slots, dict) else {}
-
-                hz = bool(slots.get("hazard:near", False)) if isinstance(slots, dict) else False
-                tr = bool(slots.get("terrain:traversable_near", False)) if isinstance(slots, dict) else False
-                gd = slots.get("goal:dir") if isinstance(slots, dict) else None
-                gd = gd if isinstance(gd, str) and gd else None
-
-                derived_grid_preds = [
-                    "grid:hazard:near" if hz else "grid:hazard:clear",
-                    "grid:terrain:traversable_near" if tr else "grid:terrain:traversable_none",
-                    f"grid:goal_dir:{gd}" if gd is not None else "grid:goal_dir:none",
-                ]
-        except Exception:
-            derived_grid_preds = []
+        # deleted this block of code
 
         # --- Predicates: update entity tags in place ---
         pred_tokens = [
@@ -9110,8 +9504,7 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             for p in (getattr(env_obs, "predicates", []) or [])
             if p is not None
         ]
-        if derived_grid_preds:
-            pred_tokens.extend(derived_grid_preds)
+
         for tok in pred_tokens:
             ent, slot_prefix = _entity_from_pred(tok)
             kind = "hazard" if slot_prefix.startswith("hazard:") else None
@@ -9131,6 +9524,10 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             except Exception:
                 pass
             created_preds.append(tok)
+
+            if changed:
+                changed_entities.add(ent)
+
             if getattr(ctx, "working_verbose", False) or changed:
                 try:
                     disp = f"{_wm_display_id(bid)} ({bid})"
@@ -9205,6 +9602,18 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
                 for t in list(ctx.wm_last_env_cues.get(ent, set())):
                     tags.discard(t)
                 ctx.wm_last_env_cues.pop(ent, None)
+        except Exception:
+            pass
+
+        try:
+            now_map = getattr(ctx, "wm_last_env_cues", None)
+            if isinstance(now_map, dict):
+                for ent, now_set in now_map.items():
+                    if not isinstance(ent, str) or not isinstance(now_set, set):
+                        continue
+                    prev_set = prev_cues_by_ent.get(ent, set())
+                    if now_set - prev_set:
+                        new_cue_entities.add(ent)
         except Exception:
             pass
 
@@ -9397,6 +9806,47 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
                 ctx.wm_surfacegrid_compose_ms = 0.0
                 ctx.wm_surfacegrid_dirty = False
                 ctx.wm_surfacegrid_dirty_reasons = ["cache_hit"]
+
+
+        # --- WM.Salience + SurfaceGrid landmark overlay (Phase X Step 14) --------------------
+        if bool(getattr(ctx, "wm_salience_enabled", False)):
+            try:
+                ambiguous_entities = _wm_salience_ambiguous_entities_v1(env_obs)
+            except Exception:
+                ambiguous_entities = set()
+
+            sal = wm_salience_tick_v1(
+                ctx,
+                ww,
+                changed_entities=changed_entities,
+                new_cue_entities=new_cue_entities,
+                ambiguous_entities=ambiguous_entities,
+            )
+
+            try:
+                ctx.wm_salience_focus_entities = list(sal.get("focus_entities", []) or [])
+                ctx.wm_salience_last_events = list(sal.get("events", []) or [])
+            except Exception:
+                pass
+
+        # Display-only: render sparse SurfaceGrid ASCII with landmark letters.
+        # (We only print when wm_surfacegrid_verbose is True to avoid log spam.)
+        try:
+            sg = getattr(ctx, "wm_surfacegrid", None)
+            if sg is not None:
+                txt = render_surfacegrid_ascii_with_salience_v1(
+                    ctx,
+                    ww,
+                    sg,
+                    focus_entities=list(getattr(ctx, "wm_salience_focus_entities", []) or []),
+                )
+                ctx.wm_surfacegrid_last_ascii = txt
+                if bool(getattr(ctx, "wm_surfacegrid_verbose", False)):
+                    focus = ",".join(getattr(ctx, "wm_salience_focus_entities", []) or [])
+                    print(f"[surfacegrid] focus=[{focus}]")
+                    print(txt)
+        except Exception:
+            pass
 
         # --- Step 13: Grid → predicates (slot-families) ---------------------------------
         # We derive a tiny stable set of “map facts” from SurfaceGrid and write them onto
@@ -11905,6 +12355,21 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                         "warmth": float(getattr(drives, "warmth", 0.0) or 0.0),
                     },
                 }
+
+                # --- Step 14.5: include WM salience in the per-cycle JSON record (trace hook) ---
+                try:
+                    wm = rec.get("wm")
+                    if not isinstance(wm, dict):
+                        wm = {}
+                        rec["wm"] = wm
+
+                    wm["salience"] = {
+                        "focus_entities": list(getattr(ctx, "wm_salience_focus_entities", []) or []),
+                        "events": list(getattr(ctx, "wm_salience_last_events", []) or []),
+                    }
+                except Exception:
+                    pass
+
                 append_cycle_json_record(ctx, rec)
         except Exception as e:
             logging.error("[cycle_json] record build/append failed: %s", e, exc_info=True)
@@ -16358,7 +16823,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         comps = [  # (label, version, path)
             ("cca8_run.py", __version__, os.path.abspath(__file__)),
         ]
-        for name in ["cca8_world_graph", "cca8_controller", "cca8_column", "cca8_features", "cca8_temporal", "cca8_env", "cca8_test_worlds"]:
+        for name in ["cca8_world_graph", "cca8_controller", "cca8_column", "cca8_features", "cca8_temporal", "cca8_env", "cca8_navpatch", "cca8_test_worlds"]:
             ver, path = _module_version_and_path(name)
             comps.append((name, ver, path))
 
