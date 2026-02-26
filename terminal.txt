@@ -163,7 +163,7 @@ Legend (console tags):
 [env→world] pred:proximity:mom:far → b4 (attach=latest)
 [env→world] pred:proximity:shelter:far → b5 (attach=latest)
 [env→world] pred:hazard:cliff:far → b6 (attach=latest)
-[wm<->col] store: ok sig=ee850c0065514d37 bid=b7 eid=900e9880… (auto_keyframe_env_reset(time_since_birth=0.00))
+[wm<->col] store: ok sig=104419e49e3bcee2 bid=b7 eid=ec65f5aa… (auto_keyframe_env_reset(time_since_birth=0.00))
 [wm<->col] retrieve: skip why=enabled_boundary_confident mode=merge top_k=5 (auto_keyframe_env_reset(time_since_birth=0.00))
 [wm<->col] apply: no-op (enabled_boundary_confident)
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
@@ -175,7 +175,7 @@ Legend (console tags):
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b7', 'b4', 'b3', 'b5'}}
+wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b3', 'b7', 'b5', 'b4'}}
 wg_cands:['b3', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 [env-loop] summary cognitive_cycle=1/50 env_step=0 stage=birth env_posture=fallen bm_posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' expected_posture=standing zone=unknown
@@ -186,9 +186,32 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] IN   KF cycle=1/50 env_step=0 stage=birth posture=fallen mom=far nipple=hidden zone=unknown drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=4 c=0)
 [cycle] OBS  preds: posture:fallen, proximity:mom:far, proximity:shelter:far, hazard:cliff:far | cues: (none) | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: posture=fallen, mom=far, shelter=far, cliff=far, nipple=hidden | scratch: policy:stand_up +3 binding(s) (exec_on=WM)
-[cycle] SG   surfacegrid_sig16=e311889fd2929813 compose_ms=0.42 (patches_changed,grid_missing)
+[cycle] SG   surfacegrid_sig16=e311889fd2929813 compose_ms=0.21 (patches_changed,grid_missing)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=e311889fd2929813)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |                |
+ 8 |        @G      |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+4 cues+0 | pred:posture:fallen, pred:proximity:mom:far, pred:proximity:shelter:far, pred:hazard:cliff:far | (none)
-[cycle] COL  store ok sig=ee850c0065514d37 eid=900e9880… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
+[cycle] COL  store ok sig=104419e49e3bcee2 eid=ec65f5aa… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
 [cycle] ACT  executed='policy:stand_up' reward=+1.00 next_action='policy:stand_up'
 
 [env-loop] Cognitive Cycle 2/50
@@ -208,7 +231,7 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b8', 'b3', 'b7'], 'size': 5, 'ids': {'b7', 'b4', 'b5', 'b3', 'b8'}}
+wg_foa:  {'seeds': ['b8', 'b3', 'b7'], 'size': 5, 'ids': {'b3', 'b5', 'b8', 'b7', 'b4'}}
 wg_cands:['b3', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 [env-loop] summary cognitive_cycle=2/50 env_step=1 stage=birth env_posture=fallen bm_posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' expected_posture=standing zone=unknown
@@ -220,6 +243,29 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] OBS  preds: posture:fallen, proximity:mom:far, proximity:shelter:far, hazard:cliff:far | cues: (none) | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: policy:stand_up +3 binding(s) (exec_on=WM)
 [cycle] SG   surfacegrid_sig16=e311889fd2929813 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=e311889fd2929813)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |                |
+ 8 |        @G      |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed='policy:stand_up' reward=+1.00 next_action='policy:stand_up'
@@ -236,12 +282,13 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=far zone=unknown
 [env→controller] policy:recover_fall (added 2 bindings)
-[pick] best_policy=policy:recover_fall best_by=rl_explore triggered=[policy:stand_up, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:recover_fall:2.50]
+[pick] best_policy=policy:recover_fall best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:recover_fall:2.50]
+[rl-pick] chosen via non-drive tiebreak in deficit near-tie band: best_def=0.000 delta=0.000 → policy:recover_fall (nd=2.50, q=+0.00) among [policy:recover_fall(def=0.000, nd=2.50, q=+0.00), policy:stand_up(def=0.000, nd=2.00, q=+0.31)]
 [executed] policy:recover_fall (ok, reward=+0.80) binding=w18 (b18)
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: True, trigger: fallen=True (bodymap_posture=fallen, bodymap_stale=False) or fall_cue=False cues=['b7']
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b8', 'b3', 'b7'], 'size': 5, 'ids': {'b7', 'b4', 'b5', 'b3', 'b8'}}
+wg_foa:  {'seeds': ['b8', 'b3', 'b7'], 'size': 5, 'ids': {'b3', 'b5', 'b8', 'b7', 'b4'}}
 wg_cands:['b3', '?']
 post: dev_gate: True, trigger: fallen=True (bodymap_posture=fallen, bodymap_stale=False) or fall_cue=False cues=['b7']
 [env-loop] summary cognitive_cycle=3/50 env_step=2 stage=birth env_posture=fallen bm_posture=fallen mom=far nipple=hidden last_policy='policy:recover_fall' expected_posture=standing zone=unknown
@@ -253,6 +300,29 @@ post: dev_gate: True, trigger: fallen=True (bodymap_posture=fallen, bodymap_stal
 [cycle] OBS  preds: posture:fallen, proximity:mom:far, proximity:shelter:far, hazard:cliff:far | cues: (none) | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: policy:recover_fall +2 binding(s) (exec_on=WM)
 [cycle] SG   surfacegrid_sig16=e311889fd2929813 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=e311889fd2929813)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |                |
+ 8 |        @G      |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed='policy:recover_fall' reward=+0.80 next_action='policy:recover_fall'
@@ -274,7 +344,7 @@ post: dev_gate: True, trigger: fallen=True (bodymap_posture=fallen, bodymap_stal
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b9', 'b3', 'b7'], 'size': 6, 'ids': {'b7', 'b5', 'b9', 'b4', 'b3', 'b8'}}
+wg_foa:  {'seeds': ['b9', 'b3', 'b7'], 'size': 6, 'ids': {'b3', 'b5', 'b8', 'b7', 'b9', 'b4'}}
 wg_cands:['b3', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 [env-loop] summary cognitive_cycle=4/50 env_step=3 stage=struggle env_posture=fallen bm_posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' expected_posture=standing zone=unknown
@@ -285,7 +355,30 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] IN   -- cycle=4/50 env_step=3 stage=struggle posture=fallen mom=far nipple=hidden zone=unknown drives(h=0.50 f=0.30 w=0.60) applied_action='policy:recover_fall' obs(p=4 c=0)
 [cycle] OBS  preds: posture:fallen, proximity:mom:far, proximity:shelter:far, hazard:cliff:far | cues: (none) | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: policy:stand_up +3 binding(s) (exec_on=WM)
-[cycle] SG   surfacegrid_sig16=e311889fd2929813 compose_ms=0.20 (patches_changed)
+[cycle] SG   surfacegrid_sig16=e311889fd2929813 compose_ms=0.17 (patches_changed)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=e311889fd2929813)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |                |
+ 8 |        @G  *   |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed='policy:stand_up' reward=+1.00 next_action='policy:stand_up'
@@ -302,7 +395,7 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [env→world] pred:proximity:mom:far → b12 (attach=latest)
 [env→world] pred:proximity:shelter:far → b13 (attach=latest)
 [env→world] pred:hazard:cliff:near → b14 (attach=latest)
-[wm<->col] store: ok sig=0149b48ef27e7529 bid=b15 eid=21b16e9d… (auto_keyframe_milestone:stood_up)
+[wm<->col] store: ok sig=874b0154cb8df964 bid=b15 eid=56754471… (auto_keyframe_milestone:stood_up)
 [wm<->col] retrieve: skip why=enabled_boundary_confident mode=merge top_k=5 (auto_keyframe_milestone:stood_up)
 [wm<->col] apply: no-op (enabled_boundary_confident)
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=near shelter=far zone=unsafe_cliff_near
@@ -314,9 +407,32 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] IN   KF cycle=5/50 env_step=4 stage=first_stand posture=standing mom=far nipple=hidden zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action='policy:stand_up' obs(p=4 c=0)
 [cycle] OBS  preds: posture:standing, proximity:mom:far, proximity:shelter:far, hazard:cliff:near | cues: (none) | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: posture fallen→standing, cliff far→near | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.16 (patches_changed)
+[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.18 (patches_changed)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=95f94ef599532e70)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |          ######|
+ 1 |          ######|
+ 2 |          ######|
+ 3 |          ######|
+ 4 |          ######|
+ 5 |          ######|
+ 6 |          ######|
+ 7 |          ######|
+ 8 |        @G##*###|
+ 9 |          ###C##|
+10 |          ######|
+11 |          ######|
+12 |          ######|
+13 |          ######|
+14 |          ######|
+15 |          ######|
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+4 cues+0 | pred:posture:standing, pred:proximity:mom:far, pred:proximity:shelter:far, pred:hazard:cliff:near | (none)
-[cycle] COL  store ok sig=0149b48ef27e7529 eid=21b16e9d… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
+[cycle] COL  store ok sig=874b0154cb8df964 eid=56754471… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
 [cycle] ACT  executed=None reward=n/a next_action=None
 
 [env-loop] Cognitive Cycle 6/50
@@ -332,7 +448,7 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [env→world] pred:proximity:shelter:far → b18 (attach=latest)
 [env→world] pred:hazard:cliff:near → b19 (attach=latest)
 [env→world] cue:vision:silhouette:mom → b20 (attach=latest)
-[wm<->col] store: ok sig=5f3d693e08eef57a bid=b21 eid=89bb2749… (auto_keyframe_milestone:reached_mom)
+[wm<->col] store: ok sig=59499c036da1e7d7 bid=b21 eid=04b3fb43… (auto_keyframe_milestone:reached_mom)
 [wm<->col] retrieve: skip why=enabled_boundary_confident mode=merge top_k=5 (auto_keyframe_milestone:reached_mom)
 [wm<->col] apply: no-op (enabled_boundary_confident)
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=near shelter=far zone=unsafe_cliff_near
@@ -344,9 +460,32 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] IN   KF cycle=6/50 env_step=5 stage=first_stand posture=standing mom=near nipple=hidden zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=4 c=1)
 [cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: mom far→near | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.18 (patches_changed)
+[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.17 (patches_changed)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=95f94ef599532e70)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |          ######|
+ 1 |          ######|
+ 2 |          ######|
+ 3 |          ######|
+ 4 |          ######|
+ 5 |          ######|
+ 6 |          ######|
+ 7 |          ######|
+ 8 |        @GM#####|
+ 9 |          C#####|
+10 |          ######|
+11 |          ######|
+12 |          ######|
+13 |          ######|
+14 |          ######|
+15 |          ######|
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+4 cues+1 | pred:posture:standing, pred:proximity:mom:close, pred:proximity:shelter:far, pred:hazard:cliff:near | cue:vision:silhouette:mom
-[cycle] COL  store ok sig=5f3d693e08eef57a eid=89bb2749… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
+[cycle] COL  store ok sig=59499c036da1e7d7 eid=04b3fb43… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
 [cycle] ACT  executed=None reward=n/a next_action=None
 
 [env-loop] Cognitive Cycle 7/50
@@ -367,6 +506,29 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=95f94ef599532e70)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |          ######|
+ 1 |          ######|
+ 2 |          ######|
+ 3 |          ######|
+ 4 |          ######|
+ 5 |          ######|
+ 6 |          ######|
+ 7 |          ######|
+ 8 |        @M######|
+ 9 |          C#####|
+10 |          ######|
+11 |          ######|
+12 |          ######|
+13 |          ######|
+14 |          ######|
+15 |          ######|
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -389,6 +551,29 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=95f94ef599532e70)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |          ######|
+ 1 |          ######|
+ 2 |          ######|
+ 3 |          ######|
+ 4 |          ######|
+ 5 |          ######|
+ 6 |          ######|
+ 7 |          ######|
+ 8 |        @M######|
+ 9 |          C#####|
+10 |          ######|
+11 |          ######|
+12 |          ######|
+13 |          ######|
+14 |          ######|
+15 |          ######|
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -411,6 +596,29 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=95f94ef599532e70)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |          ######|
+ 1 |          ######|
+ 2 |          ######|
+ 3 |          ######|
+ 4 |          ######|
+ 5 |          ######|
+ 6 |          ######|
+ 7 |          ######|
+ 8 |        @M######|
+ 9 |          C#####|
+10 |          ######|
+11 |          ######|
+12 |          ######|
+13 |          ######|
+14 |          ######|
+15 |          ######|
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -433,6 +641,29 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=95f94ef599532e70)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |          ######|
+ 1 |          ######|
+ 2 |          ######|
+ 3 |          ######|
+ 4 |          ######|
+ 5 |          ######|
+ 6 |          ######|
+ 7 |          ######|
+ 8 |        @M######|
+ 9 |          C#####|
+10 |          ######|
+11 |          ######|
+12 |          ######|
+13 |          ######|
+14 |          ######|
+15 |          ######|
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -455,6 +686,29 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=95f94ef599532e70)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |          ######|
+ 1 |          ######|
+ 2 |          ######|
+ 3 |          ######|
+ 4 |          ######|
+ 5 |          ######|
+ 6 |          ######|
+ 7 |          ######|
+ 8 |        @M######|
+ 9 |          C#####|
+10 |          ######|
+11 |          ######|
+12 |          ######|
+13 |          ######|
+14 |          ######|
+15 |          ######|
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -474,7 +728,7 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [env→world] pred:hazard:cliff:near → b25 (attach=latest)
 [env→world] pred:nipple:found → b26 (attach=latest)
 [env→world] cue:vision:silhouette:mom → b27 (attach=latest)
-[wm<->col] store: ok sig=21ef7cbabd2b2331 bid=b28 eid=e4321d53… (auto_keyframe_milestone:found_nipple)
+[wm<->col] store: ok sig=406d66c12279e22d bid=b28 eid=70d076ac… (auto_keyframe_milestone:found_nipple)
 [wm<->col] retrieve: skip why=enabled_boundary_confident mode=merge top_k=5 (auto_keyframe_milestone:found_nipple)
 [wm<->col] apply: no-op (enabled_boundary_confident)
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=near shelter=far zone=unsafe_cliff_near
@@ -487,8 +741,31 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near, nipple:found | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: nipple hidden→reachable | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=95f94ef599532e70)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |          ######|
+ 1 |          ######|
+ 2 |          ######|
+ 3 |          ######|
+ 4 |          ######|
+ 5 |          ######|
+ 6 |          ######|
+ 7 |          ######|
+ 8 |        @M######|
+ 9 |          C#####|
+10 |          ######|
+11 |          ######|
+12 |          ######|
+13 |          ######|
+14 |          ######|
+15 |          ######|
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+5 cues+1 | pred:posture:standing, pred:proximity:mom:close, pred:proximity:shelter:far, pred:hazard:cliff:near, pred:nipple:found | cue:vision:silhouette:mom
-[cycle] COL  store ok sig=21ef7cbabd2b2331 eid=e4321d53… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
+[cycle] COL  store ok sig=406d66c12279e22d eid=70d076ac… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
 [cycle] ACT  executed=None reward=n/a next_action=None
 
 [env-loop] Cognitive Cycle 13/50
@@ -510,6 +787,29 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near, nipple:found | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=95f94ef599532e70)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |          ######|
+ 1 |          ######|
+ 2 |          ######|
+ 3 |          ######|
+ 4 |          ######|
+ 5 |          ######|
+ 6 |          ######|
+ 7 |          ######|
+ 8 |        @M######|
+ 9 |          C#####|
+10 |          ######|
+11 |          ######|
+12 |          ######|
+13 |          ######|
+14 |          ######|
+15 |          ######|
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -531,7 +831,7 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [env→world] pred:nipple:latched → b33 (attach=latest)
 [env→world] pred:milk:drinking → b34 (attach=latest)
 [env→world] cue:vision:silhouette:mom → b35 (attach=latest)
-[wm<->col] store: ok sig=b40c06d926a38bbe bid=b36 eid=bfde6c54… (auto_keyframe_milestone:latched_nipple,milk_drinking)
+[wm<->col] store: ok sig=b34275069aba8793 bid=b36 eid=f57ec520… (auto_keyframe_milestone:latched_nipple,milk_drinking)
 [wm<->col] retrieve: skip why=enabled_boundary_confident mode=merge top_k=5 (auto_keyframe_milestone:latched_nipple,milk_drinking)
 [wm<->col] apply: no-op (enabled_boundary_confident)
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=near shelter=far zone=unsafe_cliff_near
@@ -543,9 +843,32 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [cycle] IN   KF cycle=14/50 env_step=13 stage=first_latch posture=latched mom=near nipple=latched zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
 [cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: posture standing→latched, nipple reachable→latched | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.20 (patches_changed)
+[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.19 (patches_changed)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=95f94ef599532e70)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |          ######|
+ 1 |          ######|
+ 2 |          ######|
+ 3 |          ######|
+ 4 |          ######|
+ 5 |          ######|
+ 6 |          ######|
+ 7 |          ######|
+ 8 |        @M##*###|
+ 9 |          C#####|
+10 |          ######|
+11 |          ######|
+12 |          ######|
+13 |          ######|
+14 |          ######|
+15 |          ######|
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+6 cues+1 | pred:posture:standing, pred:proximity:mom:close, pred:proximity:shelter:far, pred:hazard:cliff:near, pred:nipple:latched, pred:milk:drinking | cue:vision:silhouette:mom
-[cycle] COL  store ok sig=b40c06d926a38bbe eid=bfde6c54… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
+[cycle] COL  store ok sig=b34275069aba8793 eid=f57ec520… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
 [cycle] ACT  executed=None reward=n/a next_action=None
 
 [env-loop] Cognitive Cycle 15/50
@@ -562,12 +885,12 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=near zone=safe
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=near zone=safe
 [env→controller] policy:follow_mom (added 2 bindings)
-[pick] best_policy=policy:follow_mom best_by=rl_explore triggered=[policy:follow_mom] deficits=[policy:follow_mom:0.00] non_drive=[policy:follow_mom:0.00]
+[pick] best_policy=policy:follow_mom best_by=rl_exploit(deficit) triggered=[policy:follow_mom] deficits=[policy:follow_mom:0.00] non_drive=[policy:follow_mom:0.00]
 [executed] policy:follow_mom (ok, reward=+0.10) binding=w23 (b23)
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_stale=False posture=standing rest_near_now=False zone=safe (hunger=0.50, fatigue=0.30)
 wg_base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b29'}
-wg_foa:  {'seeds': ['b38', 'b29', 'b7', 'b15', 'b20', 'b21', 'b27', 'b28', 'b35', 'b36'], 'size': 13, 'ids': {'b35', 'b7', 'b31', 'b29', 'b38', 'b37', 'b21', 'b28', 'b20', 'b30', 'b27', 'b15', 'b36'}}
+wg_foa:  {'seeds': ['b38', 'b29', 'b7', 'b15', 'b20', 'b21', 'b27', 'b28', 'b35', 'b36'], 'size': 13, 'ids': {'b36', 'b20', 'b35', 'b31', 'b29', 'b38', 'b30', 'b7', 'b27', 'b15', 'b28', 'b21', 'b37'}}
 wg_cands:['b29', '?']
 post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_stale=False posture=standing rest_near_now=False zone=safe (hunger=0.50, fatigue=0.30)
 [env-loop] summary cognitive_cycle=15/50 env_step=14 stage=first_latch env_posture=latched bm_posture=standing mom=near nipple=latched last_policy='policy:follow_mom' zone=safe
@@ -578,6 +901,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: shelter far→near, cliff near→far | scratch: policy:follow_mom +2 binding(s) (exec_on=WM)
 [cycle] SG   surfacegrid_sig16=6857fa3a091f8a11 compose_ms=0.20 (patches_changed)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=6857fa3a091f8a11)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG      S  |
+ 8 |GGGGGGG @M      |
+ 9 |GGGGGGG   C     |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+2 cues+0 | pred:proximity:shelter:near, pred:hazard:cliff:far | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed='policy:follow_mom' reward=+0.10 next_action='policy:follow_mom'
@@ -600,7 +946,7 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_stale=False posture=standing rest_near_now=False zone=safe (hunger=0.50, fatigue=0.30)
 wg_base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b29'}
-wg_foa:  {'seeds': ['b39', 'b29', 'b7', 'b15', 'b20', 'b21', 'b27', 'b28', 'b35', 'b36'], 'size': 14, 'ids': {'b35', 'b7', 'b29', 'b31', 'b38', 'b37', 'b21', 'b28', 'b39', 'b20', 'b30', 'b27', 'b15', 'b36'}}
+wg_foa:  {'seeds': ['b39', 'b29', 'b7', 'b15', 'b20', 'b21', 'b27', 'b28', 'b35', 'b36'], 'size': 14, 'ids': {'b36', 'b20', 'b35', 'b39', 'b31', 'b29', 'b38', 'b30', 'b7', 'b27', 'b15', 'b28', 'b21', 'b37'}}
 wg_cands:['b29', '?']
 post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_stale=False posture=standing rest_near_now=False zone=safe (hunger=0.50, fatigue=0.30)
 [env-loop] summary cognitive_cycle=16/50 env_step=15 stage=first_latch env_posture=latched bm_posture=standing mom=near nipple=latched last_policy='policy:follow_mom' zone=safe
@@ -611,6 +957,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: policy:follow_mom +2 binding(s) (exec_on=WM)
 [cycle] SG   surfacegrid_sig16=6857fa3a091f8a11 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=6857fa3a091f8a11)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG @M      |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed='policy:follow_mom' reward=+0.10 next_action='policy:follow_mom'
@@ -632,7 +1001,7 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [env→world] pred:nipple:latched → b44 (attach=latest)
 [env→world] pred:milk:drinking → b45 (attach=latest)
 [env→world] cue:vision:silhouette:mom → b46 (attach=latest)
-[wm<->col] store: ok sig=22caf0d81e2a0595 bid=b47 eid=d6a80018… (auto_keyframe_milestone:rested)
+[wm<->col] store: ok sig=0b4784af2678eb3b bid=b47 eid=e76a2daf… (auto_keyframe_milestone:rested)
 [wm<->col] retrieve: skip why=enabled_boundary_confident mode=merge top_k=5 (auto_keyframe_milestone:rested)
 [wm<->col] apply: no-op (enabled_boundary_confident)
 [gate:rest] fatigue=0.30 high=False cue=False bodymap_stale=False cliff=far shelter=near zone=safe
@@ -644,9 +1013,32 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] IN   KF cycle=17/50 env_step=16 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action='policy:follow_mom' obs(p=6 c=1)
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: posture latched→resting, mom near→touching | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.20 (patches_changed)
+[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.18 (patches_changed)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG @M  *   |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+6 cues+1 | pred:resting, pred:proximity:mom:close, pred:proximity:shelter:near, pred:hazard:cliff:far, pred:nipple:latched, pred:milk:drinking | cue:vision:silhouette:mom
-[cycle] COL  store ok sig=22caf0d81e2a0595 eid=d6a80018… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
+[cycle] COL  store ok sig=0b4784af2678eb3b eid=e76a2daf… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
 [cycle] ACT  executed=None reward=n/a next_action=None
 
 [env-loop] Cognitive Cycle 18/50
@@ -669,6 +1061,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -693,6 +1108,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -717,6 +1155,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -741,6 +1202,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -765,6 +1249,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -789,6 +1296,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -813,6 +1343,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -837,6 +1390,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -861,6 +1437,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -885,6 +1484,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -909,6 +1531,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -933,6 +1578,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -957,6 +1625,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -981,6 +1672,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1005,6 +1719,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1029,6 +1766,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1053,6 +1813,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1077,6 +1860,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1101,6 +1907,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1125,6 +1954,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1149,6 +2001,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1173,6 +2048,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1197,6 +2095,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1221,6 +2142,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1245,6 +2189,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1269,6 +2236,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1293,6 +2283,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1317,6 +2330,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1341,6 +2377,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1365,6 +2424,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1389,6 +2471,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1413,6 +2518,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1437,6 +2565,29 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
 [cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
 [cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   map:
+WM.SurfaceGrid (sig16=291f8ea953f19a08)
+              111111
+    0123456789012345
+   +----------------+
+ 0 |GGGGGGG         |
+ 1 |GGGGGGG         |
+ 2 |GGGGGGG         |
+ 3 |GGGGGGG         |
+ 4 |GGGGGGG         |
+ 5 |GGGGGGG         |
+ 6 |GGGGGGG         |
+ 7 |GGGGGGG   S     |
+ 8 |GGGGGGG M       |
+ 9 |GGGGGGG         |
+10 |GGGGGGG         |
+11 |GGGGGGG         |
+12 |GGGGGGG         |
+13 |GGGGGGG         |
+14 |GGGGGGG         |
+15 |GGGGGGG         |
+   +----------------+
+@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
 [cycle] ACT  executed=None reward=n/a next_action=None
@@ -1491,14 +2642,14 @@ post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_st
    delta=0 then q used only for exact ties otherwise deficit values within delta range are considered tied and q used to decide)
 NOTE: deficit here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).
 Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled)
-RL: enabled=True epsilon=0.050 delta=0.000 (explore=2, exploit=4, explore_rate=0.33)
+RL: enabled=True epsilon=0.050 delta=0.000 (explore=0, exploit=6, explore_rate=0.00)
 Skill HUD (top 3 by q=EMA reward):
    1) policy:stand_up     n=  4  rate=0.75  q=+0.52  last=+1.00
    2) policy:recover_fall  n=  1  rate=1.00  q=+0.24  last=+0.80
    3) policy:follow_mom   n=  2  rate=1.00  q=+0.05  last=+0.10
 
 Values of time measures, nodes and links at this point:
-[time] controller_steps=50, cos_to_last_boundary=0.4375, temporal_epochs=0, autonomic_ticks=0, age_days=0.0000, cog_cycles=50
+[time] controller_steps=50, cos_to_last_boundary=0.5291, temporal_epochs=0, autonomic_ticks=0, age_days=0.0000, cog_cycles=50
 [world] last 47 binding(s):
   b1: [anchor:NOW_ORIGIN]
       edges: then:b2, then:b3
@@ -1669,3 +2820,4 @@ Please press any key (* stops this scroll pause) to continue with menu (above sc
     47) Load wm_mapsurface engram into WorkingMap (replace MapSurface) [wload, wmload]
 
     Select: 
+Goodbye.

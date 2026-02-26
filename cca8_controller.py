@@ -180,6 +180,7 @@ __all__ = [
     "FollowMom",
     "ExploreCheck",
     "Rest",
+    "Probe",
     "PRIMITIVES",
     "action_center_step",
     "__version__",
@@ -1367,6 +1368,141 @@ class ExploreCheck(Primitive):
         return self._success(reward=0.0, notes="checked")
 
 
+class Probe(Primitive):
+    """
+    Minimal epistemic "probe" policy (Phase X Step 15C).
+
+    Purpose / intent
+    ----------------
+    This policy is not about satisfying a drive; it is about reducing uncertainty when uncertainty matters.
+
+    In v1 the uncertainty signal comes from WM.Scratch (runner-side, Step 15A):
+        ctx.wm_scratch_navpatch_last_keys = {"cliff|p_cliff", ...}
+
+    Execution (v1)
+    --------------
+    1) Choose a target entity from Scratch keys (prefer "cliff").
+    2) Temporarily raise ctx.navpatch_precision_grid to ctx.wm_probe_grid_precision.
+       This makes the NavPatch match loop weight the grid channel more strongly on the next tick.
+    3) Record restore bookkeeping on ctx so the runner can auto-restore the previous precision value.
+    4) Write a tiny action trace into the graph (action:look_around → pred:alert) so the probe is inspectable.
+
+    Important design note
+    ---------------------
+    trigger() is intentionally False. The runner's PolicyRuntime gate (which has access to ctx)
+    decides WHEN to run this policy. The controller only needs this class so
+    action_center_step(preferred="policy:probe") can execute it.
+    """
+    name = "policy:probe"
+
+    def trigger(self, world, drives: Drives) -> bool:  # pylint: disable=unused-argument
+        return False
+
+    def execute(self, world, ctx, drives: Drives) -> dict:  # pylint: disable=unused-argument
+        meta = _policy_meta(ctx, self.name)
+
+        step_now = 0
+        try:
+            step_now = int(getattr(ctx, "controller_steps", 0) or 0)
+        except Exception:
+            step_now = 0
+
+        keys = getattr(ctx, "wm_scratch_navpatch_last_keys", None)
+        if not isinstance(keys, set) or not keys:
+            return self._success(reward=0.0, notes="probe: no ambiguity")
+
+        # Derive ambiguous entities from keys like "cliff|p_cliff".
+        ents: list[str] = []
+        for k in keys:
+            if not isinstance(k, str) or "|" not in k:
+                continue
+            ent = k.split("|", 1)[0].strip().lower()
+            if ent:
+                ents.append(ent)
+
+        uniq_ents = sorted(set(ents))
+        target = "cliff" if "cliff" in uniq_ents else (uniq_ents[0] if uniq_ents else "unknown")
+
+        # Pick one representative key for target (best-effort).
+        key_for_target = None
+        for k in sorted(list(keys)):
+            if isinstance(k, str) and k.startswith(target + "|"):
+                key_for_target = k
+                break
+        if key_for_target is None:
+            key_for_target = sorted(list(keys))[0]
+
+        # ---- Apply a temporary evidence-precision boost (grid channel) ----
+        try:
+            prev_grid = float(getattr(ctx, "navpatch_precision_grid", 0.0) or 0.0)
+        except Exception:
+            prev_grid = 0.0
+
+        try:
+            grid_boost = float(getattr(ctx, "wm_probe_grid_precision", 0.50) or 0.50)
+        except Exception:
+            grid_boost = 0.50
+        grid_boost = max(0.0, min(1.0, float(grid_boost)))
+
+        try:
+            duration = int(getattr(ctx, "wm_probe_duration_steps", 2) or 2)
+        except Exception:
+            duration = 2
+        duration = max(1, min(20, int(duration)))
+        restore_step = int(step_now + duration)
+
+        # Save prev only if we are not already in an active probe window.
+        try:
+            if getattr(ctx, "wm_probe_restore_step", None) is None:
+                ctx.wm_probe_prev_navpatch_precision_grid = float(prev_grid)
+        except Exception:
+            pass
+
+        try:
+            ctx.navpatch_precision_grid = float(grid_boost)
+            ctx.wm_probe_last_step = int(step_now)
+            ctx.wm_probe_restore_step = int(restore_step)
+        except Exception:
+            pass
+
+        # Mark the WM.Scratch item as "probed" (best-effort; display/trace only).
+        try:
+            ww = getattr(ctx, "working_world", None)
+            key_to_bid = getattr(ctx, "wm_scratch_navpatch_key_to_bid", None)
+            if ww is not None and isinstance(key_to_bid, dict) and isinstance(key_for_target, str):
+                sbid = key_to_bid.get(key_for_target)
+                b = getattr(ww, "_bindings", {}).get(sbid) if isinstance(sbid, str) else None
+                if b is not None:
+                    if not isinstance(getattr(b, "meta", None), dict):
+                        b.meta = {}
+                    wmm = b.meta.setdefault("wm", {})
+                    if isinstance(wmm, dict):
+                        wmm["probed_step"] = int(step_now)
+                        wmm["probe_policy"] = self.name
+                        wmm["probe_grid_precision"] = float(grid_boost)
+        except Exception:
+            pass
+
+        # Write an inspectable action trace (keep tokens in the existing lexicon surface).
+        binding = None
+        try:
+            a = _add_action(world, ACTION_LOOK_AROUND, attach="now", meta=meta)
+            b2 = _add_pred(world, STATE_ALERT, attach="latest", meta=meta)
+            try:
+                world.add_edge(a, b2, "then")
+            except Exception:
+                pass
+            binding = b2
+        except Exception:
+            binding = None
+
+        notes = (
+            f"probe ambiguity on {target}; grid_precision={grid_boost:.2f} "
+            f"until_step={restore_step} keys={len(keys)}"
+        )
+        return self._success(reward=0.05, notes=notes, binding=binding, inspected_entity=target)
+
+
 class Rest(Primitive):
     """
     Reduce fatigue and assert a 'resting' state.
@@ -1485,6 +1621,7 @@ PRIMITIVES: List[Primitive] = [
     RecoverFall(),
     SeekNipple(),
     Rest(),         # check restorative action before permissive fallback
+    Probe(),        # Step 15C: inspect/probe when WM.Scratch reports safety-relevant ambiguity
     FollowMom(),    # permissive default should be after concrete needs
     ExploreCheck(),
 ]

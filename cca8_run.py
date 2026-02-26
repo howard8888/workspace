@@ -318,6 +318,9 @@ class Ctx:
     wm_surfacegrid_dirty_reasons: list[str] = field(default_factory=list)
     wm_surfacegrid_compose_ms: float = 0.0
     wm_surfacegrid_last_ascii: Optional[str] = None
+    # SurfaceGrid printing controls (terminal UX)
+    wm_surfacegrid_ascii_each_tick: bool = False  # if True, print the grid even on cache-hit ticks (compose_ms==0)
+    wm_surfacegrid_legend_printed: bool = False   # internal: print legend once per session when map printing is enabled
     # --- WM.Salience + landmark overlay (Phase X Step 14) -------------------------------
     # Minimal v1:
     #   - Store per-entity salience TTL + reason in WM.MapSurface entity meta['wm'].
@@ -369,6 +372,40 @@ class Ctx:
     navpatch_match_accept_score: float = 0.85
     navpatch_match_ambiguous_margin: float = 0.05  # if best-second < margin, mark match as ambiguous (do not hallucinate certainty)
     navpatch_last_matches: list[dict[str, Any]] = field(default_factory=list)
+
+    # --- WM.Scratch (Phase X Step 15A): ambiguous commit records -----------------------
+    # When a NavPatch match is "ambiguous", we write a compact record into WM.SCRATCH so later
+    # steps (zoom/probe) can “look at” the ambiguity and choose to inspect more.
+    wm_scratch_navpatch_enabled: bool = True
+    wm_scratch_navpatch_key_to_bid: dict[str, str] = field(default_factory=dict)  # key -> WM binding id (scratch item)
+    wm_scratch_navpatch_last_keys: set[str] = field(default_factory=set)          # last tick's active ambiguity keys
+
+    # --- WM.Zoom (Phase X Step 15B): explicit zoom_down/zoom_up events -----------------------
+    # Zoom is a minimal, explicit "mode" derived from persistent ambiguity in WM.Scratch.
+    # It is diagnostic first: events are emitted on transitions and stored for JSON/terminal traces.
+    wm_zoom_enabled: bool = True
+    wm_zoom_verbose: bool = False   # if True, print zoom transitions (rare; transition ticks only)
+    wm_zoom_state: str = "up"       # "up" | "down" ("down" means we are in inspect/probe mode)
+    wm_zoom_last_reason: Optional[str] = None
+    wm_zoom_last_event_step: Optional[int] = None
+    wm_zoom_last_events: list[dict[str, Any]] = field(default_factory=list)
+
+    # --- WM.Probe (Phase X Step 15C): minimal probe/inspect policy knobs -----------------------
+    # Probe is an *epistemic* action: when WM.Scratch reports an ambiguous NavPatch match
+    # (especially for hazards), we can take a one-step "inspect" action that increases
+    # evidence precision on the next cycle (diagnostic-first; no real physics yet).
+    #
+    # Implementation note:
+    #   - The probe policy temporarily raises ctx.navpatch_precision_grid, then the matching loop
+    #     auto-restores it after wm_probe_duration_steps (see navpatch_predictive_match_loop_v1).
+    wm_probe_enabled: bool = True
+    wm_probe_verbose: bool = False
+    wm_probe_cooldown_steps: int = 3            # debounce: min controller_steps between probes
+    wm_probe_duration_steps: int = 2            # how long the precision boost remains active (steps)
+    wm_probe_grid_precision: float = 0.50       # temporary value assigned to ctx.navpatch_precision_grid
+    wm_probe_last_step: Optional[int] = None
+    wm_probe_restore_step: Optional[int] = None
+    wm_probe_prev_navpatch_precision_grid: Optional[float] = None
 
     # NavPatch priors (Phase X 2.2a): top-down bias terms (OFF by default)
     # -------------------------------------------------------------------
@@ -3975,6 +4012,119 @@ def _gate_follow_mom_explain_body_space(world, drives: Drives, ctx) -> str:  # p
     )
 
 
+def _gate_probe_ambiguity_trigger_body_first(world, _drives: Drives, ctx) -> bool:  # pylint: disable=unused-argument
+    """
+    Step 15C gate: trigger a minimal probe policy when WM.Scratch reports an ambiguous NavPatch match.
+
+    v1 (conservative):
+      - Trigger only when ambiguity exists for a safety-relevant entity (cliff), OR BodyMap says cliff is near.
+      - Debounce by ctx.wm_probe_cooldown_steps to avoid repeating the probe every tick.
+
+    This is a gate only: it must not mutate world state.
+    """
+    if ctx is None:
+        return False
+    if not bool(getattr(ctx, "wm_probe_enabled", True)):
+        return False
+
+    keys = getattr(ctx, "wm_scratch_navpatch_last_keys", None)
+    if not isinstance(keys, set) or not keys:
+        return False
+
+    ents: set[str] = set()
+    for k in keys:
+        if not isinstance(k, str) or "|" not in k:
+            continue
+        ent = k.split("|", 1)[0].strip().lower()
+        if ent:
+            ents.add(ent)
+
+    hazard_amb = "cliff" in ents
+
+    hazard_near = False
+    try:
+        hazard_near = (body_cliff_distance(ctx) == "near")  #pylint: disable=superfluous-parens
+    except Exception:
+        hazard_near = False
+
+    if not (hazard_amb or hazard_near):
+        return False
+
+    # Debounce (cooldown)
+    try:
+        step_now = int(getattr(ctx, "controller_steps", 0) or 0)
+    except Exception:
+        step_now = 0
+
+    last = getattr(ctx, "wm_probe_last_step", None)
+    last_i = int(last) if isinstance(last, int) else None
+
+    try:
+        cooldown = int(getattr(ctx, "wm_probe_cooldown_steps", 3) or 3)
+    except Exception:
+        cooldown = 3
+    cooldown = max(0, min(50, int(cooldown)))
+
+    if last_i is not None and cooldown > 0 and (step_now - last_i) < cooldown:
+        return False
+
+    return True
+
+
+def _gate_probe_ambiguity_explain_body_first(world, _drives: Drives, ctx) -> str:  # pylint: disable=unused-argument
+    """
+    Human-readable explanation for the Step 15C probe gate.
+    """
+    if ctx is None:
+        return "dev_gate: True, trigger: ctx missing"
+
+    keys = getattr(ctx, "wm_scratch_navpatch_last_keys", None)
+    keys_txt = sorted(list(keys)) if isinstance(keys, set) else []
+
+    ents: set[str] = set()
+    for k in keys_txt:
+        if isinstance(k, str) and "|" in k:
+            ents.add(k.split("|", 1)[0].strip().lower())
+
+    hazard_amb = "cliff" in ents
+
+    hazard_near = False
+    try:
+        hazard_near = (body_cliff_distance(ctx) == "near")  #pylint: disable="superfluous-parens"
+    except Exception:
+        hazard_near = False
+
+    try:
+        step_now = int(getattr(ctx, "controller_steps", 0) or 0)
+    except Exception:
+        step_now = 0
+
+    last = getattr(ctx, "wm_probe_last_step", None)
+    last_i = int(last) if isinstance(last, int) else None
+
+    try:
+        cooldown = int(getattr(ctx, "wm_probe_cooldown_steps", 3) or 3)
+    except Exception:
+        cooldown = 3
+    cooldown = max(0, min(50, int(cooldown)))
+
+    blocked = False
+    if last_i is not None and cooldown > 0 and (step_now - last_i) < cooldown:
+        blocked = True
+
+    return (
+        "dev_gate: True, trigger: "
+        f"scratch_keys={len(keys_txt)} ents={sorted(list(ents))} "
+        f"hazard_amb(cliff)={hazard_amb} hazard_near={hazard_near} "
+        f"cooldown={cooldown} blocked={blocked} "
+        f"(step_now={step_now}, last_probe={last_i})"
+    )
+
+
+
+
+
+
 def _gate_recover_fall_trigger_body_first(world, _drives: Drives, ctx) -> bool:
     """
     RecoverFall gate that prefers BodyMap for posture when available, falling back
@@ -5009,6 +5159,13 @@ CATALOG_GATES: List[PolicyGate] = [
         dev_gate=lambda ctx: True,  # available at all stages; selection is by trigger/deficit
         trigger=_gate_rest_trigger_body_space,
         explain=_gate_rest_explain_body_space,
+    ),
+
+    PolicyGate(
+        name="policy:probe",
+        dev_gate=lambda ctx: True,
+        trigger=_gate_probe_ambiguity_trigger_body_first,
+        explain=_gate_probe_ambiguity_explain_body_first,
     ),
 
     PolicyGate(
@@ -8334,6 +8491,30 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
     If we stored (or dedup-reused) the current patch engram this tick, the Column scan will contain it.
     We must exclude that engram_id from candidate ranking so we do not trivially match the patch to itself.
     """
+    if ctx is None:
+        return []
+    # --- Step 15C support: auto-restore probe precision boosts ----------------------------
+    # The probe policy can temporarily raise ctx.navpatch_precision_grid to help disambiguate
+    # competing prototypes. We restore the previous value once the probe window expires so
+    # the system returns to its default evidence weighting.
+    try:
+        step_now = int(getattr(ctx, "controller_steps", 0) or 0)
+    except Exception:
+        step_now = 0
+
+    try:
+        restore_step = getattr(ctx, "wm_probe_restore_step", None)
+        if isinstance(restore_step, int) and step_now >= int(restore_step):
+            prev = getattr(ctx, "wm_probe_prev_navpatch_precision_grid", None)
+            if isinstance(prev, (int, float)):
+                ctx.navpatch_precision_grid = float(prev)
+
+            # Clear probe restore bookkeeping (best-effort).
+            ctx.wm_probe_restore_step = None
+            ctx.wm_probe_prev_navpatch_precision_grid = None
+    except Exception:
+        pass
+
     if ctx is None or not bool(getattr(ctx, "navpatch_enabled", False)):
         return []
 
@@ -8997,6 +9178,94 @@ def render_surfacegrid_ascii_with_salience_v1(ctx: Ctx, ww, sg: SurfaceGridV1, *
 
     return "\n".join("".join(r) for r in grid)
 
+
+def format_surfacegrid_ascii_map_v1(
+    ascii_txt: str,
+    *,
+    title: str | None = None,
+    legend: str | None = None,
+    show_axes: bool = True,
+) -> str:
+    """
+    Wrap a raw ASCII SurfaceGrid dump in a terminal-friendly "map frame".
+
+    Intent
+    ------
+    The SurfaceGrid renderer (render_surfacegrid_ascii_with_salience_v1) returns a raw block of rows,
+    where each character is a cell symbol (optionally with entity overlays like '@', 'M', 'C', 'S').
+    This helper adds:
+
+      - a border (top/bottom),
+      - optional x-axis labels (0..w-1, with tens row when w >= 10),
+      - optional y-axis labels (0..h-1),
+      - optional title and legend lines.
+
+    This is deliberately pure string formatting:
+      - No third-party libraries.
+      - No assumptions about semantic meanings of characters beyond what the renderer already decided.
+
+    Parameters
+    ----------
+    ascii_txt:
+        The raw ASCII grid text. May contain uneven line lengths; we pad rows to the max width
+        so the frame aligns cleanly.
+    title:
+        Optional header line shown above the axes/border. Use to include sig16, etc.
+    legend:
+        Optional legend line shown below the framed map.
+    show_axes:
+        If True, show x-axis (top) and y-axis (left). If False, draws only a border with no indices.
+
+    Returns
+    -------
+    str
+        Framed map text with no trailing newline.
+    """
+    s = (ascii_txt or "").rstrip("\n")
+    if not s:
+        return "(surfacegrid ascii: empty)"
+
+    rows = s.splitlines()
+    # Preserve intentional leading/trailing spaces in rows; only pad to a uniform width.
+    w = max((len(r) for r in rows), default=0)
+    h = len(rows)
+    padded = [r.ljust(w) for r in rows]
+
+    if show_axes:
+        y_w = max(2, len(str(max(0, h - 1))))
+        indent_border = " " * (y_w + 1)   # spaces before the '+-----+' border
+        indent_cells = " " * (y_w + 2)    # spaces before the first cell (after '|')
+    else:
+        y_w = 0
+        indent_border = ""
+        indent_cells = ""
+
+    out: list[str] = []
+    if title:
+        out.append(str(title))
+
+    if show_axes and w > 0:
+        tens = "".join(str((i // 10) % 10) if i >= 10 else " " for i in range(w))
+        ones = "".join(str(i % 10) for i in range(w))
+        if any(ch != " " for ch in tens):
+            out.append(indent_cells + tens)
+        out.append(indent_cells + ones)
+
+    border = indent_border + "+" + ("-" * w) + "+"
+    out.append(border)
+
+    for y, row in enumerate(padded):
+        if show_axes:
+            out.append(f"{y:>{y_w}d} |{row}|")
+        else:
+            out.append(f"|{row}|")
+
+    out.append(border)
+
+    if legend:
+        out.append(str(legend))
+
+    return "\n".join(out)
 
 
 def wm_salience_force_focus_entity_v1(ctx: Ctx, entity_id: str, *, ttl: int | None = None, reason: str = "inspect") -> None:
@@ -9887,6 +10156,192 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             except Exception:
                 pass
 
+            # --- Step 15A: WM.Scratch record for ambiguous NavPatch commit -----------------------
+            # If a NavPatch match is ambiguous, stage a compact record under WM_SCRATCH so later
+            # probe/zoom steps can consult it (without affecting policy selection yet).
+            try:
+                if bool(getattr(ctx, "wm_scratch_navpatch_enabled", True)):
+                    scratch_bid = ww.ensure_anchor("WM_SCRATCH")
+
+                    # Defensive init (slots=True: must exist on ctx or be created in dataclass)
+                    key_to_bid = getattr(ctx, "wm_scratch_navpatch_key_to_bid", None)
+                    if not isinstance(key_to_bid, dict):
+                        key_to_bid = {}
+                        ctx.wm_scratch_navpatch_key_to_bid = key_to_bid
+
+                    prev_keys = getattr(ctx, "wm_scratch_navpatch_last_keys", None)
+                    if not isinstance(prev_keys, set):
+                        prev_keys = set()
+                        ctx.wm_scratch_navpatch_last_keys = prev_keys
+
+                    def _san(s: str) -> str:
+                        s2 = (s or "").strip().upper()
+                        out2: list[str] = []
+                        for ch in s2:
+                            out2.append(ch if ch.isalnum() else "_")
+                        s2 = "".join(out2)
+                        while "__" in s2:
+                            s2 = s2.replace("__", "_")
+                        return s2.strip("_") or "X"
+
+                    def _scratch_key(eid: str, local_id: str) -> str:
+                        return f"{(eid or '').strip().lower()}|{(local_id or '').strip().lower()}"
+
+                    # Collect current ambiguous items (keys) and upsert their scratch records.
+                    nav_patches = getattr(env_obs, "nav_patches", None)
+                    cur_keys: set[str] = set()
+
+                    if isinstance(nav_patches, list):
+                        for p in nav_patches:
+                            if not isinstance(p, dict):
+                                continue
+
+                            m = p.get("match")
+                            if not isinstance(m, dict):
+                                continue
+                            if (m.get("commit") or "") != "ambiguous":
+                                continue
+
+                            eid = p.get("entity_id")
+                            local_id = p.get("local_id")
+                            eid = eid.strip().lower() if isinstance(eid, str) and eid.strip() else "unknown"
+                            local_id = local_id.strip().lower() if isinstance(local_id, str) and local_id.strip() else "p"
+
+                            k = _scratch_key(eid, local_id)
+                            cur_keys.add(k)
+
+                            # Stable anchor name so we update in place (no unbounded growth).
+                            anchor_name = f"WM_SCRATCH_NVP_{_san(eid)}_{_san(local_id)}"
+                            sbid = ww.ensure_anchor(anchor_name)
+                            key_to_bid[k] = sbid
+
+                            # Ensure the scratch root points to this item.
+                            _upsert_edge(scratch_bid, sbid, "wm_scratch_item", {"created_by": "wm_scratch", "kind": "navpatch_ambiguous"})
+
+                            # Tags: keep them WM-scoped so they don't collide with pred/cue tags.
+                            tags = _tagset_of(sbid)
+                            tags.add("wm:scratch_item")
+                            tags.add("wm:scratch:navpatch_match")
+                            tags.add(f"wm:eid:{eid}")
+                            tags.add(f"wm:patch_local:{local_id}")
+
+                            # Meta.wm payload (JSON-safe, compact, inspectable)
+                            b = ww._bindings.get(sbid)
+                            if b is not None:
+                                if not isinstance(getattr(b, "meta", None), dict):
+                                    b.meta = {}
+                                wmm = b.meta.setdefault("wm", {})
+                                if isinstance(wmm, dict):
+                                    wmm["kind"] = "navpatch_match_ambiguous"
+                                    wmm["schema"] = "wm_scratch_navpatch_match_v1"
+                                    wmm["controller_steps"] = int(getattr(ctx, "controller_steps", 0) or 0)
+                                    wmm["entity_id"] = eid
+                                    wmm["local_id"] = local_id
+                                    wmm["patch_sig16"] = p.get("sig16") if isinstance(p.get("sig16"), str) else None
+                                    wmm["commit"] = "ambiguous"
+                                    wmm["decision"] = m.get("decision")
+                                    wmm["decision_note"] = m.get("decision_note")
+                                    wmm["margin"] = m.get("margin")
+                                    wmm["best"] = m.get("best") if isinstance(m.get("best"), dict) else None
+                                    wmm["top_k"] = m.get("top_k") if isinstance(m.get("top_k"), list) else []
+
+                    # Remove stale scratch edges for ambiguity items that are no longer ambiguous this tick.
+                    stale = set(prev_keys) - set(cur_keys)
+                    if stale:
+                        bsrc = ww._bindings.get(scratch_bid)
+                        edges = getattr(bsrc, "edges", None) if bsrc is not None else None
+                        if isinstance(edges, list):
+                            for sk in stale:
+                                sbid = key_to_bid.get(sk)
+                                if not isinstance(sbid, str):
+                                    continue
+                                edges[:] = [
+                                    e for e in edges
+                                    if not (
+                                        isinstance(e, dict)
+                                        and (e.get("label") or e.get("rel") or e.get("relation")) == "wm_scratch_item"
+                                        and (e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")) == sbid
+                                    )
+                                ]
+                                key_to_bid.pop(sk, None)
+
+                    ctx.wm_scratch_navpatch_last_keys = set(cur_keys)
+                    # --- Step 15B: Emit zoom_down / zoom_up events (diagnostic first) ----------
+                    # We treat "zoom" as a mode transition triggered by persistent ambiguity.
+                    # Zoom state is derived from WM.Scratch ambiguity keys:
+                    #   - zoom_down: prev_keys empty -> cur_keys non-empty
+                    #   - zoom_up:   prev_keys non-empty -> cur_keys empty
+                    try:
+                        if bool(getattr(ctx, "wm_zoom_enabled", True)):
+                            now_down = bool(cur_keys)
+                            prev_down = bool(prev_keys)
+
+                            # Compute a compact entity set from keys like "eid|local".
+                            def _entities_from_keys(keys: set[str]) -> set[str]:
+                                out_e: set[str] = set()
+                                for kk in keys:
+                                    if not isinstance(kk, str) or "|" not in kk:
+                                        continue
+                                    out_e.add(kk.split("|", 1)[0].strip().lower())
+                                return out_e
+
+                            events: list[dict[str, Any]] = []
+
+                            if now_down != prev_down:
+                                kind = "zoom_down" if now_down else "zoom_up"
+                                keys_for_event = set(cur_keys) if now_down else set(prev_keys)
+                                ents = _entities_from_keys(keys_for_event)
+
+                                hazard_near = False
+                                try:
+                                    hazard_near = (body_cliff_distance(ctx) == "near")  #pylint: disable=superfluous-parens
+                                except Exception:
+                                    hazard_near = False
+
+                                hazard_amb = "cliff" in ents
+                                if now_down:
+                                    reason = "hazard+ambiguity" if (hazard_near or hazard_amb) else "ambiguity"
+                                else:
+                                    reason = "resolved"
+
+                                ev = {
+                                    "kind": kind,
+                                    "reason": reason,
+                                    "controller_steps": int(getattr(ctx, "controller_steps", 0) or 0),
+                                    "ambiguous_n": int(len(keys_for_event)),
+                                    "ambiguous_keys": sorted(list(keys_for_event)),
+                                    "ambiguous_entities": sorted(list(ents)),
+                                    "hazard_near": bool(hazard_near),
+                                    "hazard_ambiguous": bool(hazard_amb),
+                                }
+                                events.append(ev)
+
+                                if bool(getattr(ctx, "wm_zoom_verbose", False)):
+                                    try:
+                                        ent_txt = ",".join(sorted(list(ents))[:4])
+                                        more = "..." if len(ents) > 4 else ""
+                                        print(f"[wm-zoom] {kind} reason={reason} amb={len(keys_for_event)} ents={ent_txt}{more}")
+                                    except Exception:
+                                        pass
+
+                                try:
+                                    ctx.wm_zoom_last_reason = reason
+                                    ctx.wm_zoom_last_event_step = int(getattr(ctx, "controller_steps", 0) or 0)
+                                except Exception:
+                                    pass
+
+                            # Always update state + per-tick event list (even if empty).
+                            try:
+                                ctx.wm_zoom_state = "down" if now_down else "up"
+                                ctx.wm_zoom_last_events = list(events)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+            except Exception:
+                pass
+
         # --- WorkingMap SurfaceGrid (Phase X Step 12) -----------------------------------------
         # Compose a single topological SurfaceGrid once per tick from EnvObservation.nav_patches.
         # We cache by the sorted list of patch sig16 values so unchanged patch-sets can skip recompute.
@@ -9996,21 +10451,17 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
                 pass
 
         # Display-only: render sparse SurfaceGrid ASCII with landmark letters.
-        # (We only print when wm_surfacegrid_verbose is True to avoid log spam.)
+        # NOTE: Do NOT print the raw grid here (it is visually confusing); we print the framed map in the per-cycle HUD:
+        #   "[cycle] SG   map: ..."
         try:
             sg = getattr(ctx, "wm_surfacegrid", None)
             if sg is not None:
-                txt = render_surfacegrid_ascii_with_salience_v1(
+                ctx.wm_surfacegrid_last_ascii = render_surfacegrid_ascii_with_salience_v1(
                     ctx,
                     ww,
                     sg,
                     focus_entities=list(getattr(ctx, "wm_salience_focus_entities", []) or []),
                 )
-                ctx.wm_surfacegrid_last_ascii = txt
-                if bool(getattr(ctx, "wm_surfacegrid_verbose", False)):
-                    focus = ",".join(getattr(ctx, "wm_salience_focus_entities", []) or [])
-                    print(f"[surfacegrid] focus=[{focus}]")
-                    print(txt)
         except Exception:
             pass
 
@@ -10302,20 +10753,22 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         # BodyMap update should never be allowed to break env stepping.
         pass
 
+    # NavPatch predictive matching loop (Phase X baseline; priors OFF).
+    # This records traceability metadata and may store new patch engrams in Column.
+    # IMPORTANT: run *before* WorkingMap injection so env_obs.nav_patches carries match/commit fields.
+    # This must never break env stepping.
+    try:
+        navpatch_predictive_match_loop_v1(ctx, env_obs)
+    except Exception:
+        # Matching is diagnostic; ignore failures and keep the env loop alive.
+        pass
+
     # Mirror into WorkingMap when enabled.
     # Keep the returned dict so callers (e.g., env-loop footer) can summarize what happened.
     working_inj = None
     try:
         if getattr(ctx, "working_enabled", False):
             working_inj = inject_obs_into_working_world(ctx, env_obs)
-    except Exception:
-        working_inj = None
-
-    # NavPatch predictive matching loop (Phase X baseline; priors OFF).
-    # This only records traceability metadata and stores new patch engrams in Column.
-    # It must never break env stepping.
-    try:
-        navpatch_predictive_match_loop_v1(ctx, env_obs)
     except Exception:
         working_inj = None
 
@@ -11363,6 +11816,26 @@ def _print_cog_cycle_footer(*,
         if exec_on:
             scratch_txt += f" (exec_on={exec_on})"
     print(f"[cycle] WM   surfaceΔ: {delta_txt} | scratch: {scratch_txt}")
+    # [cycle] ZM — Zoom transitions (Phase X Step 15B)
+    # We only print on transition ticks (zoom_down / zoom_up) so logs stay readable.
+    try:
+        z_events = getattr(ctx, "wm_zoom_last_events", None)
+        if isinstance(z_events, list) and z_events:
+            ev0 = z_events[0] if isinstance(z_events[0], dict) else {}
+            kind = ev0.get("kind") if isinstance(ev0.get("kind"), str) else "zoom"
+            reason = ev0.get("reason") if isinstance(ev0.get("reason"), str) else ""
+            ents = ev0.get("ambiguous_entities") if isinstance(ev0.get("ambiguous_entities"), list) else []
+            ent_txt = _fmt_items(ents, prefix="", limit=3) if ents else "(none)"
+            amb_n = ev0.get("ambiguous_n")
+            try:
+                amb_n = int(amb_n) if amb_n is not None else None
+            except Exception:
+                amb_n = None
+            amb_txt = f" amb={amb_n}" if isinstance(amb_n, int) else ""
+            rz = f" reason={reason}" if reason else ""
+            print(f"[cycle] ZM   {kind}{rz}{amb_txt} ents={ent_txt}")
+    except Exception:
+        pass
 
     # [cycle] SG — SurfaceGrid HUD (Phase X Step 12)
     if bool(getattr(ctx, "wm_surfacegrid_enabled", False)):
@@ -11380,11 +11853,19 @@ def _print_cog_cycle_footer(*,
 
         print(f"[cycle] SG   surfacegrid_sig16={sg_sig16} compose_ms={sg_ms:.2f}{reason_txt}")
 
-        # Optional ASCII dump only when verbose and we actually recomposed this tick.
-        if bool(getattr(ctx, "wm_surfacegrid_verbose", False)) and sg_ms > 0.0:
+        # Optional ASCII map dump.
+        # If wm_surfacegrid_ascii_each_tick is True, print even on cache-hit ticks (sg_ms == 0.0).
+        show_each = bool(getattr(ctx, "wm_surfacegrid_ascii_each_tick", False))
+        if bool(getattr(ctx, "wm_surfacegrid_verbose", False)) and (show_each or sg_ms > 0.0):
             ascii_txt = getattr(ctx, "wm_surfacegrid_last_ascii", None)
             if isinstance(ascii_txt, str) and ascii_txt:
-                print("[cycle] SG   ascii:\n" + ascii_txt)
+                # Always print legend under the framed map (every cognitive cycle).
+                legend_txt = "@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)"
+                title = f"WM.SurfaceGrid (sig16={sg_sig16})"
+                map_txt = format_surfacegrid_ascii_map_v1(ascii_txt, title=title, legend=legend_txt, show_axes=True)
+                print("[cycle] SG   map:\n" + map_txt)
+            elif show_each:
+                print("[cycle] SG   map: (no ascii available)")
 
     # ---- line 3: WorldGraph writes this tick
     wg_txt = f"preds+{len(wg_preds)} cues+{len(wg_cues)}"
@@ -12533,6 +13014,23 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                         "focus_entities": list(getattr(ctx, "wm_salience_focus_entities", []) or []),
                         "events": list(getattr(ctx, "wm_salience_last_events", []) or []),
                     }
+                    # --- Step 15B: include WM zoom state/events (trace hook) ---
+                    try:
+                        z_state = getattr(ctx, "wm_zoom_state", "up")
+                        z_state = str(z_state).strip().lower() if isinstance(z_state, str) else "up"
+                        if z_state not in ("up", "down"):
+                            z_state = "up"
+
+                        keys = getattr(ctx, "wm_scratch_navpatch_last_keys", None)
+                        active_keys = sorted(list(keys)) if isinstance(keys, set) else []
+
+                        wm["zoom"] = {
+                            "state": z_state,
+                            "active_keys": active_keys,
+                            "events": list(getattr(ctx, "wm_zoom_last_events", []) or []),
+                        }
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
@@ -13131,6 +13629,12 @@ def interactive_loop(args: argparse.Namespace) -> None:
         ctx.boundary_vhash64 = ctx.tvec64()
     except Exception:
         ctx.boundary_vhash64 = None
+
+    # Phase X ergonomics: show WM.SurfaceGrid as an ASCII map every env-loop tick.
+    # This is intentionally noisy; if you want the compact HUD only, set either of these False.
+    ctx.wm_surfacegrid_verbose = True
+    ctx.wm_surfacegrid_ascii_each_tick = True
+
     env = HybridEnvironment()     # Environment simulation: newborn-goat scenario (HybridEnvironment)
     ctx.body_world, ctx.body_ids = init_body_world() # initialize tiny BodyMap (body_world) as a separate WorldGraph instance
     ctx.working_world = init_working_world()
