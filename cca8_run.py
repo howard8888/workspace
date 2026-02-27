@@ -407,6 +407,14 @@ class Ctx:
     wm_probe_restore_step: Optional[int] = None
     wm_probe_prev_navpatch_precision_grid: Optional[float] = None
 
+    # --- WM demo knobs (debug-only; default OFF) ---------------------------------------
+    # If wm_demo_force_ambiguity_steps > 0, NavPatch matching will force an "ambiguous" commit
+    # for wm_demo_force_ambiguity_entity for that many env steps, then auto-decrement to 0.
+    #wm_demo_force_ambiguity_steps: int = 0
+    wm_demo_force_ambiguity_steps: int = 12  #to force ambiguity for testing
+    wm_demo_force_ambiguity_entity: str = "cliff"
+    wm_demo_force_ambiguity_margin: float = 0.0
+
     # NavPatch priors (Phase X 2.2a): top-down bias terms (OFF by default)
     # -------------------------------------------------------------------
     # These priors are used ONLY inside the NavPatch matching loop to bias which stored
@@ -3874,33 +3882,6 @@ def _gate_rest_trigger_body_space(world, drives: Drives, ctx) -> bool:
     fatigue = float(getattr(drives, "fatigue", 0.0))
     fatigue_high = fatigue > float(FATIGUE_HIGH)
     fatigue_cue = any_cue_tokens_present(world, ["drive:fatigue_high"])
-
-    # --- DEBUG: show how the Rest gate sees BodyMap and drives ---
-    try:
-        cliff = None
-        shelter = None
-        zone_label = "unknown"
-        bodymap_stale = True
-
-        if ctx is not None:
-            bodymap_stale = bodymap_is_stale(ctx)
-            if not bodymap_stale:
-                cliff = body_cliff_distance(ctx)
-                shelter = body_shelter_distance(ctx)
-                if cliff == "near" and shelter != "near":
-                    zone_label = "unsafe_cliff_near"
-                elif shelter == "near" and cliff != "near":
-                    zone_label = "safe"
-
-        print(
-            "[gate:rest] "
-            f"fatigue={fatigue:.2f} high={fatigue_high} cue={fatigue_cue} "
-            f"bodymap_stale={bodymap_stale} "
-            f"cliff={cliff} shelter={shelter} zone={zone_label}"
-        )
-    except Exception:
-        # Debug only; never crash the gate.
-        pass
 
     # If we are not tired enough, do not rest regardless of geometry.
     if not (fatigue_high or fatigue_cue):
@@ -8545,6 +8526,21 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
         amb_margin = 0.05
     amb_margin = max(0.0, min(1.0, amb_margin))
 
+    # --- Demo knob: forced ambiguity (temporary) ---------------------------------------
+    # This exists purely to demo Step 15B (zoom) + Step 15C (probe) in short runs.
+    # Default is OFF (steps==0).
+    try:
+        demo_steps_left = int(getattr(ctx, "wm_demo_force_ambiguity_steps", 0) or 0)
+    except Exception:
+        demo_steps_left = 0
+
+    demo_entity = str(getattr(ctx, "wm_demo_force_ambiguity_entity", "cliff") or "cliff").strip().lower()
+    try:
+        demo_margin = float(getattr(ctx, "wm_demo_force_ambiguity_margin", 0.0) or 0.0)
+    except Exception:
+        demo_margin = 0.0
+    demo_margin = max(0.0, min(1.0, demo_margin))
+
     # Priors bundle (Phase X 2.2a): OFF by default.
     priors_enabled = bool(getattr(ctx, "navpatch_priors_enabled", False))
     priors: dict[str, Any] = {"v": "navpatch_priors_v1", "enabled": False, "sig16": None}
@@ -8803,6 +8799,17 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
             else:
                 commit = "unknown"
 
+        # --- Demo: force an ambiguous commit for a chosen entity for N steps -------------
+        if demo_steps_left > 0 and demo_entity:
+            ent0 = p.get("entity_id")
+            ent = ent0.strip().lower() if isinstance(ent0, str) else ""
+            if ent == demo_entity:
+                commit = "ambiguous"
+                if decision_note is None:
+                    decision_note = "demo_force_ambiguity"
+                margin = float(demo_margin)
+                margin_raw = float(demo_margin)
+
         rec_out = {
             "sig": sig,
             "sig16": sig16,
@@ -8842,9 +8849,14 @@ def navpatch_predictive_match_loop_v1(ctx: Ctx, env_obs: EnvObservation) -> list
         ctx.navpatch_last_matches = out
     except Exception:
         pass
+
+    # Decrement demo knob once per navpatch loop call (one per env step).
+    if demo_steps_left > 0:
+        try:
+            ctx.wm_demo_force_ambiguity_steps = max(0, int(demo_steps_left) - 1)
+        except Exception:
+            pass
     return out
-
-
 
 
 # -----------------------------------------------------------------------------

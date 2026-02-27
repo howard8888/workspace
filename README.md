@@ -3371,32 +3371,29 @@ Design goals:
 
 ---
 
-## 0) Implementation status (v5.5)
 
-Status key: DONE = implemented in code; PARTIAL = plumbing/stub implemented; TODO = not implemented yet.
+## 0) Implementation status (v5.6 — 2026-02-27)
 
-DONE
-- EnvObservation.nav_patches + PerceptionAdapter patch stubs (Phase 2.1).
-- Patch signature (patch_sig / sig16) + per-run de-dup (Phase 1.2).
-- Store navpatch_v1 engrams in Column; attach patch_refs to WorkingMap entities (Phases 1.1, 3.1).
-- Include patch_refs in wm_mapsurface snapshots; add terminal visibility (MapSurface table “patches” column + footer).
-- Predictive match traces: top-K candidates + self-exclusion (Phase 2.2).
-- Priors bundle v1 (hazard_bias + err_guard) (Phase 2.2a).
-- Precision-weighted evidence scoring v1 (tags vs extent) with commit/ambiguous/unknown + decision margin (Phases 2.2b, 2.2c).
-- Per-cycle JSON trace logging (ring buffer + optional JSONL file) capturing patches/matches/priors (Phase 2.2d).
-- EFE-style policy scoring stub (efe_scores_v1: risk, ambiguity, preference, total) included in JSON/JSONL (diagnostic only).
-- Unit tests for signature/dedup/JSON logging; repo hygiene (ignore cycle_log.jsonl; remove accidental hello.*).
+Status key: ✅ DONE / 🟡 PARTIAL / ⚪ TODO
 
-PARTIAL
-- Use match-trace confidence (commit/ambiguous/unknown + margins + weights) inside control (policy selection).
-- Persist ambiguous hypotheses into WorkingMap.Scratch.
+✅ DONE:
+  - EnvObservation schema
+  - PerceptionAdapter + inject_obs_into_world()
+  - SurfaceGrid payload (EnvObservation.surface_grid + ASCII)
+  - WM.Grid → derived predicates (hazard:near, terrain:traversable_near, goal:dir, …)
+  - NavPatch payload schema + example patches
+  - NavPatch predictive match loop (best + top-K traces)
+  - "risk" and "ambiguity" derived scoring helpers (EFE stub)
+  - WM.Scratch ambiguity records for NavPatch matches (observed patch id/sig, entity/role, top-K candidates + scores, margin/reason)
+  - zoom_down / zoom_up events emitted on ambiguity transitions (tracked in ctx.wm_zoom_state; last events in ctx.wm_zoom_last_events)
+  - Minimal probe/inspect policy ("policy:probe") gated by WM.Scratch ambiguity (boosts navpatch_precision_grid for a few steps)
 
-TODO (next)
-- Persist top-K hypotheses into WorkingMap.Scratch when commit != "commit", and thread commit/margins into cautious action selection.
-- Patch-aware WorldGraph indexing beyond wm_mapsurface pointers (thin patch_sig/tag summaries on pointer nodes).
-- Patch consolidation/reconsolidation (ancestry, copy-on-write semantics).
-- Learned policy scaffolding and evaluation tasks (goat_foraging_*).
+🟡 PARTIAL:
+  - "Use match-trace confidence inside control" (policy selection) — trace exists; not yet used.
+  - Thread commit/margins into cautious action selection (beyond the epistemic probe).
 
+⚪ TODO:
+  - Replace the probe’s precision boost with a real inspect action that changes the observation stream (once env supports it).
 ---
 
 ## 1) What problem NavPatch solves
