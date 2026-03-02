@@ -262,6 +262,22 @@ class Ctx:
     env_loop_cycle_summary_max_items: int = 6
 
     posture_discrepancy_history: list[str] = field(default_factory=list) #per-session list of discrepancies motor command vs what environment reports
+
+    # Sequential / error unit (CCA7 cerebellum-inspired) — temporal deltas + prediction errors (stub)
+    # -----------------------------------------------------------------------------------------
+    # Diagnostic-first: tracks short windows of sensory change over time. Does NOT change policy selection yet.
+    seqerr_enabled: bool = True
+    seqerr_verbose: bool = False
+    seqerr_window: int = 4
+
+    # Optional attention hook (predictive-coding seam). OFF by default to keep behavior unchanged.
+    seqerr_attention_enabled: bool = False
+    seqerr_attention_threshold: float = 0.25
+    seqerr_attention_request: Optional[str] = None
+
+    # Latest computed bundle + short ring buffer (JSON-safe).
+    seqerr_last: dict[str, Any] = field(default_factory=dict)
+    seqerr_history: list[dict[str, Any]] = field(default_factory=list)
     # BodyMap: tiny body+near-world map (separate WorldGraph instance)
     body_world: Optional[cca8_world_graph.WorldGraph] = None
     body_ids: dict[str, str] = field(default_factory=dict)
@@ -414,6 +430,36 @@ class Ctx:
     wm_demo_force_ambiguity_steps: int = 12  #to force ambiguity for testing
     wm_demo_force_ambiguity_entity: str = "cliff"
     wm_demo_force_ambiguity_margin: float = 0.0
+
+    # MapSurface: stateful "workspace" graph (separate WorldGraph instance)
+    # ---------------------------------------------------------------
+    # WorkingMap is episodic (write-everything). MapSurface is intended to be
+    # stateful: a small set of entity nodes (starting with SELF) whose pred:* tags
+    # are overwritten each tick by slot-family ("belief register"), similar in spirit
+    # to CCA7's heavy usage of feedback loops and map-like working memory.
+    map_surface_world: Optional[cca8_world_graph.WorldGraph] = None
+    map_surface_ids: dict[str, str] = field(default_factory=dict)
+
+    # SurfaceGrid: last local spatial / affordance surface (debug + future planning)
+    # ---------------------------------------------------------------------------
+    # This is populated from EnvObservation.surface_grid (environment-side perception).
+    # It is a JSON-safe dict representation today, but can become a real grid/costmap
+    # object once we plug in a robot backend.
+    surface_grid: dict[str, Any] = field(default_factory=dict)
+
+    # Predictive coding / attention (top-down modulation)
+    # ---------------------------------------------------
+    # Minimal v1:
+    #   - predict "world stays the same" by default (prev slots == predictions)
+    #   - compute mismatch slots as a prediction error signal
+    #   - optionally request attention (percept_focus) on the most surprising slot
+    predcode_enabled: bool = True
+    predcode_prev_slots: dict[str, str] = field(default_factory=dict)
+    predcode_last_error: dict[str, Any] = field(default_factory=dict)
+
+    # A simple attention request used by PerceptionAdapter / robot backends.
+    # Examples: "mom", "proximity:mom", "hazard:cliff".
+    percept_focus: Optional[str] = None
 
     # NavPatch priors (Phase X 2.2a): top-down bias terms (OFF by default)
     # -------------------------------------------------------------------
@@ -787,6 +833,148 @@ def init_working_world() -> cca8_world_graph.WorldGraph:
     ww.ensure_anchor("NOW_ORIGIN")
     return ww
 
+
+def init_map_surface_world() -> tuple[cca8_world_graph.WorldGraph, dict[str, str]]:
+    """Initialize a stateful MapSurface as a separate WorldGraph instance.
+
+    Concept
+    -------
+    - WorkingMap (ctx.working_world) is episodic: we append bindings each tick to preserve a
+      high-bandwidth trace.
+    - MapSurface (ctx.map_surface_world) is stateful: it holds a small set of entity nodes
+      (starting with SELF) whose pred:* tags are overwritten each tick by slot-family.
+
+    Implementation detail
+    ---------------------
+    We treat the "NOW" anchor binding as the SELF node for MapSurface.
+    """
+    ms = cca8_world_graph.WorldGraph(memory_mode="semantic")
+    ms.set_tag_policy("allow")
+    ms.set_stage("neonate")
+    self_bid = ms.ensure_anchor("NOW")
+    ms.ensure_anchor("NOW_ORIGIN")
+    ids = {"SELF": self_bid, "NOW": self_bid}
+    return ms, ids
+
+
+def _slot_key_from_token(tok: str) -> str:
+    """Return a stable slot-family key for a token."""
+    tok = str(tok)
+    return tok.rsplit(":", 1)[0] if ":" in tok else tok
+
+
+def update_surface_grid_from_obs(ctx: Ctx, env_obs: EnvObservation) -> None:
+    """Update ctx.surface_grid from EnvObservation."""
+    if ctx is None or env_obs is None:
+        return
+    sg = getattr(env_obs, "surface_grid", None)
+    if isinstance(sg, dict):
+        ctx.surface_grid = sg
+
+
+def update_map_surface_from_obs(ctx: Ctx, env_obs: EnvObservation) -> None:
+    """Update the stateful MapSurface SELF node from EnvObservation (overwrite-by-slot)."""
+    if ctx is None or env_obs is None:
+        return
+
+    if getattr(ctx, "map_surface_world", None) is None:
+        try:
+            ctx.map_surface_world, ctx.map_surface_ids = init_map_surface_world()
+        except Exception:
+            return
+
+    ms = ctx.map_surface_world
+    if ms is None:
+        return
+
+    self_bid = (getattr(ctx, "map_surface_ids", {}) or {}).get("SELF")
+    if not isinstance(self_bid, str):
+        try:
+            self_bid = ms.ensure_anchor("NOW")
+            ctx.map_surface_ids = {"SELF": self_bid, "NOW": self_bid}
+        except Exception:
+            return
+
+    b = ms._bindings.get(self_bid)
+    if b is None:
+        return
+
+    pred_tokens = [
+        str(p).replace("pred:", "")
+        for p in (getattr(env_obs, "predicates", []) or [])
+        if p is not None
+    ]
+
+    keep: list[str] = []
+    for tok in pred_tokens:
+        if tok.startswith("proximity:") or tok.startswith("hazard:"):
+            keep.append(tok)
+
+    hazard_tok: str | None = None
+    if any(t.startswith("hazard:") and t.endswith(":near") for t in keep):
+        hazard_tok = "hazard:near"
+    elif any(t.startswith("hazard:") and t.endswith(":far") for t in keep):
+        hazard_tok = "hazard:far"
+    if hazard_tok is not None:
+        keep.append(hazard_tok)
+
+    slots_to_write = {_slot_key_from_token(t) for t in keep}
+
+    tags = set(getattr(b, "tags", []) or [])
+    cleaned: set[str] = set()
+    for t in tags:
+        if not isinstance(t, str) or not t.startswith("pred:"):
+            cleaned.add(t)
+            continue
+        tok = t.replace("pred:", "", 1)
+        if _slot_key_from_token(tok) in slots_to_write:
+            continue
+        cleaned.add(t)
+
+    for tok in keep:
+        cleaned.add(f"pred:{tok}")
+
+    b.tags = cleaned
+
+
+def predcode_update_from_obs(ctx: Ctx, env_obs: EnvObservation) -> None:
+    """Predictive coding v1: predict "no change" and compute which slots changed."""
+    if ctx is None or env_obs is None:
+        return
+    if not bool(getattr(ctx, "predcode_enabled", True)):
+        return
+
+    pred_tokens = [
+        str(p).replace("pred:", "")
+        for p in (getattr(env_obs, "predicates", []) or [])
+        if p is not None
+    ]
+
+    observed_slots: dict[str, str] = {}
+    for tok in pred_tokens:
+        observed_slots[_slot_key_from_token(tok)] = tok
+
+    predicted_slots = dict(getattr(ctx, "predcode_prev_slots", {}) or {})
+
+    mismatches: list[dict[str, str]] = []
+    for slot, pred_tok in predicted_slots.items():
+        obs_tok = observed_slots.get(slot)
+        if obs_tok is None:
+            continue
+        if obs_tok != pred_tok:
+            mismatches.append({"slot": slot, "pred": str(pred_tok), "obs": str(obs_tok)})
+
+    ctx.predcode_last_error = {
+        "mismatch_count": len(mismatches),
+        "mismatches": mismatches,
+        "predicted_slots": len(predicted_slots),
+        "observed_slots": len(observed_slots),
+    }
+    ctx.predcode_prev_slots = observed_slots
+
+    if mismatches and getattr(ctx, "percept_focus", None) is None:
+        slot0 = mismatches[0].get("slot")
+        ctx.percept_focus = "proximity:mom" if isinstance(slot0, str) and slot0.startswith("proximity:mom") else slot0
 
 def reset_working_world(ctx) -> None:
     """Reset ctx.working_world to a fresh WorkingMap instance (and clear MapSurface caches).
@@ -7924,28 +8112,6 @@ def update_body_world_from_obs(ctx, env_obs) -> None:
 
         b.tags = tags
 
-    # --- mom-distance slot ---
-    mom_bid = body_ids.get("mom")
-    if mom_bid and mom_bid in body_world._bindings:
-        b = body_world._bindings[mom_bid]
-        tags = set(getattr(b, "tags", []) or [])
-
-        # Remove old proximity tags
-        tags = {
-            t for t in tags
-            if not (
-                isinstance(t, str)
-                and t.startswith("pred:proximity:mom:")
-            )
-        }
-
-        if "proximity:mom:close" in preds:
-            tags.add("pred:proximity:mom:close")
-        elif "proximity:mom:far" in preds:
-            tags.add("pred:proximity:mom:far")
-
-        b.tags = tags
-
     # --- shelter-distance slot ---
     shelter_bid = body_ids.get("shelter")
     if shelter_bid and shelter_bid in body_world._bindings:
@@ -8033,6 +8199,241 @@ def update_body_world_from_obs(ctx, env_obs) -> None:
             ctx.bodymap_last_update_step = steps
     except Exception:
         # BodyMap bookkeeping must never break the env→body bridge.
+        pass
+
+
+def seqerr_update_from_obs(ctx: Ctx, env_obs: EnvObservation) -> None:
+    # pylint: disable=too-many-locals, too-many-branches, too-many-statements
+    """
+    Sequential/error v1 (stub): compute short-window temporal deltas + prediction error.
+
+    Intent
+    ------
+    In CCA7, a cerebellum-inspired unit processes how sensory signals evolve over time and
+    computes mismatch signals (prediction error). For CCA8 we implement a minimal, transparent
+    version that:
+
+      1) Tracks a short history window (default 4) of:
+         - raw numeric channels (EnvObservation.raw_sensors)
+         - discrete predicate slots (EnvObservation.predicates)
+
+      2) Computes:
+         - raw_delta: per-channel curr - prev
+         - raw_err  : constant-velocity extrapolation error when we have >=3 frames:
+                      pred_next = prev + (prev - prev_prev)
+                      raw_err   = curr - pred_next
+         - slot_changes: list of discrete slot transitions (e.g., proximity:mom:far -> close)
+         - slot_stability: how many consecutive frames each slot token has remained unchanged
+
+    Outputs (stored on ctx)
+    -----------------------
+      - ctx.seqerr_last: latest JSON-safe bundle
+      - ctx.seqerr_history: ring buffer of last seqerr_window frames
+
+    Optional predictive-coding seam (OFF by default)
+    ------------------------------------------------
+    If ctx.seqerr_attention_enabled is True, set ctx.seqerr_attention_request when a channel
+    error magnitude exceeds ctx.seqerr_attention_threshold and no request is pending.
+
+    Safety
+    ------
+    Must never raise exceptions to callers.
+    """
+    if ctx is None or env_obs is None:
+        return
+    if not bool(getattr(ctx, "seqerr_enabled", True)):
+        return
+
+    def _as_int(x: Any) -> int:
+        try:
+            return int(x)
+        except Exception:
+            return 0
+
+    def _as_float(x: Any) -> float | None:
+        # bool is an int subclass; treat it as non-numeric for our purposes.
+        if isinstance(x, bool):
+            return None
+        if isinstance(x, (int, float)):
+            return float(x)
+        try:
+            return float(x)
+        except Exception:
+            return None
+
+    def _slot_key(tok: str) -> str:
+        tok = str(tok)
+        return tok.rsplit(":", 1)[0] if ":" in tok else tok
+
+    # ---- time/step reference (best-effort) ----
+    env_meta = getattr(env_obs, "env_meta", None)
+    env_meta = env_meta if isinstance(env_meta, dict) else {}
+    t_now = _as_float(env_meta.get("time_since_birth"))
+    step_ref = env_meta.get("step_index")
+    if step_ref is None:
+        step_ref = getattr(ctx, "controller_steps", 0)
+    step_now = _as_int(step_ref)
+
+    # ---- raw sensors (numeric only; JSON-safe) ----
+    raw_in = getattr(env_obs, "raw_sensors", None)
+    raw: dict[str, float] = {}
+    if isinstance(raw_in, dict):
+        for k, v in raw_in.items():
+            if not isinstance(k, str) or not k:
+                continue
+            fv = _as_float(v)
+            if fv is None:
+                continue
+            raw[k] = fv
+
+    # ---- discrete slot snapshot (one token per slot family) ----
+    preds_in = getattr(env_obs, "predicates", None)
+    slots: dict[str, str] = {}
+    if isinstance(preds_in, list):
+        for p in preds_in:
+            if p is None:
+                continue
+            tok = str(p).replace("pred:", "", 1)
+            slots[_slot_key(tok)] = tok
+
+    # ---- history ring buffer ----
+    hist = getattr(ctx, "seqerr_history", None)
+    if not isinstance(hist, list):
+        hist = []
+        try:
+            ctx.seqerr_history = hist
+        except Exception:
+            hist = []
+
+    frame = {"step": step_now, "t": t_now, "raw": dict(raw), "slots": dict(slots)}
+    hist.append(frame)
+
+    try:
+        win = int(getattr(ctx, "seqerr_window", 4) or 4)
+    except Exception:
+        win = 4
+    win = max(2, min(25, win))
+    if len(hist) > win:
+        del hist[: len(hist) - win]
+
+    # ---- dt estimate ----
+    dt = 1.0
+    if len(hist) >= 2:
+        t0 = hist[-2].get("t")
+        t1 = hist[-1].get("t")
+        if isinstance(t0, (int, float)) and isinstance(t1, (int, float)):
+            d = float(t1) - float(t0)
+            if d > 1e-9:
+                dt = float(d)
+
+    # ---- deltas + errors ----
+    raw_delta: dict[str, float] = {}
+    raw_err: dict[str, float] = {}
+    slot_changes: list[dict[str, str]] = []
+    slot_stability: dict[str, int] = {}
+
+    if len(hist) >= 2:
+        prev_raw = hist[-2].get("raw")
+        prev_raw = prev_raw if isinstance(prev_raw, dict) else {}
+        for k, v1 in raw.items():
+            v0 = prev_raw.get(k)
+            if isinstance(v0, (int, float)):
+                raw_delta[k] = float(v1) - float(v0)
+
+        prev_slots = hist[-2].get("slots")
+        prev_slots = prev_slots if isinstance(prev_slots, dict) else {}
+        for slot, tok in slots.items():
+            prev_tok = prev_slots.get(slot)
+            if isinstance(prev_tok, str) and prev_tok != tok:
+                slot_changes.append({"slot": slot, "prev": prev_tok, "now": tok})
+
+    if len(hist) >= 3:
+        prev_raw = hist[-2].get("raw")
+        prev_prev_raw = hist[-3].get("raw")
+        if isinstance(prev_raw, dict) and isinstance(prev_prev_raw, dict):
+            for k, v1 in raw.items():
+                v0 = prev_raw.get(k)
+                v_1 = prev_prev_raw.get(k)
+                if isinstance(v0, (int, float)) and isinstance(v_1, (int, float)):
+                    pred_next = float(v0) + (float(v0) - float(v_1))
+                    raw_err[k] = float(v1) - pred_next
+
+    for slot, tok in slots.items():
+        n = 1
+        for i in range(len(hist) - 2, -1, -1):
+            slots_i = hist[i].get("slots")
+            if not isinstance(slots_i, dict):
+                break
+            if slots_i.get(slot) == tok:
+                n += 1
+            else:
+                break
+        slot_stability[slot] = n
+
+    # ---- attention suggestion (stored always; applied only when enabled) ----
+    best_key: str | None = None
+    best_mag = 0.0
+    best_src = ""
+
+    for k, e in raw_err.items():
+        mag = abs(float(e))
+        if mag > best_mag:
+            best_mag = mag
+            best_key = k
+            best_src = "raw_err"
+
+    if best_key is None:
+        for k, d in raw_delta.items():
+            mag = abs(float(d))
+            if mag > best_mag:
+                best_mag = mag
+                best_key = k
+                best_src = "raw_delta"
+
+    attention_suggest: str | None = None
+    if best_key is not None:
+        if "mom" in best_key:
+            attention_suggest = "mom"
+        elif "temperature" in best_key:
+            attention_suggest = "self:temperature"
+        else:
+            attention_suggest = best_key
+
+    try:
+        ctx.seqerr_last = {
+            "step": int(step_now),
+            "t": t_now,
+            "dt": float(dt),
+            "raw": dict(raw),
+            "raw_delta": dict(raw_delta),
+            "raw_err": dict(raw_err),
+            "slots": dict(slots),
+            "slot_changes": list(slot_changes),
+            "slot_stability": dict(slot_stability),
+            "attention_suggest": attention_suggest,
+            "attention_src": best_src,
+            "attention_mag": float(best_mag),
+        }
+    except Exception:
+        pass
+
+    try:
+        if bool(getattr(ctx, "seqerr_attention_enabled", False)) and attention_suggest:
+            thresh = float(getattr(ctx, "seqerr_attention_threshold", 0.25) or 0.25)
+            if float(best_mag) >= thresh and getattr(ctx, "seqerr_attention_request", None) is None:
+                ctx.seqerr_attention_request = attention_suggest
+    except Exception:
+        pass
+
+    try:
+        if bool(getattr(ctx, "seqerr_verbose", False)) and slot_changes:
+            parts = []
+            for c in slot_changes[:4]:
+                if isinstance(c, dict):
+                    parts.append(f"{c.get('slot')}:{c.get('prev')}→{c.get('now')}")
+            more = " …" if len(slot_changes) > 4 else ""
+            print(f"[seqerr] step={step_now} slot_changes={len(slot_changes)} [{', '.join(parts)}]{more}")
+    except Exception:
         pass
 
 
@@ -10765,6 +11166,21 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         # BodyMap update should never be allowed to break env stepping.
         pass
 
+    # Update the short-lived sensory surfaces (SurfaceGrid + MapSurface) and
+    # compute a minimal prediction error signal (predictive coding v1).
+    try:
+        update_surface_grid_from_obs(ctx, env_obs)
+    except Exception:
+        pass
+    try:
+        update_map_surface_from_obs(ctx, env_obs)
+    except Exception:
+        pass
+    try:
+        predcode_update_from_obs(ctx, env_obs)
+    except Exception:
+        pass
+
     # NavPatch predictive matching loop (Phase X baseline; priors OFF).
     # This records traceability metadata and may store new patch engrams in Column.
     # IMPORTANT: run *before* WorkingMap injection so env_obs.nav_patches carries match/commit fields.
@@ -10783,6 +11199,13 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
             working_inj = inject_obs_into_working_world(ctx, env_obs)
     except Exception:
         working_inj = None
+
+    # Always keep BodyMap current (policies are BodyMap-first now).
+    try:
+        update_body_world_from_obs(ctx, env_obs)
+    except Exception:
+        # BodyMap update should never be allowed to break env stepping.
+        pass
 
     # Allow turning off long-term injection entirely (BodyMap/WorkingMap still update).
     if not getattr(ctx, "longterm_obs_enabled", True):
@@ -11796,17 +12219,53 @@ def _print_cog_cycle_footer(*,
     patches_in = getattr(env_obs, "nav_patches", None) or []
     patch_n = len(patches_in) if isinstance(patches_in, list) else 0
     uniq_sig16: set[str] = set()
+    patch_ids: set[str] = set()
 
     if patch_n:
         for p in patches_in:
             if not isinstance(p, dict):
                 continue
+
             try:
                 uniq_sig16.add(navpatch_payload_sig_v1(p)[:16])
             except Exception:
                 pass
 
-    nav_txt = f"nav_patches={patch_n} uniq_sig16={len(uniq_sig16)}"
+            role = p.get("role") if isinstance(p.get("role"), str) else ""
+            local_id = p.get("local_id") if isinstance(p.get("local_id"), str) else ""
+            entity_id = p.get("entity_id") if isinstance(p.get("entity_id"), str) else ""
+
+            key = ""
+            if role and local_id:
+                key = f"{role}|{local_id}"
+            elif role and entity_id:
+                key = f"{role}|{entity_id}"
+            elif entity_id and local_id:
+                key = f"{entity_id}|{local_id}"
+            elif role:
+                key = role
+            elif local_id:
+                key = local_id
+            elif entity_id:
+                key = entity_id
+
+            if key:
+                patch_ids.add(key)
+
+    ids_txt = ""
+    if patch_ids:
+        ids = sorted(patch_ids)
+        show_n = 4
+        shown = ids[:show_n]
+        more = len(ids) - len(shown)
+
+        ids_body = ", ".join(shown)
+        if more > 0:
+            ids_body = ids_body + f", +{more} more"
+
+        ids_txt = f" ids=[{ids_body}]"
+
+    nav_txt = f"nav_patches={patch_n} uniq_sig16={len(uniq_sig16)}{ids_txt}"
 
     if obs_preds or obs_cues or patch_n:
         pred_txt = _fmt_items(obs_preds, prefix="", limit=max_items) if obs_preds else "(none)"

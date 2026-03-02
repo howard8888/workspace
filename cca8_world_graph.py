@@ -166,6 +166,11 @@ class TagLexicon:
                 # Hazard / cliff proximity
                 "hazard:cliff:near",
                 "hazard:cliff:far",
+                # Generic hazard summary (derived from SurfaceGrid / near-world perception)
+                # Rationale: policies can gate quickly on a one-bit hazard signal without
+                # caring which specific hazard generated it.
+                "hazard:near",
+                "hazard:far",
                 # Feeding / episode facts
                 "nipple:found",
                 "nipple:latched",
@@ -193,6 +198,7 @@ class TagLexicon:
                 "recover_miss",
                 "suckle",
                 "explore_check",
+                "probe",
             },
 
 

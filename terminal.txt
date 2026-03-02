@@ -163,17 +163,17 @@ Legend (console tags):
 [env→world] pred:proximity:mom:far → b4 (attach=latest)
 [env→world] pred:proximity:shelter:far → b5 (attach=latest)
 [env→world] pred:hazard:cliff:far → b6 (attach=latest)
-[wm<->col] store: ok sig=8ed7e5516f2b11a7 bid=b7 eid=992fb298… (auto_keyframe_env_reset(time_since_birth=0.00))
+[wm<->col] store: ok sig=d2c2273afb990d4a bid=b7 eid=451c05e1… (auto_keyframe_env_reset(time_since_birth=0.00))
 [wm<->col] retrieve: skip why=enabled_boundary_confident mode=merge top_k=5 (auto_keyframe_env_reset(time_since_birth=0.00))
 [wm<->col] apply: no-op (enabled_boundary_confident)
 [env→controller] policy:stand_up (added 3 bindings)
-[pick] best_policy=policy:stand_up best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:probe, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:probe:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:probe:0.00, policy:recover_fall:0.00] safety_filtered=[policy:stand_up, policy:recover_fall] deficits_filtered=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive_filtered=[policy:stand_up:2.00, policy:recover_fall:0.00]
+[pick] best_policy=policy:stand_up best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:recover_fall:0.00]
 [rl-pick] chosen via non-drive tiebreak in deficit near-tie band: best_def=0.000 delta=0.000 → policy:stand_up (nd=2.00, q=+0.00) among [policy:stand_up(def=0.000, nd=2.00, q=+0.00), policy:recover_fall(def=0.000, nd=0.00, q=+0.00)]
-[executed] policy:stand_up (ok, reward=+1.00) binding=w14 (b14)
+[executed] policy:stand_up (ok, reward=+1.00) binding=w13 (b13)
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b7', 'b5', 'b4', 'b3'}}
+wg_foa:  {'seeds': ['b7', 'b3'], 'size': 4, 'ids': {'b5', 'b3', 'b7', 'b4'}}
 wg_cands:['b3', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 [env-loop] summary cognitive_cycle=1/50 env_step=0 stage=birth env_posture=fallen bm_posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' expected_posture=standing zone=unknown
@@ -182,12 +182,11 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [env-loop] explain nipple: initial storyboard setup: nipple_state='hidden' in stage 'birth'; the kid has not yet found or reached the nipple.
 [env-loop] explain zone: zone is 'unknown'; either the environment has not yet established clear cliff/shelter distances or they are in a combination we do not classify, so gates treat it conservatively.
 [cycle] IN   KF cycle=1/50 env_step=0 stage=birth posture=fallen mom=far nipple=hidden zone=unknown drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=4 c=0)
-[cycle] OBS  preds: posture:fallen, proximity:mom:far, proximity:shelter:far, hazard:cliff:far | cues: (none) | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: posture:fallen, proximity:mom:far, proximity:shelter:far, hazard:cliff:far | cues: (none) | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: posture=fallen, mom=far, shelter=far, cliff=far, nipple=hidden | scratch: policy:stand_up +3 binding(s) (exec_on=WM)
-[cycle] ZM   zoom_down reason=hazard+ambiguity amb=1 ents=cliff
-[cycle] SG   surfacegrid_sig16=e311889fd2929813 compose_ms=0.37 (patches_changed,grid_missing)
+[cycle] SG   surfacegrid_sig16=1fd56c888513bd30 compose_ms=0.43 (patches_changed,grid_missing)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=e311889fd2929813)
+WM.SurfaceGrid (sig16=1fd56c888513bd30)
               111111
     0123456789012345
    +----------------+
@@ -199,7 +198,7 @@ WM.SurfaceGrid (sig16=e311889fd2929813)
  5 |                |
  6 |                |
  7 |                |
- 8 |        @G      |
+ 8 |        @       |
  9 |                |
 10 |                |
 11 |                |
@@ -210,7 +209,7 @@ WM.SurfaceGrid (sig16=e311889fd2929813)
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+4 cues+0 | pred:posture:fallen, pred:proximity:mom:far, pred:proximity:shelter:far, pred:hazard:cliff:far | (none)
-[cycle] COL  store ok sig=8ed7e5516f2b11a7 eid=992fb298… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
+[cycle] COL  store ok sig=d2c2273afb990d4a eid=451c05e1… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
 [cycle] ACT  executed='policy:stand_up' reward=+1.00 next_action='policy:stand_up'
 
 [env-loop] Cognitive Cycle 2/50
@@ -222,13 +221,13 @@ WM.SurfaceGrid (sig16=e311889fd2929813)
 [env→working] MAP pred:hazard:cliff:far → w9 (b9) (entity=cliff, slot=hazard:cliff)
 [env→world] (long-term obs unchanged; no new pred:* bindings written)
 [env→controller] policy:stand_up (added 3 bindings)
-[pick] best_policy=policy:stand_up best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:probe, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:probe:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:probe:0.00, policy:recover_fall:0.00] safety_filtered=[policy:stand_up, policy:recover_fall] deficits_filtered=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive_filtered=[policy:stand_up:2.00, policy:recover_fall:0.00]
+[pick] best_policy=policy:stand_up best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:recover_fall:0.00]
 [rl-pick] chosen via non-drive tiebreak in deficit near-tie band: best_def=0.000 delta=0.000 → policy:stand_up (nd=2.00, q=+0.30) among [policy:stand_up(def=0.000, nd=2.00, q=+0.30), policy:recover_fall(def=0.000, nd=0.00, q=+0.00)]
-[executed] policy:stand_up (ok, reward=+1.00) binding=w17 (b17)
+[executed] policy:stand_up (ok, reward=+1.00) binding=w16 (b16)
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b8', 'b3', 'b7'], 'size': 5, 'ids': {'b7', 'b3', 'b4', 'b8', 'b5'}}
+wg_foa:  {'seeds': ['b8', 'b3', 'b7'], 'size': 5, 'ids': {'b5', 'b8', 'b4', 'b3', 'b7'}}
 wg_cands:['b3', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 [env-loop] summary cognitive_cycle=2/50 env_step=1 stage=birth env_posture=fallen bm_posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' expected_posture=standing zone=unknown
@@ -237,11 +236,11 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone is 'unknown'; either the environment has not yet established clear cliff/shelter distances or they are in a combination we do not classify, so gates treat it conservatively.
 [cycle] IN   -- cycle=2/50 env_step=1 stage=birth posture=fallen mom=far nipple=hidden zone=unknown drives(h=0.50 f=0.30 w=0.60) applied_action='policy:stand_up' obs(p=4 c=0)
-[cycle] OBS  preds: posture:fallen, proximity:mom:far, proximity:shelter:far, hazard:cliff:far | cues: (none) | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: posture:fallen, proximity:mom:far, proximity:shelter:far, hazard:cliff:far | cues: (none) | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: policy:stand_up +3 binding(s) (exec_on=WM)
-[cycle] SG   surfacegrid_sig16=e311889fd2929813 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=1fd56c888513bd30 compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=e311889fd2929813)
+WM.SurfaceGrid (sig16=1fd56c888513bd30)
               111111
     0123456789012345
    +----------------+
@@ -253,8 +252,8 @@ WM.SurfaceGrid (sig16=e311889fd2929813)
  5 |                |
  6 |                |
  7 |                |
- 8 |        @G      |
- 9 |             C  |
+ 8 |        @       |
+ 9 |                |
 10 |                |
 11 |                |
 12 |                |
@@ -277,13 +276,13 @@ WM.SurfaceGrid (sig16=e311889fd2929813)
 [env→working] MAP pred:hazard:cliff:far → w9 (b9) (entity=cliff, slot=hazard:cliff)
 [env→world] (long-term obs unchanged; no new pred:* bindings written)
 [env→controller] policy:recover_fall (added 2 bindings)
-[pick] best_policy=policy:recover_fall best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:probe, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:probe:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:probe:0.00, policy:recover_fall:2.50] safety_filtered=[policy:stand_up, policy:recover_fall] deficits_filtered=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive_filtered=[policy:stand_up:2.00, policy:recover_fall:2.50]
+[pick] best_policy=policy:recover_fall best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:recover_fall:2.50]
 [rl-pick] chosen via non-drive tiebreak in deficit near-tie band: best_def=0.000 delta=0.000 → policy:recover_fall (nd=2.50, q=+0.00) among [policy:recover_fall(def=0.000, nd=2.50, q=+0.00), policy:stand_up(def=0.000, nd=2.00, q=+0.31)]
-[executed] policy:recover_fall (ok, reward=+0.80) binding=w19 (b19)
+[executed] policy:recover_fall (ok, reward=+0.80) binding=w18 (b18)
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: True, trigger: fallen=True (bodymap_posture=fallen, bodymap_stale=False) or fall_cue=False cues=['b7']
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b8', 'b3', 'b7'], 'size': 5, 'ids': {'b7', 'b3', 'b4', 'b8', 'b5'}}
+wg_foa:  {'seeds': ['b8', 'b3', 'b7'], 'size': 5, 'ids': {'b5', 'b8', 'b4', 'b3', 'b7'}}
 wg_cands:['b3', '?']
 post: dev_gate: True, trigger: fallen=True (bodymap_posture=fallen, bodymap_stale=False) or fall_cue=False cues=['b7']
 [env-loop] summary cognitive_cycle=3/50 env_step=2 stage=birth env_posture=fallen bm_posture=fallen mom=far nipple=hidden last_policy='policy:recover_fall' expected_posture=standing zone=unknown
@@ -292,11 +291,11 @@ post: dev_gate: True, trigger: fallen=True (bodymap_posture=fallen, bodymap_stal
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone is 'unknown'; either the environment has not yet established clear cliff/shelter distances or they are in a combination we do not classify, so gates treat it conservatively.
 [cycle] IN   -- cycle=3/50 env_step=2 stage=birth posture=fallen mom=far nipple=hidden zone=unknown drives(h=0.50 f=0.30 w=0.60) applied_action='policy:stand_up' obs(p=4 c=0)
-[cycle] OBS  preds: posture:fallen, proximity:mom:far, proximity:shelter:far, hazard:cliff:far | cues: (none) | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: posture:fallen, proximity:mom:far, proximity:shelter:far, hazard:cliff:far | cues: (none) | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: policy:recover_fall +2 binding(s) (exec_on=WM)
-[cycle] SG   surfacegrid_sig16=e311889fd2929813 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=1fd56c888513bd30 compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=e311889fd2929813)
+WM.SurfaceGrid (sig16=1fd56c888513bd30)
               111111
     0123456789012345
    +----------------+
@@ -308,8 +307,8 @@ WM.SurfaceGrid (sig16=e311889fd2929813)
  5 |                |
  6 |                |
  7 |                |
- 8 |        @G      |
- 9 |             C  |
+ 8 |        @       |
+ 9 |                |
 10 |                |
 11 |                |
 12 |                |
@@ -331,13 +330,13 @@ WM.SurfaceGrid (sig16=e311889fd2929813)
 [env→working] MAP pred:hazard:cliff:far → w9 (b9) (entity=cliff, slot=hazard:cliff)
 [env→world] (long-term obs unchanged; no new pred:* bindings written)
 [env→controller] policy:stand_up (added 3 bindings)
-[pick] best_policy=policy:stand_up best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:probe, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:probe:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:probe:0.00, policy:recover_fall:0.00] safety_filtered=[policy:stand_up, policy:recover_fall] deficits_filtered=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive_filtered=[policy:stand_up:2.00, policy:recover_fall:0.00]
+[pick] best_policy=policy:stand_up best_by=rl_exploit(non_drive_tiebreak) triggered=[policy:stand_up, policy:recover_fall] deficits=[policy:stand_up:0.00, policy:recover_fall:0.00] non_drive=[policy:stand_up:2.00, policy:recover_fall:0.00]
 [rl-pick] chosen via non-drive tiebreak in deficit near-tie band: best_def=0.000 delta=0.000 → policy:stand_up (nd=2.00, q=+0.31) among [policy:stand_up(def=0.000, nd=2.00, q=+0.31), policy:recover_fall(def=0.000, nd=0.00, q=+0.24)]
-[executed] policy:stand_up (ok, reward=+1.00) binding=w22 (b22)
+[executed] policy:stand_up (ok, reward=+1.00) binding=w21 (b21)
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 wg_base: {'base': 'HERE', 'bid': '?'}
-wg_foa:  {'seeds': ['b9', 'b3', 'b7'], 'size': 6, 'ids': {'b9', 'b7', 'b3', 'b4', 'b8', 'b5'}}
+wg_foa:  {'seeds': ['b9', 'b3', 'b7'], 'size': 6, 'ids': {'b5', 'b8', 'b4', 'b9', 'b3', 'b7'}}
 wg_cands:['b3', '?']
 post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False and not standing=True) (hunger=0.50)
 [env-loop] summary cognitive_cycle=4/50 env_step=3 stage=struggle env_posture=fallen bm_posture=fallen mom=far nipple=hidden last_policy='policy:stand_up' expected_posture=standing zone=unknown
@@ -346,11 +345,11 @@ post: dev_gate: age_days=0.00<=3.0, trigger: fallen=True or (stand_intent=False 
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone is 'unknown'; either the environment has not yet established clear cliff/shelter distances or they are in a combination we do not classify, so gates treat it conservatively.
 [cycle] IN   -- cycle=4/50 env_step=3 stage=struggle posture=fallen mom=far nipple=hidden zone=unknown drives(h=0.50 f=0.30 w=0.60) applied_action='policy:recover_fall' obs(p=4 c=0)
-[cycle] OBS  preds: posture:fallen, proximity:mom:far, proximity:shelter:far, hazard:cliff:far | cues: (none) | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: posture:fallen, proximity:mom:far, proximity:shelter:far, hazard:cliff:far | cues: (none) | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: policy:stand_up +3 binding(s) (exec_on=WM)
-[cycle] SG   surfacegrid_sig16=e311889fd2929813 compose_ms=0.16 (patches_changed)
+[cycle] SG   surfacegrid_sig16=1fd56c888513bd30 compose_ms=0.07 (patches_changed)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=e311889fd2929813)
+WM.SurfaceGrid (sig16=1fd56c888513bd30)
               111111
     0123456789012345
    +----------------+
@@ -362,8 +361,8 @@ WM.SurfaceGrid (sig16=e311889fd2929813)
  5 |                |
  6 |                |
  7 |                |
- 8 |        @G  *   |
- 9 |             C  |
+ 8 |        @   *   |
+ 9 |                |
 10 |                |
 11 |                |
 12 |                |
@@ -388,103 +387,93 @@ WM.SurfaceGrid (sig16=e311889fd2929813)
 [env→world] pred:proximity:mom:far → b12 (attach=latest)
 [env→world] pred:proximity:shelter:far → b13 (attach=latest)
 [env→world] pred:hazard:cliff:near → b14 (attach=latest)
-[wm<->col] store: ok sig=a4bf42f9c27d68ea bid=b15 eid=da31ebbd… (auto_keyframe_milestone:stood_up)
+[wm<->col] store: ok sig=932b05f6f2fbfbca bid=b15 eid=5f08a2c4… (auto_keyframe_milestone:stood_up)
 [wm<->col] retrieve: skip why=enabled_boundary_confident mode=merge top_k=5 (auto_keyframe_milestone:stood_up)
 [wm<->col] apply: no-op (enabled_boundary_confident)
-[env→controller] policy:probe (added 2 bindings)
-[pick] best_policy=policy:probe best_by=rl_exploit(deficit) triggered=[policy:probe, policy:follow_mom] deficits=[policy:probe:0.00, policy:follow_mom:0.00] non_drive=[policy:probe:0.00, policy:follow_mom:0.00] safety_filtered=[policy:probe] deficits_filtered=[policy:probe:0.00] non_drive_filtered=[policy:probe:0.00]
-[executed] policy:probe (ok, reward=+0.05) binding=w24 (b24)
-[maps] selection_on=WG execute_on=WM
-pre:  dev_gate: True, trigger: scratch_keys=1 ents=['cliff'] hazard_amb(cliff)=True hazard_near=True cooldown=3 blocked=False (step_now=5, last_probe=None)
-wg_base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b11'}
-wg_foa:  {'seeds': ['b15', 'b11', 'b7'], 'size': 5, 'ids': {'b13', 'b12', 'b7', 'b11', 'b15'}}
-wg_cands:['b11', '?']
-post: dev_gate: True, trigger: scratch_keys=1 ents=['cliff'] hazard_amb(cliff)=True hazard_near=True cooldown=3 blocked=True (step_now=5, last_probe=5)
-WARN [tags] action:probe not allowed at stage=neonate (allowing)
-[env-loop] summary cognitive_cycle=5/50 env_step=4 stage=first_stand env_posture=standing bm_posture=standing mom=far nipple=hidden last_policy='policy:probe' zone=unsafe_cliff_near
+[env-loop] summary cognitive_cycle=5/50 env_step=4 stage=first_stand env_posture=standing bm_posture=standing mom=far nipple=hidden last_policy=None zone=unsafe_cliff_near
 [env-loop] explain posture: stand_up action applied by the environment: posture changed fallen→standing as the storyboard moved 'struggle'→'first_stand'.
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone changed 'unknown'→'unsafe_cliff_near'; BodyMap now sees the cliff near while shelter is not near, so this geometry is treated as unsafe for resting.
 [cycle] IN   KF cycle=5/50 env_step=4 stage=first_stand posture=standing mom=far nipple=hidden zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action='policy:stand_up' obs(p=4 c=0)
-[cycle] OBS  preds: posture:standing, proximity:mom:far, proximity:shelter:far, hazard:cliff:near | cues: (none) | nav_patches=4 uniq_sig16=4
-[cycle] WM   surfaceΔ: posture fallen→standing, cliff far→near | scratch: policy:probe +2 binding(s) (exec_on=WM)
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.16 (patches_changed)
+[cycle] OBS  preds: posture:standing, proximity:mom:far, proximity:shelter:far, hazard:cliff:near | cues: (none) | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
+[cycle] WM   surfaceΔ: posture fallen→standing, cliff far→near | scratch: (no policy fired)
+[cycle] SG   surfacegrid_sig16=95b15c665b0edcec compose_ms=0.06 (patches_changed)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=95f94ef599532e70)
+WM.SurfaceGrid (sig16=95b15c665b0edcec)
               111111
     0123456789012345
    +----------------+
- 0 |          ######|
- 1 |          ######|
- 2 |          ######|
- 3 |          ######|
- 4 |          ######|
- 5 |          ######|
- 6 |          ######|
- 7 |          ######|
- 8 |        @G##*###|
- 9 |          ###C##|
-10 |          ######|
-11 |          ######|
-12 |          ######|
-13 |          ######|
-14 |          ######|
-15 |          ######|
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |       ###      |
+ 8 |       #@#  *   |
+ 9 |       ###   C  |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+4 cues+0 | pred:posture:standing, pred:proximity:mom:far, pred:proximity:shelter:far, pred:hazard:cliff:near | (none)
-[cycle] COL  store ok sig=a4bf42f9c27d68ea eid=da31ebbd… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
-[cycle] ACT  executed='policy:probe' reward=+0.05 next_action='policy:probe'
+[cycle] COL  store ok sig=932b05f6f2fbfbca eid=5f08a2c4… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
+[cycle] ACT  executed=None reward=n/a next_action=None
 
 [env-loop] Cognitive Cycle 6/50
-[env] env_step=5 (since reset) stage=first_stand posture=standing mom_distance=near nipple_state=hidden action='policy:probe'
+[env] env_step=5 (since reset) stage=first_stand posture=standing mom_distance=near nipple_state=hidden action=None
 [env→working] MAP pred:posture:standing → w6 (b6) (entity=self, slot=posture)
 [env→working] MAP pred:proximity:mom:close → w7 (b7) (entity=mom, slot=proximity:mom) [changed]
 [env→working] MAP pred:proximity:shelter:far → w8 (b8) (entity=shelter, slot=proximity:shelter)
 [env→working] MAP pred:hazard:cliff:near → w9 (b9) (entity=cliff, slot=hazard:cliff)
 [env→working] MAP cue:vision:silhouette:mom → w7 (b7) (entity=mom)
 [env→world] KEYFRAME: milestone:reached_mom | cleared 4 pred slot(s), 0 cue slot(s)
-[env→world] pred:posture:standing → b17 (attach=now)
-[env→world] pred:proximity:mom:close → b18 (attach=latest)
-[env→world] pred:proximity:shelter:far → b19 (attach=latest)
-[env→world] pred:hazard:cliff:near → b20 (attach=latest)
-[env→world] cue:vision:silhouette:mom → b21 (attach=latest)
-[wm<->col] store: ok sig=e76e819f8ad7e242 bid=b22 eid=919711f4… (auto_keyframe_milestone:reached_mom)
+[env→world] pred:posture:standing → b16 (attach=now)
+[env→world] pred:proximity:mom:close → b17 (attach=latest)
+[env→world] pred:proximity:shelter:far → b18 (attach=latest)
+[env→world] pred:hazard:cliff:near → b19 (attach=latest)
+[env→world] cue:vision:silhouette:mom → b20 (attach=latest)
+[wm<->col] store: ok sig=9d63e9ec901472e7 bid=b21 eid=4a86aa1f… (auto_keyframe_milestone:reached_mom)
 [wm<->col] retrieve: skip why=enabled_boundary_confident mode=merge top_k=5 (auto_keyframe_milestone:reached_mom)
 [wm<->col] apply: no-op (enabled_boundary_confident)
 [env-loop] summary cognitive_cycle=6/50 env_step=5 stage=first_stand env_posture=standing bm_posture=standing mom=near nipple=hidden last_policy=None zone=unsafe_cliff_near
 [env-loop] explain posture: posture remains 'standing'; no storyboard transition affecting posture this step.
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone is 'unsafe_cliff_near'; BodyMap sees a nearby cliff but no nearby shelter, so resting policies are gated off in this configuration.
-[cycle] IN   KF cycle=6/50 env_step=5 stage=first_stand posture=standing mom=near nipple=hidden zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action='policy:probe' obs(p=4 c=1)
-[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] IN   KF cycle=6/50 env_step=5 stage=first_stand posture=standing mom=near nipple=hidden zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=4 c=1)
+[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: mom far→near | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.21 (patches_changed)
+[cycle] SG   surfacegrid_sig16=95b15c665b0edcec compose_ms=0.06 (patches_changed)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=95f94ef599532e70)
+WM.SurfaceGrid (sig16=95b15c665b0edcec)
               111111
     0123456789012345
    +----------------+
- 0 |          ######|
- 1 |          ######|
- 2 |          ######|
- 3 |          ######|
- 4 |          ######|
- 5 |          ######|
- 6 |          ######|
- 7 |          ######|
- 8 |        @GM#####|
- 9 |          C#####|
-10 |          ######|
-11 |          ######|
-12 |          ######|
-13 |          ######|
-14 |          ######|
-15 |          ######|
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |       ###      |
+ 8 |       #@#M *   |
+ 9 |       ###C     |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+4 cues+1 | pred:posture:standing, pred:proximity:mom:close, pred:proximity:shelter:far, pred:hazard:cliff:near | cue:vision:silhouette:mom
-[cycle] COL  store ok sig=e76e819f8ad7e242 eid=919711f4… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
+[cycle] COL  store ok sig=9d63e9ec901472e7 eid=4a86aa1f… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
 [cycle] ACT  executed=None reward=n/a next_action=None
 
 [env-loop] Cognitive Cycle 7/50
@@ -500,30 +489,30 @@ WM.SurfaceGrid (sig16=95f94ef599532e70)
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone is 'unsafe_cliff_near'; BodyMap sees a nearby cliff but no nearby shelter, so resting policies are gated off in this configuration.
 [cycle] IN   -- cycle=7/50 env_step=6 stage=first_stand posture=standing mom=near nipple=hidden zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=4 c=1)
-[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=95b15c665b0edcec compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=95f94ef599532e70)
+WM.SurfaceGrid (sig16=95b15c665b0edcec)
               111111
     0123456789012345
    +----------------+
- 0 |          ######|
- 1 |          ######|
- 2 |          ######|
- 3 |          ######|
- 4 |          ######|
- 5 |          ######|
- 6 |          ######|
- 7 |          ######|
- 8 |        @M######|
- 9 |          C#####|
-10 |          ######|
-11 |          ######|
-12 |          ######|
-13 |          ######|
-14 |          ######|
-15 |          ######|
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |       ###      |
+ 8 |       #@M      |
+ 9 |       ###C     |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -538,52 +527,43 @@ WM.SurfaceGrid (sig16=95f94ef599532e70)
 [env→working] MAP pred:hazard:cliff:near → w9 (b9) (entity=cliff, slot=hazard:cliff)
 [env→working] MAP cue:vision:silhouette:mom → w7 (b7) (entity=mom)
 [env→world] (long-term obs unchanged; no new pred:* bindings written)
-[env→controller] policy:probe (added 2 bindings)
-[pick] best_policy=policy:probe best_by=rl_exploit(deficit) triggered=[policy:probe, policy:follow_mom] deficits=[policy:probe:0.00, policy:follow_mom:0.00] non_drive=[policy:probe:0.00, policy:follow_mom:0.00] safety_filtered=[policy:probe] deficits_filtered=[policy:probe:0.00] non_drive_filtered=[policy:probe:0.00]
-[executed] policy:probe (ok, reward=+0.05) binding=w26 (b26)
-[maps] selection_on=WG execute_on=WM
-pre:  dev_gate: True, trigger: scratch_keys=1 ents=['cliff'] hazard_amb(cliff)=True hazard_near=True cooldown=3 blocked=False (step_now=8, last_probe=5)
-wg_base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b17'}
-wg_foa:  {'seeds': ['b22', 'b17', 'b7', 'b15', 'b21'], 'size': 7, 'ids': {'b19', 'b17', 'b7', 'b22', 'b18', 'b15', 'b21'}}
-wg_cands:['b17', '?']
-post: dev_gate: True, trigger: scratch_keys=1 ents=['cliff'] hazard_amb(cliff)=True hazard_near=True cooldown=3 blocked=True (step_now=8, last_probe=8)
-[env-loop] summary cognitive_cycle=8/50 env_step=7 stage=first_stand env_posture=standing bm_posture=standing mom=near nipple=hidden last_policy='policy:probe' zone=unsafe_cliff_near
+[env-loop] summary cognitive_cycle=8/50 env_step=7 stage=first_stand env_posture=standing bm_posture=standing mom=near nipple=hidden last_policy=None zone=unsafe_cliff_near
 [env-loop] explain posture: posture remains 'standing'; no storyboard transition affecting posture this step.
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone is 'unsafe_cliff_near'; BodyMap sees a nearby cliff but no nearby shelter, so resting policies are gated off in this configuration.
 [cycle] IN   -- cycle=8/50 env_step=7 stage=first_stand posture=standing mom=near nipple=hidden zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=4 c=1)
-[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
-[cycle] WM   surfaceΔ: (no surface slot change) | scratch: policy:probe +2 binding(s) (exec_on=WM)
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
+[cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
+[cycle] SG   surfacegrid_sig16=95b15c665b0edcec compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=95f94ef599532e70)
+WM.SurfaceGrid (sig16=95b15c665b0edcec)
               111111
     0123456789012345
    +----------------+
- 0 |          ######|
- 1 |          ######|
- 2 |          ######|
- 3 |          ######|
- 4 |          ######|
- 5 |          ######|
- 6 |          ######|
- 7 |          ######|
- 8 |        @M######|
- 9 |          C#####|
-10 |          ######|
-11 |          ######|
-12 |          ######|
-13 |          ######|
-14 |          ######|
-15 |          ######|
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |       ###      |
+ 8 |       #@M      |
+ 9 |       ###C     |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
-[cycle] ACT  executed='policy:probe' reward=+0.05 next_action='policy:probe'
+[cycle] ACT  executed=None reward=n/a next_action=None
 
 [env-loop] Cognitive Cycle 9/50
-[env] env_step=8 (since reset) stage=first_stand posture=standing mom_distance=near nipple_state=hidden action='policy:probe'
+[env] env_step=8 (since reset) stage=first_stand posture=standing mom_distance=near nipple_state=hidden action=None
 [env→working] MAP pred:posture:standing → w6 (b6) (entity=self, slot=posture)
 [env→working] MAP pred:proximity:mom:close → w7 (b7) (entity=mom, slot=proximity:mom)
 [env→working] MAP pred:proximity:shelter:far → w8 (b8) (entity=shelter, slot=proximity:shelter)
@@ -594,31 +574,31 @@ WM.SurfaceGrid (sig16=95f94ef599532e70)
 [env-loop] explain posture: posture remains 'standing'; no storyboard transition affecting posture this step.
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone is 'unsafe_cliff_near'; BodyMap sees a nearby cliff but no nearby shelter, so resting policies are gated off in this configuration.
-[cycle] IN   -- cycle=9/50 env_step=8 stage=first_stand posture=standing mom=near nipple=hidden zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action='policy:probe' obs(p=4 c=1)
-[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] IN   -- cycle=9/50 env_step=8 stage=first_stand posture=standing mom=near nipple=hidden zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=4 c=1)
+[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=95b15c665b0edcec compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=95f94ef599532e70)
+WM.SurfaceGrid (sig16=95b15c665b0edcec)
               111111
     0123456789012345
    +----------------+
- 0 |          ######|
- 1 |          ######|
- 2 |          ######|
- 3 |          ######|
- 4 |          ######|
- 5 |          ######|
- 6 |          ######|
- 7 |          ######|
- 8 |        @M######|
- 9 |          C#####|
-10 |          ######|
-11 |          ######|
-12 |          ######|
-13 |          ######|
-14 |          ######|
-15 |          ######|
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |       ###      |
+ 8 |       #@M      |
+ 9 |       ###C     |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -638,30 +618,30 @@ WM.SurfaceGrid (sig16=95f94ef599532e70)
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone is 'unsafe_cliff_near'; BodyMap sees a nearby cliff but no nearby shelter, so resting policies are gated off in this configuration.
 [cycle] IN   -- cycle=10/50 env_step=9 stage=first_stand posture=standing mom=near nipple=hidden zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=4 c=1)
-[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=95b15c665b0edcec compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=95f94ef599532e70)
+WM.SurfaceGrid (sig16=95b15c665b0edcec)
               111111
     0123456789012345
    +----------------+
- 0 |          ######|
- 1 |          ######|
- 2 |          ######|
- 3 |          ######|
- 4 |          ######|
- 5 |          ######|
- 6 |          ######|
- 7 |          ######|
- 8 |        @M######|
- 9 |          C#####|
-10 |          ######|
-11 |          ######|
-12 |          ######|
-13 |          ######|
-14 |          ######|
-15 |          ######|
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |       ###      |
+ 8 |       #@M      |
+ 9 |       ###C     |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -676,52 +656,43 @@ WM.SurfaceGrid (sig16=95f94ef599532e70)
 [env→working] MAP pred:hazard:cliff:near → w9 (b9) (entity=cliff, slot=hazard:cliff)
 [env→working] MAP cue:vision:silhouette:mom → w7 (b7) (entity=mom)
 [env→world] (long-term obs unchanged; no new pred:* bindings written)
-[env→controller] policy:probe (added 2 bindings)
-[pick] best_policy=policy:probe best_by=rl_exploit(deficit) triggered=[policy:probe, policy:follow_mom] deficits=[policy:probe:0.00, policy:follow_mom:0.00] non_drive=[policy:probe:0.00, policy:follow_mom:0.00] safety_filtered=[policy:probe] deficits_filtered=[policy:probe:0.00] non_drive_filtered=[policy:probe:0.00]
-[executed] policy:probe (ok, reward=+0.05) binding=w28 (b28)
-[maps] selection_on=WG execute_on=WM
-pre:  dev_gate: True, trigger: scratch_keys=1 ents=['cliff'] hazard_amb(cliff)=True hazard_near=True cooldown=3 blocked=False (step_now=11, last_probe=8)
-wg_base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b17'}
-wg_foa:  {'seeds': ['b22', 'b17', 'b7', 'b15', 'b21'], 'size': 7, 'ids': {'b19', 'b17', 'b7', 'b22', 'b18', 'b15', 'b21'}}
-wg_cands:['b17', '?']
-post: dev_gate: True, trigger: scratch_keys=1 ents=['cliff'] hazard_amb(cliff)=True hazard_near=True cooldown=3 blocked=True (step_now=11, last_probe=11)
-[env-loop] summary cognitive_cycle=11/50 env_step=10 stage=first_stand env_posture=standing bm_posture=standing mom=near nipple=hidden last_policy='policy:probe' zone=unsafe_cliff_near
+[env-loop] summary cognitive_cycle=11/50 env_step=10 stage=first_stand env_posture=standing bm_posture=standing mom=near nipple=hidden last_policy=None zone=unsafe_cliff_near
 [env-loop] explain posture: posture remains 'standing'; no storyboard transition affecting posture this step.
 [env-loop] explain nipple: nipple remains hidden; the storyboard has not yet made it reachable (or visible) to the kid in this stage.
 [env-loop] explain zone: zone is 'unsafe_cliff_near'; BodyMap sees a nearby cliff but no nearby shelter, so resting policies are gated off in this configuration.
 [cycle] IN   -- cycle=11/50 env_step=10 stage=first_stand posture=standing mom=near nipple=hidden zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=4 c=1)
-[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
-[cycle] WM   surfaceΔ: (no surface slot change) | scratch: policy:probe +2 binding(s) (exec_on=WM)
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
+[cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
+[cycle] SG   surfacegrid_sig16=95b15c665b0edcec compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=95f94ef599532e70)
+WM.SurfaceGrid (sig16=95b15c665b0edcec)
               111111
     0123456789012345
    +----------------+
- 0 |          ######|
- 1 |          ######|
- 2 |          ######|
- 3 |          ######|
- 4 |          ######|
- 5 |          ######|
- 6 |          ######|
- 7 |          ######|
- 8 |        @M######|
- 9 |          C#####|
-10 |          ######|
-11 |          ######|
-12 |          ######|
-13 |          ######|
-14 |          ######|
-15 |          ######|
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |       ###      |
+ 8 |       #@M      |
+ 9 |       ###C     |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
 [cycle] COL  (no wm<->col ops this cycle)
-[cycle] ACT  executed='policy:probe' reward=+0.05 next_action='policy:probe'
+[cycle] ACT  executed=None reward=n/a next_action=None
 
 [env-loop] Cognitive Cycle 12/50
-[env] env_step=11 (since reset) stage=first_stand posture=standing mom_distance=near nipple_state=reachable action='policy:probe'
+[env] env_step=11 (since reset) stage=first_stand posture=standing mom_distance=near nipple_state=reachable action=None
 [env→working] MAP pred:posture:standing → w6 (b6) (entity=self, slot=posture)
 [env→working] MAP pred:proximity:mom:close → w7 (b7) (entity=mom, slot=proximity:mom)
 [env→working] MAP pred:proximity:shelter:far → w8 (b8) (entity=shelter, slot=proximity:shelter)
@@ -729,48 +700,48 @@ WM.SurfaceGrid (sig16=95f94ef599532e70)
 [env→working] MAP pred:nipple:found → w6 (b6) (entity=self, slot=nipple) [changed]
 [env→working] MAP cue:vision:silhouette:mom → w7 (b7) (entity=mom)
 [env→world] KEYFRAME: milestone:found_nipple | cleared 4 pred slot(s), 1 cue slot(s)
-[env→world] pred:posture:standing → b23 (attach=now)
-[env→world] pred:proximity:mom:close → b24 (attach=latest)
-[env→world] pred:proximity:shelter:far → b25 (attach=latest)
-[env→world] pred:hazard:cliff:near → b26 (attach=latest)
-[env→world] pred:nipple:found → b27 (attach=latest)
-[env→world] cue:vision:silhouette:mom → b28 (attach=latest)
-[wm<->col] store: ok sig=1099afcc64b9c47f bid=b29 eid=6c8e81e2… (auto_keyframe_milestone:found_nipple)
+[env→world] pred:posture:standing → b22 (attach=now)
+[env→world] pred:proximity:mom:close → b23 (attach=latest)
+[env→world] pred:proximity:shelter:far → b24 (attach=latest)
+[env→world] pred:hazard:cliff:near → b25 (attach=latest)
+[env→world] pred:nipple:found → b26 (attach=latest)
+[env→world] cue:vision:silhouette:mom → b27 (attach=latest)
+[wm<->col] store: ok sig=d400e3bdb4ef1dc0 bid=b28 eid=c54bd68f… (auto_keyframe_milestone:found_nipple)
 [wm<->col] retrieve: skip why=enabled_boundary_confident mode=merge top_k=5 (auto_keyframe_milestone:found_nipple)
 [wm<->col] apply: no-op (enabled_boundary_confident)
 [env-loop] summary cognitive_cycle=12/50 env_step=11 stage=first_stand env_posture=standing bm_posture=standing mom=near nipple=reachable last_policy=None zone=unsafe_cliff_near
 [env-loop] explain posture: posture remains 'standing'; no storyboard transition affecting posture this step.
 [env-loop] explain nipple: nipple changed hidden→reachable as the storyboard crossed its "nipple reachable" threshold in stage 'first_stand'.
 [env-loop] explain zone: zone is 'unsafe_cliff_near'; BodyMap sees a nearby cliff but no nearby shelter, so resting policies are gated off in this configuration.
-[cycle] IN   KF cycle=12/50 env_step=11 stage=first_stand posture=standing mom=near nipple=reachable zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action='policy:probe' obs(p=5 c=1)
-[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near, nipple:found | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] IN   KF cycle=12/50 env_step=11 stage=first_stand posture=standing mom=near nipple=reachable zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=5 c=1)
+[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near, nipple:found | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: nipple hidden→reachable | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=95b15c665b0edcec compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=95f94ef599532e70)
+WM.SurfaceGrid (sig16=95b15c665b0edcec)
               111111
     0123456789012345
    +----------------+
- 0 |          ######|
- 1 |          ######|
- 2 |          ######|
- 3 |          ######|
- 4 |          ######|
- 5 |          ######|
- 6 |          ######|
- 7 |          ######|
- 8 |        @M######|
- 9 |          C#####|
-10 |          ######|
-11 |          ######|
-12 |          ######|
-13 |          ######|
-14 |          ######|
-15 |          ######|
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |       ###      |
+ 8 |       #@M      |
+ 9 |       ###C     |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+5 cues+1 | pred:posture:standing, pred:proximity:mom:close, pred:proximity:shelter:far, pred:hazard:cliff:near, pred:nipple:found | cue:vision:silhouette:mom
-[cycle] COL  store ok sig=1099afcc64b9c47f eid=6c8e81e2… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
+[cycle] COL  store ok sig=d400e3bdb4ef1dc0 eid=c54bd68f… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
 [cycle] ACT  executed=None reward=n/a next_action=None
 
 [env-loop] Cognitive Cycle 13/50
@@ -787,31 +758,30 @@ WM.SurfaceGrid (sig16=95f94ef599532e70)
 [env-loop] explain nipple: nipple_state remains 'reachable'; the nipple is available but has not yet latched this step.
 [env-loop] explain zone: zone is 'unsafe_cliff_near'; BodyMap sees a nearby cliff but no nearby shelter, so resting policies are gated off in this configuration.
 [cycle] IN   -- cycle=13/50 env_step=12 stage=first_stand posture=standing mom=near nipple=reachable zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=5 c=1)
-[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near, nipple:found | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near, nipple:found | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] ZM   zoom_up reason=resolved amb=1 ents=cliff
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=95b15c665b0edcec compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=95f94ef599532e70)
+WM.SurfaceGrid (sig16=95b15c665b0edcec)
               111111
     0123456789012345
    +----------------+
- 0 |          ######|
- 1 |          ######|
- 2 |          ######|
- 3 |          ######|
- 4 |          ######|
- 5 |          ######|
- 6 |          ######|
- 7 |          ######|
- 8 |        @M######|
- 9 |          C#####|
-10 |          ######|
-11 |          ######|
-12 |          ######|
-13 |          ######|
-14 |          ######|
-15 |          ######|
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |       ###      |
+ 8 |       #@M      |
+ 9 |       ###C     |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -828,14 +798,14 @@ WM.SurfaceGrid (sig16=95f94ef599532e70)
 [env→working] MAP pred:milk:drinking → w6 (b6) (entity=self, slot=milk) [changed]
 [env→working] MAP cue:vision:silhouette:mom → w7 (b7) (entity=mom)
 [env→world] KEYFRAME: milestone:latched_nipple,milk_drinking | cleared 5 pred slot(s), 1 cue slot(s)
-[env→world] pred:posture:standing → b30 (attach=now)
-[env→world] pred:proximity:mom:close → b31 (attach=latest)
-[env→world] pred:proximity:shelter:far → b32 (attach=latest)
-[env→world] pred:hazard:cliff:near → b33 (attach=latest)
-[env→world] pred:nipple:latched → b34 (attach=latest)
-[env→world] pred:milk:drinking → b35 (attach=latest)
-[env→world] cue:vision:silhouette:mom → b36 (attach=latest)
-[wm<->col] store: ok sig=410896c92193ffd5 bid=b37 eid=c42ea525… (auto_keyframe_milestone:latched_nipple,milk_drinking)
+[env→world] pred:posture:standing → b29 (attach=now)
+[env→world] pred:proximity:mom:close → b30 (attach=latest)
+[env→world] pred:proximity:shelter:far → b31 (attach=latest)
+[env→world] pred:hazard:cliff:near → b32 (attach=latest)
+[env→world] pred:nipple:latched → b33 (attach=latest)
+[env→world] pred:milk:drinking → b34 (attach=latest)
+[env→world] cue:vision:silhouette:mom → b35 (attach=latest)
+[wm<->col] store: ok sig=81e8bd4f8a44bc76 bid=b36 eid=cda7f65f… (auto_keyframe_milestone:latched_nipple,milk_drinking)
 [wm<->col] retrieve: skip why=enabled_boundary_confident mode=merge top_k=5 (auto_keyframe_milestone:latched_nipple,milk_drinking)
 [wm<->col] apply: no-op (enabled_boundary_confident)
 [env-loop] summary cognitive_cycle=14/50 env_step=13 stage=first_latch env_posture=latched bm_posture=standing mom=near nipple=latched last_policy=None zone=unsafe_cliff_near
@@ -843,34 +813,34 @@ WM.SurfaceGrid (sig16=95f94ef599532e70)
 [env-loop] explain nipple: nipple changed reachable→latched as the storyboard hit its "auto latch" threshold; milk:drinking now begins.
 [env-loop] explain zone: zone is 'unsafe_cliff_near'; BodyMap sees a nearby cliff but no nearby shelter, so resting policies are gated off in this configuration.
 [cycle] IN   KF cycle=14/50 env_step=13 stage=first_latch posture=latched mom=near nipple=latched zone=unsafe_cliff_near drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:far, hazard:cliff:near, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: posture standing→latched, nipple reachable→latched | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=95f94ef599532e70 compose_ms=0.16 (patches_changed)
+[cycle] SG   surfacegrid_sig16=95b15c665b0edcec compose_ms=0.06 (patches_changed)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=95f94ef599532e70)
+WM.SurfaceGrid (sig16=95b15c665b0edcec)
               111111
     0123456789012345
    +----------------+
- 0 |          ######|
- 1 |          ######|
- 2 |          ######|
- 3 |          ######|
- 4 |          ######|
- 5 |          ######|
- 6 |          ######|
- 7 |          ######|
- 8 |        @M##*###|
- 9 |          C#####|
-10 |          ######|
-11 |          ######|
-12 |          ######|
-13 |          ######|
-14 |          ######|
-15 |          ######|
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |       ###      |
+ 8 |       #@M  *   |
+ 9 |       ###C     |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+6 cues+1 | pred:posture:standing, pred:proximity:mom:close, pred:proximity:shelter:far, pred:hazard:cliff:near, pred:nipple:latched, pred:milk:drinking | cue:vision:silhouette:mom
-[cycle] COL  store ok sig=410896c92193ffd5 eid=c42ea525… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
+[cycle] COL  store ok sig=81e8bd4f8a44bc76 eid=cda7f65f… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
 [cycle] ACT  executed=None reward=n/a next_action=None
 
 [env-loop] Cognitive Cycle 15/50
@@ -882,46 +852,46 @@ WM.SurfaceGrid (sig16=95f94ef599532e70)
 [env→working] MAP pred:nipple:latched → w6 (b6) (entity=self, slot=nipple)
 [env→working] MAP pred:milk:drinking → w6 (b6) (entity=self, slot=milk)
 [env→working] MAP cue:vision:silhouette:mom → w7 (b7) (entity=mom)
-[env→world] pred:proximity:shelter:near → b38 (attach=now)
-[env→world] pred:hazard:cliff:far → b39 (attach=latest)
+[env→world] pred:proximity:shelter:near → b37 (attach=now)
+[env→world] pred:hazard:cliff:far → b38 (attach=latest)
 [env→controller] policy:follow_mom (added 2 bindings)
 [pick] best_policy=policy:follow_mom best_by=rl_exploit(deficit) triggered=[policy:follow_mom] deficits=[policy:follow_mom:0.00] non_drive=[policy:follow_mom:0.00]
-[executed] policy:follow_mom (ok, reward=+0.10) binding=w30 (b30)
+[executed] policy:follow_mom (ok, reward=+0.10) binding=w23 (b23)
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_stale=False posture=standing rest_near_now=False zone=safe (hunger=0.50, fatigue=0.30)
-wg_base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b30'}
-wg_foa:  {'seeds': ['b39', 'b30', 'b7', 'b15', 'b21', 'b22', 'b28', 'b29', 'b36', 'b37'], 'size': 13, 'ids': {'b39', 'b32', 'b7', 'b21', 'b30', 'b37', 'b28', 'b38', 'b36', 'b22', 'b31', 'b29', 'b15'}}
-wg_cands:['b30', '?']
+wg_base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b29'}
+wg_foa:  {'seeds': ['b38', 'b29', 'b7', 'b15', 'b20', 'b21', 'b27', 'b28', 'b35', 'b36'], 'size': 13, 'ids': {'b20', 'b21', 'b35', 'b29', 'b30', 'b38', 'b31', 'b15', 'b28', 'b27', 'b7', 'b36', 'b37'}}
+wg_cands:['b29', '?']
 post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_stale=False posture=standing rest_near_now=False zone=safe (hunger=0.50, fatigue=0.30)
 [env-loop] summary cognitive_cycle=15/50 env_step=14 stage=first_latch env_posture=latched bm_posture=standing mom=near nipple=latched last_policy='policy:follow_mom' zone=safe
 [env-loop] explain posture: posture remains 'latched'; no storyboard transition affecting posture this step.
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone changed 'unsafe_cliff_near'→'safe'; cliff is no longer near and shelter is near, so the kid is now in a sheltered niche where resting/feeding are allowed.
 [cycle] IN   -- cycle=15/50 env_step=14 stage=first_latch posture=latched mom=near nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: shelter far→near, cliff near→far | scratch: policy:follow_mom +2 binding(s) (exec_on=WM)
-[cycle] SG   surfacegrid_sig16=6857fa3a091f8a11 compose_ms=0.17 (patches_changed)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.06 (patches_changed)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=6857fa3a091f8a11)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG      S  |
- 8 |GGGGGGG @M      |
- 9 |GGGGGGG   C     |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |             S  |
+ 8 |        @M G    |
+ 9 |          C     |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+2 cues+0 | pred:proximity:shelter:near, pred:hazard:cliff:far | (none)
@@ -940,42 +910,42 @@ WM.SurfaceGrid (sig16=6857fa3a091f8a11)
 [env→world] (long-term obs unchanged; no new pred:* bindings written)
 [env→controller] policy:follow_mom (added 2 bindings)
 [pick] best_policy=policy:follow_mom best_by=rl_exploit(deficit) triggered=[policy:follow_mom] deficits=[policy:follow_mom:0.00] non_drive=[policy:follow_mom:0.00]
-[executed] policy:follow_mom (ok, reward=+0.10) binding=w32 (b32)
+[executed] policy:follow_mom (ok, reward=+0.10) binding=w25 (b25)
 [maps] selection_on=WG execute_on=WM
 pre:  dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_stale=False posture=standing rest_near_now=False zone=safe (hunger=0.50, fatigue=0.30)
-wg_base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b30'}
-wg_foa:  {'seeds': ['b40', 'b30', 'b7', 'b15', 'b21', 'b22', 'b28', 'b29', 'b36', 'b37'], 'size': 14, 'ids': {'b15', 'b39', 'b32', 'b40', 'b7', 'b21', 'b30', 'b28', 'b38', 'b36', 'b22', 'b31', 'b29', 'b37'}}
-wg_cands:['b30', '?']
+wg_base: {'base': 'NEAREST_PRED', 'pred': 'posture:standing', 'bid': 'b29'}
+wg_foa:  {'seeds': ['b39', 'b29', 'b7', 'b15', 'b20', 'b21', 'b27', 'b28', 'b35', 'b36'], 'size': 14, 'ids': {'b20', 'b21', 'b35', 'b29', 'b39', 'b30', 'b38', 'b31', 'b15', 'b28', 'b27', 'b7', 'b36', 'b37'}}
+wg_cands:['b29', '?']
 post: dev_gate: True, trigger: fallback=True when not fallen/resting; bodymap_stale=False posture=standing rest_near_now=False zone=safe (hunger=0.50, fatigue=0.30)
 [env-loop] summary cognitive_cycle=16/50 env_step=15 stage=first_latch env_posture=latched bm_posture=standing mom=near nipple=latched last_policy='policy:follow_mom' zone=safe
 [env-loop] explain posture: posture remains 'latched'; no storyboard transition affecting posture this step.
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=16/50 env_step=15 stage=first_latch posture=latched mom=near nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action='policy:follow_mom' obs(p=6 c=1)
-[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: posture:standing, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: policy:follow_mom +2 binding(s) (exec_on=WM)
-[cycle] SG   surfacegrid_sig16=6857fa3a091f8a11 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=6857fa3a091f8a11)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG @M      |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        @M G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -992,14 +962,14 @@ WM.SurfaceGrid (sig16=6857fa3a091f8a11)
 [env→working] MAP pred:milk:drinking → w6 (b6) (entity=self, slot=milk)
 [env→working] MAP cue:vision:silhouette:mom → w7 (b7) (entity=mom)
 [env→world] KEYFRAME: milestone:rested | cleared 6 pred slot(s), 1 cue slot(s)
-[env→world] pred:resting → b41 (attach=now)
-[env→world] pred:proximity:mom:close → b42 (attach=latest)
-[env→world] pred:proximity:shelter:near → b43 (attach=latest)
-[env→world] pred:hazard:cliff:far → b44 (attach=latest)
-[env→world] pred:nipple:latched → b45 (attach=latest)
-[env→world] pred:milk:drinking → b46 (attach=latest)
-[env→world] cue:vision:silhouette:mom → b47 (attach=latest)
-[wm<->col] store: ok sig=879d805f484296f0 bid=b48 eid=2ae8fd66… (auto_keyframe_milestone:rested)
+[env→world] pred:resting → b40 (attach=now)
+[env→world] pred:proximity:mom:close → b41 (attach=latest)
+[env→world] pred:proximity:shelter:near → b42 (attach=latest)
+[env→world] pred:hazard:cliff:far → b43 (attach=latest)
+[env→world] pred:nipple:latched → b44 (attach=latest)
+[env→world] pred:milk:drinking → b45 (attach=latest)
+[env→world] cue:vision:silhouette:mom → b46 (attach=latest)
+[wm<->col] store: ok sig=49b662056bf169c7 bid=b47 eid=501f9f89… (auto_keyframe_milestone:rested)
 [wm<->col] retrieve: skip why=enabled_boundary_confident mode=merge top_k=5 (auto_keyframe_milestone:rested)
 [wm<->col] apply: no-op (enabled_boundary_confident)
 [env-loop] summary cognitive_cycle=17/50 env_step=16 stage=rest env_posture=resting bm_posture=resting mom=touching nipple=latched last_policy=None zone=safe
@@ -1007,34 +977,34 @@ WM.SurfaceGrid (sig16=6857fa3a091f8a11)
 [env-loop] explain nipple: stage advanced from 'first_latch' to 'rest' while the nipple remains latched; the kid is effectively resting with ongoing access to milk.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   KF cycle=17/50 env_step=16 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action='policy:follow_mom' obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: posture latched→resting, mom near→touching | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.16 (patches_changed)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.06 (patches_changed)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG @M  *   |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        @M G*   |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+6 cues+1 | pred:resting, pred:proximity:mom:close, pred:proximity:shelter:near, pred:hazard:cliff:far, pred:nipple:latched, pred:milk:drinking | cue:vision:silhouette:mom
-[cycle] COL  store ok sig=879d805f484296f0 eid=2ae8fd66… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
+[cycle] COL  store ok sig=49b662056bf169c7 eid=501f9f89… | retrieve skip why=enabled_boundary_confident mode=merge top_k=5 | apply no-op (enabled_boundary_confident)
 [cycle] ACT  executed=None reward=n/a next_action=None
 
 [env-loop] Cognitive Cycle 18/50
@@ -1052,30 +1022,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=18/50 env_step=17 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1097,30 +1067,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=19/50 env_step=18 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1142,30 +1112,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=20/50 env_step=19 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1187,30 +1157,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=21/50 env_step=20 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1232,30 +1202,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=22/50 env_step=21 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1277,30 +1247,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=23/50 env_step=22 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1322,30 +1292,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=24/50 env_step=23 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1367,30 +1337,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=25/50 env_step=24 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1412,30 +1382,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=26/50 env_step=25 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1457,30 +1427,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=27/50 env_step=26 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1502,30 +1472,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=28/50 env_step=27 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1547,30 +1517,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=29/50 env_step=28 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1592,30 +1562,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=30/50 env_step=29 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1637,30 +1607,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=31/50 env_step=30 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1682,30 +1652,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=32/50 env_step=31 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1727,30 +1697,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=33/50 env_step=32 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1772,30 +1742,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=34/50 env_step=33 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1817,30 +1787,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=35/50 env_step=34 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1862,30 +1832,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=36/50 env_step=35 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1907,30 +1877,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=37/50 env_step=36 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1952,30 +1922,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=38/50 env_step=37 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -1997,30 +1967,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=39/50 env_step=38 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -2042,30 +2012,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=40/50 env_step=39 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -2087,30 +2057,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=41/50 env_step=40 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -2132,30 +2102,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=42/50 env_step=41 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -2177,30 +2147,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=43/50 env_step=42 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -2222,30 +2192,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=44/50 env_step=43 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -2267,30 +2237,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=45/50 env_step=44 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -2312,30 +2282,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=46/50 env_step=45 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -2357,30 +2327,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=47/50 env_step=46 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -2402,30 +2372,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=48/50 env_step=47 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -2447,30 +2417,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=49/50 env_step=48 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -2492,30 +2462,30 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [env-loop] explain nipple: nipple remains latched; the kid continues feeding at the maternal nipple this step.
 [env-loop] explain zone: zone is 'safe'; BodyMap sees shelter near and no nearby cliff, so this is a sheltered niche suitable for resting and feeding.
 [cycle] IN   -- cycle=50/50 env_step=49 stage=rest posture=resting mom=touching nipple=latched zone=safe drives(h=0.50 f=0.30 w=0.60) applied_action=None obs(p=6 c=1)
-[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=4 uniq_sig16=4
+[cycle] OBS  preds: resting, proximity:mom:close, proximity:shelter:near, hazard:cliff:far, nipple:latched, milk:drinking | cues: vision:silhouette:mom | nav_patches=1 uniq_sig16=1 ids=[scene|p_scene]
 [cycle] WM   surfaceΔ: (no surface slot change) | scratch: (no policy fired)
-[cycle] SG   surfacegrid_sig16=291f8ea953f19a08 compose_ms=0.00 (cache_hit)
+[cycle] SG   surfacegrid_sig16=88eee28aac266a6e compose_ms=0.00 (cache_hit)
 [cycle] SG   map:
-WM.SurfaceGrid (sig16=291f8ea953f19a08)
+WM.SurfaceGrid (sig16=88eee28aac266a6e)
               111111
     0123456789012345
    +----------------+
- 0 |GGGGGGG         |
- 1 |GGGGGGG         |
- 2 |GGGGGGG         |
- 3 |GGGGGGG         |
- 4 |GGGGGGG         |
- 5 |GGGGGGG         |
- 6 |GGGGGGG         |
- 7 |GGGGGGG   S     |
- 8 |GGGGGGG M       |
- 9 |GGGGGGG         |
-10 |GGGGGGG         |
-11 |GGGGGGG         |
-12 |GGGGGGG         |
-13 |GGGGGGG         |
-14 |GGGGGGG         |
-15 |GGGGGGG         |
+ 0 |                |
+ 1 |                |
+ 2 |                |
+ 3 |                |
+ 4 |                |
+ 5 |                |
+ 6 |                |
+ 7 |          S     |
+ 8 |        M  G    |
+ 9 |                |
+10 |                |
+11 |                |
+12 |                |
+13 |                |
+14 |                |
+15 |                |
    +----------------+
 @=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)
 [cycle] WG   wrote preds+0 cues+0 | (none) | (none)
@@ -2527,48 +2497,41 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
 [workingmap] MapSurface entity table
   ent      node        kind      pos(x,y)         dist_m  class     seen patches             preds (short)                cues (short)
   -------  ----------  --------  --------------  ------  --------  ---- ------------------  --------------------------  ----------------
-  self     w6 (b6)     agent     (  0.00,  0.00) [wm_schematic_v1]    0.00  self        50  0                   goal:dir:C, milk:drinking, nipple:latched …  
-  cliff    w9 (b9)     hazard    (  5.38,  1.00) [wm_schematic_v1] brg=+11°    5.00  far         50  1:ba5048185213dd56  hazard:cliff:far            
-  mom      w7 (b7)     agent     (  0.00,  0.00) [wm_schematic_v1]    0.00  close       50  1:dd506c886ffe181b  proximity:mom:close         vision:silhouette:mom
-  scene    w10 (b10)             (  4.16, -0.50) [wm_schematic_v1] brg=-7°    3.00  unknown     50  1:d09778cabd370327                              
-  shelter  w8 (b8)     shelter   (  2.37, -1.00) [wm_schematic_v1] brg=-23°    1.20  near        50  1:f01160ea4380bee8  proximity:shelter:near      
-  [patches] ent_with=4/5 refs_total=4 uniq_sig16=4 uniq_eid=4
+  self     w6 (b6)     agent     (  0.00,  0.00) [wm_schematic_v1]    0.00  self        50  0                   goal:dir:E, milk:drinking, nipple:latched …  
+  cliff    w9 (b9)     hazard    (  5.38,  1.00) [wm_schematic_v1] brg=+11°    5.00  far         50  0                   hazard:cliff:far            
+  mom      w7 (b7)     agent     (  0.00,  0.00) [wm_schematic_v1]    0.00  close       50  0                   proximity:mom:close         vision:silhouette:mom
+  scene    w10 (b10)             (  4.16, -0.50) [wm_schematic_v1] brg=-7°    3.00  unknown     50  1:0f9e65a6389addbe                              
+  shelter  w8 (b8)     shelter   (  2.37, -1.00) [wm_schematic_v1] brg=-23°    1.20  near        50  0                   proximity:shelter:near      
+  [patches] ent_with=1/5 refs_total=1 uniq_sig16=1 uniq_eid=1
 
-[workingmap] auto snapshot (last 250): last 32 binding(s) of 32 total
+[workingmap] auto snapshot (last 250): last 25 binding(s) of 25 total
   Legend: edges=wm_entity(root→entity), wm_scratch(root→scratch), wm_creative(root→creative), distance_to(self→entity), then(action chain)
           tags=wm:* entity markers; pred:* belief-now; cue:* cues-now; meta.wm.pos={x,y,frame}
   w1 (b1): [] out=0 edges=(none)
   w2 (b2): [anchor:NOW_ORIGIN] out=0 edges=(none)
   w3 (b3): [anchor:NOW, anchor:NOW_ORIGIN, anchor:WM_ROOT] out=7 edges=wm_scratch:w4 (b4), wm_creative:w5 (b5), wm_entity:w6 (b6), wm_entity:w7 (b7), wm_entity:w8 (b8), wm_entity:w9 (b9) (+1 more)
-  w4 (b4): [anchor:WM_SCRATCH, wm:scratch] out=9 edges=then:w12 (b12), then:w15 (b15), then:w18 (b18), then:w20 (b20), then:w23 (b23), then:w25 (b25) (+3 more)
+  w4 (b4): [anchor:WM_SCRATCH, wm:scratch] out=6 edges=then:w11 (b11), then:w14 (b14), then:w17 (b17), then:w19 (b19), then:w22 (b22), then:w24 (b24)
   w5 (b5): [anchor:WM_CREATIVE, wm:creative] out=0 edges=(none)
-  w6 (b6): [anchor:WM_SELF, pred:goal:dir:C, pred:milk:drinking, pred:nipple:latched, pred:posture:standing, pred:resting, pred:terrain:traversable_near, wm:eid:self, wm:entity, wm:kind:agent] out=4 edges=distance_to:w7 (b7) meters=0.00 class=close, distance_to:w8 (b8) meters=1.20 class=near, distance_to:w9 (b9) meters=5.00 class=far, distance_to:w10 (b10) meters=3.00 class=unknown
+  w6 (b6): [anchor:WM_SELF, pred:goal:dir:E, pred:milk:drinking, pred:nipple:latched, pred:posture:standing, pred:resting, pred:terrain:traversable_near, wm:eid:self, wm:entity, wm:kind:agent] out=4 edges=distance_to:w7 (b7) meters=0.00 class=close, distance_to:w8 (b8) meters=1.20 class=near, distance_to:w9 (b9) meters=5.00 class=far, distance_to:w10 (b10) meters=3.00 class=unknown
   w7 (b7): [anchor:WM_ENT_MOM, cue:vision:silhouette:mom, pred:proximity:mom:close, wm:eid:mom, wm:entity, wm:kind:agent] out=0 edges=(none)
   w8 (b8): [anchor:WM_ENT_SHELTER, pred:proximity:shelter:near, wm:eid:shelter, wm:entity, wm:kind:shelter] out=0 edges=(none)
   w9 (b9): [anchor:WM_ENT_CLIFF, pred:hazard:cliff:far, wm:eid:cliff, wm:entity, wm:kind:hazard] out=0 edges=(none)
   w10 (b10): [anchor:WM_ENT_SCENE, wm:eid:scene, wm:entity] out=0 edges=(none)
-  w11 (b11): [anchor:WM_SCRATCH_NVP_CLIFF_P_CLIFF, wm:eid:cliff, wm:patch_local:p_cliff, wm:scratch:navpatch_match, wm:scratch_item] out=0 edges=(none)
-  w12 (b12): [action:push_up] out=1 edges=then:w13 (b13)
-  w13 (b13): [action:extend_legs] out=1 edges=then:w14 (b14)
-  w14 (b14): [pred:posture:standing] out=0 edges=(none)
-  w15 (b15): [action:push_up] out=1 edges=then:w16 (b16)
-  w16 (b16): [action:extend_legs] out=1 edges=then:w17 (b17)
-  w17 (b17): [pred:posture:standing] out=0 edges=(none)
-  w18 (b18): [action:recover_fall] out=1 edges=then:w19 (b19)
-  w19 (b19): [pred:posture:standing] out=0 edges=(none)
-  w20 (b20): [action:push_up] out=1 edges=then:w21 (b21)
-  w21 (b21): [action:extend_legs] out=1 edges=then:w22 (b22)
-  w22 (b22): [pred:posture:standing] out=0 edges=(none)
-  w23 (b23): [action:look_around] out=2 edges=then:w24 (b24), then:w24 (b24)
-  w24 (b24): [pred:alert] out=0 edges=(none)
-  w25 (b25): [action:look_around] out=2 edges=then:w26 (b26), then:w26 (b26)
-  w26 (b26): [pred:alert] out=0 edges=(none)
-  w27 (b27): [action:look_around] out=2 edges=then:w28 (b28), then:w28 (b28)
-  w28 (b28): [pred:alert] out=0 edges=(none)
-  w29 (b29): [action:look_around] out=1 edges=then:w30 (b30)
-  w30 (b30): [pred:alert] out=0 edges=(none)
-  w31 (b31): [action:look_around] out=1 edges=then:w32 (b32)
-  w32 (b32): [pred:alert] out=0 edges=(none)
+  w11 (b11): [action:push_up] out=1 edges=then:w12 (b12)
+  w12 (b12): [action:extend_legs] out=1 edges=then:w13 (b13)
+  w13 (b13): [pred:posture:standing] out=0 edges=(none)
+  w14 (b14): [action:push_up] out=1 edges=then:w15 (b15)
+  w15 (b15): [action:extend_legs] out=1 edges=then:w16 (b16)
+  w16 (b16): [pred:posture:standing] out=0 edges=(none)
+  w17 (b17): [action:recover_fall] out=1 edges=then:w18 (b18)
+  w18 (b18): [pred:posture:standing] out=0 edges=(none)
+  w19 (b19): [action:push_up] out=1 edges=then:w20 (b20)
+  w20 (b20): [action:extend_legs] out=1 edges=then:w21 (b21)
+  w21 (b21): [pred:posture:standing] out=0 edges=(none)
+  w22 (b22): [action:look_around] out=1 edges=then:w23 (b23)
+  w23 (b23): [pred:alert] out=0 edges=(none)
+  w24 (b24): [action:look_around] out=1 edges=then:w25 (b25)
+  w25 (b25): [pred:alert] out=0 edges=(none)
 
 
 [skills-hud] Learned policy values after env-loop:
@@ -2579,16 +2542,15 @@ WM.SurfaceGrid (sig16=291f8ea953f19a08)
    delta=0 then q used only for exact ties otherwise deficit values within delta range are considered tied and q used to decide)
 NOTE: deficit here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).
 Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled)
-RL: enabled=True epsilon=0.050 delta=0.000 (explore=0, exploit=9, explore_rate=0.00)
-Skill HUD (top 4 by q=EMA reward):
+RL: enabled=True epsilon=0.050 delta=0.000 (explore=0, exploit=6, explore_rate=0.00)
+Skill HUD (top 3 by q=EMA reward):
    1) policy:stand_up     n=  4  rate=0.75  q=+0.52  last=+1.00
    2) policy:recover_fall  n=  1  rate=1.00  q=+0.24  last=+0.80
    3) policy:follow_mom   n=  2  rate=1.00  q=+0.05  last=+0.10
-   4) policy:probe        n=  3  rate=1.00  q=+0.03  last=+0.05
 
 Values of time measures, nodes and links at this point:
-[time] controller_steps=50, cos_to_last_boundary=0.6027, temporal_epochs=0, autonomic_ticks=0, age_days=0.0000, cog_cycles=50
-[world] last 48 binding(s):
+[time] controller_steps=50, cos_to_last_boundary=0.3610, temporal_epochs=0, autonomic_ticks=0, age_days=0.0000, cog_cycles=50
+[world] last 47 binding(s):
   b1: [anchor:NOW_ORIGIN]
       edges: then:b2, then:b3
   b2: [pred:posture:fallen]
@@ -2610,7 +2572,7 @@ Values of time measures, nodes and links at this point:
   b10: [action:stand_up]
       edges: then:b11
   b11: [pred:posture:standing]
-      edges: then:b12, then:b15, then:b16, then:b17
+      edges: then:b12, then:b15, then:b16
   b12: [pred:proximity:mom:far]
       edges: then:b13
   b13: [pred:proximity:shelter:far]
@@ -2619,71 +2581,69 @@ Values of time measures, nodes and links at this point:
       edges: (none)
   b15: [cue:wm:mapsurface_snapshot, idx:stage:first_stand, idx:zone:unsafe_cliff_near]
       edges: (none)
-  b16: [action:probe]
-      edges: then:b23
-  b17: [pred:posture:standing]
-      edges: then:b18, then:b22, then:b23
-  b18: [pred:proximity:mom:close]
+  b16: [pred:posture:standing]
+      edges: then:b17, then:b21, then:b22
+  b17: [pred:proximity:mom:close]
+      edges: then:b18
+  b18: [pred:proximity:shelter:far]
       edges: then:b19
-  b19: [pred:proximity:shelter:far]
+  b19: [pred:hazard:cliff:near]
       edges: then:b20
-  b20: [pred:hazard:cliff:near]
-      edges: then:b21
-  b21: [cue:vision:silhouette:mom]
+  b20: [cue:vision:silhouette:mom]
       edges: (none)
-  b22: [cue:wm:mapsurface_snapshot, idx:stage:first_stand, idx:zone:unsafe_cliff_near]
+  b21: [cue:wm:mapsurface_snapshot, idx:stage:first_stand, idx:zone:unsafe_cliff_near]
       edges: (none)
-  b23: [pred:posture:standing]
-      edges: then:b24, then:b29, then:b30
-  b24: [pred:proximity:mom:close]
+  b22: [pred:posture:standing]
+      edges: then:b23, then:b28, then:b29
+  b23: [pred:proximity:mom:close]
+      edges: then:b24
+  b24: [pred:proximity:shelter:far]
       edges: then:b25
-  b25: [pred:proximity:shelter:far]
+  b25: [pred:hazard:cliff:near]
       edges: then:b26
-  b26: [pred:hazard:cliff:near]
+  b26: [pred:nipple:found]
       edges: then:b27
-  b27: [pred:nipple:found]
-      edges: then:b28
-  b28: [cue:vision:silhouette:mom]
+  b27: [cue:vision:silhouette:mom]
       edges: (none)
-  b29: [cue:wm:mapsurface_snapshot, idx:stage:first_stand, idx:zone:unsafe_cliff_near]
+  b28: [cue:wm:mapsurface_snapshot, idx:stage:first_stand, idx:zone:unsafe_cliff_near]
       edges: (none)
-  b30: [pred:posture:standing]
-      edges: then:b31, then:b37, then:b38, then:b40, then:b41, near:b42, near:b43
-  b31: [pred:proximity:mom:close, pred:valence:like]
+  b29: [pred:posture:standing]
+      edges: then:b30, then:b36, then:b37, then:b39, then:b40, near:b41, near:b42
+  b30: [pred:proximity:mom:close, pred:valence:like]
+      edges: then:b31
+  b31: [pred:proximity:shelter:far]
       edges: then:b32
-  b32: [pred:proximity:shelter:far]
+  b32: [pred:hazard:cliff:near]
       edges: then:b33
-  b33: [pred:hazard:cliff:near]
+  b33: [pred:nipple:latched]
       edges: then:b34
-  b34: [pred:nipple:latched]
+  b34: [pred:milk:drinking]
       edges: then:b35
-  b35: [pred:milk:drinking]
-      edges: then:b36
-  b36: [cue:vision:silhouette:mom]
+  b35: [cue:vision:silhouette:mom]
       edges: (none)
-  b37: [cue:wm:mapsurface_snapshot, idx:stage:first_latch, idx:zone:unsafe_cliff_near]
+  b36: [cue:wm:mapsurface_snapshot, idx:stage:first_latch, idx:zone:unsafe_cliff_near]
       edges: (none)
-  b38: [pred:proximity:shelter:near]
-      edges: then:b39
-  b39: [pred:hazard:cliff:far]
+  b37: [pred:proximity:shelter:near]
+      edges: then:b38
+  b38: [pred:hazard:cliff:far]
       edges: (none)
-  b40: [action:follow_mom]
-      edges: then:b41
-  b41: [anchor:NOW, pred:resting]
-      edges: then:b42, then:b48, near:b42, near:b43
-  b42: [pred:proximity:mom:close, pred:valence:like]
+  b39: [action:follow_mom]
+      edges: then:b40
+  b40: [anchor:NOW, pred:resting]
+      edges: then:b41, then:b47, near:b41, near:b42
+  b41: [pred:proximity:mom:close, pred:valence:like]
+      edges: then:b42
+  b42: [pred:proximity:shelter:near]
       edges: then:b43
-  b43: [pred:proximity:shelter:near]
+  b43: [pred:hazard:cliff:far]
       edges: then:b44
-  b44: [pred:hazard:cliff:far]
+  b44: [pred:nipple:latched]
       edges: then:b45
-  b45: [pred:nipple:latched]
+  b45: [pred:milk:drinking]
       edges: then:b46
-  b46: [pred:milk:drinking]
-      edges: then:b47
-  b47: [cue:vision:silhouette:mom]
+  b46: [cue:vision:silhouette:mom]
       edges: (none)
-  b48: [cue:wm:mapsurface_snapshot, idx:stage:rest, idx:zone:safe]
+  b47: [cue:wm:mapsurface_snapshot, idx:stage:rest, idx:zone:safe]
       edges: (none)
 
 [discrepancy history] recent posture discrepancies (most recent last):
@@ -2760,3 +2720,4 @@ Please press any key (* stops this scroll pause) to continue with menu (above sc
     47) Load wm_mapsurface engram into WorkingMap (replace MapSurface) [wload, wmload]
 
     Select: 
+Goodbye.

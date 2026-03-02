@@ -144,6 +144,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # CCA8 Module Imports
 from cca8_navpatch import GRID_ENCODING_V1, CELL_UNKNOWN, CELL_TRAVERSABLE, CELL_HAZARD, CELL_GOAL
 
+
 # --- Public API index, version, global variables and constants ----------------------------------------
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
@@ -288,6 +289,7 @@ class EnvObservation:
       - cues        : tokens routed into Features/Columns
       - nav_patches : processed local navigation map fragments (NavPatch v0; JSON-safe dicts)
       - env_meta    : lightweight metadata (episode id, uncertainties, etc.)
+      - surface_grid: local spatial / affordance "surface" representation
 
     Note: these are *observations*, not beliefs. WorldGraph+Columns are where
     CCA8 turns observations into internal state and memory.
@@ -298,6 +300,7 @@ class EnvObservation:
     cues: List[str] = field(default_factory=list)
     nav_patches: List[Dict[str, Any]] = field(default_factory=list)
     env_meta: Dict[str, Any] = field(default_factory=dict)
+    surface_grid: Dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -652,62 +655,23 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         # We may parameterize thresholds later (e.g., near/far distance).
         self._near_threshold: float = 1.0
 
-    def observe(self, env_state: EnvState) -> EnvObservation:
+
+    def observe(self, env_state: EnvState, ctx: Any | None = None) -> EnvObservation:
         """
         Build an EnvObservation from the current EnvState.
 
-        For the first implementation we keep this minimal and transparent:
+        In addition to predicates/cues, we also emit a minimal NavPatch grid payload
+        (grid_v1) so the Phase X SurfaceGrid pipeline has an end-to-end input stream.
 
-          - posture      → posture:standing / posture:fallen / (latched/resting variants)
-          - mom_distance → proximity:mom:close / proximity:mom:far
-          - nipple_state → nipple:found / nipple:latched / milk:drinking
-          - simple cues  → vision:silhouette:mom when near, drive:cold_skin when cold
-
-        Later, we can:
-          - add richer raw_sensors (images, IMU traces),
-          - add noise/occlusion,
-          - split observation into agent-specific channels.
+        Notes:
+            - This is a storyboard stub. In a real robot backend, these grids would
+              come from perception + mapping (depth/LiDAR/costmap/terrain classifiers).
+            - The grid is JSON-safe and deterministic; it is *not* a belief store.
         """
         raw: Dict[str, Any] = {}
         preds: List[str] = []
         cues: List[str] = []
         meta: Dict[str, Any] = {}
-
-        # --- nav patches (v0 stub) ---
-        # We do NOT model raw pixels. Instead, we emit small, JSON-safe NavPatch dicts
-        # representing processed spatial structure (hazards, shelter region, mom region, etc.).
-        # These are designed to be stored as separate Column engrams later.
-        patches: List[Dict[str, Any]] = []
-
-        # --- grid_v1 evidence (Phase X) ---
-        # The storyboard has no vision or geometry engine. We still emit deterministic
-        # toy grids so the NavPatch -> SurfaceGrid -> derived slot-family pipeline is
-        # end-to-end and testable.
-        grid_w = 16
-        grid_h = 16
-        self_x = grid_w // 2
-        self_y = grid_h // 2
-
-        def _blank_grid(fill: int = CELL_UNKNOWN) -> List[int]:
-            return [int(fill)] * (grid_w * grid_h)
-
-
-        def _paint_band_x(cells: List[int], *, x0: int, x1: int, code: int) -> None:
-            # Paint a vertical band (inclusive) across all rows, clipped to the grid.
-            xx0 = max(0, min(grid_w - 1, int(x0)))
-            xx1 = max(0, min(grid_w - 1, int(x1)))
-            if xx1 < xx0:
-                xx0, xx1 = xx1, xx0
-            for y in range(grid_h):
-                base = y * grid_w
-                for x in range(xx0, xx1 + 1):
-                    cells[base + x] = int(code)
-
-
-        def _paint_point(cells: List[int], *, x: int, y: int, code: int) -> None:
-            if 0 <= x < grid_w and 0 <= y < grid_h:
-                cells[y * grid_w + x] = int(code)
-
 
         # --- raw channels ---
         dx = env_state.mom_position[0] - env_state.kid_position[0]
@@ -716,156 +680,176 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         raw["distance_to_mom"] = dist
         raw["kid_temperature"] = env_state.kid_temperature
 
-        # --- posture predicates (canonical neonate vocabulary) ---
-        # See README: posture:standing / posture:fallen, etc.
-        # We use posture:* as the canonical form (deprecated -- state:*)
+        # --- posture predicates ---
         if env_state.kid_posture == "standing":
             preds.append("posture:standing")
         elif env_state.kid_posture == "fallen":
             preds.append("posture:fallen")
         elif env_state.kid_posture == "latched":
-            # Latched implies upright posture.
             preds.append("posture:standing")
         elif env_state.kid_posture == "resting":
             preds.append("resting")
 
         # --- proximity predicates ---
-        # We currently trust the discrete mom_distance field; later we could derive
-        # it from the continuous distance + _near_threshold.
         if env_state.mom_distance in ("near", "touching"):
             preds.append("proximity:mom:close")
         elif env_state.mom_distance == "far":
             preds.append("proximity:mom:far")
 
-        # --- shelter proximity predicates ---
-        # Coarse shelter distance: near/touching vs far.
         if env_state.shelter_distance in ("near", "touching"):
             preds.append("proximity:shelter:near")
         elif env_state.shelter_distance == "far":
             preds.append("proximity:shelter:far")
 
-        # --- cliff hazard predicates ---
-        # Dangerously near drop vs comfortably far from an edge.
+        # --- hazard predicates ---
         if env_state.cliff_distance == "near":
             preds.append("hazard:cliff:near")
         elif env_state.cliff_distance == "far":
             preds.append("hazard:cliff:far")
 
         # --- feeding predicates ---
-        # README / lexicon use:
-        #   nipple:found, nipple:latched, milk:drinking
-        #
-        # Map discrete nipple_state to these observation predicates.
         if env_state.nipple_state in ("visible", "reachable"):
-            # This corresponds to "we have found the nipple" as a milestone.
             preds.append("nipple:found")
         elif env_state.nipple_state == "latched":
             preds.append("nipple:latched")
             preds.append("milk:drinking")
 
         # --- simple cues ---
-        # Treat "mom near" as a visual silhouette cue.
         if env_state.mom_distance in ("near", "touching"):
             cues.append("vision:silhouette:mom")
-
-        # Temperature cue (very rough)
         if env_state.kid_temperature < 0.35:
             cues.append("drive:cold_skin")
 
         # --- meta ---
         meta["time_since_birth"] = env_state.time_since_birth
         meta["scenario_stage"] = env_state.scenario_stage
+        meta["zone"] = env_state.zone
+        meta["position"] = env_state.position
 
-        # --- NavPatch stub stream ---
-        # These are NOT used for policy selection yet. They are Phase X scaffolding so the agent-side
-        # predictive matching loop can start generating top-K match traces, and so later WorkingMap code
-        # can attach patch_refs to entities.
+        # Use self._near_threshold so it’s not “dead configuration”.
+        meta["mom_proximity_from_raw"] = "near" if dist <= float(self._near_threshold) else "far"
 
-        #nav_patches = self._stub_nav_patches(env_state)   #commented out since variable not used
-
-
-        # --- NavPatch grid payload v1 (Phase X Step 11) ---
-        grid_w = 16
-        grid_h = 16
-        self_x = grid_w // 2
-        self_y = grid_h // 2
-
-        # Scene-level patch (zone + position)
+        # Predictive-coding / attention hook: top-down focus request (optional).
+        focus: str | None = None
         try:
-            patches.append({
-                "schema": "navpatch_v1",
-                "local_id": "p_scene",
-                "entity_id": "scene",
-                "role": "scene",
-                "frame": "ego_schematic_v1",
-                "grid_encoding_v": GRID_ENCODING_V1,
-                "grid_w": grid_w,
-                "grid_h": grid_h,
-                "grid_origin": [self_x, self_y],
-                "grid_resolution": 1.0,
-                "grid_cells": [CELL_TRAVERSABLE] * (grid_w * grid_h),
-                "extent": {"type": "aabb", "x0": -2.0, "y0": -2.0, "x1": 2.0, "y1": 2.0},
-                "tags": [
-                    f"zone:{env_state.zone}",
-                    f"position:{env_state.position}",
-                    f"stage:{env_state.scenario_stage}",
-                ],
-                "layers": {},
-                "obs": {"source": "PerceptionAdapter.observe"},
-            })
+            if ctx is not None:
+                focus = getattr(ctx, "percept_focus", None)
+                focus = str(focus) if focus is not None else None
         except Exception:
-            pass
+            focus = None
+        if focus is not None:
+            meta["percept_focus"] = focus
+            if focus in ("mom", "vision", "proximity:mom"):
+                raw["mom_dx"] = dx
+                raw["mom_dy"] = dy
 
+        # --- SurfaceGrid (local spatial/affordance surface; JSON-safe) ---
+        # This is intentionally small: it is a *perception product* that can be scanned
+        # quickly and can later become a real robot costmap/heightmap/etc.
+        cliff_near = bool(env_state.cliff_distance == "near")
+        shelter_near = bool(env_state.shelter_distance in ("near", "touching"))
+        mom_near = bool(env_state.mom_distance in ("near", "touching"))
 
-        # Entity-linked patches (hazard/shelter/mom)
-        def _add_simple_patch(local_id: str, entity_id: str, role: str, tags: list[str], grid_cells: list[int]) -> None:
-            patches.append({
-                "schema": "navpatch_v1",
-                "local_id": local_id,
-                "entity_id": entity_id,
-                "role": role,
-                "frame": "ego_schematic_v1",
-                "grid_encoding_v": GRID_ENCODING_V1,
-                "grid_w": grid_w,
-                "grid_h": grid_h,
-                "grid_origin": [self_x, self_y],
-                "grid_resolution": 1.0,
-                "grid_cells": list(grid_cells),
-                "extent": {"type": "aabb", "x0": -1.0, "y0": -1.0, "x1": 1.0, "y1": 1.0},
-                "tags": list(tags),
-                "layers": {},
-                "obs": {"source": "PerceptionAdapter.observe"},
-            })
+        surface_grid: Dict[str, Any] = {
+            "frame": "body",
+            "center": {"entity": "kid", "x": 0.0, "y": 0.0},
+            "objects": [{"entity": "mom", "dx": float(dx), "dy": float(dy), "dist": float(dist)}],
+            "affordances": {"cliff_near": cliff_near, "shelter_near": shelter_near, "mom_near": mom_near},
+            "region": {"position": str(env_state.position), "zone": str(env_state.zone)},
+        }
+        if focus is not None:
+            surface_grid["attention"] = {"focus": focus}
 
-        try:
-            # Cliff: if near, paint a hazard band on the +X side close enough to trigger hazard:near.
-            cliff_cells = _blank_grid(CELL_UNKNOWN)
-            if env_state.cliff_distance == "near":
-                _paint_band_x(cliff_cells, x0=self_x + 2, x1=grid_w - 1, code=CELL_HAZARD)
-            _add_simple_patch("p_cliff", "cliff", "hazard", [f"hazard:cliff:{env_state.cliff_distance}"], cliff_cells)
-
-            # Shelter: if near, paint a goal band on the -X side (a "safe niche" attractor).
-            shelter_cells = _blank_grid(CELL_UNKNOWN)
-            if env_state.shelter_distance in ("near", "touching"):
-                _paint_band_x(shelter_cells, x0=0, x1=max(0, self_x - 2), code=CELL_GOAL)
-            _add_simple_patch("p_shelter", "shelter", "shelter", [f"proximity:shelter:{env_state.shelter_distance}"], shelter_cells)
-
-            # Mom: paint a single goal point one cell toward the mom direction (coarse bearing only).
-            mom_cells = _blank_grid(CELL_UNKNOWN)
-            sx = 0 if dx == 0.0 else (1 if dx > 0.0 else -1)
-            sy = 0 if dy == 0.0 else (1 if dy > 0.0 else -1)
-            _paint_point(mom_cells, x=self_x + sx, y=self_y + sy, code=CELL_GOAL)
-            _add_simple_patch("p_mom", "mom", "agent", [f"proximity:mom:{env_state.mom_distance}"], mom_cells)
-        except Exception:
-            pass
+        # --- NavPatch grid payload (grid_v1) ---
+        nav_patches = self._stub_navpatch_grid_v1(env_state, focus=focus)
 
         return EnvObservation(
             raw_sensors=raw,
             predicates=preds,
             cues=cues,
-            nav_patches=patches,
+            nav_patches=nav_patches,
             env_meta=meta,
+            surface_grid=surface_grid,
         )
+
+
+    def _stub_navpatch_grid_v1(self, env_state: EnvState, *, focus: str | None = None) -> List[Dict[str, Any]]:
+        """Return a minimal grid_v1 NavPatch list derived from EnvState (storybook stub).
+
+        Contract
+        --------
+        Unit test expects:
+          - obs.nav_patches is a non-empty list
+          - each patch uses grid_v1 fields and passes navpatch_grid_errors_v1()
+
+        Design
+        ------
+        - Deterministic
+        - JSON-safe
+        - Simple semantics: unknown border, traversable interior, optional hazard cluster, optional goal cell.
+        """
+        w = 16
+        h = 16
+        n = w * h
+
+        # Unknown everywhere, then carve a traversable interior (uses CELL_UNKNOWN intentionally).
+        cells = [CELL_UNKNOWN] * n
+        for y in range(1, h - 1):
+            base = y * w
+            for x in range(1, w - 1):
+                cells[base + x] = CELL_TRAVERSABLE
+
+        cx = w // 2
+        cy = h // 2
+
+        # Hazard cluster when cliff is near.
+        if env_state.cliff_distance == "near":
+            for ox in (-1, 0, 1):
+                for oy in (-1, 0, 1):
+                    x = cx + ox
+                    y = cy + oy
+                    if 0 < x < (w - 1) and 0 < y < (h - 1):
+                        cells[y * w + x] = CELL_HAZARD
+
+        # Goal cell when shelter is near.
+        if env_state.shelter_distance in ("near", "touching"):
+            gx = min(w - 2, cx + 3)
+            gy = cy
+            if 0 < gx < (w - 1) and 0 < gy < (h - 1):
+                cells[gy * w + gx] = CELL_GOAL
+
+        zone = getattr(env_state, "zone", None) or "unknown"
+        stage = getattr(env_state, "scenario_stage", None) or "unknown"
+
+        obs: Dict[str, Any] = {
+            "source": "PerceptionAdapter.observe",
+            "step_index": int(getattr(env_state, "step_index", 0) or 0),
+        }
+        if focus is not None:
+            obs["focus"] = str(focus)
+
+        tags = [f"zone:{zone}", f"stage:{stage}"]
+        if focus is not None:
+            tags.append(f"focus:{focus}")
+
+        patch = {
+            "schema": "navpatch_v1",
+            "local_id": "p_scene",  # volatile
+            "entity_id": "scene",
+            "role": "scene",
+            "frame": "ego_schematic_v1",
+            "grid_encoding_v": GRID_ENCODING_V1,
+            "grid_w": w,
+            "grid_h": h,
+            "grid_cells": cells,
+            "tags": tags,
+            "extent": {"type": "aabb", "x0": -1.0, "y0": -1.0, "x1": 1.0, "y1": 1.0},
+            "layers": {},  # volatile
+            "obs": obs,  # volatile
+        }
+
+        return [patch]
+
 
     def _stub_nav_patches(self, env_state: EnvState) -> List[Dict[str, Any]]:
         """Return a minimal list of NavPatch-like dicts derived from EnvState.
@@ -1146,7 +1130,7 @@ class HybridEnvironment:
         self._state = EnvState()
         self._state = self._fsm.reset(self._state, self.config)
 
-        obs = self._perception.observe(self._state)
+        obs = self._perception.observe(self._state, ctx=None)
         info = {
             "episode_index": self._episode_index,
             "scenario_name": self.config.scenario_name,
@@ -1218,7 +1202,7 @@ class HybridEnvironment:
         reward: float = 0.0
         done: bool = False
 
-        obs = self._perception.observe(self._state)
+        obs = self._perception.observe(self._state, ctx=ctx)
         info = {
             "episode_index": self._episode_index,
             "step_index": self._episode_steps,
