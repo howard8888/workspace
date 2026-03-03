@@ -11166,6 +11166,13 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         # BodyMap update should never be allowed to break env stepping.
         pass
 
+    # Sequential/error stub (CCA7-inspired): temporal deltas + prediction error on the sensory stream.
+    # Diagnostic-first; does not affect policy selection unless you explicitly enable attention later.
+    try:
+        seqerr_update_from_obs(ctx, env_obs)
+    except Exception:
+        pass
+
     # Update the short-lived sensory surfaces (SurfaceGrid + MapSurface) and
     # compute a minimal prediction error signal (predictive coding v1).
     try:

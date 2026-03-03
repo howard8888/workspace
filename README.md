@@ -559,6 +559,7 @@ In the runner, one closed-loop iteration is:
 ```
 EnvObservation
   → BodyMap update (fast gating cache)
+  → SeqErr update (temporal deltas + prediction error stub; diagnostic only)
   → WorkingMap.MapSurface update (belief state table)
   → (keyframes only) store / retrieve / apply priors (wm<->col)   # may modify MapSurface
   → (Phase X) compose WorkingMap.SurfaceGrid (derived) from active NavPatch instances
@@ -3210,6 +3211,7 @@ A minimal orientation sketch:
 EnvState (hidden truth)
   → EnvObservation
   → BodyMap update
+  → SeqErr update (temporal deltas + prediction error stub; diagnostic only)
   → WorkingMap.MapSurface update
   → (keyframes only) store / retrieve / apply priors (wm<->col)   # may modify MapSurface
   → (Phase X) compose WorkingMap.SurfaceGrid (derived)
@@ -3281,7 +3283,7 @@ Outside the env-loop, controller_steps may advance without cog_cycles (e.g., Ins
 
 4) WorldGraph observation logging (optional; per configuration)
    - The long-term WorldGraph may receive an observation commit (append-style), subject to long-term injection settings:
-     snapshot vs changes, reassert_steps, and related verbosity knobs.
+     snapshot vs changes, ctx.longterm_obs_reassert_steps, and related verbosity knobs.
    - This is distinct from the WM⇄Column keyframe pipeline: WorldGraph logging can occur on ordinary cycles as well.
 
 5) (KEYFRAME) WM ⇄ Column boundary pipeline (conditional; ordering invariant)
@@ -3630,6 +3632,25 @@ You may see an additional line during menu 37 runs:
 [pred_err] shaping: policy=policy:stand_up reward=-0.15 (streak=2) q=+0.42
 
 This shaping affects RL tie-break behavior (`q`) and also feeds the discrepancy-history used by some non-drive tie-breaks.
+
+
+### Sequential/error v1 (SeqErr stub: temporal deltas on the sensory stream)
+
+CCA8 also has a diagnostic-first “sequential / error” unit (CCA7 cerebellum-inspired) that tracks how observations change across a short window.
+
+- Implemented in `cca8_run.py` as `seqerr_update_from_obs(ctx, env_obs)`; it runs every env-loop tick (called from `inject_obs_into_world(...)`).
+- Inputs:
+  - `EnvObservation.raw_sensors` (numeric channels only)
+  - `EnvObservation.predicates` (discrete slot tokens)
+- Outputs (stored on ctx):
+  - `ctx.seqerr_last`: JSON-safe bundle including `raw_delta`, `raw_err` (constant-velocity extrapolation error when ≥3 frames),
+    `slot_changes`, `slot_stability`, and a small attention suggestion.
+  - `ctx.seqerr_history`: ring buffer of recent frames (size = `ctx.seqerr_window`, default 4).
+- Default behavior: does not affect policy selection.
+- Optional attention seam (OFF): if `ctx.seqerr_attention_enabled=True`, large errors can set `ctx.seqerr_attention_request`
+  (a suggestion string), which future perception code may use to request higher-fidelity channels.
+- Debugging: set `ctx.seqerr_verbose=True` to print short lines when discrete slots flip.
+
 
 
 
@@ -5070,9 +5091,9 @@ When the environment produces discrete predicates (posture, proximity, hazards, 
   This prevents “rewriting the same fact 4000×” while preserving transitions like fallen→standing→fallen.
 
 Optional flexibility knobs:
-- `reassert_steps` — re-emit unchanged slots periodically (so stable facts can be “re-observed” occasionally).
-- `keyframe_on_stage_change` — force a snapshot-like refresh when the environment’s scenario stage changes (birth→struggle→first_stand…).
-
+- `ctx.longterm_obs_reassert_steps` — re-emit unchanged slots periodically (so stable facts can be “re-observed” occasionally).
+- `ctx.longterm_obs_keyframe_on_stage_change` — force a snapshot-like refresh when the environment’s scenario stage changes (birth→struggle→first_stand…).
+- `ctx.longterm_obs_keyframe_on_zone_change` — same idea, but on coarse safety-zone flips (unsafe ↔ safe).
 
 ### 4) WorldGraph memory_mode: episodic vs semantic
 
@@ -11637,6 +11658,7 @@ Included starter tests (typical; evolves over time):
 - `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → `pred:posture:standing` exists.
 - `tests/test_inspect_binding_details.py` — uses a small demo world and asserts the inspect-binding report is consistent with the “Inspect binding details” menu contract.
 - `tests/test_phase_vi_c_spatial.py` — checks that the newborn-goat environment’s **spatial movement and safety gating** behave as described (e.g., `follow_mom` moves the kid off the cliff into shelter; rest gating respects BodyMap safety zones).
+- `tests/test_seqerr_stub.py` — SeqErr stub: validates raw_delta + slot_stability across consecutive observations.
 
 Tip: the same demo world used in tests is usually available interactively via `--demo-world`, so interactive experiments and unit tests share the same baseline graph shape.
 

@@ -10,6 +10,9 @@ def test_seqerr_updates_raw_delta_and_slot_stability():
     # Keep the test small/quiet: we only care about seqerr side-effects.
     ctx.working_enabled = False
     ctx.longterm_obs_enabled = False
+    
+    if hasattr(ctx, "navpatch_enabled"):
+        ctx.navpatch_enabled = False
 
     ctx.seqerr_enabled = True
     ctx.seqerr_window = 4
