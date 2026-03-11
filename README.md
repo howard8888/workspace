@@ -3421,6 +3421,253 @@ NavPatch is the optional patch layer that:
 
 (See “WorkingMap Layer Contracts” for the MapSurface/Scratch/Creative split and invariants.)
 
+
+### 2.1 Tutorial: how NavPatch becomes a rendered SurfaceGrid
+
+This subsection answers a practical question:
+
+**How do we get from patch matching to the actual body-centered grid that the policy can read?**
+
+A useful way to think about it is:
+
+- **NavPatch matching** answers:  
+  *“What stored local terrain/map prototypes best explain the evidence I have right now?”*
+
+- **SurfaceGrid rendering/composition** answers:  
+  *“Given the currently active patch instances, what local topology should the agent treat as present right now?”*
+
+They are closely related, but they are not the same thing.
+
+---
+
+#### Abstract pipeline
+
+At a high level, one cognitive cycle does the following:
+
+1. **Observe the local scene**
+   - The agent receives an `EnvObservation`.
+   - Some of that observation can be interpreted as **patch evidence**:
+     local terrain fragments, hazard structure, traversability hints, partial geometric motifs, etc.
+
+2. **Match observed evidence against stored NavPatch prototypes**
+   - Each observed patch is compared against stored **NavPatch prototypes** in Columns.
+   - The result is a **ranked top-K list** plus a decision:
+     - `commit`
+     - `ambiguous`
+     - `unknown`
+
+3. **Create/update NavPatch instances in working memory**
+   - A **prototype** is the long-term reusable template.
+   - An **instance** is that prototype bound to the current situation:
+     “this patch, here-and-now, in this pose/role/context.”
+   - These instances are working-memory objects, not long-term records.
+
+4. **Compose one SurfaceGrid for the current cycle**
+   - The currently active patch instances are overlaid/stiched into a single body-centered grid.
+   - Conflict resolution is deterministic (for example, hazard should dominate traversable when both compete for the same cell).
+   - The result is a single **SurfaceGrid** that policies can inspect directly.
+
+5. **Derive cheap summary predicates back into MapSurface**
+   - From the grid, the system may derive a few cheap facts such as:
+     - `hazard:near`
+     - `terrain:traversable_near`
+     - `goal:dir`
+   - These are useful because many policies should not need to scan the full grid just to ask a simple gating question.
+
+6. **Keep uncertainty explicit**
+   - If matching is ambiguous, the architecture should not hallucinate certainty.
+   - Ambiguity belongs in **WM.Scratch** (and can trigger zoom/probe behavior).
+   - SurfaceGrid can still be composed conservatively so the agent behaves safely even before ambiguity resolves.
+
+---
+
+#### Concrete mountain-goat-calf example
+
+Imagine the newborn calf is:
+
+- fallen,
+- near a cliff edge,
+- mother is still far away,
+- shelter is far away.
+
+The current observation may contain evidence that the local terrain looks like a dangerous boundary.
+
+##### Step A — what is observed
+
+The system receives evidence such as:
+
+- `posture:fallen`
+- `proximity:mom:far`
+- `proximity:shelter:far`
+- `hazard:cliff:near`
+
+and possibly local patch/grid evidence suggesting:
+
+- a sharp drop-off ahead-right,
+- low traversability near the edge,
+- safer cells slightly left/back.
+
+##### Step B — NavPatch matching
+
+Suppose the stored prototype library contains:
+
+- **Patch A** = “cliff-edge ledge”
+- **Patch B** = “rock ridge / raised boundary”
+
+The current evidence is compared to both.
+
+Possible outcome:
+
+- Patch A score = 0.81
+- Patch B score = 0.79
+
+That is not a clean winner, so the match result is:
+
+- top-K = `[A, B, ...]`
+- decision = **ambiguous**
+
+##### Step C — what becomes active in working memory
+
+Working memory now has:
+
+- the current **MapSurface** scene sketch (`self`, `mom`, `cliff`, `shelter`, etc.),
+- one or more active **NavPatch instances** referring to prototype A / B,
+- a **Scratch ambiguity record** saying that the cliff-related match is ambiguous.
+
+##### Step D — SurfaceGrid composition
+
+Even though the system is not certain which prototype is correct, it still needs to act safely.
+
+So the SurfaceGrid for this cycle can be composed conservatively:
+
+- if either plausible patch implies a hazardous boundary in forward-right cells,
+  those cells should remain hazardous in the composed grid.
+
+In other words:
+
+- ambiguity in identity does **not** imply permissiveness in action.
+
+The rendered grid might therefore still show:
+
+- dangerous cells near the forward-right edge,
+- safer cells toward the left/back,
+- no false claim that the exact terrain identity is known.
+
+##### Step E — policy use
+
+Now a policy does **not** need to inspect hidden prototype details.
+
+It can read one composed SurfaceGrid and simple MapSurface summaries such as:
+
+- `hazard:near = True`
+
+That is enough to support behavior such as:
+
+- do not step forward-right,
+- prefer a safer direction,
+- or trigger a probe/inspect action to gather better evidence.
+
+---
+
+#### Important distinction: prototype vs instance vs grid
+
+These three things should stay mentally separate:
+
+- **NavPatch prototype**  
+  long-term memory template stored in Columns
+
+- **NavPatch instance**  
+  working-memory use of that template in the current scene
+
+- **SurfaceGrid**  
+  the single composed local grid produced from the active instances for this cycle
+
+So:
+
+> prototypes are stored, instances are active, and SurfaceGrid is rendered/composed.
+
+---
+
+#### Lifecycle rule: does SurfaceGrid persist?
+
+SurfaceGrid is best understood as a **derived working-memory view**, not a long-term record.
+
+- It is the grid the agent uses **for the current cycle**.
+- On the next cycle, it may be:
+  - recomposed from updated patch instances, or
+  - reused from cache if nothing relevant changed.
+
+That means it has a short “half-life”:
+
+- **stable within the cycle**
+- **replaceable on the next cycle**
+
+Long-term memory should usually store:
+
+- **MapSurface snapshots**
+- **patch references**
+- **patch prototypes**
+
+not full SurfaceGrid dumps every tick.
+
+---
+
+#### Why this separation is useful
+
+This architecture gives us several advantages:
+
+- **MapSurface stays compact**
+  - a scene sketch of entities + slot-families
+
+- **SurfaceGrid stays action-facing**
+  - a local “where can I move?” view
+
+- **WorldGraph stays thin**
+  - episode index + pointers
+
+- **Columns stay heavy**
+  - actual patch prototypes / map payloads
+
+This preserves the core principle:
+
+> **WorldGraph tells you where to look; Columns hold what you actually want to look at.**
+
+---
+
+### Q&A to help you learn this section
+
+**Q: Is a NavPatch the same thing as the rendered SurfaceGrid?**  
+**A:** No. A NavPatch is a reusable local map fragment or prototype match. SurfaceGrid is the single composed grid built from the active patch instances for the current cycle.
+
+**Q: What does “match” mean in NavPatch matching?**  
+**A:** It means comparing the current **derived evidence** (tokens, local patch/grid features, coarse geometry) against stored prototype features and producing a ranked top-K result.
+
+**Q: If the match is ambiguous, should the agent still build a SurfaceGrid?**  
+**A:** Yes. In fact that is when SurfaceGrid is especially useful. The grid should be composed conservatively so the agent remains safe even before the ambiguity is resolved.
+
+**Q: Does policy read the hidden patches directly?**  
+**A:** Preferably no. Policy should read:
+1. one composed SurfaceGrid, and
+2. a few derived MapSurface facts.  
+This keeps policy code simple and inspectable.
+
+**Q: Where does ambiguity live?**  
+**A:** In **WM.Scratch**, not in MapSurface. MapSurface should remain the compact “belief-now” sketch, while ambiguity bookkeeping stays explicit in the reasoning workspace.
+
+**Q: Is SurfaceGrid long-term memory?**  
+**A:** Usually no. SurfaceGrid is a derived, short-lived working-memory view. Long-term memory should store prototypes, pointers, and selected keyframe-like summaries instead.
+
+**Q: Does SeqErr build NavPatches or SurfaceGrid?**  
+**A:** No. SeqErr is a separate temporal/error layer. It tracks change over time (`raw_delta`, prediction error, slot changes). Later it may influence attention/probe decisions, but it is not the patch renderer itself.
+
+**Q: Should SurfaceGrid be rebuilt every cycle?**  
+**A:** Semantically, yes: there is one current SurfaceGrid per cycle. Mechanically, you may reuse a cached grid if nothing relevant changed.
+
+
+
+
+
+
 ---
 
 ## 3) Data model (conceptual)
