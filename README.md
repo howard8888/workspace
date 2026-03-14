@@ -18,14 +18,14 @@ NOTE: This README is large; if GitHub truncates the preview at the 512 KiB rende
 
 ● **Simulates a mammalian brain**
 
-*The CCA8 project simulates a mammalian brain inspired by a mountain goat across its lifecycle, used as a testbed for a navigation map-based theory of+ mammalian brain evolution and function.  It aims to: (1) model how vertebrate navigation map mechanisms could evolve into human capacities such as full causal reasoning, full analogical reasoning, and (partially) compositional language; (2) offer a candidate mechanistic account, i.e., explanation, of mammalian cognition; and (3) explore in-model evolution and mechanisms of psychotic and autistic disorders in humans (no clinical claims).*
+*The CCA8 project simulates a mammalian brain inspired by a mountain goat across its lifecycle, used as a testbed for a navigation map-based theory of mammalian brain evolution and function.  It aims to: (1) model how vertebrate navigation map mechanisms could evolve into human capacities such as full causal reasoning, full analogical reasoning, and (partially) compositional language; (2) offer a candidate mechanistic account, i.e., explanation, of mammalian cognition; and (3) explore in-model evolution and mechanisms of psychotic and autistic disorders in humans (no clinical claims).*
 
 
 ● **Robotic Cognitive Operating System (RCOS)**
 
 *The CCA8 project also creates a flexible kernel of a Robotic Cognitive Operating System (RCOS):*
  - Agent behavior layer
- - CCA8 RCOS kernel
+ - CCA8 RCOS kernel <--
  - Robot middleware layer (e.g., ROS 2)
  - Hardware Abstraction Layer (HAL)
  - Low-Level OS / firmware (e.g., Linux, an RTOS, or a PetitCat-style minimal middleware/OS)
@@ -84,12 +84,15 @@ of birth, and by one week can climb most places its mother can)*
 ### CCA8 Versions
 
 
-- CCA8 Simulation of a mountain goat through the lifecycle 
+- CCA8 Simulation of a mountain goat through the lifecycle
+- CCA8_Bringup  Robotic Cognitive Operating System with CCA8 controlling PetitCat or ROS 2-based hardware
 - CCA8b Simulation of a mountain goat-like brain with 5 brains within the same agent
 - CCA8c Simulation of multiple agents with goat-like brains able to interact
 - CCA8d Simulation of a mountain goat-like brain with 5 brains within the same agent with combinatorial planning
 - CCA9 Simulation of a chimpanzee through the lifecycle
 - CCA10 Simulation of a human through the lifecycle
+- CCAx_Bringup  Robotic Cognitive Operating System with CCAx version controlling supported hardware
+
 
 ***Notes:***
 
@@ -99,6 +102,8 @@ of birth, and by one week can climb most places its mother can)*
 - **CLI flags, autosave/load workflow, and menu guide:** see **Runner, menus, and CLI** later in this README.
 - **GUI:** the supported runner is CLI/TUI only at the time of writing (a Tkinter `.pyw` may exist but is not maintained).
 - **Robotics / embodiment:** still launch via `cca8_run.py`; enable HAL with flags when supported (see the HAL section below).
+    (The CCA8 ecosystem may not include all the required files for robotics control. Use the CCA8_Bringup package version to ensure
+     that all the necessary files are present to control a PetitCat or ROS 2-based robotics platform.)
 
 
 

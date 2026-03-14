@@ -408,6 +408,42 @@ class FsmBackend:
         state.update_zone_from_position()
 
 
+    def _sync_positions_from_symbolic_location(self, state: EnvState) -> None:
+        """Keep coarse continuous coordinates aligned with symbolic scene labels.
+
+        SurfaceGrid dirty-cache v2 needs a SELF anchor that can actually move when
+        the storyboard changes location. Our vignette mainly changes symbolic
+        positions (``cliff_edge`` -> ``open_field`` -> ``shelter_area``), so this
+        helper maps those symbolic locations onto a tiny continuous coordinate
+        scaffold.
+
+        The coordinates are not intended to be realistic world physics. They are a
+        stable geometry shim for:
+            - local-window shift detection in WorkingMap / SurfaceGrid,
+            - raw distance summaries in EnvObservation,
+            - sparse salience overlays that want a few landmark offsets.
+
+        Mom position is then placed at a simple offset from the kid based on the
+        current ``mom_distance`` label.
+        """
+        pos_to_xy = {
+            "cliff_edge": (0.0, 0.0),
+            "open_field": (0.8, 0.0),
+            "shelter_area": (1.6, 0.0),
+        }
+        kid_x, kid_y = pos_to_xy.get(state.position, (0.8, 0.0))
+        state.kid_position = (float(kid_x), float(kid_y))
+
+        if state.mom_distance == "touching":
+            mom_dx = 0.0
+        elif state.mom_distance == "near":
+            mom_dx = 0.35
+        else:
+            mom_dx = 0.9
+
+        state.mom_position = (float(kid_x) + mom_dx, float(kid_y))
+
+
     def reset( #pylint: disable=unused-argument
         self, env_state: EnvState, config: EnvConfig) -> EnvState:
         """
@@ -420,13 +456,9 @@ class FsmBackend:
         so that the newborn-goat initial conditions are easy to inspect.
         """
         if config.scenario_name == "newborn_goat_first_hour":
-            env_state.kid_posture = "fallen"
-            env_state.mom_distance = "far"
-            env_state.nipple_state = "hidden"
-            env_state.scenario_stage = "birth"
-
-            env_state.kid_position = (0.0, 0.0)
-            env_state.mom_position = (1.0, 0.0)
+            env_state.position = "open_field"
+            env_state.kid_position = (0.8, 0.0)
+            env_state.mom_position = (1.7, 0.0)
 
             env_state.kid_fatigue = 0.2
             env_state.kid_temperature = 0.6
@@ -434,8 +466,9 @@ class FsmBackend:
             env_state.step_index = 0
 
             env_state.shelter_distance = "far"
-            env_state.cliff_distance   = "far"
+            env_state.cliff_distance = "far"
             self._update_spatial_label(env_state) #initialize coarse geometry / zone.
+            self._sync_positions_from_symbolic_location(env_state)
         return env_state
 
 
@@ -496,6 +529,9 @@ class FsmBackend:
 
             if steps >= self._BIRTH_TO_STRUGGLE:
                 state.scenario_stage = "struggle"
+                state.position = "cliff_edge"
+                state.shelter_distance = "far"
+                state.cliff_distance = "near"
                 # Small fatigue bump to suggest the calf is working.
                 state.kid_fatigue = min(1.0, state.kid_fatigue + 0.02)
 
@@ -506,10 +542,16 @@ class FsmBackend:
             # The kid is on the ground, flailing a bit; mom gradually comes closer.
             state.kid_posture = "fallen"
 
-            # Geometric intuition: the kid is on a more exposed patch, with a drop
-            # somewhere nearby. Shelter is still far.
-            state.shelter_distance = "far"
-            state.cliff_distance = "near"
+            # Geometric intuition: symbolic position controls the coarse geometry.
+            if state.position == "shelter_area":
+                state.shelter_distance = "near"
+                state.cliff_distance = "far"
+            elif state.position == "open_field":
+                state.shelter_distance = "far"
+                state.cliff_distance = "far"
+            else:
+                state.shelter_distance = "far"
+                state.cliff_distance = "near"
 
             # After a few steps, bring mom from far -> near.
             if steps >= self._STRUGGLE_MOM_NEAR and state.mom_distance == "far":
@@ -532,9 +574,17 @@ class FsmBackend:
                 state.mom_distance = "near"
                 state.mom_position = (0.5, state.mom_position[1])
 
-            # Still somewhat exposed: cliff remains near; shelter is not yet reached.
-            state.shelter_distance = "far"
-            state.cliff_distance = "near"
+            # Still somewhat exposed unless movement has already brought the kid to
+            # a safer symbolic position.
+            if state.position == "shelter_area":
+                state.shelter_distance = "near"
+                state.cliff_distance = "far"
+            elif state.position == "open_field":
+                state.shelter_distance = "far"
+                state.cliff_distance = "far"
+            else:
+                state.shelter_distance = "far"
+                state.cliff_distance = "near"
 
             # Step 1: nipple becomes reachable (found).
             if state.nipple_state in ("hidden", "visible"):
@@ -627,6 +677,7 @@ class FsmBackend:
             state.kid_temperature = min(1.0, state.kid_temperature + 0.005)
 
         self._update_spatial_label(state) #keep symbolic position / zone in sync with storyboard
+        self._sync_positions_from_symbolic_location(state)
         return state
 
 
@@ -654,6 +705,45 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
     def __init__(self) -> None:
         # We may parameterize thresholds later (e.g., near/far distance).
         self._near_threshold: float = 1.0
+
+    def _surfacegrid_landmarks_v1(
+        self, env_state: EnvState, *, dx: float, dy: float, dist: float, focus: str | None = None
+    ) -> List[Dict[str, Any]]:
+        """Return a tiny landmark list for SurfaceGrid v1 / salience overlay work.
+
+        The runner will later convert these lightweight landmark tokens into a
+        sparse terminal overlay and into cache-invalidation hints. Keeping the
+        landmark vocabulary tiny makes the display readable and the tests stable.
+        """
+        priority = {"cliff": 100, "shelter": 80, "mom": 70, "nipple": 60, "self": 50}
+
+        def _entry(token: str, entity: str, rel_dx: float, rel_dy: float, rel_dist: float, kind: str) -> Dict[str, Any]:
+            item: Dict[str, Any] = {
+                "token": token,
+                "entity": entity,
+                "kind": kind,
+                "dx": round(float(rel_dx), 3),
+                "dy": round(float(rel_dy), 3),
+                "dist": round(float(rel_dist), 3),
+                "priority_hint": int(priority.get(token, 10)),
+            }
+            if focus is not None and token == focus:
+                item["focused"] = True
+            return item
+
+        landmarks: List[Dict[str, Any]] = [_entry("self", "kid", 0.0, 0.0, 0.0, "ego_anchor")]
+        landmarks.append(_entry("mom", "mom", dx, dy, dist, "social"))
+
+        if env_state.cliff_distance == "near":
+            landmarks.append(_entry("cliff", "cliff", 1.0, 0.0, 1.0, "hazard"))
+
+        if env_state.shelter_distance in ("near", "touching") or env_state.position == "shelter_area":
+            landmarks.append(_entry("shelter", "shelter", 1.0, 0.0, 1.0, "goal"))
+
+        if env_state.nipple_state in ("visible", "reachable", "latched"):
+            landmarks.append(_entry("nipple", "nipple", 0.3, 0.0, 0.3, "feeding"))
+
+        return landmarks
 
 
     def observe(self, env_state: EnvState, ctx: Any | None = None) -> EnvObservation:
@@ -720,15 +810,6 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         if env_state.kid_temperature < 0.35:
             cues.append("drive:cold_skin")
 
-        # --- meta ---
-        meta["time_since_birth"] = env_state.time_since_birth
-        meta["scenario_stage"] = env_state.scenario_stage
-        meta["zone"] = env_state.zone
-        meta["position"] = env_state.position
-
-        # Use self._near_threshold so it’s not “dead configuration”.
-        meta["mom_proximity_from_raw"] = "near" if dist <= float(self._near_threshold) else "far"
-
         # Predictive-coding / attention hook: top-down focus request (optional).
         focus: str | None = None
         try:
@@ -737,25 +818,50 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
                 focus = str(focus) if focus is not None else None
         except Exception:
             focus = None
-        if focus is not None:
-            meta["percept_focus"] = focus
-            if focus in ("mom", "vision", "proximity:mom"):
-                raw["mom_dx"] = dx
-                raw["mom_dy"] = dy
+        if focus is not None and focus in ("mom", "vision", "proximity:mom"):
+            raw["mom_dx"] = dx
+            raw["mom_dy"] = dy
 
-        # --- SurfaceGrid (local spatial/affordance surface; JSON-safe) ---
-        # This is intentionally small: it is a *perception product* that can be scanned
-        # quickly and can later become a real robot costmap/heightmap/etc.
+        # --- SurfaceGrid / dirty-cache metadata ---
         cliff_near = bool(env_state.cliff_distance == "near")
         shelter_near = bool(env_state.shelter_distance in ("near", "touching"))
         mom_near = bool(env_state.mom_distance in ("near", "touching"))
+        landmarks = self._surfacegrid_landmarks_v1(env_state, dx=dx, dy=dy, dist=dist, focus=focus)
+        salience_candidates = [item["token"] for item in landmarks if item.get("token") != "self"]
+
+        # --- meta ---
+        meta["time_since_birth"] = env_state.time_since_birth
+        meta["scenario_stage"] = env_state.scenario_stage
+        meta["zone"] = env_state.zone
+        meta["position"] = env_state.position
+        meta["kid_position"] = {"x": float(env_state.kid_position[0]), "y": float(env_state.kid_position[1])}
+        meta["mom_position"] = {"x": float(env_state.mom_position[0]), "y": float(env_state.mom_position[1])}
+        meta["shelter_distance"] = env_state.shelter_distance
+        meta["cliff_distance"] = env_state.cliff_distance
+        meta["surface_anchor_xy"] = dict(meta["kid_position"])
+        meta["surface_affordances"] = {"cliff_near": cliff_near, "shelter_near": shelter_near, "mom_near": mom_near}
+        meta["salience_candidates"] = salience_candidates
+
+        # Use self._near_threshold so it’s not “dead configuration”.
+        meta["mom_proximity_from_raw"] = "near" if dist <= float(self._near_threshold) else "far"
+
+        if focus is not None:
+            meta["percept_focus"] = focus
 
         surface_grid: Dict[str, Any] = {
+            "schema": "surface_grid_v1",
             "frame": "body",
+            "anchor": {
+                "entity": "kid",
+                "x": float(env_state.kid_position[0]),
+                "y": float(env_state.kid_position[1]),
+            },
             "center": {"entity": "kid", "x": 0.0, "y": 0.0},
             "objects": [{"entity": "mom", "dx": float(dx), "dy": float(dy), "dist": float(dist)}],
+            "landmarks": landmarks,
             "affordances": {"cliff_near": cliff_near, "shelter_near": shelter_near, "mom_near": mom_near},
             "region": {"position": str(env_state.position), "zone": str(env_state.zone)},
+            "focus_candidates": salience_candidates,
         }
         if focus is not None:
             surface_grid["attention"] = {"focus": focus}
@@ -829,6 +935,14 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
             obs["focus"] = str(focus)
 
         tags = [f"zone:{zone}", f"stage:{stage}"]
+        if env_state.cliff_distance == "near":
+            tags.append("hazard:cliff")
+        if env_state.shelter_distance in ("near", "touching") or env_state.position == "shelter_area":
+            tags.append("goal:shelter")
+        if env_state.mom_distance in ("near", "touching"):
+            tags.append("landmark:mom")
+        if env_state.nipple_state in ("visible", "reachable", "latched"):
+            tags.append("goal:nipple")
         if focus is not None:
             tags.append(f"focus:{focus}")
 

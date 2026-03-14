@@ -97,6 +97,7 @@ from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
 from cca8_env import HybridEnvironment, EnvObservation  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
 from cca8_features import FactMeta
+import cca8_navpatch
 from cca8_navpatch import (
     SurfaceGridV1,
     compose_surfacegrid_v1,
@@ -330,11 +331,15 @@ class Ctx:
     wm_surfacegrid: Optional[SurfaceGridV1] = None
     wm_surfacegrid_sig16: Optional[str] = None
     wm_surfacegrid_last_input_sig16: list[str] = field(default_factory=list)
+    # Dirty-cache v2 also watches SELF local-window shift, zoom, focus, and hazard evidence.
+    wm_zoom_level: int = 0
+    wm_surfacegrid_last_scene_fingerprint: dict[str, Any] = field(default_factory=dict)
     wm_surfacegrid_dirty: bool = True
     wm_surfacegrid_dirty_reasons: list[str] = field(default_factory=list)
     wm_surfacegrid_compose_ms: float = 0.0
     wm_surfacegrid_last_ascii: Optional[str] = None
     # SurfaceGrid printing controls (terminal UX)
+    wm_surfacegrid_ascii_enabled: bool = True
     wm_surfacegrid_ascii_each_tick: bool = False  # if True, print the grid even on cache-hit ticks (compose_ms==0)
     wm_surfacegrid_legend_printed: bool = False   # internal: print legend once per session when map printing is enabled
     # --- WM.Salience + landmark overlay (Phase X Step 14) -------------------------------
@@ -376,6 +381,13 @@ class Ctx:
 
     # The concrete pred:* tags written onto the MapSurface SELF binding this tick (for inspection/traces).
     wm_grid_pred_tags: list[str] = field(default_factory=list)
+    # --- WM.NavSummary (Phase X P1.4) -----------------------------------------------
+    # Small cached numeric summaries derived from WM.SurfaceGrid.
+    # This lets later policy refactors read one stable dict instead of proliferating
+    # more pred:* tags for every topological fact.
+    wm_navsummary_enabled: bool = True
+    wm_navsummary_local_radius: int = 2
+    wm_navsummary: dict[str, Any] = field(default_factory=dict)
 
     # NavPatch (Phase X scaffolding): predictive matching loop + traceability
     # navpatch_enabled gates the entire matching pipeline. When enabled, EnvObservation.nav_patches
@@ -512,6 +524,12 @@ class Ctx:
     wm_mapsurface_autoretrieve_verbose: bool = True  # print when auto-retrieve applies
     wm_mapsurface_last_autoretrieve_engram_id: Optional[str] = None
     wm_mapsurface_last_autoretrieve_reason: Optional[str] = None
+    # Map-switch event logging (P3.11)
+    # - last_events: events created during the current cognitive cycle
+    # - history: bounded cross-cycle history for debugging / JSON traces / tests
+    wm_mapswitch_last_events: list[dict[str, Any]] = field(default_factory=list)
+    wm_mapswitch_history: list[dict[str, Any]] = field(default_factory=list)
+    wm_mapswitch_history_limit: int = 50
 
     # memory pipeline knobs (opt-in; defaults preserve Phase VI behavior)
     phase7_working_first: bool = False    # execute policies in WorkingMap; keep long-term WorldGraph sparse
@@ -1064,6 +1082,12 @@ def print_working_map_snapshot(ctx, *, n: int = 15, title: str = "[workingmap] s
             pv = "(none)"
         print(f"  {_wm_display_id(bid)} ({bid}): [{tags}] out={len(edges)} edges={pv}")
 
+    try:
+        if getattr(ctx, "wm_surfacegrid", None) is not None:
+            print(format_surfacegrid_snapshot_v1(ctx))
+    except Exception:
+        pass
+
 
 def print_working_map_layers(ctx, *, title: str = "[workingmap] layers") -> None:
     """Print a compact HUD of WorkingMap layers (MapSurface / Scratch / Creative).
@@ -1165,7 +1189,13 @@ def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface
     uniq_sig16: set[str] = set()
     uniq_patch_eids: set[str] = set()
 
+    skip_meta_entities = {"scene", "wm_root", "root", "now"}
+
     for eid, bid in sorted(ent_map.items(), key=_sort_key):
+        if not isinstance(eid, str):
+            continue
+        if eid.strip().lower() in skip_meta_entities:
+            continue
         if not isinstance(bid, str):
             continue
         b = ww._bindings.get(bid)  # pylint: disable=protected-access
@@ -2669,8 +2699,263 @@ def merge_mapsurface_payload_v1_into_workingmap(ctx: Ctx, payload: dict[str, Any
     }
 
 
+def _wm_count_cue_tags_v1(world) -> int:
+    """Count cue:* tags currently present in a WorldGraph.
+
+    This is used as a lightweight guardrail check for merge/seed mode:
+    merge should preserve prior cues in metadata, but should not leak them
+    back into live cue:* tags as if they were observed "now".
+    """
+    if world is None:
+        return 0
+
+    n = 0
+    try:
+        bindings = getattr(world, "_bindings", {})
+        if isinstance(bindings, dict):
+            for b in bindings.values():
+                tags = getattr(b, "tags", None)
+                if not isinstance(tags, list):
+                    continue
+                for t in tags:
+                    if isinstance(t, str) and t.startswith("cue:"):
+                        n += 1
+    except Exception:
+        return 0
+
+    return int(n)
+
+
+def _wm_mapswitch_candidate_view_v1(cand: dict[str, Any]) -> dict[str, Any]:
+    """Return a small JSON-safe candidate summary for map-switch logs."""
+    if not isinstance(cand, dict):
+        return {}
+
+    out: dict[str, Any] = {}
+
+    eid = cand.get("engram_id")
+    if isinstance(eid, str) and eid:
+        out["engram_id"] = eid
+
+    for key in ("stage", "zone", "sig", "salience_sig", "src", "cand_salience_sig"):
+        val = cand.get(key)
+        if isinstance(val, str) and val:
+            out[key] = val
+
+    for key in ("score",):
+        val = cand.get(key)
+        if isinstance(val, (int, float)):
+            out[key] = float(val)
+
+    for key in ("overlap_preds", "overlap_cues"):
+        val = cand.get(key)
+        if isinstance(val, int):
+            out[key] = int(val)
+
+    return out
+
+
+def _wm_mapswitch_ranked_view_v1(ranked: list[dict[str, Any]], *, limit: int = 5) -> list[dict[str, Any]]:
+    """Return a bounded list of candidate summaries for event logs."""
+    out: list[dict[str, Any]] = []
+    if not isinstance(ranked, list):
+        return out
+
+    lim = max(1, min(10, int(limit)))
+    for cand in ranked[:lim]:
+        if isinstance(cand, dict):
+            row = _wm_mapswitch_candidate_view_v1(cand)
+            if row:
+                out.append(row)
+    return out
+
+
+def _wm_log_mapswitch_event_v1(
+    ctx: Ctx,
+    *,
+    ok: bool,
+    why: str,
+    reason: str | None,
+    stage: str | None,
+    zone: str | None,
+    mode: str,
+    source: str | None,
+    match: str | None,
+    top_k: int,
+    exclude_engram_id: str | None = None,
+    ranked: list[dict[str, Any]] | None = None,
+    chosen: dict[str, Any] | None = None,
+    load: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Append one structured map-switch event to ctx.
+
+    Event semantics
+    ---------------
+    - `candidates`: the ranked candidates that were considered
+    - `chosen_seed`: the candidate actually chosen (if any)
+    - `drop_reason`: why the top/default candidate was skipped or why no-op occurred
+    - `load`: compact summary of the merge/replace application and cue-leakage guardrail
+
+    The event is JSON-safe and intentionally small enough to store in per-cycle traces.
+    """
+    ranked_rows = _wm_mapswitch_ranked_view_v1(ranked or [], limit=max(1, min(10, int(top_k))))
+    chosen_row = _wm_mapswitch_candidate_view_v1(chosen) if isinstance(chosen, dict) else None
+    if not chosen_row:
+        chosen_row = None
+
+    chosen_rank: int | None = None
+    if isinstance(chosen_row, dict):
+        chosen_id = chosen_row.get("engram_id")
+        if isinstance(chosen_id, str):
+            for idx, row in enumerate(ranked_rows, start=1):
+                if row.get("engram_id") == chosen_id:
+                    chosen_rank = idx
+                    break
+
+    drop_reason: str | None = None
+    top_id = None
+    if ranked_rows:
+        raw_top = ranked_rows[0].get("engram_id")
+        top_id = raw_top if isinstance(raw_top, str) and raw_top else None
+
+    if isinstance(exclude_engram_id, str) and exclude_engram_id and top_id == exclude_engram_id:
+        drop_reason = "excluded_current_snapshot"
+
+    if (not ok) and not drop_reason:
+        drop_reason = why if isinstance(why, str) and why else None
+
+    load_view: dict[str, Any] = {}
+    if isinstance(load, dict):
+        for key in (
+            "mode",
+            "added_entities",
+            "filled_slots",
+            "added_edges",
+            "stored_prior_cues",
+            "entities",
+            "relations",
+            "cue_tags_before",
+            "cue_tags_after",
+            "cue_tag_delta",
+            "merge_guardrail_ok",
+        ):
+            if key in load:
+                load_view[key] = load.get(key)
+
+    event = {
+        "schema": "wm_mapswitch_event_v1",
+        "step": int(getattr(ctx, "controller_steps", 0) or 0),
+        "ok": bool(ok),
+        "why": str(why or ""),
+        "reason": reason if isinstance(reason, str) and reason else None,
+        "stage": stage if isinstance(stage, str) and stage else None,
+        "zone": zone if isinstance(zone, str) and zone else None,
+        "mode": str(mode or "merge"),
+        "source": source if isinstance(source, str) and source else None,
+        "match": match if isinstance(match, str) and match else None,
+        "top_k": int(top_k),
+        "exclude_engram_id": exclude_engram_id if isinstance(exclude_engram_id, str) and exclude_engram_id else None,
+        "candidate_count": int(len(ranked_rows)),
+        "candidates": ranked_rows,
+        "chosen_seed": chosen_row,
+        "chosen_rank": int(chosen_rank) if isinstance(chosen_rank, int) else None,
+        "drop_reason": drop_reason,
+        "load": load_view,
+    }
+
+    try:
+        ctx.wm_mapswitch_last_events = [event]
+    except Exception:
+        pass
+
+    try:
+        hist = getattr(ctx, "wm_mapswitch_history", None)
+        if not isinstance(hist, list):
+            hist = []
+        hist.append(event)
+
+        lim = int(getattr(ctx, "wm_mapswitch_history_limit", 50) or 50)
+        lim = max(1, min(500, lim))
+        if len(hist) > lim:
+            del hist[:-lim]
+
+        ctx.wm_mapswitch_history = hist
+    except Exception:
+        pass
+
+    return event
+
+
+def format_mapswitch_event_line_v1(event: dict[str, Any]) -> str:
+    """Render a compact one-line map-switch event for terminal logs."""
+    if not isinstance(event, dict) or not event:
+        return "(none)"
+
+    ok = bool(event.get("ok"))
+    mode = event.get("mode")
+    mode_txt = mode if isinstance(mode, str) and mode else "merge"
+
+    match = event.get("match")
+    match_txt = match if isinstance(match, str) and match else "(none)"
+
+    try:
+        cand_n = int(event.get("candidate_count", 0) or 0)
+    except Exception:
+        cand_n = 0
+
+    if ok:
+        chosen = event.get("chosen_seed")
+        chosen_txt = "(none)"
+        if isinstance(chosen, dict):
+            raw = chosen.get("engram_id")
+            if isinstance(raw, str) and raw:
+                chosen_txt = raw[:8] + "…"
+
+        try:
+            rank_txt = str(int(event.get("chosen_rank"))) if event.get("chosen_rank") is not None else "n/a"
+        except Exception:
+            rank_txt = "n/a"
+
+        drop = event.get("drop_reason")
+        drop_txt = f" drop={drop}" if isinstance(drop, str) and drop else ""
+
+        load = event.get("load")
+        guard_txt = ""
+        if isinstance(load, dict):
+            guard = load.get("merge_guardrail_ok")
+            delta = load.get("cue_tag_delta")
+            if guard is True:
+                guard_txt = " cue_guard=ok"
+            elif guard is False:
+                try:
+                    delta_i = int(delta) if delta is not None else None
+                except Exception:
+                    delta_i = None
+                if isinstance(delta_i, int):
+                    guard_txt = f" cue_guard=leak(+{delta_i})"
+                else:
+                    guard_txt = " cue_guard=leak"
+
+        return (
+            f"ok mode={mode_txt} match={match_txt} cand_n={cand_n} "
+            f"chosen={chosen_txt} rank={rank_txt}{drop_txt}{guard_txt}"
+        )
+
+    why = event.get("why")
+    why_txt = why if isinstance(why, str) and why else "no-op"
+    drop = event.get("drop_reason")
+    drop_txt = f" drop={drop}" if isinstance(drop, str) and drop else ""
+    return f"skip why={why_txt} mode={mode_txt} match={match_txt} cand_n={cand_n}{drop_txt}"
+
+
 def load_wm_mapsurface_engram_into_workingmap_mode(ctx: Ctx, engram_id: str, *, mode: str = "replace") -> dict[str, Any]:
-    """Load a Column engram (wm_mapsurface) into WorkingMap using replace or merge/seed mode."""
+    """Load a Column engram (wm_mapsurface) into WorkingMap using replace or merge/seed mode.
+
+    Extra traceability
+    ------------------
+    We also measure cue-tag counts before/after the load so merge/seed mode can
+    prove that it did not leak cue:* tags back into the live WorkingMap.
+    """
     rec = column_mem.try_get(engram_id)
     if not isinstance(rec, dict):
         return {"ok": False, "why": "no_such_engram"}
@@ -2682,6 +2967,8 @@ def load_wm_mapsurface_engram_into_workingmap_mode(ctx: Ctx, engram_id: str, *, 
     if not isinstance(payload, dict):
         return {"ok": False, "why": "payload_not_dict"}
 
+    cue_before = _wm_count_cue_tags_v1(getattr(ctx, "working_world", None))
+
     m = (mode or "replace").strip().lower()
     if m in ("merge", "seed", "merge_seed", "merge/seed"):
         out = merge_mapsurface_payload_v1_into_workingmap(ctx, payload, reason=f"engram_merge:{engram_id[:8]}")
@@ -2690,8 +2977,19 @@ def load_wm_mapsurface_engram_into_workingmap_mode(ctx: Ctx, engram_id: str, *, 
         out = load_mapsurface_payload_v1_into_workingmap(ctx, payload, replace=True, reason=f"engram_replace:{engram_id[:8]}")
         out["mode"] = "replace"
 
+    cue_after = _wm_count_cue_tags_v1(getattr(ctx, "working_world", None))
+
     out["ok"] = True
     out["engram_id"] = engram_id
+    out["cue_tags_before"] = int(cue_before)
+    out["cue_tags_after"] = int(cue_after)
+    out["cue_tag_delta"] = int(cue_after - cue_before)
+
+    if out.get("mode") == "merge":
+        out["merge_guardrail_ok"] = int(out.get("cue_tag_delta", 0) or 0) == 0
+    else:
+        out["merge_guardrail_ok"] = None
+
     return out
 
 
@@ -2884,16 +3182,12 @@ def maybe_autoretrieve_mapsurface_on_keyframe(
 
     This is the *read-path* complement to store_mapsurface_snapshot_v1(...).
 
-    Intended semantics:
-      - Keyframes are stage/zone boundaries. At that moment we may want a "prior" map.
-      - We select candidates by (stage, zone) first, then rank by salience overlap vs *current* WM.
-      - We skip `exclude_engram_id` (usually the snapshot we just stored this same boundary).
-      - We load into WorkingMap using either:
-          * mode="merge"   (default): conservative prior; does NOT inject cue:*; does NOT overwrite slot families.
-          * mode="replace" (debug): clear + rebuild; observation will overwrite next tick.
-
-    Returns:
-      dict with keys {ok, why?, engram_id?, chosen?, pick?, load?} (safe for tests/printing).
+    In addition to returning the load result, this function now records a structured
+    map-switch event containing:
+      - candidates considered,
+      - chosen seed,
+      - drop/no-op reason,
+      - and cue-leakage guardrail outcome for merge mode.
     """
     if ctx is None or world is None:
         return {"ok": False, "why": "missing_ctx_or_world"}
@@ -2903,7 +3197,7 @@ def maybe_autoretrieve_mapsurface_on_keyframe(
 
     mode_eff = (mode or getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge").strip().lower()
     top_eff = top_k if isinstance(top_k, int) else int(getattr(ctx, "wm_mapsurface_autoretrieve_top_k", 5) or 5)
-    top_eff = max(2, min(10, int(top_eff)))  # need >=2 because we may exclude the top candidate
+    top_eff = max(2, min(10, int(top_eff)))
 
     pick = pick_best_wm_mapsurface_rec(
         stage=stage,
@@ -2915,9 +3209,28 @@ def maybe_autoretrieve_mapsurface_on_keyframe(
         top_k=top_eff,
     )
 
-    ranked = pick.get("ranked") if isinstance(pick, dict) else None
-    if not (isinstance(ranked, list) and ranked):
-        return {"ok": False, "why": "no_candidates", "pick": pick}
+    source = pick.get("source") if isinstance(pick, dict) and isinstance(pick.get("source"), str) else None
+    match = pick.get("match") if isinstance(pick, dict) and isinstance(pick.get("match"), str) else None
+    ranked = pick.get("ranked") if isinstance(pick, dict) and isinstance(pick.get("ranked"), list) else []
+
+    if not ranked:
+        event = _wm_log_mapswitch_event_v1(
+            ctx,
+            ok=False,
+            why="no_candidates",
+            reason=reason,
+            stage=stage,
+            zone=zone,
+            mode=mode_eff,
+            source=source,
+            match=match,
+            top_k=top_eff,
+            exclude_engram_id=exclude_engram_id,
+            ranked=ranked,
+            chosen=None,
+            load=None,
+        )
+        return {"ok": False, "why": "no_candidates", "pick": pick, "event": event}
 
     chosen: dict[str, Any] | None = None
     for cand in ranked:
@@ -2932,13 +3245,44 @@ def maybe_autoretrieve_mapsurface_on_keyframe(
         break
 
     if chosen is None:
-        return {"ok": False, "why": "only_excluded_candidate", "pick": pick}
+        event = _wm_log_mapswitch_event_v1(
+            ctx,
+            ok=False,
+            why="only_excluded_candidate",
+            reason=reason,
+            stage=stage,
+            zone=zone,
+            mode=mode_eff,
+            source=source,
+            match=match,
+            top_k=top_eff,
+            exclude_engram_id=exclude_engram_id,
+            ranked=ranked,
+            chosen=None,
+            load=None,
+        )
+        return {"ok": False, "why": "only_excluded_candidate", "pick": pick, "event": event}
 
     eid = chosen.get("engram_id")
     if not isinstance(eid, str) or not eid:
-        return {"ok": False, "why": "bad_engram_id", "pick": pick}
+        event = _wm_log_mapswitch_event_v1(
+            ctx,
+            ok=False,
+            why="bad_engram_id",
+            reason=reason,
+            stage=stage,
+            zone=zone,
+            mode=mode_eff,
+            source=source,
+            match=match,
+            top_k=top_eff,
+            exclude_engram_id=exclude_engram_id,
+            ranked=ranked,
+            chosen=chosen,
+            load=None,
+        )
+        return {"ok": False, "why": "bad_engram_id", "pick": pick, "event": event}
 
-    # Execute the load into WM
     if mode_eff in ("replace", "r"):
         load = load_wm_mapsurface_engram_into_workingmap_mode(ctx, eid, mode="replace")
     else:
@@ -2950,27 +3294,41 @@ def maybe_autoretrieve_mapsurface_on_keyframe(
     except Exception:
         pass
 
+    event = _wm_log_mapswitch_event_v1(
+        ctx,
+        ok=True,
+        why="ok",
+        reason=reason,
+        stage=stage,
+        zone=zone,
+        mode=mode_eff,
+        source=source,
+        match=match,
+        top_k=top_eff,
+        exclude_engram_id=exclude_engram_id,
+        ranked=ranked,
+        chosen=chosen,
+        load=load if isinstance(load, dict) else None,
+    )
+
     log_enabled = bool(getattr(ctx, "wm_mapsurface_autoretrieve_verbose", False))
     if log is not None:
         log_enabled = bool(log)
 
     if log_enabled:
         try:
-            match = pick.get("match") if isinstance(pick, dict) else None
-            score = chosen.get("score")
-            op = chosen.get("overlap_preds")
-            oc = chosen.get("overlap_cues")
-            src = chosen.get("src")
-            mode_txt = load.get("mode", "merge") if isinstance(load, dict) else mode_eff
-            print(
-                f"[wm-retrieve] (auto) {mode_txt} engram={eid[:8]}… match={match} "
-                f"score={score} op={op} oc={oc} src={src}"
-            )
+            print("[wm-mapswitch] " + format_mapswitch_event_line_v1(event))
         except Exception:
             pass
 
-    return {"ok": True, "engram_id": eid, "chosen": chosen, "pick": pick, "load": load}
-
+    return {
+        "ok": True,
+        "engram_id": eid,
+        "chosen": chosen,
+        "pick": pick,
+        "load": load,
+        "event": event,
+    }
 
 
 def load_wm_mapsurface_engram_into_workingmap(ctx: Ctx, engram_id: str, *, replace: bool = True) -> dict[str, Any]:
@@ -2989,6 +3347,350 @@ def load_wm_mapsurface_engram_into_workingmap(ctx: Ctx, engram_id: str, *, repla
     out = load_mapsurface_payload_v1_into_workingmap(ctx, payload, replace=replace, reason=f"engram:{engram_id[:8]}")
     out["engram_id"] = engram_id
     return out
+
+
+def _wm_surfacegrid_priority_v1(token: str) -> int:
+    """Return a stable display priority for salience tokens.
+
+    Higher numbers are displayed first when we need to trim the salience set.
+    The ordering intentionally favors direct hazards, then goals/attachment cues,
+    then lower-risk landmarks. This keeps the overlay conservative and easy to
+    read in the terminal while the full MapSurface entity system is still under
+    construction.
+    """
+    tok = str(token or "").strip().lower()
+    if tok == "cliff":
+        return 100
+    if tok == "shelter":
+        return 80
+    if tok == "mom":
+        return 70
+    if tok == "nipple":
+        return 60
+    if tok == "self":
+        return 50
+    return 10
+
+
+def _wm_focus_token_from_obs_token_v1(token: str) -> Optional[str]:
+    """Map a predicate/cue token to a small focus-token vocabulary.
+
+    We intentionally keep the salience vocabulary tiny in v1 because the current
+    environment exposes only a few stable scene entities. A future MapSurface
+    layer can replace this with entity ids and richer focus semantics.
+    """
+    tok = str(token or "").strip().lower()
+    if not tok:
+        return None
+    if tok.startswith("vision:silhouette:mom") or tok.startswith("proximity:mom:"):
+        return "mom"
+    if tok.startswith("proximity:shelter:"):
+        return "shelter"
+    if tok.startswith("hazard:cliff:"):
+        return "cliff"
+    if tok.startswith("nipple:") or tok.startswith("milk:"):
+        return "nipple"
+    return None
+
+
+def wm_salience_force_focus_token_v1(ctx: Ctx, token: str, *, ttl: Optional[int] = None, reason: str = "manual") -> None:
+    """Force a focus token into the salience set for a short time.
+
+    This is the token-level counterpart of a later entity-level focus API. It is
+    intentionally simple so probe/inspect policies can request a focus target
+    without depending on a full MapSurface entity layer yet.
+    """
+    if ctx is None:
+        return
+
+    tok = str(token or "").strip().lower()
+    if not tok:
+        return
+
+    ttl_steps = int(ttl if ttl is not None else getattr(ctx, "wm_salience_promote_ttl", 5) or 5)
+    ttl_steps = max(1, ttl_steps)
+
+    try:
+        ctx.wm_salience_forced_focus[tok] = ttl_steps
+        ctx.wm_salience_forced_reason[tok] = str(reason or "manual")
+    except Exception:
+        pass
+
+
+def _wm_salience_candidate_tokens_v1(env_obs: EnvObservation) -> list[tuple[str, str]]:
+    """Extract focus candidates from a single observation.
+
+    Returns a list of ``(focus_token, reason)`` pairs in deterministic order. The
+    reason strings are small trace labels, useful for debugging promotion/decay.
+    """
+    preds = [str(x) for x in (getattr(env_obs, "predicates", None) or []) if x is not None]
+    cues = [str(x) for x in (getattr(env_obs, "cues", None) or []) if x is not None]
+
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add_token(tok: Optional[str], reason: str) -> None:
+        if tok is None or tok in seen:
+            return
+        seen.add(tok)
+        out.append((tok, reason))
+
+    for tok in preds:
+        focus = _wm_focus_token_from_obs_token_v1(tok)
+        if focus == "cliff" and tok.endswith(":near"):
+            add_token(focus, "hazard")
+    for tok in cues:
+        focus = _wm_focus_token_from_obs_token_v1(tok)
+        if focus is not None:
+            add_token(focus, "cue")
+    for tok in preds:
+        focus = _wm_focus_token_from_obs_token_v1(tok)
+        if focus is not None:
+            add_token(focus, "present")
+
+    return out
+
+
+def _wm_blank_grid_cells_v1(grid_w: int, grid_h: int, fill: int = cca8_navpatch.CELL_UNKNOWN) -> list[int]:
+    """Return a flat grid cell list with a uniform fill value."""
+    return [int(fill)] * (int(grid_w) * int(grid_h))
+
+
+def _wm_set_grid_cell_v1(cells: list[int], grid_w: int, grid_h: int, x: int, y: int, value: int) -> None:
+    """Safely set one flat-grid cell if the coordinates are in bounds."""
+    if not (0 <= x < grid_w and 0 <= y < grid_h):
+        return
+    cells[(y * grid_w) + x] = int(value)
+
+
+def _wm_paint_diamond_v1(cells: list[int], grid_w: int, grid_h: int, cx: int, cy: int, radius: int, value: int) -> None:
+    """Paint a tiny Manhattan-diamond into a flat grid list."""
+    radius = max(0, int(radius))
+    for y in range(max(0, cy - radius), min(grid_h, cy + radius + 1)):
+        for x in range(max(0, cx - radius), min(grid_w, cx + radius + 1)):
+            if abs(x - cx) + abs(y - cy) <= radius:
+                _wm_set_grid_cell_v1(cells, grid_w, grid_h, x, y, value)
+
+
+def _wm_env_position_v1(env_obs: EnvObservation, key: str) -> Optional[tuple[float, float]]:
+    """Read a numeric 2D position from ``env_obs.env_meta`` if available."""
+    meta = getattr(env_obs, "env_meta", None) or {}
+    pos = meta.get(key)
+    if not (isinstance(pos, (tuple, list)) and len(pos) == 2):
+        return None
+    try:
+        return float(pos[0]), float(pos[1])
+    except Exception:
+        return None
+
+
+def _wm_relative_direction_cell_v1(env_obs: EnvObservation, grid_w: int, grid_h: int, *, default_xy: tuple[int, int]) -> tuple[int, int]:
+    """Project mom_position relative to kid_position into a coarse SELF-local cell.
+
+    The current environment only needs a tiny directional hint, not metric map
+    accuracy. If positions are unavailable, we fall back to a deterministic
+    canonical cell.
+    """
+    kid_pos = _wm_env_position_v1(env_obs, "kid_position")
+    mom_pos = _wm_env_position_v1(env_obs, "mom_position")
+    if kid_pos is None or mom_pos is None:
+        return default_xy
+
+    dx = mom_pos[0] - kid_pos[0]
+    dy = mom_pos[1] - kid_pos[1]
+    cx = grid_w // 2
+    cy = grid_h // 2
+
+    step_x = 0
+    step_y = 0
+    if dx > 0.15:
+        step_x = 1
+    elif dx < -0.15:
+        step_x = -1
+    if dy > 0.15:
+        step_y = 1
+    elif dy < -0.15:
+        step_y = -1
+
+    x = max(0, min(grid_w - 1, cx + (2 * step_x)))
+    y = max(0, min(grid_h - 1, cy + (2 * step_y)))
+    return x, y
+
+
+def _wm_default_navpatches_from_obs_v1(env_obs: EnvObservation, *, grid_w: int, grid_h: int, zoom_level: int = 0) -> list[dict[str, Any]]:
+    """Synthesize a tiny deterministic patch set from a basic EnvObservation.
+
+    Why this exists
+    ---------------
+    The current repo version already has a general ``cca8_navpatch`` module, but
+    the environment does not yet emit full patch payloads. This helper provides a
+    small bridge so the WorkingMap can still maintain one current SurfaceGrid per
+    cycle and the terminal can display salience-aware topology diagnostics.
+    """
+    preds = {str(x) for x in (getattr(env_obs, "predicates", None) or []) if x is not None}
+    patches: list[dict[str, Any]] = []
+    cx = int(grid_w) // 2
+    cy = int(grid_h) // 2
+
+    terrain_cells = _wm_blank_grid_cells_v1(grid_w, grid_h)
+    terrain_radius = 2 if int(zoom_level) <= 0 else 1
+    _wm_paint_diamond_v1(terrain_cells, grid_w, grid_h, cx, cy, terrain_radius, cca8_navpatch.CELL_TRAVERSABLE)
+    patches.append({
+        "schema": "navpatch_v1",
+        "role": "terrain",
+        "frame": "self_local",
+        "entity_id": "self",
+        "extent": {"center_xy": [cx, cy], "radius": terrain_radius},
+        "grid_encoding_v": cca8_navpatch.GRID_ENCODING_V1,
+        "grid_w": int(grid_w),
+        "grid_h": int(grid_h),
+        "grid_cells": terrain_cells,
+    })
+
+    cliff_cells = _wm_blank_grid_cells_v1(grid_w, grid_h)
+    if "hazard:cliff:near" in preds:
+        cliff_y = max(0, cy - 2)
+    else:
+        cliff_y = 0
+    for x in range(max(0, cx - 1), min(grid_w, cx + 2)):
+        _wm_set_grid_cell_v1(cliff_cells, grid_w, grid_h, x, cliff_y, cca8_navpatch.CELL_HAZARD)
+    patches.append({
+        "schema": "navpatch_v1",
+        "role": "hazard",
+        "frame": "self_local",
+        "entity_id": "cliff",
+        "extent": {"center_xy": [cx, cliff_y]},
+        "grid_encoding_v": cca8_navpatch.GRID_ENCODING_V1,
+        "grid_w": int(grid_w),
+        "grid_h": int(grid_h),
+        "grid_cells": cliff_cells,
+    })
+
+    if "proximity:shelter:near" in preds or "proximity:shelter:close" in preds or "proximity:shelter:touching" in preds:
+        shelter_x = min(grid_w - 1, cx + 2)
+    else:
+        shelter_x = min(grid_w - 1, cx + 3)
+    shelter_cells = _wm_blank_grid_cells_v1(grid_w, grid_h)
+    _wm_set_grid_cell_v1(shelter_cells, grid_w, grid_h, shelter_x, cy, cca8_navpatch.CELL_GOAL)
+    patches.append({
+        "schema": "navpatch_v1",
+        "role": "goal",
+        "frame": "self_local",
+        "entity_id": "shelter",
+        "extent": {"center_xy": [shelter_x, cy]},
+        "grid_encoding_v": cca8_navpatch.GRID_ENCODING_V1,
+        "grid_w": int(grid_w),
+        "grid_h": int(grid_h),
+        "grid_cells": shelter_cells,
+    })
+
+    mom_x, mom_y = _wm_relative_direction_cell_v1(
+        env_obs,
+        grid_w,
+        grid_h,
+        default_xy=(max(0, cx - 2), cy),
+    )
+    mom_cells = _wm_blank_grid_cells_v1(grid_w, grid_h)
+    patches.append({
+        "schema": "navpatch_v1",
+        "role": "landmark",
+        "frame": "self_local",
+        "entity_id": "mom",
+        "extent": {"center_xy": [mom_x, mom_y]},
+        "grid_encoding_v": cca8_navpatch.GRID_ENCODING_V1,
+        "grid_w": int(grid_w),
+        "grid_h": int(grid_h),
+        "grid_cells": mom_cells,
+        "tags": ["mom"],
+    })
+
+    return patches
+
+
+def _wm_patch_center_xy_v1(patch: dict[str, Any], *, grid_w: int, grid_h: int) -> Optional[tuple[int, int]]:
+    """Return a coarse display center for one navpatch payload."""
+    extent = patch.get("extent")
+    if isinstance(extent, dict):
+        center_xy = extent.get("center_xy")
+        if isinstance(center_xy, (tuple, list)) and len(center_xy) == 2:
+            try:
+                x = max(0, min(grid_w - 1, int(center_xy[0])))
+                y = max(0, min(grid_h - 1, int(center_xy[1])))
+                return x, y
+            except Exception:
+                return None
+    return None
+
+
+def _wm_patch_index_v1(patches: list[dict[str, Any]], *, grid_w: int, grid_h: int) -> dict[str, tuple[int, int]]:
+    """Index navpatch display centers by entity id / role."""
+    out: dict[str, tuple[int, int]] = {}
+    for patch in patches:
+        if not isinstance(patch, dict):
+            continue
+        center = _wm_patch_center_xy_v1(patch, grid_w=grid_w, grid_h=grid_h)
+        if center is None:
+            continue
+        raw_key = patch.get("entity_id") or patch.get("role")
+        if not isinstance(raw_key, str) or not raw_key.strip():
+            continue
+        out[raw_key.strip().lower()] = center
+    return out
+
+
+def _wm_surfacegrid_mark_char_v1(token: str) -> str:
+    """Return the ASCII overlay glyph for one focus token."""
+    tok = str(token or "").strip().lower()
+    if tok == "mom":
+        return "M"
+    if tok == "shelter":
+        return "S"
+    if tok == "cliff":
+        return "C"
+    if tok == "nipple":
+        return "N"
+    return "*"
+
+
+def _wm_place_overlay_char_v1(grid: list[list[str]], char: str, *, preferred_xy: tuple[int, int], center_xy: tuple[int, int]) -> None:
+    """Place one overlay character while avoiding obvious collisions.
+
+    Hazard/goal-aligned markers (``C`` and ``S``) may overwrite the underlying
+    semantic cell because they are effectively a relabeling of that terrain.
+    Other markers prefer nearby blank cells so they do not erase more important
+    topology cues already present on the map.
+    """
+    grid_h = len(grid)
+    grid_w = len(grid[0]) if grid else 0
+    if grid_w <= 0 or grid_h <= 0:
+        return
+
+    px, py = preferred_xy
+    cx, cy = center_xy
+    candidates: list[tuple[int, int]] = [(px, py)]
+    for radius in (1, 2):
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                if dx == 0 and dy == 0:
+                    continue
+                if max(abs(dx), abs(dy)) != radius:
+                    continue
+                candidates.append((px + dx, py + dy))
+
+    for x, y in candidates:
+        if not (0 <= x < grid_w and 0 <= y < grid_h):
+            continue
+        if x == cx and y == cy:
+            continue
+        existing = grid[y][x]
+        if existing in "@MSCN*":
+            continue
+        if char in ("C", "S"):
+            grid[y][x] = char
+            return
+        if existing == " ":
+            grid[y][x] = char
+            return
 
 
 def _edge_get_dst(edge: Dict[str, Any]) -> str | None:
@@ -3901,6 +4603,138 @@ def resting_scenes_in_shelter(world) -> Dict[str, Any]:
     }
 
 
+def _wm_navsummary_get_v1(ctx: Ctx | None) -> dict[str, Any]:
+    """Return the current cached WM.NavSummary dict, or {} when unavailable.
+
+    Policies should prefer this helper over directly reading MapSurface slot-families.
+    That keeps the gating seam stable even if we later change how NavSummary is computed.
+    """
+    if ctx is None:
+        return {}
+    ns = getattr(ctx, "wm_navsummary", None)
+    return ns if isinstance(ns, dict) else {}
+
+
+def _wm_navsummary_bool_v1(ctx: Ctx | None, key: str, default: bool = False) -> bool:
+    """Read a boolean-like NavSummary field safely."""
+    ns = _wm_navsummary_get_v1(ctx)
+    if key not in ns:
+        return bool(default)
+    try:
+        return bool(ns.get(key))
+    except Exception:
+        return bool(default)
+
+
+def _wm_navsummary_int_v1(ctx: Ctx | None, key: str) -> int | None:
+    """Read an integer NavSummary field safely."""
+    ns = _wm_navsummary_get_v1(ctx)
+    try:
+        v = ns.get(key)
+        return int(v) if isinstance(v, int) else None
+    except Exception:
+        return None
+
+
+def _wm_navsummary_float_v1(ctx: Ctx | None, key: str) -> float | None:
+    """Read a float-like NavSummary field safely."""
+    ns = _wm_navsummary_get_v1(ctx)
+    try:
+        v = ns.get(key)
+        if isinstance(v, (int, float)):
+            return float(v)
+    except Exception:
+        return None
+    return None
+
+
+def _wm_navsummary_explain_bits_v1(ctx: Ctx | None) -> str:
+    """Return a compact human-readable NavSummary excerpt for gate explanations."""
+    ns = _wm_navsummary_get_v1(ctx)
+    if not ns:
+        return "navsummary=(none)"
+
+    hazard_near = 1 if _wm_navsummary_bool_v1(ctx, "hazard_near", False) else 0
+    traversable_near = 1 if _wm_navsummary_bool_v1(ctx, "traversable_near", False) else 0
+
+    hazard_density = _wm_navsummary_float_v1(ctx, "hazard_density")
+    hd_txt = f"{hazard_density:.2f}" if isinstance(hazard_density, float) else "n/a"
+
+    corridors = _wm_navsummary_int_v1(ctx, "corridor_count")
+    corr_txt = str(corridors) if isinstance(corridors, int) else "n/a"
+
+    goal_dir = ns.get("goal_dir")
+    goal_dir_txt = goal_dir if isinstance(goal_dir, str) and goal_dir else "(none)"
+
+    safe_cost = _wm_navsummary_int_v1(ctx, "shortest_safe_path_cost")
+    safe_cost_txt = str(safe_cost) if isinstance(safe_cost, int) else "n/a"
+
+    return (
+        "navsummary("
+        f"hazard_near={hazard_near}, "
+        f"traversable_near={traversable_near}, "
+        f"hazard_density={hd_txt}, "
+        f"corridors={corr_txt}, "
+        f"goal_dir={goal_dir_txt}, "
+        f"safe_cost={safe_cost_txt})"
+    )
+
+
+def _wm_follow_mom_blocked_by_topology_v1(ctx: Ctx | None) -> bool:
+    """Return True when fallback follow_mom should be suppressed by current topology.
+
+    Conservative v1 rule:
+      - If NavSummary is unavailable: do not block here.
+      - If no traversable outlet is visible near SELF: block fallback movement.
+      - If hazard is near AND no currently visible safe path to a goal exists: block fallback movement.
+
+    This keeps follow_mom available as a simple default in easy scenes, while making it stop
+    pretending to be a good generic fallback in locally hazardous or topology-poor scenes.
+    """
+    ns = _wm_navsummary_get_v1(ctx)
+    if not ns:
+        return False
+
+    traversable_near = _wm_navsummary_bool_v1(ctx, "traversable_near", False)
+    hazard_near = _wm_navsummary_bool_v1(ctx, "hazard_near", False)
+    safe_cost = _wm_navsummary_int_v1(ctx, "shortest_safe_path_cost")
+
+    if not traversable_near:
+        return True
+    if hazard_near and safe_cost is None:
+        return True
+    return False
+
+
+def _wm_probe_supported_by_topology_v1(ctx: Ctx | None) -> bool:
+    """Return True when NavSummary says the local scene is topology-relevant enough to justify probing.
+
+    Conservative v1 signal:
+      - hazard_near, OR
+      - hazard_density is clearly non-trivial, OR
+      - no traversable local outlet and no safe path is visible.
+
+    This keeps probe tied to hazardous/uncertain topology, not generic curiosity.
+    """
+    ns = _wm_navsummary_get_v1(ctx)
+    if not ns:
+        return False
+
+    if _wm_navsummary_bool_v1(ctx, "hazard_near", False):
+        return True
+
+    hazard_density = _wm_navsummary_float_v1(ctx, "hazard_density")
+    if isinstance(hazard_density, float) and hazard_density >= 0.15:
+        return True
+
+    traversable_near = _wm_navsummary_bool_v1(ctx, "traversable_near", False)
+    safe_cost = _wm_navsummary_int_v1(ctx, "shortest_safe_path_cost")
+    if (not traversable_near) and safe_cost is None:
+        return True
+
+    return False
+
+
 #pylint: disable=superfluous-parens
 def _gate_stand_up_trigger_body_first(world, _drives: Drives, ctx) -> bool:
     """
@@ -4116,19 +4950,24 @@ def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
 
 def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool:  # pylint: disable=unused-argument
     """
-    FollowMom gate: permissive fallback when the kid is not fallen *and not resting*.
+    FollowMom gate: permissive fallback when the kid is not fallen/resting AND the local topology permits it.
 
-    Intent:
-      - FollowMom is a mild default policy when nothing else is urgent.
-      - During storyboard rest, we want quiescence (no repeated scratch writes and no spurious action).
+    Refactor intent
+    ---------------
+    This gate now reads NavSummary first, rather than relying only on BodyMap and graph-side
+    predicate checks. We still keep BodyMap as the first safety veto, but the fallback movement
+    policy is no longer blind to local hazard/traversability structure.
 
-    Rules (v1):
+    Rules (v1 refactor)
+    -------------------
       - If BodyMap is fresh:
-          posture in {"fallen","resting"} -> False
-          else -> True
-      - If BodyMap is stale:
+          posture in {"fallen", "resting"} -> False
+      - Else fallback:
           pred:resting near NOW -> False
-          else -> True
+      - Then apply NavSummary:
+          * no traversable outlet near SELF -> False
+          * hazard_near + no visible safe path -> False
+      - Otherwise True.
     """
     try:
         if ctx is not None and not bodymap_is_stale(ctx):
@@ -4138,9 +4977,16 @@ def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool:  # 
     except Exception:
         pass
 
-    # Fallback when BodyMap is stale/unavailable: suppress FollowMom if the graph near NOW says we're resting.
+    # Fallback when BodyMap is stale/unavailable: suppress FollowMom if graph near NOW says resting.
     try:
         if has_pred_near_now(world, "resting", hops=3):
+            return False
+    except Exception:
+        pass
+
+    # New topology-first seam: fallback movement should respect the current SurfaceGrid digest.
+    try:
+        if _wm_follow_mom_blocked_by_topology_v1(ctx):
             return False
     except Exception:
         pass
@@ -4174,9 +5020,16 @@ def _gate_follow_mom_explain_body_space(world, drives: Drives, ctx) -> str:  # p
     except Exception:
         rest_near_now = False
 
+    topo_blocked = False
+    try:
+        topo_blocked = _wm_follow_mom_blocked_by_topology_v1(ctx)
+    except Exception:
+        topo_blocked = False
+
     return (
-        "dev_gate: True, trigger: fallback=True when not fallen/resting; "
-        f"bodymap_stale={bodymap_stale} posture={posture or 'n/a'} rest_near_now={rest_near_now} zone={zone} "
+        "dev_gate: True, trigger: fallback=True when not fallen/resting and topology permits; "
+        f"bodymap_stale={bodymap_stale} posture={posture or 'n/a'} rest_near_now={rest_near_now} "
+        f"zone={zone} topology_blocked={topo_blocked} {_wm_navsummary_explain_bits_v1(ctx)} "
         f"(hunger={hunger:.2f}, fatigue={fatigue:.2f})"
     )
 
@@ -4185,11 +5038,22 @@ def _gate_probe_ambiguity_trigger_body_first(world, _drives: Drives, ctx) -> boo
     """
     Step 15C gate: trigger a minimal probe policy when WM.Scratch reports an ambiguous NavPatch match.
 
-    v1 (conservative):
-      - Trigger only when ambiguity exists for a safety-relevant entity (cliff), OR BodyMap says cliff is near.
-      - Debounce by ctx.wm_probe_cooldown_steps to avoid repeating the probe every tick.
+    Refactor intent
+    ---------------
+    This gate prefers NavSummary when it is available, but it preserves the original
+    Step-15C behavior when NavSummary is absent.
 
-    This is a gate only: it must not mutate world state.
+    v1.1 rules
+    ----------
+      - Probe must be enabled.
+      - WM.Scratch must currently hold at least one ambiguity key.
+      - Prefer cliff ambiguity, but BodyMap cliff-near remains a fallback support signal.
+      - If NavSummary is present:
+          * hazard ambiguity requires topology support OR BodyMap cliff-near
+          * non-hazard ambiguity requires the stronger fallback (hazard_near + topology support)
+      - If NavSummary is absent:
+          * preserve backward-compatible behavior: cliff ambiguity alone may trigger probe
+      - Respect cooldown exactly as before.
     """
     if ctx is None:
         return False
@@ -4212,12 +5076,34 @@ def _gate_probe_ambiguity_trigger_body_first(world, _drives: Drives, ctx) -> boo
 
     hazard_near = False
     try:
-        hazard_near = (body_cliff_distance(ctx) == "near")  #pylint: disable=superfluous-parens
+        hazard_near = body_cliff_distance(ctx) == "near"
     except Exception:
         hazard_near = False
 
     if not (hazard_amb or hazard_near):
         return False
+
+    ns = _wm_navsummary_get_v1(ctx)
+    navsummary_present = bool(ns)
+
+    topo_support = False
+    if navsummary_present:
+        try:
+            topo_support = _wm_probe_supported_by_topology_v1(ctx)
+        except Exception:
+            topo_support = False
+
+    # Backward-compatible Step 15C behavior:
+    # if NavSummary is missing, a hazard-relevant ambiguity should still be able to trigger probe.
+    if hazard_amb:
+        if navsummary_present and not (topo_support or hazard_near):
+            return False
+    else:
+        # No explicit cliff ambiguity: require stronger evidence.
+        if not navsummary_present:
+            return False
+        if not (hazard_near and topo_support):
+            return False
 
     # Debounce (cooldown)
     try:
@@ -4259,9 +5145,19 @@ def _gate_probe_ambiguity_explain_body_first(world, _drives: Drives, ctx) -> str
 
     hazard_near = False
     try:
-        hazard_near = (body_cliff_distance(ctx) == "near")  #pylint: disable="superfluous-parens"
+        hazard_near = body_cliff_distance(ctx) == "near"
     except Exception:
         hazard_near = False
+
+    ns = _wm_navsummary_get_v1(ctx)
+    navsummary_present = bool(ns)
+
+    topo_support = False
+    if navsummary_present:
+        try:
+            topo_support = _wm_probe_supported_by_topology_v1(ctx)
+        except Exception:
+            topo_support = False
 
     try:
         step_now = int(getattr(ctx, "controller_steps", 0) or 0)
@@ -4281,17 +5177,19 @@ def _gate_probe_ambiguity_explain_body_first(world, _drives: Drives, ctx) -> str
     if last_i is not None and cooldown > 0 and (step_now - last_i) < cooldown:
         blocked = True
 
+    fallback_mode = False
+    if hazard_amb and not navsummary_present:
+        fallback_mode = True
+
     return (
         "dev_gate: True, trigger: "
         f"scratch_keys={len(keys_txt)} ents={sorted(list(ents))} "
         f"hazard_amb(cliff)={hazard_amb} hazard_near={hazard_near} "
+        f"navsummary_present={navsummary_present} topo_support={topo_support} "
+        f"fallback_mode={fallback_mode} "
         f"cooldown={cooldown} blocked={blocked} "
-        f"(step_now={step_now}, last_probe={last_i})"
+        f"(step_now={step_now}, last_probe={last_i}) {_wm_navsummary_explain_bits_v1(ctx)}"
     )
-
-
-
-
 
 
 def _gate_recover_fall_trigger_body_first(world, _drives: Drives, ctx) -> bool:
@@ -4849,16 +5747,15 @@ class PolicyRuntime:
         # capture the full triggered set (before any safety-only filtering)
         triggered_all = [p.name for p in matches]
 
-        # Step 13 (minimal behavior hook):
-        # If the composed SurfaceGrid says hazard is near, suppress the *fallback* follow_mom policy.
-        # This makes a visible behavioral change in unsafe cycles without inventing new policies yet.
+        # SurfaceGrid/NavSummary-first suppression hook:
+        # block the fallback follow_mom path only when the current topology says that
+        # local movement is effectively unsafe or no visible safe outlet exists.
         try:
-            slots = getattr(ctx, "wm_grid_slot_families", None)
-            hazard_near = bool(slots.get("hazard:near", False)) if isinstance(slots, dict) else False
+            suppress_follow_mom = _wm_follow_mom_blocked_by_topology_v1(ctx)
         except Exception:
-            hazard_near = False
+            suppress_follow_mom = False
 
-        if hazard_near:
+        if suppress_follow_mom:
             matches = [p for p in matches if p.name != "policy:follow_mom"]
             if not matches:
                 return "no_match"
@@ -9399,6 +10296,372 @@ def wm_apply_grid_slot_families_to_mapsurface_v1(working_world, self_bid: str, s
     return written
 
 
+def _wm_dir8_v1(dx: int, dy: int) -> str:
+    """Return a compact 8-way direction code from an integer delta.
+
+    The goal here is readability, not geometry perfection. This matches the spirit
+    of the simple directional summaries already used elsewhere in the CCA8 codebase.
+    """
+    sx = 0 if dx == 0 else (1 if dx > 0 else -1)
+    sy = 0 if dy == 0 else (1 if dy > 0 else -1)
+
+    if sx == 0 and sy == 0:
+        return "C"
+    if sx == 0 and sy < 0:
+        return "N"
+    if sx == 0 and sy > 0:
+        return "S"
+    if sx > 0 and sy == 0:
+        return "E"
+    if sx < 0 and sy == 0:
+        return "W"
+    if sx > 0 and sy < 0:  #pylint: disable=chained-comparison
+        return "NE"
+    if sx > 0 and sy > 0:
+        return "SE"
+    if sx < 0 and sy < 0:
+        return "NW"
+    return "SW"
+
+
+def _wm_surfacegrid_local_points_v1(grid_w: int, grid_h: int, cx: int, cy: int, radius: int) -> list[tuple[int, int]]:
+    """Return Euclidean-disk local points around SELF for NavSummary v1.
+
+    This intentionally mirrors the "near-self local neighborhood" idea already
+    used for small grid-derived slot families. The result is small, deterministic,
+    and cheap to scan every cycle.
+    """
+    w = max(1, int(grid_w))
+    h = max(1, int(grid_h))
+    r = max(0, int(radius))
+
+    pts: list[tuple[int, int]] = []
+    r2 = r * r
+    for y in range(max(0, cy - r), min(h, cy + r + 1)):
+        dy = y - cy
+        for x in range(max(0, cx - r), min(w, cx + r + 1)):
+            dx = x - cx
+            if (dx * dx + dy * dy) <= r2:
+                pts.append((x, y))
+    return pts
+
+
+def _wm_surfacegrid_corridor_count_v1(sg: SurfaceGridV1, *, self_xy: tuple[int, int], local_radius: int) -> int:
+    """Count connected traversable components near SELF.
+
+    v1 definition:
+      - local neighborhood = Euclidean disk around SELF
+      - safe/traversable cells = CELL_TRAVERSABLE or CELL_GOAL
+      - connectivity = 4-neighbor
+
+    This is a deliberately simple proxy for "how many local traversable branches
+    or corridors do I have right now?"
+    """
+    w = int(getattr(sg, "grid_w", 0) or 0)
+    h = int(getattr(sg, "grid_h", 0) or 0)
+    cells = getattr(sg, "grid_cells", None)
+    if not isinstance(cells, list) or len(cells) != (w * h) or w <= 0 or h <= 0:
+        return 0
+
+    cx, cy = int(self_xy[0]), int(self_xy[1])
+    pts = _wm_surfacegrid_local_points_v1(w, h, cx, cy, local_radius)
+    local = set(pts)
+    safe_codes = {CELL_TRAVERSABLE, CELL_GOAL}
+
+    walkable: set[tuple[int, int]] = set()
+    for x, y in pts:
+        try:
+            c = int(cells[y * w + x])
+        except Exception:
+            continue
+        if c in safe_codes:
+            walkable.add((x, y))
+
+    if not walkable:
+        return 0
+
+    seen: set[tuple[int, int]] = set()
+    comps = 0
+
+    for pt in sorted(walkable):
+        if pt in seen:
+            continue
+        comps += 1
+        stack = [pt]
+        seen.add(pt)
+
+        while stack:
+            x, y = stack.pop()
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                np = (nx, ny)
+                if np not in local or np not in walkable or np in seen:
+                    continue
+                seen.add(np)
+                stack.append(np)
+
+    return comps
+
+
+def _wm_surfacegrid_shortest_safe_path_cost_v1(sg: SurfaceGridV1, *, self_xy: tuple[int, int]) -> int | None:
+    """Return the shortest safe path length from SELF to any goal cell.
+
+    v1 safety rule:
+      - passable = CELL_TRAVERSABLE or CELL_GOAL
+      - impassable = unknown / hazard / blocked
+      - connectivity = 4-neighbor
+
+    This is intentionally conservative. Unknown cells are not treated as safe.
+    """
+    w = int(getattr(sg, "grid_w", 0) or 0)
+    h = int(getattr(sg, "grid_h", 0) or 0)
+    cells = getattr(sg, "grid_cells", None)
+    if not isinstance(cells, list) or len(cells) != (w * h) or w <= 0 or h <= 0:
+        return None
+
+    cx, cy = int(self_xy[0]), int(self_xy[1])
+    if not (0 <= cx < w and 0 <= cy < h):
+        return None
+
+    safe_codes = {CELL_TRAVERSABLE, CELL_GOAL}
+    goals: set[tuple[int, int]] = set()
+
+    for y in range(h):
+        base = y * w
+        for x in range(w):
+            try:
+                c = int(cells[base + x])
+            except Exception:
+                continue
+            if c == CELL_GOAL:
+                goals.add((x, y))
+
+    if not goals:
+        return None
+
+    try:
+        start_cell = int(cells[cy * w + cx])
+    except Exception:
+        return None
+
+    if start_cell == CELL_GOAL:
+        return 0
+    if start_cell not in safe_codes:
+        return None
+
+    queue: list[tuple[int, int, int]] = [(cx, cy, 0)]
+    seen: set[tuple[int, int]] = {(cx, cy)}
+    head = 0
+
+    while head < len(queue):
+        x, y, dist = queue[head]
+        head += 1
+
+        if (x, y) in goals:
+            return int(dist)
+
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if not (0 <= nx < w and 0 <= ny < h):
+                continue
+            if (nx, ny) in seen:
+                continue
+            try:
+                c = int(cells[ny * w + nx])
+            except Exception:
+                continue
+            if c not in safe_codes:
+                continue
+            seen.add((nx, ny))
+            queue.append((nx, ny, dist + 1))
+
+    return None
+
+
+def compute_navsummary_v1(
+    sg: SurfaceGridV1,
+    *,
+    slots: dict[str, Any] | None = None,
+    self_xy: tuple[int, int] | None = None,
+    local_radius: int = 2,
+) -> dict[str, Any]:
+    """Compute a compact numeric summary from the current SurfaceGrid.
+
+    Purpose
+    -------
+    NavSummary is the "cheap scan once" layer that sits between raw topology and
+    later policy logic. It is intentionally small and JSON-safe, and it avoids
+    exploding the number of derived pred:* tags on MapSurface.
+
+    v1 outputs
+    ----------
+    - hazard_near / hazard_density
+    - traversable_near / traversable_density
+    - corridor_count
+    - goal_present / goal_dir / goal_distance_l1
+    - shortest_safe_path_cost
+
+    Notes
+    -----
+    - Densities are LOCAL to a small SELF-centered disk (radius=local_radius),
+      not whole-grid fractions.
+    - goal_dir is first taken from `slots["goal:dir"]` if already computed by
+      the grid→slot-family path; otherwise we derive it from the nearest goal.
+    - shortest_safe_path_cost is conservative and may be None when no safe route
+      is visible from the current grid.
+    """
+    w = int(getattr(sg, "grid_w", 0) or 0)
+    h = int(getattr(sg, "grid_h", 0) or 0)
+    cells = getattr(sg, "grid_cells", None)
+    if not isinstance(cells, list) or len(cells) != (w * h) or w <= 0 or h <= 0:
+        return {}
+
+    if self_xy is None:
+        cx = w // 2
+        cy = h // 2
+    else:
+        cx = max(0, min(w - 1, int(self_xy[0])))
+        cy = max(0, min(h - 1, int(self_xy[1])))
+
+    r = max(1, int(local_radius))
+    pts = _wm_surfacegrid_local_points_v1(w, h, cx, cy, r)
+
+    blocked_code = int(getattr(cca8_navpatch, "CELL_BLOCKED", 4) or 4)
+
+    total_local_n = len(pts)
+    unknown_n = 0
+    traversable_n = 0
+    hazard_n = 0
+    goal_n = 0
+    blocked_n = 0
+
+    for x, y in pts:
+        try:
+            c = int(cells[y * w + x])
+        except Exception:
+            continue
+
+        if c == CELL_UNKNOWN:
+            unknown_n += 1
+        elif c == CELL_TRAVERSABLE:
+            traversable_n += 1
+        elif c == CELL_HAZARD:
+            hazard_n += 1
+        elif c == CELL_GOAL:
+            goal_n += 1
+        elif c == blocked_code:
+            blocked_n += 1
+
+    known_n = max(0, total_local_n - unknown_n)
+    safe_local_n = traversable_n + goal_n
+
+    if isinstance(slots, dict):
+        hazard_near = bool(slots.get("hazard:near", False))
+        traversable_near = bool(slots.get("terrain:traversable_near", False))
+        slot_goal_dir = slots.get("goal:dir")
+        goal_dir = slot_goal_dir if isinstance(slot_goal_dir, str) and slot_goal_dir else None
+    else:
+        hazard_near = (hazard_n + blocked_n) > 0
+        traversable_near = safe_local_n > 0
+        goal_dir = None
+
+    hazard_density = float(hazard_n + blocked_n) / float(known_n) if known_n > 0 else 0.0
+    traversable_density = float(safe_local_n) / float(known_n) if known_n > 0 else 0.0
+
+    goal_pts: list[tuple[int, int]] = []
+    for y in range(h):
+        base = y * w
+        for x in range(w):
+            try:
+                if int(cells[base + x]) == CELL_GOAL:
+                    goal_pts.append((x, y))
+            except Exception:
+                continue
+
+    goal_present = bool(goal_pts)
+    goal_distance_l1: int | None = None
+
+    if goal_pts:
+        nearest = min(goal_pts, key=lambda p: (abs(p[0] - cx) + abs(p[1] - cy), p[1], p[0]))
+        goal_distance_l1 = int(abs(nearest[0] - cx) + abs(nearest[1] - cy))
+        if goal_dir is None:
+            goal_dir = _wm_dir8_v1(nearest[0] - cx, nearest[1] - cy)
+
+    shortest_safe_path_cost = _wm_surfacegrid_shortest_safe_path_cost_v1(sg, self_xy=(cx, cy))
+    corridor_count = _wm_surfacegrid_corridor_count_v1(sg, self_xy=(cx, cy), local_radius=r)
+
+    try:
+        grid_sig16 = sg.sig16_v1()
+    except Exception:
+        grid_sig16 = None
+
+    return {
+        "schema": "wm_navsummary_v1",
+        "grid_sig16": grid_sig16 if isinstance(grid_sig16, str) and grid_sig16 else None,
+        "grid_w": int(w),
+        "grid_h": int(h),
+        "self_xy": [int(cx), int(cy)],
+        "local_radius": int(r),
+        "hazard_near": bool(hazard_near),
+        "hazard_density": float(hazard_density),
+        "traversable_near": bool(traversable_near),
+        "traversable_density": float(traversable_density),
+        "corridor_count": int(corridor_count),
+        "goal_present": bool(goal_present),
+        "goal_dir": goal_dir if isinstance(goal_dir, str) and goal_dir else None,
+        "goal_distance_l1": int(goal_distance_l1) if isinstance(goal_distance_l1, int) else None,
+        "shortest_safe_path_cost": (
+            int(shortest_safe_path_cost) if isinstance(shortest_safe_path_cost, int) else None
+        ),
+        "local_counts": {
+            "total": int(total_local_n),
+            "known": int(known_n),
+            "unknown": int(unknown_n),
+            "traversable": int(traversable_n),
+            "goal": int(goal_n),
+            "hazard": int(hazard_n),
+            "blocked": int(blocked_n),
+        },
+    }
+
+
+def format_navsummary_line_v1(summary: dict[str, Any]) -> str:
+    """Render a compact one-line NavSummary for terminal logs."""
+    if not isinstance(summary, dict) or not summary:
+        return "(none)"
+
+    hazard_near = 1 if bool(summary.get("hazard_near", False)) else 0
+    traversable_near = 1 if bool(summary.get("traversable_near", False)) else 0
+
+    try:
+        hazard_density = float(summary.get("hazard_density", 0.0) or 0.0)
+    except Exception:
+        hazard_density = 0.0
+
+    try:
+        traversable_density = float(summary.get("traversable_density", 0.0) or 0.0)
+    except Exception:
+        traversable_density = 0.0
+
+    try:
+        corridors = int(summary.get("corridor_count", 0) or 0)
+    except Exception:
+        corridors = 0
+
+    goal_dir = summary.get("goal_dir")
+    goal_dir_txt = goal_dir if isinstance(goal_dir, str) and goal_dir else "(none)"
+
+    goal_l1 = summary.get("goal_distance_l1")
+    goal_l1_txt = str(int(goal_l1)) if isinstance(goal_l1, int) else "n/a"
+
+    safe_cost = summary.get("shortest_safe_path_cost")
+    safe_cost_txt = str(int(safe_cost)) if isinstance(safe_cost, int) else "n/a"
+
+    return (
+        f"hazard_near={hazard_near} hazard_density={hazard_density:.2f} "
+        f"traversable_near={traversable_near} traversable_density={traversable_density:.2f} "
+        f"corridors={corridors} goal_dir={goal_dir_txt} goal_l1={goal_l1_txt} safe_cost={safe_cost_txt}"
+    )
+
+
 def _wm_entity_pos_xy_v1(ww, bid: str) -> tuple[float, float] | None:
     """Best-effort read of WM schematic position from binding.meta['wm']['pos'].
 
@@ -9442,6 +10705,31 @@ def _wm_entity_kind_v1(ww, bid: str) -> str | None:
     return None
 
 
+def _wm_entity_dist_class_v1(ww, bid: str) -> str | None:
+    """Return the WM distance-class metadata (e.g., touching / near / far) when present.
+
+    We use this only for terminal presentation. In particular, if mom is marked
+    as "touching", the SurfaceGrid can render a combined SELF+MOM symbol even if
+    the schematic coordinate projection would otherwise place mom in a nearby cell.
+    """
+    try:
+        b = getattr(ww, "_bindings", {}).get(bid)
+        if b is None:
+            return None
+        meta = getattr(b, "meta", None)
+        if not isinstance(meta, dict):
+            return None
+        wmm = meta.get("wm")
+        if not isinstance(wmm, dict):
+            return None
+        dc = wmm.get("dist_class")
+        if isinstance(dc, str) and dc:
+            return dc
+    except Exception:
+        return None
+    return None
+
+
 def _wm_pos_to_grid_cell_v1(x: float, y: float, grid_w: int, grid_h: int) -> tuple[int, int] | None:
     """Map WM schematic (x,y) to a SurfaceGrid cell, assuming SELF is centered."""
     try:
@@ -9458,6 +10746,138 @@ def _wm_pos_to_grid_cell_v1(x: float, y: float, grid_w: int, grid_h: int) -> tup
     except Exception:
         return None
     return None
+
+
+def _wm_surfacegrid_window_anchor_v2(env_obs: EnvObservation, *, zoom_level: int = 0) -> tuple[int, int]:
+    """Compute a coarse SELF-local window anchor for dirty-cache v2.
+
+    We do not yet have a fully explicit scrolling local-window object, so we use
+    env_meta['kid_position'] as a pragmatic proxy for whether the current local
+    view should be considered shifted enough to warrant recomposition.
+
+    The bucket size is zoom-sensitive: higher zoom means the effective local
+    footprint is smaller, so smaller motion should trigger a window shift.
+    """
+    env_meta = getattr(env_obs, "env_meta", None) or {}
+    kid_pos = env_meta.get("kid_position")
+    if not (isinstance(kid_pos, (tuple, list)) and len(kid_pos) == 2):
+        return (0, 0)
+
+    try:
+        x = float(kid_pos[0])
+        y = float(kid_pos[1])
+    except Exception:
+        return (0, 0)
+
+    bucket = 1.0 / max(1, int(zoom_level) + 1)
+    return (int(round(x / bucket)), int(round(y / bucket)))
+
+
+def _wm_surfacegrid_scene_fingerprint_v2(
+    env_obs: EnvObservation,
+    patches: list[dict[str, Any]],
+    *,
+    grid_w: int,
+    grid_h: int,
+    zoom_level: int,
+    focus_entities: list[str],
+) -> dict[str, Any]:
+    """Build the v2 dirty-cache fingerprint for the current SurfaceGrid scene.
+
+    This fingerprints the *incoming evidence* (patch payload sigs) plus a few
+    semantically important display/context fields. That lets us distinguish a
+    true cache hit from cases where the underlying scene changed even if the old
+    v1 patch-sig cache would have missed it.
+    """
+    sig16s: list[str] = []
+    for patch in patches:
+        if not isinstance(patch, dict):
+            continue
+        try:
+            sig16s.append(navpatch_payload_sig_v1(patch)[:16])
+        except Exception:
+            continue
+    sig16s.sort()
+
+    preds = {str(x) for x in (getattr(env_obs, "predicates", None) or []) if x is not None}
+    hazard_sig = sorted(tok for tok in preds if tok.startswith("hazard:"))
+
+    focus = [str(x).strip().lower() for x in (focus_entities or []) if isinstance(x, str) and x.strip()]
+
+    return {
+        "input_sig16": sig16s,
+        "grid_wh": [int(grid_w), int(grid_h)],
+        "window_anchor": list(_wm_surfacegrid_window_anchor_v2(env_obs, zoom_level=zoom_level)),
+        "zoom_level": int(zoom_level),
+        "focus_entities": focus,
+        "hazard_sig": hazard_sig,
+    }
+
+
+def _wm_surfacegrid_dirty_reasons_v2(ctx: Ctx, fingerprint: dict[str, Any]) -> list[str]:
+    """Compare the current scene fingerprint to the previous one.
+
+    Cleanup intent
+    --------------
+    We want the dirty reasons to describe *why the scene changed*, not to over-report
+    grid-shape changes when the composed map dimensions are actually stable.
+
+    v2 rule:
+      - grid_shape_changed is based on previous vs current fingerprinted grid_wh
+      - the current SurfaceGrid object's grid_w/grid_h are used only as a sanity check
+      - semantic reasons (patches/focus/window/hazard/zoom) still come from the fingerprint
+    """
+    reasons: list[str] = []
+
+    prev = getattr(ctx, "wm_surfacegrid_last_scene_fingerprint", None)
+    if not isinstance(prev, dict):
+        prev = {}
+
+    sg = getattr(ctx, "wm_surfacegrid", None)
+
+    def _fp_grid_wh(fp: dict[str, Any]) -> tuple[int, int] | None:
+        raw = fp.get("grid_wh")
+        if not (isinstance(raw, (list, tuple)) and len(raw) == 2):
+            return None
+        try:
+            return (int(raw[0]), int(raw[1]))
+        except Exception:
+            return None
+
+    prev_wh = _fp_grid_wh(prev)
+    cur_wh = _fp_grid_wh(fingerprint)
+
+    # Bootstrap / structural checks first.
+    if sg is None:
+        reasons.append("grid_missing")
+    else:
+        # Shape change is an explanation about the requested scene fingerprint changing
+        # across ticks, not about the already-composed previous grid object merely existing.
+        if prev_wh is not None and cur_wh is not None and prev_wh != cur_wh:
+            reasons.append("grid_shape_changed")
+        else:
+            # Keep a light sanity check on the existing SurfaceGrid object.
+            try:
+                sg_w = int(getattr(sg, "grid_w", 0) or 0)
+                sg_h = int(getattr(sg, "grid_h", 0) or 0)
+                if sg_w <= 0 or sg_h <= 0:
+                    reasons.append("grid_check_error")
+            except Exception:
+                reasons.append("grid_check_error")
+
+    # Fingerprint-driven semantic reasons.
+    if list(prev.get("input_sig16", [])) != list(fingerprint.get("input_sig16", [])):
+        reasons.append("patches_changed")
+    if list(prev.get("window_anchor", [])) != list(fingerprint.get("window_anchor", [])):
+        reasons.append("self_window_shift")
+    if int(prev.get("zoom_level", 0) or 0) != int(fingerprint.get("zoom_level", 0) or 0):
+        reasons.append("zoom_changed")
+    if list(prev.get("focus_entities", [])) != list(fingerprint.get("focus_entities", [])):
+        reasons.append("focus_changed")
+    if list(prev.get("hazard_sig", [])) != list(fingerprint.get("hazard_sig", [])):
+        reasons.append("hazard_changed")
+
+    return reasons or ["cache_hit"]
 
 
 def _surfacegrid_ascii_lines_v1(grid_w: int, grid_h: int, cells: list[int], *, sparse: bool) -> list[str]:
@@ -9509,15 +10929,61 @@ def _wm_entity_mark_char_v1(entity_id: str, kind: str | None) -> str:
     return "*"
 
 
+def _wm_display_focus_entities_v1(focus_entities: list[str]) -> list[str]:
+    """Normalize the salience focus list for terminal display.
+
+    Why this helper exists
+    ----------------------
+    The internal salience machinery can occasionally include meta-entities such as
+    "scene" that are useful for bookkeeping but are not meaningful landmarks for a
+    human reading the SurfaceGrid printout.
+
+    This helper keeps the printed focus list stable and readable by:
+      - dropping known non-spatial/meta ids,
+      - de-duplicating entries,
+      - presenting common landmarks in a fixed user-facing order.
+    """
+    raw: list[str] = []
+    for item in (focus_entities or []):
+        if isinstance(item, str) and item.strip():
+            raw.append(item.strip().lower())
+
+    skip = {"scene", "wm_root", "root", "now"}
+
+    seen: set[str] = set()
+    kept: list[str] = []
+    for ent in raw:
+        if ent in skip:
+            continue
+        if ent in seen:
+            continue
+        seen.add(ent)
+        kept.append(ent)
+
+    ordered: list[str] = []
+    preferred = ("self", "cliff", "shelter", "mom", "nipple")
+    for ent in preferred:
+        if ent in seen:
+            ordered.append(ent)
+
+    for ent in sorted(kept):
+        if ent not in preferred:
+            ordered.append(ent)
+
+    return ordered
+
+
 def render_surfacegrid_ascii_with_salience_v1(ctx: Ctx, ww, sg: SurfaceGridV1, *, focus_entities: list[str]) -> str:
     """Render a sparse SurfaceGrid ASCII string and overlay salient entity marks.
 
     This is display-only: it never changes sg.cells, so Step 13 grid->predicates remains unchanged.
 
-    Overlay rules:
-      - Always mark SELF as '@' at the center cell.
-      - For each focus entity (excluding self), map WM pos(x,y) to a cell and mark it.
-      - Marks overwrite the underlying ASCII character to make landmarks visible.
+    Overlay rules
+    -------------
+      - SELF is normally rendered as '@' at the center cell.
+      - If mom is effectively co-located with SELF (same grid cell, or dist_class='touching'),
+        render '&' at the center cell to mean SELF+MOM.
+      - Other focus entities are rendered in their own cells using one-letter marks.
     """
     w = int(getattr(sg, "grid_w", 0) or 0)
     h = int(getattr(sg, "grid_h", 0) or 0)
@@ -9548,9 +11014,10 @@ def render_surfacegrid_ascii_with_salience_v1(ctx: Ctx, ww, sg: SurfaceGridV1, *
             rr.extend([" "] * (w - len(rr)))
         grid.append(rr[:w])
 
-    # SELF at center
     cx = w // 2
     cy = h // 2
+
+    # Start with SELF at center; we may later upgrade this to '&' if mom is touching/co-located.
     try:
         grid[cy][cx] = "@"
     except Exception:
@@ -9560,9 +11027,10 @@ def render_surfacegrid_ascii_with_salience_v1(ctx: Ctx, ww, sg: SurfaceGridV1, *
     if not show_entities:
         return "\n".join("".join(r) for r in grid)
 
-    for eid in (focus_entities or []):
+    for eid in _wm_display_focus_entities_v1(focus_entities):
         if not isinstance(eid, str):
             continue
+
         ent = eid.strip().lower()
         if not ent or ent == "self":
             continue
@@ -9582,12 +11050,24 @@ def render_surfacegrid_ascii_with_salience_v1(ctx: Ctx, ww, sg: SurfaceGridV1, *
         gx, gy = cell
 
         kind = _wm_entity_kind_v1(ww, bid)
+        dist_class = _wm_entity_dist_class_v1(ww, bid)
         mark = _wm_entity_mark_char_v1(ent, kind)
 
         try:
-            grid[gy][gx] = mark
+            # Presentation rule: when mom is physically with SELF, show a combined symbol.
+            if ent in ("mom", "mother") and (dist_class == "touching" or (gx == cx and gy == cy)):
+                grid[cy][cx] = "&"
+            else:
+                grid[gy][gx] = mark
         except Exception:
             pass
+
+    # Re-assert SELF only when we are NOT intentionally showing the combined SELF+MOM symbol.
+    try:
+        if grid[cy][cx] != "&":
+            grid[cy][cx] = "@"
+    except Exception:
+        pass
 
     return "\n".join("".join(r) for r in grid)
 
@@ -9679,6 +11159,87 @@ def format_surfacegrid_ascii_map_v1(
         out.append(str(legend))
 
     return "\n".join(out)
+
+
+def format_surfacegrid_snapshot_v1(ctx: Ctx) -> str:
+    """Format the current WM.SurfaceGrid stored on ctx using the newer entity-aware helpers.
+
+    Why this helper exists
+    ----------------------
+    Some older call sites want a simple "give me the current SurfaceGrid as a printable
+    string from ctx" API. The newer renderer/formatter split that into:
+
+        1) render_surfacegrid_ascii_with_salience_v1(ctx, ww, sg, focus_entities=[...])
+        2) format_surfacegrid_ascii_map_v1(ascii_txt, title=..., legend=..., show_axes=True)
+
+    This wrapper bridges those call sites without reintroducing the older duplicate
+    function names/signatures that confused Pylint.
+    """
+    sg = getattr(ctx, "wm_surfacegrid", None)
+    if sg is None:
+        return "[surfacegrid] (none)"
+
+    ww = getattr(ctx, "working_world", None)
+
+    sig16 = getattr(ctx, "wm_surfacegrid_sig16", None)
+    if not isinstance(sig16, str) or not sig16:
+        try:
+            sig16 = sg.sig16_v1()
+        except Exception:
+            sig16 = "unknown"
+
+    compose_ms = float(getattr(ctx, "wm_surfacegrid_compose_ms", 0.0) or 0.0)
+    reasons = getattr(ctx, "wm_surfacegrid_dirty_reasons", None)
+    if not isinstance(reasons, list):
+        reasons = []
+
+    reason_items = [str(r) for r in reasons if isinstance(r, str) and r]
+    if reason_items == ["cache_hit"]:
+        reason_txt = ""
+    else:
+        reason_txt = ", ".join(reason_items)
+
+    focus_entities = getattr(ctx, "wm_salience_focus_entities", None)
+    if not isinstance(focus_entities, list):
+        focus_entities = []
+    focus_entities = _wm_display_focus_entities_v1(focus_entities)
+    focus_txt = ", ".join(focus_entities) or "(none)"
+
+    header = f"[surfacegrid] sig16={sig16} compose_ms={compose_ms:.2f} focus={focus_txt}"
+    if reason_txt:
+        header += f" reasons={reason_txt}"
+
+    if not bool(getattr(ctx, "wm_surfacegrid_ascii_enabled", True)):
+        return header
+
+    ascii_txt = getattr(ctx, "wm_surfacegrid_last_ascii", None)
+    if not isinstance(ascii_txt, str) or not ascii_txt:
+        if ww is not None:
+            try:
+                ascii_txt = render_surfacegrid_ascii_with_salience_v1(
+                    ctx,
+                    ww,
+                    sg,
+                    focus_entities=list(focus_entities),
+                )
+            except Exception:
+                ascii_txt = ""
+        else:
+            ascii_txt = ""
+
+    if not ascii_txt:
+        return header
+
+    legend_prefix = "@=self"
+    if "&" in ascii_txt:
+        legend_prefix += " &=self+mom"
+    legend_txt = (
+        f"{legend_prefix} M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  "
+        "(dense: .=traversable; sparse: space=unknown/trav)"
+    )
+    title = f"WM.SurfaceGrid (sig16={sig16})"
+    map_txt = format_surfacegrid_ascii_map_v1(ascii_txt, title=title, legend=legend_txt, show_axes=True)
+    return header + "\n" + map_txt
 
 
 def wm_salience_force_focus_entity_v1(ctx: Ctx, entity_id: str, *, ttl: int | None = None, reason: str = "inspect") -> None:
@@ -10755,94 +12316,11 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
             except Exception:
                 pass
 
-        # --- WorkingMap SurfaceGrid (Phase X Step 12) -----------------------------------------
-        # Compose a single topological SurfaceGrid once per tick from EnvObservation.nav_patches.
-        # We cache by the sorted list of patch sig16 values so unchanged patch-sets can skip recompute.
-        if bool(getattr(ctx, "wm_surfacegrid_enabled", False)):
-            grid_w = int(getattr(ctx, "wm_surfacegrid_w", 16) or 16)
-            grid_h = int(getattr(ctx, "wm_surfacegrid_h", 16) or 16)
-            if grid_w <= 0:
-                grid_w = 16
-            if grid_h <= 0:
-                grid_h = 16
-
-            patches_in = getattr(env_obs, "nav_patches", None) or []
-
-            # Deterministic input signature list for caching (sig16 of each patch core).
-            sig16s: list[str] = []
-            if isinstance(patches_in, list):
-                for p in patches_in:
-                    if not isinstance(p, dict):
-                        continue
-                    try:
-                        s = navpatch_payload_sig_v1(p)
-                        if isinstance(s, str) and s:
-                            sig16s.append(s[:16])
-                    except Exception:
-                        continue
-            sig16s.sort()
-
-            prev = getattr(ctx, "wm_surfacegrid_last_input_sig16", None)
-            prev_sig16s = list(prev) if isinstance(prev, list) else []
-
-            reasons: list[str] = []
-            dirty = bool(getattr(ctx, "wm_surfacegrid_dirty", True))
-
-            if prev_sig16s != sig16s:
-                dirty = True
-                reasons.append("patches_changed")
-
-            prev_grid = getattr(ctx, "wm_surfacegrid", None)
-            if prev_grid is None:
-                dirty = True
-                reasons.append("grid_missing")
-            else:
-                try:
-                    pw = int(getattr(prev_grid, "grid_w", 0) or 0)
-                    ph = int(getattr(prev_grid, "grid_h", 0) or 0)
-                    if pw != grid_w or ph != grid_h:
-                        dirty = True
-                        reasons.append("dims_changed")
-                except Exception:
-                    dirty = True
-                    reasons.append("grid_check_error")
-
-            if dirty:
-                t0 = time.perf_counter()
-                try:
-                    sg = compose_surfacegrid_v1(patches_in if isinstance(patches_in, list) else [], grid_w=grid_w, grid_h=grid_h)
-                except Exception:
-                    sg = compose_surfacegrid_v1([], grid_w=grid_w, grid_h=grid_h)
-                    reasons.append("compose_error")
-
-                dt_ms = (time.perf_counter() - t0) * 1000.0
-
-                ctx.wm_surfacegrid = sg
-                try:
-                    ctx.wm_surfacegrid_sig16 = sg.sig16_v1()
-                except Exception:
-                    ctx.wm_surfacegrid_sig16 = None
-
-                ctx.wm_surfacegrid_last_input_sig16 = list(sig16s)
-                ctx.wm_surfacegrid_compose_ms = float(dt_ms)
-                ctx.wm_surfacegrid_dirty = False
-                ctx.wm_surfacegrid_dirty_reasons = reasons or ["dirty"]
-
-                if bool(getattr(ctx, "wm_surfacegrid_verbose", False)):
-                    try:
-                        ctx.wm_surfacegrid_last_ascii = sg.ascii_v1()
-                    except Exception:
-                        ctx.wm_surfacegrid_last_ascii = None
-                else:
-                    ctx.wm_surfacegrid_last_ascii = None
-            else:
-                # Cache hit: keep the prior SurfaceGrid and report that we did not recompute.
-                ctx.wm_surfacegrid_compose_ms = 0.0
-                ctx.wm_surfacegrid_dirty = False
-                ctx.wm_surfacegrid_dirty_reasons = ["cache_hit"]
-
 
         # --- WM.Salience + SurfaceGrid landmark overlay (Phase X Step 14) --------------------
+        # Run salience BEFORE dirty-cache v2 so focus-target changes can themselves
+        # trigger a SurfaceGrid recomposition when the patch payload is unchanged.
+        ambiguous_entities: set[str] = set()
         if bool(getattr(ctx, "wm_salience_enabled", False)):
             try:
                 ambiguous_entities = _wm_salience_ambiguous_entities_v1(env_obs)
@@ -10862,6 +12340,102 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
                 ctx.wm_salience_last_events = list(sal.get("events", []) or [])
             except Exception:
                 pass
+        else:
+            try:
+                ctx.wm_salience_focus_entities = []
+                ctx.wm_salience_last_events = []
+            except Exception:
+                pass
+
+        # --- WorkingMap SurfaceGrid (Phase X Step 12 / dirty-cache v2) -----------------------
+        # Compose a single topological SurfaceGrid once per tick from EnvObservation.nav_patches.
+        # v2 invalidates not just on patch-payload changes, but also on SELF-window shifts,
+        # zoom changes, focus changes, and direct hazard evidence changes.
+        if bool(getattr(ctx, "wm_surfacegrid_enabled", False)):
+            grid_w = int(getattr(ctx, "wm_surfacegrid_w", 16) or 16)
+            grid_h = int(getattr(ctx, "wm_surfacegrid_h", 16) or 16)
+            if grid_w <= 0:
+                grid_w = 16
+            if grid_h <= 0:
+                grid_h = 16
+
+            patches_raw = getattr(env_obs, "nav_patches", None) or []
+            patches_in = [p for p in patches_raw if isinstance(p, dict)] if isinstance(patches_raw, list) else []
+
+            zoom_level = int(getattr(ctx, "wm_zoom_level", 0) or 0)
+            focus_entities = [
+                str(e).strip().lower()
+                for e in (getattr(ctx, "wm_salience_focus_entities", []) or [])
+                if isinstance(e, str) and e.strip()
+            ]
+            fingerprint = _wm_surfacegrid_scene_fingerprint_v2(
+                env_obs,
+                patches_in,
+                grid_w=grid_w,
+                grid_h=grid_h,
+                zoom_level=zoom_level,
+                focus_entities=focus_entities,
+            )
+            reasons = _wm_surfacegrid_dirty_reasons_v2(ctx, fingerprint)
+            dirty = any(r != "cache_hit" for r in reasons)
+
+            prev_grid_sig16 = getattr(ctx, "wm_surfacegrid_sig16", None)
+            if not isinstance(prev_grid_sig16, str) or not prev_grid_sig16:
+                prev_grid_sig16 = None
+
+            if dirty:
+                t0 = time.perf_counter()
+                try:
+                    sg = compose_surfacegrid_v1(patches_in, grid_w=grid_w, grid_h=grid_h)
+                except Exception:
+                    sg = compose_surfacegrid_v1([], grid_w=grid_w, grid_h=grid_h)
+                    reasons = list(reasons) + ["compose_error"]
+
+                dt_ms = (time.perf_counter() - t0) * 1000.0
+
+                ctx.wm_surfacegrid = sg
+                try:
+                    ctx.wm_surfacegrid_sig16 = sg.sig16_v1()
+                except Exception:
+                    ctx.wm_surfacegrid_sig16 = None
+
+                new_grid_sig16 = ctx.wm_surfacegrid_sig16 if isinstance(ctx.wm_surfacegrid_sig16, str) else None
+                if (
+                    "patches_changed" in reasons            #pylint: disable=too-many-boolean-expressions
+                    and prev_grid_sig16 is not None
+                    and new_grid_sig16 is not None
+                    and new_grid_sig16 == prev_grid_sig16
+                    and "grid_missing" not in reasons
+                    and "grid_shape_changed" not in reasons
+                    and "self_window_shift" not in reasons
+                    and "zoom_changed" not in reasons
+                    and "focus_changed" not in reasons
+                    and "hazard_changed" not in reasons
+                    and "compose_error" not in reasons
+                ):
+                    reasons = ["patch_payload_changed"] + [r for r in reasons if r != "patches_changed"]
+
+                ctx.wm_surfacegrid_last_input_sig16 = list(fingerprint.get("input_sig16", []) or [])
+                ctx.wm_surfacegrid_compose_ms = float(dt_ms)
+                ctx.wm_surfacegrid_dirty = False
+                ctx.wm_surfacegrid_dirty_reasons = list(reasons) if reasons else ["dirty"]
+                ctx.wm_surfacegrid_last_scene_fingerprint = dict(fingerprint)
+
+                if bool(getattr(ctx, "wm_surfacegrid_verbose", False)):
+                    try:
+                        ctx.wm_surfacegrid_last_ascii = sg.ascii_v1()
+                    except Exception:
+                        ctx.wm_surfacegrid_last_ascii = None
+                else:
+                    ctx.wm_surfacegrid_last_ascii = None
+            else:
+                # Cache hit: keep the prior SurfaceGrid and report that we did not recompute.
+                ctx.wm_surfacegrid_last_input_sig16 = list(fingerprint.get("input_sig16", []) or [])
+                ctx.wm_surfacegrid_compose_ms = 0.0
+                ctx.wm_surfacegrid_dirty = False
+                ctx.wm_surfacegrid_dirty_reasons = ["cache_hit"]
+                ctx.wm_surfacegrid_last_scene_fingerprint = dict(fingerprint)
+
 
         # Display-only: render sparse SurfaceGrid ASCII with landmark letters.
         # NOTE: Do NOT print the raw grid here (it is visually confusing); we print the framed map in the per-cycle HUD:
@@ -10905,6 +12479,33 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
         else:
             ctx.wm_grid_slot_families = {}
             ctx.wm_grid_pred_tags = []
+
+        # --- NavSummary v1 (Phase X P1.4) ----------------------------------------------
+        # This is a small cached numeric summary derived from WM.SurfaceGrid.
+        # It is intentionally policy-neutral in v1: later policy refactors can read
+        # ctx.wm_navsummary without changing how we currently write pred:* tags.
+        if bool(getattr(ctx, "wm_navsummary_enabled", True)):
+            sg_now = getattr(ctx, "wm_surfacegrid", None)
+            if sg_now is not None:
+                try:
+                    local_r = int(getattr(ctx, "wm_navsummary_local_radius", 2) or 2)
+                except Exception:
+                    local_r = 2
+                local_r = max(1, min(6, local_r))
+
+                try:
+                    ctx.wm_navsummary = compute_navsummary_v1(
+                        sg_now,
+                        slots=getattr(ctx, "wm_grid_slot_families", {}) or {},
+                        self_xy=None,
+                        local_radius=local_r,
+                    )
+                except Exception:
+                    ctx.wm_navsummary = {}
+            else:
+                ctx.wm_navsummary = {}
+        else:
+            ctx.wm_navsummary = {}
 
         # --- Coordinates + distance edges (schematic map) ---
         raw = getattr(env_obs, "raw_sensors", {}) or {}
@@ -11003,6 +12604,8 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
                 print(f"[env→working] cue:{tok} (attach={cue_attach})")
         except Exception:
             pass
+
+    # Keep working map bounded
     try:
         _prune_working_world(ctx)
     except Exception:
@@ -12274,10 +13877,27 @@ def _print_cog_cycle_footer(*,
 
     nav_txt = f"nav_patches={patch_n} uniq_sig16={len(uniq_sig16)}{ids_txt}"
 
+    obs_note_txt = ""
+    try:
+        obs_pred_set = {str(x) for x in obs_preds if isinstance(x, str) and x}
+        if (
+            isinstance(st_post, str)
+            and st_post == "latched"
+            and "posture:standing" in obs_pred_set
+            and "nipple:latched" in obs_pred_set
+            and "milk:drinking" in obs_pred_set
+        ):
+            obs_note_txt = (
+                " | note: in this early CCA8, env_posture='latched' is encoded perceptually as "
+                "posture:standing + nipple:latched + milk:drinking"
+            )
+    except Exception:
+        obs_note_txt = ""
+
     if obs_preds or obs_cues or patch_n:
         pred_txt = _fmt_items(obs_preds, prefix="", limit=max_items) if obs_preds else "(none)"
         cue_txt = _fmt_items(obs_cues, prefix="", limit=max_items) if obs_cues else "(none)"
-        print(f"[cycle] OBS  preds: {pred_txt} | cues: {cue_txt} | {nav_txt}")
+        print(f"[cycle] OBS  preds: {pred_txt} | cues: {cue_txt} | {nav_txt}{obs_note_txt}")
 
     # ---- line 2: WorkingMap summary (surface deltas + scratch writes)
     deltas = _surface_deltas(prev_state, curr_state)
@@ -12315,6 +13935,17 @@ def _print_cog_cycle_footer(*,
     except Exception:
         pass
 
+    # [cycle] MS — Map-switch events (P3.11)
+    try:
+        ms_events = getattr(ctx, "wm_mapswitch_last_events", None)
+        if isinstance(ms_events, list) and ms_events:
+            ev0 = ms_events[-1] if isinstance(ms_events[-1], dict) else {}
+            line = format_mapswitch_event_line_v1(ev0)
+            if line and line != "(none)":
+                print(f"[cycle] MS   {line}")
+    except Exception:
+        pass
+
     # [cycle] SG — SurfaceGrid HUD (Phase X Step 12)
     if bool(getattr(ctx, "wm_surfacegrid_enabled", False)):
         sg_sig16 = getattr(ctx, "wm_surfacegrid_sig16", None)
@@ -12326,8 +13957,13 @@ def _print_cog_cycle_footer(*,
 
         reasons = getattr(ctx, "wm_surfacegrid_dirty_reasons", None)
         reasons = reasons if isinstance(reasons, list) else []
-        reason_txt = ",".join(str(r) for r in reasons[:3] if r)
-        reason_txt = f" ({reason_txt})" if reason_txt else ""
+
+        reason_items = [str(r) for r in reasons[:3] if isinstance(r, str) and r]
+        if reason_items == ["cache_hit"]:
+            reason_txt = ""
+        else:
+            reason_txt = ",".join(reason_items)
+            reason_txt = f" ({reason_txt})" if reason_txt else ""
 
         print(f"[cycle] SG   surfacegrid_sig16={sg_sig16} compose_ms={sg_ms:.2f}{reason_txt}")
 
@@ -12338,12 +13974,21 @@ def _print_cog_cycle_footer(*,
             ascii_txt = getattr(ctx, "wm_surfacegrid_last_ascii", None)
             if isinstance(ascii_txt, str) and ascii_txt:
                 # Always print legend under the framed map (every cognitive cycle).
-                legend_txt = "@=self M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)"
+                legend_txt = "@=self M=mom &=@M S=shelter C=cliff G=goal #=hazd X=blocked *=other (dense: .=traversable; sparse: space=unknown/trav)"
                 title = f"WM.SurfaceGrid (sig16={sg_sig16})"
                 map_txt = format_surfacegrid_ascii_map_v1(ascii_txt, title=title, legend=legend_txt, show_axes=True)
                 print("[cycle] SG   map:\n" + map_txt)
             elif show_each:
                 print("[cycle] SG   map: (no ascii available)")
+
+    # [cycle] NS — NavSummary HUD (Phase X P1.4)
+    try:
+        if bool(getattr(ctx, "wm_navsummary_enabled", False)):
+            ns = getattr(ctx, "wm_navsummary", None)
+            if isinstance(ns, dict) and ns:
+                print(f"[cycle] NS   {format_navsummary_line_v1(ns)}")
+    except Exception:
+        pass
 
     # ---- line 3: WorldGraph writes this tick
     wg_txt = f"preds+{len(wg_preds)} cues+{len(wg_cues)}"
@@ -12867,6 +14512,10 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         col_store_txt = None
         col_retrieve_txt = None
         col_apply_txt = None
+        try:
+            ctx.wm_mapswitch_last_events = []
+        except Exception:
+            pass
 
         # Count one CLOSED-LOOP cognitive cycle (env↔controller iteration).
         try:
@@ -13050,234 +14699,13 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             # Shaping must never crash the env-loop.
             pass
 
-
         # 3) EnvObservation → WorldGraph + BodyMap
-        inj = inject_obs_into_world(world, ctx, env_obs)
-
+        obs_write = inject_obs_into_world(world, ctx, env_obs)
         try:
-            token_to_bid = inj.get("token_to_bid", {}) if isinstance(inj, dict) else {}
+            if getattr(ctx, "wm_surfacegrid_enabled", False):
+                print(format_surfacegrid_snapshot_v1(ctx))
         except Exception:
-            token_to_bid = {}
-
-        # boundary detection + update open run end-state from the outcome we just observed.
-        zone_now = None
-        try:
-            zone_now = body_space_zone(ctx)
-        except Exception:
-            zone_now = None
-
-        wm_auto_store = False
-        wm_auto_reason = None
-        boundary_changed = False
-        try:
-            st_curr = env.state
-            prev_zone = _coarse_zone_from_env(prev_state) if prev_state is not None else None
-            prev_sig = (
-                getattr(prev_state, "scenario_stage", None),
-                getattr(prev_state, "kid_posture", None),
-                getattr(prev_state, "nipple_state", None),
-                (prev_zone or "unknown"),
-            ) if prev_state is not None else None
-            curr_sig = (
-                getattr(st_curr, "scenario_stage", None),
-                getattr(st_curr, "kid_posture", None),
-                getattr(st_curr, "nipple_state", None),
-                (zone_now or "unknown"),
-            )
-            boundary_changed = (prev_sig is not None) and (prev_sig != curr_sig)
-
-            # Stage/zone boundary detection (ignore posture/nipple here to keep storage sparse/readable)
-            try:
-                stage_changed = prev_sig[0] != curr_sig[0]
-                zone_changed  = prev_sig[3] != curr_sig[3]
-            except Exception:
-                stage_changed, zone_changed = False, False
-
-            # IMPORTANT:
-            # These are "keyframe trigger knobs", but we also treat them as *Phase VII boundary-to-memory* knobs.
-            # If a user disables stage/zone keyframes, they likely want to disable stage/zone-driven WM↔Column auto-store too.
-            allow_stage = bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True))
-            allow_zone  = bool(getattr(ctx, "longterm_obs_keyframe_on_zone_change", True))
-
-            _ps = (prev_sig[0] if isinstance(prev_sig, tuple) else None) or "?"
-            _cs = (curr_sig[0] if isinstance(curr_sig, tuple) else None) or "?"
-            _pz = (prev_sig[3] if isinstance(prev_sig, tuple) else None) or "?"
-            _cz = (curr_sig[3] if isinstance(curr_sig, tuple) else None) or "?"
-
-            parts: list[str] = []
-            if stage_changed and allow_stage:
-                parts.append(f"stage:{_ps}->{_cs}")
-            if zone_changed and allow_zone:
-                parts.append(f"zone:{_pz}->{_cz}")
-
-            if parts:
-                wm_auto_store = True
-                wm_auto_reason = "auto_boundary_" + "_".join(parts)
-
-        except Exception:
-            boundary_changed = False
-
-        # Additional keyframe triggers (periodic / pred_err / milestone / emotion) come from inject_obs_into_world.
-        inj_kf = bool(inj.get("keyframe")) if isinstance(inj, dict) else False
-        inj_rs = inj.get("keyframe_reasons") if isinstance(inj, dict) else None
-
-        if inj_kf and not wm_auto_store:
-            wm_auto_store = True
-            if isinstance(inj_rs, list) and inj_rs:
-                why = ";".join(str(x) for x in inj_rs[:3])
-                if len(why) > 80:
-                    why = why[:77] + "..."
-                wm_auto_reason = "auto_keyframe_" + why
-            else:
-                wm_auto_reason = "auto_keyframe"
-        state_bid = _phase7_pick_state_bid(token_to_bid) if isinstance(token_to_bid, dict) else None
-
-        if _phase7_enabled():
-            # Outcome update: the env state we see NOW is the result of the previous action tick.
-            _phase7_update_open_run_end(world, state_bid, env_step=step_idx)
-
-            # Hard boundary breaks runs (stage/posture/nipple/zone changes)
-            if boundary_changed:
-                _phase7_close_run(world, reason="boundary")
-
-            # Optional: move long-term NOW onto the env's current posture/resting binding
-            if bool(getattr(ctx, "phase7_move_longterm_now_to_env", False)) and isinstance(state_bid, str):
-                try:
-                    world.set_now(state_bid, tag=True, clean_previous=True)
-                except Exception:
-                    pass
-
-            # Auto-store MapSurface snapshot at stage/zone boundaries (Option B#3)
-            if wm_auto_store and bool(getattr(ctx, "phase7_working_first", False)):
-                reason_kf = (wm_auto_reason or "auto_boundary")
-
-                # Context labels for retrieval filtering
-                try:
-                    stage_kf = getattr(env.state, "scenario_stage", None)
-                except Exception:
-                    stage_kf = None
-                stage_kf = stage_kf if isinstance(stage_kf, str) else None
-                zone_kf = zone_now if isinstance(zone_now, str) else None
-
-                # Boundary type flags (derived from the reason string you already construct)
-                stage_chg = isinstance(reason_kf, str) and ("stage:" in reason_kf)
-                zone_chg = isinstance(reason_kf, str) and ("zone:" in reason_kf)
-
-                # ---- 1) STORE line ----
-                info: dict[str, Any] = {}
-                try:
-                    if (
-                        bool(getattr(ctx, "working_enabled", True))
-                        and getattr(ctx, "working_world", None) is not None
-                        and bool(getattr(ctx, "working_mapsurface", True))
-                    ):
-                        info = store_mapsurface_snapshot_v1(
-                            world,
-                            ctx,
-                            reason=reason_kf,
-                            attach="now",
-                            force=False,
-                            quiet=True,
-                        )
-                    else:
-                        info = {"stored": False, "why": "workingmap_disabled_or_missing"}
-                except Exception as e:
-                    info = {"stored": False, "why": f"store_error:{e}"}
-
-                stored = bool(info.get("stored"))
-                sig16 = str(info.get("sig", ""))[:16] if isinstance(info.get("sig"), str) else ""
-                bid = info.get("bid")
-                eid = info.get("engram_id")
-                why_store = info.get("why")
-
-                if stored and isinstance(eid, str):
-                    print(f"[wm<->col] store: ok sig={sig16} bid={bid} eid={eid[:8]}… ({reason_kf})")
-                    col_store_txt = f"store ok sig={sig16} eid={eid[:8]}…"
-                else:
-                    print(f"[wm<->col] store: skip why={why_store} sig={sig16} ({reason_kf})")
-                    col_store_txt = f"store skip why={why_store} sig={sig16}"
-
-                # ---- 2) RETRIEVE line + 3) APPLY line ----
-                try:
-                    forced_keyframe = bool(wm_auto_store) and not (bool(stage_chg) or bool(zone_chg))
-                    dec = should_autoretrieve_mapsurface(
-                        ctx,
-                        env_obs,
-                        stage=stage_kf,
-                        zone=zone_kf,
-                        stage_changed=stage_chg,
-                        zone_changed=zone_chg,
-                        forced_keyframe=forced_keyframe,
-                        boundary_reason=reason_kf,
-                    )
-                    mode_txt = str(dec.get("mode") or "merge")
-                    top_k = int(dec.get("top_k") or 5)
-                    do_try = bool(dec.get("ok"))
-
-                    if not do_try:
-                        print(f"[wm<->col] retrieve: skip why={dec.get('why')} mode={mode_txt} top_k={top_k} ({reason_kf})")
-                        col_retrieve_txt = f"retrieve skip why={dec.get('why')} mode={mode_txt} top_k={top_k}"
-
-                        print(f"[wm<->col] apply: no-op ({dec.get('why')})")
-                        col_apply_txt = f"apply no-op ({dec.get('why')})"
-                    else:
-                        exclude = eid if stored and isinstance(eid, str) else None
-
-                        out = maybe_autoretrieve_mapsurface_on_keyframe(
-                            world,
-                            ctx,
-                            stage=stage_kf,
-                            zone=zone_kf,
-                            exclude_engram_id=exclude,
-                            reason=reason_kf,
-                            mode=mode_txt,
-                            top_k=top_k,
-                            log=False,  # menu 37 owns the standardized log lines
-                        )
-
-                        if isinstance(out, dict) and bool(out.get("ok")):
-                            rid = out.get("engram_id")
-                            chosen = out.get("chosen") if isinstance(out.get("chosen"), dict) else {}
-                            pick = out.get("pick") if isinstance(out.get("pick"), dict) else {}
-
-                            match = pick.get("match")
-                            score = chosen.get("score")
-                            op = chosen.get("overlap_preds")
-                            oc = chosen.get("overlap_cues")
-                            src = chosen.get("src")
-
-                            rid_txt = (rid[:8] + "…") if isinstance(rid, str) else "(n/a)"
-                            print(f"[wm<->col] retrieve: ok mode={mode_txt} eid={rid_txt} match={match} score={score} op={op} oc={oc} src={src}")
-                            col_retrieve_txt = f"retrieve ok mode={mode_txt} eid={rid_txt} match={match} score={score}"
-
-                            load = out.get("load") if isinstance(out.get("load"), dict) else {}
-                            applied_mode = str(load.get("mode") or mode_txt)
-
-                            if applied_mode == "replace":
-                                ent_n = load.get("entities")
-                                rel_n = load.get("relations")
-                                print(f"[wm<->col] apply: replace entities={ent_n} relations={rel_n}")
-                                col_apply_txt = f"apply replace ent={ent_n} rel={rel_n}"
-                            else:
-                                ae = load.get("added_entities")
-                                fs = load.get("filled_slots")
-                                ed = load.get("added_edges")
-                                pc = load.get("stored_prior_cues")
-                                print(f"[wm<->col] apply: merge added_entities={ae} filled_slots={fs} added_edges={ed} prior_cues={pc}")
-                                col_apply_txt = f"apply merge ent+{ae} slots+{fs} edges+{ed} prior_cues={pc}"
-                        else:
-                            why = out.get("why") if isinstance(out, dict) else "no-op"
-                            print(f"[wm<->col] retrieve: skip why={why} mode={mode_txt} top_k={top_k} ({reason_kf})")
-                            col_retrieve_txt = f"retrieve skip why={why} mode={mode_txt} top_k={top_k}"
-                            print(f"[wm<->col] apply: no-op ({why})")
-                            col_apply_txt = f"apply no-op ({why})"
-                except Exception as e:
-                    print(f"[wm<->col] retrieve: skip why=error:{e} ({reason_kf})")
-                    col_retrieve_txt = f"retrieve skip error:{e}"
-                    print("[wm<->col] apply: no-op (error)")
-                    col_apply_txt = "apply no-op (error)"
-
-                            # ----- END Auto-retrieve (read path) ----
+            pass
 
         # 4) Controller response
         exec_world = None
@@ -13330,6 +14758,13 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
         # start/extend run for the policy we just chose (applied on the NEXT env step)
         if _phase7_enabled():
+            token_to_bid = {}
+            if isinstance(obs_write, dict):
+                raw_map = obs_write.get("token_to_bid")
+                if isinstance(raw_map, dict):
+                    token_to_bid = raw_map
+
+            state_bid = _phase7_pick_state_bid(token_to_bid)
             _phase7_start_or_extend_run(world, state_bid, policy_name, env_step=step_idx)
 
         # Short summary for this step + posture/nipple/zone explanations
@@ -13381,6 +14816,12 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 posture_expl = _explain_posture_change(prev_state, st, action_for_env)
                 if posture_expl:
                     print(f"[env-loop] explain posture: {posture_expl}")
+
+                if isinstance(getattr(st, "kid_posture", None), str) and st.kid_posture == "latched":
+                    print(
+                        "[env-loop] explain perception: in this early CCA8, the storyboard state "
+                        "'latched' is represented perceptually as posture:standing + nipple:latched + milk:drinking."
+                    )
             except Exception:
                 pass
 
@@ -13492,6 +14933,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                         "focus_entities": list(getattr(ctx, "wm_salience_focus_entities", []) or []),
                         "events": list(getattr(ctx, "wm_salience_last_events", []) or []),
                     }
+
+                    wm["navsummary"] = dict(getattr(ctx, "wm_navsummary", {}) or {})
+
                     # --- Step 15B: include WM zoom state/events (trace hook) ---
                     try:
                         z_state = getattr(ctx, "wm_zoom_state", "up")
@@ -13507,6 +14951,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                             "active_keys": active_keys,
                             "events": list(getattr(ctx, "wm_zoom_last_events", []) or []),
                         }
+
+                        wm["mapswitch"] = {"events": list(getattr(ctx, "wm_mapswitch_last_events", []) or [])}
+
                     except Exception:
                         pass
                 except Exception:
@@ -17593,15 +19040,32 @@ rl_delta (float)
                 continue
 
             if out.get("mode") == "merge":
+                guard_ok = out.get("merge_guardrail_ok")
+                cue_delta = out.get("cue_tag_delta")
+                if guard_ok is True:
+                    guard_txt = " cue_guard=ok"
+                elif guard_ok is False:
+                    try:
+                        d_i = int(cue_delta) if cue_delta is not None else None
+                    except Exception:
+                        d_i = None
+                    if isinstance(d_i, int):
+                        guard_txt = f" cue_guard=leak(+{d_i})"
+                    else:
+                        guard_txt = " cue_guard=leak"
+                else:
+                    guard_txt = ""
+
                 print(
                     f"[wm-retrieve] merged engram={raw[:8]}… into WorkingMap: "
                     f"added_entities={out.get('added_entities')} filled_slots={out.get('filled_slots')} "
                     f"added_edges={out.get('added_edges')} stored_prior_cues={out.get('stored_prior_cues')}"
+                    f"{guard_txt}"
                 )
-                print("Tip: run menu 43 to inspect; then run one env step to let observation correct the prior.")
+                print("Tip: run appropriate menu item (43 currently) to inspect; then run one env step to let observation correct the prior.")
             else:
                 print(f"[wm-retrieve] replaced WorkingMap from engram={raw[:8]}…: entities={out.get('entities')} relations={out.get('relations')}")
-                print("Tip: run menu 43 now to inspect the loaded MapSurface; next env step may overwrite parts of it.")
+                print("Tip: run appropriate menu item (43 currently) now to inspect the loaded MapSurface; next env step may overwrite parts of it.")
 
             loop_helper(args.autosave, world, drives, ctx)
 
