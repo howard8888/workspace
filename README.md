@@ -133,8 +133,10 @@ of birth, and by one week can climb most places its mother can)*
 - [Intro Glossary](#intro-glossary)
 
 
+
 **Instructive Tutorial**
 - [Instructive Tutorial](#instructive-tutorial)
+
 
 
 **Detailed Tutorials and Technical Deep Dives**
@@ -1253,6 +1255,8 @@ We attempt to do so here in a friendly, instructive fashion. Please see the larg
 NOTE: This README is large; if GitHub truncates the preview at the 512 KiB render limit, open the file directly to view the full document.
 
 NOTE: This Instructive Tutorial is correct at the time of writing but needs to be periodically updated as the CCA8 architecture and simulation is further developed.
+
+NOTE: If this README is included as part of the software repo for a paper submission, then some terms may inadvertently be deleted to ensure anonymous submission. 
 
 
 
