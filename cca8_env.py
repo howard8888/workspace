@@ -245,6 +245,11 @@ class EnvState:
     position: str = "cliff_edge"         # symbolic location name
     zone: str = "unsafe"                 # safety zone classification
 
+    # Evaluation/context scaffolding (goat_foraging_04)
+    context_label: str = ""              # e.g., "fox" | "hawk"
+    milestones: List[str] = field(default_factory=list)
+    obs_mask_dropped_cues_hint: int = 0  # story-level occlusion hint for auto-retrieve gating
+
     def update_zone_from_position(self) -> None:
         """Update safety zone label from the current symbolic position."""
         mapping = {
@@ -271,7 +276,11 @@ class EnvState:
             step_index=self.step_index,
             position=self.position,
             zone=self.zone,
+            context_label=self.context_label,
+            milestones=list(self.milestones),
+            obs_mask_dropped_cues_hint=self.obs_mask_dropped_cues_hint,
         )
+
 
 # ---------------------------------------------------------------------------
 # EnvObservation: what CCA8 sees each tick
@@ -444,6 +453,25 @@ class FsmBackend:
         state.mom_position = (float(kid_x) + mom_dx, float(kid_y))
 
 
+    def _goat_foraging_04_context_for_step(self, step_index: int) -> str:
+        """Return the context label for the contextual map-switch evaluation scenario.
+
+        The geometry stays intentionally simple and mostly unchanged. What changes is the
+        *context label* (fox vs hawk), which becomes a milestone / sparse-observation seam
+        for WorkingMap↔Column map switching.
+        """
+        i = int(step_index)
+        if i < 4:
+            return "fox"
+        if i < 8:
+            return "hawk"
+        if i < 12:
+            return "fox"
+        if i < 16:
+            return "hawk"
+        return "fox"
+
+
     def reset( #pylint: disable=unused-argument
         self, env_state: EnvState, config: EnvConfig) -> EnvState:
         """
@@ -456,9 +484,13 @@ class FsmBackend:
         so that the newborn-goat initial conditions are easy to inspect.
         """
         if config.scenario_name == "newborn_goat_first_hour":
-            env_state.position = "open_field"
-            env_state.kid_position = (0.8, 0.0)
-            env_state.mom_position = (1.7, 0.0)
+            env_state.kid_posture = "fallen"
+            env_state.mom_distance = "far"
+            env_state.nipple_state = "hidden"
+            env_state.scenario_stage = "birth"
+
+            env_state.kid_position = (0.0, 0.0)
+            env_state.mom_position = (1.0, 0.0)
 
             env_state.kid_fatigue = 0.2
             env_state.kid_temperature = 0.6
@@ -466,9 +498,35 @@ class FsmBackend:
             env_state.step_index = 0
 
             env_state.shelter_distance = "far"
-            env_state.cliff_distance = "far"
+            env_state.cliff_distance   = "far"
+            env_state.context_label = ""
+            env_state.milestones = []
+            env_state.obs_mask_dropped_cues_hint = 0
             self._update_spatial_label(env_state) #initialize coarse geometry / zone.
-            self._sync_positions_from_symbolic_location(env_state)
+
+        elif config.scenario_name == "goat_foraging_04":
+            env_state.kid_posture = "standing"
+            env_state.mom_distance = "far"
+            env_state.nipple_state = "hidden"
+            env_state.scenario_stage = "goat_foraging_04_scan"
+
+            env_state.kid_position = (0.8, 0.0)
+            env_state.mom_position = (3.5, 0.0)
+
+            env_state.kid_fatigue = 0.3
+            env_state.kid_temperature = 0.6
+            env_state.time_since_birth = 0.0
+            env_state.step_index = 0
+
+            env_state.shelter_distance = "far"
+            env_state.cliff_distance = "far"
+            env_state.position = "open_field"
+            env_state.update_zone_from_position()
+
+            env_state.context_label = "fox"
+            env_state.milestones = []
+            env_state.obs_mask_dropped_cues_hint = 0
+
         return env_state
 
 
@@ -510,6 +568,9 @@ class FsmBackend:
         stage = state.scenario_stage
         steps = state.step_index
 
+        # One-tick event/meta hints are rebuilt each step.
+        state.milestones = []
+        state.obs_mask_dropped_cues_hint = 0
 
         def _has_action(prefix: str) -> bool:
             """Return True if the action string starts with the given prefix."""
@@ -633,6 +694,30 @@ class FsmBackend:
             # Resting near shelter; cliff is far.
             state.shelter_distance = "near"
             state.cliff_distance = "far"
+
+        # -------------------------------
+        # Stage: goat_foraging_04_scan
+        # -------------------------------
+        elif stage == "goat_foraging_04_scan":
+            # Contextual map-switch evaluation:
+            # keep the coarse geometry simple and mostly unchanged, but alternate the
+            # context label so WorkingMap↔Column retrieval has to switch on cue context.
+            state.kid_posture = "standing"
+            state.mom_distance = "far"
+            state.nipple_state = "hidden"
+            state.shelter_distance = "far"
+            state.cliff_distance = "far"
+            state.position = "open_field"
+
+            next_ctx = self._goat_foraging_04_context_for_step(steps)
+            prev_ctx = state.context_label or next_ctx
+            state.context_label = next_ctx
+
+            # When context switches, emit a milestone and a sparse-observation hint.
+            # This is the seam that lets the runner exercise WM↔Column map switching.
+            if next_ctx != prev_ctx:
+                state.milestones = [f"context:{next_ctx}"]
+                state.obs_mask_dropped_cues_hint = 1
 
         # ------------------------------------------------------------------
         # Interpret 'policy:follow_mom' as a small move toward shelter.
@@ -810,6 +895,15 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         if env_state.kid_temperature < 0.35:
             cues.append("drive:cold_skin")
 
+        # --- goat_foraging_04 contextual cues / keyframe hints ---
+        if env_state.scenario_stage == "goat_foraging_04_scan":
+            # One common cue, plus one context-specific cue.
+            cues.append("terrain:forage_patch")
+            if env_state.context_label == "fox":
+                cues.append("vision:silhouette:fox")
+            elif env_state.context_label == "hawk":
+                cues.append("vision:silhouette:hawk")
+
         # Predictive-coding / attention hook: top-down focus request (optional).
         focus: str | None = None
         try:
@@ -834,6 +928,12 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         meta["scenario_stage"] = env_state.scenario_stage
         meta["zone"] = env_state.zone
         meta["position"] = env_state.position
+        if isinstance(env_state.context_label, str) and env_state.context_label:
+            meta["context_label"] = env_state.context_label
+        if isinstance(env_state.milestones, list) and env_state.milestones:
+            meta["milestones"] = list(env_state.milestones)
+        if int(getattr(env_state, "obs_mask_dropped_cues_hint", 0) or 0) > 0:
+            meta["obs_mask_dropped_cues"] = int(env_state.obs_mask_dropped_cues_hint)
         meta["kid_position"] = {"x": float(env_state.kid_position[0]), "y": float(env_state.kid_position[1])}
         meta["mom_position"] = {"x": float(env_state.mom_position[0]), "y": float(env_state.mom_position[1])}
         meta["shelter_distance"] = env_state.shelter_distance

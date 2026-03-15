@@ -95,7 +95,7 @@ from cca8_controller import body_cliff_is_near     # pylint: disable=unused-impo
 from cca8_controller import body_shelter_is_near   # pylint: disable=unused-import
 from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
-from cca8_env import HybridEnvironment, EnvObservation  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
+from cca8_env import HybridEnvironment, EnvObservation, EnvConfig  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
 from cca8_features import FactMeta
 import cca8_navpatch
 from cca8_navpatch import (
@@ -524,12 +524,16 @@ class Ctx:
     wm_mapsurface_autoretrieve_verbose: bool = True  # print when auto-retrieve applies
     wm_mapsurface_last_autoretrieve_engram_id: Optional[str] = None
     wm_mapsurface_last_autoretrieve_reason: Optional[str] = None
+
     # Map-switch event logging (P3.11)
-    # - last_events: events created during the current cognitive cycle
-    # - history: bounded cross-cycle history for debugging / JSON traces / tests
     wm_mapswitch_last_events: list[dict[str, Any]] = field(default_factory=list)
     wm_mapswitch_history: list[dict[str, Any]] = field(default_factory=list)
     wm_mapswitch_history_limit: int = 50
+
+    # goat_foraging_04 contextual map-switch bookkeeping (episode-local)
+    wm_goat04_seeded_contexts: set[str] = field(default_factory=set)
+    wm_goat04_seed_engram_by_context: dict[str, str] = field(default_factory=dict)
+
 
     # memory pipeline knobs (opt-in; defaults preserve Phase VI behavior)
     phase7_working_first: bool = False    # execute policies in WorkingMap; keep long-term WorldGraph sparse
@@ -3329,6 +3333,230 @@ def maybe_autoretrieve_mapsurface_on_keyframe(
         "load": load,
         "event": event,
     }
+
+
+def _goat04_context_milestone_label_v1(env_obs: EnvObservation) -> str | None:
+    """Return 'fox' or 'hawk' when this observation carries a goat_foraging_04 context milestone."""
+    meta = getattr(env_obs, "env_meta", None)
+    meta = meta if isinstance(meta, dict) else {}
+
+    stage = meta.get("scenario_stage")
+    if stage != "goat_foraging_04_scan":
+        return None
+
+    raw = meta.get("milestones") or meta.get("milestone")
+    items: list[str] = []
+    if isinstance(raw, str) and raw:
+        items = [raw]
+    elif isinstance(raw, list):
+        items = [m for m in raw if isinstance(m, str) and m]
+
+    for m in items:
+        if m == "context:fox":
+            return "fox"
+        if m == "context:hawk":
+            return "hawk"
+    return None
+
+
+def maybe_goat04_context_mapswitch_on_keyframe_v1(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
+    """goat_foraging_04 evaluation harness:
+
+    - first fox milestone  -> store a fox wm_mapsurface
+    - first hawk milestone -> store a hawk wm_mapsurface
+    - later alternating milestones -> attempt auto-retrieve/apply
+
+    Returns a small dict for the cycle footer:
+      {
+        "handled": bool,
+        "store": str|None,
+        "retrieve": str|None,
+        "apply": str|None,
+      }
+    """
+    out: dict[str, Any] = {"handled": False, "store": None, "retrieve": None, "apply": None}
+
+    if ctx is None or world is None or env_obs is None:
+        return out
+
+    label = _goat04_context_milestone_label_v1(env_obs)
+    if label not in ("fox", "hawk"):
+        return out
+
+    out["handled"] = True
+
+    seeded = getattr(ctx, "wm_goat04_seeded_contexts", None)
+    if not isinstance(seeded, set):
+        seeded = set()
+        ctx.wm_goat04_seeded_contexts = seeded
+
+    seed_map = getattr(ctx, "wm_goat04_seed_engram_by_context", None)
+    if not isinstance(seed_map, dict):
+        seed_map = {}
+        ctx.wm_goat04_seed_engram_by_context = seed_map
+
+    # Stage/zone for retrieval filtering
+    meta = getattr(env_obs, "env_meta", None)
+    meta = meta if isinstance(meta, dict) else {}
+    stage = meta.get("scenario_stage")
+    stage = stage if isinstance(stage, str) and stage else None
+
+    try:
+        zone = body_space_zone(ctx)
+    except Exception:
+        zone = None
+    zone = zone if isinstance(zone, str) and zone else None
+
+    # ------------------------------------------------------------------
+    # First time we see a context milestone: STORE a seed snapshot.
+    # ------------------------------------------------------------------
+    if label not in seeded:
+        info = store_mapsurface_snapshot_v1(
+            world,
+            ctx,
+            reason=f"goat04_seed:{label}",
+            attach="now",
+            force=True,
+            quiet=True,
+        )
+
+        sig16 = str(info.get("sig") or "")[:16]
+        eid = info.get("engram_id")
+        eid_txt = (eid[:8] + "…") if isinstance(eid, str) and eid else "(n/a)"
+
+        if bool(info.get("stored")):
+            seeded.add(label)
+            if isinstance(eid, str) and eid:
+                seed_map[label] = eid
+
+            print(f"[wm<->col] store: goat04 seed context={label} sig={sig16} eid={eid_txt}")
+            out["store"] = f"store goat04:{label} sig={sig16} eid={eid_txt}"
+        else:
+            why = info.get("why")
+            if isinstance(eid, str) and eid:
+                seeded.add(label)
+                seed_map[label] = eid
+            print(f"[wm<->col] store: goat04 seed context={label} skip={why} sig={sig16}")
+            out["store"] = f"store goat04:{label} skip={why} sig={sig16}"
+
+        return out
+
+    # ------------------------------------------------------------------
+    # Later alternating milestones: RETRIEVE/APPLY only after both seeds exist.
+    # ------------------------------------------------------------------
+    if not ("fox" in seed_map and "hawk" in seed_map):
+        return out
+
+    mode_txt = "merge"
+    top_k = 5
+    ret = maybe_autoretrieve_mapsurface_on_keyframe(
+        world,
+        ctx,
+        stage=stage,
+        zone=zone,
+        exclude_engram_id=None,
+        reason=f"goat04_context:{label}",
+        mode=mode_txt,
+        top_k=top_k,
+        log=False,   # footer owns the compact standardized log line
+    )
+
+    # Build a compact event payload so [cycle] MS can show it even if the generic path was bypassed.
+    pick = ret.get("pick") if isinstance(ret, dict) and isinstance(ret.get("pick"), dict) else {}
+    ranked = pick.get("ranked") if isinstance(pick.get("ranked"), list) else []
+    chosen = ret.get("chosen") if isinstance(ret, dict) and isinstance(ret.get("chosen"), dict) else {}
+    load = ret.get("load") if isinstance(ret, dict) and isinstance(ret.get("load"), dict) else {}
+
+    chosen_rank = None
+    chosen_eid = chosen.get("engram_id") if isinstance(chosen, dict) else None
+    if isinstance(chosen_eid, str) and isinstance(ranked, list):
+        for idx, cand in enumerate(ranked, start=1):
+            if isinstance(cand, dict) and cand.get("engram_id") == chosen_eid:
+                chosen_rank = idx
+                break
+
+    event = {
+        "schema": "wm_mapswitch_event_v1",
+        "ok": bool(isinstance(ret, dict) and ret.get("ok")),
+        "why": str(ret.get("why") or ("ok" if ret.get("ok") else "no-op")) if isinstance(ret, dict) else "error",
+        "mode": mode_txt,
+        "reason": f"goat04_context:{label}",
+        "stage": stage,
+        "zone": zone,
+        "match": pick.get("match") if isinstance(pick, dict) else None,
+        "candidate_count": len(ranked) if isinstance(ranked, list) else 0,
+        "chosen_seed": chosen if isinstance(chosen, dict) and chosen else None,
+        "chosen_rank": chosen_rank,
+        "drop_reason": None if bool(isinstance(ret, dict) and ret.get("ok")) else (ret.get("why") if isinstance(ret, dict) else "error"),
+        "load": load if isinstance(load, dict) else {},
+    }
+
+    try:
+        ctx.wm_mapswitch_last_events = [event]
+    except Exception:
+        pass
+    try:
+        hist = getattr(ctx, "wm_mapswitch_history", None)
+        if not isinstance(hist, list):
+            hist = []
+        hist.append(event)
+        lim = int(getattr(ctx, "wm_mapswitch_history_limit", 50) or 50)
+        lim = max(1, min(500, lim))
+        if len(hist) > lim:
+            del hist[:-lim]
+        ctx.wm_mapswitch_history = hist
+    except Exception:
+        pass
+
+    if bool(ret.get("ok")):
+        rid = ret.get("engram_id")
+        rid_txt = (rid[:8] + "…") if isinstance(rid, str) and rid else "(n/a)"
+        match = pick.get("match") if isinstance(pick, dict) else None
+        cand_n = len(ranked) if isinstance(ranked, list) else 0
+
+        print(f"[wm<->col] retrieve: goat04 context={label} ok mode={mode_txt} eid={rid_txt} match={match} cand_n={cand_n}")
+        out["retrieve"] = f"retrieve goat04:{label} ok eid={rid_txt} match={match} cand_n={cand_n}"
+
+        if load.get("mode") == "replace":
+            ent_n = load.get("entities")
+            rel_n = load.get("relations")
+            print(f"[wm<->col] apply: replace entities={ent_n} relations={rel_n}")
+            out["apply"] = f"apply replace ent={ent_n} rel={rel_n}"
+        else:
+            ae = load.get("added_entities")
+            fs = load.get("filled_slots")
+            ed = load.get("added_edges")
+            pc = load.get("stored_prior_cues")
+
+            guard_ok = load.get("merge_guardrail_ok")
+            cue_delta = load.get("cue_tag_delta")
+            if guard_ok is True:
+                guard_txt = " cue_guard=ok"
+            elif guard_ok is False:
+                try:
+                    d_i = int(cue_delta) if cue_delta is not None else None
+                except Exception:
+                    d_i = None
+                if isinstance(d_i, int):
+                    guard_txt = f" cue_guard=leak(+{d_i})"
+                else:
+                    guard_txt = " cue_guard=leak"
+            else:
+                guard_txt = ""
+
+            print(
+                f"[wm<->col] apply: merge added_entities={ae} filled_slots={fs} "
+                f"added_edges={ed} prior_cues={pc}{guard_txt}"
+            )
+            out["apply"] = f"apply merge ent+{ae} slots+{fs} edges+{ed} prior_cues={pc}{guard_txt}"
+    else:
+        why = ret.get("why") if isinstance(ret, dict) else "error"
+        print(f"[wm<->col] retrieve: goat04 context={label} skip why={why}")
+        print(f"[wm<->col] apply: no-op ({why})")
+        out["retrieve"] = f"retrieve goat04:{label} skip why={why}"
+        out["apply"] = f"apply no-op ({why})"
+
+    return out
 
 
 def load_wm_mapsurface_engram_into_workingmap(ctx: Ctx, engram_id: str, *, replace: bool = True) -> dict[str, Any]:
@@ -13025,7 +13253,28 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         if bool(getattr(ctx, "longterm_obs_keyframe_on_milestone", False)):
             ms_events: set[str] = set()
 
-            # --- A) Env-supplied milestone flags (sticky) ---
+            # --- A) Env-supplied milestone flags (rising-edge, not episode-global sticky) ---
+            #
+            # Important semantic choice:
+            #   We treat env-supplied milestones as "new" relative to the immediately
+            #   previous observation, NOT as "seen once per episode forever".
+            #
+            # Why:
+            #   Some scenarios intentionally reuse the same milestone label multiple times
+            #   in one episode. goat_foraging_04 is the current example:
+            #
+            #       context:fox -> context:hawk -> context:fox -> ...
+            #
+            #   We want each alternation edge to be a fresh keyframe trigger, while still
+            #   suppressing repeated identical labels on consecutive ticks:
+            #
+            #       fox, fox, fox     -> fire once on first fox tick
+            #       fox -> hawk       -> fire on hawk
+            #       hawk, hawk, hawk  -> fire once on first hawk tick
+            #       hawk -> fox       -> fire on fox again
+            #
+            #   Therefore we compare CURRENT milestones against the PREVIOUS active set,
+            #   then overwrite the remembered set with the current one.
             ms_raw = env_meta.get("milestones") or env_meta.get("milestone")
             ms_list: list[str] = []
             if isinstance(ms_raw, str) and ms_raw:
@@ -13033,17 +13282,18 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
             elif isinstance(ms_raw, list):
                 ms_list = [m for m in ms_raw if isinstance(m, str) and m]
 
-            if ms_list:
-                prev_raw = getattr(ctx, "lt_obs_last_milestones", None)
-                prev: set[str] = {x for x in prev_raw if isinstance(x, str) and x} if isinstance(prev_raw, set) else set()
-                new_ms = {m for m in ms_list if m not in prev}
-                if new_ms:
-                    ms_events |= new_ms
-                    try:
-                        prev |= new_ms
-                        ctx.lt_obs_last_milestones = prev
-                    except Exception:
-                        pass
+            prev_raw = getattr(ctx, "lt_obs_last_milestones", None)
+            prev_ms: set[str] = {x for x in prev_raw if isinstance(x, str) and x} if isinstance(prev_raw, set) else set()
+            curr_ms: set[str] = {m for m in ms_list if isinstance(m, str) and m}
+
+            new_ms = curr_ms - prev_ms
+            if new_ms:
+                ms_events |= new_ms
+
+            try:
+                ctx.lt_obs_last_milestones = curr_ms
+            except Exception:
+                pass
 
             # --- B) Derived milestone events (slot transitions) ---
             try:
@@ -13185,6 +13435,10 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
             ctx.lt_obs_slots.clear()
             try:
                 ctx.lt_obs_cues.clear()
+            except Exception:
+                pass
+            try:
+                ctx.lt_obs_last_milestones = set()
             except Exception:
                 pass
             if bool(getattr(ctx, "longterm_obs_keyframe_log", True)):
@@ -14011,6 +14265,97 @@ def _print_cog_cycle_footer(*,
     print(f"[cycle] ACT  executed={pol!r} reward={rtxt} next_action={next_action_for_env!r}")
 
 
+def configure_goat_foraging_04_eval_v1(world, drives, ctx: Ctx, env: HybridEnvironment) -> None:
+    """Configure the contextual map-switch evaluation scenario (goat_foraging_04).
+
+    Intent
+    ------
+    This helper prepares a repeatable evaluation run that pressures the WorkingMap↔Column
+    read path without changing the core controller. The scenario keeps coarse geometry mostly
+    fixed while alternating context cues (fox vs hawk), so retrieval must rely on stored
+    MapSurface context rather than gross topology alone.
+
+    What this sets
+    --------------
+    - env scenario: ``goat_foraging_04``
+    - Phase VII memory pipeline: enabled via apply_hardwired_profile_phase7(...)
+    - keyframe trigger emphasis: milestone-driven rather than stage/zone-driven
+    - episode bookkeeping: force the next env-loop tick to call env.reset(...)
+    """
+    if ctx is None or env is None:
+        return
+
+    try:
+        apply_hardwired_profile_phase7(ctx, world)
+    except Exception:
+        pass
+
+    # This evaluation wants milestone-forced keyframes under a constant stage/zone.
+    try:
+        ctx.longterm_obs_keyframe_on_stage_change = False
+        ctx.longterm_obs_keyframe_on_zone_change = False
+        ctx.longterm_obs_keyframe_on_milestone = True
+    except Exception:
+        pass
+
+    # Conservative retrieve knobs.
+    try:
+        ctx.wm_mapsurface_autoretrieve_enabled = True
+        ctx.wm_mapsurface_autoretrieve_mode = "merge"
+        ctx.wm_mapsurface_autoretrieve_top_k = 5
+        ctx.wm_mapsurface_autoretrieve_verbose = True
+    except Exception:
+        pass
+
+    try:
+        env.config = EnvConfig(scenario_name="goat_foraging_04", dt=getattr(env.config, "dt", 1.0))
+    except Exception:
+        try:
+            env.config.scenario_name = "goat_foraging_04"
+        except Exception:
+            pass
+
+    try:
+        ctx.env_episode_started = False
+        ctx.env_last_action = None
+    except Exception:
+        pass
+
+    # Keep drives mild so the controller mostly behaves as a permissive background process.
+    try:
+        drives.hunger = 0.30
+        drives.fatigue = 0.20
+        drives.warmth = 0.60
+    except Exception:
+        pass
+
+    # Fresh WorkingMap is helpful for readability; the long-term WorldGraph is intentionally preserved.
+    try:
+        reset_working_world(ctx)
+    except Exception:
+        pass
+
+    try:
+        ctx.wm_goat04_seeded_contexts.clear()
+        ctx.wm_goat04_seed_engram_by_context.clear()
+        ctx.wm_mapswitch_last_events = []
+    except Exception:
+        pass
+
+    # Clear prior run-compression state and recent auto-retrieve note.
+    try:
+        ctx.run_open = False
+        ctx.run_policy = None
+        ctx.run_action_bid = None
+        ctx.run_len = 0
+        ctx.run_start_env_step = None
+        ctx.run_last_env_step = None
+        ctx.wm_mapsurface_last_autoretrieve_engram_id = None
+        ctx.wm_mapsurface_last_autoretrieve_reason = None
+    except Exception:
+        pass
+
+
 def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) -> None:
     """
     Run N closed-loop steps between the HybridEnvironment and the CCA8 brain
@@ -14542,7 +14887,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             ctx.env_last_action = None
             step_idx = env_info.get("step_index", 0)
             print(
-                f"[env] Reset newborn_goat scenario: "
+                f"[env] Reset env scenario: "
                 f"episode_index={env_info.get('episode_index')} "
                 f"scenario={env_info.get('scenario_name')}"
             )
@@ -14561,10 +14906,17 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             ctx.env_last_action = None
             st = env.state
             step_idx = env_info.get("step_index")
+            ctx_txt = ""
+            try:
+                c_label = getattr(st, "context_label", None)
+                if isinstance(c_label, str) and c_label:
+                    ctx_txt = f" context={c_label}"
+            except Exception:
+                ctx_txt = ""
             print(
                 f"[env] env_step={step_idx} (since reset) "
                 f"stage={st.scenario_stage} posture={st.kid_posture} "
-                f"mom_distance={st.mom_distance} nipple_state={st.nipple_state} "
+                f"mom_distance={st.mom_distance} nipple_state={st.nipple_state}{ctx_txt} "
                 f"action={action_for_env!r}"
             )
 
@@ -14701,6 +15053,40 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
         # 3) EnvObservation → WorldGraph + BodyMap
         obs_write = inject_obs_into_world(world, ctx, env_obs)
+
+        # goat_foraging_04 contextual evaluation:
+        #   - first fox milestone  -> store fox seed
+        #   - first hawk milestone -> store hawk seed
+        #   - later alternating milestones -> retrieve/apply
+        #
+        # In this latest runner there is no generic wm_auto_store block here anymore,
+        # so we hook the evaluation directly into the live env→memory handoff.
+        try:
+            goat04_stage = None
+            meta_goat = getattr(env_obs, "env_meta", None)
+            meta_goat = meta_goat if isinstance(meta_goat, dict) else {}
+            goat04_stage = meta_goat.get("scenario_stage")
+
+            goat04_kf = bool(isinstance(obs_write, dict) and obs_write.get("keyframe"))
+        except Exception:
+            goat04_stage = None
+            goat04_kf = False
+
+        if goat04_stage == "goat_foraging_04_scan" and goat04_kf:
+            try:
+                goat04_ops = maybe_goat04_context_mapswitch_on_keyframe_v1(world, ctx, env_obs)
+                if isinstance(goat04_ops, dict):
+                    if isinstance(goat04_ops.get("store"), str):
+                        col_store_txt = goat04_ops.get("store")
+                    if isinstance(goat04_ops.get("retrieve"), str):
+                        col_retrieve_txt = goat04_ops.get("retrieve")
+                    if isinstance(goat04_ops.get("apply"), str):
+                        col_apply_txt = goat04_ops.get("apply")
+            except Exception as e:
+                print(f"[wm<->col] goat04 context mapswitch error: {e}")
+                col_retrieve_txt = f"retrieve goat04 error:{e}"
+                col_apply_txt = "apply no-op (error)"
+
         try:
             if getattr(ctx, "wm_surfacegrid_enabled", False):
                 print(format_surfacegrid_snapshot_v1(ctx))
@@ -15647,6 +16033,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Memories
     40) Configure episode starting state (drives + age_days) [config-episode, cfg-epi]
     41) Retired: WorkingMap & WorldGraph settings, toggle RL policy
+    42) Configure goat_foraging_04 contextual map-switch evaluation [goat04]
     43) WorkingMap snapshot (last N bindings; optional clear) [wsnap, wmsnap]
     44) Store MapSurface snapshot to Column + WG pointer (dedup vs last) [wstore, wmstore]
     45) List recent wm_mapsurface engrams (Column)
@@ -18809,8 +19196,21 @@ rl_delta (float)
 
         #----Menu Selection Code Block------------------------
         elif choice == "42":
-            # fuure usage
-            print("Selection: future usage\n")
+            print("Selection: Configure goat_foraging_04 contextual map-switch evaluation\n")
+            print("This configures a repeatable evaluation run where the coarse geometry stays simple")
+            print("but the context alternates (fox ↔ hawk), so WorkingMap↔Column retrieval must")
+            print("switch on contextual cues rather than gross terrain alone.\n")
+
+            try:
+                configure_goat_foraging_04_eval_v1(world, drives, ctx, env)
+                print("Configured goat_foraging_04.")
+                print("  - env.config.scenario_name = 'goat_foraging_04'")
+                print("  - milestone-driven keyframes ON")
+                print("  - WorkingMap/Column auto-retrieve ON (merge mode)")
+                print("  - next menu 35/37 call will start a fresh goat_foraging_04 episode")
+            except Exception as e:
+                print(f"[goat04] configuration error: {e}")
+
             loop_helper(args.autosave, world, drives, ctx)
 
 
