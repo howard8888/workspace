@@ -1262,12 +1262,6 @@ NOTE: This Instructive Tutorial is correct at the time of writing but needs to b
 
 > **Purpose.** This tutorial is a code-grounded guide to the memory architecture in the current CCA8 runner (v0.8.2). It is written to help a developer read the system as a set of cooperating representations rather than as one undifferentiated “memory.”
 
-| Reader          | What this document gives you                                                                                                          |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| New contributor | A map of the memory layers, what each one stores, why it exists, and how it is updated during a cognitive cycle.                      |
-| Debugger        | A practical guide to where to look when behavior seems wrong: BodyMap, WorkingMap, WorldGraph, Column payloads, or keyframe logic.    |
-| Paper author    | A precise vocabulary for describing the architecture in AGI-2026 / BICA-2026 style writing without collapsing important distinctions. |
-
 
 
 ### Tutorial outline
