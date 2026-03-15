@@ -3869,32 +3869,10 @@ Design goals:
 - keep WorldGraph thin (symbols + pointers) while Columns hold heavier patch payloads,
 - keep decisions traceable (top-K matches, priors applied, error/uncertainty, margins).
 
+
 ---
 
 
-## 0) Implementation status (v5.6 — 2026-02-27)
-
-Status key: ✅ DONE / 🟡 PARTIAL / ⚪ TODO
-
-✅ DONE:
-  - EnvObservation schema
-  - PerceptionAdapter + inject_obs_into_world()
-  - SurfaceGrid payload (EnvObservation.surface_grid + ASCII)
-  - WM.Grid → derived predicates (hazard:near, terrain:traversable_near, goal:dir, …)
-  - NavPatch payload schema + example patches
-  - NavPatch predictive match loop (best + top-K traces)
-  - "risk" and "ambiguity" derived scoring helpers (EFE stub)
-  - WM.Scratch ambiguity records for NavPatch matches (observed patch id/sig, entity/role, top-K candidates + scores, margin/reason)
-  - zoom_down / zoom_up events emitted on ambiguity transitions (tracked in ctx.wm_zoom_state; last events in ctx.wm_zoom_last_events)
-  - Minimal probe/inspect policy ("policy:probe") gated by WM.Scratch ambiguity (boosts navpatch_precision_grid for a few steps)
-
-🟡 PARTIAL:
-  - "Use match-trace confidence inside control" (policy selection) — trace exists; not yet used.
-  - Thread commit/margins into cautious action selection (beyond the epistemic probe).
-
-⚪ TODO:
-  - Replace the probe’s precision boost with a real inspect action that changes the observation stream (once env supports it).
----
 
 ## 1) What problem NavPatch solves
 
