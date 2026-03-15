@@ -116,7 +116,80 @@ of birth, and by one week can climb most places its mother can)*
 
 
 
-## **TL;DR == 15-minute summary**
+
+# Table of Contents
+
+**Introduction to the Causal Cognitive Architecture 8 (CCA8)**
+
+- [Executive Overview](#executive-overview)
+- [TL;DR == 15-minute summary](#tldr--15-minute-summary)
+- [Opening screen (banner) explained](#opening-screen-banner-explained)
+- [Profiles (1–7): overview and implementation notes](#profiles-17-overview-and-implementation-notes)
+- [Introduction to the Memory Pipeline](#introduction-to-the-memory-pipeline)
+- [CCA8 as a Robotic Cognitive Operating System (RCOS)](#cca8-as-a-robotic-cognitive-operating-system-rcos)
+- [Hardware Abstraction Layer (HAL)](#hardware-abstraction-layer-hal)
+- [Hardware preflight lane (status stub)](#hardware-preflight-lane-status-stub)
+- [FAQ / Pitfalls](#faq--pitfalls)
+- [Intro Glossary](#intro-glossary)
+
+
+**Instructive Tutorial**
+- [Instructive Tutorial](#instructive-tutorial)
+
+
+**Detailed Tutorials and Technical Deep Dives**
+
+- [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
+- [The WorldGraph in detail](#the-worldgraph-in-detail)
+- [Tagging Standard (bindings, predicates, cues, anchors, actions, provenance & engrams)](#tagging-standard-bindings-predicates-cues-anchors-actions-provenance--engrams)
+- [Restricted Lexicon (Developmental Vocabulary)](#restricted-lexicon-developmental-vocabulary)
+- [Signal Bridge (WorldGraph ↔ Engrams)](#signal-bridge-worldgraph--engrams)
+- [Architecture](#architecture)
+- [Action Selection: Drives, Policies, Action Center](#action-selection-drives-policies-action-center)
+- [Planner Contract](#planner-contract)
+- [Planner: BFS vs Dijkstra (weighted edges)](#planner-bfs-vs-dijkstra-weighted-edges)
+- [Persistence: Autosave/Load](#persistence-autosaveload)
+- [Runner, menus, and CLI](#runner-menus-and-cli)
+- [Preflight (four-part self-test)](#preflight-four-part-self-test)
+- [Logging](#logging)
+- [WorkingMap Layer Contracts](#workingmap-layer-contracts)
+- [Design principle: multi-scale navigation is first-class](#design-principle-multi-scale-navigation-is-first-class)
+- [Tutorial on Timekeeping](#tutorial-on-timekeeping)
+- [Tutorial on Cognitive Cycles](#tutorial-on-cognitive-cycles)
+- [Tutorial on NavPatch: MapSurface patches and matching](#tutorial-on-navpatch-mapsurface-patches-and-matching)
+- [Prediction error and predictive coding](#prediction-error-and-predictive-coding)
+- [Tutorial on WorkingMap](#tutorial-on-workingmap)
+- [Memory systems in CCA8](#memory-systems-in-cca8)
+- [Binding and Edge Representation](#binding-and-edge-representation)
+- [Anchors, LATEST, and Base-Aware Writes](#anchors-latest-and-base-aware-writes)
+- [Data schemas (for contributors)](#data-schemas-for-contributors)
+- [Tutorial on Drives](#tutorial-on-drives)
+- [Tutorial on WorldGraph Technical Features](#tutorial-on-worldgraph-technical-features)
+- [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
+- [Tutorial on BodyMap](#tutorial-on-bodymap)
+- [Tutorial on Main (Runner) Module Technical Features](#tutorial-on-main-runner-module-technical-features)
+- [Tutorial on Controller Module Technical Features](#tutorial-on-controller-module-technical-features)
+- [Tutorial on Reinforcement Learning in the CCA8](#tutorial-on-reinforcement-learning-in-the-cca8)
+- [Tutorial on Temporal Module Technical Features](#tutorial-on-temporal-module-technical-features)
+- [Tutorial on Features Module Technical Features](#tutorial-on-features-module-technical-features)
+- [Tutorial on Column Module Technical Features](#tutorial-on-column-module-technical-features)
+- [Tutorial on Approach to Simulation of the Environment](#tutorial-on-approach-to-simulation-of-the-environment)
+- [Tutorial on Environment Module Technical Features](#tutorial-on-environment-module-technical-features)
+- [Traceability (requirements to code)](#traceability-requirements-to-code)
+- [Debugging Tips (traceback, pdb, VS Code)](#debugging-tips-traceback-pdb-vs-code)
+
+**References and Notes**
+
+- [References](#references)
+- [Developer and Maintainer Notes](#developer-and-maintainer-notes)
+
+
+
+
+
+
+
+# **TL;DR == 15-minute summary**
 
 
 **Goal (what you should accomplish in ~15 minutes)**
@@ -346,6 +419,26 @@ Tip: set obs_mask_prob back to 0.00 for “fully observed baseline” runs.
 
 
 
+
+### 3b) Optional experiment: contextual map switching (optional: 10 minutes)
+
+If you want to see the **WorkingMap ⇄ Column** memory pipeline in a controlled context-switch task, use the dedicated
+goat-foraging evaluation harness:
+
+- go to **menu 42**: *Configure goat_foraging_04 contextual map-switch evaluation*
+- then run **menu 37** for `N = 20` (or `N = 50` if you want a longer trace)
+
+What to look for:
+
+- the first context milestones seed two stored MapSurface snapshots (one **hawk**, one **fox**),
+- later alternating milestones trigger **retrieve** + **apply** in merge mode,
+- and the footer will summarize these events with `[cycle] COL` / `[cycle] MS` lines.
+
+This is the quickest way to confirm that contextual retrieval is happening on cues rather than only on coarse geometry.
+
+
+
+
 ### 4) Quick ways to confirm you “used the system” (2 minutes)
 
 
@@ -379,85 +472,22 @@ Once you’ve seen one closed-loop episode run successfully, take a look at othe
 
 
 
-# Table of Contents
-
-**Introduction to the Causal Cognitive Architecture 8 (CCA8)**
-
-- [Executive Overview](#executive-overview)
-- [Opening screen (banner) explained](#opening-screen-banner-explained)
-- [Profiles (1–7): overview and implementation notes](#profiles-17-overview-and-implementation-notes)
-- [Introduction to the Memory Pipeline](#introduction-to-the-memory-pipeline)
-- [CCA8 as a Robotic Cognitive Operating System (RCOS)](#cca8-as-a-robotic-cognitive-operating-system-rcos)
-- [Hardware Abstraction Layer (HAL)](#hardware-abstraction-layer-hal)
-- [Hardware preflight lane (status stub)](#hardware-preflight-lane-status-stub)
-- [FAQ / Pitfalls](#faq--pitfalls)
-- [Intro Glossary](#intro-glossary)
-
-**Tutorials and technical deep dives**
-
-- [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
-- [The WorldGraph in detail](#the-worldgraph-in-detail)
-- [Tagging Standard (bindings, predicates, cues, anchors, actions, provenance & engrams)](#tagging-standard-bindings-predicates-cues-anchors-actions-provenance--engrams)
-- [Restricted Lexicon (Developmental Vocabulary)](#restricted-lexicon-developmental-vocabulary)
-- [Signal Bridge (WorldGraph ↔ Engrams)](#signal-bridge-worldgraph--engrams)
-- [Architecture](#architecture)
-- [Action Selection: Drives, Policies, Action Center](#action-selection-drives-policies-action-center)
-- [Planner Contract](#planner-contract)
-- [Planner: BFS vs Dijkstra (weighted edges)](#planner-bfs-vs-dijkstra-weighted-edges)
-- [Persistence: Autosave/Load](#persistence-autosaveload)
-- [Runner, menus, and CLI](#runner-menus-and-cli)
-- [Preflight (four-part self-test)](#preflight-four-part-self-test)
-- [Logging](#logging)
-- [WorkingMap Layer Contracts](#workingmap-layer-contracts)
-- [Design principle: multi-scale navigation is first-class](#design-principle-multi-scale-navigation-is-first-class)
-- [Tutorial on Timekeeping](#tutorial-on-timekeeping)
-- [Tutorial on Cognitive Cycles](#tutorial-on-cognitive-cycles)
-- [Tutorial on NavPatch: MapSurface patches and matching](#tutorial-on-navpatch-mapsurface-patches-and-matching)
-- [Prediction error and predictive coding](#prediction-error-and-predictive-coding)
-- [Tutorial on WorkingMap](#tutorial-on-workingmap)
-- [Memory systems in CCA8](#memory-systems-in-cca8)
-- [Binding and Edge Representation](#binding-and-edge-representation)
-- [Anchors, LATEST, and Base-Aware Writes](#anchors-latest-and-base-aware-writes)
-- [Data schemas (for contributors)](#data-schemas-for-contributors)
-- [Tutorial on Drives](#tutorial-on-drives)
-- [Tutorial on WorldGraph Technical Features](#tutorial-on-worldgraph-technical-features)
-- [Tutorial on Breadth-First Search (BFS) Used by the CCA8 Fast Index](#tutorial-on-breadth-first-search-bfs-used-by-the-cca8-fast-index)
-- [Tutorial on BodyMap](#tutorial-on-bodymap)
-- [Tutorial on Main (Runner) Module Technical Features](#tutorial-on-main-runner-module-technical-features)
-- [Tutorial on Controller Module Technical Features](#tutorial-on-controller-module-technical-features)
-- [Tutorial on Reinforcement Learning in the CCA8](#tutorial-on-reinforcement-learning-in-the-cca8)
-- [Tutorial on Temporal Module Technical Features](#tutorial-on-temporal-module-technical-features)
-- [Tutorial on Features Module Technical Features](#tutorial-on-features-module-technical-features)
-- [Tutorial on Column Module Technical Features](#tutorial-on-column-module-technical-features)
-- [Tutorial on Approach to Simulation of the Environment](#tutorial-on-approach-to-simulation-of-the-environment)
-- [Tutorial on Environment Module Technical Features](#tutorial-on-environment-module-technical-features)
-- [Traceability (requirements to code)](#traceability-requirements-to-code)
-- [Debugging Tips (traceback, pdb, VS Code)](#debugging-tips-traceback-pdb-vs-code)
-
-**References and Notes**
-
-- [References](#references)
-- [Developer and Maintainer Notes](#developer-and-maintainer-notes)
-
-
-
-
-
 # INTRODUCTION TO THE CAUSAL COGNITIVE ARCHITECTURE 8 (CCA8)
 
 # Opening screen (banner) explained
 
-**Opening screen:**
+
+**Opening screen (current runner example):**
 
 A Warm Welcome to the CCA8 Mammalian Brain Simulation
-(cca8_run.py v0.7.11)
+(cca8_run.py v0.8.x; the exact patch version will match the build you launched)
 
 Entry point program being run: C:\Users\howar\workspace\cca8_run.py
-OS: win32 (run system-dependent utilities for more detailed system/simulation info)
+OS: win32 (see system-dependent utilities for more detailed system/simulation info)
 (for non-interactive execution, ">python cca8_run.py --help" to see optional flags you can set)
 
-Embodiment:  HAL (hardware abstraction layer) setting: off (runs without consideration of the robotic embodiment)
-Embodiment:  body_type-version_number-serial_number (i.e., robotic embodiment): none specified
+Embodiment:  HAL (hardware abstraction layer) setting: OFF (runs without consideration of the robotic embodiment)
+Embodiment:  body_type|version_number|serial_number (i.e., robotic embodiment): 0.0.0 : none specified
 
 The simulation of the cognitive architecture can be adjusted to add or take away
 various features, allowing exploration of different evolutionary-like configurations.
@@ -469,9 +499,9 @@ various features, allowing exploration of different evolutionary-like configurat
 5. Human-like one-brain simulation × multiple-agents society
 6. Human-like one-agent multiple-brains simulation with combinatorial planning
 7. Super-Human-like machine simulation
+T. Tutorial (more information) on using and maintaining this program, references
 
-Pending additional intro material here....
-Please make a choice [1-7]:*
+Please make a choice [1–7 or T | Enter = Mountain Goat]:*
 
 
 
@@ -669,7 +699,7 @@ Phase VII establishes snapshot consolidation/retrieval (`wm<->col`). Phase X add
 
 ## Reading guide: where the deep dives live
 
-The detailed reference material (WorldGraph internals, tagging rules, runner details, planner contract) lives in **Tutorials and technical deep dives** later in this README.
+The detailed reference material (WorldGraph internals, tagging rules, runner details, planner contract) lives in **Detailed Tutorials and Technical Deep Dives** later in this README.
 
 Recommended next reads:
 - **Tutorial on WorldGraph** → **WorldGraph in detail** → **Tagging Standard**
@@ -993,7 +1023,7 @@ A: Literally: there are currently zero implemented hardware checks. It’s a pla
 
 # FAQ / Pitfalls
 
-- **“No path found to `pred:posture:standing`”** — You planned before creating the predicate (or before NOW is connected forward to it). Run one instinct step (menu **12**) first, add the predicate manually, or `--load` a session that already contains it. *(If you see `state:posture_standing`, that’s a legacy token; canonical is `pred:posture:standing`.)*
+- **“No path found to `pred:posture:standing`”** — You planned before creating the predicate (or before NOW is connected forward to it). Run one instinct step (menu **9**) first, add the predicate manually, or `--load` a session that already contains it. *(If you see `state:posture_standing`, that’s a legacy token; canonical is `pred:posture:standing`.)*
 - **Repeated “standing” nodes** — Tightened `StandUp.trigger()` prevents refiring when a standing binding exists. If you see repeats, ensure you’re on the updated controller.
 - **Autosave overwrote my old run** — Use a new filename for autosave (e.g., `--autosave session_YYYYMMDD.json`) or keep read-only load + new autosave path.
 - **Loading says file not found** — We continue with a fresh session, the file will be created on your first autosave event.
@@ -1212,18 +1242,457 @@ A: So planning and indexing remain fast and inspectable. WorldGraph tells you *w
 
 
 
+# INSTRUCTIVE TUTORIAL
+
+
+The instructive tutorial attempts to give you the reader an overview of the architectural background (i.e., how data flows through the memory and processing components).
+
+We attempt to do so here in a friendly, instructive fashion. Please see the large section DETAILED TUTORIALS AND TECHNICAL DEEP DIVES for deeper overview of the material.
+
+
+NOTE: This README is large; if GitHub truncates the preview at the 512 KiB render limit, open the file directly to view the full document.
+
+NOTE: This Instructive Tutorial is correct at the time of writing but needs to be periodically updated as the CCA8 architecture and simulation is further developed.
 
 
 
+## CCA8 tutorial: structure and function of the memory components and representations
+
+*Current focus: BodyMap, WorkingMap, WorldGraph, Columns / Engrams, NavPatch, keyframes, and the closed-loop cognitive cycle.*
+
+> **Purpose.** This tutorial is a code-grounded guide to the memory architecture in the current CCA8 runner (v0.8.2). It is written to help a developer read the system as a set of cooperating representations rather than as one undifferentiated “memory.”
+
+| Reader          | What this document gives you                                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| New contributor | A map of the memory layers, what each one stores, why it exists, and how it is updated during a cognitive cycle.                      |
+| Debugger        | A practical guide to where to look when behavior seems wrong: BodyMap, WorkingMap, WorldGraph, Column payloads, or keyframe logic.    |
+| Paper author    | A precise vocabulary for describing the architecture in AGI-2026 / BICA-2026 style writing without collapsing important distinctions. |
 
 
 
+### Tutorial outline
+
+- 1. Architectural orientation: reality outside, memory inside
+- 2. The memory component matrix
+- 3. The core representational vocabulary
+- 4. BodyMap: fast belief registers for gating and safety
+- 5. WorkingMap overview: the active workspace
+- 6. MapSurface: semantic scene memory in overwrite-by-slot form
+- 7. SurfaceGrid and NavPatch: topological memory and reusable local maps
+- 8. Scratch and Creative: transient traces and counterfactual memory
+- 9. WorldGraph: the sparse episode index
+- 10. Columns / Engrams: heavy payload memory
+- 11. Keyframes, consolidation, retrieval, and merge / replace semantics
+- 12. A full closed-loop cognitive cycle, step by step
+- 13. Reading logs and debugging memory behavior
+- 14. Conceptual synthesis and writing vocabulary
+- Appendix A. Current menu entry points for memory work
+- Appendix B. A one-page glossary of memory terms
+
+> **Reading strategy.** If you only need the essentials, read Sections 1–3, then jump to Sections 6, 9, 10, 11, and 12. If you are debugging the current implementation, Section 13 is the fastest payoff.
+
+### Document design principles
+
+This tutorial treats CCA8 memory as a layered system. The central mistake to avoid is to speak as though “memory” were a single store. In the current codebase, several structures coexist precisely because they answer different questions at different latencies.
+
+A second design principle is that the tutorial stays close to the current implementation. When a component is partly conceptual and partly implemented, the text will say so explicitly. The goal is not to make the architecture sound simpler than it is, but to make its present form legible.
+
+A third principle is that representations matter. In CCA8, the difference between a binding tag, a WorkingMap slot value, a SurfaceGrid cell, and an engram payload is not cosmetic. It determines what can be searched, what can be overwritten, what can be retrieved, and what can safely remain sparse.
+
+## 1. Architectural orientation: reality outside, memory inside
+
+The cleanest way to begin is with the architecture boundary. In CCA8, the environment owns a hidden truth state. The agent never reads that truth directly. Instead it receives an EnvObservation and uses that observation to update several internal memories. This simple separation prevents the architecture from cheating. It also makes memory design visible: every internal store must justify its existence in terms of what it remembers, how long it remembers it, and what consumes it.
+
+That boundary immediately explains why CCA8 needs multiple memory structures. Some internal questions are urgent and cheap: “Am I fallen?”, “Is mom near?”, “Am I in a risky zone?”, “Should this policy even trigger?” Other questions are structural and slower: “What happened across this episode?”, “What did the scene look like at the last keyframe?”, “Which prior WorkingMap snapshot is the best contextual match?” Still other questions are representationally heavy: “What exactly was the stored map payload?” or “Which patch prototype matched the current terrain fragment?”
+
+A useful slogan is this: reality is singular, but internal memory is plural. CCA8 therefore separates immediate body-state beliefs, live scene structure, sparse episodic indexing, and heavy reusable payloads. If you compress all of those into one graph or one log, you make the system harder to search, harder to update, and harder to explain in papers.
+
+The current runner makes this boundary especially clear during a closed-loop cognitive cycle. The flow is: EnvObservation arrives; BodyMap updates; WorkingMap.MapSurface updates; on keyframe cycles the WorkingMap ⇄ Column pipeline may store or retrieve; SurfaceGrid is composed as a derived topological view; the Action Center selects and executes one policy; then the chosen action is fed back into env.step() for the next cycle. Once you can say that sentence without hesitation, the rest of the architecture becomes much easier to read.
+
+> **Key principle.** Do not ask one memory structure to do every job. BodyMap, MapSurface, Scratch, WorldGraph, and Column engrams are separated because they support different update rules, different lifetimes, and different consumers.
+
+```text
+EnvState (hidden truth)
+  -> EnvObservation
+  -> BodyMap update
+  -> WorkingMap.MapSurface update
+  -> (keyframes only) store / retrieve / apply priors
+  -> WorkingMap.SurfaceGrid composition
+  -> Action Center selection + policy execution
+  -> env.step(action)
+  -> next EnvObservation
+```
+
+## 2. The memory component matrix
+
+Before going deep into each component, it helps to compare them side by side. The table below is the single most compact statement of the current architecture.
+
+| Component              | Primary question answered                                | Update rule                                            | Typical lifetime                                    | Main readers                                            |
+| ---------------------- | -------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------- | ------------------------------------------------------- |
+| BodyMap                | What is true of my body and near-space right now?        | Overwrite fast registers from the latest observation   | Short: current-cycle belief registers               | Policy triggers, safety checks, zone logic              |
+| WorkingMap.MapSurface  | What do I believe about the current scene right now?     | Overwrite-by-slot-family, keep stable entity ids       | Persists across env steps within the active episode | Policies, retrieval, human inspection                   |
+| WorkingMap.SurfaceGrid | Where can I move right now topologically?                | Recompose from active NavPatch instances               | One-cycle derived view with optional caching        | Navigation and risk-sensitive policies                  |
+| WorkingMap.Scratch     | What did I just try, and what was the predicted outcome? | Append transient chains and ambiguity notes            | Short-lived, should be treated as disposable        | Debugging, predicted postconditions, future probes      |
+| WorkingMap.Creative    | What candidate futures did I simulate?                   | Store counterfactual candidates without mutating truth | Decision-local or short horizon                     | Action selection, future evaluators                     |
+| WorldGraph             | What happened over time, and how can I index it?         | Sparse append-oriented episode skeleton                | Long-lived across the session                       | Planner, inspection, pointer scaffold                   |
+| Columns / Engrams      | Where is the heavy payload?                              | Assert immutable records by id                         | Long-lived as stored memory                         | Retrieval, payload inspection, future similarity search |
+
+Two distinctions in this table are worth emphasizing. First, BodyMap and MapSurface are both “belief-now” structures, but BodyMap is intentionally tiny and scalar-ish, whereas MapSurface is the richer entity-and-slot workspace. Second, WorldGraph and Columns are both long-term memory, but they do not carry the same kind of material: WorldGraph is the sparse index, while Columns hold the heavy payloads.
+
+The architecture also separates canonical memories from derived views. MapSurface and Scratch are canonical within the active episode. SurfaceGrid, by contrast, is derived and must be reproducible from the relevant current evidence and active patch instances. That distinction matters because it tells you what can be safely recomputed, and what must be stored or pointed to explicitly.
+
+> **WorldGraph thin, Columns heavy.** This is the most important compression rule in the design. WorldGraph should tell you where to look. Column engrams should hold what you actually want to inspect in detail.
+
+## 3. The core representational vocabulary
+
+CCA8 memory is not defined only by where information lives. It is also defined by the representational forms that are allowed in each place. The system uses a small vocabulary of tags, slots, pointers, and payload schemas so that updates remain interpretable.
+
+At the WorldGraph level, the main symbolic units are bindings and edges. A binding is an episode card: it has an id, tags, meta, optional engram pointers, and outgoing edges. Tags come in a few families that matter operationally: pred:* for state or event descriptions, cue:* for evidence, action:* for explicit behavioral steps, and anchor:* for orientation markers such as NOW and NOW_ORIGIN.
+
+At the WorkingMap.MapSurface level, the dominant form is not a timeline binding but an entity with slot-families. For example, entity=self might have the slot-family posture with value standing, while entity=mom might have the slot-family proximity:mom with value far. The point is that MapSurface is an overwrite-style workspace rather than an append-only episode trace.
+
+At the Columns level, the dominant form is an engram payload. A payload can be a wm_mapsurface snapshot, a navpatch prototype, or another heavy feature-bearing record. The binding only stores a pointer such as column01 -> {id, act}. The payload itself lives elsewhere and can be fetched when needed.
+
+At the SurfaceGrid level, the dominant form is a cell-based topological view. Cells are not verbose symbolic facts. They are compact markers such as traversable, hazard, goal, or unknown. This makes the grid usable for navigation policies without forcing the graph to become a full geometric database.
+
+| Representation                        | Where it lives       | What it is good for                                  | What it is bad for                       |
+| ------------------------------------- | -------------------- | ---------------------------------------------------- | ---------------------------------------- |
+| Binding tag (pred:*, cue:*, action:*) | WorldGraph           | Sparse indexing, planning, provenance-visible traces | Dense scene state, heavy payload storage |
+| Slot-family value                     | MapSurface / BodyMap | Belief-now, overwrite updates, policy gating         | Long episodic history by itself          |
+| Grid cell                             | SurfaceGrid          | Local topology and movement reasoning                | Narrative episode traces                 |
+| Engram pointer                        | Binding.engrams      | Connecting sparse nodes to heavy memory              | Human-readable payload content           |
+| Engram payload                        | Columns              | Rich reusable stored structures                      | Fast graph search if used directly       |
+
+```json
+{
+  "id": "b42",
+  "tags": ["pred:posture:standing", "cue:vision:silhouette:fox"],
+  "edges": [{"to": "b43", "label": "then", "meta": {"created_by": "policy:follow_mom"}}],
+  "meta": {"policy": "policy:follow_mom"},
+  "engrams": {"column01": {"id": "57549c8f...", "act": 1.0}}
+}
+```
+
+A good paper sentence to remember is this: CCA8 uses different representations because the same content becomes computationally useful in different forms at different stages of the loop. A posture fact may be a pred:* tag in WorldGraph, a slot value in MapSurface, and a field inside a stored wm_mapsurface payload.
+
+## 4. BodyMap: fast belief registers for gating and safety
+
+BodyMap is the smallest and fastest memory structure in the current system. It answers questions that are operationally urgent and conceptually shallow: posture, mom distance, nipple state, shelter distance, cliff hazard distance, and a derived zone classification. In practical terms, it is the structure policies consult when they need a cheap trigger test rather than a rich scene reconstruction.
+
+It helps to think of BodyMap as a dashboard rather than a scene model. It is intentionally narrow. It should let a policy answer “Should I even consider firing?” without reading the full WorkingMap or the full WorldGraph. For example, if the body is fallen, a fall-recovery policy may become the only allowable candidate. If the zone is unsafe, rest may be suppressed even if fatigue is high. If the nipple is already latched, a search-for-nipple policy should not fire.
+
+The architectural advantage of a small BodyMap is not just speed. It is also clarity. By separating these fast registers from the richer scene workspace, you avoid a common failure mode in cognitive architectures: every policy re-derives urgent body-state facts from a larger and noisier representation. BodyMap centralizes those urgent facts into one inspectable place.
+
+The current README describes BodyMap as “small and scalar-ish,” and that phrase is exactly right. It is not intended to hold all context. It holds just enough context for gating, safety, and short explanatory summaries. This is why the terminal footer often includes both env truth and BodyMap posture: if those disagree, you have a clue about where a mismatch entered the pipeline.
+
+| BodyMap field    | Typical values                           | Why it matters                                                                |
+| ---------------- | ---------------------------------------- | ----------------------------------------------------------------------------- |
+| posture          | fallen / standing / resting              | Controls recovery, locomotion, and whether some policies are even legal       |
+| mom distance     | far / near / close                       | Drives follow / seek behavior and affects scene interpretation                |
+| nipple state     | hidden / found / latched / milk:drinking | Shapes feeding-related policy transitions                                     |
+| shelter distance | far / near                               | Supports rest and safety interpretation                                       |
+| cliff hazard     | far / near                               | Feeds zone classification and risk gating                                     |
+| zone             | safe / unsafe / unknown                  | A compact summary used by several policies                                    |
+| staleness        | fresh / stale                            | Signals whether fast registers are reliable enough or whether priors may help |
+
+> **Interpretive rule.** If behavior looks wrong and the policy should obviously have fired or obviously been suppressed, inspect BodyMap before you inspect the full WorldGraph. Many trigger problems are really BodyMap problems.
+
+## 5. WorkingMap overview: the active workspace
+
+WorkingMap is the live workspace memory of the agent. If BodyMap is the dashboard, WorkingMap is the workbench. It is where the agent keeps a richer, continuously updated picture of the current scene and of the short-lived structures used for recent action traces or candidate futures.
+
+The current architecture divides WorkingMap into several conceptual layers: MapSurface, SurfaceGrid, Scratch, and Creative. Only some of these are equally mature in the current build, but the division is already important. It prevents the workspace from becoming a single confusing heap of scene facts, action traces, and hypothetical rollouts.
+
+Another advantage of WorkingMap is that it gives the architecture a place to be WorkingMap-first. The long-term WorldGraph remains sparse. The rich belief-now computations happen on the active workspace. Keyframe consolidation then snapshots or indexes that workspace rather than logging every tick at full detail forever.
+
+| WorkingMap layer | Main role                                | Representation                                                  |
+| ---------------- | ---------------------------------------- | --------------------------------------------------------------- |
+| MapSurface       | Semantic scene sketch                    | Entities + slot-families + simple relations + pointer refs      |
+| SurfaceGrid      | Policy-facing topology                   | Composed cell grid built from active patch instances            |
+| Scratch          | Recent action traces and ambiguity notes | Short chains and transient annotations                          |
+| Creative         | Counterfactual candidates                | Predicted action/outcome packages that must not overwrite truth |
+
+## 6. MapSurface: semantic scene memory in overwrite-by-slot form
+
+MapSurface is the core WorkingMap layer in the present implementation. Its job is to hold what the agent currently believes about the scene in a compact, stable, inspectable form. The key idea is that MapSurface is not an append-only timeline. It is a stateful scene table. Entities such as self, mom, shelter, cliff, fox, or hawk keep stable identities, and each entity carries slot-families that can be overwritten as new observations arrive.
+
+This overwrite-by-slot design is one of the clearest differences between MapSurface and WorldGraph. If you log every observed posture, distance, and cue as new nodes forever, you get a useful episode index but a poor belief-now workspace. MapSurface solves the opposite problem: it makes the current scene easy to read and update, even if it is not by itself the complete history.
+
+A slot-family is the channel under which mutually exclusive or at least tightly competing values are stored. Posture is a slot-family. Proximity to mom is a slot-family. Hazard distance to cliff is a slot-family. The rule is simple: when new observation says the value changed, the slot is overwritten. That is why the agent can carry one current belief about posture without leaving dozens of stale posture tags active in the same place.
+
+The current code also uses MapSurface as the source structure for snapshot storage. When menu 43 prints the WorkingMap snapshot, it can dump the exact JSON-safe payload that would become a wm_mapsurface_v1 engram. That is enormously valuable for reasoning about the memory pipeline because it shows the active scene sketch in the same shape that later retrieval will use.
+
+Another subtle point is that MapSurface can hold prior material without pretending that prior material is current observation. In merge mode, retrieved snapshots fill missing slot-families conservatively and store prior cues in metadata rather than injecting live cue:* tags. This is one of the most important anti-hallucination design choices in the recent pipeline work.
+
+| Concept            | MapSurface meaning                                            | Operational consequence                                                            |
+| ------------------ | ------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Stable entity id   | self, mom, cliff, shelter, fox, hawk, etc.                    | Lets updates happen in place instead of creating a fresh graph universe every tick |
+| Slot-family        | A field such as posture or proximity:mom                      | New observation overwrites the current value for that family                       |
+| Current cue tag    | A cue interpreted as present now                              | Useful for immediate interpretation but dangerous if leaked from priors            |
+| Prior cue metadata | A cue remembered from a retrieved snapshot                    | Can bias reasoning without masquerading as current evidence                        |
+| patch_refs         | Thin references from entities to patch prototypes / instances | Lets the scene point into richer map content without embedding it inline           |
+
+```json
+{
+  "schema": "wm_mapsurface_v1",
+  "header": {...},
+  "entities": [
+    {"eid": "self", "kind": "self", "preds": ["posture:standing"], "cues": [], "pos": {"x": 0.0, "y": 0.0}},
+    {"eid": "mom", "kind": "landmark", "preds": ["proximity:mom:far"], "cues": []},
+    {"eid": "cliff", "kind": "hazard", "preds": ["hazard:cliff:far"], "cues": []}
+  ],
+  "relations": [
+    {"rel": "distance_to", "src": "self", "dst": "mom", "class": "far"}
+  ]
+}
+```
+
+> **Practical reading rule.** When you ask “what does the agent believe right now?”, go to MapSurface first. When you ask “what happened over time?”, go to WorldGraph. When you ask “what exactly was stored?”, go to the Column engram payload.
+
+Because MapSurface is a scene sketch, not a theorem prover, you should resist the temptation to push every temporary inference into it. If the agent briefly entertains two competing interpretations of a patch match, that ambiguity belongs in Scratch or Creative. MapSurface should stay readable as the current committed working scene.
+
+This also gives you a clean paper distinction. MapSurface is not a vague “working memory” blob. It is the committed semantic layer of working memory. Scratch and Creative are the uncommitted layers. That phrasing is often clearer than calling everything “working memory” and hoping the reader infers the internal structure.
+
+## 7. SurfaceGrid and NavPatch: topological memory and reusable local maps
+
+MapSurface tells you what is in the scene. SurfaceGrid tells you where you can move in the scene. That distinction is central to the “everything is a navigation map” direction of CCA8. If the system is going to reason about locomotion, risk, corridor structure, and local route choice, it needs a topological representation that is more direct than a collection of predicate tags.
+
+The current design makes SurfaceGrid a derived one-grid-per-cycle workspace. It is composed from the currently active NavPatch instances. A NavPatch is a compact local map fragment. In long-term memory, a NavPatch prototype lives as an engram payload in Columns. In current working memory, an instance lives as a here-and-now match with pose, evidence, and a pointer back to the prototype. Composing the active instances yields the current SurfaceGrid.
+
+This design buys three things at once. First, it avoids forcing WorldGraph to store dense geometry. Second, it makes the workspace directly readable by policies that care about traversability or hazard bands. Third, it makes reuse possible: the same stored patch motif can be instantiated in many episodes without duplicating its heavy payload each time.
+
+SurfaceGrid is intentionally derived, and that word matters. The grid is not the archival record. It is a policy-facing view that should be recomposable. In the future, caching and dirty flags can avoid needless recomposition, but the conceptual contract remains that the grid is derived from the current scene plus the currently active patch matches.
+
+The current terminal traces already hint at this design. You see surfacegrid signatures, composition times, focus entities, and compact ASCII renderings. Those outputs are not decorative. They are the first readable surface of the architecture’s topological memory.
+
+| NavPatch concept | Long-term form                                | Working-memory form             | Why it matters                                                          |
+| ---------------- | --------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------- |
+| Prototype        | Column engram payload                         | Not active by itself            | Reusable local terrain / hazard / affordance motif                      |
+| Instance         | Referenced by current WM entity / match trace | Active in the current cycle     | Places a prototype into the current context with evidence               |
+| SurfaceGrid cell | Not stored as a long-term record by default   | Immediate topological workspace | Lets policies read movement structure directly                          |
+| NavSummary       | Tiny derived summary                          | Current-cycle convenience cache | Gives cheap scalars such as hazard_near, corridor count, goal direction |
+
+```text
+WM.SurfaceGrid (conceptual)
++----------------+
+|      C         |   C = hazard / cliff band
+|                |
+|        @   M   |   @ = self, M = mom
+|            S   |   S = shelter / goal region
++----------------+
+```
+
+> **Do not confuse semantics with topology.** MapSurface can say that a cliff exists and is near. SurfaceGrid can say where the hazard band sits relative to the self-centered local frame. Both facts matter, but they are not the same representation.
+
+One useful writing move is to say that NavPatch makes the architecture’s navigation-map thesis concrete. Without patch prototypes and current instances, “everything is a navigation map” remains a metaphor. With them, it becomes an implementation strategy: local map motifs are stored, matched, instantiated, and composed into a current topological field.
+
+Another useful move is to stress that SurfaceGrid is not intended to replace MapSurface. The grid is excellent for local path and hazard reasoning, but it is weak at carrying rich entity semantics and provenance. The two layers are complementary: MapSurface says what the current scene contains; SurfaceGrid says how that scene is navigable.
+
+## 8. Scratch and Creative: transient traces and counterfactual memory
+
+Scratch and Creative are the layers that prevent WorkingMap from collapsing into either pure committed scene state or pure long-term history. They are where the architecture can keep uncommitted, transient, or explicitly hypothetical structures without polluting MapSurface truth.
+
+Scratch is the short-lived procedural trace layer. When a policy executes “into WorkingMap,” it can write an action chain that ends in a predicted postcondition. In the current README, Scratch is described as the place to ask: “What did I just try to do, and what outcome did I expect?” That is exactly the right operational summary. A scratch chain may look like action:stand_up -> action:push_up -> action:extend_legs -> pred:posture:standing.
+
+Creative is the counterfactual layer. It is where multiple candidate futures can be held for comparison without directly mutating the committed scene. Even if Creative is still more scaffold than finished mechanism in the current build, the design contract is already important: Creative proposals are not allowed to overwrite truth. They must remain candidates until a selector commits one.
+
+This distinction matters enormously for future predictive coding and planning. If you do not separate committed belief from predicted candidate outcome, you will make it impossible to measure prediction error cleanly. Scratch and Creative therefore play a conceptual role that is bigger than their current implementation footprint.
+
+| Layer    | Question answered                                  | Safe contents                                                                    | Should not contain                                |
+| -------- | -------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------- |
+| Scratch  | What did I just do, and what outcome was claimed?  | Action chains, predicted postconditions, ambiguity notes, probe targets          | Long-lived scene truth or large archival payloads |
+| Creative | What would happen if I chose candidate A, B, or C? | Counterfactual action/outcome packages, score breakdowns, small outcome sketches | Direct modifications of MapSurface truth          |
+
+```text
+Scratch chain example
+  action:follow_mom
+    -> action:orient_to_mom
+    -> pred:proximity:mom:near   # predicted / claimed postcondition
+
+Creative candidate example
+  candidate_01
+    actions: [policy:follow_mom]
+    outcome_sketch: {risk: low, progress: +mom_proximity, uncertainty: moderate}
+```
+
+> **Implementation caveat.** The current README notes that Scratch is not automatically cleared yet. Treat that as an implementation detail to monitor, not as a change in the conceptual contract that Scratch is meant to be transient.
+
+## 9. WorldGraph: the sparse episode index
+
+WorldGraph is the architecture’s long-lived symbolic memory. It is not the live scene sketch. It is the sparse index of what happened over time. Bindings carry tags, provenance, edges, and optional engram pointers. The planner searches it. Inspectors display it. Export tools visualize it. The crucial phrase from the README is that WorldGraph is a thin symbolic episode index rather than a data warehouse.
+
+This means two things in practice. First, WorldGraph can remain small enough to search and reason over quickly. Second, it does not have to inline heavy structures. A binding can point to a wm_mapsurface snapshot or another stored payload rather than reproducing the full scene inline. That division of labor is what keeps the index legible.
+
+The graph’s tag families also clarify intent. pred:* tags are states, events, or goals. cue:* tags are evidence. action:* tags are explicit behavioral steps. anchor:* tags orient traversal, especially NOW and NOW_ORIGIN. Edges are directed and usually labeled then. The label is important for readability, but the planner is fundamentally structure-first: it cares most about reachability and goal tags.
+
+One common confusion is to treat WorldGraph as though it were belief-now. That is precisely what the architecture tries to avoid. WorldGraph is allowed to stay sparse and partly historical. The current truth of the body or scene should not be inferred by scanning the entire graph for any tag that ever occurred. That is why BodyMap and MapSurface exist.
+
+| WorldGraph element                | Meaning                                                           | Why it is separate from WorkingMap                                 |
+| --------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Binding                           | A sparse episode card with tags, meta, edges, and engram pointers | Good for indexing and provenance; not ideal as a dense state table |
+| Anchor NOW                        | Current orientation point for planning and display                | Useful for traversal, but not a full belief register               |
+| LATEST                            | Most recent binding pointer used for chaining                     | Supports tidy episode writing rather than scene semantics          |
+| Pointer binding for wm_mapsurface | Thin node that indexes a heavy snapshot                           | Lets the graph reference rich memory without inlining it           |
+
+```text
+WorldGraph view (conceptual)
+  b24 [pred:posture:standing]
+    then -> b25 [pred:proximity:mom:far]
+    then -> b28 [cue:terrain:forage_patch]
+    then -> b29 [cue:vision:silhouette:hawk]
+    engrams["column01"] = {id: "25794442...", act: 1.0}
+```
+
+> **Planner-friendly sentence.** WorldGraph is where you ask “How can I traverse from NOW to a predicate or to a pointer-bearing keyframe?” It is not where you ask “What are the currently committed slot values of the scene?”
+
+## 10. Columns / Engrams: heavy payload memory
+
+Column memory is where heavy payloads live. In the present build, the most important examples are wm_mapsurface snapshots and navpatch payloads. The graph keeps only pointers. This is the system’s answer to a classic scaling problem: how do you keep episodic indexing fast and human-readable while still retaining rich stored content?
+
+An engram is therefore best understood as a payload record with an id, a name, a payload body, and some metadata. The payload may contain headers, entity tables, relation lists, patch grids, or other feature-bearing material. The binding only knows that the payload exists and where to find it.
+
+This architecture makes retrieval modular. The system can search WorldGraph for pointer nodes, use descriptors such as stage, zone, and salience signatures to rank candidates, and only then load the chosen payload from Columns. It can also inspect a payload on demand when the developer wants to see exactly what was stored at a keyframe.
+
+The current grouped menu makes this pipeline visible. Menu 44 stores a snapshot. Menu 45 lists recent wm_mapsurface engrams. Menu 46 picks the best matching snapshot for the current stage or zone without mutating working memory. Menu 47 loads a chosen snapshot into WorkingMap. Menu 15 inspects an engram by id.
+
+| Column / engram feature          | Practical meaning                                                                                 |
+| -------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Immutable record by id           | Once asserted, the payload is treated as stored memory rather than as a mutable live scene object |
+| Lightweight pointer from binding | Graph nodes remain cheap while still referencing heavy memory                                     |
+| Descriptor metadata              | Stage, zone, salience signature, and time metadata support ranking and debugging                  |
+| Payload schema                   | Different engram types can coexist as long as the schema is explicit                              |
+
+```text
+binding.engrams = {
+  "column01": {"id": "57549c8f...", "act": 1.0}
+}
+
+Column record (conceptual) = {
+  id: "57549c8f...",
+  name: "wm_mapsurface",
+  payload: {... wm_mapsurface_v1 ...},
+  meta: {attrs: {stage: "goat_foraging_04_scan", zone: "unknown", salience_sig: "..."}}
+}
+```
 
 
+## 11. Keyframes, consolidation, retrieval, and merge / replace semantics
 
+Keyframes are the moments when the memory pipeline becomes more than passive logging. On ordinary cycles, the agent updates BodyMap and WorkingMap and then acts. On keyframe cycles, the architecture can also consolidate the current MapSurface into a stored engram, write an index pointer into WorldGraph, and retrieve a prior snapshot if the current context suggests that priors would help.
 
+The current codebase supports several keyframe triggers. Stage changes and zone changes are the obvious ones. Periodic keyframes and prediction-error-driven keyframes also exist as control knobs. The important conceptual point is that keyframes create explicit boundaries in the episode. They are where the architecture says, in effect, “This moment is special enough to store, index, or use for context switching.”
 
+Retrieval is intentionally guarded. Even when auto-retrieve is enabled, the current design does not retrieve on every boundary blindly. Missingness, prediction error, or BodyMap staleness can all serve as reasons that a prior may be useful. This matters because indiscriminate retrieval would make the logs noisy and would let priors dominate current evidence unnecessarily.
 
+The recent goat_foraging_04 harness is especially useful because it isolates contextual switching. The environment keeps coarse geometry simple while context alternates between fox and hawk. The first time each context appears, the pipeline stores a seed snapshot. Later repeated context milestones trigger retrieval and merge-mode apply. This lets you test contextual map switching directly rather than inferring it from noisier episodes.
+
+Merge and replace are not minor implementation details. Merge is the conservative mode. It fills missing slot-families or adds missing edges without overwriting direct observation, and it stores prior cues in metadata so they do not leak into cue:* tags as if they had just been observed. Replace is the strong-prior mode. It clears and rebuilds MapSurface from the stored engram, which is useful for debugging but more aggressive as a cognitive operation.
+
+| Keyframe / retrieval concept | Current operational meaning                                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Store                        | Serialize the current wm_mapsurface_v1 payload, assert it into Column memory, and attach a pointer binding in WorldGraph |
+| Retrieve                     | Rank candidate stored snapshots by context descriptors such as stage, zone, and salience overlap                         |
+| Apply (merge)                | Seed missing slot-families / edges conservatively and keep prior cues out of live cue tags                               |
+| Apply (replace)              | Rebuild MapSurface from the stored snapshot, typically for stronger prior or debugging use                               |
+| Cue guard                    | Check that merge did not leak cue:* tags back into live working memory                                                   |
+
+```json
+[env->world] KEYFRAME: milestone:context:hawk
+[wm<->col] store: goat04 seed context=hawk sig=ae9cd80260adfb3a eid=25794442...
+... later ...
+[env->world] KEYFRAME: milestone:context:hawk
+[wm<->col] retrieve: goat04 context=hawk ok mode=merge eid=25794442... match=stage+zone cand_n=2
+[wm<->col] apply: merge added_entities=0 filled_slots=0 added_edges=0 prior_cues=2 cue_guard=ok
+```
+
+> **Important interpretation.** A retrieval that reports zero new entities or slots is not necessarily a failure. It can mean the current observation already filled the same scene structure and the retrieved prior was confirmatory rather than transformative.
+
+## 12. A full closed-loop cognitive cycle, step by step
+
+This section walks through one cycle in the order that matters for reasoning about the memory pipeline. The point is not merely to list steps. The point is to understand why the order is what it is.
+
+1. The environment advances and produces an EnvObservation. This is the only route by which external truth enters the agent. The agent does not read EnvState directly.
+2. Observation masking, if enabled, is applied before memory updates. This means partial observability affects belief-now structures rather than only affecting long-term logs.
+3. BodyMap updates. Fast gating fields such as posture, mom distance, nipple state, cliff hazard, and zone classification are refreshed.
+4. WorkingMap.MapSurface updates. Stable entity ids remain, but slot-families are overwritten by current observation. Active cue tags reflect what is present now.
+5. If the cycle is a keyframe, the architecture may store the current MapSurface, write a pointer binding into WorldGraph, and optionally retrieve/apply a prior snapshot according to the retrieval guard and current mode.
+6. WorkingMap.SurfaceGrid is composed as a derived topological view from the active patch instances and current focus state.
+7. The Action Center evaluates policy candidates, applies gating and triggering rules, and selects one winner. Scratch or other transient layers may be written during execution.
+8. The chosen policy name becomes the action fed to env.step() for the next environment tick. Prediction error can only be measured on the following cycle when the next observation arrives.
+   The cycle ordering is not arbitrary. If you let policy selection run before belief-now updates, you ask the controller to act on stale memory. If you let retrieval happen after policy execution, the prior cannot influence the current decision. If you let predicted outcomes overwrite committed truth, you can no longer tell whether a later mismatch is real or self-inflicted. Much of the value of the current architecture comes from getting this ordering discipline explicit.
+
+This also explains why the per-cycle footer in menu 37 is so helpful. It compresses the cycle into the same ordering: important inputs, observation summary, WorkingMap delta, SurfaceGrid summary, WorldGraph writes, Column operations, and action recap. A good developer learns to read that footer as a pipeline rather than as a bag of unrelated lines.
+
+| Cycle phase             | Main structure touched                 | Diagnostic question                                          |
+| ----------------------- | -------------------------------------- | ------------------------------------------------------------ |
+| Observation ingress     | EnvObservation                         | What evidence actually entered this cycle?                   |
+| Fast body update        | BodyMap                                | What does gating think is true right now?                    |
+| Scene update            | MapSurface                             | What is the committed scene sketch?                          |
+| Boundary logic          | wm<->col pipeline + WorldGraph pointer | Was this a keyframe, and if so what was stored or retrieved? |
+| Derived topology        | SurfaceGrid / NavSummary               | What local movement structure does policy see?               |
+| Selection and execution | PolicyRuntime + Scratch                | Which policy won, and what postcondition did it claim?       |
+
+## 13. Reading logs and debugging memory behavior
+
+When you debug CCA8, you are usually asking one of a small set of questions. Did the observation arrive correctly? Did BodyMap misclassify the situation? Did MapSurface fail to update? Did a keyframe fail to fire? Did the wrong prior load? Did the policy act on the wrong structure? The fastest way to debug is to map each question to the correct memory layer.
+
+The current log vocabulary already supports this style of reading. [env] tells you what the environment thinks is happening. [env->working] shows the WorkingMap injection path. [env->world] shows the long-term observation write path and keyframes. [wm<->col] exposes store, retrieve, and apply. [cycle] WM, [cycle] MS, and [cycle] COL compress the same operations into the footer. [pred_err] tells you when prediction and observation disagreed.
+
+| If you want to know…                           | Look here first                            | Why                                                              |
+| ---------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------- |
+| What the environment says is true now          | [env] lines and EnvObservation summary     | This is the incoming evidence before interpretation              |
+| What the agent believes now                    | MapSurface / menu 43                       | This is the committed semantic workspace                         |
+| Whether fast gating is wrong                   | BodyMap / menu 38                          | Many trigger mistakes are fast-register mistakes                 |
+| Whether keyframe storage or retrieval happened | [env->world] KEYFRAME and [wm<->col] lines | These are the boundary-memory operations                         |
+| What exactly was stored                        | Menu 15 or menu 43 payload dump            | Engram payloads and current wm_mapsurface_v1 are inspectable     |
+| Why contextual switch behavior seems weak      | goat04 harness + [cycle] COL / [cycle] MS  | This isolates contextual retrieval from other episode complexity |
+
+> **Debugging heuristic.** When in doubt, move from fastest and most local to slowest and most archival: BodyMap -> MapSurface -> SurfaceGrid -> Scratch -> WorldGraph -> Column payload. That ordering mirrors the cognitive cycle itself.
+
+## 14. Conceptual synthesis and writing vocabulary
+
+If you are preparing a paper, the most useful conceptual move is to stop calling CCA8 memory a single store. Instead, describe it as a memory ecology. The body-facing ecology consists of fast belief registers and current scene commitments. The episode-facing ecology consists of sparse index nodes and heavy stored payloads. The planning-facing ecology consists of current topology and transient predicted outcomes. These ecologies overlap, but they are not identical.
+
+A second useful move is to give each representation a sentence-level role. BodyMap is the low-latency gating layer. MapSurface is the committed semantic working scene. SurfaceGrid is the derived topological action field. Scratch is the transient trace of recent action and predicted postcondition. Creative is the counterfactual proposal pool. WorldGraph is the sparse episode index. Columns are the heavy long-term payload store.
+
+A third useful move is to emphasize that retrieval in CCA8 is not mere recall. It is context-sensitive selection of which stored map prior should currently help the workspace, subject to guardrails against cue leakage and against overwriting direct evidence. The goat_foraging_04 harness is therefore valuable not just as an engineering test, but as a clean story about contextual map switching.
+
+Finally, if you need one compact thesis sentence, here is a good candidate: CCA8 implements memory as a layered set of complementary representations in which immediate body-state beliefs, committed working-scene structure, derived local topology, sparse episodic indexing, and heavy stored payloads are kept distinct so that each can be updated, retrieved, and explained on its own terms.
+
+> **One-sentence summary.** In CCA8, memory is not one thing: it is a coordinated family of representations that differ in authority, update rule, persistence, and computational purpose.
+
+## Appendix A. Current menu entry points for memory work
+
+| Menu | Name                                                        | Why it matters for memory                                            |
+| ---- | ----------------------------------------------------------- | -------------------------------------------------------------------- |
+| 37   | Run n Cognitive Cycles                                      | Shows the full closed-loop memory pipeline in action                 |
+| 38   | Inspect BodyMap                                             | Best place to inspect fast gating registers                          |
+| 40   | Configure episode starting state                            | Lets you change obs-mask and WM<->Column auto-retrieve controls      |
+| 42   | Configure goat_foraging_04 contextual map-switch evaluation | Turns on the canned contextual switching harness                     |
+| 43   | WorkingMap snapshot                                         | Shows MapSurface, entity table, and current wm_mapsurface_v1 payload |
+| 44   | Store MapSurface snapshot to Column + WG pointer            | Manual store path for wm_mapsurface engrams                          |
+| 45   | List recent wm_mapsurface engrams                           | Quick view of recent stored snapshots                                |
+| 46   | Pick best wm_mapsurface engram                              | Read-only retrieval ranking for the current stage / zone             |
+| 47   | Load wm_mapsurface engram into WorkingMap                   | Manual apply path for stored priors                                  |
+| 20   | Inspect binding details                                     | Shows tags, meta, edges, and engram pointers on a WorldGraph binding |
+| 15   | Inspect engram by id (or binding)                           | Shows the actual heavy payload record in Column memory               |
+
+## Appendix B. One-page glossary of memory terms
+
+- BodyMap — fast body and near-space belief registers used mainly for gating and safety.
+- WorkingMap — the active workspace memory of the current episode.
+- MapSurface — the committed semantic scene layer of WorkingMap.
+- SurfaceGrid — the derived topological layer of WorkingMap used for movement and hazard reasoning.
+- Scratch — transient traces, ambiguity notes, and predicted postconditions.
+- Creative — counterfactual candidate futures that must not overwrite truth.
+- WorldGraph — sparse episodic index of bindings, edges, anchors, and pointer nodes.
+- Binding — a WorldGraph node carrying tags, meta, edges, and optional engram pointers.
+- Engram — a heavy stored payload in Column memory.
+- wm_mapsurface_v1 — the JSON-safe snapshot schema used to store MapSurface states.
+- NavPatch — a compact local map fragment; prototypes live in Columns and instances live in WorkingMap.
+- Keyframe — a cycle where consolidation and optional retrieval/apply logic can run.
+- Merge mode — conservative apply semantics that fill missing structure without cue leakage.
+- Replace mode — strong-prior apply semantics that rebuild MapSurface from a stored snapshot.
 
 
 
@@ -1236,7 +1705,8 @@ NOTE: This README is large; if GitHub truncates the preview at the 512 KiB rende
 
 
 
-# TUTORIALS AND TECHNICAL DEEP DIVES
+# DETAILED TUTORIALS AND TECHNICAL DEEP DIVES
+
 
 
 NOTE: This README.md file exceeds the 512K GitHub rendering limit. Therefore, some topics
@@ -2326,9 +2796,11 @@ This lets you keep planning/search **simple and fast** while still recording a *
 
 ### How to use it (menu)
 
-From the runner:
 
-1. **Capture scene → emit cue/predicate with tiny engram** (menu **24**):
+From the runner (current grouped menu):
+
+1. **Capture scene → emit cue/predicate with tiny engram** (menu **13**):
+
    
    * Choose **channel** (`vision/scent/sound/touch`), **token** (e.g., `silhouette:mom`), **family** (`cue` or `pred`), **attach** (`now/latest/none`), and an optional vector (e.g., `0.1, 0.2, 0.3`).
    
@@ -2408,7 +2880,7 @@ Tip: Attach mode matters for episode wiring—`now` will add `NOW → new` (labe
 ### Example workflows
 
 **A. Cue + scene pointer (vision silhouette, neonate)**
-    menu 24 → channel=vision, token=silhouette:mom, family=cue, attach=now
+    menu 13 → channel=vision, token=silhouette:mom, family=cue, attach=now
 
 * Creates `bX: [cue:vision:silhouette:mom]`
 
@@ -2419,7 +2891,7 @@ Tip: Attach mode matters for episode wiring—`now` will add `NOW → new` (labe
 * (Optional) a policy may react (e.g., orient or follow)
 
 **B. Predicate + scene pointer (if plannable state)**
-    menu 24 → family=pred, token=location:mom:north_forest, attach=latest
+    menu 13 → family=pred, token=location:mom:north_forest, attach=latest
 
 * Creates a `pred:*` node (ensure the token is allowed by the restricted lexicon for the current stage)
 
@@ -4236,7 +4708,8 @@ Because EnvObservation already injected a “truthy” WM for that step, and mer
 
 ### Guard hook: minimal gating for auto-retrieve (implemented)
 
-Auto-retrieve is enabled/disabled and mode-selected via runtime context (menu 40):
+
+Auto-retrieve is enabled/disabled and mode-selected via runtime context (menu 40), and menu 42 turns it on automatically for the canned `goat_foraging_04` contextual map-switch evaluation:
 
 - `wm_mapsurface_autoretrieve_enabled` (bool): whether we *attempt* retrieval at keyframes
 - `wm_mapsurface_autoretrieve_mode` (`merge` | `replace`): how a retrieved MapSurface snapshot is applied
@@ -4501,21 +4974,19 @@ repository of prior map instances rather than a per-tick log.
 
 ### Runner tools used in this WorkingMap snapshot pipeline (not a full menu list)
 
-Menu numbers may change over time; treat these as “the tools used in this tutorial,” not a canonical menu reference.
+Menu numbers may change over time; the list below reflects the **current grouped menu** shown by the runner.
 
-- : closed-loop environment run (produces keyframes; auto-stores MapSurface snapshots on stage/zone changes)
-- : WorkingMap snapshot + MapSurface payload dump (wm_mapsurface_v1)
-- : manually store MapSurface snapshot to Column + WorldGraph pointer (dedup vs last)
-- : list recent wm_mapsurface engrams (Column)
+- **37**: closed-loop environment run (produces keyframes; auto-stores MapSurface snapshots on stage/zone changes)
+- **42**: configure `goat_foraging_04` contextual map-switch evaluation (repeatable fox↔hawk cue-switch harness)
+- **43**: WorkingMap snapshot + MapSurface payload dump (`wm_mapsurface_v1`)
+- **44**: manually store MapSurface snapshot to Column + WorldGraph pointer (dedup vs last)
+- **45**: list recent `wm_mapsurface` engrams (Column)
+- **46**: pick the best `wm_mapsurface` engram for the current stage/zone (read-only)
+- **47**: load a `wm_mapsurface` engram into WorkingMap (replace MapSurface)
 
 Validation / inspection:
-- : inspect a WorldGraph binding to confirm it carries an engram pointer (binding.engrams["column01"])
-- : inspect an engram by id (verify payload/meta)
-
-
-
-
-
+- **20**: inspect a WorldGraph binding to confirm it carries an engram pointer (`binding.engrams["column01"]`)
+- **15**: inspect an engram by id (verify payload/meta)
 
 
 
@@ -9770,10 +10241,10 @@ Under the hood: `_normalize(vals)` returns a unit-norm copy and guards zero-norm
 
 ## 10) Quick demo in the Runner (what to expect)
 
-1. `12` Instinct step → if the controller writes, you’ll see  
+1. `9` Instinct step → if the controller writes, you’ll see  
    `[temporal] boundary after write (cos reset to ~1.000)` and `cos_to_last_boundary: 1.000` in the snapshot.
 
-2. `15` Autonomic tick × N → `cos_to_last_boundary` decays gently (drift only).
+2. `10` Autonomic tick × N → `cos_to_last_boundary` decays gently (drift only).
 
 3. If you enabled the τ-cut, a boundary triggers automatically once cosine drops below τ (you’ll see a console note).
 
@@ -9945,7 +10416,7 @@ Bindings already carry graph-side provenance (`created_at`, `ticks`, `tvec64`). 
   
   * `meta` is a **FactMeta** (often with `ticks`/`tvec64` in `attrs`).
 
-* **Signal bridge** (menu **24** “Capture scene”) wraps a small vector into a `TensorPayload`, asserts it as an engram, attaches the pointer to the new binding, and—if you pass `attrs=time_attrs_from_ctx(ctx)`—**mirrors time** into the column record automatically.
+* **Signal bridge** (menu **13** “Capture scene”) wraps a small vector into a `TensorPayload`, asserts it as an engram, attaches the pointer to the new binding, and—if you pass `attrs=time_attrs_from_ctx(ctx)`—**mirrors time** into the column record automatically.
   
   
 
@@ -9960,7 +10431,7 @@ Bindings already carry graph-side provenance (`created_at`, `ticks`, `tvec64`). 
     engram_id = mem.assert_fact("vision:silhouette:mom", payload, meta)
     world.attach_engram(latest_bid, column="column01", engram_id=engram_id, act=1.0)
 
-**B) Via WorldGraph bridge (menu 24 path)**
+**B) Via WorldGraph bridge (menu 13 path)**
     from cca8_features import time_attrs_from_ctx  # if exported
     attrs = time_attrs_from_ctx(ctx)  # {'ticks': ..., 'tvec64': ...} or {}
     bid, engram_id = world.capture_scene("vision", "silhouette:mom",
@@ -10007,19 +10478,11 @@ This module focuses on **schema + portability**, not numeric ops. `struct` + `ar
 
 * World bridge: `capture_scene(..., attrs=time_attrs_from_ctx(ctx))` → `get_engram(...)[ "meta"]["attrs"]` contains mirrored time.
   
-  
 
-## 11) What’s new (Nov 2025)
-
-* Runner’s **Capture scene** (menu **24**) now mirrors temporal context into each engram via `time_attrs_from_ctx(ctx)`: `ticks`, `tvec64`, **`epoch`**, and **`epoch_vhash64`**. This makes engrams time-aware without touching payload bytes.
-
-* Two new runner tools: **27) Inspect engram by id** (also accepts a **binding id** and resolves its pointer) and **28) List all engrams** (id, source binding, time attrs, payload summary).
-
-* Snapshot and probe make event boundaries explicit (`boundary_no`, `last_boundary_vhash64` in CTX; probe shows cosine/Hamming status). (Context; see Runner TEMPORAL section.)
 
 ## The bridge (WorldGraph ↔ Column)
 
-1. **Emit**: Runner **24) Capture scene** asks for channel/token/family (cue|pred), attach policy (now/latest/none), and a small vector. It creates a binding and asserts a column engram, then attaches a pointer:
+1. **Emit**: Runner **13) Capture scene** asks for channel/token/family (cue|pred), attach policy (now/latest/none), and a small vector. It creates a binding and asserts a column engram, then attaches a pointer:
 
 `"engrams": { "column01": { "id": "<engram_id>", "act": 1.0 } }`
 
@@ -10032,9 +10495,10 @@ The Column record stores `{id, name, payload, meta}`, where `meta.attrs` carries
 
 * **Inspect binding details** prints the full pointer JSON (including the engram id).
 
-* **27) Inspect engram by id** prints the Column record (meta + payload summary). If you type a **binding id** (e.g., `b11`) it resolves its engram automatically.
+* **15) Inspect engram by id** prints the Column record (meta + payload summary). If you type a **binding id** (e.g., `b11`) it resolves its engram automatically.
 
-* **28) List all engrams** enumerates all attached engrams with time attrs.
+* **16) List all engrams** enumerates all attached engrams with time attrs.
+
 
 ### Minimal API surface (dev view)
 
@@ -10045,18 +10509,21 @@ The Column record stores `{id, name, payload, meta}`, where `meta.attrs` carries
 
 * **Runner bridge** (`cca8_run.py`):  
   `world.capture_scene(channel, token, vector, attach, family, attrs=...) -> (bid, engram_id)`  
-  plus menu **24**, **27**, **28** wrappers so you don’t have to write code to use it.
+  plus menu **13**, **15**, **16** wrappers so you don’t have to write code to use it.
+  
 
 ### Quick tutorial (CLI)
 
-1. **24) Capture scene** → use `vision / silhouette:mom / cue / now / 0.1 0.2 0.3`  
+1. **13) Capture scene** → use `vision / silhouette:mom / cue / now / 0.1 0.2 0.3`  
    Runner prints both the **binding id** and the **engram id**, and echoes the time attrs mirrored into the engram.
 
-2. **3) Inspect binding** → paste the binding id. You’ll see `Engrams: {"column01": {"id":"…"}}`.
+2. **20) Inspect binding details** → paste the binding id. You’ll see the engram pointer under `binding.engrams["column01"]`.
 
-3. **27) Inspect engram by id** → paste the engram id **or** just type the binding id; it resolves for you.
+3. **15) Inspect engram by id** → paste the engram id **or** just type the binding id; it resolves the pointer for you.
 
-4. **28) List all engrams** → browse all engrams with their source binding and time attrs.
+4. **16) List all engrams** → browse all engrams with their source binding and time attrs.
+
+
 
 ### Q&A to help you learn this section
 
@@ -10163,7 +10630,9 @@ Convenience helpers (present in current build) ok = column_mem.exists(engram_id:
 
 ## 3) How time gets into Column records (bridge)
 
-From the Runner (menu **24 Capture scene**), we pass `attrs=time_attrs_from_ctx(ctx)`, which copies **`ticks`**, **`tvec64`**, **`epoch`**, **`epoch_vhash64`** into `meta.attrs` of the Column record at **assert time**. With the current Runner, capture does a **pre-capture event boundary**, so the engram’s `epoch` reflects the **new** boundary you just created.
+
+From the Runner (menu **13 Capture scene**), we pass `attrs=time_attrs_from_ctx(ctx)`, which copies **`ticks`**, **`tvec64`**, **`epoch`**, **`epoch_vhash64`** into `meta.attrs` of the Column record at **assert time**. With the current Runner, capture does a **pre-capture event boundary**, so the engram’s `epoch` reflects the **new** boundary you just created.
+
 
 CLI menus that help you see this:
 
