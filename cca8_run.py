@@ -15904,6 +15904,299 @@ def candidate_anchors(world, ctx) -> list[str]:  # pylint: disable=unused-argume
     return [p for p in picks if p]
 
 
+# ---------- LLM API password, billing, mgmt ----------
+def _save_openai_api_key_windows_user_env(api_key: str) -> tuple[bool, str]:
+    """Persist OPENAI_API_KEY for future Windows cmd.exe sessions using setx.
+
+    Important:
+        - setx affects future shells, not the current process.
+        - We also set os.environ in the current process so the key works immediately inside this run.
+    """
+    try:
+        result = subprocess.run(
+            ["setx", "OPENAI_API_KEY", api_key],
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+        )
+    except Exception as e:
+        return False, f"Could not run setx: {e}"
+
+    if result.returncode != 0:
+        msg = (result.stderr or result.stdout or "").strip() or f"setx failed with exit code {result.returncode}"
+        return False, msg
+
+    msg = (result.stdout or "").strip() or "OPENAI_API_KEY saved with setx."
+    return True, msg
+
+
+def _openai_sdk_version_text() -> str:
+    """Return installed openai SDK version text, or '(not installed)'."""
+    try:
+        import openai  # pylint: disable=import-outside-toplevel
+        return str(getattr(openai, "__version__", "(unknown)"))
+    except Exception:
+        return "(not installed)"
+
+
+def _openai_default_model_name() -> str:
+    """Return the default model name used by CCA8 menu 48 smoke tests.
+
+    This is a CCA8 runner setting, not an OpenAI SDK requirement.
+    """
+    model_name = os.environ.get("CCA8_OPENAI_MODEL", "").strip()
+    return model_name or "gpt-5.4"
+
+
+def _save_cca8_openai_model_windows_user_env(model_name: str) -> tuple[bool, str]:
+    """Persist CCA8_OPENAI_MODEL for future Windows cmd.exe sessions using setx."""
+    try:
+        result = subprocess.run(
+            ["setx", "CCA8_OPENAI_MODEL", model_name],
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+        )
+    except Exception as e:
+        return False, f"Could not run setx: {e}"
+
+    if result.returncode != 0:
+        msg = (result.stderr or result.stdout or "").strip() or f"setx failed with exit code {result.returncode}"
+        return False, msg
+
+    msg = (result.stdout or "").strip() or "CCA8_OPENAI_MODEL saved with setx."
+    return True, msg
+
+
+def print_openai_install_help() -> None:
+    """Print concise OpenAI / LLM API installation help."""
+    print("\n[llm-help] OpenAI / LLM API setup")
+    print("  1. Install the Python SDK into this SAME Python environment:")
+    print("       python -m pip install --upgrade openai")
+    print("  2. Verify which version this interpreter sees:")
+    print('       python -c "import openai; print(openai.__version__)"')
+    print("  3. Save your API key in menu 48, or otherwise set OPENAI_API_KEY in the environment.")
+    print("  4. Optionally set a default smoke-test model in menu 48.")
+    print("     - CCA8 stores this in CCA8_OPENAI_MODEL.")
+    print("     - If unset, CCA8 defaults to gpt-5.4.")
+    print("  5. Run the smoke test from menu 48 to verify:")
+    print("       - the SDK imports correctly,")
+    print("       - OPENAI_API_KEY is present,")
+    print("       - the configured model name is being used, and")
+    print("       - an actual API call succeeds.")
+    print("  Notes:")
+    print("       - Use 'python -m pip ...' so pip targets the same interpreter running CCA8.")
+    print("       - On Windows, setx affects future cmd.exe windows, not the current one.")
+    print("       - This menu also sets os.environ in the current CCA8 run, so testing can work immediately.")
+    print("       - You need both a valid API key and API billing/credits for live calls.\n")
+
+
+def configure_openai_api_key_interactive() -> None:
+    """Interactively collect and save OPENAI_API_KEY for the current run and future Windows shells.
+
+    House style / UX:
+        - The user can see what they typed.
+        - We do not print the full key back afterward.
+        - Blank input cancels.
+    """
+    print("\nSelection: Configure OpenAI / LLM API key")
+    print("  - Paste your OpenAI API key when prompted.")
+    print("  - The key will be visible while typing.")
+    print("  - Blank input cancels without changing anything.")
+    print("  - On Windows, we will also save it for future cmd.exe sessions with setx.")
+    print("  - In this current CCA8 run, the key is also loaded into os.environ immediately.\n")
+
+    existing = os.environ.get("OPENAI_API_KEY", "").strip()
+    if existing:
+        print(f"[llm] OPENAI_API_KEY already present in current process (length={len(existing)}).")
+    else:
+        print("[llm] OPENAI_API_KEY is not currently set in this process.")
+
+    api_key = input("\nPaste OpenAI API key (blank = cancel): ").strip()
+    if not api_key:
+        print("[llm] Cancelled. No changes made.")
+        return
+
+    os.environ["OPENAI_API_KEY"] = api_key
+    print(f"[llm] Loaded OPENAI_API_KEY into current process (length={len(api_key)}).")
+
+    if os.name == "nt":
+        ok, msg = _save_openai_api_key_windows_user_env(api_key)
+        if ok:
+            print("[llm] Saved OPENAI_API_KEY for future Windows cmd.exe sessions.")
+            print(f"[llm] setx: {msg}")
+            print("[llm] Note: a NEW cmd.exe window will see the saved key automatically.")
+        else:
+            print("[llm] Warning: key loaded for this current run, but persistence failed.")
+            print(f"[llm] setx error: {msg}")
+    else:
+        print("[llm] Non-Windows OS detected; key saved only for this current process.")
+        print("[llm] Add OPENAI_API_KEY to your shell startup file if you want persistence.")
+
+
+def configure_openai_model_interactive() -> None:
+    """Interactively collect and save the default model name used by menu 48 smoke tests."""
+    print("\nSelection: Configure OpenAI / LLM default model")
+    print("  - This sets the default model used by CCA8 menu 48 smoke tests.")
+    print("  - Blank input cancels without changing anything.")
+    print("  - Examples: gpt-5.4, gpt-5.4-mini, gpt-5.4-nano\n")
+
+    current_model = _openai_default_model_name()
+    print(f"[llm-model] Current default model: {current_model}")
+
+    model_name = input("\nEnter model name (blank = cancel): ").strip()
+    if not model_name:
+        print("[llm-model] Cancelled. No changes made.")
+        return
+
+    os.environ["CCA8_OPENAI_MODEL"] = model_name
+    print(f"[llm-model] Loaded CCA8_OPENAI_MODEL into current process: {model_name}")
+
+    if os.name == "nt":
+        ok, msg = _save_cca8_openai_model_windows_user_env(model_name)
+        if ok:
+            print("[llm-model] Saved CCA8_OPENAI_MODEL for future Windows cmd.exe sessions.")
+            print(f"[llm-model] setx: {msg}")
+            print("[llm-model] Note: a NEW cmd.exe window will see the saved model automatically.")
+        else:
+            print("[llm-model] Warning: model loaded for this current run, but persistence failed.")
+            print(f"[llm-model] setx error: {msg}")
+    else:
+        print("[llm-model] Non-Windows OS detected; model saved only for this current process.")
+        print("[llm-model] Add CCA8_OPENAI_MODEL to your shell startup file if you want persistence.")
+
+
+def run_openai_smoke_test_interactive() -> None:
+    """Test whether the OpenAI SDK imports and whether the current API key actually works.
+
+    This folds the old standalone openai_smoke_test.py logic into menu 48 so users
+    do not need to manage a separate file.
+    """
+    print("\n[llm-test] OpenAI SDK / API smoke test")
+    print("[llm-test] This checks:")
+    print("           1) whether the openai package imports,")
+    print("           2) whether OPENAI_API_KEY is present,")
+    print("           3) which model CCA8 will use, and")
+    print("           4) whether a real API call succeeds.\n")
+
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    model_name = _openai_default_model_name()
+
+    print(f"[llm-test] OPENAI_API_KEY present: {'yes' if api_key else 'no'}")
+    if api_key:
+        print(f"[llm-test] OPENAI_API_KEY length: {len(api_key)}")
+    print(f"[llm-test] model: {model_name}")
+
+    try:
+        import openai  # pylint: disable=import-outside-toplevel
+        from openai import OpenAI  # pylint: disable=import-outside-toplevel
+    except Exception as e:
+        print("[llm-test] OpenAI Python SDK is not available in this Python environment.")
+        print("[llm-test] Install or upgrade it with:")
+        print("           python -m pip install --upgrade openai")
+        print(f"[llm-test] Import error: {e}")
+        return
+
+    sdk_ver = str(getattr(openai, "__version__", "(unknown)"))
+    print(f"[llm-test] openai SDK version: {sdk_ver}")
+
+    if not api_key:
+        print("[llm-test] OPENAI_API_KEY is missing.")
+        print("[llm-test] Use menu 48 to save the key, then run this test again.")
+        return
+
+    print("[llm-test] Sending a tiny test request...")
+
+    try:
+        client = OpenAI()
+        response = client.responses.create(
+            model=model_name,
+            input="Reply with exactly: CCA8 smoke test ok."
+        )
+
+        reply = getattr(response, "output_text", None)
+        print("\n[llm-test] API call succeeded.")
+        print("[llm-test] Model reply:")
+        print(reply if isinstance(reply, str) and reply.strip() else "(no output_text returned)")
+        return
+
+    except openai.AuthenticationError as e:
+        print("\n[llm-test] Authentication error.")
+        print("[llm-test] The SDK imported correctly, but the API key was rejected.")
+        print(f"[llm-test] Details: {e}")
+        return
+
+    except openai.RateLimitError as e:
+        print("\n[llm-test] Rate-limit / quota / billing error.")
+        print("[llm-test] The key was recognized, but the request could not proceed.")
+        print(f"[llm-test] Details: {e}")
+        return
+
+    except openai.APIConnectionError as e:
+        print("\n[llm-test] Connection error.")
+        print("[llm-test] The SDK and key look present, but the network call failed.")
+        print(f"[llm-test] Details: {e}")
+        return
+
+    except openai.APIStatusError as e:
+        status_code = getattr(e, "status_code", "(unknown)")
+        print(f"\n[llm-test] API status error (HTTP {status_code}).")
+        print(f"[llm-test] Details: {e}")
+        return
+
+    except Exception as e:
+        print("\n[llm-test] Unexpected error during smoke test.")
+        print(f"[llm-test] Details: {e}")
+        return
+
+
+def openai_menu_48_interactive() -> None:
+    """Menu #48: one place for OpenAI / LLM SDK help, key setup, model setup, and smoke testing."""
+    while True:
+        existing = os.environ.get("OPENAI_API_KEY", "").strip()
+        sdk_ver = _openai_sdk_version_text()
+        model_name = _openai_default_model_name()
+
+        print("\nSelection: OpenAI / LLM API setup, model selection, help, and smoke test")
+        print(f"  Current SDK version seen by this interpreter: {sdk_ver}")
+        print(f"  Current default model for smoke test: {model_name}")
+        print(f"  OPENAI_API_KEY present in this process: {'yes' if existing else 'no'}")
+        if existing:
+            print(f"  OPENAI_API_KEY length: {len(existing)}")
+
+        print("\n  1) Configure / update OPENAI_API_KEY")
+        print("  2) Configure / update default OpenAI model")
+        print("  3) Run OpenAI SDK / API smoke test")
+        print("  4) Show install/help text")
+        print("  Enter) Return to main menu")
+
+        choice = input("\nChoose [1,2,3,4, Enter]: ").strip().lower()
+
+        if choice == "":
+            print("[llm] Returning to main menu.")
+            return
+        if choice in ("1", "c", "config", "configure", "key", "apikey"):
+            configure_openai_api_key_interactive()
+            continue
+        if choice in ("2", "m", "model", "llmmodel"):
+            configure_openai_model_interactive()
+            continue
+        if choice in ("3", "t", "test", "smoke", "smoketest"):
+            run_openai_smoke_test_interactive()
+            continue
+        if choice in ("4", "h", "help", "install", "sdk", "pip"):
+            print_openai_install_help()
+            continue
+
+        print(f"[llm] Unknown selection: {choice!r}")
+
+
+
+
+
+
 # --------------------------------------------------------------------------------------
 # Interactive loop
 # --------------------------------------------------------------------------------------
@@ -16039,6 +16332,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     45) List recent wm_mapsurface engrams (Column)
     46) Pick best wm_mapsurface engram for current stage/zone (read-only) [wpick, wpickwm]
     47) Load wm_mapsurface engram into WorkingMap (replace MapSurface) [wload, wmload]
+    48) Configure & test OpenAI / LLM API key [llmkey, apikey, openai, llm]
 
     Select: """
 
@@ -16110,6 +16404,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
+    "llmkey": "k", "apikey": "k", "openai": "k", "llm": "k",
 }
     # NEW MENU compatibility: accept new grouped numbers and legacy ones.
     NEW_TO_OLD = {
@@ -16171,6 +16466,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "45": "45",  # list recent wm_mapsurface engrams
     "46": "46",  # wpickwm
     "47": "47",  # wmload
+    "48": "k",   # Configure OpenAI / LLM API key
 
 }
 
@@ -19467,6 +19763,14 @@ rl_delta (float)
                 print(f"[wm-retrieve] replaced WorkingMap from engram={raw[:8]}…: entities={out.get('entities')} relations={out.get('relations')}")
                 print("Tip: run appropriate menu item (43 currently) now to inspect the loaded MapSurface; next env step may overwrite parts of it.")
 
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice.lower() == "k":
+            # Configure & test an LLM API key
+            print("Selection: Configure and test an LLM API key\n")
+            openai_menu_48_interactive()
             loop_helper(args.autosave, world, drives, ctx)
 
 
