@@ -152,6 +152,7 @@ of birth, and by one week can climb most places its mother can)*
 - [Planner: BFS vs Dijkstra (weighted edges)](#planner-bfs-vs-dijkstra-weighted-edges)
 - [Persistence: Autosave/Load](#persistence-autosaveload)
 - [Runner, menus, and CLI](#runner-menus-and-cli)
+- [Menu 48: OpenAI / LLM setup, smoke test, state-summary demo, and advanced request knobs](#menu-48-openai--llm-setup-smoke-test-state-summary-demo-and-advanced-request-knobs)
 - [Preflight (four-part self-test)](#preflight-four-part-self-test)
 - [Logging](#logging)
 - [WorkingMap Layer Contracts](#workingmap-layer-contracts)
@@ -3343,6 +3344,10 @@ Once you’re comfortable, these become very useful:
 
 Planning and surgery tools (when you start editing graphs by hand):
 
+* **LLM API setup + first demo (Menu 48)**  
+  Configure the OpenAI API key and default model, run a live smoke test, inspect the outgoing CCA8 state-summary JSON, and experiment with a small set of request-level LLM knobs.
+
+
 * **Plan to predicate**  
   Runs the planner from NOW to a target predicate and prints a readable path.
 
@@ -3350,6 +3355,209 @@ Planning and surgery tools (when you start editing graphs by hand):
   Lets you manually edit the graph (helpful for controlled experiments, but watch for duplicates).
 
 ---
+
+
+## Menu 48: OpenAI / LLM setup, smoke test, state-summary demo, and advanced request knobs
+
+Menu **48** is the current entry point for OpenAI / LLM work inside the runner.
+
+It keeps the first bridge deliberately simple and readable:
+
+- configure the API key,
+- choose the default model,
+- run a tiny live smoke test,
+- run a first **CCA8 -> LLM** state-summary demo,
+- and (optionally) adjust a small set of **advanced request knobs** that are useful for later experiments.
+
+The current Menu 48 screen presents:
+
+1. Configure / update `OPENAI_API_KEY`
+2. Configure / update default OpenAI model
+3. Run OpenAI SDK / API smoke test
+4. Show install/help text
+5. Run first CCA8 -> LLM state-summary demo
+6. Advanced request settings (future tuning knobs)
+
+This keeps all of the current LLM-facing setup in one place rather than scattering it across multiple menus.
+
+
+
+### Smoke test
+
+The smoke test is the quickest way to verify that the LLM interface is wired correctly in the current Python environment.
+
+It checks:
+
+1. whether the `openai` Python package imports,
+2. whether `OPENAI_API_KEY` is present,
+3. which model CCA8 will use,
+4. and whether a real API call succeeds.
+
+If everything is configured correctly, CCA8 sends a tiny request and expects a tiny fixed reply. This is intentionally minimal: it is not a cognitive demo, only a “plumbing works” test.
+
+
+
+### First CCA8 -> LLM state-summary demo
+
+The first CCA8 -> LLM demo is intentionally **read-only**.
+
+It does **not** write anything back into CCA8. Instead, it takes a very small runtime summary from the current CCA8 state, sends that summary to the model, and asks the model for a **structured interpretation** in a fixed JSON shape.
+
+This keeps the first bridge:
+
+- conservative,
+- inspectable,
+- easy to debug,
+- and easy for a human reader to understand from terminal output.
+
+At present, the demo asks the model to return exactly these conceptual fields:
+
+- `scene_label`
+- `current_task`
+- `risk_flags`
+- `advice`
+- `confidence`
+
+The terminal then prints the parsed result in a **human-friendly** display format rather than echoing raw JSON back to the user.
+
+
+
+### Outgoing CCA8 state summary (what is sent to the model)
+
+The current demo sends a compact JSON object whose purpose is to summarize the **current runtime state**, not to dump the entire architecture.
+
+The outgoing state summary currently includes:
+
+- `schema` — version tag for the outgoing summary format
+- `profile` — current simulation profile (for example, Mountain Goat)
+- `age_days`
+- `controller_steps`
+- `cog_cycles`
+- `autonomic_ticks`
+- `timekeeping` — one compact human-readable summary line
+- `body` — small BodyMap-style readout such as posture, mother distance, nipple state, zone, and BodyMap staleness
+- `drives` — numeric drives such as hunger, fatigue, and warmth
+- `graph` — small WorldGraph summary such as NOW id, latest id, node count, and edge count
+- `working_map` — a compact WorkingMap status summary
+- `navsummary` — current nav-summary cache (if present)
+- `recent_bindings` — a short tail of recent bindings and tags
+
+This is intentionally a **small state packet** rather than a full memory export. The goal is to let the model interpret the current situation cheaply and transparently.
+
+
+
+### How the model is instructed
+
+The demo prompt tells the model that it is reading a **tiny CCA8 runtime snapshot** and that it must be conservative.
+
+In particular, the current prompt tells the model to:
+
+- use only the supplied JSON summary,
+- avoid inventing hidden sensors, hidden goals, or hidden world state,
+- and return only a JSON object matching the required schema.
+
+This is important because the model is **not** directly connected to the live CCA8 internals. It only sees the prompt text plus the outgoing summary JSON. The LLM therefore behaves like an outside interpreter of a small state packet, not like a hidden controller with privileged access.
+
+
+
+### Advanced request settings (future tuning knobs)
+
+Menu 48 now also includes a small **advanced request settings** submenu.
+
+These are **request-level** LLM knobs, not CCA8 architectural knobs. In other words, they tune how the OpenAI request is sent, but they do not change the underlying CCA8 memory structures, drives, policies, or map logic.
+
+The current submenu supports:
+
+1. **temperature**
+2. **top_p**
+3. **max_output_tokens**
+4. **reasoning_effort**
+5. **clear all advanced settings back to defaults**
+
+These settings are intentionally limited to a small set that already maps cleanly onto the current request path used by both the smoke test and the CCA8 demo.
+
+Current environment variable names used by Menu 48:
+
+- `CCA8_OPENAI_TEMPERATURE`
+- `CCA8_OPENAI_TOP_P`
+- `CCA8_OPENAI_MAX_OUTPUT_TOKENS`
+- `CCA8_OPENAI_REASONING_EFFORT`
+
+On Windows, the menu loads these values into the **current process** and also saves them for future `cmd.exe` sessions, so experimental settings can persist without editing source code.
+
+
+
+### Why these knobs were added
+
+The first demo is already understandable without any extra tuning. However, future serious work on the **CCA8 <-> LLM** interface will likely need some request-level experimentation.
+
+Examples:
+
+- making output more stable vs. more variable,
+- capping token usage,
+- trying different reasoning-effort levels,
+- or quickly testing how the same CCA8 state is interpreted under different request settings.
+
+By putting these controls into Menu 48 now, later experiments can be run from the interface rather than by hand-editing Python code.
+
+
+
+### What to expect when changing advanced settings
+
+The advanced settings affect the **request**, not the underlying CCA8 state summary.
+
+So if you keep the same CCA8 state but raise, for example, `temperature`, you should expect the **shape** of the reply to remain stable (same required fields), while the **wording, emphasis, and exact interpretation details** may vary.
+
+This is useful for experimentation:
+
+- low-variation settings are better when you want more repeatable interpretations,
+- high-variation settings are useful when you want to stress-test the interface and see how robust the structured interpretation remains.
+
+In practical testing, raising `temperature` and adjusting `top_p` made the CCA8 demo replies vary more while still remaining structurally valid and recognizable as interpretations of the same small state summary.
+
+
+
+### Practical reading guide for Menu 48 terminal output
+
+When reading the terminal output, it helps to separate four different things:
+
+1. **Menu/UI text from CCA8**
+   - e.g., the `Selection: OpenAI / LLM API setup...` blocks
+
+2. **Smoke test narration**
+   - friendly text explaining what is being checked
+
+3. **Outgoing CCA8 summary**
+   - the JSON state packet generated by CCA8 and sent to the model
+
+4. **Structured LLM reply**
+   - a parsed, human-friendly display of the model’s reply fields
+
+This separation makes Menu 48 easier to debug:
+first confirm the setup, then confirm the outgoing state summary, then inspect the model’s returned interpretation.
+
+
+
+### Q&A
+
+**Q: Does Menu 48 let the LLM control CCA8?**  
+A: Not in the current demo. The first bridge is read-only and returns an interpretation only.
+
+**Q: Is the model seeing all of CCA8?**  
+A: No. It sees only the prompt plus the compact outgoing JSON summary.
+
+**Q: Why not just print raw JSON from the reply?**  
+A: The reply is parsed as JSON, but then displayed in a more human-friendly form because that is easier to read during interactive use.
+
+**Q: Why keep the outgoing summary so small?**  
+A: So the first bridge stays cheap, understandable, and easy to inspect. It is meant to demonstrate the interface cleanly before richer CCA8 <-> LLM coupling is attempted.
+
+**Q: Why are the advanced settings in the menu already, if the demo itself is simple?**  
+A: Because future work will likely need experimentation with request-level LLM behavior, and it is more convenient to expose a few useful knobs once than to repeatedly edit code during later experiments.
+
+
+
+
 
 ## Quick CLI + menu recipes
 

@@ -15970,6 +15970,406 @@ def _save_cca8_openai_model_windows_user_env(model_name: str) -> tuple[bool, str
     return True, msg
 
 
+OPENAI_REASONING_EFFORT_OPTIONS = ("none", "minimal", "low", "medium", "high", "xhigh")
+OPENAI_ADVANCED_ENV_NAMES = (
+    "CCA8_OPENAI_TEMPERATURE",
+    "CCA8_OPENAI_TOP_P",
+    "CCA8_OPENAI_MAX_OUTPUT_TOKENS",
+    "CCA8_OPENAI_REASONING_EFFORT",
+)
+
+
+def _save_windows_user_env(name: str, value: str) -> tuple[bool, str]:
+    """Persist one user environment variable for future Windows cmd.exe sessions using setx.
+
+    This is used for non-secret Menu 48 tuning knobs. The current process must still update
+    os.environ separately because setx only affects future shells.
+    """
+    try:
+        result = subprocess.run(
+            ["setx", name, value],
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+        )
+    except Exception as e:
+        return False, f"Could not run setx: {e}"
+
+    if result.returncode != 0:
+        msg = (result.stderr or result.stdout or "").strip() or f"setx failed with exit code {result.returncode}"
+        return False, msg
+
+    msg = (result.stdout or "").strip() or f"{name} saved with setx."
+    return True, msg
+
+
+def _delete_windows_user_env(name: str) -> tuple[bool, str]:
+    """Delete one user environment variable for future Windows cmd.exe sessions.
+
+    We delete from HKCU\\Environment so a reset-to-default in Menu 48 really clears the saved
+    value for future cmd.exe shells instead of merely setting a blank string.
+    """
+    try:
+        result = subprocess.run(
+            ["reg", "delete", r"HKCU\Environment", "/v", name, "/f"],
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+        )
+    except Exception as e:
+        return False, f"Could not run reg delete: {e}"
+
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+
+    if result.returncode == 0:
+        return True, stdout or f"{name} removed from HKCU\\Environment."
+
+    lower = (stdout + "\n" + stderr).lower()
+    if "unable to find" in lower or "cannot find" in lower:
+        return True, f"{name} was not present in HKCU\\Environment."
+
+    msg = stderr or stdout or f"reg delete failed with exit code {result.returncode}"
+    return False, msg
+
+
+def _openai_temperature_value() -> Optional[float]:
+    """Return Menu 48 temperature override if present and valid, else None."""
+    raw = os.environ.get("CCA8_OPENAI_TEMPERATURE", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    if not 0.0 <= value <= 2.0:
+        return None
+    return value
+
+
+def _openai_top_p_value() -> Optional[float]:
+    """Return Menu 48 top_p override if present and valid, else None."""
+    raw = os.environ.get("CCA8_OPENAI_TOP_P", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    if not 0.0 < value <= 1.0:
+        return None
+    return value
+
+
+def _openai_max_output_tokens_value() -> Optional[int]:
+    """Return Menu 48 max_output_tokens override if present and valid, else None."""
+    raw = os.environ.get("CCA8_OPENAI_MAX_OUTPUT_TOKENS", "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
+def _openai_reasoning_effort_value() -> Optional[str]:
+    """Return Menu 48 reasoning-effort override if present and valid, else None."""
+    raw = os.environ.get("CCA8_OPENAI_REASONING_EFFORT", "").strip().lower()
+    if not raw:
+        return None
+    if raw not in OPENAI_REASONING_EFFORT_OPTIONS:
+        return None
+    return raw
+
+
+def _openai_advanced_settings_snapshot() -> dict[str, Any]:
+    """Return the parsed advanced Menu 48 request settings.
+
+    These settings are intentionally request-focused rather than architecture-focused. They
+    already map onto the current Responses API path used by both the smoke test and demo,
+    so they are immediately testable while still being useful for future experiments.
+    """
+    return {
+        "temperature": _openai_temperature_value(),
+        "top_p": _openai_top_p_value(),
+        "max_output_tokens": _openai_max_output_tokens_value(),
+        "reasoning_effort": _openai_reasoning_effort_value(),
+    }
+
+
+def _openai_advanced_settings_one_line() -> str:
+    """Return one compact human-readable summary of active advanced settings."""
+    settings = _openai_advanced_settings_snapshot()
+    parts: list[str] = []
+
+    temp = settings.get("temperature")
+    if isinstance(temp, float):
+        parts.append(f"temperature={temp:.3f}")
+
+    top_p = settings.get("top_p")
+    if isinstance(top_p, float):
+        parts.append(f"top_p={top_p:.3f}")
+
+    mot = settings.get("max_output_tokens")
+    if isinstance(mot, int):
+        parts.append(f"max_output_tokens={mot}")
+
+    effort = settings.get("reasoning_effort")
+    if isinstance(effort, str) and effort:
+        parts.append(f"reasoning_effort={effort}")
+
+    return ", ".join(parts) if parts else "(defaults)"
+
+
+def _openai_response_request_options_v1() -> dict[str, Any]:
+    """Return optional Responses API kwargs derived from Menu 48 advanced settings."""
+    settings = _openai_advanced_settings_snapshot()
+    opts: dict[str, Any] = {}
+
+    temp = settings.get("temperature")
+    if isinstance(temp, float):
+        opts["temperature"] = temp
+
+    top_p = settings.get("top_p")
+    if isinstance(top_p, float):
+        opts["top_p"] = top_p
+
+    mot = settings.get("max_output_tokens")
+    if isinstance(mot, int):
+        opts["max_output_tokens"] = mot
+
+    effort = settings.get("reasoning_effort")
+    if isinstance(effort, str) and effort:
+        opts["reasoning"] = {"effort": effort}
+
+    return opts
+
+
+def _set_openai_advanced_env(name: str, value: Optional[str]) -> None:
+    """Set or clear one Menu 48 advanced environment variable.
+
+    The current process is always updated immediately. On Windows, we also persist the change for
+    future cmd.exe sessions. On non-Windows platforms we keep the current process updated and print
+    a small reminder about shell startup files.
+    """
+    if value is None:
+        os.environ.pop(name, None)
+        print(f"[llm-adv] Cleared {name} in the current process.")
+
+        if os.name == "nt":
+            ok, msg = _delete_windows_user_env(name)
+            if ok:
+                print(f"[llm-adv] Cleared {name} for future Windows cmd.exe sessions.")
+                print(f"[llm-adv] reg: {msg}")
+                print("[llm-adv] Note: a NEW cmd.exe window will see the cleared value automatically.")
+            else:
+                print(f"[llm-adv] Warning: {name} was cleared for this run, but persistence failed.")
+                print(f"[llm-adv] reg error: {msg}")
+        else:
+            print(f"[llm-adv] Non-Windows OS detected; {name} was cleared only for this current process.")
+            print(f"[llm-adv] Remove {name} from your shell startup file too if you saved it there manually.")
+        return
+
+    os.environ[name] = value
+    print(f"[llm-adv] Loaded {name} into current process: {value}")
+
+    if os.name == "nt":
+        ok, msg = _save_windows_user_env(name, value)
+        if ok:
+            print(f"[llm-adv] Saved {name} for future Windows cmd.exe sessions.")
+            print(f"[llm-adv] setx: {msg}")
+            print("[llm-adv] Note: a NEW cmd.exe window will see the saved value automatically.")
+        else:
+            print(f"[llm-adv] Warning: {name} was loaded for this run, but persistence failed.")
+            print(f"[llm-adv] setx error: {msg}")
+    else:
+        print(f"[llm-adv] Non-Windows OS detected; {name} was saved only for this current process.")
+        print(f"[llm-adv] Add {name} to your shell startup file if you want persistence.")
+
+
+def configure_openai_temperature_interactive() -> None:
+    """Configure Menu 48 temperature override for future smoke tests and demos."""
+    print("\nSelection: Configure OpenAI / LLM temperature override")
+    print("  - Responses API range is 0.0 to 2.0.")
+    print("  - Lower values are usually more focused / repeatable.")
+    print("  - Blank input cancels without changing anything.")
+    print("  - Type DEFAULT to clear this override and use the API/model default.\n")
+
+    current = _openai_temperature_value()
+    print(f"[llm-adv] Current temperature override: {current if current is not None else '(default)'}")
+
+    raw = input("\nEnter temperature [0.0..2.0] (blank=cancel, DEFAULT=clear): ").strip()
+    if not raw:
+        print("[llm-adv] Cancelled. No changes made.")
+        return
+
+    if raw.lower() == "default":
+        _set_openai_advanced_env("CCA8_OPENAI_TEMPERATURE", None)
+        return
+
+    try:
+        value = float(raw)
+    except ValueError:
+        print("[llm-adv] Invalid temperature. Please enter a numeric value such as 0.2 or 1.0.")
+        return
+
+    if not 0.0 <= value <= 2.0:
+        print("[llm-adv] Temperature must be between 0.0 and 2.0.")
+        return
+
+    _set_openai_advanced_env("CCA8_OPENAI_TEMPERATURE", str(value))
+
+
+def configure_openai_top_p_interactive() -> None:
+    """Configure Menu 48 top_p override for future smoke tests and demos."""
+    print("\nSelection: Configure OpenAI / LLM top_p override")
+    print("  - Responses API range is >0.0 and <=1.0.")
+    print("  - This is an alternative to broad temperature changes.")
+    print("  - Blank input cancels without changing anything.")
+    print("  - Type DEFAULT to clear this override and use the API/model default.\n")
+
+    current = _openai_top_p_value()
+    print(f"[llm-adv] Current top_p override: {current if current is not None else '(default)'}")
+
+    raw = input("\nEnter top_p (>0.0 and <=1.0) (blank=cancel, DEFAULT=clear): ").strip()
+    if not raw:
+        print("[llm-adv] Cancelled. No changes made.")
+        return
+
+    if raw.lower() == "default":
+        _set_openai_advanced_env("CCA8_OPENAI_TOP_P", None)
+        return
+
+    try:
+        value = float(raw)
+    except ValueError:
+        print("[llm-adv] Invalid top_p. Please enter a numeric value such as 0.3 or 1.0.")
+        return
+
+    if not 0.0 < value <= 1.0:
+        print("[llm-adv] top_p must be >0.0 and <=1.0.")
+        return
+
+    _set_openai_advanced_env("CCA8_OPENAI_TOP_P", str(value))
+
+
+def configure_openai_max_output_tokens_interactive() -> None:
+    """Configure Menu 48 max_output_tokens override for future smoke tests and demos."""
+    print("\nSelection: Configure OpenAI / LLM max_output_tokens override")
+    print("  - This caps total generated response tokens, including reasoning tokens.")
+    print("  - Blank input cancels without changing anything.")
+    print("  - Type DEFAULT to clear this override and use the API/model default.\n")
+
+    current = _openai_max_output_tokens_value()
+    print(f"[llm-adv] Current max_output_tokens override: {current if current is not None else '(default)'}")
+
+    raw = input("\nEnter max_output_tokens (>0) (blank=cancel, DEFAULT=clear): ").strip()
+    if not raw:
+        print("[llm-adv] Cancelled. No changes made.")
+        return
+
+    if raw.lower() == "default":
+        _set_openai_advanced_env("CCA8_OPENAI_MAX_OUTPUT_TOKENS", None)
+        return
+
+    try:
+        value = int(raw)
+    except ValueError:
+        print("[llm-adv] Invalid max_output_tokens. Please enter an integer such as 120 or 400.")
+        return
+
+    if value <= 0:
+        print("[llm-adv] max_output_tokens must be greater than zero.")
+        return
+
+    _set_openai_advanced_env("CCA8_OPENAI_MAX_OUTPUT_TOKENS", str(value))
+
+
+def configure_openai_reasoning_effort_interactive() -> None:
+    """Configure Menu 48 reasoning-effort override for gpt-5 / o-series style models."""
+    print("\nSelection: Configure OpenAI / LLM reasoning effort override")
+    print("  - Typical values: none, minimal, low, medium, high, xhigh.")
+    print("  - Model support varies; unsupported values will be rejected by the API.")
+    print("  - Blank input cancels without changing anything.")
+    print("  - Type DEFAULT to clear this override and use the API/model default.\n")
+
+    current = _openai_reasoning_effort_value()
+    print(f"[llm-adv] Current reasoning_effort override: {current if current is not None else '(default)'}")
+
+    raw = input("\nEnter reasoning_effort (blank=cancel, DEFAULT=clear): ").strip().lower()
+    if not raw:
+        print("[llm-adv] Cancelled. No changes made.")
+        return
+
+    if raw == "default":
+        _set_openai_advanced_env("CCA8_OPENAI_REASONING_EFFORT", None)
+        return
+
+    if raw not in OPENAI_REASONING_EFFORT_OPTIONS:
+        opts = ", ".join(OPENAI_REASONING_EFFORT_OPTIONS)
+        print(f"[llm-adv] Invalid reasoning_effort. Choose one of: {opts}")
+        return
+
+    _set_openai_advanced_env("CCA8_OPENAI_REASONING_EFFORT", raw)
+
+
+def clear_openai_advanced_settings_interactive() -> None:
+    """Clear all Menu 48 advanced request settings back to defaults."""
+    print("\nSelection: Clear all OpenAI / LLM advanced settings")
+    print("  - This removes all Menu 48 request overrides and returns to defaults.")
+    print("  - Blank input cancels. Type YES to continue.\n")
+
+    confirm = input("Type YES to clear all advanced settings: ").strip()
+    if confirm != "YES":
+        print("[llm-adv] Cancelled. No changes made.")
+        return
+
+    for name in OPENAI_ADVANCED_ENV_NAMES:
+        _set_openai_advanced_env(name, None)
+
+
+def openai_advanced_settings_menu_interactive() -> None:
+    """Submenu for advanced Menu 48 request knobs that already map to the current API path."""
+    while True:
+        print("\nSelection: OpenAI / LLM advanced request settings")
+        print("  These settings apply to Menu 48 requests sent by the smoke test and CCA8 demo.")
+        print(f"  Current active overrides: {_openai_advanced_settings_one_line()}")
+        print("\n  1) Configure temperature")
+        print("  2) Configure top_p")
+        print("  3) Configure max_output_tokens")
+        print("  4) Configure reasoning_effort")
+        print("  5) Clear all advanced settings back to defaults")
+        print("  Enter) Return to the Menu 48 screen")
+
+        choice = input("\nChoose [1,2,3,4,5, Enter]: ").strip().lower()
+
+        if choice == "":
+            print("[llm-adv] Returning to the Menu 48 screen.")
+            return
+        if choice in ("1", "temp", "temperature"):
+            configure_openai_temperature_interactive()
+            continue
+        if choice in ("2", "top", "top_p", "topp"):
+            configure_openai_top_p_interactive()
+            continue
+        if choice in ("3", "tokens", "max", "max_output_tokens"):
+            configure_openai_max_output_tokens_interactive()
+            continue
+        if choice in ("4", "reason", "reasoning", "effort", "reasoning_effort"):
+            configure_openai_reasoning_effort_interactive()
+            continue
+        if choice in ("5", "clear", "reset", "defaults"):
+            clear_openai_advanced_settings_interactive()
+            continue
+
+        print(f"[llm-adv] Unknown selection: {choice!r}")
+
+
 def print_openai_install_help() -> None:
     """Print concise OpenAI / LLM API installation help."""
     print("\n[llm-help] OpenAI / LLM API setup")
@@ -16083,11 +16483,13 @@ def run_openai_smoke_test_interactive() -> None:
 
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     model_name = _openai_default_model_name()
+    request_opts = _openai_response_request_options_v1()
 
     print(f"[llm-test] OPENAI_API_KEY present: {'yes' if api_key else 'no'}")
     if api_key:
         print(f"[llm-test] OPENAI_API_KEY length: {len(api_key)}")
     print(f"[llm-test] model: {model_name}")
+    print(f"[llm-test] advanced settings: {_openai_advanced_settings_one_line()}")
 
     try:
         import openai  # pylint: disable=import-outside-toplevel
@@ -16113,7 +16515,8 @@ def run_openai_smoke_test_interactive() -> None:
         client = OpenAI()
         response = client.responses.create(
             model=model_name,
-            input="Reply with exactly: CCA8 smoke test ok."
+            input="Reply with exactly: CCA8 smoke test ok.",
+            **request_opts,
         )
 
         reply = getattr(response, "output_text", None)
@@ -16122,10 +16525,11 @@ def run_openai_smoke_test_interactive() -> None:
         print(reply if isinstance(reply, str) and reply.strip() else "(no output_text returned)")
         return
 
-    except openai.AuthenticationError as e:
+    except openai.AuthenticationError as e:  #pylint: disable=unused-variable
         print("\n[llm-test] Authentication error.")
         print("[llm-test] The SDK imported correctly, but the API key was rejected.")
-        print(f"[llm-test] Details: {e}")
+        #print(f"[llm-test] Details: {e}")
+        print("[llm-demo] Details were redacted to avoid echoing API-key text into terminal output.")
         return
 
     except openai.RateLimitError as e:
@@ -16151,28 +16555,346 @@ def run_openai_smoke_test_interactive() -> None:
         print(f"[llm-test] Details: {e}")
         return
 
+def build_cca8_llm_state_summary_v1(world, drives, ctx) -> dict[str, Any]:
+    """Build a tiny JSON-safe summary of the current CCA8 state.
 
-def openai_menu_48_interactive() -> None:
-    """Menu #48: one place for OpenAI / LLM SDK help, key setup, model setup, and smoke testing."""
+    Purpose
+    -------
+    This is the first real CCA8 -> LLM bridge. I keep it deliberately small,
+    stable, and readable so:
+      - the prompt stays cheap,
+      - the returned interpretation is easy to inspect,
+      - and we do not accidentally turn the LLM into the controller.
+
+    This is a read-only summary. It does NOT modify CCA8 state.
+    """
+    out: dict[str, Any] = {
+        "schema": "cca8_llm_state_summary_v1",
+        "profile": getattr(ctx, "profile", None),
+        "age_days": float(getattr(ctx, "age_days", 0.0) or 0.0),
+        "controller_steps": int(getattr(ctx, "controller_steps", 0) or 0),
+        "cog_cycles": int(getattr(ctx, "cog_cycles", 0) or 0),
+        "autonomic_ticks": int(getattr(ctx, "ticks", 0) or 0),
+        "timekeeping": None,
+        "body": {
+            "bodymap_stale": True,
+            "posture": None,
+            "mom_distance": None,
+            "nipple_state": None,
+            "zone": None,
+        },
+        "drives": {
+            "hunger": None,
+            "fatigue": None,
+            "warmth": None,
+        },
+        "graph": {
+            "now_bid": None,
+            "latest_bid": None,
+            "node_count": 0,
+            "edge_count": 0,
+        },
+        "working_map": {
+            "enabled": bool(getattr(ctx, "working_enabled", False)),
+            "binding_count": 0,
+        },
+        "navsummary": {},
+        "recent_bindings": [],
+    }
+
+    try:
+        out["timekeeping"] = timekeeping_line(ctx)
+    except Exception:
+        out["timekeeping"] = None
+
+    try:
+        out["body"]["bodymap_stale"] = bool(bodymap_is_stale(ctx))
+    except Exception:
+        out["body"]["bodymap_stale"] = True
+
+    try:
+        out["body"]["posture"] = body_posture(ctx)
+    except Exception:
+        pass
+
+    try:
+        out["body"]["mom_distance"] = body_mom_distance(ctx)
+    except Exception:
+        pass
+
+    try:
+        out["body"]["nipple_state"] = body_nipple_state(ctx)
+    except Exception:
+        pass
+
+    try:
+        out["body"]["zone"] = body_space_zone(ctx)
+    except Exception:
+        pass
+
+    try:
+        out["drives"]["hunger"] = round(float(getattr(drives, "hunger", 0.0) or 0.0), 3)
+        out["drives"]["fatigue"] = round(float(getattr(drives, "fatigue", 0.0) or 0.0), 3)
+        out["drives"]["warmth"] = round(float(getattr(drives, "warmth", 0.0) or 0.0), 3)
+    except Exception:
+        pass
+
+    try:
+        out["graph"]["now_bid"] = _anchor_id(world, "NOW")
+    except Exception:
+        pass
+
+    try:
+        out["graph"]["latest_bid"] = getattr(world, "_latest_binding_id", None)
+    except Exception:
+        pass
+
+    try:
+        bindings = getattr(world, "_bindings", {}) or {}
+        out["graph"]["node_count"] = len(bindings)
+
+        edge_count = 0
+        for b in bindings.values():
+            edges = getattr(b, "edges", []) or []
+            if isinstance(edges, list):
+                edge_count += len(edges)
+        out["graph"]["edge_count"] = edge_count
+    except Exception:
+        pass
+
+    try:
+        ww = getattr(ctx, "working_world", None)
+        if ww is not None:
+            out["working_map"]["binding_count"] = len(getattr(ww, "_bindings", {}) or {})
+    except Exception:
+        pass
+
+    try:
+        ns = getattr(ctx, "wm_navsummary", None)
+        if isinstance(ns, dict) and ns:
+            keep = (
+                "hazard_near",
+                "hazard_density",
+                "traversable_near",
+                "traversable_density",
+                "corridor_count",
+                "goal_present",
+                "goal_dir",
+                "goal_distance_l1",
+                "shortest_safe_path_cost",
+            )
+            out["navsummary"] = {k: ns.get(k) for k in keep if k in ns}
+    except Exception:
+        pass
+
+    try:
+        recent: list[dict[str, Any]] = []
+        for bid in _sorted_bids(world)[-4:]:
+            b = world._bindings.get(bid)
+            if b is None:
+                continue
+
+            tags = [t for t in (getattr(b, "tags", []) or []) if isinstance(t, str)]
+            edges = getattr(b, "edges", []) or []
+            out_degree = len(edges) if isinstance(edges, list) else 0
+
+            recent.append(
+                {
+                    "bid": bid,
+                    "tags": sorted(tags)[:8],
+                    "out_degree": out_degree,
+                }
+            )
+
+        out["recent_bindings"] = recent
+    except Exception:
+        pass
+
+    return out
+
+
+def run_cca8_llm_state_summary_demo_interactive(world, drives, ctx) -> None:
+    """Run the first real CCA8 -> LLM demo.
+
+    This sends a tiny CCA8-generated state summary to the current OpenAI model,
+    asks for a short structured interpretation, and prints the result cleanly.
+
+    Important:
+      - read-only demo
+      - no write-back into CCA8
+      - conservative / inspectable / easy to debug
+    """
+    print("\n[llm-demo] First CCA8 -> LLM state-summary demo")
+    print("[llm-demo] This sends a small CCA8-generated JSON summary to the model.")
+    print("[llm-demo] The model returns a structured JSON interpretation.\n")
+
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    model_name = _openai_default_model_name()
+    request_opts = _openai_response_request_options_v1()
+
+    print(f"[llm-demo] OPENAI_API_KEY present: {'yes' if api_key else 'no'}")
+    if api_key:
+        print(f"[llm-demo] OPENAI_API_KEY length: {len(api_key)}")
+    print(f"[llm-demo] model: {model_name}")
+
+    try:
+        import openai  # pylint: disable=import-outside-toplevel
+        from openai import OpenAI  # pylint: disable=import-outside-toplevel
+    except Exception as e:
+        print("[llm-demo] OpenAI Python SDK is not available in this Python environment.")
+        print("[llm-demo] Install or upgrade it with:")
+        print("           python -m pip install --upgrade openai")
+        print(f"[llm-demo] Import error: {e}")
+        return
+
+    sdk_ver = str(getattr(openai, "__version__", "(unknown)"))
+    print(f"[llm-demo] openai SDK version: {sdk_ver}")
+
+    if not api_key:
+        print("[llm-demo] OPENAI_API_KEY is missing.")
+        print("[llm-demo] Use menu 48 to save the key, then run this demo again.")
+        return
+
+    state_summary = build_cca8_llm_state_summary_v1(world, drives, ctx)
+
+    print("\n[llm-demo] Outgoing CCA8 state summary:")
+    print(json.dumps(state_summary, indent=2, ensure_ascii=False))
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "scene_label": {"type": "string"},
+            "current_task": {"type": "string"},
+            "risk_flags": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "advice": {"type": "string"},
+            "confidence": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+            },
+        },
+        "required": ["scene_label", "current_task", "risk_flags", "advice", "confidence"],
+        "additionalProperties": False,
+    }
+
+    prompt = (
+        "You are helping interpret a tiny CCA8 cognitive-architecture runtime snapshot. "
+        "Be conservative. Use only the supplied JSON summary. "
+        "Do not invent hidden sensors, hidden goals, or hidden world state. "
+        "Return only a JSON object matching the required schema.\n\n"
+        "CCA8 STATE SUMMARY JSON:\n"
+        f"{json.dumps(state_summary, ensure_ascii=False)}"
+    )
+
+    print("\n[llm-demo] SENDING STRUCTURED REQUEST TO THE LLM...")
+
+    try:
+        client = OpenAI()
+        response = client.responses.create(
+            model=model_name,
+            input=prompt,
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "cca8_state_reply_v1",
+                    "strict": True,
+                    "schema": schema,
+                }
+            },
+            **request_opts,
+        )
+
+        raw = getattr(response, "output_text", None)
+        if not isinstance(raw, str) or not raw.strip():
+            print("[llm-demo] API call succeeded, but no output_text was returned.")
+            return
+
+        try:
+            reply = json.loads(raw)
+        except Exception as e:
+            print("[llm-demo] The API call succeeded, but the reply was not valid JSON.")
+            print(f"[llm-demo] JSON parse error: {e}")
+            print("[llm-demo] Raw reply:")
+            print(raw)
+            return
+
+        print("\n[llm-demo] STRUCTURED REPLY FROM THE LLM:")
+        print(f"  scene_label : {reply.get('scene_label')}")
+        print(f"  current_task: {reply.get('current_task')}")
+        print("  risk_flags  :")
+        risks = reply.get("risk_flags")
+        if isinstance(risks, list) and risks:
+            for item in risks:
+                print(f"    - {item}")
+        else:
+            print("    (none)")
+        print(f"  advice      : {reply.get('advice')}")
+
+        conf = reply.get("confidence")
+        if isinstance(conf, (int, float)):
+            print(f"  confidence  : {float(conf):.2f}")
+        else:
+            print(f"  confidence  : {conf}")
+        return
+
+    except openai.AuthenticationError as e:  #pylint: disable=unused-variable
+        print("\n[llm-demo] Authentication error.")
+        print("[llm-demo] The SDK imported correctly, but the API key was rejected.")
+        #print(f"[llm-demo] Details: {e}")
+        print("[llm-demo] Details were redacted to avoid echoing API-key text into terminal output.")
+        return
+
+    except openai.RateLimitError as e:
+        print("\n[llm-demo] Rate-limit / quota / billing error.")
+        print("[llm-demo] The key was recognized, but the request could not proceed.")
+        print(f"[llm-demo] Details: {e}")
+        return
+
+    except openai.APIConnectionError as e:
+        print("\n[llm-demo] Connection error.")
+        print("[llm-demo] The SDK and key look present, but the network call failed.")
+        print(f"[llm-demo] Details: {e}")
+        return
+
+    except openai.APIStatusError as e:
+        status_code = getattr(e, "status_code", "(unknown)")
+        print(f"\n[llm-demo] API status error (HTTP {status_code}).")
+        print(f"[llm-demo] Details: {e}")
+        return
+
+    except Exception as e:
+        print("\n[llm-demo] Unexpected error during the CCA8 -> LLM demo.")
+        print(f"[llm-demo] Details: {e}")
+        return
+
+
+def openai_menu_48_interactive(world, drives, ctx) -> None:
+    """Menu #48: one place for OpenAI / LLM setup, demos, help, and smoke testing."""
     while True:
         existing = os.environ.get("OPENAI_API_KEY", "").strip()
         sdk_ver = _openai_sdk_version_text()
         model_name = _openai_default_model_name()
 
-        print("\nSelection: OpenAI / LLM API setup, model selection, help, and smoke test")
+        print("\nSelection: OpenAI / LLM API setup, model selection, help, smoke test, and CCA8 demo")
         print(f"  Current SDK version seen by this interpreter: {sdk_ver}")
-        print(f"  Current default model for smoke test: {model_name}")
+        print(f"  Current default model for smoke test / demo: {model_name}")
         print(f"  OPENAI_API_KEY present in this process: {'yes' if existing else 'no'}")
         if existing:
             print(f"  OPENAI_API_KEY length: {len(existing)}")
+        print(f"  Advanced request overrides: {_openai_advanced_settings_one_line()}")
 
         print("\n  1) Configure / update OPENAI_API_KEY")
         print("  2) Configure / update default OpenAI model")
         print("  3) Run OpenAI SDK / API smoke test")
         print("  4) Show install/help text")
+        print("  5) Run first CCA8 -> LLM state-summary demo")
+        print("  6) Advanced request settings (future tuning knobs)")
         print("  Enter) Return to main menu")
 
-        choice = input("\nChoose [1,2,3,4, Enter]: ").strip().lower()
+        choice = input("\nChoose [1,2,3,4,5,6, Enter]: ").strip().lower()
 
         if choice == "":
             print("[llm] Returning to main menu.")
@@ -16189,9 +16911,16 @@ def openai_menu_48_interactive() -> None:
         if choice in ("4", "h", "help", "install", "sdk", "pip"):
             print_openai_install_help()
             continue
+        if choice in ("5", "demo", "cca8", "state", "summary"):
+            run_cca8_llm_state_summary_demo_interactive(world, drives, ctx)
+            continue
+        if choice in ("6", "advanced", "adv", "knobs", "settings"):
+            openai_advanced_settings_menu_interactive()
+            continue
 
         print(f"[llm] Unknown selection: {choice!r}")
 
+        print(f"[llm] Unknown selection: {choice!r}")
 
 
 
@@ -16332,7 +17061,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     45) List recent wm_mapsurface engrams (Column)
     46) Pick best wm_mapsurface engram for current stage/zone (read-only) [wpick, wpickwm]
     47) Load wm_mapsurface engram into WorkingMap (replace MapSurface) [wload, wmload]
-    48) Configure & test OpenAI / LLM API key [llmkey, apikey, openai, llm]
+    48) LLM API setup + first demo [llmkey, apikey, openai, llm]
 
     Select: """
 
@@ -19768,9 +20497,9 @@ rl_delta (float)
 
         #----Menu Selection Code Block------------------------
         elif choice.lower() == "k":
-            # Configure & test an LLM API key
-            print("Selection: Configure and test an LLM API key\n")
-            openai_menu_48_interactive()
+            # OpenAI / LLM setup + first CCA8 demo
+            print("Selection: OpenAI / LLM API setup + first CCA8 demo\n")
+            openai_menu_48_interactive(world, drives, ctx)
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -20160,12 +20889,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         rc = run_preflight_full(args)
         return rc
 
-    # mirror terminal output to the file terminal.txt -- comment to stop
-    install_terminal_tee("terminal.txt", append=True, also_stderr=True)
+    # mirror terminal output to terminal.txt, overwriting the previous session each time
+    # set append=True to not overwrite each session
+    # comment out the line below if you don't want this feature
+    install_terminal_tee("terminal.txt", append=False, also_stderr=True)
 
     ##main operations of program via interactive_loop()
     interactive_loop(args); return 0
-
 
 # --------------------------------------------------------------------------------------
 # __main__
