@@ -1,0 +1,11 @@
+# -*- coding: utf-8 -*-
+"""
+Temporary intentional failure for verifying that preflight reports more than one failing test.
+
+Delete this file after the experiment.
+"""
+
+
+def test_ss_intended_failure() -> None:
+    """Fail on purpose so I can verify that a later failing test is also reported."""
+    assert "goat" == "sheep", "Intentional failure from test_ss_intended_failure.py"

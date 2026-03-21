@@ -7505,6 +7505,210 @@ def print_startup_notices(world) -> None:
         logging.error(f"Unable to retrieve startup active planner status: {e}", exc_info=True)
 
 
+def _openai_response_text_best_effort(response: Any) -> str:
+    """Extract plain text from an OpenAI Responses API object as defensively as possible.
+
+    Purpose / intent
+    ----------------
+    Menu 48 and preflight both care about a very small question: did the model return a short text reply?
+    Newer SDKs usually expose ``response.output_text`` directly, but we also walk the structured
+    ``response.output[*].content[*].text`` shape as a fallback so the preflight stays robust across small SDK
+    response-shape differences.
+
+    Parameters
+    ----------
+    response:
+        The object returned by ``client.responses.create(...)``.
+
+    Returns
+    -------
+    str
+        Stripped text if we can find it, otherwise an empty string.
+
+    Notes
+    -----
+    This helper is intentionally read-only and best-effort. It should never raise. Preflight must remain
+    informative even when the SDK shape changes or a mocked response object is incomplete.
+    """
+    text = getattr(response, "output_text", None)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    try:
+        output = getattr(response, "output", None)
+        if isinstance(output, list):
+            pieces: list[str] = []
+            for item in output:
+                content = getattr(item, "content", None)
+                if not isinstance(content, list):
+                    continue
+                for part in content:
+                    part_text = getattr(part, "text", None)
+                    if isinstance(part_text, str) and part_text:
+                        pieces.append(part_text)
+            if pieces:
+                return "".join(pieces).strip()
+    except Exception:
+        pass
+
+    return ""
+
+
+def run_llm_operational_preflight_check(timeout_seconds: float = 20.0) -> dict[str, Any]:
+    """Run a non-interactive OpenAI/LLM smoke test for preflight Part 4.
+
+    Purpose / intent
+    ----------------
+    This is a *system-fitness* check, not a deterministic unit test. It answers the practical runtime question:
+    can this CCA8 process currently talk to the configured OpenAI model and receive a small reply?
+
+    What it checks
+    --------------
+    1. OPENAI_API_KEY is present in this process.
+    2. CCA8 can determine the default model name it would normally use.
+    3. The OpenAI SDK imports successfully in this interpreter.
+    4. A tiny live Responses API call succeeds.
+    5. The reply contains the expected smoke-test token.
+
+    Return contract
+    ---------------
+    Returns a JSON-safe dict with:
+        status:
+            "pass", "fail", or "skip"
+        summary:
+            Short human-readable summary
+        detail:
+            One-line explanation suitable for the preflight lane
+        model:
+            Effective model name if known
+
+    Design choice
+    -------------
+    Missing local configuration returns "skip" rather than "fail". That keeps normal developer preflight usable on
+    machines that are not configured for LLM work. A configured-but-broken live call returns "fail".
+    """
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    #api_key = ""   #for testing, to force the preflight helper to behave as if no API key exists
+    if not api_key:
+        return {
+            "status": "skip",
+            "summary": "LLM smoke test skipped",
+            "detail": "OPENAI_API_KEY not set in this process",
+            "model": None,
+        }
+
+    try:
+        model_name = _openai_default_model_name()
+    except Exception:
+        model_name = (os.environ.get("CCA8_OPENAI_MODEL", "") or os.environ.get("OPENAI_MODEL", "")).strip()
+
+    if not isinstance(model_name, str) or not model_name.strip():
+        return {
+            "status": "skip",
+            "summary": "LLM smoke test skipped",
+            "detail": "no default OpenAI model configured",
+            "model": None,
+        }
+    model_name = model_name.strip()
+
+    try:
+        request_opts = _openai_response_request_options_v1()
+        if not isinstance(request_opts, dict):
+            request_opts = {}
+    except Exception:
+        request_opts = {}
+
+    if "max_output_tokens" not in request_opts:
+        request_opts["max_output_tokens"] = 24
+
+    prompt = "Reply with exactly this text and nothing else: CCA8_LLM_SMOKE_TEST_OK"
+    expected = "CCA8_LLM_SMOKE_TEST_OK"
+
+    try:
+        import openai  # pylint: disable=import-outside-toplevel
+        from openai import OpenAI  # pylint: disable=import-outside-toplevel
+    except Exception as e:
+        return {
+            "status": "skip",
+            "summary": "LLM smoke test skipped",
+            "detail": f"OpenAI SDK import failed: {e}",
+            "model": model_name,
+        }
+
+    try:
+        client = OpenAI(api_key=api_key, timeout=timeout_seconds)
+        response = client.responses.create(
+            model=model_name,
+            input=prompt,
+            **request_opts,
+        )
+        text = _openai_response_text_best_effort(response)
+
+    except openai.AuthenticationError as e:
+        return {
+            "status": "fail",
+            "summary": "LLM smoke test failed",
+            "detail": f"authentication error: {e}",
+            "model": model_name,
+        }
+
+    except openai.APIConnectionError as e:
+        return {
+            "status": "fail",
+            "summary": "LLM smoke test failed",
+            "detail": f"connection error: {e}",
+            "model": model_name,
+        }
+
+    except openai.APIStatusError as e:
+        status_code = getattr(e, "status_code", "(unknown)")
+        return {
+            "status": "fail",
+            "summary": "LLM smoke test failed",
+            "detail": f"API status error HTTP {status_code}: {e}",
+            "model": model_name,
+        }
+
+    except Exception as e:
+        return {
+            "status": "fail",
+            "summary": "LLM smoke test failed",
+            "detail": f"{e.__class__.__name__}: {e}",
+            "model": model_name,
+        }
+
+    if text == expected:
+        return {
+            "status": "pass",
+            "summary": "LLM smoke test passed",
+            "detail": "live API call returned the expected reply",
+            "model": model_name,
+        }
+
+    if expected in text:
+        return {
+            "status": "pass",
+            "summary": "LLM smoke test passed",
+            "detail": f"live API call returned the expected token inside reply: {text!r}",
+            "model": model_name,
+        }
+
+    if not text:
+        return {
+            "status": "fail",
+            "summary": "LLM smoke test failed",
+            "detail": "live API call returned no text",
+            "model": model_name,
+        }
+
+    return {
+        "status": "fail",
+        "summary": "LLM smoke test failed",
+        "detail": f"unexpected reply text: {text!r}",
+        "model": model_name,
+    }
+
+
 def run_preflight_full(args) -> int:
     """
     Full preflight: quick, deterministic checks with one-line PASS/FAIL per item.
@@ -7664,7 +7868,7 @@ def run_preflight_full(args) -> int:
                     _os.environ.setdefault("COVERAGE_FILE", ".coverage/.coverage.preflight")
                     _cov_pkgs = ["cca8_world_graph", "cca8_controller", "cca8_run",
                                  "cca8_temporal", "cca8_features", "cca8_column"]
-                    _args = ["-v", "--maxfail=1", "--junitxml=.coverage/junit.xml"]
+                    _args = ["-v", "-ra", "--junitxml=.coverage/junit.xml"]
                     for _pkg in _cov_pkgs:
                         _args += ["--cov", _pkg]
                     if _os.path.exists(".coveragerc"):
@@ -7675,7 +7879,7 @@ def run_preflight_full(args) -> int:
                               "tests"]
                 else:
                     # Fallback: no coverage plugin, but still produce JUnit for counts
-                    _args = ["-v", "--maxfail=1", "--junitxml=.coverage/junit.xml", "tests"]
+                    _args = ["-v", "-ra", "--junitxml=.coverage/junit.xml", "tests"]
 
                 _rc = _pytest.main(_args)
                 if _rc == 0:
@@ -7691,6 +7895,11 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"pytest not available or other error: {e}\n")
 
+    # Part 2 probe counting should exclude the earlier Part 1 pytest lane bookkeeping.
+    # We keep the cumulative counters for overall PASS/FAIL logic, but remember the offsets
+    # so the Part 2 footer reflects only the scenario/probe section.
+    probe_checks_offset = checks
+    probe_failures_offset = failures
 
     # 1) Python & platform
     try:
@@ -8703,11 +8912,43 @@ def run_preflight_full(args) -> int:
         bad_hw(f"disk free check error: {e}")
 
 
-    # part 4 -- integrated system preflight (stub)
-    print(f"\n[preflight system functionality] PASS  - NO-TEST: HAL={hal_str}; body={body_str} — pending integration")
+    # part 4 -- integrated system preflight
+    print(f"\n[preflight system functionality] HAL={hal_str}; body={body_str}")
+
     assessment_checks = 0
     assessment_failures = 0
+    assessment_skips = 0
 
+    def ok_sys(msg: str) -> None:
+        nonlocal assessment_checks
+        assessment_checks += 1
+        print(f"[preflight system functionality] PASS  - {msg}")
+
+    def bad_sys(msg: str) -> None:
+        nonlocal assessment_checks, assessment_failures
+        assessment_checks += 1
+        assessment_failures += 1
+        print(f"[preflight system functionality] FAIL  - {msg}")
+
+    def skip_sys(msg: str) -> None:
+        nonlocal assessment_checks, assessment_skips
+        assessment_checks += 1
+        assessment_skips += 1
+        print(f"[preflight system functionality] SKIP  - {msg}")
+
+    _llm_probe = run_llm_operational_preflight_check(timeout_seconds=20.0)
+    _llm_status = str(_llm_probe.get("status", "fail")).strip().lower()
+    _llm_summary = str(_llm_probe.get("summary", "LLM smoke test"))
+    _llm_detail = str(_llm_probe.get("detail", "") or "")
+    _llm_model = _llm_probe.get("model")
+    _llm_model_txt = f" model={_llm_model}" if isinstance(_llm_model, str) and _llm_model else ""
+
+    if _llm_status == "pass":
+        ok_sys(f"{_llm_summary}{_llm_model_txt} -- {_llm_detail}")
+    elif _llm_status == "skip":
+        skip_sys(f"{_llm_summary}{_llm_model_txt} -- {_llm_detail}")
+    else:
+        bad_sys(f"{_llm_summary}{_llm_model_txt} -- {_llm_detail}")
 
     # Compute Summary Results
     # ---- Summary footer (with denominators) ----
@@ -8728,17 +8969,18 @@ def run_preflight_full(args) -> int:
     cov_txt   = (f"coverage={cov_pct:.0f}% ({'≥30' if (cov_pct or 0.0) >= 30.0 else '<30'})"
                  if (cov_pct is not None) else "coverage=—")
 
-    # Probes (Part 2) — counts come from your ok()/bad() probe counters
-    probes_pass = max(0, checks - failures)
-    probes_txt  = f"probes={probes_pass}/{checks}"
+    # Probes (Part 2) — exclude the earlier Part 1 pytest-lane bookkeeping
+    probe_checks = max(0, checks - probe_checks_offset)
+    probe_failures = max(0, failures - probe_failures_offset)
+    probes_pass = max(0, probe_checks - probe_failures)
+    probes_txt  = f"probes={probes_pass}/{probe_checks}"
 
     # Hardware (Part 3) — show pass/total
     hardware_pass = max(0, hal_checks - hal_failures)
 
-    # System fitness (Part 4) — show pass/total (stub)
-    assessment_checks = locals().get("assessment_checks", 0)
-    assessment_failures = locals().get("assessment_failures", 0)
-    assess_pass = max(0, assessment_checks - assessment_failures)
+    # System fitness (Part 4) — show pass/fail/skip/total
+    assessment_skips = locals().get("assessment_skips", 0)
+    assessment_pass = max(0, assessment_checks - assessment_failures - assessment_skips)
 
     # Overall status (fail if any part failed)
     status_ok = (
@@ -8750,7 +8992,8 @@ def run_preflight_full(args) -> int:
 
     line1 = f"\n[preflight] RESULT: {'PASS' if status_ok else 'FAIL'} | PART 1: {tests_txt} | {cov_txt} | PART 2: {probes_txt} |"
     line2 = (f"[preflight] PART 3: hardware_robotics_checks = {hardware_pass}/{hal_checks} | "
-             f"PART 4: system_fitness_assessments = {assess_pass}/{assessment_checks} |")
+             f"PART 4: system_fitness_assessments = "
+             f"{assessment_pass} pass, {assessment_failures} fail, {assessment_skips} skipped, {assessment_checks} total |")
     line3 = f"[preflight] elapsed_time (mm:ss) ={elapsed_mmss}"
 
     print(_paint_fail(line1) if not status_ok else line1)
@@ -8761,9 +9004,6 @@ def run_preflight_full(args) -> int:
     else:
         print(line2)
     print(line3)
-    random.seed(time.perf_counter_ns())
-    if assessment_failures == 0 and status_ok and random.randint(1,10) in (2, 3, 4):  #silly humor
-        print("\nError!! ###$#$# !!  system_fitness_assessments has DIVIDE BY ZERO ERROR -- DANGER!! DANGER!!\n.... just kidding:)\n")
 
     if status_ok:
         print_ascii_logo(style="goat", color=True)
@@ -16405,8 +16645,13 @@ def configure_openai_api_key_interactive() -> None:
     print("  - Paste your OpenAI API key when prompted.")
     print("  - The key will be visible while typing.")
     print("  - Blank input cancels without changing anything.")
-    print("  - On Windows, we will also save it for future cmd.exe sessions with setx.")
-    print("  - In this current CCA8 run, the key is also loaded into os.environ immediately.\n")
+    print("  - In this current CCA8 run, the key is loaded into os.environ immediately,")
+    print("    so you can test it right away without restarting CCA8.")
+    print("  - On Windows, CCA8 also saves the key for future cmd.exe sessions with setx.")
+    print("    Important: already-open terminals or IDE shells may still keep the old key")
+    print("    until you close them and open a fresh terminal window.")
+    print("  - On non-Windows systems, the key still works immediately in this current run,")
+    print("    but persistence is usually manual via your shell startup file.\n")
 
     existing = os.environ.get("OPENAI_API_KEY", "").strip()
     if existing:
@@ -16433,7 +16678,9 @@ def configure_openai_api_key_interactive() -> None:
             print(f"[llm] setx error: {msg}")
     else:
         print("[llm] Non-Windows OS detected; key saved only for this current process.")
-        print("[llm] Add OPENAI_API_KEY to your shell startup file if you want persistence.")
+        print("[llm] This means the current CCA8 run can use it immediately.")
+        print("[llm] For future terminal sessions, add OPENAI_API_KEY to your shell startup file")
+        print("[llm] such as ~/.bashrc, ~/.zshrc, or the startup file used by your shell.")
 
 
 def configure_openai_model_interactive() -> None:
@@ -16518,7 +16765,6 @@ def run_openai_smoke_test_interactive() -> None:
             input="Reply with exactly: CCA8 smoke test ok.",
             **request_opts,
         )
-
         reply = getattr(response, "output_text", None)
         print("\n[llm-test] API call succeeded.")
         print("[llm-test] Model reply:")
@@ -16713,6 +16959,416 @@ def build_cca8_llm_state_summary_v1(world, drives, ctx) -> dict[str, Any]:
     return out
 
 
+def _cca8_llm_state_reply_schema_v1() -> dict[str, Any]:
+    """Return the strict structured-reply schema used by Menu 48 state-summary requests.
+
+    I keep this in one helper so the normal demo and the batch evaluation harness use the
+    exact same output contract. That makes later comparisons more meaningful because any
+    differences are coming from model behavior or request settings, not from two slightly
+    different prompt/schema definitions drifting apart over time.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "scene_label": {"type": "string"},
+            "current_task": {"type": "string"},
+            "risk_flags": {"type": "array", "items": {"type": "string"}},
+            "advice": {"type": "string"},
+            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        },
+        "required": ["scene_label", "current_task", "risk_flags", "advice", "confidence"],
+        "additionalProperties": False,
+    }
+
+
+def _cca8_llm_state_reply_prompt_v1(state_summary: dict[str, Any]) -> str:
+    """Return the conservative prompt used by the Menu 48 demo and evaluation harness."""
+    return (
+        "You are helping interpret a tiny CCA8 cognitive-architecture runtime snapshot. "
+        "Be conservative. Use only the supplied JSON summary. "
+        "Do not invent hidden sensors, hidden goals, or hidden world state. "
+        "Return only a JSON object matching the required schema.\n\n"
+        "CCA8 STATE SUMMARY JSON:\n"
+        f"{json.dumps(state_summary, ensure_ascii=False)}"
+    )
+
+
+def _short_json_sig16_v1(obj: Any) -> str:
+    """Return a short stable signature for a JSON-safe object."""
+    try:
+        blob = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    except Exception:
+        blob = json.dumps(str(obj), ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def _llm_eval_response_usage_v1(response: Any) -> dict[str, Optional[int]]:
+    """Extract a compact token-usage summary from a Responses API object.
+
+    I keep this defensive because SDK response objects can grow new fields over time, and I
+    do not want the evaluation harness itself to fail merely because one usage subfield is
+    absent for a given model or SDK version.
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return {
+            "input_tokens": None,
+            "output_tokens": None,
+            "reasoning_tokens": None,
+            "total_tokens": None,
+        }
+
+    output_details = getattr(usage, "output_tokens_details", None)
+    reasoning_tokens = getattr(output_details, "reasoning_tokens", None) if output_details is not None else None
+
+    return {
+        "input_tokens": int(usage.input_tokens) if getattr(usage, "input_tokens", None) is not None else None,
+        "output_tokens": int(usage.output_tokens) if getattr(usage, "output_tokens", None) is not None else None,
+        "reasoning_tokens": int(reasoning_tokens) if reasoning_tokens is not None else None,
+        "total_tokens": int(usage.total_tokens) if getattr(usage, "total_tokens", None) is not None else None,
+    }
+
+
+def _append_jsonl_record_v1(path: str, record: dict[str, Any]) -> tuple[bool, str]:
+    """Append one JSON-safe record to a JSONL file."""
+    try:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+        return True, "ok"
+    except Exception as e:
+        return False, str(e)
+
+
+def _run_openai_structured_state_eval_once_v1(*, model_name: str, prompt: str,
+                                              schema: dict[str, Any], request_opts: dict[str, Any]) -> dict[str, Any]:
+    """Run one structured Menu 48 state-summary request and return a JSON-safe result bundle."""
+    try:
+        import openai  # pylint: disable=import-outside-toplevel
+        from openai import OpenAI  # pylint: disable=import-outside-toplevel
+    except Exception as e:
+        return {
+            "ok": False,
+            "error_type": "sdk_import_error",
+            "error": str(e),
+            "model": model_name,
+        }
+
+    t0 = time.time()
+    try:
+        client = OpenAI()
+        response = client.responses.create(
+            model=model_name,
+            input=prompt,
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "cca8_state_reply_v1",
+                    "strict": True,
+                    "schema": schema,
+                }
+            },
+            **request_opts,
+        )
+        duration_ms = int((time.time() - t0) * 1000.0)
+
+        raw = getattr(response, "output_text", None)
+        if not isinstance(raw, str) or not raw.strip():
+            return {
+                "ok": False,
+                "error_type": "no_output_text",
+                "error": "Responses API returned no output_text.",
+                "model": model_name,
+                "duration_ms": duration_ms,
+                "response_id": getattr(response, "id", None),
+                "status": getattr(response, "status", None),
+                "usage": _llm_eval_response_usage_v1(response),
+                "sdk_version": str(getattr(openai, "__version__", "(unknown)")),
+            }
+
+        try:
+            reply = json.loads(raw)
+        except Exception as e:
+            return {
+                "ok": False,
+                "error_type": "json_parse_error",
+                "error": str(e),
+                "raw_text": raw,
+                "model": model_name,
+                "duration_ms": duration_ms,
+                "response_id": getattr(response, "id", None),
+                "status": getattr(response, "status", None),
+                "usage": _llm_eval_response_usage_v1(response),
+                "sdk_version": str(getattr(openai, "__version__", "(unknown)")),
+            }
+
+        return {
+            "ok": True,
+            "model": model_name,
+            "duration_ms": duration_ms,
+            "response_id": getattr(response, "id", None),
+            "status": getattr(response, "status", None),
+            "usage": _llm_eval_response_usage_v1(response),
+            "reply": reply,
+            "reply_sig16": _short_json_sig16_v1(reply),
+            "sdk_version": str(getattr(openai, "__version__", "(unknown)")),
+        }
+
+    except Exception as e:
+        duration_ms = int((time.time() - t0) * 1000.0)
+        error_name = e.__class__.__name__.lower()
+        if "authentication" in error_name:
+            error_type = "authentication_error"
+        elif "ratelimit" in error_name or "rate_limit" in error_name:
+            error_type = "rate_limit_error"
+        elif "connection" in error_name:
+            error_type = "api_connection_error"
+        elif "status" in error_name:
+            error_type = "api_status_error"
+        else:
+            error_type = "unexpected_error"
+        return {
+            "ok": False,
+            "error_type": error_type,
+            "error": str(e),
+            "model": model_name,
+            "duration_ms": duration_ms,
+        }
+
+
+def _llm_eval_result_one_line_v1(result: dict[str, Any]) -> str:
+    """Render one compact evaluation-harness result line for the terminal."""
+    model = str(result.get("model", "(unknown)"))
+    duration_ms = result.get("duration_ms")
+    duration_txt = f"{int(duration_ms)}ms" if isinstance(duration_ms, int) else "n/a"
+
+    if bool(result.get("ok")):
+        reply = result.get("reply") if isinstance(result.get("reply"), dict) else {}
+        scene = str(reply.get("scene_label", ""))[:60]
+        confidence = reply.get("confidence")
+        try:
+            confidence_txt = f"{float(confidence):.2f}"
+        except Exception:
+            confidence_txt = "n/a"
+        sig16 = result.get("reply_sig16")
+        sig16_txt = str(sig16) if isinstance(sig16, str) and sig16 else "(none)"
+        return f"ok model={model} dur={duration_txt} conf={confidence_txt} sig={sig16_txt} scene={scene!r}"
+
+    error_type = str(result.get("error_type", "error"))
+    msg = str(result.get("error", ""))[:72]
+    return f"error model={model} dur={duration_txt} type={error_type} msg={msg!r}"
+
+
+def _print_llm_eval_summary_v1(records: list[dict[str, Any]]) -> None:
+    """Print a compact grouped summary after a Menu 48 evaluation-harness batch."""
+    if not records:
+        print("\n[llm-eval] No records to summarize.")
+        return
+
+    by_model: DefaultDict[str, list[dict[str, Any]]] = defaultdict(list)
+    for rec in records:
+        model = str(rec.get("model", "(unknown)"))
+        by_model[model].append(rec)
+
+    print("\n[llm-eval] Batch summary")
+    for model in sorted(by_model):
+        rows = by_model[model]
+        ok_rows = [row for row in rows if bool(row.get("ok"))]
+        err_rows = [row for row in rows if not bool(row.get("ok"))]
+
+        durations = [int(row.get("duration_ms")) for row in rows if isinstance(row.get("duration_ms"), int)]
+        avg_duration = (sum(durations) / len(durations)) if durations else None
+
+        confidences: list[float] = []
+        scene_counts: DefaultDict[str, int] = defaultdict(int)
+        risk_counts: DefaultDict[str, int] = defaultdict(int)
+        reply_sigs: set[str] = set()
+        error_counts: DefaultDict[str, int] = defaultdict(int)
+
+        for row in ok_rows:
+            reply = row.get("reply") if isinstance(row.get("reply"), dict) else {}
+
+            confidence = reply.get("confidence")
+            try:
+                confidences.append(float(confidence))
+            except Exception:
+                pass
+
+            scene = reply.get("scene_label")
+            if isinstance(scene, str) and scene:
+                scene_counts[scene] += 1
+
+            risks = reply.get("risk_flags")
+            if isinstance(risks, list):
+                for item in risks:
+                    if isinstance(item, str) and item:
+                        risk_counts[item] += 1
+
+            sig16 = row.get("reply_sig16")
+            if isinstance(sig16, str) and sig16:
+                reply_sigs.add(sig16)
+
+        for row in err_rows:
+            error_counts[str(row.get("error_type", "error"))] += 1
+
+        avg_confidence = (sum(confidences) / len(confidences)) if confidences else None
+        top_scenes = sorted(scene_counts.items(), key=lambda item: (-item[1], item[0]))[:3]
+        top_risks = sorted(risk_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+        top_errors = sorted(error_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+
+        avg_duration_txt = f"{avg_duration:.0f}ms" if isinstance(avg_duration, float) else "n/a"
+        avg_confidence_txt = f"{avg_confidence:.2f}" if isinstance(avg_confidence, float) else "n/a"
+
+        print(f"\n  model={model}")
+        print(
+            f"    runs={len(rows)} ok={len(ok_rows)} error={len(err_rows)} "
+            f"avg_dur={avg_duration_txt} avg_conf={avg_confidence_txt} unique_replies={len(reply_sigs)}"
+        )
+
+        if top_scenes:
+            scene_txt = "; ".join(f"{name} x{count}" for name, count in top_scenes)
+            print(f"    top scene_label: {scene_txt}")
+        if top_risks:
+            risk_txt = ", ".join(f"{name} x{count}" for name, count in top_risks)
+            print(f"    top risk_flags : {risk_txt}")
+        if top_errors:
+            error_txt = ", ".join(f"{name} x{count}" for name, count in top_errors)
+            print(f"    errors         : {error_txt}")
+
+
+def run_cca8_llm_eval_harness_interactive(world, drives, ctx) -> None:
+    """Run a small Menu 48 evaluation harness over the current CCA8 state summary.
+
+    This harness exists to make the Menu 48 bridge useful for real experimentation rather
+    than only a one-off demo. It sends the SAME outgoing CCA8 summary repeatedly, records
+    structured replies, and optionally saves a JSONL log that can be inspected later.
+    """
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    model_name = _openai_default_model_name()
+    request_opts = _openai_response_request_options_v1()
+
+    print("\nSelection: CCA8 -> LLM evaluation harness")
+    print("  Purpose: prove that CCA8 can package a selected internal state summary, send it to the LLM,")
+    print("           receive structured replies back, and compare those replies across repeated runs.")
+    print("  This harness reuses the SAME outgoing CCA8 state packet each time, so differences mainly")
+    print("           reflect model/settings behavior rather than changes inside CCA8 itself.")
+    print("  It is read-only: useful for comparison, logging, and future LLM experiments.")
+    print("  It does NOT yet make the LLM control map switching, planning, or write-back into CCA8.\n")
+    print(f"[llm-eval] OPENAI_API_KEY present: {'yes' if api_key else 'no'}")
+    if api_key:
+        print(f"[llm-eval] OPENAI_API_KEY length: {len(api_key)}")
+    print(f"[llm-eval] default model: {model_name}")
+    print(f"[llm-eval] advanced settings: {_openai_advanced_settings_one_line()}")
+
+    if not api_key:
+        print("\n[llm-eval] OPENAI_API_KEY is not set in this process.")
+        print("[llm-eval] Use Menu 48 option 1 first, then rerun this harness.")
+        return
+
+    state_summary = build_cca8_llm_state_summary_v1(world, drives, ctx)
+    schema = _cca8_llm_state_reply_schema_v1()
+    prompt = _cca8_llm_state_reply_prompt_v1(state_summary)
+    state_sig16 = _short_json_sig16_v1(state_summary)
+
+    print("\n[llm-eval] Outgoing CCA8 state summary (same packet reused for all runs):")
+    print(json.dumps(state_summary, indent=2, ensure_ascii=False))
+
+    raw_models = input("\nModels to evaluate (comma-separated, blank=current default model): ").strip()
+    models = [item.strip() for item in raw_models.split(",") if item.strip()] if raw_models else [model_name]
+
+    raw_trials = input("Trials per model (blank=3): ").strip()
+    if not raw_trials:
+        trials_per_model = 3
+    else:
+        try:
+            trials_per_model = int(raw_trials)
+        except ValueError:
+            print("[llm-eval] Invalid integer for trials per model.")
+            return
+        if not 1 <= trials_per_model <= 20:
+            print("[llm-eval] Trials per model must be between 1 and 20.")
+            return
+
+    default_path = f"llm_eval_menu48_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+    raw_path = input(f"JSONL output path (blank={default_path}, NONE=no file): ").strip()
+    if not raw_path:
+        jsonl_path: Optional[str] = default_path
+    elif raw_path.lower() == "none":
+        jsonl_path = None
+    else:
+        jsonl_path = raw_path
+
+    eval_id = f"menu48_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    header = {
+        "schema": "cca8_llm_eval_header_v1",
+        "eval_id": eval_id,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "menu": 48,
+        "state_summary_sig16": state_sig16,
+        "state_summary": state_summary,
+        "prompt": prompt,
+        "reply_schema": schema,
+        "advanced_settings": dict(request_opts),
+        "models": list(models),
+        "trials_per_model": int(trials_per_model),
+        "sdk_version": _openai_sdk_version_text(),
+    }
+
+    jsonl_ok = True
+    if isinstance(jsonl_path, str):
+        ok, msg = _append_jsonl_record_v1(jsonl_path, header)
+        if not ok:
+            jsonl_ok = False
+            print(f"[llm-eval] Warning: could not write JSONL header to {jsonl_path!r}: {msg}")
+
+    print("\n[llm-eval] Running batch...")
+    print(
+        f"[llm-eval] eval_id={eval_id} state_sig={state_sig16} models={models} "
+        f"trials_per_model={trials_per_model}"
+    )
+
+    records: list[dict[str, Any]] = []
+    run_no = 0
+    total_runs = len(models) * trials_per_model
+
+    for model in models:
+        for trial_no in range(1, trials_per_model + 1):
+            run_no += 1
+            print(f"\n[llm-eval] run {run_no}/{total_runs}: model={model} trial={trial_no}/{trials_per_model}")
+            result = _run_openai_structured_state_eval_once_v1(
+                model_name=model,
+                prompt=prompt,
+                schema=schema,
+                request_opts=request_opts,
+            )
+            records.append(result)
+            print("  " + _llm_eval_result_one_line_v1(result))
+
+            if isinstance(jsonl_path, str) and jsonl_ok:
+                record = {
+                    "schema": "cca8_llm_eval_record_v1",
+                    "eval_id": eval_id,
+                    "created_at": datetime.now().isoformat(timespec="seconds"),
+                    "state_summary_sig16": state_sig16,
+                    "model": model,
+                    "trial_no": trial_no,
+                    "advanced_settings": dict(request_opts),
+                    "result": result,
+                }
+                ok, msg = _append_jsonl_record_v1(jsonl_path, record)
+                if not ok:
+                    jsonl_ok = False
+                    print(f"[llm-eval] Warning: JSONL append failed for {jsonl_path!r}: {msg}")
+
+    _print_llm_eval_summary_v1(records)
+
+    if isinstance(jsonl_path, str) and jsonl_ok:
+        print(f"\n[llm-eval] JSONL saved to: {jsonl_path}")
+    elif isinstance(jsonl_path, str):
+        print("\n[llm-eval] Batch completed, but JSONL output stopped after a write failure.")
+    else:
+        print("\n[llm-eval] Batch completed without JSONL file output.")
+
+
 def run_cca8_llm_state_summary_demo_interactive(world, drives, ctx) -> None:
     """Run the first real CCA8 -> LLM demo.
 
@@ -16736,6 +17392,7 @@ def run_cca8_llm_state_summary_demo_interactive(world, drives, ctx) -> None:
     if api_key:
         print(f"[llm-demo] OPENAI_API_KEY length: {len(api_key)}")
     print(f"[llm-demo] model: {model_name}")
+    print(f"[llm-demo] advanced settings: {_openai_advanced_settings_one_line()}")
 
     try:
         import openai  # pylint: disable=import-outside-toplevel
@@ -16760,34 +17417,8 @@ def run_cca8_llm_state_summary_demo_interactive(world, drives, ctx) -> None:
     print("\n[llm-demo] Outgoing CCA8 state summary:")
     print(json.dumps(state_summary, indent=2, ensure_ascii=False))
 
-    schema = {
-        "type": "object",
-        "properties": {
-            "scene_label": {"type": "string"},
-            "current_task": {"type": "string"},
-            "risk_flags": {
-                "type": "array",
-                "items": {"type": "string"},
-            },
-            "advice": {"type": "string"},
-            "confidence": {
-                "type": "number",
-                "minimum": 0.0,
-                "maximum": 1.0,
-            },
-        },
-        "required": ["scene_label", "current_task", "risk_flags", "advice", "confidence"],
-        "additionalProperties": False,
-    }
-
-    prompt = (
-        "You are helping interpret a tiny CCA8 cognitive-architecture runtime snapshot. "
-        "Be conservative. Use only the supplied JSON summary. "
-        "Do not invent hidden sensors, hidden goals, or hidden world state. "
-        "Return only a JSON object matching the required schema.\n\n"
-        "CCA8 STATE SUMMARY JSON:\n"
-        f"{json.dumps(state_summary, ensure_ascii=False)}"
-    )
+    schema = _cca8_llm_state_reply_schema_v1()
+    prompt = _cca8_llm_state_reply_prompt_v1(state_summary)
 
     print("\n[llm-demo] SENDING STRUCTURED REQUEST TO THE LLM...")
 
@@ -16840,10 +17471,9 @@ def run_cca8_llm_state_summary_demo_interactive(world, drives, ctx) -> None:
             print(f"  confidence  : {conf}")
         return
 
-    except openai.AuthenticationError as e:  #pylint: disable=unused-variable
+    except openai.AuthenticationError as e:  # pylint: disable=unused-variable
         print("\n[llm-demo] Authentication error.")
         print("[llm-demo] The SDK imported correctly, but the API key was rejected.")
-        #print(f"[llm-demo] Details: {e}")
         print("[llm-demo] Details were redacted to avoid echoing API-key text into terminal output.")
         return
 
@@ -16872,7 +17502,7 @@ def run_cca8_llm_state_summary_demo_interactive(world, drives, ctx) -> None:
 
 
 def openai_menu_48_interactive(world, drives, ctx) -> None:
-    """Menu #48: one place for OpenAI / LLM setup, demos, help, and smoke testing."""
+    """Menu #48: one place for OpenAI / LLM setup, demos, help, smoke testing, and evals."""
     while True:
         existing = os.environ.get("OPENAI_API_KEY", "").strip()
         sdk_ver = _openai_sdk_version_text()
@@ -16891,10 +17521,11 @@ def openai_menu_48_interactive(world, drives, ctx) -> None:
         print("  3) Run OpenAI SDK / API smoke test")
         print("  4) Show install/help text")
         print("  5) Run first CCA8 -> LLM state-summary demo")
-        print("  6) Advanced request settings (future tuning knobs)")
+        print("  6) Advanced request settings")
+        print("  7) Run evaluation harness (batch compare + JSONL log)")
         print("  Enter) Return to main menu")
 
-        choice = input("\nChoose [1,2,3,4,5,6, Enter]: ").strip().lower()
+        choice = input("\nChoose [1,2,3,4,5,6,7, Enter]: ").strip().lower()
 
         if choice == "":
             print("[llm] Returning to main menu.")
@@ -16917,13 +17548,11 @@ def openai_menu_48_interactive(world, drives, ctx) -> None:
         if choice in ("6", "advanced", "adv", "knobs", "settings"):
             openai_advanced_settings_menu_interactive()
             continue
+        if choice in ("7", "eval", "evaluate", "harness", "batch"):
+            run_cca8_llm_eval_harness_interactive(world, drives, ctx)
+            continue
 
         print(f"[llm] Unknown selection: {choice!r}")
-
-        print(f"[llm] Unknown selection: {choice!r}")
-
-
-
 
 
 # --------------------------------------------------------------------------------------
