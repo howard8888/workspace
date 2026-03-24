@@ -133,6 +133,11 @@ __all__ = [
     "Ctx",
     "HAL",
     "PolicyRuntime",
+    "ExperimentConditionDef",
+    "ExperimentBenchmarkDef",
+    "ExperimentProtocolConfig",
+    "render_experiment_protocol_summary_v1",
+    "experiments_menu_49_interactive",
 ]
 
 NON_WIN_LINUX = False  #set if non-Win, non-macOS, non-Linux/like OS
@@ -179,6 +184,54 @@ class CreativeCandidate:
     score: float
     notes: str = ""
     predicted: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ExperimentConditionDef:
+    """One frozen comparison condition for the long-horizon experiments.
+
+    I keep this intentionally small and explicit so that the paper protocol and the
+    runner protocol stay aligned. Each condition answers one scientific question.
+    """
+    condition_id: str
+    label: str
+    agent_mode: str
+    decision_authority: str
+    retrieval_enabled: bool
+    retrieval_mode: str
+    llm_role: str
+    notes: str = ""
+
+
+@dataclass(slots=True)
+class ExperimentBenchmarkDef:
+    """One benchmark definition used by the experiment harness."""
+    benchmark_id: str
+    label: str
+    goal: str
+    primary_metrics: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ExperimentProtocolConfig:
+    """Mutable experiment protocol settings stored on ctx.
+
+    This is intentionally separate from everyday simulation settings. When the
+    user never enters the experiments menu, the ordinary CCA8 workflow should
+    behave exactly as before.
+    """
+    protocol_version: str = "exp_protocol_v1"
+    benchmark_id: str = "goat04_context"
+    condition_ids: list[str] = field(default_factory=lambda: ["A", "B", "C", "D", "E"])
+    seed_list: list[int] = field(default_factory=lambda: [11, 23, 37, 41, 53])
+    episodes_per_seed: int = 1
+    max_cycles: int = 60
+    obs_mask_prob: float = 0.0
+    action_vocab_version: str = "cca8_action_vocab_v1"
+    scratch_clear_policy: str = "per_episode_reset"
+    jsonl_write_cycle_records: bool = True
+    jsonl_write_episode_records: bool = True
+    llm_model: Optional[str] = None
 
 
 @dataclass(slots=True)
@@ -647,6 +700,14 @@ class Ctx:
     cycle_json_max_records: int = 2000
     cycle_json_records: list[dict[str, Any]] = field(default_factory=list)
 
+    # Experiment protocol scaffolding (long-horizon paper)
+    # --------------------------------------------------------------
+    # These settings are additive and should not affect normal simulation when the
+    # experiments menu is never used. Later patches will read this config to run
+    # controlled A/B/C/D/E batches from the main runner.
+    experiment_cfg: ExperimentProtocolConfig = field(default_factory=ExperimentProtocolConfig)
+    experiment_last_summary: dict[str, Any] = field(default_factory=dict)
+
 
     def reset_controller_steps(self) -> None:
         """quick reset of Ctx.controller_steps counter
@@ -682,6 +743,290 @@ class Ctx:
             return None
         v = tv.vector()
         return sum(a*b for a, b in zip(v, lb))
+
+
+def experiment_action_vocab_v1() -> list[str]:
+    """Return the frozen action vocabulary used across experiment conditions A-E.
+
+    I keep this explicit rather than deriving it dynamically from the live policy
+    catalog, because the experiment protocol should stay stable even if we later
+    add unrelated policies to the runner.
+    """
+    return [
+        "policy:stand_up",
+        "policy:recover_fall",
+        "policy:seek_nipple",
+        "policy:rest",
+        "policy:probe",
+        "policy:follow_mom",
+        "policy:suckle",
+        "policy:recover_miss",
+        "policy:explore_check",
+    ]
+
+
+def experiment_condition_catalog_v1() -> dict[str, ExperimentConditionDef]:
+    """Return the frozen A-E comparison conditions for the paper protocol."""
+    items = [
+        ExperimentConditionDef(
+            condition_id="A",
+            label="Full CCA8 (merge retrieval)",
+            agent_mode="cca8",
+            decision_authority="cca8",
+            retrieval_enabled=True,
+            retrieval_mode="merge",
+            llm_role="none",
+            notes="Reference condition: full layered memory with guarded episodic readback.",
+        ),
+        ExperimentConditionDef(
+            condition_id="B",
+            label="CCA8 without episodic readback",
+            agent_mode="cca8",
+            decision_authority="cca8",
+            retrieval_enabled=False,
+            retrieval_mode="merge",
+            llm_role="none",
+            notes="Storage remains on; auto-retrieval is disabled to isolate recall utility.",
+        ),
+        ExperimentConditionDef(
+            condition_id="C",
+            label="CCA8 with replace-mode prior injection",
+            agent_mode="cca8",
+            decision_authority="cca8",
+            retrieval_enabled=True,
+            retrieval_mode="replace",
+            llm_role="none",
+            notes="Tests whether guarded merge is better than strong overwrite priors.",
+        ),
+        ExperimentConditionDef(
+            condition_id="D",
+            label="LLM-only controller baseline",
+            agent_mode="llm_only",
+            decision_authority="llm",
+            retrieval_enabled=False,
+            retrieval_mode="none",
+            llm_role="controller",
+            notes="LLM sees only agent-visible observation packets plus the same fixed action vocabulary.",
+        ),
+        ExperimentConditionDef(
+            condition_id="E",
+            label="Hybrid CCA8 + LLM adviser",
+            agent_mode="hybrid",
+            decision_authority="cca8",
+            retrieval_enabled=True,
+            retrieval_mode="merge",
+            llm_role="advisor",
+            notes="CCA8 remains authoritative; the LLM ranks or advises among bounded candidate actions.",
+        ),
+    ]
+    return {item.condition_id: item for item in items}
+
+
+def experiment_benchmark_catalog_v1() -> dict[str, ExperimentBenchmarkDef]:
+    """Return the current benchmark suite for the long-horizon paper."""
+    items = [
+        ExperimentBenchmarkDef(
+            benchmark_id="goat04_context",
+            label="goat_foraging_04 contextual map-switch benchmark",
+            goal=(
+                "Mechanistic benchmark: partial observability plus fox/hawk contextual switching "
+                "to test retrieval, contamination control, and stabilization after a context change."
+            ),
+            primary_metrics=[
+                "context_switch_accuracy",
+                "cycles_to_stabilization",
+                "false_retrieval_count",
+                "cue_leakage_violations",
+                "cumulative_prediction_error",
+            ],
+        ),
+        ExperimentBenchmarkDef(
+            benchmark_id="newborn_long_horizon",
+            label="newborn-goat long-horizon milestone benchmark",
+            goal=(
+                "Behavioral benchmark: closed-loop milestone attainment across posture recovery, "
+                "mom approach, nipple finding, latching, milk drinking, and resting."
+            ),
+            primary_metrics=[
+                "episode_success",
+                "milestone_vector",
+                "cycles_to_end",
+                "repeated_action_loop_count",
+                "cumulative_prediction_error",
+                "recovery_latency",
+            ],
+        ),
+    ]
+    return {item.benchmark_id: item for item in items}
+
+
+def reset_experiment_protocol_v1(ctx: Ctx) -> None:
+    """Reset ctx experiment settings to the frozen paper defaults."""
+    if ctx is None:
+        return
+    ctx.experiment_cfg = ExperimentProtocolConfig()
+    ctx.experiment_last_summary.clear()
+
+
+def render_experiment_conditions_table_v1(ctx: Ctx) -> str:
+    """Return a compact fixed-width table of the A-E condition definitions."""
+    cfg = getattr(ctx, "experiment_cfg", None) or ExperimentProtocolConfig()
+    catalog = experiment_condition_catalog_v1()
+
+    lines = []
+    lines.append("Condition table (A-E)")
+    lines.append("id  mode      authority  retrieve  mode     llm_role    label")
+    lines.append("--  --------  ---------  --------  -------  ----------  ----------------------------------------------")
+
+    for cid in cfg.condition_ids:
+        cond = catalog.get(cid)
+        if cond is None:
+            continue
+        retrieve_txt = "on" if cond.retrieval_enabled else "off"
+        lines.append(
+            f"{cond.condition_id:<2}  {cond.agent_mode:<8}  {cond.decision_authority:<9}  {retrieve_txt:<8}  "
+            f"{cond.retrieval_mode:<7}  {cond.llm_role:<10}  {cond.label}"
+        )
+
+    lines.append("")
+    for cid in cfg.condition_ids:
+        cond = catalog.get(cid)
+        if cond is None:
+            continue
+        lines.append(f"  {cond.condition_id}) {cond.notes}")
+
+    return "\n".join(lines)
+
+
+def render_experiment_benchmarks_table_v1() -> str:
+    """Return a human-readable summary of the current benchmark suite."""
+    catalog = experiment_benchmark_catalog_v1()
+    order = ["goat04_context", "newborn_long_horizon"]
+
+    lines = []
+    lines.append("Benchmark suite")
+    for bid in order:
+        bench = catalog.get(bid)
+        if bench is None:
+            continue
+        lines.append(f"  {bench.benchmark_id}: {bench.label}")
+        lines.append(f"     goal: {bench.goal}")
+        lines.append(f"     metrics: {', '.join(bench.primary_metrics)}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def render_experiment_jsonl_schema_summary_v1() -> str:
+    """Return the current JSONL record contract for experiment logging.
+
+    This is intentionally a schema summary, not yet the actual writer. A later
+    patch will make the live runner emit these records.
+    """
+    cycle_fields = [
+        "schema", "record_type", "experiment_id", "benchmark", "condition", "seed", "episode_index",
+        "cycle_index", "env_step", "stage", "zone", "obs_mask_stats", "retrieval_event", "pred_err",
+        "selected_policy", "llm_advice_summary", "executed_action", "milestones", "done", "termination_reason",
+    ]
+    episode_fields = [
+        "schema", "record_type", "experiment_id", "benchmark", "condition", "seed", "episode_index",
+        "success", "cycles_to_end", "milestone_vector", "context_switch_accuracy", "false_retrieval_count",
+        "cue_leakage_violations", "cumulative_prediction_error", "repeated_action_loop_count", "llm_call_count",
+        "latency_ms_total",
+    ]
+
+    lines = []
+    lines.append("JSONL schema summary")
+    lines.append("  cycle record:")
+    lines.append("    " + ", ".join(cycle_fields))
+    lines.append("")
+    lines.append("  episode summary record:")
+    lines.append("    " + ", ".join(episode_fields))
+    return "\n".join(lines)
+
+
+def render_experiment_protocol_summary_v1(ctx: Ctx) -> str:
+    """Return the current frozen experiment protocol as a readable block."""
+    cfg = getattr(ctx, "experiment_cfg", None) or ExperimentProtocolConfig()
+    bench = experiment_benchmark_catalog_v1().get(cfg.benchmark_id)
+    action_vocab = experiment_action_vocab_v1()
+
+    lines = []
+    lines.append("Experiment protocol summary")
+    lines.append(f"  protocol_version     : {cfg.protocol_version}")
+    lines.append(f"  benchmark            : {cfg.benchmark_id}")
+    if bench is not None:
+        lines.append(f"  benchmark_label      : {bench.label}")
+    lines.append(f"  conditions           : {', '.join(cfg.condition_ids)}")
+    lines.append(f"  seeds                : {cfg.seed_list}")
+    lines.append(f"  episodes_per_seed    : {cfg.episodes_per_seed}")
+    lines.append(f"  max_cycles           : {cfg.max_cycles}")
+    lines.append(f"  obs_mask_prob        : {cfg.obs_mask_prob:.3f}")
+    lines.append(f"  action_vocab_version : {cfg.action_vocab_version}")
+    lines.append(f"  scratch_clear_policy : {cfg.scratch_clear_policy}")
+    lines.append(f"  jsonl_cycle_records  : {cfg.jsonl_write_cycle_records}")
+    lines.append(f"  jsonl_episode_records: {cfg.jsonl_write_episode_records}")
+    lines.append(f"  llm_model            : {cfg.llm_model}")
+    lines.append("")
+    lines.append("  fixed action vocabulary:")
+    for name in action_vocab:
+        lines.append(f"    - {name}")
+    return "\n".join(lines)
+
+
+def experiments_menu_49_interactive(ctx: Ctx) -> None:
+    """Small additive submenu for the AGI-2026 experiment protocol.
+
+    Patch-1 goal:
+      - make the protocol visible and inspectable from the main runner,
+      - without changing any normal simulation path,
+      - and without running experiments yet.
+
+    Later patches will add real execution and JSONL writing underneath the same
+    menu entry.
+    """
+    if ctx is None:
+        print("[experiments] ctx missing; cannot open experiments menu.")
+        return
+
+    if not isinstance(getattr(ctx, "experiment_cfg", None), ExperimentProtocolConfig):
+        ctx.experiment_cfg = ExperimentProtocolConfig()
+
+    while True:
+        cfg = ctx.experiment_cfg
+        print("\nSelection: Experiments / Benchmarks (protocol scaffolding)\n")
+        print(f"  benchmark={cfg.benchmark_id}  conditions={cfg.condition_ids}  seeds={cfg.seed_list}  max_cycles={cfg.max_cycles}")
+        print("  1) Show frozen protocol summary")
+        print("  2) Show A-E condition table")
+        print("  3) Show benchmark suite")
+        print("  4) Show planned JSONL schema")
+        print("  5) Reset experiment protocol to defaults")
+        print("  0) Return to Main Menu")
+
+        sub = input("Experiment menu select: ").strip().lower()
+        if sub in ("0", "q", "quit", "return", "back"):
+            return
+        if sub == "1":
+            print()
+            print(render_experiment_protocol_summary_v1(ctx))
+            continue
+        if sub == "2":
+            print()
+            print(render_experiment_conditions_table_v1(ctx))
+            continue
+        if sub == "3":
+            print()
+            print(render_experiment_benchmarks_table_v1())
+            continue
+        if sub == "4":
+            print()
+            print(render_experiment_jsonl_schema_summary_v1())
+            continue
+        if sub == "5":
+            reset_experiment_protocol_v1(ctx)
+            print("[experiments] protocol reset to exp_protocol_v1 defaults.")
+            continue
+
+        print("[experiments] Unknown selection. Use 0..5.")
 
 
 # Module layout / roadmap
@@ -17691,6 +18036,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     46) Pick best wm_mapsurface engram for current stage/zone (read-only) [wpick, wpickwm]
     47) Load wm_mapsurface engram into WorkingMap (replace MapSurface) [wload, wmload]
     48) LLM API setup + first demo [llmkey, apikey, openai, llm]
+    49) Experiments / Benchmarks (protocol scaffolding) [experiments, bench]
 
     Select: """
 
@@ -17759,6 +18105,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "recent_wm_amp": "45",
     "wpick": "46", "wpickwm": "46",
     "wload": "47", "wmload": "47",
+    "experiments": "49", "experiment": "49", "bench": "49", "benchmark": "49",
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -17825,6 +18172,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "46": "46",  # wpickwm
     "47": "47",  # wmload
     "48": "k",   # Configure OpenAI / LLM API key
+    "49": "49",  # Experiments / Benchmarks (protocol scaffolding)
 
 }
 
@@ -21129,6 +21477,14 @@ rl_delta (float)
             # OpenAI / LLM setup + first CCA8 demo
             print("Selection: OpenAI / LLM API setup + first CCA8 demo\n")
             openai_menu_48_interactive(world, drives, ctx)
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "49":
+            # Experiments / Benchmarks (protocol scaffolding only in patch 1)
+            experiments_menu_49_interactive(ctx)
+            print("Selection: xperiments / Benchmarks\n")
             loop_helper(args.autosave, world, drives, ctx)
 
 
