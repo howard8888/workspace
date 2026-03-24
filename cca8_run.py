@@ -136,7 +136,16 @@ __all__ = [
     "ExperimentConditionDef",
     "ExperimentBenchmarkDef",
     "ExperimentProtocolConfig",
+    "experiment_normalize_protocol_v1",
+    "experiment_make_run_id_v1",
+    "experiment_jsonl_paths_v1",
+    "experiment_prepare_logging_v1",
+    "append_experiment_jsonl_record_v1",
+    "experiment_write_episode_record_v1",
+    "experiment_build_cycle_record_stub_v1",
+    "experiment_build_episode_record_stub_v1",
     "render_experiment_protocol_summary_v1",
+    "render_experiment_logging_status_v1",
     "experiments_menu_49_interactive",
 ]
 
@@ -232,6 +241,12 @@ class ExperimentProtocolConfig:
     jsonl_write_cycle_records: bool = True
     jsonl_write_episode_records: bool = True
     llm_model: Optional[str] = None
+
+    # Patch-2 additions:
+    # - run_label gives the user a stable human-readable tag for filenames.
+    # - output_dir is where prepared JSONL files will live once execution is wired in.
+    run_label: str = ""
+    output_dir: str = "experiment_jsonl"
 
 
 @dataclass(slots=True)
@@ -945,10 +960,17 @@ def render_experiment_jsonl_schema_summary_v1() -> str:
 
 
 def render_experiment_protocol_summary_v1(ctx: Ctx) -> str:
-    """Return the current frozen experiment protocol as a readable block."""
+    """Return the current frozen experiment protocol as a readable block.
+
+    Patch-2 extends the summary so the experiment menu can show not only the scientific
+    protocol knobs, but also the file/output preparation knobs. That makes the protocol
+    inspectable before we wire in actual experiment execution.
+    """
     cfg = getattr(ctx, "experiment_cfg", None) or ExperimentProtocolConfig()
     bench = experiment_benchmark_catalog_v1().get(cfg.benchmark_id)
     action_vocab = experiment_action_vocab_v1()
+    last = getattr(ctx, "experiment_last_summary", None)
+    last = last if isinstance(last, dict) else {}
 
     lines = []
     lines.append("Experiment protocol summary")
@@ -966,6 +988,10 @@ def render_experiment_protocol_summary_v1(ctx: Ctx) -> str:
     lines.append(f"  jsonl_cycle_records  : {cfg.jsonl_write_cycle_records}")
     lines.append(f"  jsonl_episode_records: {cfg.jsonl_write_episode_records}")
     lines.append(f"  llm_model            : {cfg.llm_model}")
+    lines.append(f"  run_label            : {cfg.run_label or '(none)'}")
+    lines.append(f"  output_dir           : {cfg.output_dir}")
+    if last:
+        lines.append(f"  prepared_run_id      : {last.get('run_id')}")
     lines.append("")
     lines.append("  fixed action vocabulary:")
     for name in action_vocab:
@@ -973,16 +999,478 @@ def render_experiment_protocol_summary_v1(ctx: Ctx) -> str:
     return "\n".join(lines)
 
 
+def _experiment_safe_token_v1(text: str, *, default: str = "") -> str:
+    """Return a short filesystem-friendly token for run ids and labels.
+
+    Purpose / intent
+    ----------------
+    Experiment output filenames should stay readable on Windows and should not contain
+    punctuation that later complicates shell usage or path handling. This helper keeps
+    only alnum / dash / underscore, translating a few common separators into underscores.
+
+    Notes
+    -----
+    This is intentionally conservative. It is not intended as a full path sanitizer; it
+    only prepares short filename tokens such as run_label or benchmark fragments.
+    """
+    raw = str(text or "").strip()
+    chars: list[str] = []
+
+    for ch in raw:
+        if ch.isalnum() or ch in ("-", "_"):
+            chars.append(ch)
+        elif ch in (" ", ".", "/", "\\", ":"):
+            chars.append("_")
+
+    out = "".join(chars)
+    while "__" in out:
+        out = out.replace("__", "_")
+    out = out.strip("_")
+    return out or default
+
+
+def experiment_parse_condition_ids_v1(text: str) -> list[str]:
+    """Parse a comma/space-separated A-E condition list.
+
+    We keep parsing permissive for terminal use, but validation still remains explicit:
+    only A/B/C/D/E survive. Order is preserved and duplicates are removed.
+    """
+    if not isinstance(text, str):
+        return []
+
+    tokens = text.replace(",", " ").split()
+    out: list[str] = []
+    seen: set[str] = set()
+    valid = {"A", "B", "C", "D", "E"}
+
+    for tok in tokens:
+        cid = tok.strip().upper()
+        if cid in valid and cid not in seen:
+            seen.add(cid)
+            out.append(cid)
+
+    return out
+
+
+def experiment_parse_seed_list_v1(text: str) -> list[int]:
+    """Parse a comma/space-separated integer seed list.
+
+    Intent:
+      - keep the menu forgiving,
+      - preserve user order,
+      - remove duplicates,
+      - and leave final clamping/limits to experiment_normalize_protocol_v1(...).
+    """
+    if not isinstance(text, str):
+        return []
+
+    tokens = text.replace(",", " ").split()
+    out: list[int] = []
+    seen: set[int] = set()
+
+    for tok in tokens:
+        try:
+            seed = int(tok)
+        except Exception:
+            continue
+
+        if seed not in seen:
+            seen.add(seed)
+            out.append(seed)
+
+    return out
+
+
+def experiment_normalize_protocol_v1(cfg: ExperimentProtocolConfig | None) -> ExperimentProtocolConfig:
+    """Return a sanitized experiment protocol configuration.
+
+    Purpose / intent
+    ----------------
+    Menu 49 now edits protocol values interactively. That means we need one stable place
+    that clamps numeric ranges, validates benchmark/condition identifiers, restores safe
+    defaults, and makes later execution code independent of ad-hoc menu parsing.
+
+    Design choice
+    -------------
+    I return a *new* ExperimentProtocolConfig rather than mutating the incoming object
+    in place. That makes the normalization step easier to reason about and easier to test.
+    """
+    src = cfg if isinstance(cfg, ExperimentProtocolConfig) else ExperimentProtocolConfig()
+
+    try:
+        episodes_per_seed = int(getattr(src, "episodes_per_seed", 1) or 1)
+    except Exception:
+        episodes_per_seed = 1
+
+    try:
+        max_cycles = int(getattr(src, "max_cycles", 60) or 60)
+    except Exception:
+        max_cycles = 60
+
+    try:
+        obs_mask_prob = float(getattr(src, "obs_mask_prob", 0.0) or 0.0)
+    except Exception:
+        obs_mask_prob = 0.0
+
+    llm_model_raw = getattr(src, "llm_model", None)
+    llm_model = None
+    if isinstance(llm_model_raw, str) and llm_model_raw.strip():
+        llm_model = llm_model_raw.strip()
+
+    out = ExperimentProtocolConfig(
+        protocol_version=str(getattr(src, "protocol_version", "exp_protocol_v1") or "exp_protocol_v1"),
+        benchmark_id=str(getattr(src, "benchmark_id", "goat04_context") or "goat04_context"),
+        condition_ids=list(getattr(src, "condition_ids", []) or []),
+        seed_list=list(getattr(src, "seed_list", []) or []),
+        episodes_per_seed=max(1, min(1000, episodes_per_seed)),
+        max_cycles=max(1, min(100000, max_cycles)),
+        obs_mask_prob=max(0.0, min(1.0, obs_mask_prob)),
+        action_vocab_version=str(
+            getattr(src, "action_vocab_version", "cca8_action_vocab_v1") or "cca8_action_vocab_v1"
+        ),
+        scratch_clear_policy=str(
+            getattr(src, "scratch_clear_policy", "per_episode_reset") or "per_episode_reset"
+        ),
+        jsonl_write_cycle_records=bool(getattr(src, "jsonl_write_cycle_records", True)),
+        jsonl_write_episode_records=bool(getattr(src, "jsonl_write_episode_records", True)),
+        llm_model=llm_model,
+        run_label=str(getattr(src, "run_label", "") or ""),
+        output_dir=str(getattr(src, "output_dir", "experiment_jsonl") or "experiment_jsonl"),
+    )
+
+    if out.benchmark_id not in experiment_benchmark_catalog_v1():
+        out.benchmark_id = "goat04_context"
+
+    valid_conditions = experiment_parse_condition_ids_v1(" ".join(str(x) for x in out.condition_ids))
+    out.condition_ids = valid_conditions or ["A", "B", "C", "D", "E"]
+
+    valid_seeds: list[int] = []
+    seen_seeds: set[int] = set()
+    for raw in out.seed_list:
+        try:
+            seed = int(raw)
+        except Exception:
+            continue
+
+        if seed not in seen_seeds:
+            seen_seeds.add(seed)
+            valid_seeds.append(seed)
+
+    out.seed_list = valid_seeds[:64] or [11, 23, 37, 41, 53]
+
+    out.run_label = _experiment_safe_token_v1(out.run_label)
+    out.output_dir = str(out.output_dir).strip() or "experiment_jsonl"
+
+    return out
+
+
+def experiment_make_run_id_v1(ctx: Ctx | None, cfg: ExperimentProtocolConfig | None = None) -> str:
+    """Build a stable, human-readable run id for experiment output files.
+
+    Current policy:
+      - timestamp first (so lexicographic order is chronological),
+      - benchmark id next,
+      - optional run_label when provided,
+      - otherwise fall back to profile if available.
+
+    This is meant for filenames and log identity, not as a cryptographic id.
+    """
+    norm = experiment_normalize_protocol_v1(cfg)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    benchmark = _experiment_safe_token_v1(norm.benchmark_id, default="benchmark")
+    label = _experiment_safe_token_v1(norm.run_label)
+    profile = _experiment_safe_token_v1(getattr(ctx, "profile", ""), default="")
+
+    parts = [stamp, benchmark]
+    if label:
+        parts.append(label)
+    elif profile:
+        parts.append(profile)
+
+    return "__".join(parts)
+
+
+def experiment_jsonl_paths_v1(ctx: Ctx, *, run_id: str | None = None) -> dict[str, Any]:
+    """Return the effective output directory and JSONL paths for the current protocol.
+
+    Patch-2 uses this as the single source of truth for prepared output locations.
+    The later execution patch can reuse the same helper unchanged.
+    """
+    cfg = experiment_normalize_protocol_v1(getattr(ctx, "experiment_cfg", None))
+    rid = run_id or experiment_make_run_id_v1(ctx, cfg)
+    out_dir = os.path.normpath(cfg.output_dir)
+
+    cycle_json_path = None
+    episode_json_path = None
+
+    if cfg.jsonl_write_cycle_records:
+        cycle_json_path = os.path.join(out_dir, f"{rid}__cycle.jsonl")
+
+    if cfg.jsonl_write_episode_records:
+        episode_json_path = os.path.join(out_dir, f"{rid}__episode.jsonl")
+
+    return {
+        "run_id": rid,
+        "output_dir": out_dir,
+        "cycle_json_path": cycle_json_path,
+        "episode_json_path": episode_json_path,
+    }
+
+
+def append_experiment_jsonl_record_v1(path: str | None, record: dict[str, Any]) -> None:
+    """Append one JSON-safe record to a JSONL path.
+
+    Purpose / intent
+    ----------------
+    The runner already has a generic per-cycle JSON writer later in the file. We still need
+    a tiny generic helper for experiment-side JSONL writes, especially for episode summaries.
+
+    Design
+    ------
+    - Best effort only: never raise into the runner.
+    - UTF-8 JSONL, one record per line.
+    - Creates the parent directory if needed.
+    """
+    if not isinstance(path, str) or not path.strip():
+        return
+    if not isinstance(record, dict):
+        return
+
+    try:
+        folder = os.path.dirname(path)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        return
+
+
+def experiment_prepare_logging_v1(ctx: Ctx, *, reset_buffers: bool = True) -> dict[str, Any]:
+    """Normalize config and arm experiment JSONL output paths.
+
+    What this prepares now
+    ----------------------
+    - validates / normalizes Menu 49 protocol fields,
+    - creates the output directory,
+    - points the existing cycle JSON writer at the prepared experiment cycle path,
+    - stores the episode-summary JSONL path in ctx.experiment_last_summary.
+
+    What this does NOT do yet
+    -------------------------
+    - it does not run any episodes,
+    - it does not emit episode summaries,
+    - it does not alter ordinary closed-loop runs unless Menu 49 explicitly invokes it.
+    """
+    if ctx is None:
+        return {"ok": False, "why": "missing_ctx"}
+
+    cfg = experiment_normalize_protocol_v1(getattr(ctx, "experiment_cfg", None))
+    ctx.experiment_cfg = cfg
+
+    paths = experiment_jsonl_paths_v1(ctx)
+    out_dir = paths["output_dir"]
+
+    try:
+        if isinstance(out_dir, str) and out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+    except Exception as e:
+        return {"ok": False, "why": f"mkdir_failed:{e}"}
+
+    cycle_path = paths.get("cycle_json_path")
+    if cfg.jsonl_write_cycle_records and isinstance(cycle_path, str) and cycle_path:
+        ctx.cycle_json_enabled = True
+        ctx.cycle_json_path = cycle_path
+    else:
+        ctx.cycle_json_enabled = False
+        ctx.cycle_json_path = None
+
+    if reset_buffers:
+        try:
+            ctx.cycle_json_records.clear()
+        except Exception:
+            ctx.cycle_json_records = []
+
+    summary = {
+        "ok": True,
+        "schema": "experiment_logging_prep_v1",
+        "prepared_at": datetime.now().isoformat(timespec="seconds"),
+        "run_id": paths["run_id"],
+        "benchmark_id": cfg.benchmark_id,
+        "condition_ids": list(cfg.condition_ids),
+        "seed_list": list(cfg.seed_list),
+        "episodes_per_seed": int(cfg.episodes_per_seed),
+        "max_cycles": int(cfg.max_cycles),
+        "obs_mask_prob": float(cfg.obs_mask_prob),
+        "run_label": cfg.run_label,
+        "output_dir": out_dir,
+        "cycle_json_enabled": bool(ctx.cycle_json_enabled),
+        "cycle_json_path": ctx.cycle_json_path,
+        "episode_json_enabled": bool(cfg.jsonl_write_episode_records),
+        "episode_json_path": paths.get("episode_json_path"),
+        "cycle_json_max_records": int(getattr(ctx, "cycle_json_max_records", 0) or 0),
+    }
+    ctx.experiment_last_summary = summary
+    return summary
+
+
+def experiment_build_cycle_record_stub_v1(
+    ctx: Ctx,
+    *,
+    experiment_id: str | None = None,
+    condition_id: str = "A",
+    seed: int = 11,
+    episode_index: int = 0,
+    cycle_index: int = 0,
+) -> dict[str, Any]:
+    """Build one JSON-safe example cycle record using the current protocol contract.
+
+    This is not yet the live experiment runner output. It is the stable builder/helper that
+    the later execution patch can call once episodes are being driven automatically.
+    """
+    cfg = experiment_normalize_protocol_v1(getattr(ctx, "experiment_cfg", None))
+    last = getattr(ctx, "experiment_last_summary", None)
+
+    if isinstance(last, dict) and isinstance(last.get("run_id"), str) and last.get("run_id"):
+        run_id = str(last["run_id"])
+    else:
+        run_id = experiment_make_run_id_v1(ctx, cfg)
+
+    if isinstance(experiment_id, str) and experiment_id:
+        run_id = experiment_id
+
+    stage = getattr(ctx, "lt_obs_last_stage", None)
+
+    zone = None
+    try:
+        zone = body_space_zone(ctx)
+    except Exception:
+        zone = None
+
+    retrieval_event = None
+    if isinstance(getattr(ctx, "wm_mapswitch_last_events", None), list) and ctx.wm_mapswitch_last_events:
+        retrieval_event = ctx.wm_mapswitch_last_events[-1]
+
+    return {
+        "schema": "experiment_cycle_record_v1",
+        "record_type": "cycle",
+        "experiment_id": run_id,
+        "benchmark": cfg.benchmark_id,
+        "condition": str(condition_id),
+        "seed": int(seed),
+        "episode_index": int(episode_index),
+        "cycle_index": int(cycle_index),
+        "env_step": int(getattr(ctx, "controller_steps", 0) or 0),
+        "stage": stage if isinstance(stage, str) and stage else None,
+        "zone": zone if isinstance(zone, str) and zone else None,
+        "obs_mask_stats": {
+            "prob": float(cfg.obs_mask_prob),
+            "seed": getattr(ctx, "obs_mask_seed", None),
+        },
+        "retrieval_event": retrieval_event,
+        "pred_err": dict(getattr(ctx, "pred_err_v0_last", {}) or {}),
+        "selected_policy": None,
+        "llm_advice_summary": None,
+        "executed_action": getattr(ctx, "env_last_action", None),
+        "milestones": [],
+        "done": False,
+        "termination_reason": None,
+    }
+
+
+def experiment_build_episode_record_stub_v1(
+    ctx: Ctx,
+    *,
+    experiment_id: str | None = None,
+    condition_id: str = "A",
+    seed: int = 11,
+    episode_index: int = 0,
+) -> dict[str, Any]:
+    """Build one JSON-safe example episode-summary record using the current protocol contract."""
+    cfg = experiment_normalize_protocol_v1(getattr(ctx, "experiment_cfg", None))
+    last = getattr(ctx, "experiment_last_summary", None)
+
+    if isinstance(last, dict) and isinstance(last.get("run_id"), str) and last.get("run_id"):
+        run_id = str(last["run_id"])
+    else:
+        run_id = experiment_make_run_id_v1(ctx, cfg)
+
+    if isinstance(experiment_id, str) and experiment_id:
+        run_id = experiment_id
+
+    return {
+        "schema": "experiment_episode_record_v1",
+        "record_type": "episode_summary",
+        "experiment_id": run_id,
+        "benchmark": cfg.benchmark_id,
+        "condition": str(condition_id),
+        "seed": int(seed),
+        "episode_index": int(episode_index),
+        "success": None,
+        "cycles_to_end": None,
+        "milestone_vector": {},
+        "context_switch_accuracy": None,
+        "false_retrieval_count": 0,
+        "cue_leakage_violations": 0,
+        "cumulative_prediction_error": None,
+        "repeated_action_loop_count": 0,
+        "llm_call_count": 0,
+        "latency_ms_total": None,
+    }
+
+
+def experiment_write_episode_record_v1(ctx: Ctx, record: dict[str, Any]) -> None:
+    """Append an episode-summary record to the prepared experiment episode JSONL path.
+
+    This is intentionally separate from the existing cycle writer. Later execution code can
+    call this directly after an episode ends.
+    """
+    if ctx is None or not isinstance(record, dict):
+        return
+
+    summary = getattr(ctx, "experiment_last_summary", None)
+    if not isinstance(summary, dict):
+        return
+
+    path = summary.get("episode_json_path")
+    append_experiment_jsonl_record_v1(path if isinstance(path, str) else None, record)
+
+
+def render_experiment_logging_status_v1(ctx: Ctx) -> str:
+    """Return a compact summary of experiment logging/output preparation state."""
+    cfg = experiment_normalize_protocol_v1(getattr(ctx, "experiment_cfg", None))
+    last = getattr(ctx, "experiment_last_summary", None)
+    last = last if isinstance(last, dict) else {}
+
+    lines = []
+    lines.append("Experiment logging / output status")
+    lines.append(f"  run_label           : {cfg.run_label or '(none)'}")
+    lines.append(f"  output_dir          : {cfg.output_dir}")
+    lines.append(f"  cycle_json_enabled  : {bool(getattr(ctx, 'cycle_json_enabled', False))}")
+    lines.append(f"  cycle_json_path     : {getattr(ctx, 'cycle_json_path', None)}")
+    lines.append(f"  prepared_run_id     : {last.get('run_id') if last else '(not prepared yet)'}")
+    lines.append(f"  prepared_at         : {last.get('prepared_at') if last else '(not prepared yet)'}")
+    lines.append(
+        f"  episode_json_path   : {last.get('episode_json_path') if last else '(not prepared yet)'}"
+    )
+    lines.append(f"  cycle_ring_records  : {len(getattr(ctx, 'cycle_json_records', []) or [])}")
+    lines.append(
+        "  note                : preparing logging arms the existing cycle JSON writer but does not run experiments"
+    )
+    return "\n".join(lines)
+
+
 def experiments_menu_49_interactive(ctx: Ctx) -> None:
-    """Small additive submenu for the AGI-2026 experiment protocol.
+    """Richer interactive config menu for the long-horizon experiment protocol.
 
-    Patch-1 goal:
-      - make the protocol visible and inspectable from the main runner,
-      - without changing any normal simulation path,
-      - and without running experiments yet.
+    Patch-2 goal:
+      - keep normal simulation untouched unless Menu 49 is used,
+      - let the user configure experiment protocol fields interactively,
+      - and wire those settings into concrete JSONL output-path preparation.
 
-    Later patches will add real execution and JSONL writing underneath the same
-    menu entry.
+    This still does NOT execute experiment batches yet. It prepares the protocol,
+    output paths, and record contracts so the later execution patch has a stable seam.
     """
     if ctx is None:
         print("[experiments] ctx missing; cannot open experiments menu.")
@@ -992,41 +1480,216 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
         ctx.experiment_cfg = ExperimentProtocolConfig()
 
     while True:
-        cfg = ctx.experiment_cfg
-        print("\nSelection: Experiments / Benchmarks (protocol scaffolding)\n")
-        print(f"  benchmark={cfg.benchmark_id}  conditions={cfg.condition_ids}  seeds={cfg.seed_list}  max_cycles={cfg.max_cycles}")
+        cfg = experiment_normalize_protocol_v1(getattr(ctx, "experiment_cfg", None))
+        ctx.experiment_cfg = cfg
+
+        print("\nSelection: Experiments / Benchmarks (config + JSONL plumbing)\n")
+        print(
+            f"  benchmark={cfg.benchmark_id}  conditions={cfg.condition_ids}  seeds={cfg.seed_list}  "
+            f"episodes_per_seed={cfg.episodes_per_seed}  max_cycles={cfg.max_cycles}"
+        )
+        print(
+            f"  obs_mask_prob={cfg.obs_mask_prob:.3f}  run_label={cfg.run_label or '(none)'}  "
+            f"output_dir={cfg.output_dir}"
+        )
         print("  1) Show frozen protocol summary")
         print("  2) Show A-E condition table")
         print("  3) Show benchmark suite")
-        print("  4) Show planned JSONL schema")
-        print("  5) Reset experiment protocol to defaults")
+        print("  4) Show JSONL schema summary")
+        print("  5) Show logging / output status")
+        print("  6) Set benchmark id")
+        print("  7) Set condition ids")
+        print("  8) Set random seed list")
+        print("  9) Set episodes per seed")
+        print(" 10) Set max cycles")
+        print(" 11) Set observation-mask probability")
+        print(" 12) Set run label")
+        print(" 13) Set output directory")
+        print(" 14) Show example cycle / episode records")
+        print(" 15) Prepare JSONL logging / output paths")
+        print(" 16) Reset experiment protocol to defaults")
         print("  0) Return to Main Menu")
 
         sub = input("Experiment menu select: ").strip().lower()
         if sub in ("0", "q", "quit", "return", "back"):
             return
+
         if sub == "1":
             print()
             print(render_experiment_protocol_summary_v1(ctx))
             continue
+
         if sub == "2":
             print()
             print(render_experiment_conditions_table_v1(ctx))
             continue
+
         if sub == "3":
             print()
             print(render_experiment_benchmarks_table_v1())
             continue
+
         if sub == "4":
             print()
             print(render_experiment_jsonl_schema_summary_v1())
             continue
+
         if sub == "5":
+            print()
+            print(render_experiment_logging_status_v1(ctx))
+            continue
+
+        if sub == "6":
+            raw = input(
+                "Benchmark id [goat04_context | newborn_long_horizon; blank=keep current]: "
+            ).strip()
+            if not raw:
+                continue
+
+            if raw in experiment_benchmark_catalog_v1():
+                ctx.experiment_cfg.benchmark_id = raw
+                print(f"[experiments] benchmark set to {raw}")
+            else:
+                print(f"[experiments] unknown benchmark id: {raw!r}")
+            continue
+
+        if sub == "7":
+            raw = input(
+                f"Condition ids (comma/space separated A-E) [current: {cfg.condition_ids}]: "
+            ).strip()
+            if not raw:
+                continue
+
+            parsed = experiment_parse_condition_ids_v1(raw)
+            if parsed:
+                ctx.experiment_cfg.condition_ids = parsed
+                print(f"[experiments] conditions set to {parsed}")
+            else:
+                print("[experiments] no valid condition ids found; expected values like: A B C")
+            continue
+
+        if sub == "8":
+            raw = input(
+                f"Seed list (comma/space separated integers) [current: {cfg.seed_list}]: "
+            ).strip()
+            if not raw:
+                continue
+
+            parsed = experiment_parse_seed_list_v1(raw)
+            if parsed:
+                ctx.experiment_cfg.seed_list = parsed
+                print(f"[experiments] seeds set to {parsed}")
+            else:
+                print("[experiments] no valid integer seeds found.")
+            continue
+
+        if sub == "9":
+            raw = input(f"Episodes per seed [current: {cfg.episodes_per_seed}]: ").strip()
+            if not raw:
+                continue
+
+            try:
+                ctx.experiment_cfg.episodes_per_seed = int(raw)
+                ctx.experiment_cfg = experiment_normalize_protocol_v1(ctx.experiment_cfg)
+                print(f"[experiments] episodes_per_seed set to {ctx.experiment_cfg.episodes_per_seed}")
+            except Exception:
+                print("[experiments] invalid integer for episodes_per_seed.")
+            continue
+
+        if sub == "10":
+            raw = input(f"Max cycles [current: {cfg.max_cycles}]: ").strip()
+            if not raw:
+                continue
+
+            try:
+                ctx.experiment_cfg.max_cycles = int(raw)
+                ctx.experiment_cfg = experiment_normalize_protocol_v1(ctx.experiment_cfg)
+                print(f"[experiments] max_cycles set to {ctx.experiment_cfg.max_cycles}")
+            except Exception:
+                print("[experiments] invalid integer for max_cycles.")
+            continue
+
+        if sub == "11":
+            raw = input(f"Observation-mask probability 0.0..1.0 [current: {cfg.obs_mask_prob:.3f}]: ").strip()
+            if not raw:
+                continue
+
+            try:
+                ctx.experiment_cfg.obs_mask_prob = float(raw)
+                ctx.experiment_cfg = experiment_normalize_protocol_v1(ctx.experiment_cfg)
+                print(f"[experiments] obs_mask_prob set to {ctx.experiment_cfg.obs_mask_prob:.3f}")
+            except Exception:
+                print("[experiments] invalid float for obs_mask_prob.")
+            continue
+
+        if sub == "12":
+            raw = input(
+                f"Run label (used in output filenames) [current: {cfg.run_label or '(none)'}]: "
+            ).strip()
+            ctx.experiment_cfg.run_label = raw
+            ctx.experiment_cfg = experiment_normalize_protocol_v1(ctx.experiment_cfg)
+            print(f"[experiments] run_label set to {ctx.experiment_cfg.run_label or '(none)'}")
+            continue
+
+        if sub == "13":
+            raw = input(f"Output directory [current: {cfg.output_dir}]: ").strip()
+            if not raw:
+                continue
+
+            ctx.experiment_cfg.output_dir = raw
+            ctx.experiment_cfg = experiment_normalize_protocol_v1(ctx.experiment_cfg)
+            print(f"[experiments] output_dir set to {ctx.experiment_cfg.output_dir}")
+            continue
+
+        if sub == "14":
+            run_id = experiment_make_run_id_v1(ctx, cfg)
+            cond0 = cfg.condition_ids[0] if cfg.condition_ids else "A"
+            seed0 = cfg.seed_list[0] if cfg.seed_list else 11
+
+            cycle_stub = experiment_build_cycle_record_stub_v1(
+                ctx,
+                experiment_id=run_id,
+                condition_id=cond0,
+                seed=seed0,
+                episode_index=0,
+                cycle_index=0,
+            )
+            episode_stub = experiment_build_episode_record_stub_v1(
+                ctx,
+                experiment_id=run_id,
+                condition_id=cond0,
+                seed=seed0,
+                episode_index=0,
+            )
+
+            print()
+            print("Example cycle record:")
+            print(json.dumps(cycle_stub, indent=2, ensure_ascii=False))
+            print()
+            print("Example episode summary record:")
+            print(json.dumps(episode_stub, indent=2, ensure_ascii=False))
+            continue
+
+        if sub == "15":
+            info = experiment_prepare_logging_v1(ctx, reset_buffers=True)
+            if not bool(info.get("ok")):
+                print(f"[experiments] logging preparation failed: {info.get('why')}")
+                continue
+
+            print()
+            print("[experiments] logging prepared.")
+            print(f"  run_id            : {info.get('run_id')}")
+            print(f"  cycle_json_path   : {info.get('cycle_json_path')}")
+            print(f"  episode_json_path : {info.get('episode_json_path')}")
+            print("  note              : normal CCA8 simulation is still unchanged until a later run hook uses this protocol.")
+            continue
+
+        if sub == "16":
             reset_experiment_protocol_v1(ctx)
             print("[experiments] protocol reset to exp_protocol_v1 defaults.")
             continue
 
-        print("[experiments] Unknown selection. Use 0..5.")
+        print("[experiments] Unknown selection. Use 0..16.")
 
 
 # Module layout / roadmap
