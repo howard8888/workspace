@@ -63,6 +63,8 @@ import random
 import time
 import subprocess
 import shutil
+import io
+from contextlib import redirect_stdout
 
 # PyPI and Third-Party Imports
 # --none at this time at program startup --
@@ -144,9 +146,13 @@ __all__ = [
     "experiment_write_episode_record_v1",
     "experiment_build_cycle_record_stub_v1",
     "experiment_build_episode_record_stub_v1",
+    "experiment_make_sandbox_runtime_v1",
+    "experiment_configure_benchmark_runtime_v1",
+    "experiment_apply_condition_runtime_v1",
+    "experiment_run_one_episode_v1",
+    "experiment_run_condition_batch_v1",
+    "render_experiment_batch_summary_lines_v1",
     "render_experiment_protocol_summary_v1",
-    "render_experiment_logging_status_v1",
-    "experiments_menu_49_interactive",
 ]
 
 NON_WIN_LINUX = False  #set if non-Win, non-macOS, non-Linux/like OS
@@ -855,6 +861,8 @@ def experiment_benchmark_catalog_v1() -> dict[str, ExperimentBenchmarkDef]:
                 "cumulative_prediction_error",
             ],
         ),
+
+
         ExperimentBenchmarkDef(
             benchmark_id="newborn_long_horizon",
             label="newborn-goat long-horizon milestone benchmark",
@@ -865,12 +873,14 @@ def experiment_benchmark_catalog_v1() -> dict[str, ExperimentBenchmarkDef]:
             primary_metrics=[
                 "episode_success",
                 "milestone_vector",
+                "milestone_score",
                 "cycles_to_end",
                 "repeated_action_loop_count",
                 "cumulative_prediction_error",
                 "recovery_latency",
             ],
         ),
+
     ]
     return {item.benchmark_id: item for item in items}
 
@@ -940,13 +950,16 @@ def render_experiment_jsonl_schema_summary_v1() -> str:
     cycle_fields = [
         "schema", "record_type", "experiment_id", "benchmark", "condition", "seed", "episode_index",
         "cycle_index", "env_step", "stage", "zone", "obs_mask_stats", "retrieval_event", "pred_err",
-        "selected_policy", "llm_advice_summary", "executed_action", "milestones", "done", "termination_reason",
+        "selected_policy", "llm_advice_summary", "executed_action", "milestones", "oracle",
+        "done", "termination_reason",
     ]
     episode_fields = [
         "schema", "record_type", "experiment_id", "benchmark", "condition", "seed", "episode_index",
-        "success", "cycles_to_end", "milestone_vector", "context_switch_accuracy", "false_retrieval_count",
-        "cue_leakage_violations", "cumulative_prediction_error", "repeated_action_loop_count", "llm_call_count",
-        "latency_ms_total",
+        "success", "cycles_to_end", "milestone_vector", "milestone_score", "context_switch_accuracy",
+        "false_retrieval_count", "cue_leakage_violations", "cumulative_prediction_error",
+        "repeated_action_loop_count", "llm_call_count", "latency_ms_total", "recovery_latency",
+        "oracle_action_accuracy", "oracle_retrieval_precision", "internal_retrieval_event_ratio",
+        "stabilization_latency", "retrieval_action_dissociation_count",
     ]
 
     lines = []
@@ -1374,6 +1387,7 @@ def experiment_build_cycle_record_stub_v1(
         "llm_advice_summary": None,
         "executed_action": getattr(ctx, "env_last_action", None),
         "milestones": [],
+        "oracle": None,
         "done": False,
         "termination_reason": None,
     }
@@ -1410,6 +1424,7 @@ def experiment_build_episode_record_stub_v1(
         "success": None,
         "cycles_to_end": None,
         "milestone_vector": {},
+        "milestone_score": None,
         "context_switch_accuracy": None,
         "false_retrieval_count": 0,
         "cue_leakage_violations": 0,
@@ -1417,6 +1432,12 @@ def experiment_build_episode_record_stub_v1(
         "repeated_action_loop_count": 0,
         "llm_call_count": 0,
         "latency_ms_total": None,
+        "recovery_latency": None,
+        "oracle_action_accuracy": None,
+        "oracle_retrieval_precision": None,
+        "internal_retrieval_event_ratio": None,
+        "stabilization_latency": None,
+        "retrieval_action_dissociation_count": 0,
     }
 
 
@@ -1435,6 +1456,832 @@ def experiment_write_episode_record_v1(ctx: Ctx, record: dict[str, Any]) -> None
 
     path = summary.get("episode_json_path")
     append_experiment_jsonl_record_v1(path if isinstance(path, str) else None, record)
+
+
+def experiment_make_sandbox_runtime_v1() -> dict[str, Any]:
+    """Build one isolated experiment runtime without touching the live interactive session.
+
+    Purpose / intent
+    ----------------
+    Menu 49 needs a way to start running real experiment episodes while keeping the
+    ordinary CCA8 session non-destructive. Rather than mutating the user's current
+    world, drives, and context, this helper builds a fresh sandbox runtime that mirrors
+    the interactive runner's default wiring closely enough for the experiment harness.
+
+    Design notes
+    ------------
+    - The sandbox keeps per-cycle JSON capture ON, but defaults to in-memory buffering
+      until the experiment helper transforms those raw cycle traces into experiment
+      schema records.
+    - Verbose ASCII/SurfaceGrid output is turned OFF here so experiment runs can stay
+      compact unless a caller explicitly asks for full console output.
+    """
+    world = cca8_world_graph.WorldGraph()
+    drives = Drives(hunger=0.5, fatigue=0.3, warmth=0.6)
+
+    ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
+    ctx.navpatch_enabled = True
+    ctx.cycle_json_enabled = True
+    ctx.cycle_json_path = None
+    ctx.cycle_json_max_records = 2000
+
+    ctx.efe_enabled = True
+    ctx.efe_verbose = False
+    ctx.efe_w_risk = 1.0
+    ctx.efe_w_ambiguity = 1.0
+    ctx.efe_w_preference = 1.0
+
+    ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump)
+    ctx.tvec_last_boundary = ctx.temporal.vector()
+    try:
+        ctx.boundary_vhash64 = ctx.tvec64()
+    except Exception:
+        ctx.boundary_vhash64 = None
+
+    ctx.wm_surfacegrid_verbose = False
+    ctx.wm_surfacegrid_ascii_each_tick = False
+    ctx.obs_mask_verbose = False
+
+    env = HybridEnvironment()
+    ctx.body_world, ctx.body_ids = init_body_world()
+    ctx.working_world = init_working_world()
+
+    policy_rt = PolicyRuntime(CATALOG_GATES)
+    policy_rt.refresh_loaded(ctx)
+
+    return {
+        "world": world,
+        "drives": drives,
+        "ctx": ctx,
+        "env": env,
+        "policy_rt": policy_rt,
+    }
+
+
+def experiment_configure_benchmark_runtime_v1(world, drives, ctx: Ctx, env: HybridEnvironment, benchmark_id: str) -> dict[str, Any]:
+    """Configure one sandbox runtime for the chosen experiment benchmark.
+
+    This helper is intentionally benchmark-scoped. Condition A/B/C runtime knobs are
+    applied later by ``experiment_apply_condition_runtime_v1(...)`` so the benchmark
+    wiring and the scientific comparison wiring remain separate.
+    """
+    catalog = experiment_benchmark_catalog_v1()
+    if benchmark_id not in catalog:
+        return {"ok": False, "why": f"unknown_benchmark:{benchmark_id}"}
+
+    if ctx is None or env is None:
+        return {"ok": False, "why": "missing_runtime"}
+
+    try:
+        apply_hardwired_profile_phase7(ctx, world)
+    except Exception:
+        pass
+
+    if benchmark_id == "goat04_context":
+        try:
+            configure_goat_foraging_04_eval_v1(world, drives, ctx, env)
+        except Exception as e:
+            return {"ok": False, "why": f"benchmark_setup_failed:{e}"}
+    elif benchmark_id == "newborn_long_horizon":
+        try:
+            env.config = EnvConfig(scenario_name="newborn_goat_first_hour", dt=getattr(env.config, "dt", 1.0))
+        except Exception:
+            try:
+                env.config.scenario_name = "newborn_goat_first_hour"
+            except Exception:
+                return {"ok": False, "why": "benchmark_setup_failed:newborn_env_config"}
+
+        try:
+            ctx.longterm_obs_keyframe_on_stage_change = True
+            ctx.longterm_obs_keyframe_on_zone_change = True
+            ctx.longterm_obs_keyframe_on_milestone = True
+        except Exception:
+            pass
+
+        try:
+            ctx.wm_mapsurface_autoretrieve_enabled = True
+            ctx.wm_mapsurface_autoretrieve_mode = "merge"
+            ctx.wm_mapsurface_autoretrieve_top_k = 5
+            ctx.wm_mapsurface_autoretrieve_verbose = False
+        except Exception:
+            pass
+
+        try:
+            ctx.env_episode_started = False
+            ctx.env_last_action = None
+        except Exception:
+            pass
+
+        try:
+            drives.hunger = 0.50
+            drives.fatigue = 0.30
+            drives.warmth = 0.60
+        except Exception:
+            pass
+
+        try:
+            reset_working_world(ctx)
+        except Exception:
+            pass
+
+        try:
+            ctx.wm_mapswitch_last_events = []
+            ctx.wm_mapswitch_history = []
+        except Exception:
+            pass
+    else:
+        return {"ok": False, "why": f"unsupported_benchmark:{benchmark_id}"}
+
+    return {
+        "ok": True,
+        "benchmark_id": benchmark_id,
+        "benchmark_label": catalog[benchmark_id].label,
+    }
+
+
+def experiment_apply_condition_runtime_v1(
+    world,
+    drives,
+    ctx: Ctx,
+    env: HybridEnvironment,
+    *,
+    condition_id: str,
+    cfg: ExperimentProtocolConfig | None = None,
+) -> dict[str, Any]:
+    """Apply one frozen A-E condition onto a sandbox runtime.
+
+    Scope of this patch
+    -------------------
+    This first execution patch wires the real CCA8 conditions (A/B/C). The LLM-only
+    and hybrid conditions (D/E) still need a later action-selection hook so they are
+    reported clearly as not-yet-supported rather than silently degraded.
+    """
+    _ = world
+    _ = drives
+    _ = env
+
+    catalog = experiment_condition_catalog_v1()
+    cid = str(condition_id or "").strip().upper()
+    cond = catalog.get(cid)
+    if cond is None:
+        return {"ok": False, "why": f"unknown_condition:{condition_id}"}
+
+    if cond.agent_mode != "cca8":
+        return {
+            "ok": False,
+            "why": "condition_not_yet_supported",
+            "condition_id": cid,
+            "agent_mode": cond.agent_mode,
+            "llm_role": cond.llm_role,
+        }
+
+    cfg_norm = experiment_normalize_protocol_v1(cfg)
+
+    try:
+        ctx.experiment_cfg = cfg_norm
+    except Exception:
+        pass
+
+    try:
+        ctx.wm_mapsurface_autoretrieve_enabled = bool(cond.retrieval_enabled)
+        ctx.wm_mapsurface_autoretrieve_mode = cond.retrieval_mode if cond.retrieval_mode in ("merge", "replace") else "merge"
+        ctx.wm_mapsurface_autoretrieve_top_k = 5
+        ctx.wm_mapsurface_autoretrieve_verbose = False
+    except Exception:
+        return {"ok": False, "why": "condition_apply_failed:autoretrieve"}
+
+    try:
+        ctx.obs_mask_prob = float(cfg_norm.obs_mask_prob)
+        ctx.obs_mask_last_cfg_sig = None
+        ctx.obs_mask_verbose = False
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "condition_id": cid,
+        "label": cond.label,
+        "agent_mode": cond.agent_mode,
+        "decision_authority": cond.decision_authority,
+        "retrieval_enabled": bool(cond.retrieval_enabled),
+        "retrieval_mode": cond.retrieval_mode,
+        "llm_role": cond.llm_role,
+    }
+
+
+def _experiment_extract_generic_milestones_v1(raw_record: dict[str, Any]) -> list[str]:
+    """Extract a normalized milestone list from one generic cycle JSON record."""
+    obs = raw_record.get("obs") if isinstance(raw_record, dict) else None
+    env_meta = obs.get("env_meta") if isinstance(obs, dict) else None
+    env_meta = env_meta if isinstance(env_meta, dict) else {}
+
+    raw = env_meta.get("milestones")
+    if raw is None:
+        raw = env_meta.get("milestone")
+
+    if isinstance(raw, str) and raw.strip():
+        return [raw.strip()]
+
+    out: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip())
+    return out
+
+
+def _experiment_summarize_newborn_b2_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize the paper-frozen B2 newborn benchmark from raw cycle records.
+
+    B2 is the behavioral long-horizon benchmark from the AGI-2026 paper. The paper freezes a
+    six-step ordered milestone ladder:
+        1) stood_up
+        2) reached_mom
+        3) found_nipple
+        4) latched_nipple
+        5) milk_drinking
+        6) rested
+
+    v1 scoring rule implemented here
+    -------------------------------
+    - Milestones must be achieved in order.
+    - A milestone may be recognized either from the raw environment-side state fields
+      (posture / mom_distance / nipple_state / zone) or from the current observation predicates.
+    - The final "rested" milestone is counted only when the kid is resting in the safe zone.
+    - ``recovery_latency`` is defined simply as the first env step at which ``stood_up`` is
+      achieved. This is a practical first measure of time-to-functional-recovery from birth.
+
+    Returns a small JSON-safe dict containing the ordered milestone vector plus milestone_score
+    and recovery_latency.
+    """
+    ordered = [
+        "stood_up",
+        "reached_mom",
+        "found_nipple",
+        "latched_nipple",
+        "milk_drinking",
+        "rested",
+    ]
+    milestone_vector = {name: False for name in ordered}
+    milestone_steps: dict[str, int | None] = {name: None for name in ordered}
+    recovery_latency: float | None = None
+
+    next_idx = 0
+    for cycle_index, raw in enumerate(raw_records):
+        obs = raw.get("obs") if isinstance(raw, dict) else None
+        obs = obs if isinstance(obs, dict) else {}
+        preds_raw = obs.get("predicates") if isinstance(obs, dict) else None
+        preds = {str(x) for x in preds_raw} if isinstance(preds_raw, list) else set()
+
+        posture = raw.get("posture") if isinstance(raw, dict) else None
+        mom_distance = raw.get("mom_distance") if isinstance(raw, dict) else None
+        nipple_state = raw.get("nipple_state") if isinstance(raw, dict) else None
+        zone = raw.get("zone") if isinstance(raw, dict) else None
+
+        events: set[str] = set()
+
+        if posture in ("standing", "latched", "resting") or "posture:standing" in preds:
+            events.add("stood_up")
+
+        if mom_distance in ("near", "touching") or "proximity:mom:close" in preds:
+            events.add("reached_mom")
+
+        if nipple_state in ("visible", "reachable", "latched") or "nipple:found" in preds:
+            events.add("found_nipple")
+
+        if nipple_state == "latched" or "nipple:latched" in preds:
+            events.add("latched_nipple")
+
+        if "milk:drinking" in preds:
+            events.add("milk_drinking")
+
+        if (posture == "resting" or "resting" in preds) and zone == "safe":
+            events.add("rested")
+
+        while next_idx < len(ordered) and ordered[next_idx] in events:
+            name = ordered[next_idx]
+            env_step = raw.get("env_step") if isinstance(raw, dict) else None
+            try:
+                step_value = int(env_step) if env_step is not None else int(cycle_index)
+            except Exception:
+                step_value = int(cycle_index)
+
+            milestone_vector[name] = True
+            milestone_steps[name] = step_value
+
+            if name == "stood_up" and recovery_latency is None:
+                recovery_latency = float(step_value)
+
+            next_idx += 1
+
+    achieved_count = sum(1 for name in ordered if milestone_vector[name])
+    milestone_score = achieved_count / float(len(ordered))
+
+    return {
+        "milestone_vector": milestone_vector,
+        "milestone_steps": milestone_steps,
+        "milestone_score": milestone_score,
+        "recovery_latency": recovery_latency,
+        "success": bool(achieved_count == len(ordered)),
+    }
+
+
+def _goat04_oracle_from_raw_record_v1(raw_record: dict[str, Any]) -> dict[str, Any]:
+    """Return the hidden goat04 oracle payload from one raw cycle record."""
+    oracle = raw_record.get("oracle") if isinstance(raw_record, dict) else None
+    oracle = oracle if isinstance(oracle, dict) else {}
+    goat04 = oracle.get("goat04") if isinstance(oracle, dict) else None
+    return goat04 if isinstance(goat04, dict) else {}
+
+
+def _goat04_seed_context_by_engram_v1(ctx: Ctx) -> dict[str, str]:
+    """Build reverse map engram_id -> goat04 context label from seeded benchmark snapshots."""
+    raw = getattr(ctx, "wm_goat04_seed_engram_by_context", None)
+    out: dict[str, str] = {}
+    if isinstance(raw, dict):
+        for label, engram_id in raw.items():
+            if isinstance(label, str) and label and isinstance(engram_id, str) and engram_id:
+                out[engram_id] = label
+    return out
+
+
+def _goat04_retrieved_context_from_event_v1(ctx: Ctx, event: dict[str, Any]) -> str | None:
+    """Best-effort recovered context label for one goat04 retrieval/apply event."""
+    chosen_seed = event.get("chosen_seed") if isinstance(event, dict) else None
+    chosen_seed = chosen_seed if isinstance(chosen_seed, dict) else {}
+    engram_id = chosen_seed.get("engram_id")
+    if not isinstance(engram_id, str) or not engram_id:
+        return None
+    return _goat04_seed_context_by_engram_v1(ctx).get(engram_id)
+
+
+def _experiment_transform_generic_cycle_records_v1(
+    ctx: Ctx,
+    *,
+    experiment_id: str,
+    condition_id: str,
+    seed: int,
+    episode_index: int,
+    raw_records: list[dict[str, Any]],
+    termination_reason: str,
+) -> list[dict[str, Any]]:
+    """Convert generic per-cycle JSON traces into experiment cycle-record schema rows.
+
+    This version is goat04-oracle aware:
+      - retrieval_event remains the internal/self-report trace
+      - oracle.goat04 holds hidden benchmark truth for later scientific scoring
+    """
+    cfg = experiment_normalize_protocol_v1(getattr(ctx, "experiment_cfg", None))
+    out: list[dict[str, Any]] = []
+
+    for idx, raw in enumerate(raw_records):
+        obs = raw.get("obs") if isinstance(raw, dict) else None
+        env_meta = obs.get("env_meta") if isinstance(obs, dict) else None
+        env_meta = env_meta if isinstance(env_meta, dict) else {}
+
+        wm = raw.get("wm") if isinstance(raw, dict) else None
+        wm = wm if isinstance(wm, dict) else {}
+        mapswitch = wm.get("mapswitch") if isinstance(wm, dict) else None
+        mapswitch = mapswitch if isinstance(mapswitch, dict) else {}
+        events = mapswitch.get("events") if isinstance(mapswitch, dict) else None
+        events = events if isinstance(events, list) else []
+        retrieval_event = events[-1] if events and isinstance(events[-1], dict) else None
+
+        pred_err = raw.get("pred_err_v0") if isinstance(raw, dict) else None
+        pred_err = dict(pred_err) if isinstance(pred_err, dict) else {}
+
+        selected_policy = raw.get("policy_fired") if isinstance(raw.get("policy_fired"), str) else None
+        executed_action = raw.get("action_applied") if isinstance(raw.get("action_applied"), str) else None
+
+        goat04_oracle = _goat04_oracle_from_raw_record_v1(raw)
+        oracle_block = None
+        if goat04_oracle:
+            true_context = goat04_oracle.get("true_context")
+            true_context = true_context if isinstance(true_context, str) and true_context else None
+
+            expected_policy = goat04_oracle.get("expected_policy")
+            expected_policy = expected_policy if isinstance(expected_policy, str) and expected_policy else None
+
+            retrieved_context = None
+            retrieval_correct = None
+            if isinstance(retrieval_event, dict):
+                retrieved_context = _goat04_retrieved_context_from_event_v1(ctx, retrieval_event)
+                if true_context is not None and retrieved_context is not None:
+                    retrieval_correct = retrieved_context == true_context
+
+            action_correct_now = None
+            if expected_policy:
+                action_correct_now = bool(
+                    selected_policy == expected_policy or executed_action == expected_policy  #pylint: disable=consider-using-in
+                )
+
+            oracle_block = {
+                "goat04": {
+                    "true_context": true_context,
+                    "expected_policy": expected_policy,
+                    "switch_event": bool(goat04_oracle.get("switch_event")),
+                    "response_window_open": bool(goat04_oracle.get("response_window_open")),
+                    "response_deadline_step": goat04_oracle.get("response_deadline_step"),
+                    "retrieved_context": retrieved_context,
+                    "retrieval_correct": retrieval_correct,
+                    "action_correct_now": action_correct_now,
+                }
+            }
+
+        rec = {
+            "schema": "experiment_cycle_record_v1",
+            "record_type": "cycle",
+            "experiment_id": experiment_id,
+            "benchmark": cfg.benchmark_id,
+            "condition": str(condition_id),
+            "seed": int(seed),
+            "episode_index": int(episode_index),
+            "cycle_index": int(idx),
+            "env_step": int(raw.get("env_step", idx) or idx),
+            "stage": raw.get("scenario_stage") if isinstance(raw.get("scenario_stage"), str) else None,
+            "zone": raw.get("zone") if isinstance(raw.get("zone"), str) else None,
+            "obs_mask_stats": {
+                "prob": float(cfg.obs_mask_prob),
+                "seed": getattr(ctx, "obs_mask_seed", None),
+            },
+            "retrieval_event": retrieval_event,
+            "pred_err": pred_err,
+            "selected_policy": selected_policy,
+            "llm_advice_summary": None,
+            "executed_action": executed_action,
+            "milestones": _experiment_extract_generic_milestones_v1(raw),
+            "oracle": oracle_block,
+            "done": bool(idx == (len(raw_records) - 1)),
+            "termination_reason": termination_reason if idx == (len(raw_records) - 1) else None,
+        }
+        out.append(rec)
+
+    return out
+
+
+def _experiment_summarize_generic_episode_v1(
+    ctx: Ctx,
+    *,
+    experiment_id: str,
+    condition_id: str,
+    seed: int,
+    episode_index: int,
+    raw_records: list[dict[str, Any]],
+    latency_ms_total: float,
+) -> dict[str, Any]:
+    """Summarize one sandbox episode into the experiment episode-record schema.
+
+    This version keeps the generic metrics, but for goat04 it now scores contextual
+    switching from a hidden environment-side oracle rather than from retrieval
+    self-report alone.
+    """
+    record = experiment_build_episode_record_stub_v1(
+        ctx,
+        experiment_id=experiment_id,
+        condition_id=condition_id,
+        seed=seed,
+        episode_index=episode_index,
+    )
+
+    milestone_vector: dict[str, Any] = {}
+    repeated_action_loop_count = 0
+    same_action_streak = 0
+    prev_action = None
+    pred_err_total = 0.0
+    pred_err_seen = False
+
+    cue_leakage_violations = 0
+
+    # Goat04 oracle-scored metrics
+    goat04_switch_events: list[dict[str, Any]] = []
+    retrieval_attempts = 0
+    correct_retrievals = 0
+    internal_retrieval_success_count = 0
+    false_retrieval_count = 0
+    correct_action_count = 0
+    stabilization_latencies: list[float] = []
+    retrieval_action_dissociation_count = 0
+
+    for raw in raw_records:
+
+        fired = raw.get("policy_fired") if isinstance(raw.get("policy_fired"), str) else None
+        if fired and fired == prev_action:
+            same_action_streak += 1
+            if same_action_streak >= 2:
+                repeated_action_loop_count += 1
+        else:
+            same_action_streak = 0
+            prev_action = fired
+
+        pred_err = raw.get("pred_err_v0")
+        if isinstance(pred_err, dict):
+            pred_err_seen = True
+            for val in pred_err.values():
+                if isinstance(val, (int, float)):
+                    pred_err_total += abs(float(val))
+
+        # Track cue-leakage guardrail from any goat04 retrieval event.
+        wm = raw.get("wm") if isinstance(raw, dict) else None
+        wm = wm if isinstance(wm, dict) else {}
+        mapswitch = wm.get("mapswitch") if isinstance(wm, dict) else None
+        mapswitch = mapswitch if isinstance(mapswitch, dict) else {}
+        events = mapswitch.get("events") if isinstance(mapswitch, dict) else None
+        events = events if isinstance(events, list) else []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            reason = event.get("reason")
+            if isinstance(reason, str) and reason.startswith("goat04_context:"):
+                load = event.get("load") if isinstance(event.get("load"), dict) else {}
+                if load.get("merge_guardrail_ok") is False:
+                    cue_leakage_violations += 1
+
+        # Harvest hidden goat04 switch opportunities.
+        goat04_oracle = _goat04_oracle_from_raw_record_v1(raw)
+        if goat04_oracle and bool(goat04_oracle.get("switch_event")):
+            true_context = goat04_oracle.get("true_context")
+            expected_policy = goat04_oracle.get("expected_policy")
+            switch_step = goat04_oracle.get("switch_step")
+            deadline_step = goat04_oracle.get("response_deadline_step")
+
+            if isinstance(true_context, str) and true_context and isinstance(expected_policy, str) and expected_policy:
+                try:
+                    switch_step_i = int(switch_step)
+                except Exception:
+                    switch_step_i = -1
+                try:
+                    deadline_step_i = int(deadline_step)
+                except Exception:
+                    deadline_step_i = switch_step_i
+                deadline_step_i = max(deadline_step_i, switch_step_i)
+
+                goat04_switch_events.append(
+                    {
+                        "true_context": true_context,
+                        "expected_policy": expected_policy,
+                        "switch_step": switch_step_i,
+                        "response_deadline_step": deadline_step_i,
+                    }
+                )
+
+    benchmark_id = str(record.get("benchmark") or "")
+    success = False
+    context_switch_accuracy = None
+    oracle_retrieval_precision = None
+    internal_retrieval_event_ratio = None
+    stabilization_latency = None
+
+    if benchmark_id == "goat04_context":
+        for switch in goat04_switch_events:
+            true_context = switch["true_context"]
+            expected_policy = switch["expected_policy"]
+            switch_step = int(switch["switch_step"])
+            deadline_step = int(switch["response_deadline_step"])
+
+            first_retrieval_event = None
+            first_retrieved_context = None
+            first_internal_ok = False
+            first_correct_action_step = None
+
+            for raw in raw_records:
+                env_step = raw.get("env_step")
+                if not isinstance(env_step, int):
+                    continue
+                if env_step < switch_step or env_step > deadline_step:
+                    continue
+
+                wm = raw.get("wm") if isinstance(raw, dict) else None
+                wm = wm if isinstance(wm, dict) else {}
+                mapswitch = wm.get("mapswitch") if isinstance(wm, dict) else None
+                mapswitch = mapswitch if isinstance(mapswitch, dict) else {}
+                events = mapswitch.get("events") if isinstance(mapswitch, dict) else None
+                events = events if isinstance(events, list) else []
+
+                if first_retrieval_event is None:
+                    for event in events:
+                        if not isinstance(event, dict):
+                            continue
+                        reason = event.get("reason")
+                        if isinstance(reason, str) and reason.startswith("goat04_context:"):
+                            first_retrieval_event = event
+                            first_internal_ok = bool(event.get("ok"))
+                            first_retrieved_context = _goat04_retrieved_context_from_event_v1(ctx, event)
+                            break
+
+                if first_correct_action_step is None:
+                    fired = raw.get("policy_fired") if isinstance(raw.get("policy_fired"), str) else None
+                    applied = raw.get("action_applied") if isinstance(raw.get("action_applied"), str) else None
+                    if fired == expected_policy or applied == expected_policy:  #pylint: disable=consider-using-in
+                        first_correct_action_step = env_step
+
+            if first_retrieval_event is not None:
+                retrieval_attempts += 1
+                if first_internal_ok:
+                    internal_retrieval_success_count += 1
+                if first_retrieved_context == true_context:
+                    correct_retrievals += 1
+                else:
+                    false_retrieval_count += 1
+
+            if first_correct_action_step is not None:
+                correct_action_count += 1
+                stabilization_latencies.append(float(first_correct_action_step - switch_step))
+
+            if first_retrieved_context == true_context and first_correct_action_step is None:
+                retrieval_action_dissociation_count += 1
+
+        if goat04_switch_events:
+            context_switch_accuracy = correct_action_count / float(len(goat04_switch_events))
+            internal_retrieval_event_ratio = internal_retrieval_success_count / float(len(goat04_switch_events))
+
+        if retrieval_attempts > 0:
+            oracle_retrieval_precision = correct_retrievals / float(retrieval_attempts)
+
+        if stabilization_latencies:
+            stabilization_latency = sum(stabilization_latencies) / float(len(stabilization_latencies))
+
+        success = bool(
+            context_switch_accuracy is not None
+            and context_switch_accuracy >= 0.75
+            and cue_leakage_violations == 0
+        )
+    else:
+        newborn = _experiment_summarize_newborn_b2_v1(raw_records)
+        milestone_vector = dict(newborn.get("milestone_vector", {}) or {})
+        success = bool(newborn.get("success"))
+        record["milestone_score"] = float(newborn.get("milestone_score", 0.0) or 0.0)
+        recovery_latency = newborn.get("recovery_latency")
+        record["recovery_latency"] = float(recovery_latency) if isinstance(recovery_latency, (int, float)) else None
+
+    record["success"] = success
+    record["cycles_to_end"] = int(len(raw_records))
+    record["milestone_vector"] = milestone_vector
+    record["context_switch_accuracy"] = context_switch_accuracy
+    record["false_retrieval_count"] = int(false_retrieval_count)
+    record["cue_leakage_violations"] = int(cue_leakage_violations)
+    record["cumulative_prediction_error"] = float(pred_err_total) if pred_err_seen else None
+    record["repeated_action_loop_count"] = int(repeated_action_loop_count)
+    record["llm_call_count"] = 0
+    record["latency_ms_total"] = round(float(latency_ms_total), 3)
+
+    record["oracle_action_accuracy"] = context_switch_accuracy
+    record["oracle_retrieval_precision"] = oracle_retrieval_precision
+    record["internal_retrieval_event_ratio"] = internal_retrieval_event_ratio
+    record["stabilization_latency"] = round(float(stabilization_latency), 3) if stabilization_latency is not None else None
+    record["retrieval_action_dissociation_count"] = int(retrieval_action_dissociation_count)
+    return record
+
+
+def experiment_run_one_episode_v1(
+    protocol_ctx: Ctx,
+    *,
+    condition_id: str | None = None,
+    seed: int | None = None,
+    episode_index: int = 0,
+    suppress_output: bool = True,
+) -> dict[str, Any]:
+    """Run one experiment episode inside an isolated sandbox runtime.
+
+    Why this helper exists
+    ----------------------
+    This is the first execution seam for Menu 49. It keeps the user's live CCA8 session
+    untouched by building a fresh runtime, preparing experiment logging, running one
+    benchmark episode, transforming the generic per-cycle trace into the experiment
+    cycle schema, and writing one episode-summary JSONL record.
+
+    Current scope
+    -------------
+    - Real CCA8 execution is wired for conditions A/B/C.
+    - Conditions D/E are reported cleanly as not-yet-supported until the later patch
+      adds the LLM controller/adviser action hook.
+    """
+    if protocol_ctx is None:
+        return {"ok": False, "why": "missing_protocol_ctx"}
+
+    cfg = experiment_normalize_protocol_v1(getattr(protocol_ctx, "experiment_cfg", None))
+    chosen_condition = str(condition_id or (cfg.condition_ids[0] if cfg.condition_ids else "A")).strip().upper()
+    chosen_seed = int(seed if isinstance(seed, int) else (cfg.seed_list[0] if cfg.seed_list else 11))
+
+    sandbox = experiment_make_sandbox_runtime_v1()
+    world = sandbox["world"]
+    drives = sandbox["drives"]
+    run_ctx = sandbox["ctx"]
+    env = sandbox["env"]
+    policy_rt = sandbox["policy_rt"]
+
+    run_ctx.experiment_cfg = cfg
+    prep = experiment_prepare_logging_v1(run_ctx, reset_buffers=True)
+    if not bool(prep.get("ok")):
+        return {"ok": False, "why": prep.get("why", "logging_prepare_failed")}
+
+    # Keep generic cycle logging in-memory only; experiment-schema JSONL writing happens after transform.
+    run_ctx.cycle_json_enabled = True
+    run_ctx.cycle_json_path = None
+    run_ctx.cycle_json_max_records = max(2000, int(cfg.max_cycles) + 10)
+
+    bench_info = experiment_configure_benchmark_runtime_v1(world, drives, run_ctx, env, cfg.benchmark_id)
+    if not bool(bench_info.get("ok")):
+        return {"ok": False, "why": bench_info.get("why", "benchmark_setup_failed")}
+
+    cond_info = experiment_apply_condition_runtime_v1(
+        world,
+        drives,
+        run_ctx,
+        env,
+        condition_id=chosen_condition,
+        cfg=cfg,
+    )
+    if not bool(cond_info.get("ok")):
+        return {
+            "ok": False,
+            "why": cond_info.get("why", "condition_apply_failed"),
+            "condition_id": chosen_condition,
+            "agent_mode": cond_info.get("agent_mode"),
+            "llm_role": cond_info.get("llm_role"),
+        }
+
+    try:
+        run_ctx.obs_mask_prob = float(cfg.obs_mask_prob)
+        run_ctx.obs_mask_seed = int(chosen_seed)
+        run_ctx.obs_mask_last_cfg_sig = None
+        run_ctx.obs_mask_verbose = False
+    except Exception:
+        pass
+
+    random.seed(int(chosen_seed))
+
+    started = time.perf_counter()
+    captured_stdout = ""
+    try:
+        if suppress_output:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                run_env_closed_loop_steps(env, world, drives, run_ctx, policy_rt, int(cfg.max_cycles))
+            captured_stdout = buf.getvalue()
+        else:
+            run_env_closed_loop_steps(env, world, drives, run_ctx, policy_rt, int(cfg.max_cycles))
+    except Exception as e:
+        return {
+            "ok": False,
+            "why": f"episode_run_failed:{e}",
+            "run_id": prep.get("run_id"),
+            "condition_id": chosen_condition,
+            "seed": int(chosen_seed),
+        }
+    latency_ms_total = (time.perf_counter() - started) * 1000.0
+
+    raw_records = list(getattr(run_ctx, "cycle_json_records", []) or [])
+    termination_reason = "max_cycles_exhausted"
+
+    cycle_records = _experiment_transform_generic_cycle_records_v1(
+        run_ctx,
+        experiment_id=str(prep.get("run_id") or ""),
+        condition_id=chosen_condition,
+        seed=int(chosen_seed),
+        episode_index=int(episode_index),
+        raw_records=raw_records,
+        termination_reason=termination_reason,
+    )
+    for rec in cycle_records:
+        append_experiment_jsonl_record_v1(prep.get("cycle_json_path"), rec)
+
+    episode_record = _experiment_summarize_generic_episode_v1(
+        run_ctx,
+        experiment_id=str(prep.get("run_id") or ""),
+        condition_id=chosen_condition,
+        seed=int(chosen_seed),
+        episode_index=int(episode_index),
+        raw_records=raw_records,
+        latency_ms_total=latency_ms_total,
+    )
+    experiment_write_episode_record_v1(run_ctx, episode_record)
+
+    try:
+        protocol_ctx.experiment_last_summary = dict(run_ctx.experiment_last_summary)
+        protocol_ctx.experiment_last_summary["last_run_condition_id"] = chosen_condition
+        protocol_ctx.experiment_last_summary["last_run_seed"] = int(chosen_seed)
+        protocol_ctx.experiment_last_summary["last_run_episode_index"] = int(episode_index)
+        protocol_ctx.experiment_last_summary["last_run_cycle_count"] = int(len(cycle_records))
+        protocol_ctx.experiment_last_summary["last_run_success"] = episode_record.get("success")
+        protocol_ctx.experiment_last_summary["last_run_latency_ms_total"] = episode_record.get("latency_ms_total")
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "run_id": prep.get("run_id"),
+        "benchmark_id": cfg.benchmark_id,
+        "condition_id": chosen_condition,
+        "condition_label": cond_info.get("label"),
+        "seed": int(chosen_seed),
+        "episode_index": int(episode_index),
+        "cycle_record_count": int(len(cycle_records)),
+        "episode_record": episode_record,
+        "cycle_json_path": prep.get("cycle_json_path"),
+        "episode_json_path": prep.get("episode_json_path"),
+        "suppressed_output": bool(suppress_output),
+        "captured_output_lines": int(len(captured_stdout.splitlines())) if captured_stdout else 0,
+    }
 
 
 def render_experiment_logging_status_v1(ctx: Ctx) -> str:
@@ -1459,6 +2306,405 @@ def render_experiment_logging_status_v1(ctx: Ctx) -> str:
         "  note                : preparing logging arms the existing cycle JSON writer but does not run experiments"
     )
     return "\n".join(lines)
+
+
+def _experiment_metric_text_v1(value: Any) -> str:
+    """Return a compact human-readable text form for experiment menu metrics.
+
+    The experiment menu prints a mix of bools, ints, floats, dicts, and sometimes
+    missing values. This helper keeps the display stable and easy to read:
+      - None -> "(none)"
+      - float -> 3 decimal places
+      - dict/list -> compact JSON
+      - everything else -> str(...)
+    """
+    if value is None:
+        return "(none)"
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return f"{value:.3f}"
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, ensure_ascii=False, sort_keys=isinstance(value, dict))
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def render_experiment_episode_summary_lines_v1(result: dict[str, Any]) -> list[str]:
+    """Return benchmark-aware summary lines for Menu 49 single-episode runs.
+
+    Goal
+    ----
+    Submenu 17 used to print only a compact generic summary. After the goat04
+    oracle patch, the most important B1 values are now oracle-based metrics such
+    as oracle_action_accuracy and oracle_retrieval_precision. This helper keeps
+    the display logic in one place and prints different details for goat04 vs
+    newborn_long_horizon.
+    """
+    if not isinstance(result, dict):
+        return ["[experiments] run result       : (invalid)"]
+
+    episode_record = result.get("episode_record")
+    episode_record = episode_record if isinstance(episode_record, dict) else {}
+
+    benchmark = result.get("benchmark_id")
+    if not isinstance(benchmark, str) or not benchmark:
+        raw_bench = episode_record.get("benchmark")
+        benchmark = raw_bench if isinstance(raw_bench, str) and raw_bench else "(unknown)"
+
+    condition_id = result.get("condition_id")
+    condition_label = result.get("condition_label")
+
+    lines = [
+        f"[experiments] run_id            : {_experiment_metric_text_v1(result.get('run_id'))}",
+        f"[experiments] benchmark         : {_experiment_metric_text_v1(benchmark)}",
+        f"[experiments] condition         : {_experiment_metric_text_v1(condition_id)}"
+        f"  ({_experiment_metric_text_v1(condition_label)})",
+        f"[experiments] seed              : {_experiment_metric_text_v1(result.get('seed'))}",
+        f"[experiments] cycles_to_end     : {_experiment_metric_text_v1(episode_record.get('cycles_to_end'))}",
+        f"[experiments] success           : {_experiment_metric_text_v1(episode_record.get('success'))}",
+    ]
+
+    if benchmark == "goat04_context":
+        lines.extend(
+            [
+                f"[experiments] context_switch_acc: {_experiment_metric_text_v1(episode_record.get('context_switch_accuracy'))}",
+                f"[experiments] oracle_action_acc : {_experiment_metric_text_v1(episode_record.get('oracle_action_accuracy'))}",
+                f"[experiments] oracle_retr_prec  : {_experiment_metric_text_v1(episode_record.get('oracle_retrieval_precision'))}",
+                f"[experiments] internal_retr_rt  : {_experiment_metric_text_v1(episode_record.get('internal_retrieval_event_ratio'))}",
+                f"[experiments] stabilize_lat     : {_experiment_metric_text_v1(episode_record.get('stabilization_latency'))}",
+                f"[experiments] retr_act_dissoc   : {_experiment_metric_text_v1(episode_record.get('retrieval_action_dissociation_count'))}",
+                f"[experiments] false_retrievals  : {_experiment_metric_text_v1(episode_record.get('false_retrieval_count'))}",
+                f"[experiments] cue_leakage       : {_experiment_metric_text_v1(episode_record.get('cue_leakage_violations'))}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"[experiments] milestones        : {_experiment_metric_text_v1(episode_record.get('milestone_vector'))}",
+                f"[experiments] milestone_score   : {_experiment_metric_text_v1(episode_record.get('milestone_score'))}",
+                f"[experiments] recovery_latency  : {_experiment_metric_text_v1(episode_record.get('recovery_latency'))}",
+            ]
+        )
+
+    lines.extend(
+        [
+            f"[experiments] repeated_loops    : {_experiment_metric_text_v1(episode_record.get('repeated_action_loop_count'))}",
+            f"[experiments] cumulative_pred_e : {_experiment_metric_text_v1(episode_record.get('cumulative_prediction_error'))}",
+            f"[experiments] latency_ms_total  : {_experiment_metric_text_v1(episode_record.get('latency_ms_total'))}",
+        ]
+    )
+
+    return lines
+
+
+def _experiment_mean_v1(values: list[Any]) -> float | None:
+    """Return the arithmetic mean of numeric values, ignoring missing/non-numeric items.
+
+    Purpose / intent
+    ----------------
+    The experiment batch summary needs a very small, predictable aggregator. I keep it here rather
+    than pulling in statistics helpers because the behavior should stay obvious and robust:
+      - ignore None / strings / dicts / lists,
+      - ignore bools (so True/False do not silently behave like 1/0 unless we convert explicitly),
+      - return None when there is nothing numeric to average.
+    """
+    nums: list[float] = []
+    for value in values:
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            nums.append(float(value))
+
+    if not nums:
+        return None
+    return sum(nums) / float(len(nums))
+
+
+def experiment_run_condition_batch_v1(
+    protocol_ctx: Ctx,
+    *,
+    condition_ids: list[str] | None = None,
+    seed_list: list[int] | None = None,
+    episodes_per_seed: int | None = None,
+    suppress_output: bool = True,
+) -> dict[str, Any]:
+    """Run a small benchmark batch by reusing the existing single-episode sandbox runner.
+
+    Purpose / intent
+    ----------------
+    Menu 49 already has a stable single-run seam:
+        experiment_run_one_episode_v1(...)
+
+    This helper adds the next practical layer for the paper workflow:
+        run condition A vs B vs C over the currently selected seeds
+        and summarize the result in a benchmark-aware way.
+
+    Current design choice
+    ---------------------
+    I intentionally reuse experiment_run_one_episode_v1(...) rather than introducing a second
+    execution pathway. That keeps the behavior aligned with the already-tested single-run path
+    and minimizes new moving parts.
+
+    Important limitation
+    --------------------
+    Because this helper reuses the existing single-run function, each episode still writes its own
+    cycle/episode JSONL files. A later patch can consolidate an entire batch under one shared run id.
+    """
+    if protocol_ctx is None:
+        return {"ok": False, "why": "missing_protocol_ctx"}
+
+    cfg = experiment_normalize_protocol_v1(getattr(protocol_ctx, "experiment_cfg", None))
+
+    raw_conditions = condition_ids if isinstance(condition_ids, list) and condition_ids else ["A", "B", "C"]
+    run_conditions = experiment_parse_condition_ids_v1(" ".join(str(x) for x in raw_conditions))
+    run_conditions = [cid for cid in run_conditions if cid in ("A", "B", "C")] or ["A", "B", "C"]
+
+    raw_seeds = seed_list if isinstance(seed_list, list) and seed_list else list(cfg.seed_list)
+    run_seeds: list[int] = []
+    seen_seeds: set[int] = set()
+    for raw_seed in raw_seeds:
+        try:
+            seed_value = int(raw_seed)
+        except Exception:
+            continue
+
+        if seed_value not in seen_seeds:
+            seen_seeds.add(seed_value)
+            run_seeds.append(seed_value)
+
+    if not run_seeds:
+        run_seeds = [11]
+
+    try:
+        eps = int(episodes_per_seed if episodes_per_seed is not None else cfg.episodes_per_seed)
+    except Exception:
+        eps = int(cfg.episodes_per_seed)
+    eps = max(1, min(1000, eps))
+
+    results: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    ok_by_condition: dict[str, list[dict[str, Any]]] = {cid: [] for cid in run_conditions}
+
+    for cid in run_conditions:
+        for seed_value in run_seeds:
+            for episode_no in range(eps):
+                result = experiment_run_one_episode_v1(
+                    protocol_ctx,
+                    condition_id=cid,
+                    seed=seed_value,
+                    episode_index=episode_no,
+                    suppress_output=suppress_output,
+                )
+                results.append(result)
+
+                if not bool(result.get("ok")):
+                    failures.append(
+                        {
+                            "condition_id": cid,
+                            "seed": int(seed_value),
+                            "episode_index": int(episode_no),
+                            "why": result.get("why"),
+                            "agent_mode": result.get("agent_mode"),
+                            "llm_role": result.get("llm_role"),
+                        }
+                    )
+                    continue
+
+                ok_by_condition[cid].append(result)
+
+    benchmark_id = str(cfg.benchmark_id or "")
+    catalog = experiment_condition_catalog_v1()
+    condition_summaries: list[dict[str, Any]] = []
+
+    for cid in run_conditions:
+        rows = ok_by_condition.get(cid, [])
+        success_vals: list[float] = []
+        milestone_scores: list[float] = []
+        recovery_latencies: list[float] = []
+        repeated_loops: list[float] = []
+        context_switch_accs: list[float] = []
+        oracle_retr_precs: list[float] = []
+        internal_retr_rts: list[float] = []
+        stabilization_lats: list[float] = []
+        false_retrievals: list[float] = []
+        cue_leakages: list[float] = []
+        pred_errs: list[float] = []
+
+        for row in rows:
+            episode_record = row.get("episode_record")
+            episode_record = episode_record if isinstance(episode_record, dict) else {}
+
+            success = episode_record.get("success")
+            if isinstance(success, bool):
+                success_vals.append(1.0 if success else 0.0)
+
+            if benchmark_id == "goat04_context":
+                value = episode_record.get("context_switch_accuracy")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    context_switch_accs.append(float(value))
+
+                value = episode_record.get("oracle_retrieval_precision")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    oracle_retr_precs.append(float(value))
+
+                value = episode_record.get("internal_retrieval_event_ratio")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    internal_retr_rts.append(float(value))
+
+                value = episode_record.get("stabilization_latency")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    stabilization_lats.append(float(value))
+
+                value = episode_record.get("false_retrieval_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    false_retrievals.append(float(value))
+
+                value = episode_record.get("cue_leakage_violations")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    cue_leakages.append(float(value))
+
+            else:
+                value = episode_record.get("milestone_score")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    milestone_scores.append(float(value))
+
+                value = episode_record.get("recovery_latency")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    recovery_latencies.append(float(value))
+
+                value = episode_record.get("repeated_action_loop_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    repeated_loops.append(float(value))
+
+            value = episode_record.get("cumulative_prediction_error")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                pred_errs.append(float(value))
+
+        summary = {
+            "condition_id": cid,
+            "condition_label": catalog.get(cid).label if cid in catalog else cid,
+            "n_ok": int(len(rows)),
+            "n_fail": int(sum(1 for item in failures if item.get("condition_id") == cid)),
+            "success_rate": _experiment_mean_v1(success_vals),
+        }
+
+        if benchmark_id == "goat04_context":
+            summary.update(
+                {
+                    "mean_context_switch_accuracy": _experiment_mean_v1(context_switch_accs),
+                    "mean_oracle_retrieval_precision": _experiment_mean_v1(oracle_retr_precs),
+                    "mean_internal_retrieval_event_ratio": _experiment_mean_v1(internal_retr_rts),
+                    "mean_stabilization_latency": _experiment_mean_v1(stabilization_lats),
+                    "mean_false_retrieval_count": _experiment_mean_v1(false_retrievals),
+                    "mean_cue_leakage_violations": _experiment_mean_v1(cue_leakages),
+                    "mean_cumulative_prediction_error": _experiment_mean_v1(pred_errs),
+                }
+            )
+        else:
+            summary.update(
+                {
+                    "mean_milestone_score": _experiment_mean_v1(milestone_scores),
+                    "mean_recovery_latency": _experiment_mean_v1(recovery_latencies),
+                    "mean_repeated_loops": _experiment_mean_v1(repeated_loops),
+                    "mean_cumulative_prediction_error": _experiment_mean_v1(pred_errs),
+                }
+            )
+
+        condition_summaries.append(summary)
+
+    try:
+        protocol_ctx.experiment_last_summary["last_batch_benchmark_id"] = benchmark_id
+        protocol_ctx.experiment_last_summary["last_batch_condition_ids"] = list(run_conditions)
+        protocol_ctx.experiment_last_summary["last_batch_seed_list"] = list(run_seeds)
+        protocol_ctx.experiment_last_summary["last_batch_episodes_per_seed"] = int(eps)
+        protocol_ctx.experiment_last_summary["last_batch_run_count"] = int(len(results))
+        protocol_ctx.experiment_last_summary["last_batch_ok_count"] = int(len(results) - len(failures))
+        protocol_ctx.experiment_last_summary["last_batch_fail_count"] = int(len(failures))
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "benchmark_id": benchmark_id,
+        "condition_ids": list(run_conditions),
+        "seed_list": list(run_seeds),
+        "episodes_per_seed": int(eps),
+        "run_count": int(len(results)),
+        "ok_count": int(len(results) - len(failures)),
+        "fail_count": int(len(failures)),
+        "results": results,
+        "failures": failures,
+        "condition_summaries": condition_summaries,
+    }
+
+
+def render_experiment_batch_summary_lines_v1(batch_result: dict[str, Any]) -> list[str]:
+    """Return compact benchmark-aware lines for a condition-batch summary.
+
+    This is intentionally terminal-oriented rather than report-oriented. The goal is to let you
+    glance at A/B/C separation immediately after a run without opening JSONL files first.
+    """
+    if not isinstance(batch_result, dict):
+        return ["[experiments] batch result     : (invalid)"]
+
+    benchmark = batch_result.get("benchmark_id")
+    benchmark = benchmark if isinstance(benchmark, str) and benchmark else "(unknown)"
+
+    lines = [
+        f"[experiments] batch benchmark   : {_experiment_metric_text_v1(benchmark)}",
+        f"[experiments] batch conditions  : {_experiment_metric_text_v1(batch_result.get('condition_ids'))}",
+        f"[experiments] batch seeds       : {_experiment_metric_text_v1(batch_result.get('seed_list'))}",
+        f"[experiments] batch eps/seed    : {_experiment_metric_text_v1(batch_result.get('episodes_per_seed'))}",
+        f"[experiments] batch run_count   : {_experiment_metric_text_v1(batch_result.get('run_count'))}",
+        f"[experiments] batch fail_count  : {_experiment_metric_text_v1(batch_result.get('fail_count'))}",
+    ]
+
+    summaries = batch_result.get("condition_summaries")
+    summaries = summaries if isinstance(summaries, list) else []
+
+    for row in summaries:
+        if not isinstance(row, dict):
+            continue
+
+        cid = row.get("condition_id")
+        label = row.get("condition_label")
+        head = (
+            f"[experiments] {cid} ({_experiment_metric_text_v1(label)}) "
+            f"n_ok={_experiment_metric_text_v1(row.get('n_ok'))} "
+            f"n_fail={_experiment_metric_text_v1(row.get('n_fail'))} "
+            f"success_rt={_experiment_metric_text_v1(row.get('success_rate'))}"
+        )
+
+        if benchmark == "goat04_context":
+            tail = (
+                f" ctx_switch={_experiment_metric_text_v1(row.get('mean_context_switch_accuracy'))}"
+                f" retr_prec={_experiment_metric_text_v1(row.get('mean_oracle_retrieval_precision'))}"
+                f" retr_rt={_experiment_metric_text_v1(row.get('mean_internal_retrieval_event_ratio'))}"
+                f" stabilize={_experiment_metric_text_v1(row.get('mean_stabilization_latency'))}"
+                f" false_retr={_experiment_metric_text_v1(row.get('mean_false_retrieval_count'))}"
+                f" cue_leak={_experiment_metric_text_v1(row.get('mean_cue_leakage_violations'))}"
+                f" pred_e={_experiment_metric_text_v1(row.get('mean_cumulative_prediction_error'))}"
+            )
+        else:
+            tail = (
+                f" milestone_score={_experiment_metric_text_v1(row.get('mean_milestone_score'))}"
+                f" recovery_lat={_experiment_metric_text_v1(row.get('mean_recovery_latency'))}"
+                f" loops={_experiment_metric_text_v1(row.get('mean_repeated_loops'))}"
+                f" pred_e={_experiment_metric_text_v1(row.get('mean_cumulative_prediction_error'))}"
+            )
+
+        lines.append(head + tail)
+
+    lines.append(
+        "[experiments] note             : batch mode currently reuses the single-episode runner, "
+        "so each episode keeps its own JSONL files."
+    )
+    return lines
 
 
 def experiments_menu_49_interactive(ctx: Ctx) -> None:
@@ -1508,6 +2754,8 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
         print(" 14) Show example cycle / episode records")
         print(" 15) Prepare JSONL logging / output paths")
         print(" 16) Reset experiment protocol to defaults")
+        print(" 17) Run one prepared experiment episode now (isolated sandbox)")
+        print(" 18) Run A/B/C batch over current seeds (isolated sandbox)")
         print("  0) Return to Main Menu")
 
         sub = input("Experiment menu select: ").strip().lower()
@@ -1689,7 +2937,82 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
             print("[experiments] protocol reset to exp_protocol_v1 defaults.")
             continue
 
-        print("[experiments] Unknown selection. Use 0..16.")
+        if sub == "17":
+            raw_condition = input(
+                f"Condition id for single run (blank = first selected: {cfg.condition_ids[0] if cfg.condition_ids else 'A'}): "
+            ).strip()
+            raw_seed = input(
+                f"Seed for single run (blank = first selected: {cfg.seed_list[0] if cfg.seed_list else 11}): "
+            ).strip()
+
+            run_condition = raw_condition or (cfg.condition_ids[0] if cfg.condition_ids else "A")
+            try:
+                run_seed = int(raw_seed) if raw_seed else (cfg.seed_list[0] if cfg.seed_list else 11)
+            except Exception:
+                print("[experiments] invalid integer seed.")
+                continue
+
+            print()
+            print("[experiments] running one isolated sandbox episode...")
+            result = experiment_run_one_episode_v1(
+                ctx,
+                condition_id=run_condition,
+                seed=run_seed,
+                episode_index=0,
+                suppress_output=True,
+            )
+
+            if not bool(result.get("ok")):
+                print(f"[experiments] run failed: {result.get('why')}")
+                if result.get("agent_mode") or result.get("llm_role"):
+                    print(
+                        f"  detail: agent_mode={result.get('agent_mode')} llm_role={result.get('llm_role')} "
+                        "still needs the later LLM action hook patch."
+                    )
+                continue
+
+            for line in render_experiment_episode_summary_lines_v1(result):
+                print(line)
+
+            print(f"[experiments] cycle_json_path   : {result.get('cycle_json_path')}")
+            print(f"[experiments] episode_json_path : {result.get('episode_json_path')}")
+            if result.get("captured_output_lines"):
+                print(f"[experiments] sandbox console   : {result.get('captured_output_lines')} lines captured and suppressed")
+            continue
+
+        if sub == "18":
+            print()
+            print("[experiments] running A/B/C batch over current seeds...")
+            batch = experiment_run_condition_batch_v1(
+                ctx,
+                condition_ids=["A", "B", "C"],
+                seed_list=list(cfg.seed_list),
+                episodes_per_seed=int(cfg.episodes_per_seed),
+                suppress_output=True,
+            )
+
+            if not bool(batch.get("ok")):
+                print(f"[experiments] batch failed: {batch.get('why')}")
+                continue
+
+            for line in render_experiment_batch_summary_lines_v1(batch):
+                print(line)
+
+            failures = batch.get("failures")
+            if isinstance(failures, list) and failures:
+                print("[experiments] failure details:")
+                for item in failures[:5]:
+                    if not isinstance(item, dict):
+                        continue
+                    print(
+                        f"  condition={item.get('condition_id')} seed={item.get('seed')} "
+                        f"episode={item.get('episode_index')} why={item.get('why')}"
+                    )
+                if len(failures) > 5:
+                    print(f"  ... plus {len(failures) - 5} more failure(s)")
+            continue
+
+        print("[experiments] Unknown selection. Use 0..18.")
 
 
 # Module layout / roadmap
@@ -16554,7 +17877,33 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                         "fatigue": float(getattr(drives, "fatigue", 0.0) or 0.0),
                         "warmth": float(getattr(drives, "warmth", 0.0) or 0.0),
                     },
+                    "pred_err_v0": dict(getattr(ctx, "pred_err_v0_last", {}) or {}),
                 }
+                try:
+                    if getattr(st, "scenario_stage", None) == "goat_foraging_04_scan":
+                        goat04_oracle = {
+                            "true_context": getattr(st, "context_label", None),
+                            "expected_policy": getattr(st, "goat04_oracle_expected_policy", None),
+                            "switch_step": int(getattr(st, "goat04_oracle_switch_step", -1) or -1),
+                            "response_deadline_step": int(
+                                getattr(st, "goat04_oracle_response_deadline_step", -1) or -1
+                            ),
+                        }
+
+                        sw = goat04_oracle["switch_step"]
+                        dl = goat04_oracle["response_deadline_step"]
+                        env_step_now = rec.get("env_step")
+
+                        goat04_oracle["switch_event"] = bool(
+                            isinstance(env_step_now, int) and sw >= 0 and env_step_now == sw
+                        )
+                        goat04_oracle["response_window_open"] = bool(
+                            isinstance(env_step_now, int) and sw >= 0 and dl >= sw and sw <= env_step_now <= dl #pylint: disable=chained-comparison
+                        )
+
+                        rec["oracle"] = {"goat04": goat04_oracle}
+                except Exception:
+                    pass
 
                 # --- Step 14.5: include WM salience in the per-cycle JSON record (trace hook) ---
                 try:

@@ -246,9 +246,14 @@ class EnvState:
     zone: str = "unsafe"                 # safety zone classification
 
     # Evaluation/context scaffolding (goat_foraging_04)
-    context_label: str = ""              # e.g., "fox" | "hawk"
+    context_label: str = ""              # hidden ground-truth context, e.g., "fox" | "hawk"
     milestones: List[str] = field(default_factory=list)
     obs_mask_dropped_cues_hint: int = 0  # story-level occlusion hint for auto-retrieve gating
+
+    # Hidden goat04 benchmark oracle (environment-side only).
+    goat04_oracle_expected_policy: str = ""
+    goat04_oracle_switch_step: int = -1
+    goat04_oracle_response_deadline_step: int = -1
 
     def update_zone_from_position(self) -> None:
         """Update safety zone label from the current symbolic position."""
@@ -279,6 +284,9 @@ class EnvState:
             context_label=self.context_label,
             milestones=list(self.milestones),
             obs_mask_dropped_cues_hint=self.obs_mask_dropped_cues_hint,
+            goat04_oracle_expected_policy=self.goat04_oracle_expected_policy,
+            goat04_oracle_switch_step=self.goat04_oracle_switch_step,
+            goat04_oracle_response_deadline_step=self.goat04_oracle_response_deadline_step,
         )
 
 
@@ -472,6 +480,24 @@ class FsmBackend:
         return "fox"
 
 
+    def _goat_foraging_04_expected_policy_for_context(self, context_label: str) -> str:
+        """Return the benchmark's hidden surrogate 'correct action' for this context.
+
+        We intentionally reuse the existing action vocabulary so B1 stays comparable
+        across A/B/C without introducing new predator-specific motor primitives.
+
+        Current surrogate mapping:
+            fox  -> policy:follow_mom
+            hawk -> policy:rest
+        """
+        label = str(context_label or "").strip().lower()
+        if label == "fox":
+            return "policy:follow_mom"
+        if label == "hawk":
+            return "policy:rest"
+        return ""
+
+
     def reset( #pylint: disable=unused-argument
         self, env_state: EnvState, config: EnvConfig) -> EnvState:
         """
@@ -502,6 +528,9 @@ class FsmBackend:
             env_state.context_label = ""
             env_state.milestones = []
             env_state.obs_mask_dropped_cues_hint = 0
+            env_state.goat04_oracle_expected_policy = ""
+            env_state.goat04_oracle_switch_step = -1
+            env_state.goat04_oracle_response_deadline_step = -1
             self._update_spatial_label(env_state) #initialize coarse geometry / zone.
 
         elif config.scenario_name == "goat_foraging_04":
@@ -526,6 +555,11 @@ class FsmBackend:
             env_state.context_label = "fox"
             env_state.milestones = []
             env_state.obs_mask_dropped_cues_hint = 0
+            env_state.goat04_oracle_expected_policy = self._goat_foraging_04_expected_policy_for_context(
+                env_state.context_label
+            )
+            env_state.goat04_oracle_switch_step = -1
+            env_state.goat04_oracle_response_deadline_step = -1
 
         return env_state
 
@@ -712,12 +746,15 @@ class FsmBackend:
             next_ctx = self._goat_foraging_04_context_for_step(steps)
             prev_ctx = state.context_label or next_ctx
             state.context_label = next_ctx
+            state.goat04_oracle_expected_policy = self._goat_foraging_04_expected_policy_for_context(next_ctx)
 
             # When context switches, emit a milestone and a sparse-observation hint.
-            # This is the seam that lets the runner exercise WM↔Column map switching.
+            # The hidden oracle also opens a short response window for benchmark scoring.
             if next_ctx != prev_ctx:
                 state.milestones = [f"context:{next_ctx}"]
                 state.obs_mask_dropped_cues_hint = 1
+                state.goat04_oracle_switch_step = int(steps)
+                state.goat04_oracle_response_deadline_step = int(steps) + 3
 
         # ------------------------------------------------------------------
         # Interpret 'policy:follow_mom' as a small move toward shelter.
@@ -928,8 +965,8 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         meta["scenario_stage"] = env_state.scenario_stage
         meta["zone"] = env_state.zone
         meta["position"] = env_state.position
-        if isinstance(env_state.context_label, str) and env_state.context_label:
-            meta["context_label"] = env_state.context_label
+        # IMPORTANT: for goat04 we do NOT expose env_state.context_label in env_meta.
+        # It is hidden benchmark truth used only by experiment-side evaluation.
         if isinstance(env_state.milestones, list) and env_state.milestones:
             meta["milestones"] = list(env_state.milestones)
         if int(getattr(env_state, "obs_mask_dropped_cues_hint", 0) or 0) > 0:
