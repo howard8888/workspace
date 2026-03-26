@@ -608,6 +608,17 @@ class Ctx:
     wm_goat04_seeded_contexts: set[str] = field(default_factory=set)
     wm_goat04_seed_engram_by_context: dict[str, str] = field(default_factory=dict)
 
+    # goat04 retrieval → control bridge
+    # --------------------------------
+    # B1 is supposed to test whether recovered context changes downstream behavior.
+    # The current retrieval machinery can recover a fox/hawk context, but without a
+    # short-lived control bridge the controller often keeps falling through to the
+    # permissive follow_mom fallback. These fields hold a tiny, explicit, expiring
+    # hint derived from retrieved context only (not hidden oracle truth).
+    goat04_control_context: Optional[str] = None
+    goat04_control_source: Optional[str] = None
+    goat04_control_until_step: int = -1
+
 
     # memory pipeline knobs (opt-in; defaults preserve Phase VI behavior)
     phase7_working_first: bool = False    # execute policies in WorkingMap; keep long-term WorldGraph sparse
@@ -1813,6 +1824,111 @@ def _goat04_retrieved_context_from_event_v1(ctx: Ctx, event: dict[str, Any]) -> 
     if not isinstance(engram_id, str) or not engram_id:
         return None
     return _goat04_seed_context_by_engram_v1(ctx).get(engram_id)
+
+
+def _goat04_context_hint_active_v1(ctx: Ctx | None) -> str | None:
+    """Return the currently active goat04 control hint, if any.
+
+    This helper is intentionally tiny and read-only from the point of view of gates.
+    A hint is active only if:
+      - ctx.goat04_control_context is a recognized label ('fox' or 'hawk')
+      - and the current controller step has not passed goat04_control_until_step
+
+    We do not silently invent fallback labels here. If retrieval did not produce a usable
+    context hint, the gates should behave as they normally do.
+    """
+    if ctx is None:
+        return None
+
+    label = getattr(ctx, "goat04_control_context", None)
+    if not (isinstance(label, str) and label in ("fox", "hawk")):
+        return None
+
+    try:
+        step_now = int(getattr(ctx, "controller_steps", 0) or 0)
+        until_step = int(getattr(ctx, "goat04_control_until_step", -1) or -1)
+    except Exception:
+        return None
+
+    if step_now > until_step:
+        return None
+    return label
+
+
+def _goat04_update_control_hint_v1(ctx: Ctx | None) -> dict[str, Any]:
+    """Update the short-lived goat04 control hint from the latest map-switch event.
+
+    Design intent
+    -------------
+    B1 should not merely show that a retrieval event occurred. It should show that a
+    recovered context can influence downstream control. This helper creates the minimal
+    bridge from WorkingMap/Column retrieval into policy gating.
+
+    Rules
+    -----
+    - Only goat04 retrieval/apply events are considered.
+    - Successful retrieval with a decoded context label ('fox' or 'hawk') activates a
+      control hint lasting through the current step plus the next 3 steps. That matches
+      the environment-side oracle response window size.
+    - Failed retrieval clears any previous hint so stale context does not bleed across
+      a new switch opportunity.
+
+    Returns
+    -------
+    JSON-safe dict for logging/debugging:
+      {
+        "updated": bool,
+        "active": "fox" | "hawk" | None,
+        "source": "retrieval" | None,
+        "until_step": int,
+      }
+    """
+    if ctx is None:
+        return {"updated": False, "active": None, "source": None, "until_step": -1}
+
+    events = getattr(ctx, "wm_mapswitch_last_events", None)
+    event = events[-1] if isinstance(events, list) and events and isinstance(events[-1], dict) else None
+    if not isinstance(event, dict):
+        return {
+            "updated": False,
+            "active": _goat04_context_hint_active_v1(ctx),
+            "source": getattr(ctx, "goat04_control_source", None),
+            "until_step": int(getattr(ctx, "goat04_control_until_step", -1) or -1),
+        }
+
+    reason = event.get("reason")
+    if not (isinstance(reason, str) and reason.startswith("goat04_context:")):
+        return {
+            "updated": False,
+            "active": _goat04_context_hint_active_v1(ctx),
+            "source": getattr(ctx, "goat04_control_source", None),
+            "until_step": int(getattr(ctx, "goat04_control_until_step", -1) or -1),
+        }
+
+    try:
+        step_now = int(getattr(ctx, "controller_steps", 0) or 0)
+    except Exception:
+        step_now = 0
+
+    retrieved_context = _goat04_retrieved_context_from_event_v1(ctx, event)
+    ok = bool(event.get("ok"))
+
+    if ok and isinstance(retrieved_context, str) and retrieved_context in ("fox", "hawk"):
+        ctx.goat04_control_context = retrieved_context
+        ctx.goat04_control_source = "retrieval"
+        ctx.goat04_control_until_step = step_now + 3
+        return {
+            "updated": True,
+            "active": retrieved_context,
+            "source": "retrieval",
+            "until_step": step_now + 3,
+        }
+
+    # Retrieval attempt happened but did not produce a usable context.
+    ctx.goat04_control_context = None
+    ctx.goat04_control_source = None
+    ctx.goat04_control_until_step = -1
+    return {"updated": True, "active": None, "source": None, "until_step": -1}
 
 
 def _experiment_transform_generic_cycle_records_v1(
@@ -7451,21 +7567,32 @@ def _gate_rest_trigger_body_space(world, drives: Drives, ctx) -> bool:
     """
     Rest gate that adds a gentle body/space constraint on top of fatigue.
 
-    Conditions:
-      • fatigue > FATIGUE_HIGH OR drive:fatigue_high cue present, AND
-      • if BodyMap is available: classify a 'rest_zone' via body_space_zone(ctx)
-            and do NOT rest when rest_zone == 'unsafe_cliff_near'.
-      • otherwise, rely solely on fatigue / fatigue cue.
+    In goat04 B1 we also allow a short-lived retrieval-derived context hint to
+    request rest on hawk windows. This is the benchmark bridge from recovered
+    context into downstream action selection.
 
-    This keeps the original rest behaviour when BodyMap is stale or absent, and
-    only vetoes rest in clearly unsafe positions (near a cliff without shelter).
+    Rules
+    -----
+    - Ordinary mode:
+        fatigue > FATIGUE_HIGH or cue:drive:fatigue_high present
+    - goat04 contextual mode:
+        an active hawk hint may request rest even when fatigue is mild
+        an active fox hint suppresses rest
+    - BodyMap/space veto remains in force:
+        do not rest when zone == 'unsafe_cliff_near'
     """
     fatigue = float(getattr(drives, "fatigue", 0.0))
     fatigue_high = fatigue > float(FATIGUE_HIGH)
     fatigue_cue = any_cue_tokens_present(world, ["drive:fatigue_high"])
+    goat04_hint = _goat04_context_hint_active_v1(ctx)
 
-    # If we are not tired enough, do not rest regardless of geometry.
-    if not (fatigue_high or fatigue_cue):
+    # Fox context should not drift into rest unless you later decide to make the
+    # benchmark more permissive. For B1 we keep it crisp and explicit.
+    if goat04_hint == "fox":
+        return False
+
+    # Hawk context is allowed to request rest even with mild fatigue.
+    if not (fatigue_high or fatigue_cue or goat04_hint == "hawk"):
         return False
 
     # Gentle body/space veto: only when we can classify a zone from BodyMap.
@@ -7475,7 +7602,7 @@ def _gate_rest_trigger_body_space(world, drives: Drives, ctx) -> bool:
             if zone == "unsafe_cliff_near":
                 return False
     except Exception:
-        # On any BodyMap error, fall back to fatigue-based gate only.
+        # On any BodyMap error, fall back to fatigue/context-based gating only.
         return True
 
     return True
@@ -7487,6 +7614,7 @@ def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
     """
     fatigue = float(getattr(drives, "fatigue", 0.0))
     fatigue_cue = any_cue_tokens_present(world, ["drive:fatigue_high"])
+    goat04_hint = _goat04_context_hint_active_v1(ctx)
 
     shelter = None
     cliff = None
@@ -7503,6 +7631,7 @@ def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
     return (
         f"dev_gate: True, trigger: fatigue={fatigue:.2f}>{float(FATIGUE_HIGH):.2f} "
         f"or cue:drive:fatigue_high present={fatigue_cue} "
+        f"or goat04_hint={goat04_hint!r} "
         f"and rest_zone={zone} (shelter={shelter}, cliff={cliff})"
     )
 
@@ -7511,23 +7640,18 @@ def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool:  # 
     """
     FollowMom gate: permissive fallback when the kid is not fallen/resting AND the local topology permits it.
 
-    Refactor intent
-    ---------------
-    This gate now reads NavSummary first, rather than relying only on BodyMap and graph-side
-    predicate checks. We still keep BodyMap as the first safety veto, but the fallback movement
-    policy is no longer blind to local hazard/traversability structure.
+    In goat04 B1 we suppress follow_mom during a short-lived hawk retrieval hint so the
+    controller can actually express contextual switching instead of repeating the fallback.
 
-    Rules (v1 refactor)
-    -------------------
-      - If BodyMap is fresh:
-          posture in {"fallen", "resting"} -> False
-      - Else fallback:
-          pred:resting near NOW -> False
-      - Then apply NavSummary:
-          * no traversable outlet near SELF -> False
-          * hazard_near + no visible safe path -> False
-      - Otherwise True.
+    This keeps the benchmark honest:
+      - A/C can benefit only when retrieval supplies a context hint
+      - B cannot benefit because auto-retrieval is disabled
+      - wrong retrieval can still drive the wrong action
     """
+    goat04_hint = _goat04_context_hint_active_v1(ctx)
+    if goat04_hint == "hawk":
+        return False
+
     try:
         if ctx is not None and not bodymap_is_stale(ctx):
             bp = body_posture(ctx)
@@ -7543,7 +7667,7 @@ def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool:  # 
     except Exception:
         pass
 
-    # New topology-first seam: fallback movement should respect the current SurfaceGrid digest.
+    # Topology-first seam: fallback movement should respect the current SurfaceGrid digest.
     try:
         if _wm_follow_mom_blocked_by_topology_v1(ctx):
             return False
@@ -7559,6 +7683,7 @@ def _gate_follow_mom_explain_body_space(world, drives: Drives, ctx) -> str:  # p
     """
     hunger = float(getattr(drives, "hunger", 0.0))
     fatigue = float(getattr(drives, "fatigue", 0.0))
+    goat04_hint = _goat04_context_hint_active_v1(ctx)
 
     posture = None
     zone = "unknown"
@@ -7587,9 +7712,9 @@ def _gate_follow_mom_explain_body_space(world, drives: Drives, ctx) -> str:  # p
 
     return (
         "dev_gate: True, trigger: fallback=True when not fallen/resting and topology permits; "
-        f"bodymap_stale={bodymap_stale} posture={posture or 'n/a'} rest_near_now={rest_near_now} "
-        f"zone={zone} topology_blocked={topo_blocked} {_wm_navsummary_explain_bits_v1(ctx)} "
-        f"(hunger={hunger:.2f}, fatigue={fatigue:.2f})"
+        f"goat04_hint={goat04_hint!r} bodymap_stale={bodymap_stale} posture={posture or 'n/a'} "
+        f"rest_near_now={rest_near_now} zone={zone} topology_blocked={topo_blocked} "
+        f"{_wm_navsummary_explain_bits_v1(ctx)} (hunger={hunger:.2f}, fatigue={fatigue:.2f})"
     )
 
 
@@ -16909,6 +17034,9 @@ def configure_goat_foraging_04_eval_v1(world, drives, ctx: Ctx, env: HybridEnvir
     try:
         ctx.wm_goat04_seeded_contexts.clear()
         ctx.wm_goat04_seed_engram_by_context.clear()
+        ctx.goat04_control_context = None
+        ctx.goat04_control_source = None
+        ctx.goat04_control_until_step = -1
         ctx.wm_mapswitch_last_events = []
     except Exception:
         pass
@@ -17657,6 +17785,23 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 print(f"[wm<->col] goat04 context mapswitch error: {e}")
                 col_retrieve_txt = f"retrieve goat04 error:{e}"
                 col_apply_txt = "apply no-op (error)"
+
+        # goat04 retrieval → control bridge:
+        # update a short-lived context hint after any goat04 mapswitch event so the
+        # controller can express contextual switching rather than only logging retrieval.
+        try:
+            goat04_hint_info = _goat04_update_control_hint_v1(ctx)
+            if bool(goat04_hint_info.get("updated")):
+                active = goat04_hint_info.get("active")
+                if isinstance(active, str) and active:
+                    print(
+                        f"[goat04] control_hint context={active} source={goat04_hint_info.get('source')} "
+                        f"until_step={goat04_hint_info.get('until_step')}"
+                    )
+                else:
+                    print("[goat04] control_hint cleared")
+        except Exception:
+            pass
 
         try:
             if getattr(ctx, "wm_surfacegrid_enabled", False):

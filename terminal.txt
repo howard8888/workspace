@@ -136,6 +136,101 @@ Selection: Experiments / Benchmarks (config + JSONL plumbing)
  17) Run one prepared experiment episode now (isolated sandbox)
  18) Run A/B/C batch over current seeds (isolated sandbox)
   0) Return to Main Menu
+Experiment menu select: Benchmark id [goat04_context | newborn_long_horizon; blank=keep current]: [experiments] benchmark set to goat04_context
+
+Selection: Experiments / Benchmarks (config + JSONL plumbing)
+
+  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.000  run_label=(none)  output_dir=experiment_jsonl
+  1) Show frozen protocol summary
+  2) Show A-E condition table
+  3) Show benchmark suite
+  4) Show JSONL schema summary
+  5) Show logging / output status
+  6) Set benchmark id
+  7) Set condition ids
+  8) Set random seed list
+  9) Set episodes per seed
+ 10) Set max cycles
+ 11) Set observation-mask probability
+ 12) Set run label
+ 13) Set output directory
+ 14) Show example cycle / episode records
+ 15) Prepare JSONL logging / output paths
+ 16) Reset experiment protocol to defaults
+ 17) Run one prepared experiment episode now (isolated sandbox)
+ 18) Run A/B/C batch over current seeds (isolated sandbox)
+  0) Return to Main Menu
+Experiment menu select: Observation-mask probability 0.0..1.0 [current: 0.000]: 
+Selection: Experiments / Benchmarks (config + JSONL plumbing)
+
+  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.000  run_label=(none)  output_dir=experiment_jsonl
+  1) Show frozen protocol summary
+  2) Show A-E condition table
+  3) Show benchmark suite
+  4) Show JSONL schema summary
+  5) Show logging / output status
+  6) Set benchmark id
+  7) Set condition ids
+  8) Set random seed list
+  9) Set episodes per seed
+ 10) Set max cycles
+ 11) Set observation-mask probability
+ 12) Set run label
+ 13) Set output directory
+ 14) Show example cycle / episode records
+ 15) Prepare JSONL logging / output paths
+ 16) Reset experiment protocol to defaults
+ 17) Run one prepared experiment episode now (isolated sandbox)
+ 18) Run A/B/C batch over current seeds (isolated sandbox)
+  0) Return to Main Menu
+Experiment menu select: Condition id for single run (blank = first selected: A): Seed for single run (blank = first selected: 11): 
+[experiments] running one isolated sandbox episode...
+[experiments] run_id            : 20260325_233732__goat04_context__Mountain_Goat
+[experiments] benchmark         : goat04_context
+[experiments] condition         : A  (Full CCA8 (merge retrieval))
+[experiments] seed              : 11
+[experiments] cycles_to_end     : 60
+[experiments] success           : True
+[experiments] context_switch_acc: 0.750
+[experiments] oracle_action_acc : 0.750
+[experiments] oracle_retr_prec  : 1.000
+[experiments] internal_retr_rt  : 0.500
+[experiments] stabilize_lat     : 0.000
+[experiments] retr_act_dissoc   : 0
+[experiments] false_retrievals  : 0
+[experiments] cue_leakage       : 0
+[experiments] repeated_loops    : 54
+[experiments] cumulative_pred_e : 0.000
+[experiments] latency_ms_total  : 88.067
+[experiments] cycle_json_path   : experiment_jsonl\20260325_233732__goat04_context__Mountain_Goat__cycle.jsonl
+[experiments] episode_json_path : experiment_jsonl\20260325_233732__goat04_context__Mountain_Goat__episode.jsonl
+[experiments] sandbox console   : 3474 lines captured and suppressed
+
+Selection: Experiments / Benchmarks (config + JSONL plumbing)
+
+  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.000  run_label=(none)  output_dir=experiment_jsonl
+  1) Show frozen protocol summary
+  2) Show A-E condition table
+  3) Show benchmark suite
+  4) Show JSONL schema summary
+  5) Show logging / output status
+  6) Set benchmark id
+  7) Set condition ids
+  8) Set random seed list
+  9) Set episodes per seed
+ 10) Set max cycles
+ 11) Set observation-mask probability
+ 12) Set run label
+ 13) Set output directory
+ 14) Show example cycle / episode records
+ 15) Prepare JSONL logging / output paths
+ 16) Reset experiment protocol to defaults
+ 17) Run one prepared experiment episode now (isolated sandbox)
+ 18) Run A/B/C batch over current seeds (isolated sandbox)
+  0) Return to Main Menu
 Experiment menu select: 
 [experiments] running A/B/C batch over current seeds...
 [experiments] batch benchmark   : goat04_context
@@ -144,15 +239,264 @@ Experiment menu select:
 [experiments] batch eps/seed    : 1
 [experiments] batch run_count   : 15
 [experiments] batch fail_count  : 0
-[experiments] A (Full CCA8 (merge retrieval)) n_ok=5 n_fail=0 success_rt=0.000 ctx_switch=0.500 retr_prec=1.000 retr_rt=0.500 stabilize=0.000 false_retr=0.000 cue_leak=0.000 pred_e=0.000
+[experiments] A (Full CCA8 (merge retrieval)) n_ok=5 n_fail=0 success_rt=1.000 ctx_switch=0.750 retr_prec=1.000 retr_rt=0.500 stabilize=0.000 false_retr=0.000 cue_leak=0.000 pred_e=0.000
 [experiments] B (CCA8 without episodic readback) n_ok=5 n_fail=0 success_rt=0.000 ctx_switch=0.500 retr_prec=0.000 retr_rt=0.000 stabilize=0.000 false_retr=2.000 cue_leak=0.000 pred_e=0.000
-[experiments] C (CCA8 with replace-mode prior injection) n_ok=5 n_fail=0 success_rt=0.000 ctx_switch=0.500 retr_prec=1.000 retr_rt=0.500 stabilize=0.000 false_retr=0.000 cue_leak=0.000 pred_e=0.000
+[experiments] C (CCA8 with replace-mode prior injection) n_ok=5 n_fail=0 success_rt=1.000 ctx_switch=0.750 retr_prec=1.000 retr_rt=0.500 stabilize=0.000 false_retr=0.000 cue_leak=0.000 pred_e=0.000
 [experiments] note             : batch mode currently reuses the single-episode runner, so each episode keeps its own JSONL files.
 
 Selection: Experiments / Benchmarks (config + JSONL plumbing)
 
   benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
   obs_mask_prob=0.000  run_label=(none)  output_dir=experiment_jsonl
+  1) Show frozen protocol summary
+  2) Show A-E condition table
+  3) Show benchmark suite
+  4) Show JSONL schema summary
+  5) Show logging / output status
+  6) Set benchmark id
+  7) Set condition ids
+  8) Set random seed list
+  9) Set episodes per seed
+ 10) Set max cycles
+ 11) Set observation-mask probability
+ 12) Set run label
+ 13) Set output directory
+ 14) Show example cycle / episode records
+ 15) Prepare JSONL logging / output paths
+ 16) Reset experiment protocol to defaults
+ 17) Run one prepared experiment episode now (isolated sandbox)
+ 18) Run A/B/C batch over current seeds (isolated sandbox)
+  0) Return to Main Menu
+Experiment menu select: Observation-mask probability 0.0..1.0 [current: 0.000]: [experiments] obs_mask_prob set to 0.400
+
+Selection: Experiments / Benchmarks (config + JSONL plumbing)
+
+  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.400  run_label=(none)  output_dir=experiment_jsonl
+  1) Show frozen protocol summary
+  2) Show A-E condition table
+  3) Show benchmark suite
+  4) Show JSONL schema summary
+  5) Show logging / output status
+  6) Set benchmark id
+  7) Set condition ids
+  8) Set random seed list
+  9) Set episodes per seed
+ 10) Set max cycles
+ 11) Set observation-mask probability
+ 12) Set run label
+ 13) Set output directory
+ 14) Show example cycle / episode records
+ 15) Prepare JSONL logging / output paths
+ 16) Reset experiment protocol to defaults
+ 17) Run one prepared experiment episode now (isolated sandbox)
+ 18) Run A/B/C batch over current seeds (isolated sandbox)
+  0) Return to Main Menu
+Experiment menu select: Condition id for single run (blank = first selected: A): Seed for single run (blank = first selected: 11): 
+[experiments] running one isolated sandbox episode...
+[experiments] run_id            : 20260325_234420__goat04_context__Mountain_Goat
+[experiments] benchmark         : goat04_context
+[experiments] condition         : A  (Full CCA8 (merge retrieval))
+[experiments] seed              : 11
+[experiments] cycles_to_end     : 60
+[experiments] success           : False
+[experiments] context_switch_acc: 0.500
+[experiments] oracle_action_acc : 0.500
+[experiments] oracle_retr_prec  : 0.000
+[experiments] internal_retr_rt  : 0.500
+[experiments] stabilize_lat     : 0.000
+[experiments] retr_act_dissoc   : 0
+[experiments] false_retrievals  : 2
+[experiments] cue_leakage       : 0
+[experiments] repeated_loops    : 54
+[experiments] cumulative_pred_e : 0.000
+[experiments] latency_ms_total  : 155.823
+[experiments] cycle_json_path   : experiment_jsonl\20260325_234420__goat04_context__Mountain_Goat__cycle.jsonl
+[experiments] episode_json_path : experiment_jsonl\20260325_234420__goat04_context__Mountain_Goat__episode.jsonl
+[experiments] sandbox console   : 3425 lines captured and suppressed
+
+Selection: Experiments / Benchmarks (config + JSONL plumbing)
+
+  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.400  run_label=(none)  output_dir=experiment_jsonl
+  1) Show frozen protocol summary
+  2) Show A-E condition table
+  3) Show benchmark suite
+  4) Show JSONL schema summary
+  5) Show logging / output status
+  6) Set benchmark id
+  7) Set condition ids
+  8) Set random seed list
+  9) Set episodes per seed
+ 10) Set max cycles
+ 11) Set observation-mask probability
+ 12) Set run label
+ 13) Set output directory
+ 14) Show example cycle / episode records
+ 15) Prepare JSONL logging / output paths
+ 16) Reset experiment protocol to defaults
+ 17) Run one prepared experiment episode now (isolated sandbox)
+ 18) Run A/B/C batch over current seeds (isolated sandbox)
+  0) Return to Main Menu
+Experiment menu select: Observation-mask probability 0.0..1.0 [current: 0.400]: [experiments] obs_mask_prob set to 0.200
+
+Selection: Experiments / Benchmarks (config + JSONL plumbing)
+
+  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.200  run_label=(none)  output_dir=experiment_jsonl
+  1) Show frozen protocol summary
+  2) Show A-E condition table
+  3) Show benchmark suite
+  4) Show JSONL schema summary
+  5) Show logging / output status
+  6) Set benchmark id
+  7) Set condition ids
+  8) Set random seed list
+  9) Set episodes per seed
+ 10) Set max cycles
+ 11) Set observation-mask probability
+ 12) Set run label
+ 13) Set output directory
+ 14) Show example cycle / episode records
+ 15) Prepare JSONL logging / output paths
+ 16) Reset experiment protocol to defaults
+ 17) Run one prepared experiment episode now (isolated sandbox)
+ 18) Run A/B/C batch over current seeds (isolated sandbox)
+  0) Return to Main Menu
+Experiment menu select: Condition id for single run (blank = first selected: A): Seed for single run (blank = first selected: 11): 
+[experiments] running one isolated sandbox episode...
+[experiments] run_id            : 20260325_234436__goat04_context__Mountain_Goat
+[experiments] benchmark         : goat04_context
+[experiments] condition         : A  (Full CCA8 (merge retrieval))
+[experiments] seed              : 11
+[experiments] cycles_to_end     : 60
+[experiments] success           : False
+[experiments] context_switch_acc: 0.500
+[experiments] oracle_action_acc : 0.500
+[experiments] oracle_retr_prec  : 0.500
+[experiments] internal_retr_rt  : 0.500
+[experiments] stabilize_lat     : 0.000
+[experiments] retr_act_dissoc   : 0
+[experiments] false_retrievals  : 1
+[experiments] cue_leakage       : 0
+[experiments] repeated_loops    : 58
+[experiments] cumulative_pred_e : 0.000
+[experiments] latency_ms_total  : 152.289
+[experiments] cycle_json_path   : experiment_jsonl\20260325_234436__goat04_context__Mountain_Goat__cycle.jsonl
+[experiments] episode_json_path : experiment_jsonl\20260325_234436__goat04_context__Mountain_Goat__episode.jsonl
+[experiments] sandbox console   : 3455 lines captured and suppressed
+
+Selection: Experiments / Benchmarks (config + JSONL plumbing)
+
+  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.200  run_label=(none)  output_dir=experiment_jsonl
+  1) Show frozen protocol summary
+  2) Show A-E condition table
+  3) Show benchmark suite
+  4) Show JSONL schema summary
+  5) Show logging / output status
+  6) Set benchmark id
+  7) Set condition ids
+  8) Set random seed list
+  9) Set episodes per seed
+ 10) Set max cycles
+ 11) Set observation-mask probability
+ 12) Set run label
+ 13) Set output directory
+ 14) Show example cycle / episode records
+ 15) Prepare JSONL logging / output paths
+ 16) Reset experiment protocol to defaults
+ 17) Run one prepared experiment episode now (isolated sandbox)
+ 18) Run A/B/C batch over current seeds (isolated sandbox)
+  0) Return to Main Menu
+Experiment menu select: Observation-mask probability 0.0..1.0 [current: 0.200]: [experiments] obs_mask_prob set to 0.100
+
+Selection: Experiments / Benchmarks (config + JSONL plumbing)
+
+  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.100  run_label=(none)  output_dir=experiment_jsonl
+  1) Show frozen protocol summary
+  2) Show A-E condition table
+  3) Show benchmark suite
+  4) Show JSONL schema summary
+  5) Show logging / output status
+  6) Set benchmark id
+  7) Set condition ids
+  8) Set random seed list
+  9) Set episodes per seed
+ 10) Set max cycles
+ 11) Set observation-mask probability
+ 12) Set run label
+ 13) Set output directory
+ 14) Show example cycle / episode records
+ 15) Prepare JSONL logging / output paths
+ 16) Reset experiment protocol to defaults
+ 17) Run one prepared experiment episode now (isolated sandbox)
+ 18) Run A/B/C batch over current seeds (isolated sandbox)
+  0) Return to Main Menu
+Experiment menu select: Condition id for single run (blank = first selected: A): Seed for single run (blank = first selected: 11): 
+[experiments] running one isolated sandbox episode...
+[experiments] run_id            : 20260325_234450__goat04_context__Mountain_Goat
+[experiments] benchmark         : goat04_context
+[experiments] condition         : A  (Full CCA8 (merge retrieval))
+[experiments] seed              : 11
+[experiments] cycles_to_end     : 60
+[experiments] success           : False
+[experiments] context_switch_acc: 0.500
+[experiments] oracle_action_acc : 0.500
+[experiments] oracle_retr_prec  : 0.500
+[experiments] internal_retr_rt  : 0.500
+[experiments] stabilize_lat     : 0.000
+[experiments] retr_act_dissoc   : 0
+[experiments] false_retrievals  : 1
+[experiments] cue_leakage       : 0
+[experiments] repeated_loops    : 58
+[experiments] cumulative_pred_e : 0.000
+[experiments] latency_ms_total  : 152.993
+[experiments] cycle_json_path   : experiment_jsonl\20260325_234450__goat04_context__Mountain_Goat__cycle.jsonl
+[experiments] episode_json_path : experiment_jsonl\20260325_234450__goat04_context__Mountain_Goat__episode.jsonl
+[experiments] sandbox console   : 3465 lines captured and suppressed
+
+Selection: Experiments / Benchmarks (config + JSONL plumbing)
+
+  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.100  run_label=(none)  output_dir=experiment_jsonl
+  1) Show frozen protocol summary
+  2) Show A-E condition table
+  3) Show benchmark suite
+  4) Show JSONL schema summary
+  5) Show logging / output status
+  6) Set benchmark id
+  7) Set condition ids
+  8) Set random seed list
+  9) Set episodes per seed
+ 10) Set max cycles
+ 11) Set observation-mask probability
+ 12) Set run label
+ 13) Set output directory
+ 14) Show example cycle / episode records
+ 15) Prepare JSONL logging / output paths
+ 16) Reset experiment protocol to defaults
+ 17) Run one prepared experiment episode now (isolated sandbox)
+ 18) Run A/B/C batch over current seeds (isolated sandbox)
+  0) Return to Main Menu
+Experiment menu select: 
+[experiments] running A/B/C batch over current seeds...
+[experiments] batch benchmark   : goat04_context
+[experiments] batch conditions  : ["A", "B", "C"]
+[experiments] batch seeds       : [11, 23, 37, 41, 53]
+[experiments] batch eps/seed    : 1
+[experiments] batch run_count   : 15
+[experiments] batch fail_count  : 0
+[experiments] A (Full CCA8 (merge retrieval)) n_ok=5 n_fail=0 success_rt=0.600 ctx_switch=0.650 retr_prec=0.800 retr_rt=0.500 stabilize=0.000 false_retr=0.400 cue_leak=0.000 pred_e=0.000
+[experiments] B (CCA8 without episodic readback) n_ok=5 n_fail=0 success_rt=0.000 ctx_switch=0.500 retr_prec=0.000 retr_rt=0.000 stabilize=0.000 false_retr=2.000 cue_leak=0.000 pred_e=0.000
+[experiments] C (CCA8 with replace-mode prior injection) n_ok=5 n_fail=0 success_rt=0.600 ctx_switch=0.650 retr_prec=0.800 retr_rt=0.500 stabilize=0.000 false_retr=0.400 cue_leak=0.000 pred_e=0.000
+[experiments] note             : batch mode currently reuses the single-episode runner, so each episode keeps its own JSONL files.
+
+Selection: Experiments / Benchmarks (config + JSONL plumbing)
+
+  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.100  run_label=(none)  output_dir=experiment_jsonl
   1) Show frozen protocol summary
   2) Show A-E condition table
   3) Show benchmark suite
@@ -177,32 +521,7 @@ Experiment menu select: [experiments] Unknown selection. Use 0..18.
 Selection: Experiments / Benchmarks (config + JSONL plumbing)
 
   benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
-  obs_mask_prob=0.000  run_label=(none)  output_dir=experiment_jsonl
-  1) Show frozen protocol summary
-  2) Show A-E condition table
-  3) Show benchmark suite
-  4) Show JSONL schema summary
-  5) Show logging / output status
-  6) Set benchmark id
-  7) Set condition ids
-  8) Set random seed list
-  9) Set episodes per seed
- 10) Set max cycles
- 11) Set observation-mask probability
- 12) Set run label
- 13) Set output directory
- 14) Show example cycle / episode records
- 15) Prepare JSONL logging / output paths
- 16) Reset experiment protocol to defaults
- 17) Run one prepared experiment episode now (isolated sandbox)
- 18) Run A/B/C batch over current seeds (isolated sandbox)
-  0) Return to Main Menu
-Experiment menu select: Episodes per seed [current: 1]: [experiments] episodes_per_seed set to 10
-
-Selection: Experiments / Benchmarks (config + JSONL plumbing)
-
-  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=10  max_cycles=60
-  obs_mask_prob=0.000  run_label=(none)  output_dir=experiment_jsonl
+  obs_mask_prob=0.100  run_label=(none)  output_dir=experiment_jsonl
   1) Show frozen protocol summary
   2) Show A-E condition table
   3) Show benchmark suite
@@ -227,18 +546,18 @@ Experiment menu select:
 [experiments] batch benchmark   : goat04_context
 [experiments] batch conditions  : ["A", "B", "C"]
 [experiments] batch seeds       : [11, 23, 37, 41, 53]
-[experiments] batch eps/seed    : 10
-[experiments] batch run_count   : 150
+[experiments] batch eps/seed    : 1
+[experiments] batch run_count   : 15
 [experiments] batch fail_count  : 0
-[experiments] A (Full CCA8 (merge retrieval)) n_ok=50 n_fail=0 success_rt=0.000 ctx_switch=0.500 retr_prec=1.000 retr_rt=0.500 stabilize=0.000 false_retr=0.000 cue_leak=0.000 pred_e=0.000
-[experiments] B (CCA8 without episodic readback) n_ok=50 n_fail=0 success_rt=0.000 ctx_switch=0.500 retr_prec=0.000 retr_rt=0.000 stabilize=0.000 false_retr=2.000 cue_leak=0.000 pred_e=0.000
-[experiments] C (CCA8 with replace-mode prior injection) n_ok=50 n_fail=0 success_rt=0.000 ctx_switch=0.500 retr_prec=1.000 retr_rt=0.500 stabilize=0.000 false_retr=0.000 cue_leak=0.000 pred_e=0.000
+[experiments] A (Full CCA8 (merge retrieval)) n_ok=5 n_fail=0 success_rt=0.600 ctx_switch=0.650 retr_prec=0.800 retr_rt=0.500 stabilize=0.000 false_retr=0.400 cue_leak=0.000 pred_e=0.000
+[experiments] B (CCA8 without episodic readback) n_ok=5 n_fail=0 success_rt=0.000 ctx_switch=0.500 retr_prec=0.000 retr_rt=0.000 stabilize=0.000 false_retr=2.000 cue_leak=0.000 pred_e=0.000
+[experiments] C (CCA8 with replace-mode prior injection) n_ok=5 n_fail=0 success_rt=0.600 ctx_switch=0.650 retr_prec=0.800 retr_rt=0.500 stabilize=0.000 false_retr=0.400 cue_leak=0.000 pred_e=0.000
 [experiments] note             : batch mode currently reuses the single-episode runner, so each episode keeps its own JSONL files.
 
 Selection: Experiments / Benchmarks (config + JSONL plumbing)
 
-  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=10  max_cycles=60
-  obs_mask_prob=0.000  run_label=(none)  output_dir=experiment_jsonl
+  benchmark=goat04_context  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.100  run_label=(none)  output_dir=experiment_jsonl
   1) Show frozen protocol summary
   2) Show A-E condition table
   3) Show benchmark suite
@@ -258,16 +577,65 @@ Selection: Experiments / Benchmarks (config + JSONL plumbing)
  17) Run one prepared experiment episode now (isolated sandbox)
  18) Run A/B/C batch over current seeds (isolated sandbox)
   0) Return to Main Menu
-Experiment menu select: Traceback (most recent call last):
-  File "C:\Users\howar\workspace\cca8_run.py", line 23904, in <module>
-    sys.exit(main())
-             ^^^^^^
-  File "C:\Users\howar\workspace\cca8_run.py", line 23895, in main
-    interactive_loop(args); return 0
-    ^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\howar\workspace\cca8_run.py", line 23498, in interactive_loop
-    experiments_menu_49_interactive(ctx)
-  File "C:\Users\howar\workspace\cca8_run.py", line 2761, in experiments_menu_49_interactive
-    sub = input("Experiment menu select: ").strip().lower()
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-KeyboardInterrupt
+Experiment menu select: Benchmark id [goat04_context | newborn_long_horizon; blank=keep current]: [experiments] benchmark set to newborn_long_horizon
+
+Selection: Experiments / Benchmarks (config + JSONL plumbing)
+
+  benchmark=newborn_long_horizon  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.100  run_label=(none)  output_dir=experiment_jsonl
+  1) Show frozen protocol summary
+  2) Show A-E condition table
+  3) Show benchmark suite
+  4) Show JSONL schema summary
+  5) Show logging / output status
+  6) Set benchmark id
+  7) Set condition ids
+  8) Set random seed list
+  9) Set episodes per seed
+ 10) Set max cycles
+ 11) Set observation-mask probability
+ 12) Set run label
+ 13) Set output directory
+ 14) Show example cycle / episode records
+ 15) Prepare JSONL logging / output paths
+ 16) Reset experiment protocol to defaults
+ 17) Run one prepared experiment episode now (isolated sandbox)
+ 18) Run A/B/C batch over current seeds (isolated sandbox)
+  0) Return to Main Menu
+Experiment menu select: 
+[experiments] running A/B/C batch over current seeds...
+[experiments] batch benchmark   : newborn_long_horizon
+[experiments] batch conditions  : ["A", "B", "C"]
+[experiments] batch seeds       : [11, 23, 37, 41, 53]
+[experiments] batch eps/seed    : 1
+[experiments] batch run_count   : 15
+[experiments] batch fail_count  : 0
+[experiments] A (Full CCA8 (merge retrieval)) n_ok=5 n_fail=0 success_rt=1.000 milestone_score=1.000 recovery_lat=4.000 loops=0.000 pred_e=7.600
+[experiments] B (CCA8 without episodic readback) n_ok=5 n_fail=0 success_rt=1.000 milestone_score=1.000 recovery_lat=4.000 loops=0.000 pred_e=7.600
+[experiments] C (CCA8 with replace-mode prior injection) n_ok=5 n_fail=0 success_rt=1.000 milestone_score=1.000 recovery_lat=4.000 loops=0.000 pred_e=7.600
+[experiments] note             : batch mode currently reuses the single-episode runner, so each episode keeps its own JSONL files.
+
+Selection: Experiments / Benchmarks (config + JSONL plumbing)
+
+  benchmark=newborn_long_horizon  conditions=['A', 'B', 'C', 'D', 'E']  seeds=[11, 23, 37, 41, 53]  episodes_per_seed=1  max_cycles=60
+  obs_mask_prob=0.100  run_label=(none)  output_dir=experiment_jsonl
+  1) Show frozen protocol summary
+  2) Show A-E condition table
+  3) Show benchmark suite
+  4) Show JSONL schema summary
+  5) Show logging / output status
+  6) Set benchmark id
+  7) Set condition ids
+  8) Set random seed list
+  9) Set episodes per seed
+ 10) Set max cycles
+ 11) Set observation-mask probability
+ 12) Set run label
+ 13) Set output directory
+ 14) Show example cycle / episode records
+ 15) Prepare JSONL logging / output paths
+ 16) Reset experiment protocol to defaults
+ 17) Run one prepared experiment episode now (isolated sandbox)
+ 18) Run A/B/C batch over current seeds (isolated sandbox)
+  0) Return to Main Menu
+Experiment menu select: 
