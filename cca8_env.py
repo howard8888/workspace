@@ -255,6 +255,21 @@ class EnvState:
     goat04_oracle_switch_step: int = -1
     goat04_oracle_response_deadline_step: int = -1
 
+    # Newborn long-horizon task bookkeeping (B2 hardening)
+    # ----------------------------------------------------
+    # These fields make the newborn benchmark less like a passive storyboard and
+    # more like a task that actually depends on action, delay, recovery, and
+    # short-lived partial observability.
+    newborn_stand_attempts: int = 0
+    newborn_seek_attempts: int = 0
+    newborn_rest_attempts: int = 0
+    newborn_milk_ticks: int = 0
+    newborn_last_progress_step: int = -1
+    newborn_setback_count: int = 0
+    newborn_obs_blackout_until_step: int = -1
+    newborn_obs_blackout_kind: str = ""
+
+
     def update_zone_from_position(self) -> None:
         """Update safety zone label from the current symbolic position."""
         mapping = {
@@ -287,6 +302,14 @@ class EnvState:
             goat04_oracle_expected_policy=self.goat04_oracle_expected_policy,
             goat04_oracle_switch_step=self.goat04_oracle_switch_step,
             goat04_oracle_response_deadline_step=self.goat04_oracle_response_deadline_step,
+            newborn_stand_attempts=self.newborn_stand_attempts,
+            newborn_seek_attempts=self.newborn_seek_attempts,
+            newborn_rest_attempts=self.newborn_rest_attempts,
+            newborn_milk_ticks=self.newborn_milk_ticks,
+            newborn_last_progress_step=self.newborn_last_progress_step,
+            newborn_setback_count=self.newborn_setback_count,
+            newborn_obs_blackout_until_step=self.newborn_obs_blackout_until_step,
+            newborn_obs_blackout_kind=self.newborn_obs_blackout_kind,
         )
 
 
@@ -376,15 +399,44 @@ class FsmBackend:
     """
 
     name: str = "fsm"
-
-    # Simple thresholds in *steps* for software changes; HybridEnvironment bumps
-    # EnvState.step_index and time_since_birth before calling this backend.
+    # Newborn B2 hardening knobs
+    # --------------------------
+    # We still allow the initial birth -> struggle setup transition, because that is
+    # world initialization rather than task progress. After that, progress should depend
+    # much more on action and less on passive time thresholds.
     _BIRTH_TO_STRUGGLE: int = 3
+
+    # Legacy storyboard thresholds kept only as compatibility constants for older
+    # tests/docs. The hardened newborn benchmark no longer uses passive auto-
+    # progression after "birth" -> "struggle".
     _STRUGGLE_MOM_NEAR: int = 5
     _AUTO_STAND_UP: int = 8
     _AUTO_NIPPLE_REACHABLE: int = 11
     _AUTO_LATCH: int = 13
     _AUTO_REST: int = 16
+
+    # Standing and feeding now require repeated or correctly staged actions.
+    _STAND_SUCCESS_ATTEMPTS: int = 2
+    _SEEK_FOUND_ATTEMPTS: int = 1
+    _SEEK_LATCH_ATTEMPTS: int = 2
+    _REST_SUCCESS_MIN_MILK_TICKS: int = 2
+
+    # Short partial-observability window after progress/setbacks.
+    _BLACKOUT_STEPS_ON_PROGRESS: int = 2
+    _BLACKOUT_STEPS_ON_SETBACK: int = 1
+
+    # Small penalties used when the kid chooses poorly or misses the next useful move.
+    _MISS_FATIGUE_PENALTY: float = 0.03
+    _MISS_TEMP_PENALTY: float = 0.01
+    _SETBACK_FATIGUE_PENALTY: float = 0.05
+
+    # Keep symbolic mom_distance aligned with the raw-distance threshold used by
+    # PerceptionAdapter.observe(...). In particular, "far" must stay outside the
+    # adapter's near-threshold or the raw geometry and the symbolic label will
+    # contradict one another in logs / debug output.
+    _MOM_RAW_DX_TOUCHING: float = 0.0
+    _MOM_RAW_DX_NEAR: float = 0.35
+    _MOM_RAW_DX_FAR: float = 1.25
 
 
     def _update_spatial_label(self, state: EnvState) -> None:
@@ -452,11 +504,11 @@ class FsmBackend:
         state.kid_position = (float(kid_x), float(kid_y))
 
         if state.mom_distance == "touching":
-            mom_dx = 0.0
+            mom_dx = self._MOM_RAW_DX_TOUCHING
         elif state.mom_distance == "near":
-            mom_dx = 0.35
+            mom_dx = self._MOM_RAW_DX_NEAR
         else:
-            mom_dx = 0.9
+            mom_dx = self._MOM_RAW_DX_FAR
 
         state.mom_position = (float(kid_x) + mom_dx, float(kid_y))
 
@@ -531,6 +583,14 @@ class FsmBackend:
             env_state.goat04_oracle_expected_policy = ""
             env_state.goat04_oracle_switch_step = -1
             env_state.goat04_oracle_response_deadline_step = -1
+            env_state.newborn_stand_attempts = 0
+            env_state.newborn_seek_attempts = 0
+            env_state.newborn_rest_attempts = 0
+            env_state.newborn_milk_ticks = 0
+            env_state.newborn_last_progress_step = -1
+            env_state.newborn_setback_count = 0
+            env_state.newborn_obs_blackout_until_step = -1
+            env_state.newborn_obs_blackout_kind = ""
             self._update_spatial_label(env_state) #initialize coarse geometry / zone.
 
         elif config.scenario_name == "goat_foraging_04":
@@ -606,19 +666,45 @@ class FsmBackend:
         state.milestones = []
         state.obs_mask_dropped_cues_hint = 0
 
+
         def _has_action(prefix: str) -> bool:
             """Return True if the action string starts with the given prefix."""
             return isinstance(action, str) and action.startswith(prefix)
+
+        did_stand = _has_action("policy:stand_up") or _has_action("policy:recover_fall")
+        did_seek = _has_action("policy:seek_nipple") or _has_action("policy:suckle")
+        did_follow = _has_action("policy:follow_mom")
+        did_rest = _has_action("policy:rest")
+
+
+        def _open_blackout(kind: str, duration_steps: int) -> None:
+            """Open a short newborn observation blackout.
+
+            This is a deliberate small partial-observability window after either real
+            progress or a setback. It gives retrieval/keyframe machinery a chance to
+            matter without changing the rest of the environment API.
+            """
+            state.newborn_obs_blackout_kind = str(kind or "generic")
+            state.newborn_obs_blackout_until_step = int(steps) + max(1, int(duration_steps))
+            state.obs_mask_dropped_cues_hint = max(int(getattr(state, "obs_mask_dropped_cues_hint", 0) or 0), 1)
+
+        def _emit_progress(label: str, *, blackout_kind: str) -> None:
+            """Record one progress milestone for this step and open a short blackout."""
+            if isinstance(label, str) and label:
+                state.milestones.append(label)
+            state.newborn_last_progress_step = int(steps)
+            _open_blackout(blackout_kind, self._BLACKOUT_STEPS_ON_PROGRESS)
+
 
         # -------------------------------
         # Stage: birth → struggle
         # -------------------------------
         if stage == "birth":
-            # At birth: fallen, mom far, nipple hidden. We mostly let time pass.
+            # Birth remains a setup phase. We still advance into struggle after a short
+            # initial delay, but this is not counted as B2 task progress.
             state.kid_posture = "fallen"
             state.mom_distance = "far"
             state.nipple_state = "hidden"
-            # Environment geometry: no shelter or cliff immediately nearby.
             state.shelter_distance = "far"
             state.cliff_distance = "far"
 
@@ -627,17 +713,16 @@ class FsmBackend:
                 state.position = "cliff_edge"
                 state.shelter_distance = "far"
                 state.cliff_distance = "near"
-                # Small fatigue bump to suggest the calf is working.
                 state.kid_fatigue = min(1.0, state.kid_fatigue + 0.02)
 
         # -------------------------------
         # Stage: struggle
         # -------------------------------
         elif stage == "struggle":
-            # The kid is on the ground, flailing a bit; mom gradually comes closer.
+            # The kid is still down. It must now *do something useful* to recover.
             state.kid_posture = "fallen"
+            state.nipple_state = "hidden"
 
-            # Geometric intuition: symbolic position controls the coarse geometry.
             if state.position == "shelter_area":
                 state.shelter_distance = "near"
                 state.cliff_distance = "far"
@@ -648,29 +733,47 @@ class FsmBackend:
                 state.shelter_distance = "far"
                 state.cliff_distance = "near"
 
-            # After a few steps, bring mom from far -> near.
-            if steps >= self._STRUGGLE_MOM_NEAR and state.mom_distance == "far":
+            # Following mom can also bring mom into actionable range.
+            if did_follow and state.mom_distance == "far":
                 state.mom_distance = "near"
-                # Move mom closer along the x-axis (purely illustrative).
                 state.mom_position = (0.7, state.mom_position[1])
 
-            stood_up = _has_action("policy:stand_up") or _has_action("policy:recover_fall") or (steps >= self._AUTO_STAND_UP)
-            if stood_up:
-                state.kid_posture = "standing"
-                state.scenario_stage = "first_stand"
+            if did_stand:
+                state.newborn_stand_attempts += 1
+
+                # Standing is easier once the kid is off the cliff edge.
+                needed = self._STAND_SUCCESS_ATTEMPTS
+                if state.position in ("open_field", "shelter_area"):
+                    needed = max(1, needed - 1)
+
+                if state.newborn_stand_attempts >= needed:
+                    state.kid_posture = "standing"
+                    state.scenario_stage = "first_stand"
+                    state.newborn_stand_attempts = 0
+                    _emit_progress("stood_up", blackout_kind="transition")
+
+                    # If mom was already brought near during struggle, we let that
+                    # count immediately on the recovery step.
+                    if state.mom_distance in ("near", "touching"):
+                        state.milestones.append("reached_mom")
+
+            elif did_seek or did_rest:
+                # Premature search/rest while still down is unhelpful and costs energy.
+                state.newborn_setback_count += 1
+                state.kid_fatigue = min(1.0, state.kid_fatigue + self._MISS_FATIGUE_PENALTY)
+                state.kid_temperature = max(0.0, state.kid_temperature - self._MISS_TEMP_PENALTY)
+                _open_blackout("setback", self._BLACKOUT_STEPS_ON_SETBACK)
+
+            else:
+                # Missing the next useful move should delay recovery, not auto-fix it.
+                state.kid_fatigue = min(1.0, state.kid_fatigue + self._MISS_FATIGUE_PENALTY)
 
         # -------------------------------
         # Stage: first_stand
         # -------------------------------
         elif stage == "first_stand":
-            # Ensure upright posture and a near mom.
             state.kid_posture = "standing"
-            if state.mom_distance == "far":
-                state.mom_distance = "near"
-                state.mom_position = (0.5, state.mom_position[1])
 
-            # Still somewhat exposed unless movement has already brought the kid to
-            # a safer symbolic position.
             if state.position == "shelter_area":
                 state.shelter_distance = "near"
                 state.cliff_distance = "far"
@@ -681,53 +784,114 @@ class FsmBackend:
                 state.shelter_distance = "far"
                 state.cliff_distance = "near"
 
-            # Step 1: nipple becomes reachable (found).
-            if state.nipple_state in ("hidden", "visible"):
-                if _has_action("policy:seek_nipple") or steps >= self._AUTO_NIPPLE_REACHABLE:
-                    state.nipple_state = "reachable"
+            mom_was_far = state.mom_distance == "far"
 
-            # Step 2: latch, once nipple is reachable.
-            if state.nipple_state == "reachable":
-                if _has_action("policy:seek_nipple") or steps >= self._AUTO_LATCH:
-                    state.nipple_state = "latched"
-                    state.kid_posture = "latched"
-                    state.scenario_stage = "first_latch"
+            # "follow_mom" now matters behaviorally, not just cosmetically.
+            if did_follow and state.mom_distance == "far":
+                state.mom_distance = "near"
+                state.mom_position = (0.5, state.mom_position[1])
+
+            if did_follow and mom_was_far and state.mom_distance in ("near", "touching"):
+                _emit_progress("reached_mom", blackout_kind="mom")
+
+            if did_seek:
+                # Searching before the mother is truly reachable causes a real setback.
+                if state.mom_distance not in ("near", "touching"):
+                    state.newborn_setback_count += 1
+                    state.kid_fatigue = min(1.0, state.kid_fatigue + self._SETBACK_FATIGUE_PENALTY)
+                    state.kid_posture = "fallen"
+                    state.scenario_stage = "struggle"
+                    state.nipple_state = "hidden"
+                    state.newborn_seek_attempts = 0
+                    _open_blackout("setback", self._BLACKOUT_STEPS_ON_SETBACK)
+                else:
+                    state.newborn_seek_attempts += 1
+
+                    if state.nipple_state in ("hidden", "visible") and state.newborn_seek_attempts >= self._SEEK_FOUND_ATTEMPTS:
+                        state.nipple_state = "reachable"
+                        _emit_progress("found_nipple", blackout_kind="nipple")
+
+                    elif state.nipple_state == "reachable" and state.newborn_seek_attempts >= self._SEEK_LATCH_ATTEMPTS:
+                        state.nipple_state = "latched"
+                        state.kid_posture = "latched"
+                        state.scenario_stage = "first_latch"
+                        state.newborn_milk_ticks = 0
+                        _emit_progress("latched_nipple", blackout_kind="nipple")
+
+            elif did_rest:
+                # Resting before reaching a safe niche can knock the kid backward.
+                if state.position == "cliff_edge":
+                    state.newborn_setback_count += 1
+                    state.kid_fatigue = min(1.0, state.kid_fatigue + self._SETBACK_FATIGUE_PENALTY)
+                    state.kid_posture = "fallen"
+                    state.scenario_stage = "struggle"
+                    state.nipple_state = "hidden"
+                    state.newborn_seek_attempts = 0
+                    _open_blackout("setback", self._BLACKOUT_STEPS_ON_SETBACK)
+                else:
+                    state.kid_fatigue = min(1.0, state.kid_fatigue + self._MISS_FATIGUE_PENALTY)
 
         # -------------------------------
         # Stage: first_latch
         # -------------------------------
         elif stage == "first_latch":
-            # Latched and effectively drinking.
+            # Latching is no longer enough. The kid must remain latched long enough
+            # to count as feeding, and then rest in the safe niche.
             state.kid_posture = "latched"
             state.nipple_state = "latched"
             state.mom_distance = "near"
-
-            # Interpretation: the kid has shifted into a safer, more sheltered niche.
             state.shelter_distance = "near"
             state.cliff_distance = "far"
 
-            # After a short while, transition to a resting state.
-            if steps >= self._AUTO_REST:
-                state.scenario_stage = "rest"
-                state.kid_posture = "resting"
-                state.mom_distance = "touching"
-                # You may imagine the kid curled up against mom.
-                state.mom_position = (state.kid_position[0], state.kid_position[1])
+            state.newborn_milk_ticks += 1
+            if state.newborn_milk_ticks == 1:
+                _emit_progress("milk_drinking", blackout_kind="milk")
+
+            if did_rest:
+                state.newborn_rest_attempts += 1
+
+                if state.newborn_milk_ticks >= self._REST_SUCCESS_MIN_MILK_TICKS and state.position == "shelter_area":
+                    state.scenario_stage = "rest"
+                    state.kid_posture = "resting"
+                    state.mom_distance = "touching"
+                    state.mom_position = (state.kid_position[0], state.kid_position[1])
+                    _emit_progress("rested", blackout_kind="transition")
+                else:
+                    # Resting too early delays completion.
+                    state.kid_fatigue = min(1.0, state.kid_fatigue + self._MISS_FATIGUE_PENALTY)
+
+            elif did_stand or did_seek:
+                # Breaking latch should matter.
+                state.newborn_setback_count += 1
+                state.newborn_seek_attempts = 1
+                state.newborn_rest_attempts = 0
+                state.newborn_milk_ticks = 0
+                state.kid_posture = "standing"
+                state.nipple_state = "reachable"
+                state.scenario_stage = "first_stand"
+                state.kid_fatigue = min(1.0, state.kid_fatigue + self._SETBACK_FATIGUE_PENALTY)
+                _open_blackout("setback", self._BLACKOUT_STEPS_ON_SETBACK)
 
         # -------------------------------
         # Stage: rest
         # -------------------------------
         elif stage == "rest":
-            # Keep a simple, stable resting configuration.
+            # The solved end-state should be stable and richly observable.
+            # Once the kid has reached rest, we keep the canonical sheltered
+            # nursing geometry explicit every tick instead of letting any
+            # earlier transition blackout continue to hide it.
             state.kid_posture = "resting"
             state.mom_distance = "touching"
-            # We keep nipple_state as "latched" to indicate ongoing access to milk.
-            if state.nipple_state == "hidden":
-                state.nipple_state = "latched"
+            state.mom_position = (state.kid_position[0], state.kid_position[1])
+            state.nipple_state = "latched"
 
-            # Resting near shelter; cliff is far.
             state.shelter_distance = "near"
             state.cliff_distance = "far"
+
+            # Any blackout carried over from the transition into rest should end
+            # here so the resting niche remains perceptually stable.
+            state.newborn_obs_blackout_until_step = -1
+            state.newborn_obs_blackout_kind = ""
 
         # -------------------------------
         # Stage: goat_foraging_04_scan
@@ -765,12 +929,15 @@ class FsmBackend:
         # This only runs in 'struggle' / 'first_stand' so we do not interfere with
         # the birth setup or the later nursing/resting configuration.
         # ------------------------------------------------------------------
-        if _has_action("policy:follow_mom") and state.scenario_stage in ("struggle", "first_stand"):
+        if did_follow and state.scenario_stage in ("struggle", "first_stand"):
+            if state.mom_distance == "far":
+                state.mom_distance = "near"
+                state.mom_position = (state.kid_position[0] + 0.35, state.kid_position[1])
+
             if state.position == "cliff_edge":
                 # Step 1: move off the exposed cliff edge onto more neutral terrain.
                 state.position = "open_field"
                 state.cliff_distance = "far"
-                # shelter_distance stays as-is (usually 'far' at this point).
             elif state.position == "open_field":
                 # Step 2: move from neutral ground into a more sheltered niche.
                 state.position = "shelter_area"
@@ -868,6 +1035,73 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         return landmarks
 
 
+    def _newborn_blackout_active_v1(self, env_state: EnvState) -> bool:
+        """Return True when the newborn storyboard intentionally suppresses local detail.
+
+        Important detail
+        ----------------
+        ``step_index`` may legitimately be 0 on a freshly constructed ``EnvState``.
+        We therefore must not use ``value or -1`` here, because that would coerce a
+        real step index of 0 into -1 and incorrectly turn blackout on.
+        """
+        if env_state.scenario_stage in ("rest", "goat_foraging_04_scan"):
+            return False
+
+        try:
+            raw_until = getattr(env_state, "newborn_obs_blackout_until_step", -1)
+            raw_step = getattr(env_state, "step_index", -1)
+
+            until_step = int(raw_until) if raw_until is not None else -1
+            step_index = int(raw_step) if raw_step is not None else -1
+        except Exception:
+            return False
+
+        return until_step >= step_index
+
+
+    def _apply_newborn_blackout_v1(
+        self,
+        env_state: EnvState,
+        preds: List[str],
+        cues: List[str],
+    ) -> tuple[List[str], List[str], int, int]:
+        """Apply a short-lived newborn observation blackout.
+
+        Purpose
+        -------
+        The newborn B2 benchmark should occasionally force the agent to bridge over a
+        brief gap in directly visible local detail. This helper keeps posture visible,
+        but suppresses most relation/feeding detail for a couple of steps after progress
+        or a setback.
+
+        Returns
+        -------
+        (preds_out, cues_out, dropped_pred_count, dropped_cue_count)
+        """
+        if not self._newborn_blackout_active_v1(env_state):
+            return preds, cues, 0, 0
+
+        pred_drop = {
+            "proximity:mom:close",
+            "proximity:mom:far",
+            "proximity:shelter:near",
+            "proximity:shelter:far",
+            "hazard:cliff:near",
+            "hazard:cliff:far",
+            "nipple:found",
+            "nipple:latched",
+            "milk:drinking",
+        }
+        cue_drop = {
+            "vision:silhouette:mom",
+            "drive:cold_skin",
+        }
+
+        preds_out = [tok for tok in preds if tok not in pred_drop]
+        cues_out = [tok for tok in cues if tok not in cue_drop]
+        return preds_out, cues_out, len(preds) - len(preds_out), len(cues) - len(cues_out)
+
+
     def observe(self, env_state: EnvState, ctx: Any | None = None) -> EnvObservation:
         """
         Build an EnvObservation from the current EnvState.
@@ -941,6 +1175,16 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
             elif env_state.context_label == "hawk":
                 cues.append("vision:silhouette:hawk")
 
+        blackout_active = self._newborn_blackout_active_v1(env_state)
+        dropped_pred_blackout = 0
+        dropped_cue_blackout = 0
+
+        preds, cues, dropped_pred_blackout, dropped_cue_blackout = self._apply_newborn_blackout_v1(
+            env_state,
+            preds,
+            cues,
+        )
+
         # Predictive-coding / attention hook: top-down focus request (optional).
         focus: str | None = None
         try:
@@ -958,6 +1202,8 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         shelter_near = bool(env_state.shelter_distance in ("near", "touching"))
         mom_near = bool(env_state.mom_distance in ("near", "touching"))
         landmarks = self._surfacegrid_landmarks_v1(env_state, dx=dx, dy=dy, dist=dist, focus=focus)
+        if blackout_active:
+            landmarks = [item for item in landmarks if item.get("token") == "self"]
         salience_candidates = [item["token"] for item in landmarks if item.get("token") != "self"]
 
         # --- meta ---
@@ -967,17 +1213,35 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         meta["position"] = env_state.position
         # IMPORTANT: for goat04 we do NOT expose env_state.context_label in env_meta.
         # It is hidden benchmark truth used only by experiment-side evaluation.
+
         if isinstance(env_state.milestones, list) and env_state.milestones:
             meta["milestones"] = list(env_state.milestones)
-        if int(getattr(env_state, "obs_mask_dropped_cues_hint", 0) or 0) > 0:
-            meta["obs_mask_dropped_cues"] = int(env_state.obs_mask_dropped_cues_hint)
+
+        if blackout_active:
+            meta["newborn_obs_blackout"] = True
+            meta["newborn_obs_blackout_kind"] = str(getattr(env_state, "newborn_obs_blackout_kind", "") or "generic")
+
+        if dropped_pred_blackout > 0:
+            meta["obs_mask_dropped_preds"] = int(dropped_pred_blackout)
+
+        total_dropped_cues = int(getattr(env_state, "obs_mask_dropped_cues_hint", 0) or 0) + int(dropped_cue_blackout)
+        if total_dropped_cues > 0:
+            meta["obs_mask_dropped_cues"] = int(total_dropped_cues)
+
         meta["kid_position"] = {"x": float(env_state.kid_position[0]), "y": float(env_state.kid_position[1])}
-        meta["mom_position"] = {"x": float(env_state.mom_position[0]), "y": float(env_state.mom_position[1])}
-        meta["shelter_distance"] = env_state.shelter_distance
-        meta["cliff_distance"] = env_state.cliff_distance
         meta["surface_anchor_xy"] = dict(meta["kid_position"])
-        meta["surface_affordances"] = {"cliff_near": cliff_near, "shelter_near": shelter_near, "mom_near": mom_near}
         meta["salience_candidates"] = salience_candidates
+
+        if blackout_active:
+            meta["mom_position"] = None
+            meta["shelter_distance"] = None
+            meta["cliff_distance"] = None
+            meta["surface_affordances"] = {}
+        else:
+            meta["mom_position"] = {"x": float(env_state.mom_position[0]), "y": float(env_state.mom_position[1])}
+            meta["shelter_distance"] = env_state.shelter_distance
+            meta["cliff_distance"] = env_state.cliff_distance
+            meta["surface_affordances"] = {"cliff_near": cliff_near, "shelter_near": shelter_near, "mom_near": mom_near}
 
         # Use self._near_threshold so it’s not “dead configuration”.
         meta["mom_proximity_from_raw"] = "near" if dist <= float(self._near_threshold) else "far"
@@ -994,17 +1258,30 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
                 "y": float(env_state.kid_position[1]),
             },
             "center": {"entity": "kid", "x": 0.0, "y": 0.0},
-            "objects": [{"entity": "mom", "dx": float(dx), "dy": float(dy), "dist": float(dist)}],
+            "objects": [] if blackout_active else [{"entity": "mom", "dx": float(dx), "dy": float(dy), "dist": float(dist)}],
             "landmarks": landmarks,
-            "affordances": {"cliff_near": cliff_near, "shelter_near": shelter_near, "mom_near": mom_near},
+            "affordances": {} if blackout_active else {"cliff_near": cliff_near, "shelter_near": shelter_near, "mom_near": mom_near},
             "region": {"position": str(env_state.position), "zone": str(env_state.zone)},
-            "focus_candidates": salience_candidates,
+            "focus_candidates": [] if blackout_active else salience_candidates,
         }
+
         if focus is not None:
             surface_grid["attention"] = {"focus": focus}
 
         # --- NavPatch grid payload (grid_v1) ---
         nav_patches = self._stub_navpatch_grid_v1(env_state, focus=focus)
+        if blackout_active and isinstance(nav_patches, list) and nav_patches:
+            patch0 = dict(nav_patches[0])
+            grid_w = int(patch0.get("grid_w", 0) or 0)
+            grid_h = int(patch0.get("grid_h", 0) or 0)
+            patch0["grid_cells"] = [CELL_UNKNOWN] * (grid_w * grid_h)
+            patch0["tags"] = [f"stage:{env_state.scenario_stage}", "blackout:newborn"]
+            patch0["obs"] = {
+                "source": "PerceptionAdapter.observe",
+                "step_index": int(getattr(env_state, "step_index", 0) or 0),
+                "blackout": True,
+            }
+            nav_patches = [patch0]
 
         return EnvObservation(
             raw_sensors=raw,

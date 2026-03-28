@@ -1,9 +1,10 @@
 # tests/test_cca8_env.py
 # Basic unit tests for cca8_env.EnvState / EnvObservation / HybridEnvironment / PerceptionAdapter
 #
-# These tests are intentionally small and deterministic:
-#   1) Storyboard progression: HybridEnvironment + FsmBackend without actions.
-#   2) PerceptionAdapter: mapping EnvState → EnvObservation predicates/cues.
+# These tests now match the hardened newborn-goat environment:
+#   1) No-action runs should stall in struggle rather than auto-completing B2.
+#   2) PerceptionAdapter should expose full local detail when blackout is not active.
+#   3) PerceptionAdapter should suppress local detail during an explicit blackout window.
 
 import math
 
@@ -11,29 +12,21 @@ from cca8_env import (
     EnvState,
     EnvObservation,
     EnvConfig,
-    FsmBackend,
     PerceptionAdapter,
     HybridEnvironment,
 )
 
 
-def test_storyboard_sequence_no_actions():
+def test_storyboard_sequence_no_actions_stalls_in_struggle():
     """
-    HybridEnvironment + FsmBackend should walk through the newborn-goat storyboard
-    with default thresholds when no actions are provided.
+    The hardened newborn-goat environment should no longer auto-progress all the way
+    to standing/latching/resting when no actions are supplied.
 
-    We check a few key milestones only, to keep the test robust to minor cosmetic changes:
-
-      - step 0 (after reset):  stage = birth, posture = fallen, mom_distance = far
-      - step 3:               stage = struggle
-      - step 5:               mom_distance = near
-      - step 8:               stage = first_stand, posture = standing
-      - step 11:              nipple_state = reachable
-      - step 13:              stage = first_latch, nipple_state = latched
-      - step 16:              stage = rest, posture = resting, mom_distance = touching
+    We still expect the initial birth -> struggle transition, but after that the kid
+    should remain stuck in struggle until useful actions occur.
     """
     env = HybridEnvironment(config=EnvConfig())
-    obs0, info0 = env.reset()  # noqa: F841  # obs not used directly
+    obs0, info0 = env.reset()  # noqa: F841
     state = env.state
 
     # Step 0: after reset
@@ -43,72 +36,38 @@ def test_storyboard_sequence_no_actions():
     assert state.nipple_state == "hidden"
     assert state.step_index == 0
 
-    # Helper: advance N steps with action=None
     def step_n(n: int):
         for _ in range(n):
             env.step(action=None, ctx=None)
         return env.state
 
-    # After 3 steps → struggle
+    # After 3 steps we should enter struggle.
     s3 = step_n(3)
     assert s3.step_index == 3
     assert s3.scenario_stage == "struggle"
     assert s3.kid_posture == "fallen"
+    assert s3.position == "cliff_edge"
+    assert s3.zone == "unsafe"
 
-    # After 2 more (5 total) → mom near
-    s5 = step_n(2)
-    assert s5.step_index == 5
-    assert s5.scenario_stage == "struggle"
-    assert s5.mom_distance == "near"
-
-    # After 3 more (8 total) → first_stand
-    s8 = step_n(3)
-    assert s8.step_index == 8
-    assert s8.scenario_stage == "first_stand"
-    assert s8.kid_posture == "standing"
-    assert s8.mom_distance == "near"
-
-    # After 3 more (11 total) → nipple reachable / found
-    s11 = step_n(3)
-    assert s11.step_index == 11
-    assert s11.scenario_stage == "first_stand"
-    assert s11.nipple_state == "reachable"
-
-    # After 2 more (13 total) → first_latch, latched
-    s13 = step_n(2)
-    assert s13.step_index == 13
-    assert s13.scenario_stage == "first_latch"
-    assert s13.nipple_state == "latched"
-
-    # After 3 more (16 total) → rest, touching
-    s16 = step_n(3)
+    # Even much later, no-action should still leave the kid stuck in struggle.
+    s16 = step_n(13)
     assert s16.step_index == 16
-    assert s16.scenario_stage == "rest"
-    assert s16.kid_posture == "resting"
-    assert s16.mom_distance == "touching"
+    assert s16.scenario_stage == "struggle"
+    assert s16.kid_posture == "fallen"
+    assert s16.mom_distance == "far"
+    assert s16.nipple_state == "hidden"
+    assert s16.position == "cliff_edge"
+    assert s16.zone == "unsafe"
+    assert s16.milestones == []
 
 
-def test_perception_adapter_from_env_state():
+def test_perception_adapter_from_env_state_without_blackout():
     """
-    PerceptionAdapter.observe should produce sensible predicates/cues from a given EnvState.
+    A directly constructed EnvState at step_index=0 should NOT be blacked out unless
+    blackout was explicitly requested.
 
-    Scenario:
-      - posture = latched
-      - mom_distance = near
-      - nipple_state = latched
-      - kid_temperature low enough to trigger drive:cold_skin
-
-    We expect:
-      - predicates include:
-          posture:standing (latched implies upright),
-          proximity:mom:close,
-          nipple:latched,
-          milk:drinking
-      - cues include:
-          vision:silhouette:mom,
-          drive:cold_skin
-      - raw_sensors contains distance_to_mom and kid_temperature.
-      - env_meta includes scenario_stage and time_since_birth.
+    This test specifically guards against the bug where step_index=0 was coerced to -1
+    and blackout activated unexpectedly.
     """
     state = EnvState(
         kid_posture="latched",
@@ -119,6 +78,9 @@ def test_perception_adapter_from_env_state():
         mom_position=(0.5, 0.0),
         kid_temperature=0.30,
         time_since_birth=42.0,
+        step_index=0,
+        newborn_obs_blackout_until_step=-1,
+        newborn_obs_blackout_kind="",
     )
     adapter = PerceptionAdapter()
     obs: EnvObservation = adapter.observe(state)
@@ -143,3 +105,40 @@ def test_perception_adapter_from_env_state():
     # Meta
     assert obs.env_meta.get("scenario_stage") == "first_latch"
     assert obs.env_meta.get("time_since_birth") == 42.0
+    assert "newborn_obs_blackout" not in obs.env_meta
+
+
+def test_perception_adapter_explicit_blackout_suppresses_local_detail():
+    """
+    During an explicit blackout window, local relation/feeding detail should be hidden
+    while posture remains visible.
+    """
+    state = EnvState(
+        kid_posture="latched",
+        mom_distance="near",
+        nipple_state="latched",
+        scenario_stage="first_latch",
+        kid_position=(0.0, 0.0),
+        mom_position=(0.5, 0.0),
+        kid_temperature=0.30,
+        step_index=5,
+        newborn_obs_blackout_until_step=6,
+        newborn_obs_blackout_kind="transition",
+    )
+    adapter = PerceptionAdapter()
+    obs: EnvObservation = adapter.observe(state)
+
+    preds = set(obs.predicates)
+    cues = set(obs.cues)
+
+    # Posture remains, but local feeding/proximity detail is hidden.
+    assert "posture:standing" in preds
+    assert "proximity:mom:close" not in preds
+    assert "nipple:latched" not in preds
+    assert "milk:drinking" not in preds
+
+    assert "vision:silhouette:mom" not in cues
+    assert "drive:cold_skin" not in cues
+
+    assert obs.env_meta.get("newborn_obs_blackout") is True
+    assert obs.env_meta.get("newborn_obs_blackout_kind") == "transition"
