@@ -412,6 +412,16 @@ class Ctx:
     wm_surfacegrid_dirty_reasons: list[str] = field(default_factory=list)
     wm_surfacegrid_compose_ms: float = 0.0
     wm_surfacegrid_last_ascii: Optional[str] = None
+    # Last ASCII map actually printed to the terminal.
+    # This is separate from wm_surfacegrid_last_ascii, which is the current
+    # composed map snapshot for this tick. Keeping both lets the footer say
+    # "unchanged" without re-dumping the full map every cycle.
+    wm_surfacegrid_last_printed_ascii: Optional[str] = None
+    # Normalized framed block last emitted to the terminal.
+    # I keep this separate from wm_surfacegrid_last_printed_ascii because the raw
+    # ascii snapshot can vary for non-visual reasons while the human-visible framed
+    # terminal block is unchanged.
+    wm_surfacegrid_last_printed_block: Optional[str] = None
     # SurfaceGrid printing controls (terminal UX)
     wm_surfacegrid_ascii_enabled: bool = True
     wm_surfacegrid_ascii_each_tick: bool = False  # if True, print the grid even on cache-hit ticks (compose_ms==0)
@@ -14352,25 +14362,155 @@ def format_surfacegrid_ascii_map_v1(
     return "\n".join(out)
 
 
-def format_surfacegrid_snapshot_v1(ctx: Ctx) -> str:
-    """Format the current WM.SurfaceGrid stored on ctx using the newer entity-aware helpers.
+def _surfacegrid_ascii_text_v1(ctx: Ctx, sg) -> Optional[str]:
+    """Return the best available raw ASCII SurfaceGrid text for the current tick.
+
+    Preference order
+    ----------------
+    1. Reuse ctx.wm_surfacegrid_last_ascii when it is already available.
+    2. Fall back to the renderer helper if the current code path has a SurfaceGrid
+       object but the cached ASCII text has not yet been populated.
+
+    This helper is read-mostly. It may refresh ctx.wm_surfacegrid_last_ascii when
+    the fallback renderer succeeds.
+    """
+    ascii_txt = getattr(ctx, "wm_surfacegrid_last_ascii", None)
+    if isinstance(ascii_txt, str) and ascii_txt:
+        return ascii_txt
+
+    render_fn = globals().get("render_surfacegrid_ascii_with_salience_v1")
+    if not callable(render_fn) or sg is None:
+        return None
+
+    ww = getattr(ctx, "working_world", None)
+    focus_entities = getattr(ctx, "wm_salience_focus_entities", None)
+    if not isinstance(focus_entities, list):
+        focus_entities = []
+    try:
+        focus_entities = _wm_display_focus_entities_v1(focus_entities)
+    except Exception:
+        focus_entities = list(focus_entities)
+
+    try:
+        ascii_txt = render_fn(ctx, ww, sg, focus_entities=focus_entities)
+    except Exception:
+        return None
+
+    if isinstance(ascii_txt, str) and ascii_txt:
+        try:
+            ctx.wm_surfacegrid_last_ascii = ascii_txt
+        except Exception:
+            pass
+        return ascii_txt
+
+    return None
+
+
+def _surfacegrid_terminal_block_key_v1(map_txt: str) -> str:
+    """Return a normalized comparison key for the framed SurfaceGrid terminal block.
 
     Why this helper exists
     ----------------------
-    Some older call sites want a simple "give me the current SurfaceGrid as a printable
-    string from ctx" API. The newer renderer/formatter split that into:
+    The terminal UX should suppress repeat prints when the *visible* SurfaceGrid
+    block is unchanged. Comparing the raw cached ascii snapshot alone can be too
+    strict, because upstream recomposition may produce harmless whitespace-only
+    differences while the framed terminal block the user sees is identical.
 
-        1) render_surfacegrid_ascii_with_salience_v1(ctx, ww, sg, focus_entities=[...])
-        2) format_surfacegrid_ascii_map_v1(ascii_txt, title=..., legend=..., show_axes=True)
+    Normalization
+    -------------
+    - split into lines
+    - strip trailing whitespace per line
+    - drop only blank lines at the very start/end
+    - preserve internal spaces and line order
+    """
+    if not isinstance(map_txt, str) or not map_txt:
+        return ""
 
-    This wrapper bridges those call sites without reintroducing the older duplicate
-    function names/signatures that confused Pylint.
+    lines = [line.rstrip() for line in map_txt.splitlines()]
+
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+
+    return "\n".join(lines)
+
+
+def _surfacegrid_ascii_terminal_block_v1(
+    ctx: Ctx,
+    sg,
+    *,
+    sig16: str,
+    line_prefix: str = "",
+    title: Optional[str] = None,
+    legend: Optional[str] = None,
+) -> str:
+    """Return the terminal block for a SurfaceGrid map using change detection.
+
+    Behavior
+    --------
+    - First time a map is printed in this run: print the full framed map.
+    - If the visible framed map changes later: print the full framed map again.
+    - If the visible framed map is unchanged: print a short unchanged marker instead.
+
+    Why the comparison uses the framed block
+    ----------------------------------------
+    The raw cached ascii snapshot can differ across ticks for non-visual reasons,
+    while the formatted terminal block the user sees is identical. For terminal UX,
+    I therefore compare a normalized key derived from the formatted map block.
+    """
+    _ = sig16  # kept for call-site compatibility; helper no longer needs sig16 directly
+
+    ascii_txt = _surfacegrid_ascii_text_v1(ctx, sg)
+    if not isinstance(ascii_txt, str) or not ascii_txt:
+        try:
+            ctx.wm_surfacegrid_last_printed_ascii = None
+            ctx.wm_surfacegrid_last_printed_block = None
+        except Exception:
+            pass
+        return f"{line_prefix}map: (no ascii available)"
+
+    map_txt = format_surfacegrid_ascii_map_v1(
+        ascii_txt,
+        title=title,
+        legend=legend,
+        show_axes=True,
+    )
+    block_key = _surfacegrid_terminal_block_key_v1(map_txt)
+
+    show_each = bool(getattr(ctx, "wm_surfacegrid_ascii_each_tick", False))
+    last_block = getattr(ctx, "wm_surfacegrid_last_printed_block", None)
+    changed = bool(show_each or block_key != last_block)
+
+    if not changed:
+        try:
+            ctx.wm_surfacegrid_last_printed_ascii = ascii_txt
+        except Exception:
+            pass
+        return f"{line_prefix}++SurfaceGrid ASCII Map is unchanged++"
+
+    try:
+        ctx.wm_surfacegrid_last_printed_ascii = ascii_txt
+        ctx.wm_surfacegrid_last_printed_block = block_key
+    except Exception:
+        pass
+
+    return f"{line_prefix}map:\n{map_txt}"
+
+
+def format_surfacegrid_snapshot_v1(ctx: Ctx) -> str:
+    """Format the current WM.SurfaceGrid stored on ctx using shared change detection.
+
+    Why this helper exists
+    ----------------------
+    Older call sites still want a single "give me the current SurfaceGrid as a
+    printable string" API. We now route those call sites through the same
+    changed-vs-unchanged logic used by the cycle footer, so the full ASCII map
+    is printed only when it actually changes.
     """
     sg = getattr(ctx, "wm_surfacegrid", None)
     if sg is None:
         return "[surfacegrid] (none)"
-
-    ww = getattr(ctx, "working_world", None)
 
     sig16 = getattr(ctx, "wm_surfacegrid_sig16", None)
     if not isinstance(sig16, str) or not sig16:
@@ -14379,7 +14519,11 @@ def format_surfacegrid_snapshot_v1(ctx: Ctx) -> str:
         except Exception:
             sig16 = "unknown"
 
-    compose_ms = float(getattr(ctx, "wm_surfacegrid_compose_ms", 0.0) or 0.0)
+    try:
+        compose_ms = float(getattr(ctx, "wm_surfacegrid_compose_ms", 0.0) or 0.0)
+    except Exception:
+        compose_ms = 0.0
+
     reasons = getattr(ctx, "wm_surfacegrid_dirty_reasons", None)
     if not isinstance(reasons, list):
         reasons = []
@@ -14393,44 +14537,32 @@ def format_surfacegrid_snapshot_v1(ctx: Ctx) -> str:
     focus_entities = getattr(ctx, "wm_salience_focus_entities", None)
     if not isinstance(focus_entities, list):
         focus_entities = []
-    focus_entities = _wm_display_focus_entities_v1(focus_entities)
+    try:
+        focus_entities = _wm_display_focus_entities_v1(focus_entities)
+    except Exception:
+        focus_entities = list(focus_entities)
+
     focus_txt = ", ".join(focus_entities) or "(none)"
 
     header = f"[surfacegrid] sig16={sig16} compose_ms={compose_ms:.2f} focus={focus_txt}"
     if reason_txt:
         header += f" reasons={reason_txt}"
 
-    if not bool(getattr(ctx, "wm_surfacegrid_ascii_enabled", True)):
-        return header
-
-    ascii_txt = getattr(ctx, "wm_surfacegrid_last_ascii", None)
-    if not isinstance(ascii_txt, str) or not ascii_txt:
-        if ww is not None:
-            try:
-                ascii_txt = render_surfacegrid_ascii_with_salience_v1(
-                    ctx,
-                    ww,
-                    sg,
-                    focus_entities=list(focus_entities),
-                )
-            except Exception:
-                ascii_txt = ""
-        else:
-            ascii_txt = ""
-
-    if not ascii_txt:
-        return header
-
-    legend_prefix = "@=self"
-    if "&" in ascii_txt:
-        legend_prefix += " &=self+mom"
     legend_txt = (
-        f"{legend_prefix} M=mom S=shelter C=cliff G=goal #=hazard X=blocked *=other  "
-        "(dense: .=traversable; sparse: space=unknown/trav)"
+        "@=self &=self+mom M=mom S=shelter C=cliff G=goal "
+        "#=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)"
     )
-    title = f"WM.SurfaceGrid (sig16={sig16})"
-    map_txt = format_surfacegrid_ascii_map_v1(ascii_txt, title=title, legend=legend_txt, show_axes=True)
-    return header + "\n" + map_txt
+
+    block = _surfacegrid_ascii_terminal_block_v1(
+        ctx,
+        sg,
+        sig16=sig16,
+        line_prefix="",
+        title=f"WM.SurfaceGrid (sig16={sig16})",
+        legend=legend_txt,
+    )
+
+    return header + "\n" + block
 
 
 def wm_salience_force_focus_entity_v1(ctx: Ctx, entity_id: str, *, ttl: int | None = None, reason: str = "inspect") -> None:
@@ -17238,27 +17370,25 @@ def _print_cog_cycle_footer(*,
 
         print(f"[cycle] SG   surfacegrid_sig16={sg_sig16} compose_ms={sg_ms:.2f}{reason_txt}")
 
-        quiet_rest_tail = _quiet_solved_rest_tail_v1(
-            curr_state,
-            zone,
-            action_applied_this_step,
-            next_action_for_env,
-        )
-
-        # Optional ASCII map dump.
-        # If wm_surfacegrid_ascii_each_tick is True, print even on cache-hit ticks (sg_ms == 0.0).
-        # Otherwise, suppress repetitive solved-rest map re-dumps.
-        show_each = bool(getattr(ctx, "wm_surfacegrid_ascii_each_tick", False))
-        if bool(getattr(ctx, "wm_surfacegrid_verbose", False)) and (show_each or (sg_ms > 0.0 and not quiet_rest_tail)):
-            ascii_txt = getattr(ctx, "wm_surfacegrid_last_ascii", None)
-            if isinstance(ascii_txt, str) and ascii_txt:
-                # Always print legend under the framed map (every cognitive cycle).
-                legend_txt = "@=self M=mom &=@M S=shelter C=cliff G=goal #=hazd X=blocked *=other (dense: .=traversable; sparse: space=unknown/trav)"
-                title = f"WM.SurfaceGrid (sig16={sg_sig16})"
-                map_txt = format_surfacegrid_ascii_map_v1(ascii_txt, title=title, legend=legend_txt, show_axes=True)
-                print("[cycle] SG   map:\n" + map_txt)
-            elif show_each:
-                print("[cycle] SG   map: (no ascii available)")
+        # ASCII map dump:
+        # Optional ASCII map dump using the same changed-vs-unchanged logic as
+        # the older [surfacegrid] snapshot path.
+        if bool(getattr(ctx, "wm_surfacegrid_verbose", False)):
+            legend_txt = (
+                "@=self &=self+mom M=mom S=shelter C=cliff G=goal "
+                "#=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)"
+            )
+            sg = getattr(ctx, "wm_surfacegrid", None)
+            print(
+                _surfacegrid_ascii_terminal_block_v1(
+                    ctx,
+                    sg,
+                    sig16=sg_sig16,
+                    line_prefix="[cycle] SG   ",
+                    title=f"WM.SurfaceGrid (sig16={sg_sig16})",
+                    legend=legend_txt,
+                )
+            )
 
     # [cycle] NS — NavSummary HUD (Phase X P1.4)
     try:
@@ -17877,6 +18007,16 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
     if not getattr(ctx, "env_episode_started", False):
         print("[env-loop] Note: this episode has not started yet; the first cognitive cycle will call env.reset().")
         print("[env-loop]       (With HAL ON, this is where we'd sample the first real sensor snapshot.)")
+
+    # Start each env-loop run with a clean SG display cache so the first map
+    # of the run is shown in full once, and later identical maps can collapse
+    # to the short unchanged marker.
+    try:
+        ctx.wm_surfacegrid_last_printed_ascii = None
+        ctx.wm_surfacegrid_last_printed_block = None
+    except Exception:
+        pass
+
     for i in range(n_steps):
         print(f"\n[env-loop] Cognitive Cycle {i+1}/{n_steps}")
         # Per-cycle capture for the footer summary (reset each cycle).
@@ -20432,10 +20572,12 @@ def interactive_loop(args: argparse.Namespace) -> None:
     except Exception:
         ctx.boundary_vhash64 = None
 
-    # Phase X ergonomics: show WM.SurfaceGrid as an ASCII map every env-loop tick.
-    # This is intentionally noisy; if you want the compact HUD only, set either of these False.
+    # Phase X ergonomics:
+    # - keep the SurfaceGrid HUD visible in env-loop runs,
+    # - but let the shared SG helper collapse identical maps to the short
+    #   "unchanged" marker instead of forcing a full redraw every cycle.
     ctx.wm_surfacegrid_verbose = True
-    ctx.wm_surfacegrid_ascii_each_tick = True
+    ctx.wm_surfacegrid_ascii_each_tick = False
 
     env = HybridEnvironment()     # Environment simulation: newborn-goat scenario (HybridEnvironment)
     ctx.body_world, ctx.body_ids = init_body_world() # initialize tiny BodyMap (body_world) as a separate WorldGraph instance
