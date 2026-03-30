@@ -3060,6 +3060,233 @@ def render_experiment_batch_summary_lines_v1(batch_result: dict[str, Any]) -> li
     return lines
 
 
+def _experiment_repeat_metric_keys_v1(benchmark_id: str) -> list[str]:
+    """Return the compact metric set that best separates A/B/C for the active benchmark.
+
+    I intentionally keep this small and benchmark-specific so submenu 19 stays readable in the
+    terminal and focuses on the paper-facing numbers that have been most useful so far.
+    """
+    if benchmark_id == "goat04_context":
+        return [
+            "success_rate",
+            "mean_context_switch_accuracy",
+            "mean_oracle_retrieval_precision",
+            "mean_internal_retrieval_event_ratio",
+            "mean_stabilization_latency",
+            "mean_cumulative_prediction_error",
+        ]
+
+    return [
+        "success_rate",
+        "mean_milestone_score",
+        "mean_time_to_rested",
+        "mean_newborn_retrieval_event_count",
+        "mean_newborn_retrieval_non_noop_count",
+        "mean_cumulative_prediction_error",
+    ]
+
+
+def _experiment_random_seed_list_v1(
+    count: int,
+    *,
+    low: int = 1,
+    high: int = 999_999,
+    rng: random.Random | None = None,
+) -> list[int]:
+    """Return a unique random seed list for one repeat.
+
+    Important design point:
+    experiment_run_one_episode_v1(...) reseeds the module-global random generator on every run.
+    Therefore I use a local RNG here so the repeat driver keeps producing genuinely fresh seed lists.
+    """
+    try:
+        n = int(count)
+    except Exception:
+        n = 1
+    n = max(1, min(64, n))
+
+    try:
+        lo = int(low)
+        hi = int(high)
+    except Exception:
+        lo = 1
+        hi = 999_999
+
+    if hi < lo:  #pylint: disable=consider-using-max-builtin
+        hi = lo
+
+    chooser = rng if rng is not None else random.SystemRandom()
+    out: set[int] = set()
+
+    while len(out) < n:
+        out.add(int(chooser.randrange(lo, hi + 1)))
+
+    return list(out)
+
+
+def _render_experiment_repeat_condition_line_v1(
+    condition_summary: dict[str, Any],
+    *,
+    benchmark_id: str,
+    repeat_index: int | None = None,
+    prefix: str = "[experiments]",
+) -> str:
+    """Render one compact condition line for submenu 19.
+
+    The goal is to mirror the existing batch summary style, but keep it short enough that
+    twenty repeats remain readable in a text terminal.
+    """
+    cid = condition_summary.get("condition_id")
+    head = f"{prefix} "
+    if isinstance(repeat_index, int):
+        head += f"repeat {repeat_index:02d} "
+    head += f"{_experiment_metric_text_v1(cid)}"
+
+    if benchmark_id == "goat04_context":
+        tail = (
+            f" success_rt={_experiment_metric_text_v1(condition_summary.get('success_rate'))}"
+            f" ctx_switch={_experiment_metric_text_v1(condition_summary.get('mean_context_switch_accuracy'))}"
+            f" retr_prec={_experiment_metric_text_v1(condition_summary.get('mean_oracle_retrieval_precision'))}"
+            f" retr_rt={_experiment_metric_text_v1(condition_summary.get('mean_internal_retrieval_event_ratio'))}"
+            f" stabilize={_experiment_metric_text_v1(condition_summary.get('mean_stabilization_latency'))}"
+            f" pred_e={_experiment_metric_text_v1(condition_summary.get('mean_cumulative_prediction_error'))}"
+        )
+    else:
+        tail = (
+            f" success_rt={_experiment_metric_text_v1(condition_summary.get('success_rate'))}"
+            f" milestone_score={_experiment_metric_text_v1(condition_summary.get('mean_milestone_score'))}"
+            f" rest_t={_experiment_metric_text_v1(condition_summary.get('mean_time_to_rested'))}"
+            f" retr_evt={_experiment_metric_text_v1(condition_summary.get('mean_newborn_retrieval_event_count'))}"
+            f" retr_eff={_experiment_metric_text_v1(condition_summary.get('mean_newborn_retrieval_non_noop_count'))}"
+            f" pred_e={_experiment_metric_text_v1(condition_summary.get('mean_cumulative_prediction_error'))}"
+        )
+
+    return head + tail
+
+
+def experiment_run_repeated_random_abc_v1(
+    protocol_ctx: Ctx,
+    *,
+    repeats: int = 20,
+    seeds_per_repeat: int | None = None,
+    suppress_output: bool = True,
+) -> dict[str, Any]:
+    """Run A/B/C batches repeatedly with fresh random seeds and aggregate the results.
+
+    This is intentionally a thin wrapper around experiment_run_condition_batch_v1(...).
+    I do not create a second execution pathway. That keeps submenu 19 aligned with the
+    already-working submenu 18 behavior.
+    """
+    if protocol_ctx is None:
+        return {"ok": False, "why": "missing_protocol_ctx"}
+
+    cfg = experiment_normalize_protocol_v1(getattr(protocol_ctx, "experiment_cfg", None))
+    benchmark_id = str(cfg.benchmark_id or "")
+
+    try:
+        repeat_count = int(repeats)
+    except Exception:
+        repeat_count = 20
+    repeat_count = max(1, min(200, repeat_count))
+
+    try:
+        seed_count = int(seeds_per_repeat if seeds_per_repeat is not None else len(cfg.seed_list))
+    except Exception:
+        seed_count = len(cfg.seed_list)
+    seed_count = max(1, min(64, seed_count or 5))
+
+    rng = random.SystemRandom()
+    metric_keys = _experiment_repeat_metric_keys_v1(benchmark_id)
+
+    repeat_batches: list[dict[str, Any]] = []
+    result_lines: list[str] = []
+
+    aggregate: dict[str, dict[str, list[float]]] = {
+        "A": defaultdict(list),
+        "B": defaultdict(list),
+        "C": defaultdict(list),
+    }
+
+    for repeat_idx in range(1, repeat_count + 1):
+        seed_values = _experiment_random_seed_list_v1(seed_count, rng=rng)
+        print(f"[experiments] repeat {repeat_idx:02d}/{repeat_count}: seeds={seed_values}")
+
+        batch = experiment_run_condition_batch_v1(
+            protocol_ctx,
+            condition_ids=["A", "B", "C"],
+            seed_list=seed_values,
+            episodes_per_seed=int(cfg.episodes_per_seed),
+            suppress_output=suppress_output,
+        )
+
+        repeat_batches.append(
+            {
+                "repeat_index": int(repeat_idx),
+                "seed_list": list(seed_values),
+                "batch": batch,
+            }
+        )
+
+        if not bool(batch.get("ok")):
+            line = f"[experiments] repeat {repeat_idx:02d} failed: {_experiment_metric_text_v1(batch.get('why'))}"
+            print(line)
+            result_lines.append(line)
+            continue
+
+        summaries = batch.get("condition_summaries")
+        summaries = summaries if isinstance(summaries, list) else []
+
+        for row in summaries:
+            if not isinstance(row, dict):
+                continue
+
+            cid = row.get("condition_id")
+            if cid not in aggregate:
+                continue
+
+            line = _render_experiment_repeat_condition_line_v1(
+                row,
+                benchmark_id=benchmark_id,
+                repeat_index=repeat_idx,
+            )
+            print(line)
+            result_lines.append(line)
+
+            for key in metric_keys:
+                value = row.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    aggregate[cid][key].append(float(value))
+
+    averages_by_condition: dict[str, dict[str, Any]] = {}
+    average_lines: list[str] = []
+
+    for cid in ("A", "B", "C"):
+        avg_row: dict[str, Any] = {"condition_id": cid}
+        for key in metric_keys:
+            avg_row[key] = _experiment_mean_v1(aggregate[cid].get(key, []))
+
+        averages_by_condition[cid] = avg_row
+        average_lines.append(
+            _render_experiment_repeat_condition_line_v1(
+                avg_row,
+                benchmark_id=benchmark_id,
+                prefix="[experiments] avg",
+            )
+        )
+
+    return {
+        "ok": True,
+        "benchmark_id": benchmark_id,
+        "repeats": int(repeat_count),
+        "seeds_per_repeat": int(seed_count),
+        "metric_keys": metric_keys,
+        "repeat_batches": repeat_batches,
+        "result_lines": result_lines,
+        "averages_by_condition": averages_by_condition,
+        "average_lines": average_lines,
+    }
+
+
 def experiments_menu_49_interactive(ctx: Ctx) -> None:
     """Richer interactive config menu for the long-horizon experiment protocol.
 
@@ -3109,6 +3336,7 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
         print(" 16) Reset experiment protocol to defaults")
         print(" 17) Run one prepared experiment episode now (isolated sandbox)")
         print(" 18) Run A/B/C batch over current seeds (isolated sandbox)")
+        print(" 19) Run x20 random-seed A/B/C repeats + averages")
         print("  0) Return to Main Menu")
 
         sub = input("Experiment menu select: ").strip().lower()
@@ -3365,7 +3593,33 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
                     print(f"  ... plus {len(failures) - 5} more failure(s)")
             continue
 
-        print("[experiments] Unknown selection. Use 0..18.")
+        if sub == "19":
+            print()
+            print("[experiments] running x20 A/B/C batches with fresh random seeds...")
+
+            repeated = experiment_run_repeated_random_abc_v1(
+                ctx,
+                repeats=20,
+                seeds_per_repeat=len(cfg.seed_list) if cfg.seed_list else 5,
+                suppress_output=True,
+            )
+
+            if not bool(repeated.get("ok")):
+                print(f"[experiments] repeated run failed: {repeated.get('why')}")
+                continue
+
+            print()
+            print("[experiments] result list (20 repeats):")
+            for line in repeated.get("result_lines", []):
+                print(line)
+
+            print()
+            print(f"[experiments] averages over {repeated.get('repeats')} repeats:")
+            for line in repeated.get("average_lines", []):
+                print(line)
+            continue
+
+        print("[experiments] Unknown selection. Use 0..19.")
 
 
 # Module layout / roadmap
