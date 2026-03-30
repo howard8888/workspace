@@ -617,6 +617,9 @@ class Ctx:
     # goat_foraging_04 contextual map-switch bookkeeping (episode-local)
     wm_goat04_seeded_contexts: set[str] = field(default_factory=set)
     wm_goat04_seed_engram_by_context: dict[str, str] = field(default_factory=dict)
+    # newborn_long_horizon benchmark seed snapshots (episode-local)
+    wm_newborn_b2_seeded_labels: set[str] = field(default_factory=set)
+    wm_newborn_b2_seed_engram_by_label: dict[str, str] = field(default_factory=dict)
 
     # goat04 retrieval → control bridge
     # --------------------------------
@@ -750,6 +753,30 @@ class Ctx:
     experiment_cfg: ExperimentProtocolConfig = field(default_factory=ExperimentProtocolConfig)
     experiment_last_summary: dict[str, Any] = field(default_factory=dict)
 
+    # Newborn B2 benchmark hardening
+    # ------------------------------
+    # When True, the newborn bridge gates must rely on fresh current-state memory
+    # (BodyMap / committed current state) rather than reconstructing "truth now"
+    # from older long-term episode predicates near NOW.
+    #
+    # This is benchmark-only. It should be enabled by the Menu 49 sandbox for
+    # newborn_long_horizon, not for ordinary interactive runs.
+    experiment_newborn_require_current_state: bool = False
+    # When True, the newborn benchmark is allowed to bridge across a blackout only
+    # if a recent wm_mapsurface retrieval/apply event succeeded.
+    #
+    # This makes "resume the long-horizon task after missing current evidence"
+    # depend on episodic readback rather than on stage-local bridge logic alone.
+    experiment_newborn_require_resume_memory: bool = False
+    # Short-lived retrieved-state bridge for newborn B2.
+    # -------------------------------------------------
+    # A newborn retrieval can succeed at the WorkingMap/Column seam but still fail
+    # to change control if the gates only read fresh BodyMap values. These fields
+    # hold a tiny decoded hint from the most recent retrieved wm_mapsurface engram
+    # so strict benchmark gates can consult it during brief blackout windows.
+    experiment_newborn_retrieved_hint: dict[str, Any] = field(default_factory=dict)
+    experiment_newborn_retrieved_hint_until_step: int = -1
+    experiment_newborn_retrieved_hint_source: Optional[str] = None
 
     def reset_controller_steps(self) -> None:
         """quick reset of Ctx.controller_steps counter
@@ -1565,10 +1592,13 @@ def experiment_configure_benchmark_runtime_v1(world, drives, ctx: Ctx, env: Hybr
             return {"ok": False, "why": f"benchmark_setup_failed:{e}"}
     elif benchmark_id == "newborn_long_horizon":
         try:
-            env.config = EnvConfig(scenario_name="newborn_goat_first_hour", dt=getattr(env.config, "dt", 1.0))
+            env.config = EnvConfig(
+                scenario_name="newborn_goat_first_hour_benchmark_hard",
+                dt=getattr(env.config, "dt", 1.0),
+            )
         except Exception:
             try:
-                env.config.scenario_name = "newborn_goat_first_hour"
+                env.config.scenario_name = "newborn_goat_first_hour_benchmark_hard"
             except Exception:
                 return {"ok": False, "why": "benchmark_setup_failed:newborn_env_config"}
 
@@ -1584,6 +1614,22 @@ def experiment_configure_benchmark_runtime_v1(world, drives, ctx: Ctx, env: Hybr
             ctx.wm_mapsurface_autoretrieve_mode = "merge"
             ctx.wm_mapsurface_autoretrieve_top_k = 5
             ctx.wm_mapsurface_autoretrieve_verbose = False
+        except Exception:
+            pass
+
+        try:
+            # Benchmark-only hardening:
+            # during newborn B2, bridge logic must trust fresh current-state memory
+            # rather than silently reconstructing "truth now" from old episode history.
+            ctx.experiment_newborn_require_current_state = True
+        except Exception:
+            pass
+
+        try:
+            # Benchmark-only hardening:
+            # if current evidence is missing during a blackout, bridge logic must
+            # have a recent successful retrieval in order to resume task progress.
+            ctx.experiment_newborn_require_resume_memory = True
         except Exception:
             pass
 
@@ -1610,6 +1656,20 @@ def experiment_configure_benchmark_runtime_v1(world, drives, ctx: Ctx, env: Hybr
             ctx.wm_mapswitch_history = []
         except Exception:
             pass
+
+        try:
+            ctx.wm_newborn_b2_seeded_labels = set()
+            ctx.wm_newborn_b2_seed_engram_by_label = {}
+        except Exception:
+            pass
+
+        try:
+            ctx.experiment_newborn_retrieved_hint = {}
+            ctx.experiment_newborn_retrieved_hint_until_step = -1
+            ctx.experiment_newborn_retrieved_hint_source = None
+        except Exception:
+            pass
+
     else:
         return {"ok": False, "why": f"unsupported_benchmark:{benchmark_id}"}
 
@@ -1723,17 +1783,23 @@ def _experiment_summarize_newborn_b2_v1(raw_records: list[dict[str, Any]]) -> di
         5) milk_drinking
         6) rested
 
-    v1 scoring rule implemented here
-    -------------------------------
-    - Milestones must be achieved in order.
-    - A milestone may be recognized either from the raw environment-side state fields
-      (posture / mom_distance / nipple_state / zone) or from the current observation predicates.
-    - The final "rested" milestone is counted only when the kid is resting in the safe zone.
-    - ``recovery_latency`` is defined simply as the first env step at which ``stood_up`` is
-      achieved. This is a practical first measure of time-to-functional-recovery from birth.
+    v2 scoring / debugging additions
+    --------------------------------
+    The old summary told us whether the episode eventually succeeded, but it hid the
+    later timing structure. We now keep the old fields and add milestone-step timing
+    so A/B/C separation can show up even when all three conditions eventually succeed.
 
-    Returns a small JSON-safe dict containing the ordered milestone vector plus milestone_score
-    and recovery_latency.
+    Returns a small JSON-safe dict containing:
+      - milestone_vector
+      - milestone_steps
+      - milestone_score
+      - recovery_latency          (time to stood_up; preserved for back-compat)
+      - time_to_rested            (absolute env step of final completion)
+      - mom_approach_latency      (reached_mom - stood_up)
+      - nipple_find_latency       (found_nipple - reached_mom)
+      - latch_latency             (latched_nipple - found_nipple)
+      - rest_completion_latency   (rested - latched_nipple)
+      - success
     """
     ordered = [
         "stood_up",
@@ -1746,6 +1812,13 @@ def _experiment_summarize_newborn_b2_v1(raw_records: list[dict[str, Any]]) -> di
     milestone_vector = {name: False for name in ordered}
     milestone_steps: dict[str, int | None] = {name: None for name in ordered}
     recovery_latency: float | None = None
+
+    def _step_delta(start_name: str, end_name: str) -> float | None:
+        start = milestone_steps.get(start_name)
+        end = milestone_steps.get(end_name)
+        if not isinstance(start, int) or not isinstance(end, int):
+            return None
+        return float(end - start)
 
     next_idx = 0
     for cycle_index, raw in enumerate(raw_records):
@@ -1798,12 +1871,96 @@ def _experiment_summarize_newborn_b2_v1(raw_records: list[dict[str, Any]]) -> di
     achieved_count = sum(1 for name in ordered if milestone_vector[name])
     milestone_score = achieved_count / float(len(ordered))
 
+    time_to_rested = None
+    if isinstance(milestone_steps.get("rested"), int):
+        time_to_rested = float(milestone_steps["rested"])
+
     return {
         "milestone_vector": milestone_vector,
         "milestone_steps": milestone_steps,
         "milestone_score": milestone_score,
         "recovery_latency": recovery_latency,
+        "time_to_rested": time_to_rested,
+        "mom_approach_latency": _step_delta("stood_up", "reached_mom"),
+        "nipple_find_latency": _step_delta("reached_mom", "found_nipple"),
+        "latch_latency": _step_delta("found_nipple", "latched_nipple"),
+        "rest_completion_latency": _step_delta("latched_nipple", "rested"),
         "success": bool(achieved_count == len(ordered)),
+    }
+
+
+def _newborn_retrieval_debug_from_raw_records_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize newborn B2 retrieval/apply behavior from raw cycle records.
+
+    Why this exists
+    ---------------
+    We now know that "retrieval happened" is not enough. We need to distinguish:
+
+      - no retrieval at all,
+      - retrieval events that were merge no-ops,
+      - retrieval events that actually changed the WorkingMap,
+      - and replace-mode retrieval frequency.
+
+    This helper is purely diagnostic. It does not change behavior.
+    """
+    retrieval_event_count = 0
+    retrieval_ok_count = 0
+    retrieval_non_noop_count = 0
+    retrieval_merge_noop_count = 0
+    retrieval_replace_count = 0
+    retrieval_steps: list[int] = []
+
+    for raw in raw_records:
+        wm = raw.get("wm") if isinstance(raw, dict) else None
+        wm = wm if isinstance(wm, dict) else {}
+        mapswitch = wm.get("mapswitch") if isinstance(wm, dict) else None
+        mapswitch = mapswitch if isinstance(mapswitch, dict) else {}
+        events = mapswitch.get("events") if isinstance(mapswitch, dict) else None
+        events = events if isinstance(events, list) else []
+
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            reason = event.get("reason")
+            if not (isinstance(reason, str) and reason.startswith("newborn_b2:")):
+                continue
+
+            retrieval_event_count += 1
+            if bool(event.get("ok")):
+                retrieval_ok_count += 1
+
+            step_value = raw.get("env_step")
+            if isinstance(step_value, int):
+                retrieval_steps.append(int(step_value))
+
+            load = event.get("load")
+            load = load if isinstance(load, dict) else {}
+            mode = str(load.get("mode") or "").strip().lower()
+
+            if mode == "replace":
+                retrieval_replace_count += 1
+                ent_n = int(load.get("entities", 0) or 0)
+                rel_n = int(load.get("relations", 0) or 0)
+                if ent_n > 0 or rel_n > 0:
+                    retrieval_non_noop_count += 1
+            else:
+                ae = int(load.get("added_entities", 0) or 0)
+                fs = int(load.get("filled_slots", 0) or 0)
+                ed = int(load.get("added_edges", 0) or 0)
+                pc = int(load.get("stored_prior_cues", 0) or 0)
+
+                if ae > 0 or fs > 0 or ed > 0 or pc > 0:
+                    retrieval_non_noop_count += 1
+                else:
+                    retrieval_merge_noop_count += 1
+
+    return {
+        "retrieval_event_count": int(retrieval_event_count),
+        "retrieval_ok_count": int(retrieval_ok_count),
+        "retrieval_non_noop_count": int(retrieval_non_noop_count),
+        "retrieval_merge_noop_count": int(retrieval_merge_noop_count),
+        "retrieval_replace_count": int(retrieval_replace_count),
+        "retrieval_steps": retrieval_steps[:24],
     }
 
 
@@ -2231,13 +2388,37 @@ def _experiment_summarize_generic_episode_v1(
             and context_switch_accuracy >= 0.75
             and cue_leakage_violations == 0
         )
+
     else:
         newborn = _experiment_summarize_newborn_b2_v1(raw_records)
+        retrieval_dbg = _newborn_retrieval_debug_from_raw_records_v1(raw_records)
+
         milestone_vector = dict(newborn.get("milestone_vector", {}) or {})
         success = bool(newborn.get("success"))
+
         record["milestone_score"] = float(newborn.get("milestone_score", 0.0) or 0.0)
+
         recovery_latency = newborn.get("recovery_latency")
         record["recovery_latency"] = float(recovery_latency) if isinstance(recovery_latency, (int, float)) else None
+
+        record["milestone_steps"] = dict(newborn.get("milestone_steps", {}) or {})
+
+        for key in (
+            "time_to_rested",
+            "mom_approach_latency",
+            "nipple_find_latency",
+            "latch_latency",
+            "rest_completion_latency",
+        ):
+            value = newborn.get(key)
+            record[key] = float(value) if isinstance(value, (int, float)) else None
+
+        record["newborn_retrieval_event_count"] = int(retrieval_dbg.get("retrieval_event_count", 0) or 0)
+        record["newborn_retrieval_ok_count"] = int(retrieval_dbg.get("retrieval_ok_count", 0) or 0)
+        record["newborn_retrieval_non_noop_count"] = int(retrieval_dbg.get("retrieval_non_noop_count", 0) or 0)
+        record["newborn_retrieval_merge_noop_count"] = int(retrieval_dbg.get("retrieval_merge_noop_count", 0) or 0)
+        record["newborn_retrieval_replace_count"] = int(retrieval_dbg.get("retrieval_replace_count", 0) or 0)
+        record["newborn_retrieval_steps"] = list(retrieval_dbg.get("retrieval_steps", []) or [])
 
     record["success"] = success
     record["cycles_to_end"] = int(len(raw_records))
@@ -2285,6 +2466,12 @@ def experiment_run_one_episode_v1(
         return {"ok": False, "why": "missing_protocol_ctx"}
 
     cfg = experiment_normalize_protocol_v1(getattr(protocol_ctx, "experiment_cfg", None))
+    # Benchmark-effective default:
+    # newborn_long_horizon needs genuine partial observability or A/B/C collapse
+    # into the same easy storyboard. If the protocol is still at zero masking,
+    # use a modest benchmark floor here without changing ordinary simulation.
+    if cfg.benchmark_id == "newborn_long_horizon" and float(cfg.obs_mask_prob) <= 0.0:
+        cfg.obs_mask_prob = 0.35
     chosen_condition = str(condition_id or (cfg.condition_ids[0] if cfg.condition_ids else "A")).strip().upper()
     chosen_seed = int(seed if isinstance(seed, int) else (cfg.seed_list[0] if cfg.seed_list else 11))
 
@@ -2400,6 +2587,7 @@ def experiment_run_one_episode_v1(
         "condition_id": chosen_condition,
         "condition_label": cond_info.get("label"),
         "seed": int(chosen_seed),
+        "effective_obs_mask_prob": float(cfg.obs_mask_prob),
         "episode_index": int(episode_index),
         "cycle_record_count": int(len(cycle_records)),
         "episode_record": episode_record,
@@ -2491,6 +2679,7 @@ def render_experiment_episode_summary_lines_v1(result: dict[str, Any]) -> list[s
         f"[experiments] condition         : {_experiment_metric_text_v1(condition_id)}"
         f"  ({_experiment_metric_text_v1(condition_label)})",
         f"[experiments] seed              : {_experiment_metric_text_v1(result.get('seed'))}",
+        f"[experiments] obs_mask_prob     : {_experiment_metric_text_v1(result.get('effective_obs_mask_prob'))}",
         f"[experiments] cycles_to_end     : {_experiment_metric_text_v1(episode_record.get('cycles_to_end'))}",
         f"[experiments] success           : {_experiment_metric_text_v1(episode_record.get('success'))}",
     ]
@@ -2512,8 +2701,18 @@ def render_experiment_episode_summary_lines_v1(result: dict[str, Any]) -> list[s
         lines.extend(
             [
                 f"[experiments] milestones        : {_experiment_metric_text_v1(episode_record.get('milestone_vector'))}",
+                f"[experiments] milestone_steps   : {_experiment_metric_text_v1(episode_record.get('milestone_steps'))}",
                 f"[experiments] milestone_score   : {_experiment_metric_text_v1(episode_record.get('milestone_score'))}",
                 f"[experiments] recovery_latency  : {_experiment_metric_text_v1(episode_record.get('recovery_latency'))}",
+                f"[experiments] time_to_rested    : {_experiment_metric_text_v1(episode_record.get('time_to_rested'))}",
+                f"[experiments] phase_lats        : mom={_experiment_metric_text_v1(episode_record.get('mom_approach_latency'))} "
+                f"find={_experiment_metric_text_v1(episode_record.get('nipple_find_latency'))} "
+                f"latch={_experiment_metric_text_v1(episode_record.get('latch_latency'))} "
+                f"rest={_experiment_metric_text_v1(episode_record.get('rest_completion_latency'))}",
+                f"[experiments] retrieval_debug   : evt={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_event_count'))} "
+                f"nonnoop={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_non_noop_count'))} "
+                f"merge_noop={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_merge_noop_count'))} "
+                f"replace={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_replace_count'))}",
             ]
         )
 
@@ -2586,6 +2785,11 @@ def experiment_run_condition_batch_v1(
 
     cfg = experiment_normalize_protocol_v1(getattr(protocol_ctx, "experiment_cfg", None))
 
+    # Keep batch runs aligned with single-run behavior: newborn_long_horizon should
+    # use a real partial-observability setting unless the user explicitly chose one.
+    if cfg.benchmark_id == "newborn_long_horizon" and float(cfg.obs_mask_prob) <= 0.0:
+        cfg.obs_mask_prob = 0.35
+
     raw_conditions = condition_ids if isinstance(condition_ids, list) and condition_ids else ["A", "B", "C"]
     run_conditions = experiment_parse_condition_ids_v1(" ".join(str(x) for x in raw_conditions))
     run_conditions = [cid for cid in run_conditions if cid in ("A", "B", "C")] or ["A", "B", "C"]
@@ -2652,7 +2856,10 @@ def experiment_run_condition_batch_v1(
         success_vals: list[float] = []
         milestone_scores: list[float] = []
         recovery_latencies: list[float] = []
+        time_to_rested_vals: list[float] = []
         repeated_loops: list[float] = []
+        retrieval_event_counts: list[float] = []
+        retrieval_non_noop_counts: list[float] = []
         context_switch_accs: list[float] = []
         oracle_retr_precs: list[float] = []
         internal_retr_rts: list[float] = []
@@ -2703,9 +2910,21 @@ def experiment_run_condition_batch_v1(
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     recovery_latencies.append(float(value))
 
+                value = episode_record.get("time_to_rested")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    time_to_rested_vals.append(float(value))
+
                 value = episode_record.get("repeated_action_loop_count")
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     repeated_loops.append(float(value))
+
+                value = episode_record.get("newborn_retrieval_event_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    retrieval_event_counts.append(float(value))
+
+                value = episode_record.get("newborn_retrieval_non_noop_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    retrieval_non_noop_counts.append(float(value))
 
             value = episode_record.get("cumulative_prediction_error")
             if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -2736,7 +2955,10 @@ def experiment_run_condition_batch_v1(
                 {
                     "mean_milestone_score": _experiment_mean_v1(milestone_scores),
                     "mean_recovery_latency": _experiment_mean_v1(recovery_latencies),
+                    "mean_time_to_rested": _experiment_mean_v1(time_to_rested_vals),
                     "mean_repeated_loops": _experiment_mean_v1(repeated_loops),
+                    "mean_newborn_retrieval_event_count": _experiment_mean_v1(retrieval_event_counts),
+                    "mean_newborn_retrieval_non_noop_count": _experiment_mean_v1(retrieval_non_noop_counts),
                     "mean_cumulative_prediction_error": _experiment_mean_v1(pred_errs),
                 }
             )
@@ -2759,6 +2981,7 @@ def experiment_run_condition_batch_v1(
         "benchmark_id": benchmark_id,
         "condition_ids": list(run_conditions),
         "seed_list": list(run_seeds),
+        "effective_obs_mask_prob": float(cfg.obs_mask_prob),
         "episodes_per_seed": int(eps),
         "run_count": int(len(results)),
         "ok_count": int(len(results) - len(failures)),
@@ -2785,6 +3008,7 @@ def render_experiment_batch_summary_lines_v1(batch_result: dict[str, Any]) -> li
         f"[experiments] batch benchmark   : {_experiment_metric_text_v1(benchmark)}",
         f"[experiments] batch conditions  : {_experiment_metric_text_v1(batch_result.get('condition_ids'))}",
         f"[experiments] batch seeds       : {_experiment_metric_text_v1(batch_result.get('seed_list'))}",
+        f"[experiments] batch obs_mask    : {_experiment_metric_text_v1(batch_result.get('effective_obs_mask_prob'))}",
         f"[experiments] batch eps/seed    : {_experiment_metric_text_v1(batch_result.get('episodes_per_seed'))}",
         f"[experiments] batch run_count   : {_experiment_metric_text_v1(batch_result.get('run_count'))}",
         f"[experiments] batch fail_count  : {_experiment_metric_text_v1(batch_result.get('fail_count'))}",
@@ -2820,7 +3044,10 @@ def render_experiment_batch_summary_lines_v1(batch_result: dict[str, Any]) -> li
             tail = (
                 f" milestone_score={_experiment_metric_text_v1(row.get('mean_milestone_score'))}"
                 f" recovery_lat={_experiment_metric_text_v1(row.get('mean_recovery_latency'))}"
+                f" rest_t={_experiment_metric_text_v1(row.get('mean_time_to_rested'))}"
                 f" loops={_experiment_metric_text_v1(row.get('mean_repeated_loops'))}"
+                f" retr_evt={_experiment_metric_text_v1(row.get('mean_newborn_retrieval_event_count'))}"
+                f" retr_eff={_experiment_metric_text_v1(row.get('mean_newborn_retrieval_non_noop_count'))}"
                 f" pred_e={_experiment_metric_text_v1(row.get('mean_cumulative_prediction_error'))}"
             )
 
@@ -6016,6 +6243,375 @@ def maybe_goat04_context_mapswitch_on_keyframe_v1(world, ctx: Ctx, env_obs: EnvO
     return out
 
 
+def _newborn_b2_seed_label_v1(env_obs: EnvObservation) -> str | None:
+    """Return the newborn B2 milestone label that should create a reusable seed snapshot.
+
+    I keep this narrow and explicit. We only seed a few meaningful control states:
+      - stood_up
+      - reached_mom
+      - latched_nipple
+      - rested
+
+    That gives the benchmark a small reusable memory library inside one episode
+    without turning the newborn task into a generic snapshot dump.
+    """
+    meta = getattr(env_obs, "env_meta", None)
+    meta = meta if isinstance(meta, dict) else {}
+
+    raw = meta.get("milestones") or meta.get("milestone")
+    items: list[str] = []
+
+    if isinstance(raw, str) and raw:
+        items = [raw]
+    elif isinstance(raw, list):
+        items = [m for m in raw if isinstance(m, str) and m]
+
+    for label in ("stood_up", "reached_mom", "latched_nipple", "rested"):
+        if label in items:
+            return label
+    return None
+
+
+def maybe_newborn_b2_mapswitch_on_keyframe_v1(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
+    """newborn_long_horizon evaluation harness.
+
+    What this does
+    --------------
+    - first meaningful newborn milestones store compact wm_mapsurface seeds
+    - later newborn keyframes may retrieve/apply those seeds when auto-retrieve is enabled
+
+    Why this exists
+    ---------------
+    goat04 already has an explicit benchmark-side store/retrieve seam.
+    newborn_long_horizon did not. That meant A vs B differed in flags, but not in
+    whether any real episodic readback event actually occurred.
+
+    This helper gives B2 a real within-episode readback loop without changing
+    ordinary interactive runs.
+    """
+    out: dict[str, Any] = {"handled": False, "store": None, "retrieve": None, "apply": None}
+
+    if ctx is None or world is None or env_obs is None:
+        return out
+    if not bool(getattr(ctx, "experiment_newborn_require_resume_memory", False)):
+        return out
+
+    meta = getattr(env_obs, "env_meta", None)
+    meta = meta if isinstance(meta, dict) else {}
+    stage = meta.get("scenario_stage")
+    stage = stage if isinstance(stage, str) and stage else None
+
+    if stage not in ("struggle", "first_stand", "first_latch", "rest"):
+        return out
+
+    out["handled"] = True
+
+    seeded = getattr(ctx, "wm_newborn_b2_seeded_labels", None)
+    if not isinstance(seeded, set):
+        seeded = set()
+        ctx.wm_newborn_b2_seeded_labels = seeded
+
+    seed_map = getattr(ctx, "wm_newborn_b2_seed_engram_by_label", None)
+    if not isinstance(seed_map, dict):
+        seed_map = {}
+        ctx.wm_newborn_b2_seed_engram_by_label = seed_map
+
+    label = _newborn_b2_seed_label_v1(env_obs)
+
+    # First time we hit a meaningful milestone, store a reusable seed.
+    if label and label not in seeded:
+        info = store_mapsurface_snapshot_v1(
+            world,
+            ctx,
+            reason=f"newborn_b2_seed:{label}",
+            attach="now",
+            force=True,
+            quiet=True,
+        )
+
+        sig16 = str(info.get("sig") or "")[:16]
+        eid = info.get("engram_id")
+        eid_txt = (eid[:8] + "…") if isinstance(eid, str) and eid else "(n/a)"
+
+        if bool(info.get("stored")):
+            seeded.add(label)
+            if isinstance(eid, str) and eid:
+                seed_map[label] = eid
+
+            print(f"[wm<->col] store: newborn_b2 seed={label} sig={sig16} eid={eid_txt}")
+            out["store"] = f"store newborn_b2:{label} sig={sig16} eid={eid_txt}"
+        else:
+            why = info.get("why")
+            if isinstance(eid, str) and eid:
+                seeded.add(label)
+                seed_map[label] = eid
+
+            print(f"[wm<->col] store: newborn_b2 seed={label} skip={why} sig={sig16}")
+            out["store"] = f"store newborn_b2:{label} skip={why} sig={sig16}"
+
+        return out
+
+    # No stored seeds yet -> nothing to retrieve.
+    if not seed_map:
+        return out
+
+    try:
+        zone = body_space_zone(ctx)
+    except Exception:
+        zone = None
+    zone = zone if isinstance(zone, str) and zone else None
+
+    mode_txt = str(getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge").strip().lower()
+    try:
+        top_k = int(getattr(ctx, "wm_mapsurface_autoretrieve_top_k", 5) or 5)
+    except Exception:
+        top_k = 5
+    top_k = max(2, min(10, top_k))
+
+    ret = maybe_autoretrieve_mapsurface_on_keyframe(
+        world,
+        ctx,
+        stage=stage,
+        zone=zone,
+        exclude_engram_id=None,
+        reason=f"newborn_b2:{stage}:{label or 'boundary'}",
+        mode=mode_txt,
+        top_k=top_k,
+        log=False,
+    )
+
+    if bool(ret.get("ok")):
+        rid = ret.get("engram_id")
+        rid_txt = (rid[:8] + "…") if isinstance(rid, str) and rid else "(n/a)"
+
+        try:
+            if isinstance(rid, str) and rid:
+                _set_newborn_retrieved_hint_from_engram_v1(ctx, rid, ttl_steps=3)
+        except Exception:
+            pass
+
+        pick = ret.get("pick") if isinstance(ret.get("pick"), dict) else {}
+        match = pick.get("match") if isinstance(pick, dict) else None
+        ranked = pick.get("ranked") if isinstance(pick.get("ranked"), list) else []
+        cand_n = len(ranked) if isinstance(ranked, list) else 0
+
+        print(
+            f"[wm<->col] retrieve: newborn_b2 stage={stage} ok mode={mode_txt} "
+            f"eid={rid_txt} match={match} cand_n={cand_n}"
+        )
+        out["retrieve"] = f"retrieve newborn_b2:{stage} ok eid={rid_txt} match={match} cand_n={cand_n}"
+
+        load = ret.get("load") if isinstance(ret.get("load"), dict) else {}
+        if load.get("mode") == "replace":
+            ent_n = load.get("entities")
+            rel_n = load.get("relations")
+            print(f"[wm<->col] apply: replace entities={ent_n} relations={rel_n}")
+            out["apply"] = f"apply replace ent={ent_n} rel={rel_n}"
+        else:
+            ae = load.get("added_entities")
+            fs = load.get("filled_slots")
+            ed = load.get("added_edges")
+            pc = load.get("stored_prior_cues")
+
+            guard_ok = load.get("merge_guardrail_ok")
+            cue_delta = load.get("cue_tag_delta")
+            if guard_ok is True:
+                guard_txt = " cue_guard=ok"
+            elif guard_ok is False:
+                try:
+                    delta_i = int(cue_delta) if cue_delta is not None else None
+                except Exception:
+                    delta_i = None
+                if isinstance(delta_i, int):
+                    guard_txt = f" cue_guard=leak(+{delta_i})"
+                else:
+                    guard_txt = " cue_guard=leak"
+            else:
+                guard_txt = ""
+
+            print(
+                f"[wm<->col] apply: merge added_entities={ae} filled_slots={fs} "
+                f"added_edges={ed} prior_cues={pc}{guard_txt}"
+            )
+            out["apply"] = f"apply merge ent+{ae} slots+{fs} edges+{ed} prior_cues={pc}{guard_txt}"
+    else:
+        try:
+            _clear_newborn_retrieved_hint_v1(ctx)
+        except Exception:
+            pass
+
+        why = ret.get("why") if isinstance(ret, dict) else "error"
+        print(f"[wm<->col] retrieve: newborn_b2 stage={stage} skip why={why}")
+        print(f"[wm<->col] apply: no-op ({why})")
+        out["retrieve"] = f"retrieve newborn_b2:{stage} skip why={why}"
+        out["apply"] = f"apply no-op ({why})"
+
+    return out
+
+
+def _clear_newborn_retrieved_hint_v1(ctx: Ctx | None) -> None:
+    """Clear the short-lived newborn B2 retrieved-state hint."""
+    if ctx is None:
+        return
+    try:
+        ctx.experiment_newborn_retrieved_hint = {}
+        ctx.experiment_newborn_retrieved_hint_until_step = -1
+        ctx.experiment_newborn_retrieved_hint_source = None
+    except Exception:
+        pass
+
+
+def _newborn_active_retrieved_hint_v1(ctx: Ctx | None) -> dict[str, Any]:
+    """Return the active retrieved-state hint for newborn B2, or {} when absent/expired."""
+    if ctx is None:
+        return {}
+
+    hint = getattr(ctx, "experiment_newborn_retrieved_hint", None)
+    if not isinstance(hint, dict) or not hint:
+        return {}
+
+    try:
+        raw_step = getattr(ctx, "controller_steps", 0)
+        raw_until = getattr(ctx, "experiment_newborn_retrieved_hint_until_step", -1)
+
+        step_now = int(raw_step) if raw_step is not None else 0
+        until_step = int(raw_until) if raw_until is not None else -1
+    except Exception:
+        return {}
+
+    if step_now > until_step:
+        _clear_newborn_retrieved_hint_v1(ctx)
+        return {}
+
+    return dict(hint)
+
+
+def _decode_newborn_hint_from_mapsurface_record_v1(rec: dict[str, Any]) -> dict[str, Any]:
+    """Decode a tiny control-relevant state hint from a wm_mapsurface Column record.
+
+    The benchmark does not need the full retrieved map to influence control.
+    It needs only a few values that matter at the newborn decision seam:
+
+      - posture
+      - mom_distance
+      - nipple_state
+      - zone
+
+    We first prefer the payload header's BodyMap summary if present. If that is
+    missing or incomplete, we fall back to parsing entity preds.
+    """
+    if not isinstance(rec, dict):
+        return {}
+
+    payload = rec.get("payload")
+    if not isinstance(payload, dict):
+        return {}
+
+    hint: dict[str, Any] = {}
+
+    header = payload.get("header")
+    header = header if isinstance(header, dict) else {}
+    body = header.get("body")
+    body = body if isinstance(body, dict) else {}
+
+    for key in ("posture", "mom_distance", "nipple_state", "zone"):
+        val = body.get(key)
+        if isinstance(val, str) and val:
+            hint[key] = val
+
+    ents = payload.get("entities")
+    ents = ents if isinstance(ents, list) else []
+
+    shelter_near = False
+    cliff_near = False
+
+    for ent in ents:
+        if not isinstance(ent, dict):
+            continue
+
+        preds = ent.get("preds")
+        preds = preds if isinstance(preds, list) else []
+
+        for tok in preds:
+            if not isinstance(tok, str) or not tok:
+                continue
+
+            if "posture" not in hint:
+                if tok == "resting":
+                    hint["posture"] = "resting"
+                elif tok == "posture:standing":
+                    hint["posture"] = "standing"
+                elif tok == "posture:fallen":
+                    hint["posture"] = "fallen"
+
+            if "mom_distance" not in hint:
+                if tok == "proximity:mom:close":
+                    hint["mom_distance"] = "near"
+                elif tok == "proximity:mom:far":
+                    hint["mom_distance"] = "far"
+
+            if "nipple_state" not in hint:
+                if tok in ("nipple:latched", "milk:drinking"):
+                    hint["nipple_state"] = "latched"
+                elif tok == "nipple:found":
+                    hint["nipple_state"] = "reachable"
+                elif tok == "nipple:hidden":
+                    hint["nipple_state"] = "hidden"
+
+            if tok == "proximity:shelter:near":
+                shelter_near = True
+            elif tok == "hazard:cliff:near":
+                cliff_near = True
+
+    if "zone" not in hint:
+        if cliff_near and not shelter_near:
+            hint["zone"] = "unsafe_cliff_near"
+        elif shelter_near and not cliff_near:
+            hint["zone"] = "safe"
+
+    return hint
+
+
+def _set_newborn_retrieved_hint_from_engram_v1(ctx: Ctx | None, engram_id: str, *, ttl_steps: int = 3) -> dict[str, Any]:
+    """Decode and store a short-lived retrieved-state hint from a wm_mapsurface engram.
+
+    This is benchmark-only glue. It does not replace BodyMap. It simply lets a
+    successful newborn retrieval restore a few decision-relevant values for a
+    short time when current evidence is sparse.
+    """
+    if ctx is None:
+        return {}
+    if not isinstance(engram_id, str) or not engram_id:
+        return {}
+
+    rec = column_mem.try_get(engram_id)
+    if not isinstance(rec, dict):
+        _clear_newborn_retrieved_hint_v1(ctx)
+        return {}
+
+    hint = _decode_newborn_hint_from_mapsurface_record_v1(rec)
+    if not hint:
+        _clear_newborn_retrieved_hint_v1(ctx)
+        return {}
+
+    try:
+        raw_step = getattr(ctx, "controller_steps", 0)
+        step_now = int(raw_step) if raw_step is not None else 0
+    except Exception:
+        step_now = 0
+
+    ttl_i = max(1, int(ttl_steps))
+
+    try:
+        ctx.experiment_newborn_retrieved_hint = dict(hint)
+        ctx.experiment_newborn_retrieved_hint_until_step = step_now + ttl_i
+        ctx.experiment_newborn_retrieved_hint_source = engram_id
+    except Exception:
+        pass
+
+    return dict(hint)
+
+
 def load_wm_mapsurface_engram_into_workingmap(ctx: Ctx, engram_id: str, *, replace: bool = True) -> dict[str, Any]:
     """Load a Column engram (wm_mapsurface) into WorkingMap MapSurface."""
     rec = column_mem.try_get(engram_id)
@@ -7495,6 +8091,13 @@ def _gate_seek_nipple_trigger_body_first(world, drives: Drives, ctx) -> bool:
 
     This keeps the old behavior for generic cases while letting the newborn task move
     from "reached mom" into "find nipple".
+
+    Benchmark-only strict mode
+    --------------------------
+    In strict newborn benchmark mode, current state still comes first. However, when
+    current distance/nipple information is sparse due to blackout, we now allow the
+    short-lived retrieved hint to supply that information. This is the missing bridge
+    between "retrieval happened" and "retrieval changed control".
     """
     # Prefer BodyMap posture when it is not stale; otherwise fall back to graph.
     stale = bodymap_is_stale(ctx) if ctx is not None else True
@@ -7510,7 +8113,11 @@ def _gate_seek_nipple_trigger_body_first(world, drives: Drives, ctx) -> bool:
     if not standing or fallen:
         return False
 
-    # Mom-distance check: use BodyMap first, then fall back to the episode graph.
+    strict_current = bool(getattr(ctx, "experiment_newborn_require_current_state", False)) if ctx is not None else False
+    hint = _newborn_active_retrieved_hint_v1(ctx) if strict_current else {}
+
+    # Mom-distance check: use BodyMap first. In strict newborn experiment mode,
+    # use the retrieved hint next. Only non-strict mode falls back to old graph history.
     have_distance = False
     mom_near = False
 
@@ -7520,19 +8127,34 @@ def _gate_seek_nipple_trigger_body_first(world, drives: Drives, ctx) -> bool:
             have_distance = True
             mom_near = md in ("near", "touching")
 
-    if not have_distance:
+    if not have_distance and strict_current:
+        hm = hint.get("mom_distance")
+        if isinstance(hm, str) and hm:
+            have_distance = True
+            mom_near = hm in ("near", "touching")
+
+    if not have_distance and not strict_current:
         close = has_pred_near_now(world, "proximity:mom:close")
         far = has_pred_near_now(world, "proximity:mom:far")
         if close or far:
             have_distance = True
             mom_near = close
 
+    # In the strict newborn benchmark, if distance is still unknown even after
+    # consulting the retrieved hint, do not infer "mom is near enough".
+    if strict_current and not have_distance:
+        return False
+
     # If we have distance information and mom is not near, seeking is premature.
     if have_distance and not mom_near:
         return False
 
-    # If BodyMap says we are already latched/drinking, do not seek again.
-    ns = body_nipple_state(ctx) if ctx is not None else None
+    # If current state or retrieved hint says we are already latched/drinking, do not seek again.
+    ns = body_nipple_state(ctx) if ctx is not None and not stale else None
+    if ns is None and strict_current:
+        hn = hint.get("nipple_state")
+        if isinstance(hn, str) and hn:
+            ns = hn
     if ns == "latched":
         return False
 
@@ -7684,9 +8306,20 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
         zone?
         bodymap fresh or stale?
 
-    BodyMap is preferred when fresh. If it is stale or unavailable, we fall back to
-    near-NOW WorldGraph predicates so the controller still has a conservative view of
-    the current situation.
+    BodyMap is preferred when fresh. If it is stale or unavailable, we normally fall
+    back to near-NOW WorldGraph predicates so the controller still has a conservative
+    view of the current situation.
+
+    Benchmark-only strict mode
+    --------------------------
+    When ctx.experiment_newborn_require_current_state is True, this helper does NOT
+    reconstruct current-state values from older long-term graph predicates. It uses:
+
+      1) fresh BodyMap/current-state values first, then
+      2) the short-lived newborn retrieved hint (if active).
+
+    That gives episodic readback a real causal role during blackout windows without
+    letting older long-term graph history silently masquerade as "truth now".
     """
     stale = True
     posture = None
@@ -7711,6 +8344,38 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
         mom_distance = None
         nipple_state = None
         zone = "unknown"
+
+    strict_current = bool(getattr(ctx, "experiment_newborn_require_current_state", False)) if ctx is not None else False
+    if strict_current:
+        hint = _newborn_active_retrieved_hint_v1(ctx)
+
+        if posture is None:
+            hp = hint.get("posture")
+            if isinstance(hp, str) and hp:
+                posture = hp
+
+        if mom_distance is None:
+            hm = hint.get("mom_distance")
+            if isinstance(hm, str) and hm:
+                mom_distance = hm
+
+        if nipple_state is None:
+            hn = hint.get("nipple_state")
+            if isinstance(hn, str) and hn:
+                nipple_state = hn
+
+        if zone in (None, "", "unknown"):
+            hz = hint.get("zone")
+            if isinstance(hz, str) and hz:
+                zone = hz
+
+        return {
+            "bodymap_stale": bool(stale),
+            "posture": posture,
+            "mom_distance": mom_distance,
+            "nipple_state": nipple_state,
+            "zone": zone,
+        }
 
     if posture is None:
         if has_pred_near_now(world, "posture:fallen"):
@@ -7743,32 +8408,156 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
     }
 
 
+def _newborn_recent_retrieval_ok_v1(ctx, *, max_age_steps: int = 3) -> bool:
+    """Return True when a recent wm_mapsurface retrieval/apply event succeeded.
+
+    Why this exists
+    ---------------
+    The newborn benchmark now needs a way to distinguish:
+
+      - "I can continue because I still have fresh current evidence", from
+      - "I can continue because episodic readback just restored a useful prior."
+
+    We intentionally keep this helper tiny and benchmark-oriented.
+    It inspects the latest map-switch event and treats it as "recent enough"
+    only when:
+
+      - the event exists,
+      - the event reports ok=True,
+      - and it occurred within ``max_age_steps`` controller steps.
+
+    This is not a general memory-quality score. It is only a narrow bridge gate
+    for Menu 49 newborn_long_horizon hardening.
+    """
+    if ctx is None:
+        return False
+
+    events = getattr(ctx, "wm_mapswitch_last_events", None)
+    if not isinstance(events, list) or not events:
+        return False
+
+    event = events[-1]
+    if not isinstance(event, dict):
+        return False
+    if not bool(event.get("ok")):
+        return False
+
+    try:
+        event_step = int(event.get("step"))
+        step_now = int(getattr(ctx, "controller_steps", 0) or 0)
+    except Exception:
+        return False
+
+    age_steps = step_now - event_step
+    return 0 <= age_steps <= max(1, int(max_age_steps))
+
+
+def _newborn_follow_fallback_blocked_without_memory_v1(world, ctx) -> bool:
+    """Return True when generic follow_mom fallback should be blocked in newborn benchmark mode.
+
+    Why this exists
+    ---------------
+    The current newborn benchmark already has:
+      - strict current-state use for some bridge gates,
+      - a recent-retrieval check for explicit bridge continuation,
+      - and real partial observability via blackout + obs masking.
+
+    However, one important leak remains:
+    the generic follow_mom fallback can still keep the task moving even when
+    current evidence is sparse, simply because posture is not fallen/resting and
+    topology does not veto the action.
+
+    That makes episodic readback less important than the paper intends.
+
+    Rule
+    ----
+    In newborn benchmark resume-memory mode, block the *generic* follow_mom
+    fallback when all of the following are true:
+
+      - posture is standing,
+      - current local evidence is sparse/unknown (BodyMap stale or key slots missing),
+      - and there was no recent successful wm_mapsurface retrieval/apply event.
+
+    This helper does NOT replace the explicit newborn bridge:
+    `_should_force_follow_mom_bridge_v1(...)` still handles the narrower case
+    where the system specifically knows mom is far and wants to continue a
+    post-stand approach sequence.
+
+    This helper only stops the architecture from drifting forward on a vague
+    permissive fallback during blackout-like uncertainty.
+    """
+    if ctx is None:
+        return False
+
+    if not bool(getattr(ctx, "experiment_newborn_require_resume_memory", False)):
+        return False
+
+    st = _follow_mom_bridge_state_v1(world, ctx)
+    if st.get("posture") != "standing":
+        return False
+
+    bodymap_stale = bool(st.get("bodymap_stale"))
+    evidence_sparse = (
+        bodymap_stale
+        or (st.get("mom_distance") is None)
+        or (st.get("nipple_state") is None)
+    )
+
+    if not evidence_sparse:
+        return False
+
+    return not _newborn_recent_retrieval_ok_v1(ctx, max_age_steps=3)
+
+
 def _should_force_follow_mom_bridge_v1(world, ctx) -> bool:
     """Return True when follow_mom should bridge post-stand recovery into mom-approach.
 
-    This is intentionally narrow. It exists to prevent the hardened newborn benchmark
-    from stalling forever in first_stand after the kid has already recovered posture.
+    Why this exists
+    ---------------
+    This bridge prevents the hardened newborn benchmark from stalling forever in
+    ``first_stand`` after the kid has already recovered posture.
 
-    Trigger shape:
-      - posture is standing,
-      - mom is still far,
-      - nipple is not already latched.
+    New benchmark hardening
+    -----------------------
+    In ordinary mode, the bridge remains permissive once posture is standing and
+    mom is still far.
 
-    I do not require a specific zone here because the current newborn geometry can be
-    unknown during short blackout windows and still legitimately need the same bridge.
+    In newborn benchmark resume-memory mode, that permissive bridge is allowed to
+    carry progress across a blackout only if:
+
+      - current evidence is genuinely missing/unknown, and
+      - a recent wm_mapsurface retrieval/apply event succeeded.
+
+    This gives episodic readback a real causal role without changing ordinary
+    interactive runs.
     """
     st = _follow_mom_bridge_state_v1(world, ctx)
 
     if st.get("posture") != "standing":
         return False
-    if st.get("mom_distance") != "far":
+
+    mom_distance = st.get("mom_distance")
+    if mom_distance != "far":
         return False
 
     nipple_state = st.get("nipple_state")
     if nipple_state == "latched":
         return False
 
-    return True
+    require_resume_memory = bool(getattr(ctx, "experiment_newborn_require_resume_memory", False)) if ctx is not None else False
+    if not require_resume_memory:
+        return True
+
+    bodymap_stale = bool(st.get("bodymap_stale"))
+    current_evidence_missing = bodymap_stale or (mom_distance is None)
+
+    # If current evidence is present and explicitly says "mom is far", ordinary bridge is fine.
+    # We only require episodic readback when we are trying to continue through a blackout-like
+    # uncertainty window.
+    if not current_evidence_missing:
+        return True
+
+    return _newborn_recent_retrieval_ok_v1(ctx, max_age_steps=3)
 
 
 def _should_force_rest_bridge_v1(world, ctx) -> bool:
@@ -7776,24 +8565,17 @@ def _should_force_rest_bridge_v1(world, ctx) -> bool:
 
     Why this exists
     ---------------
-    In the hardened newborn benchmark, ``first_latch`` is the state in which the
-    kid is already latched and feeding. A fresh ``seek_nipple`` at that point
-    breaks latch and pushes the environment back to ``first_stand``. The runner
-    therefore needs a narrow rest bridge that can key off the environment stage
-    even when short observation blackouts temporarily hide ``nipple:latched`` /
-    ``milk:drinking`` from BodyMap.
+    In the hardened newborn benchmark, ``first_latch`` is the state where the kid
+    is already latched and feeding. A fresh ``seek_nipple`` there can break latch
+    and push the environment back to ``first_stand``. This rest bridge protects
+    the completion path.
 
-    Trigger shape
-    -------------
-      - the latest environment stage is ``first_latch``, or we can still infer
-        that the kid is latched/feeding from BodyMap or the episode graph,
-      - posture is not fallen,
-      - mom is not explicitly far,
-      - and geometry is not explicitly ``unsafe_cliff_near``.
-
-    We intentionally tolerate ``zone == 'unknown'`` here. During blackout
-    windows the observation can lose shelter/cliff predicates even while the
-    underlying environment is already in the sheltered nursing niche.
+    New benchmark hardening
+    -----------------------
+    In newborn benchmark resume-memory mode, the bridge may carry progress through
+    a blackout only when a recent successful retrieval occurred. That matters
+    especially when the environment stage says ``first_latch`` but current nipple /
+    mom / zone evidence has temporarily become sparse.
     """
     if ctx is None:
         return False
@@ -7820,7 +8602,18 @@ def _should_force_rest_bridge_v1(world, ctx) -> bool:
     if st.get("zone") == "unsafe_cliff_near":
         return False
 
-    return True
+    require_resume_memory = bool(getattr(ctx, "experiment_newborn_require_resume_memory", False))
+    if not require_resume_memory:
+        return True
+
+    # If we are relying mainly on stage-local logic while current feeding/space evidence is
+    # sparse, require a recent retrieval before we let the bridge continue the task.
+    bodymap_stale = bool(st.get("bodymap_stale"))
+    evidence_sparse = bodymap_stale or (st.get("nipple_state") is None) or (st.get("mom_distance") is None)
+
+    if not evidence_sparse:
+        return True
+    return _newborn_recent_retrieval_ok_v1(ctx, max_age_steps=3)
 
 
 def _should_quiesce_rest_v1(world, ctx) -> bool:
@@ -7910,6 +8703,12 @@ def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool:  # 
     if _should_force_follow_mom_bridge_v1(world, ctx):
         return True
 
+    # In the hardened newborn benchmark, do not let the generic follow_mom fallback
+    # carry progress through a blackout-like sparse state unless retrieval just
+    # restored context.
+    if _newborn_follow_fallback_blocked_without_memory_v1(world, ctx):
+        return False
+
     # Only use the graph-side resting fallback when posture is still unknown.
     if posture is None:
         try:
@@ -7961,10 +8760,17 @@ def _gate_follow_mom_explain_body_space(world, drives: Drives, ctx) -> str:  # p
     except Exception:
         topo_blocked = False
 
+    sparse_follow_blocked = False
+    try:
+        sparse_follow_blocked = _newborn_follow_fallback_blocked_without_memory_v1(world, ctx)
+    except Exception:
+        sparse_follow_blocked = False
+
     return (
         "dev_gate: True, trigger: fallback=True when not fallen/resting and topology permits; "
         f"goat04_hint={goat04_hint!r} bodymap_stale={bodymap_stale} posture={posture or 'n/a'} "
         f"rest_near_now={rest_near_now} zone={zone} topology_blocked={topo_blocked} "
+        f"sparse_follow_blocked={sparse_follow_blocked} "
         f"{_wm_navsummary_explain_bits_v1(ctx)} (hunger={hunger:.2f}, fatigue={fatigue:.2f})"
     )
 
@@ -18253,6 +19059,29 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
             except Exception as e:
                 print(f"[wm<->col] goat04 context mapswitch error: {e}")
                 col_retrieve_txt = f"retrieve goat04 error:{e}"
+                col_apply_txt = "apply no-op (error)"
+
+        # newborn_long_horizon benchmark evaluation:
+        #   - first stood_up / reached_mom / latched_nipple / rested milestones -> store seeds
+        #   - later newborn keyframes -> retrieve/apply
+        try:
+            newborn_kf = bool(isinstance(obs_write, dict) and obs_write.get("keyframe"))
+        except Exception:
+            newborn_kf = False
+
+        if bool(getattr(ctx, "experiment_newborn_require_resume_memory", False)) and newborn_kf:
+            try:
+                newborn_ops = maybe_newborn_b2_mapswitch_on_keyframe_v1(world, ctx, env_obs)
+                if isinstance(newborn_ops, dict):
+                    if isinstance(newborn_ops.get("store"), str):
+                        col_store_txt = newborn_ops.get("store")
+                    if isinstance(newborn_ops.get("retrieve"), str):
+                        col_retrieve_txt = newborn_ops.get("retrieve")
+                    if isinstance(newborn_ops.get("apply"), str):
+                        col_apply_txt = newborn_ops.get("apply")
+            except Exception as e:
+                print(f"[wm<->col] newborn B2 mapswitch error: {e}")
+                col_retrieve_txt = f"retrieve newborn_b2 error:{e}"
                 col_apply_txt = "apply no-op (error)"
 
         # goat04 retrieval → control bridge:

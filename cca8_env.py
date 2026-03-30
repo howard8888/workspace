@@ -268,7 +268,12 @@ class EnvState:
     newborn_setback_count: int = 0
     newborn_obs_blackout_until_step: int = -1
     newborn_obs_blackout_kind: str = ""
-
+    # Benchmark-only newborn hard-mode toggle/bookkeeping.
+    # The ordinary storyboard remains the default. Menu 49 can enable the harder
+    # variant so the same task becomes more memory-demanding without changing
+    # normal interactive runs.
+    newborn_benchmark_hard: bool = False
+    newborn_follow_attempts: int = 0
 
     def update_zone_from_position(self) -> None:
         """Update safety zone label from the current symbolic position."""
@@ -310,6 +315,8 @@ class EnvState:
             newborn_setback_count=self.newborn_setback_count,
             newborn_obs_blackout_until_step=self.newborn_obs_blackout_until_step,
             newborn_obs_blackout_kind=self.newborn_obs_blackout_kind,
+            newborn_benchmark_hard=self.newborn_benchmark_hard,
+            newborn_follow_attempts=self.newborn_follow_attempts,
         )
 
 
@@ -439,6 +446,63 @@ class FsmBackend:
     _MOM_RAW_DX_FAR: float = 1.25
 
 
+    def _newborn_hard_mode_v1(self, state: EnvState) -> bool:
+        """Return True when this episode is using the benchmark-hardened newborn storyboard."""
+        return bool(getattr(state, "newborn_benchmark_hard", False))
+
+
+    def _newborn_follow_commit_attempts_v1(self, state: EnvState) -> int:
+        """Return how many useful follow_mom actions are needed before 'reached_mom' is secured."""
+        return 2 if self._newborn_hard_mode_v1(state) else 1
+
+
+    def _newborn_seek_latch_attempts_v1(self, state: EnvState) -> int:
+        """Return the latch-attempt threshold for the current newborn episode."""
+        return 3 if self._newborn_hard_mode_v1(state) else self._SEEK_LATCH_ATTEMPTS
+
+
+    def _newborn_rest_success_min_milk_ticks_v1(self, state: EnvState) -> int:
+        """Return the minimum milk-tick persistence needed before rest counts as successful."""
+        return 3 if self._newborn_hard_mode_v1(state) else self._REST_SUCCESS_MIN_MILK_TICKS
+
+
+    def _newborn_rest_commit_actions_v1(self, state: EnvState) -> int:
+        """Return how many successful rest actions are needed to finish the late feeding/rest phase.
+
+        In ordinary mode, one good rest action is enough once feeding has persisted.
+        In the benchmark-hardened newborn scenario, we require two:
+          1) a first "settling" rest, then
+          2) a final rest that completes the episode.
+
+        This creates a second late-phase memory seam without changing the early stand-up phase.
+        """
+        return 2 if self._newborn_hard_mode_v1(state) else 1
+
+
+    def _newborn_late_progress_blackout_steps_v1(self, state: EnvState) -> int:
+        """Return blackout duration for meaningful late feeding/rest progress.
+
+        Why this is separate
+        --------------------
+        The benchmark is already separating in the late phase. We therefore make only
+        the late feeding/rest seam more demanding, rather than globally increasing all
+        progress blackouts.
+        """
+        return 5 if self._newborn_hard_mode_v1(state) else self._BLACKOUT_STEPS_ON_PROGRESS
+
+
+
+
+    def _newborn_progress_blackout_steps_v1(self, state: EnvState) -> int:
+        """Return blackout duration after real task progress."""
+        return 3 if self._newborn_hard_mode_v1(state) else self._BLACKOUT_STEPS_ON_PROGRESS
+
+
+    def _newborn_setback_blackout_steps_v1(self, state: EnvState) -> int:
+        """Return blackout duration after a setback or premature action."""
+        return 2 if self._newborn_hard_mode_v1(state) else self._BLACKOUT_STEPS_ON_SETBACK
+
+
     def _update_spatial_label(self, state: EnvState) -> None:
         """
         Coarse spatial geometry helper.
@@ -561,7 +625,9 @@ class FsmBackend:
         This method is explicit (even though EnvState has matching defaults)
         so that the newborn-goat initial conditions are easy to inspect.
         """
-        if config.scenario_name == "newborn_goat_first_hour":
+        if config.scenario_name in ("newborn_goat_first_hour", "newborn_goat_first_hour_benchmark_hard"):
+            hard_newborn = config.scenario_name == "newborn_goat_first_hour_benchmark_hard"
+
             env_state.kid_posture = "fallen"
             env_state.mom_distance = "far"
             env_state.nipple_state = "hidden"
@@ -576,7 +642,7 @@ class FsmBackend:
             env_state.step_index = 0
 
             env_state.shelter_distance = "far"
-            env_state.cliff_distance   = "far"
+            env_state.cliff_distance = "far"
             env_state.context_label = ""
             env_state.milestones = []
             env_state.obs_mask_dropped_cues_hint = 0
@@ -591,7 +657,9 @@ class FsmBackend:
             env_state.newborn_setback_count = 0
             env_state.newborn_obs_blackout_until_step = -1
             env_state.newborn_obs_blackout_kind = ""
-            self._update_spatial_label(env_state) #initialize coarse geometry / zone.
+            env_state.newborn_benchmark_hard = hard_newborn
+            env_state.newborn_follow_attempts = 0
+            self._update_spatial_label(env_state)  # initialize coarse geometry / zone.
 
         elif config.scenario_name == "goat_foraging_04":
             env_state.kid_posture = "standing"
@@ -661,7 +729,7 @@ class FsmBackend:
         state = env_state  # alias for readability
         stage = state.scenario_stage
         steps = state.step_index
-
+        hard_newborn = self._newborn_hard_mode_v1(state)
         # One-tick event/meta hints are rebuilt each step.
         state.milestones = []
         state.obs_mask_dropped_cues_hint = 0
@@ -688,13 +756,13 @@ class FsmBackend:
             state.newborn_obs_blackout_until_step = int(steps) + max(1, int(duration_steps))
             state.obs_mask_dropped_cues_hint = max(int(getattr(state, "obs_mask_dropped_cues_hint", 0) or 0), 1)
 
+
         def _emit_progress(label: str, *, blackout_kind: str) -> None:
             """Record one progress milestone for this step and open a short blackout."""
             if isinstance(label, str) and label:
                 state.milestones.append(label)
             state.newborn_last_progress_step = int(steps)
-            _open_blackout(blackout_kind, self._BLACKOUT_STEPS_ON_PROGRESS)
-
+            _open_blackout(blackout_kind, self._newborn_progress_blackout_steps_v1(state))
 
         # -------------------------------
         # Stage: birth → struggle
@@ -752,9 +820,13 @@ class FsmBackend:
                     state.newborn_stand_attempts = 0
                     _emit_progress("stood_up", blackout_kind="transition")
 
-                    # If mom was already brought near during struggle, we let that
-                    # count immediately on the recovery step.
-                    if state.mom_distance in ("near", "touching"):
+
+                    state.newborn_follow_attempts = 0
+                    # In ordinary mode we keep the old convenience behavior:
+                    # if mom was already brought near during struggle, count that
+                    # immediately. In benchmark-hard mode, reaching mom must still
+                    # be re-secured by useful follow_mom actions after standing.
+                    if (not hard_newborn) and state.mom_distance in ("near", "touching"):
                         state.milestones.append("reached_mom")
 
             elif did_seek or did_rest:
@@ -762,7 +834,7 @@ class FsmBackend:
                 state.newborn_setback_count += 1
                 state.kid_fatigue = min(1.0, state.kid_fatigue + self._MISS_FATIGUE_PENALTY)
                 state.kid_temperature = max(0.0, state.kid_temperature - self._MISS_TEMP_PENALTY)
-                _open_blackout("setback", self._BLACKOUT_STEPS_ON_SETBACK)
+                _open_blackout("setback", self._newborn_setback_blackout_steps_v1(state))
 
             else:
                 # Missing the next useful move should delay recovery, not auto-fix it.
@@ -785,25 +857,46 @@ class FsmBackend:
                 state.cliff_distance = "near"
 
             mom_was_far = state.mom_distance == "far"
+            required_follow = self._newborn_follow_commit_attempts_v1(state)
 
-            # "follow_mom" now matters behaviorally, not just cosmetically.
-            if did_follow and state.mom_distance == "far":
-                state.mom_distance = "near"
-                state.mom_position = (0.5, state.mom_position[1])
+            # In benchmark-hard mode, the kid must do more than one permissive
+            # follow tick before "reached mom" is really secured.
+            if did_follow:
+                state.newborn_follow_attempts += 1
 
-            if did_follow and mom_was_far and state.mom_distance in ("near", "touching"):
-                _emit_progress("reached_mom", blackout_kind="mom")
+                if not hard_newborn:
+                    if state.mom_distance == "far":
+                        state.mom_distance = "near"
+                        state.mom_position = (0.5, state.mom_position[1])
+
+                    if mom_was_far and state.mom_distance in ("near", "touching"):
+                        _emit_progress("reached_mom", blackout_kind="mom")
+                else:
+                    if state.newborn_follow_attempts >= required_follow and state.mom_distance == "far":
+                        state.mom_distance = "near"
+                        state.mom_position = (0.5, state.mom_position[1])
+
+                    if state.newborn_follow_attempts == required_follow and state.mom_distance in ("near", "touching"):
+                        _emit_progress("reached_mom", blackout_kind="mom")
+
+            follow_committed = state.newborn_follow_attempts >= required_follow
 
             if did_seek:
-                # Searching before the mother is truly reachable causes a real setback.
-                if state.mom_distance not in ("near", "touching"):
+                # In benchmark-hard mode, nipple search should not become
+                # productive until the mom-approach phase has been re-secured.
+                mom_ready = state.mom_distance in ("near", "touching")
+                if hard_newborn:
+                    mom_ready = mom_ready and follow_committed
+
+                if not mom_ready:
                     state.newborn_setback_count += 1
                     state.kid_fatigue = min(1.0, state.kid_fatigue + self._SETBACK_FATIGUE_PENALTY)
                     state.kid_posture = "fallen"
                     state.scenario_stage = "struggle"
                     state.nipple_state = "hidden"
                     state.newborn_seek_attempts = 0
-                    _open_blackout("setback", self._BLACKOUT_STEPS_ON_SETBACK)
+                    state.newborn_follow_attempts = 0
+                    _open_blackout("setback", self._newborn_setback_blackout_steps_v1(state))
                 else:
                     state.newborn_seek_attempts += 1
 
@@ -811,11 +904,12 @@ class FsmBackend:
                         state.nipple_state = "reachable"
                         _emit_progress("found_nipple", blackout_kind="nipple")
 
-                    elif state.nipple_state == "reachable" and state.newborn_seek_attempts >= self._SEEK_LATCH_ATTEMPTS:
+                    elif state.nipple_state == "reachable" and state.newborn_seek_attempts >= self._newborn_seek_latch_attempts_v1(state):
                         state.nipple_state = "latched"
                         state.kid_posture = "latched"
                         state.scenario_stage = "first_latch"
                         state.newborn_milk_ticks = 0
+                        state.newborn_rest_attempts = 0
                         _emit_progress("latched_nipple", blackout_kind="nipple")
 
             elif did_rest:
@@ -827,7 +921,8 @@ class FsmBackend:
                     state.scenario_stage = "struggle"
                     state.nipple_state = "hidden"
                     state.newborn_seek_attempts = 0
-                    _open_blackout("setback", self._BLACKOUT_STEPS_ON_SETBACK)
+                    state.newborn_follow_attempts = 0
+                    _open_blackout("setback", self._newborn_setback_blackout_steps_v1(state))
                 else:
                     state.kid_fatigue = min(1.0, state.kid_fatigue + self._MISS_FATIGUE_PENALTY)
 
@@ -844,25 +939,51 @@ class FsmBackend:
             state.cliff_distance = "far"
 
             state.newborn_milk_ticks += 1
-            if state.newborn_milk_ticks == 1:
-                _emit_progress("milk_drinking", blackout_kind="milk")
+            required_milk_ticks = self._newborn_rest_success_min_milk_ticks_v1(state)
+            required_rest_actions = self._newborn_rest_commit_actions_v1(state)
+
+            # In ordinary mode, "milk_drinking" appears immediately on the first latched tick.
+            # In benchmark-hard mode, only count it once feeding has persisted long enough to be
+            # behaviorally meaningful. This keeps the late-phase seam where the current A/B/C
+            # separation is already emerging.
+            milk_progress_tick = required_milk_ticks if hard_newborn else 1
+            if state.newborn_milk_ticks == milk_progress_tick:
+                if hard_newborn:
+                    state.milestones.append("milk_drinking")
+                    state.newborn_last_progress_step = int(steps)
+                    _open_blackout("milk", self._newborn_late_progress_blackout_steps_v1(state))
+                else:
+                    _emit_progress("milk_drinking", blackout_kind="milk")
 
             if did_rest:
                 state.newborn_rest_attempts += 1
+                feeding_ready = state.newborn_milk_ticks >= required_milk_ticks and state.position == "shelter_area"
 
-                if state.newborn_milk_ticks >= self._REST_SUCCESS_MIN_MILK_TICKS and state.position == "shelter_area":
+                if feeding_ready and state.newborn_rest_attempts >= required_rest_actions:
                     state.scenario_stage = "rest"
                     state.kid_posture = "resting"
                     state.mom_distance = "touching"
                     state.mom_position = (state.kid_position[0], state.kid_position[1])
                     _emit_progress("rested", blackout_kind="transition")
+
+                elif feeding_ready and hard_newborn:
+                    # First successful settling rest in the hard benchmark.
+                    # Keep the kid latched, but open one more late blackout window so retrieval
+                    # can matter specifically in the feeding/rest phase.
+                    state.milestones.append("rest_settled")
+                    state.newborn_last_progress_step = int(steps)
+                    _open_blackout("transition", self._newborn_late_progress_blackout_steps_v1(state))
+                    state.kid_fatigue = max(0.0, state.kid_fatigue - 0.01)
+
                 else:
                     # Resting too early delays completion.
                     state.kid_fatigue = min(1.0, state.kid_fatigue + self._MISS_FATIGUE_PENALTY)
 
-            elif did_stand or did_seek:
-                # Breaking latch should matter.
+            elif did_stand or did_seek or (hard_newborn and did_follow):
+                # Breaking latch should matter. In the benchmark-hard late phase, an
+                # obviously wrong locomotor action like follow_mom should also break latch.
                 state.newborn_setback_count += 1
+                state.newborn_follow_attempts = 0
                 state.newborn_seek_attempts = 1
                 state.newborn_rest_attempts = 0
                 state.newborn_milk_ticks = 0
@@ -870,7 +991,7 @@ class FsmBackend:
                 state.nipple_state = "reachable"
                 state.scenario_stage = "first_stand"
                 state.kid_fatigue = min(1.0, state.kid_fatigue + self._SETBACK_FATIGUE_PENALTY)
-                _open_blackout("setback", self._BLACKOUT_STEPS_ON_SETBACK)
+                _open_blackout("setback", self._newborn_setback_blackout_steps_v1(state))
 
         # -------------------------------
         # Stage: rest
@@ -926,13 +1047,21 @@ class FsmBackend:
         # Geometry ladder:
         #   cliff_edge  --follow_mom-->  open_field  --follow_mom-->  shelter_area
         #
-        # This only runs in 'struggle' / 'first_stand' so we do not interfere with
-        # the birth setup or the later nursing/resting configuration.
+        # Important benchmark-hard detail:
+        #   In first_stand hard mode, one useful follow step may move the kid away
+        #   from the cliff, but it must NOT also make mom "near" until the earlier
+        #   hard-mode commit logic has actually been satisfied.
         # ------------------------------------------------------------------
         if did_follow and state.scenario_stage in ("struggle", "first_stand"):
-            if state.mom_distance == "far":
-                state.mom_distance = "near"
-                state.mom_position = (state.kid_position[0] + 0.35, state.kid_position[1])
+            if state.scenario_stage == "struggle":
+                if state.mom_distance == "far":
+                    state.mom_distance = "near"
+                    state.mom_position = (state.kid_position[0] + 0.35, state.kid_position[1])
+
+            elif state.scenario_stage == "first_stand":
+                if (not hard_newborn) and state.mom_distance == "far":
+                    state.mom_distance = "near"
+                    state.mom_position = (state.kid_position[0] + 0.35, state.kid_position[1])
 
             if state.position == "cliff_edge":
                 # Step 1: move off the exposed cliff edge onto more neutral terrain.

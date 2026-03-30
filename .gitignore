@@ -38,6 +38,10 @@ lib/
 *.bak
 *.tmp
 
+# Local run artifacts
+terminal.txt
+experiment_jsonl/
+
 # Virtual envs
 .venv/
 venv/

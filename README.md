@@ -153,6 +153,13 @@ of birth, and by one week can climb most places its mother can)*
 - [Persistence: Autosave/Load](#persistence-autosaveload)
 - [Runner, menus, and CLI](#runner-menus-and-cli)
 - [Menu 48: OpenAI / LLM setup, smoke test, state-summary demo, and advanced request knobs](#menu-48-openai--llm-setup-smoke-test-state-summary-demo-and-advanced-request-knobs)
+- [Experiments](#experiments)
+- [Menu 49: Experiments / Benchmarks](#menu-49-experiments--benchmarks)
+- [Experiment protocol: conditions A–E](#experiment-protocol-conditions-ae)
+- [Current benchmark suite](#current-benchmark-suite)
+- [Experiment outputs and JSONL records](#experiment-outputs-and-jsonl-records)
+- [Current status and limitations of the experiment harness](#current-status-and-limitations-of-the-experiment-harness)
+- [Current observed behavior in the benchmark harness](#current-observed-behavior-in-the-benchmark-harness)
 - [Preflight (four-part self-test)](#preflight-four-part-self-test)
 - [Logging](#logging)
 - [WorkingMap Layer Contracts](#workingmap-layer-contracts)
@@ -3357,7 +3364,7 @@ Planning and surgery tools (when you start editing graphs by hand):
 ---
 
 
-## Menu 48: OpenAI / LLM setup, smoke test, state-summary demo, and advanced request knobs
+# Menu 48: OpenAI / LLM setup, smoke test, state-summary demo, and advanced request knobs
 
 Menu **48** is the current entry point for OpenAI / LLM work inside the runner.
 
@@ -3591,6 +3598,350 @@ A: First confirm your goal token is exact (e.g., `pred:posture:standing`), then 
 
 Q: Is there a “known good” graph for debugging menus?  
 A: Yes — `--demo-world` seeds a small deterministic graph that is also used by some unit tests, so interactive experiments and tests share the same baseline.
+
+
+
+
+# Experiments
+
+CCA8 now contains a dedicated experiment harness for controlled benchmark runs. The purpose of this harness is not merely to
+“run the goat many times,” but to let us compare memory and control conditions against frozen benchmark definitions using a
+stable action vocabulary, repeatable seeds, machine-readable JSONL records, and compact batch summaries.
+
+The experiment harness is intentionally additive. If you never enter the experiments menu, ordinary CCA8 simulation behavior
+remains unchanged. When you do use the harness, runs are executed in an isolated sandbox runtime so that benchmark execution
+does not mutate the user’s live interactive session.
+
+The current experimental focus is long-horizon memory and control:
+- mechanistic contextual retrieval and switching in a partially observable task,
+- and milestone completion in a closed-loop newborn-goat task.
+
+This section documents the current harness as implemented in the runner at the time of writing.
+
+
+
+# Menu 49: Experiments / Benchmarks
+
+Menu 49 is the current entry point for experiment work.
+
+It provides:
+- protocol inspection,
+- benchmark and condition configuration,
+- seed and run-budget configuration,
+- JSONL output-path preparation,
+- example cycle/episode records,
+- one isolated benchmark episode,
+- and A/B/C batch execution over the selected seeds.
+
+At present, the menu includes the following practical actions:
+
+1. Show frozen protocol summary  
+2. Show A–E condition table  
+3. Show benchmark suite  
+4. Show JSONL schema summary  
+5. Show logging / output status  
+6. Set benchmark id  
+7. Set condition ids  
+8. Set random seed list  
+9. Set episodes per seed  
+10. Set max cycles  
+11. Set observation-mask probability  
+12. Set run label  
+13. Set output directory  
+14. Show example cycle / episode records  
+15. Prepare JSONL logging / output paths  
+16. Reset experiment protocol to defaults  
+17. Run one prepared experiment episode now (isolated sandbox)  
+18. Run A/B/C batch over current seeds (isolated sandbox)
+
+The current menu text still mentions “config + JSONL plumbing,” but the harness has already progressed beyond scaffolding:
+submenu 17 and submenu 18 now execute real experiment runs.
+
+
+
+# Experiment protocol: conditions A–E
+
+The current experiment protocol freezes five comparison conditions.
+
+## A) Full CCA8 (merge retrieval)
+Reference condition. Full layered CCA8 with episodic readback enabled and conservative merge-mode prior injection.
+
+## B) CCA8 without episodic readback
+Storage remains available, but automatic episodic retrieval is disabled. This isolates the contribution of readback rather than
+storage alone.
+
+## C) CCA8 with replace-mode prior injection
+Episodic retrieval is enabled, but retrieved MapSurface priors are applied in replace mode rather than conservative merge mode.
+This is intended to test whether guarded merge is better than stronger overwrite-style priors.
+
+## D) LLM-only controller baseline
+Reserved condition. Intended future baseline where an LLM selects actions from the same bounded action vocabulary using only
+agent-visible state summaries.
+
+## E) Hybrid CCA8 + LLM adviser
+Reserved condition. Intended future hybrid where CCA8 remains the authoritative controller while an LLM ranks or advises among
+bounded candidate actions.
+
+At the time of writing:
+- A, B, and C execute real sandboxed CCA8 runs.
+- D and E are intentionally reported as not yet supported until the later LLM action-selection hook is implemented.
+
+
+
+# Current benchmark suite
+
+The harness currently defines two benchmarks.
+
+## 1) `goat04_context`
+This is the contextual map-switch benchmark built around the `goat_foraging_04` evaluation world.
+
+Its purpose is mechanistic rather than ethological:
+- partial observability,
+- sparse fox / hawk contextual switching,
+- retrieval of the appropriate prior map,
+- contamination control,
+- and stabilization after a context switch.
+
+The primary metrics currently associated with this benchmark are:
+
+- `context_switch_accuracy`
+- `cycles_to_stabilization`
+- `false_retrieval_count`
+- `cue_leakage_violations`
+- `cumulative_prediction_error`
+
+This benchmark is currently the clearest place to test whether retrieved context actually changes downstream control.
+
+## 2) `newborn_long_horizon`
+This is the closed-loop newborn-goat milestone benchmark.
+
+Its purpose is behavioral:
+can the system progress through the task ladder from birth-like fallen posture to successful resting after feeding?
+
+The current milestone ladder is:
+
+1. `stood_up`
+2. `reached_mom`
+3. `found_nipple`
+4. `latched_nipple`
+5. `milk_drinking`
+6. `rested`
+
+The primary metrics currently associated with this benchmark are:
+
+- `episode_success`
+- `milestone_vector`
+- `milestone_score`
+- `cycles_to_end`
+- `repeated_action_loop_count`
+- `cumulative_prediction_error`
+- `recovery_latency`
+
+At the time of writing, this benchmark is valuable both as a behavioral regression test and as a long-horizon task-completion
+sandbox, even though its condition ablations are not yet strongly separated.
+
+
+
+# Experiment outputs and JSONL records
+
+The experiment harness can prepare and write JSONL files to a configurable output directory.
+
+Current protocol knobs include:
+- benchmark id,
+- selected condition ids,
+- seed list,
+- episodes per seed,
+- max cycles,
+- observation-mask probability,
+- run label,
+- output directory,
+- and booleans controlling whether cycle records and episode-summary records are written.
+
+## Run identity and paths
+
+Each prepared run uses a stable human-readable run id, composed from:
+- timestamp,
+- benchmark id,
+- and optionally a run label (or profile when no label is provided).
+
+Prepared output files typically follow the pattern:
+
+- `<run_id>__cycle.jsonl`
+- `<run_id>__episode.jsonl`
+
+inside the configured `output_dir`.
+
+## Cycle-record contract
+
+Cycle records are intended to be machine-readable per-cycle traces. The current schema includes fields such as:
+
+- schema / record_type
+- experiment_id
+- benchmark / condition / seed / episode_index
+- cycle_index / env_step
+- stage / zone
+- obs_mask_stats
+- retrieval_event
+- pred_err
+- selected_policy
+- executed_action
+- milestones
+- oracle
+- done / termination_reason
+
+## Episode-summary contract
+
+Episode summaries are the compact evaluation artifact for one run. The current schema includes fields such as:
+
+- success
+- cycles_to_end
+- milestone_vector
+- milestone_score
+- context_switch_accuracy
+- false_retrieval_count
+- cue_leakage_violations
+- cumulative_prediction_error
+- repeated_action_loop_count
+- latency_ms_total
+- recovery_latency
+- oracle_action_accuracy
+- oracle_retrieval_precision
+- internal_retrieval_event_ratio
+- stabilization_latency
+- retrieval_action_dissociation_count
+
+These records are built from the generic per-cycle trace captured during the sandbox run.
+
+
+
+# Current status and limitations of the experiment harness
+
+The current harness is real and useful, but it is still an evolving research tool rather than a finished paper-grade evaluation suite.
+
+## What already works
+
+- isolated sandbox runtime creation,
+- benchmark-specific runtime configuration,
+- real execution for conditions A/B/C,
+- hidden-oracle scoring for the goat04 contextual benchmark,
+- milestone summarization for the newborn benchmark,
+- per-episode JSONL writing,
+- and compact terminal summaries for single runs and A/B/C batches.
+
+## Important current limitations
+
+### 1) D and E are not yet supported
+The LLM-only and hybrid LLM conditions are defined in the protocol but intentionally return a “not yet supported” result until
+the later LLM action-selection hook is implemented.
+
+### 2) `cycles_to_end` is not yet true early termination
+At present, the single-episode runner executes up to `max_cycles` and then summarizes what happened.
+This means that `cycles_to_end` currently reflects the number of raw cycle records collected, not a true “the task terminated
+naturally at cycle N” measure.
+
+In other words, it is currently best read as:
+- “how many cycles this benchmark run consumed under the current run budget”
+rather than:
+- “the exact cycle at which the task ended.”
+
+### 3) Batch mode currently reuses the single-episode runner
+A/B/C batch execution is already useful, but each episode still writes its own JSONL files.
+The harness does not yet consolidate an entire batch under one shared run id or one unified batch artifact.
+
+### 4) The newborn benchmark is not yet a strong episodic-readback ablation
+The newborn long-horizon task currently serves very well as a behavioral regression and long-horizon task-completion benchmark,
+but at the time of writing it does not yet strongly separate A/B/C. That means it is not yet sufficient, by itself, to support a
+claim that episodic readback materially improves newborn long-horizon success.
+
+### 5) A vs C separation is still weak in the contextual benchmark
+The goat04 contextual benchmark already separates “retrieval present” vs “retrieval absent,” but A and C can still look very
+similar in batch summaries. This means the current benchmark is stronger for testing the presence or absence of retrieval than
+for testing merge-mode vs replace-mode priors.
+
+These limitations are not failures. They define the next development targets for the benchmark harness.
+
+
+
+# Current observed behavior in the benchmark harness
+
+The following summarizes the current behavior seen in the benchmark harness at the time of writing.
+
+## `goat04_context`
+
+In a representative single run under condition A:
+- `success = True`
+- `context_switch_acc = 0.750`
+- `oracle_action_acc = 0.750`
+- `oracle_retr_prec = 1.000`
+- `internal_retr_rt = 0.500`
+- `false_retrievals = 0`
+- `cue_leakage = 0`
+- `repeated_loops = 54`
+- `cumulative_pred_e = 0.000`
+
+In the current A/B/C batch over the default seed set:
+- A and C both succeed and outperform B,
+- B loses contextual retrieval accuracy and retrieval precision,
+- cue leakage remains controlled,
+- and A/C currently appear much closer to one another than either is to B.
+
+Interpretation:
+- the contextual benchmark is already discriminative for “episodic readback on” vs “episodic readback off,”
+- but it is not yet strongly discriminative for merge-mode vs replace-mode priors.
+
+## `newborn_long_horizon`
+
+In a representative single run under condition A:
+- all six milestones are reached,
+- `milestone_score = 1.000`,
+- `recovery_latency = 5.000`,
+- `repeated_loops = 2`,
+- `cumulative_pred_e = 4.000`.
+
+In the current A/B/C batch over the default seed set:
+- A, B, and C all succeed,
+- milestone score remains perfect,
+- recovery latency remains stable,
+- and the summary values are currently identical across A/B/C.
+
+Interpretation:
+- the newborn benchmark is currently a strong stability / regression benchmark,
+- but it does not yet separate episodic readback conditions in a scientifically interesting way.
+
+This is an honest and useful result: the benchmark harness is functioning, but not every benchmark is yet measuring the same kind
+of architectural dependence.
+
+---
+
+## Practical recommendation for reading Menu 49 results
+
+At the time of writing, the fastest way to interpret the experiment menu is:
+
+- use `goat04_context` when you want to test contextual retrieval, map switching, contamination control, and whether memory
+  changes downstream behavior;
+
+- use `newborn_long_horizon` when you want to test closed-loop task completion, milestone stability, and whether recent
+  changes broke the basic newborn behavioral sequence.
+
+These benchmarks should be treated as complementary rather than interchangeable.
+
+---
+
+## Planned next improvements
+
+A natural next sequence of improvements is:
+
+1. introduce true early benchmark termination for completed or failed episodes,
+2. strengthen the newborn benchmark so that condition B genuinely loses something when episodic readback is removed,
+3. improve A vs C separation in the contextual benchmark,
+4. consolidate batch outputs under cleaner batch-level logging,
+5. and later add D/E once the LLM action hook is ready.
+
+That trajectory keeps the harness scientifically honest while steadily increasing its paper-readiness.
+
+
+
+
 
 
 
