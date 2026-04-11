@@ -54,7 +54,6 @@ import os
 import platform
 import sys
 import logging
-import math
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Optional, Any, Dict, List, Callable
@@ -248,8 +247,6 @@ class ExperimentProtocolConfig:
     jsonl_write_cycle_records: bool = True
     jsonl_write_episode_records: bool = True
     llm_model: Optional[str] = None
-    llm_adviser_ambiguity_delta: float = 0.10
-    llm_adviser_max_candidates: int = 4
 
     # Patch-2 additions:
     # - run_label gives the user a stable human-readable tag for filenames.
@@ -755,16 +752,6 @@ class Ctx:
     # controlled A/B/C/D/E batches from the main runner.
     experiment_cfg: ExperimentProtocolConfig = field(default_factory=ExperimentProtocolConfig)
     experiment_last_summary: dict[str, Any] = field(default_factory=dict)
-    experiment_active_condition_id: Optional[str] = None
-    experiment_active_condition_label: Optional[str] = None
-    experiment_llm_adviser_enabled: bool = False
-    experiment_llm_role: str = "none"
-    experiment_llm_model_name: Optional[str] = None
-    experiment_llm_call_count: int = 0
-    experiment_llm_latency_ms_total: float = 0.0
-    experiment_last_llm_advice_summary: dict[str, Any] = field(default_factory=dict)
-    experiment_llm_first_error_printed: bool = False
-    experiment_llm_first_error_summary: Optional[str] = None
 
     # Newborn B2 benchmark hardening
     # ------------------------------
@@ -1018,7 +1005,7 @@ def render_experiment_jsonl_schema_summary_v1() -> str:
         "schema", "record_type", "experiment_id", "benchmark", "condition", "seed", "episode_index",
         "success", "cycles_to_end", "milestone_vector", "milestone_score", "context_switch_accuracy",
         "false_retrieval_count", "cue_leakage_violations", "cumulative_prediction_error",
-        "repeated_action_loop_count", "llm_call_count", "llm_latency_ms_total", "latency_ms_total", "recovery_latency",
+        "repeated_action_loop_count", "llm_call_count", "latency_ms_total", "recovery_latency",
         "oracle_action_accuracy", "oracle_retrieval_precision", "internal_retrieval_event_ratio",
         "stabilization_latency", "retrieval_action_dissociation_count",
     ]
@@ -1062,8 +1049,6 @@ def render_experiment_protocol_summary_v1(ctx: Ctx) -> str:
     lines.append(f"  jsonl_cycle_records  : {cfg.jsonl_write_cycle_records}")
     lines.append(f"  jsonl_episode_records: {cfg.jsonl_write_episode_records}")
     lines.append(f"  llm_model            : {cfg.llm_model}")
-    lines.append(f"  llm_adv_delta        : {cfg.llm_adviser_ambiguity_delta:.3f}")
-    lines.append(f"  llm_adv_max_cands    : {cfg.llm_adviser_max_candidates}")
     lines.append(f"  run_label            : {cfg.run_label or '(none)'}")
     lines.append(f"  output_dir           : {cfg.output_dir}")
     if last:
@@ -1193,16 +1178,6 @@ def experiment_normalize_protocol_v1(cfg: ExperimentProtocolConfig | None) -> Ex
     if isinstance(llm_model_raw, str) and llm_model_raw.strip():
         llm_model = llm_model_raw.strip()
 
-    try:
-        llm_delta = float(getattr(src, "llm_adviser_ambiguity_delta", 0.10) or 0.10)
-    except Exception:
-        llm_delta = 0.10
-
-    try:
-        llm_max_candidates = int(getattr(src, "llm_adviser_max_candidates", 4) or 4)
-    except Exception:
-        llm_max_candidates = 4
-
     out = ExperimentProtocolConfig(
         protocol_version=str(getattr(src, "protocol_version", "exp_protocol_v1") or "exp_protocol_v1"),
         benchmark_id=str(getattr(src, "benchmark_id", "goat04_context") or "goat04_context"),
@@ -1220,8 +1195,6 @@ def experiment_normalize_protocol_v1(cfg: ExperimentProtocolConfig | None) -> Ex
         jsonl_write_cycle_records=bool(getattr(src, "jsonl_write_cycle_records", True)),
         jsonl_write_episode_records=bool(getattr(src, "jsonl_write_episode_records", True)),
         llm_model=llm_model,
-        llm_adviser_ambiguity_delta=max(0.0, min(1.0, llm_delta)),
-        llm_adviser_max_candidates=max(2, min(8, llm_max_candidates)),
         run_label=str(getattr(src, "run_label", "") or ""),
         output_dir=str(getattr(src, "output_dir", "experiment_jsonl") or "experiment_jsonl"),
     )
@@ -1506,7 +1479,6 @@ def experiment_build_episode_record_stub_v1(
         "cumulative_prediction_error": None,
         "repeated_action_loop_count": 0,
         "llm_call_count": 0,
-        "llm_latency_ms_total": None,
         "latency_ms_total": None,
         "recovery_latency": None,
         "oracle_action_accuracy": None,
@@ -1721,9 +1693,9 @@ def experiment_apply_condition_runtime_v1(
 
     Scope of this patch
     -------------------
-    - A/B/C remain the pure CCA8 memory-discipline conditions.
-    - E now enables the bounded LLM adviser while keeping CCA8 authoritative.
-    - D remains intentionally unsupported until we build a true LLM-only controller path.
+    This first execution patch wires the real CCA8 conditions (A/B/C). The LLM-only
+    and hybrid conditions (D/E) still need a later action-selection hook so they are
+    reported clearly as not-yet-supported rather than silently degraded.
     """
     _ = world
     _ = drives
@@ -1735,7 +1707,7 @@ def experiment_apply_condition_runtime_v1(
     if cond is None:
         return {"ok": False, "why": f"unknown_condition:{condition_id}"}
 
-    if cond.agent_mode == "llm_only":
+    if cond.agent_mode != "cca8":
         return {
             "ok": False,
             "why": "condition_not_yet_supported",
@@ -1766,20 +1738,6 @@ def experiment_apply_condition_runtime_v1(
     except Exception:
         pass
 
-    try:
-        ctx.experiment_active_condition_id = cid
-        ctx.experiment_active_condition_label = cond.label
-        ctx.experiment_llm_role = cond.llm_role
-        ctx.experiment_llm_adviser_enabled = bool(cond.llm_role == "advisor" and cond.decision_authority == "cca8")
-        ctx.experiment_llm_model_name = cfg_norm.llm_model.strip() if isinstance(cfg_norm.llm_model, str) and cfg_norm.llm_model.strip() else None
-        ctx.experiment_llm_call_count = 0
-        ctx.experiment_llm_latency_ms_total = 0.0
-        ctx.experiment_last_llm_advice_summary = {}
-        ctx.experiment_llm_first_error_printed = False
-        ctx.experiment_llm_first_error_summary = None
-    except Exception:
-        pass
-
     return {
         "ok": True,
         "condition_id": cid,
@@ -1789,367 +1747,6 @@ def experiment_apply_condition_runtime_v1(
         "retrieval_enabled": bool(cond.retrieval_enabled),
         "retrieval_mode": cond.retrieval_mode,
         "llm_role": cond.llm_role,
-        "llm_adviser_enabled": bool(getattr(ctx, "experiment_llm_adviser_enabled", False)),
-    }
-
-
-def _experiment_llm_candidate_rows_v1(
-    matches: list[Any],
-    *,
-    world,
-    drives: Drives,
-    ctx: Ctx,
-    deficit_fn: Callable[[str], float],
-    non_drive_fn: Callable[[str], float],
-    stable_idx_fn: Callable[[Any], int],
-) -> dict[str, Any]:
-    """Build a bounded candidate set for the hybrid LLM adviser.
-
-    The adviser should not see every possible policy in the architecture. It should only see
-    the currently-triggered candidate set, bounded further to the near-best deficit band so it
-    functions as a tie-break adviser rather than a free-running controller.
-    """
-    rows: list[dict[str, Any]] = []
-    if not isinstance(matches, list) or len(matches) < 2:
-        return {"candidate_rows": [], "all_rows": [], "best_deficit": 0.0, "delta": 0.0}
-
-    for gate in matches:
-        try:
-            name = str(getattr(gate, "name", "") or "")
-        except Exception:
-            name = ""
-        if not name:
-            continue
-
-        explain_text = None
-        try:
-            explain_fn = getattr(gate, "explain", None)
-            if callable(explain_fn):
-                explain_text = str(explain_fn(world, drives, ctx) or "")
-        except Exception:
-            explain_text = None
-
-        if isinstance(explain_text, str) and len(explain_text) > 240:
-            explain_text = explain_text[:237] + "..."
-
-        rows.append(
-            {
-                "policy": name,
-                "deficit": round(float(deficit_fn(name)), 3),
-                "non_drive_priority": round(float(non_drive_fn(name)), 3),
-                "q": round(float(skill_q(name, default=0.0)), 3),
-                "stable_order": int(stable_idx_fn(gate)),
-                "trigger_explanation": explain_text,
-            }
-        )
-
-    if len(rows) < 2:
-        return {"candidate_rows": [], "all_rows": rows, "best_deficit": 0.0, "delta": 0.0}
-
-    rows.sort(key=lambda row: (-float(row["deficit"]), -float(row["non_drive_priority"]), int(row["stable_order"])))
-    best_deficit = max(float(row["deficit"]) for row in rows)
-
-    try:
-        delta = float(getattr(getattr(ctx, "experiment_cfg", None), "llm_adviser_ambiguity_delta", 0.10) or 0.10)
-    except Exception:
-        delta = 0.10
-    delta = max(0.0, min(1.0, delta))
-
-    candidate_rows = [row for row in rows if (best_deficit - float(row["deficit"])) <= delta]
-    if len(candidate_rows) < 2:
-        candidate_rows = rows[:2]
-
-    try:
-        max_candidates = int(getattr(getattr(ctx, "experiment_cfg", None), "llm_adviser_max_candidates", 4) or 4)
-    except Exception:
-        max_candidates = 4
-    max_candidates = max(2, min(8, max_candidates))
-    candidate_rows = candidate_rows[:max_candidates]
-
-    return {
-        "candidate_rows": candidate_rows,
-        "all_rows": rows,
-        "best_deficit": round(best_deficit, 3),
-        "delta": round(delta, 3),
-    }
-
-
-def _experiment_llm_adviser_reply_schema_v1(candidate_names: list[str]) -> dict[str, Any]:
-    """Return the strict JSON schema for one bounded LLM-adviser reply."""
-    names = [name for name in candidate_names if isinstance(name, str) and name]
-    max_items = max(1, len(names))
-    return {
-        "type": "object",
-        "properties": {
-            "recommended_policy": {"type": "string", "enum": names},
-            "ranking": {
-                "type": "array",
-                "items": {"type": "string", "enum": names},
-                "minItems": 1,
-                "maxItems": max_items,
-            },
-            "rationale": {"type": "string"},
-            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-            "risk_flags": {"type": "array", "items": {"type": "string"}},
-        },
-        "required": ["recommended_policy", "ranking", "rationale", "confidence", "risk_flags"],
-        "additionalProperties": False,
-    }
-
-
-def _experiment_llm_adviser_prompt_v1(request_obj: dict[str, Any]) -> str:
-    """Build the conservative adviser prompt for condition E."""
-    return (
-        "You are a bounded policy adviser inside a CCA8 experiment. "
-        "The architecture remains authoritative. "
-        "Use only the supplied JSON state summary and the supplied candidate policies. "
-        "Choose exactly one policy from the candidate list. "
-        "Do not invent policies, sensors, goals, or hidden world state. "
-        "Prefer conservative, safety-aware advice. "
-        "Return only a JSON object matching the required schema.\n\n"
-        "CCA8 HYBRID-ADVISER REQUEST JSON:\n"
-        f"{json.dumps(request_obj, ensure_ascii=False)}"
-    )
-
-
-def _run_experiment_llm_adviser_once_v1(world, drives, ctx: Ctx, candidate_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Call the OpenAI Responses API once for condition E and return a JSON-safe summary.
-
-    The caller is expected to fall back to the normal CCA8 heuristic if this returns `ok=False`
-    or if the reply recommends a policy outside the supplied bounded candidate list.
-    """
-    names = [row.get("policy") for row in candidate_rows if isinstance(row, dict) and isinstance(row.get("policy"), str)]
-    if len(names) < 2:
-        return {
-            "enabled": True,
-            "called": False,
-            "ok": False,
-            "why": "not_ambiguous",
-            "candidate_policies": list(names),
-        }
-
-    model_name = None
-    try:
-        model_name = getattr(ctx, "experiment_llm_model_name", None)
-    except Exception:
-        model_name = None
-    if not isinstance(model_name, str) or not model_name.strip():
-        try:
-            model_name = _openai_default_model_name()
-        except Exception:
-            model_name = None
-    if not isinstance(model_name, str) or not model_name.strip():
-        return {
-            "enabled": True,
-            "called": False,
-            "ok": False,
-            "why": "no_model",
-            "candidate_policies": list(names),
-            "model": None,
-        }
-    model_name = model_name.strip()
-
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        return {
-            "enabled": True,
-            "called": False,
-            "ok": False,
-            "why": "no_api_key",
-            "candidate_policies": list(names),
-            "model": model_name,
-        }
-
-    state_summary = build_cca8_llm_state_summary_v1(world, drives, ctx)
-    request_obj = {
-        "schema": "cca8_experiment_llm_adviser_request_v1",
-        "benchmark": getattr(getattr(ctx, "experiment_cfg", None), "benchmark_id", None),
-        "condition": getattr(ctx, "experiment_active_condition_id", None),
-        "state": state_summary,
-        "candidate_policies": candidate_rows,
-    }
-    schema = _experiment_llm_adviser_reply_schema_v1(names)
-    prompt = _experiment_llm_adviser_prompt_v1(request_obj)
-
-    try:
-        request_opts = _openai_response_request_options_v1()
-        if not isinstance(request_opts, dict):
-            request_opts = {}
-    except Exception:
-        request_opts = {}
-
-    request_opts = _openai_sanitize_adviser_request_options_v1(request_opts)
-    if "max_output_tokens" not in request_opts:
-        request_opts["max_output_tokens"] = 220
-
-    _openai_quiet_http_loggers_v1()
-
-    t0 = time.time()
-    try:
-        import openai  # pylint: disable=import-outside-toplevel
-        from openai import OpenAI  # pylint: disable=import-outside-toplevel
-    except Exception as e:
-        return {
-            "enabled": True,
-            "called": False,
-            "ok": False,
-            "why": "sdk_import_error",
-            "error": str(e),
-            "candidate_policies": list(names),
-            "model": model_name,
-        }
-
-    try:
-        client = OpenAI(api_key=api_key, timeout=20.0)
-        response = client.responses.create(
-            model=model_name,
-            input=prompt,
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "cca8_experiment_llm_adviser_reply_v1",
-                    "strict": True,
-                    "schema": schema,
-                }
-            },
-            **request_opts,
-        )
-        duration_ms = int((time.time() - t0) * 1000.0)
-        raw = _openai_response_text_best_effort(response)
-
-    except openai.RateLimitError as e:
-        duration_ms = int((time.time() - t0) * 1000.0)
-        return {
-            "enabled": True,
-            "called": True,
-            "ok": False,
-            "why": "rate_limit_error",
-            "error": str(e),
-            "candidate_policies": list(names),
-            "model": model_name,
-            "latency_ms": duration_ms,
-        }
-    except openai.APIConnectionError as e:
-        duration_ms = int((time.time() - t0) * 1000.0)
-        return {
-            "enabled": True,
-            "called": True,
-            "ok": False,
-            "why": "api_connection_error",
-            "error": str(e),
-            "candidate_policies": list(names),
-            "model": model_name,
-            "latency_ms": duration_ms,
-        }
-    except openai.APIStatusError as e:
-        duration_ms = int((time.time() - t0) * 1000.0)
-        detail = _openai_api_error_detail_v1(e)
-        return {
-            "enabled": True,
-            "called": True,
-            "ok": False,
-            "why": "api_status_error",
-            "error": detail.get("message"),
-            "error_detail": detail,
-            "status_code": detail.get("status_code"),
-            "candidate_policies": list(names),
-            "model": model_name,
-            "latency_ms": duration_ms,
-        }
-
-    except Exception as e:
-        duration_ms = int((time.time() - t0) * 1000.0)
-        return {
-            "enabled": True,
-            "called": True,
-            "ok": False,
-            "why": "unexpected_error",
-            "error": f"{e.__class__.__name__}: {e}",
-            "candidate_policies": list(names),
-            "model": model_name,
-            "latency_ms": duration_ms,
-        }
-
-    if not isinstance(raw, str) or not raw.strip():
-        return {
-            "enabled": True,
-            "called": True,
-            "ok": False,
-            "why": "no_output_text",
-            "candidate_policies": list(names),
-            "model": model_name,
-            "latency_ms": duration_ms,
-            "response_id": getattr(response, "id", None),
-            "usage": _llm_eval_response_usage_v1(response),
-        }
-
-    try:
-        reply = json.loads(raw)
-    except Exception as e:
-        return {
-            "enabled": True,
-            "called": True,
-            "ok": False,
-            "why": "json_parse_error",
-            "error": str(e),
-            "raw_text": raw,
-            "candidate_policies": list(names),
-            "model": model_name,
-            "latency_ms": duration_ms,
-            "response_id": getattr(response, "id", None),
-            "usage": _llm_eval_response_usage_v1(response),
-        }
-
-    recommended = reply.get("recommended_policy")
-    if not isinstance(recommended, str) or recommended not in names:
-        return {
-            "enabled": True,
-            "called": True,
-            "ok": False,
-            "why": "invalid_recommended_policy",
-            "reply": reply,
-            "candidate_policies": list(names),
-            "model": model_name,
-            "latency_ms": duration_ms,
-            "response_id": getattr(response, "id", None),
-            "usage": _llm_eval_response_usage_v1(response),
-        }
-
-    ranking_in = reply.get("ranking")
-    ranking: list[str] = []
-    if isinstance(ranking_in, list):
-        for item in ranking_in:
-            if isinstance(item, str) and item in names and item not in ranking:
-                ranking.append(item)
-    if recommended not in ranking:
-        ranking.insert(0, recommended)
-
-    risk_flags = reply.get("risk_flags")
-    if not isinstance(risk_flags, list):
-        risk_flags = []
-    risk_flags = [str(item) for item in risk_flags if isinstance(item, str) and item]
-
-    confidence = reply.get("confidence")
-    try:
-        confidence_val = float(confidence)
-    except Exception:
-        confidence_val = None
-
-    return {
-        "enabled": True,
-        "called": True,
-        "ok": True,
-        "why": "ok",
-        "model": model_name,
-        "candidate_policies": list(names),
-        "recommended_policy": recommended,
-        "ranking": ranking,
-        "rationale": reply.get("rationale"),
-        "confidence": confidence_val,
-        "risk_flags": risk_flags,
-        "latency_ms": duration_ms,
-        "response_id": getattr(response, "id", None),
-        "usage": _llm_eval_response_usage_v1(response),
     }
 
 
@@ -2593,7 +2190,7 @@ def _experiment_transform_generic_cycle_records_v1(
             "retrieval_event": retrieval_event,
             "pred_err": pred_err,
             "selected_policy": selected_policy,
-            "llm_advice_summary": dict(raw.get("llm_advice_summary", {}) or {}),
+            "llm_advice_summary": None,
             "executed_action": executed_action,
             "milestones": _experiment_extract_generic_milestones_v1(raw),
             "oracle": oracle_block,
@@ -2647,10 +2244,6 @@ def _experiment_summarize_generic_episode_v1(
     correct_action_count = 0
     stabilization_latencies: list[float] = []
     retrieval_action_dissociation_count = 0
-    llm_call_count = 0
-    llm_latency_ms_total = 0.0
-    llm_ok_count = 0
-    llm_first_error = None
 
     for raw in raw_records:
 
@@ -2669,32 +2262,6 @@ def _experiment_summarize_generic_episode_v1(
             for val in pred_err.values():
                 if isinstance(val, (int, float)):
                     pred_err_total += abs(float(val))
-
-        llm_summary = raw.get("llm_advice_summary") if isinstance(raw, dict) else None
-        llm_summary = llm_summary if isinstance(llm_summary, dict) else {}
-
-        if bool(llm_summary.get("called")):
-            llm_call_count += 1
-
-            lat_v = llm_summary.get("latency_ms")
-            if isinstance(lat_v, (int, float)) and not isinstance(lat_v, bool):
-                llm_latency_ms_total += float(lat_v)
-
-            if bool(llm_summary.get("ok")):
-                llm_ok_count += 1
-            elif llm_first_error is None:
-                detail = llm_summary.get("error_detail")
-                detail = detail if isinstance(detail, dict) else {}
-
-                msg = detail.get("message") or llm_summary.get("error") or llm_summary.get("why")
-                param = detail.get("param")
-                code = detail.get("code")
-
-                llm_first_error = str(msg) if msg is not None else str(llm_summary.get("why"))
-                if isinstance(param, str) and param:
-                    llm_first_error += f" | param={param}"
-                if isinstance(code, str) and code:
-                    llm_first_error += f" | code={code}"
 
         # Track cue-leakage guardrail from any goat04 retrieval event.
         wm = raw.get("wm") if isinstance(raw, dict) else None
@@ -2860,12 +2427,8 @@ def _experiment_summarize_generic_episode_v1(
     record["false_retrieval_count"] = int(false_retrieval_count)
     record["cue_leakage_violations"] = int(cue_leakage_violations)
     record["cumulative_prediction_error"] = float(pred_err_total) if pred_err_seen else None
-
     record["repeated_action_loop_count"] = int(repeated_action_loop_count)
-    record["llm_call_count"] = int(llm_call_count)
-    record["llm_latency_ms_total"] = round(float(llm_latency_ms_total), 3) if llm_call_count > 0 else None
-    record["llm_ok_count"] = int(llm_ok_count)
-    record["llm_first_error"] = llm_first_error
+    record["llm_call_count"] = 0
     record["latency_ms_total"] = round(float(latency_ms_total), 3)
 
     record["oracle_action_accuracy"] = context_switch_accuracy
@@ -3119,9 +2682,6 @@ def render_experiment_episode_summary_lines_v1(result: dict[str, Any]) -> list[s
         f"[experiments] obs_mask_prob     : {_experiment_metric_text_v1(result.get('effective_obs_mask_prob'))}",
         f"[experiments] cycles_to_end     : {_experiment_metric_text_v1(episode_record.get('cycles_to_end'))}",
         f"[experiments] success           : {_experiment_metric_text_v1(episode_record.get('success'))}",
-        f"[experiments] llm_calls         : {_experiment_metric_text_v1(episode_record.get('llm_call_count'))}",
-        f"[experiments] llm_ok_count      : {_experiment_metric_text_v1(episode_record.get('llm_ok_count'))}",
-        f"[experiments] llm_lat_ms_total  : {_experiment_metric_text_v1(episode_record.get('llm_latency_ms_total'))}",
     ]
 
     if benchmark == "goat04_context":
@@ -3164,10 +2724,6 @@ def render_experiment_episode_summary_lines_v1(result: dict[str, Any]) -> list[s
         ]
     )
 
-    first_err = episode_record.get("llm_first_error")
-    if isinstance(first_err, str) and first_err:
-        lines.append(f"[experiments] llm_first_error   : {first_err}")
-
     return lines
 
 
@@ -3192,362 +2748,6 @@ def _experiment_mean_v1(values: list[Any]) -> float | None:
     if not nums:
         return None
     return sum(nums) / float(len(nums))
-
-
-_EXPERIMENT_TCRIT_CACHE_V1: dict[tuple[float, int], float] = {}
-
-
-def _experiment_numeric_values_v1(values: list[Any]) -> list[float]:
-    """Return numeric values as floats, ignoring non-numeric items and bools.
-
-    This keeps the experiment stats path defensive. Menu 49 summaries are JSON-safe
-    dicts and may contain None or non-numeric fields, so I normalize the numeric
-    subset once here and reuse it for mean / SD / CI calculations.
-    """
-    out: list[float] = []
-    for value in values:
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, (int, float)):
-            out.append(float(value))
-    return out
-
-
-def _experiment_sample_sd_v1(values: list[Any]) -> float | None:
-    """Return the sample standard deviation (n-1 denominator), or None when undefined."""
-    nums = _experiment_numeric_values_v1(values)
-    n = len(nums)
-    if n < 2:
-        return None
-
-    mean_v = sum(nums) / float(n)
-    var = sum((x - mean_v) ** 2 for x in nums) / float(n - 1)
-    return math.sqrt(var)
-
-
-def _student_t_pdf_v1(x: float, df: int) -> float:
-    """Return the Student-t probability density for x and degrees of freedom df.
-
-    I keep this dependency-free on purpose. The local CCA8 workflow should not
-    require SciPy just to print submenu 19 statistics.
-    """
-    if int(df) <= 0:
-        return 0.0
-
-    df_f = float(df)
-    log_norm = (
-        math.lgamma((df_f + 1.0) / 2.0)
-        - math.lgamma(df_f / 2.0)
-        - 0.5 * (math.log(df_f) + math.log(math.pi))
-    )
-    log_tail = -((df_f + 1.0) / 2.0) * math.log1p((float(x) * float(x)) / df_f)
-    return math.exp(log_norm + log_tail)
-
-
-def _student_t_cdf_v1(x: float, df: int) -> float:
-    """Return the Student-t cumulative distribution function by Simpson integration.
-
-    Why Simpson integration
-    -----------------------
-    The runner should stay self-contained and readable. This is accurate enough
-    for submenu 19 reporting and avoids introducing a heavy scientific dependency.
-    """
-    if int(df) <= 0:
-        return 0.5
-
-    x_f = float(x)
-    if abs(x_f) < 1e-12:
-        return 0.5
-
-    upper = abs(x_f)
-    n_intervals = max(200, min(8000, int(upper * 240.0)))
-    if n_intervals % 2 == 1:
-        n_intervals += 1
-
-    h = upper / float(n_intervals)
-    total = _student_t_pdf_v1(0.0, df) + _student_t_pdf_v1(upper, df)
-
-    for i in range(1, n_intervals):
-        coeff = 4.0 if i % 2 == 1 else 2.0
-        total += coeff * _student_t_pdf_v1(float(i) * h, df)
-
-    area = (total * h) / 3.0
-    if x_f > 0.0:
-        return min(1.0, 0.5 + area)
-    return max(0.0, 0.5 - area)
-
-
-def _student_t_critical_two_sided_v1(confidence: float, df: int) -> float | None:
-    """Return the two-sided t critical value for the requested confidence level."""
-    df_i = int(df)
-    conf_f = float(confidence)
-
-    if df_i <= 0:
-        return None
-
-    key = (round(conf_f, 6), df_i)
-    cached = _EXPERIMENT_TCRIT_CACHE_V1.get(key)
-    if cached is not None:
-        return cached
-
-    target = 0.5 + (conf_f / 2.0)
-    lo = 0.0
-    hi = 1.0
-
-    while _student_t_cdf_v1(hi, df_i) < target and hi < 100.0:
-        hi *= 2.0
-
-    for _ in range(35):
-        mid = (lo + hi) / 2.0
-        if _student_t_cdf_v1(mid, df_i) < target:
-            lo = mid
-        else:
-            hi = mid
-
-    _EXPERIMENT_TCRIT_CACHE_V1[key] = hi
-    return hi
-
-
-def _experiment_descriptive_stats_v1(values: list[Any], *, confidence: float = 0.95) -> dict[str, Any]:
-    """Return n / mean / sample SD / 95% CI for one repeat-level metric series.
-
-    The CI here is the confidence interval of the mean across repeats, not a
-    prediction interval.
-    """
-    nums = _experiment_numeric_values_v1(values)
-    n = len(nums)
-
-    out: dict[str, Any] = {
-        "n": int(n),
-        "mean": None,
-        "sd": None,
-        "ci_low": None,
-        "ci_high": None,
-        "confidence": float(confidence),
-    }
-
-    if n <= 0:
-        return out
-
-    mean_v = sum(nums) / float(n)
-    out["mean"] = float(mean_v)
-
-    sd_v = _experiment_sample_sd_v1(nums)
-    if sd_v is None:
-        out["ci_low"] = float(mean_v)
-        out["ci_high"] = float(mean_v)
-        return out
-
-    out["sd"] = float(sd_v)
-
-    if n == 1:
-        out["ci_low"] = float(mean_v)
-        out["ci_high"] = float(mean_v)
-        return out
-
-    tcrit = _student_t_critical_two_sided_v1(confidence, n - 1)
-    if tcrit is None:
-        out["ci_low"] = float(mean_v)
-        out["ci_high"] = float(mean_v)
-        return out
-
-    se_v = sd_v / math.sqrt(float(n))
-    margin = float(tcrit) * se_v
-    out["ci_low"] = float(mean_v - margin)
-    out["ci_high"] = float(mean_v + margin)
-    return out
-
-
-def _experiment_paired_diff_stats_v1(
-    ref_values: list[Any],
-    cmp_values: list[Any],
-    *,
-    confidence: float = 0.95,
-) -> dict[str, Any]:
-    """Return paired repeat-level comparison stats for cmp minus ref.
-
-    Statistical contract
-    --------------------
-    - pairing is by repeat index,
-    - test is a two-sided paired t test,
-    - reported delta is mean(cmp - ref),
-    - CI is the confidence interval of that paired mean difference.
-    """
-    pairs: list[tuple[float, float]] = []
-
-    for ref_v, cmp_v in zip(ref_values, cmp_values):
-        if isinstance(ref_v, bool) or isinstance(cmp_v, bool):
-            continue
-        if isinstance(ref_v, (int, float)) and isinstance(cmp_v, (int, float)):
-            pairs.append((float(ref_v), float(cmp_v)))
-
-    n = len(pairs)
-    out: dict[str, Any] = {
-        "n": int(n),
-        "mean_ref": None,
-        "mean_cmp": None,
-        "mean_diff": None,
-        "sd_diff": None,
-        "ci_low": None,
-        "ci_high": None,
-        "t_stat": None,
-        "p_value": None,
-        "confidence": float(confidence),
-    }
-
-    if n <= 0:
-        return out
-
-    ref_nums = [a for a, _ in pairs]
-    cmp_nums = [b for _, b in pairs]
-    diffs = [b - a for a, b in pairs]
-
-    mean_ref = sum(ref_nums) / float(n)
-    mean_cmp = sum(cmp_nums) / float(n)
-    mean_diff = sum(diffs) / float(n)
-
-    out["mean_ref"] = float(mean_ref)
-    out["mean_cmp"] = float(mean_cmp)
-    out["mean_diff"] = float(mean_diff)
-
-    if n == 1:
-        out["ci_low"] = float(mean_diff)
-        out["ci_high"] = float(mean_diff)
-        return out
-
-    sd_diff = _experiment_sample_sd_v1(diffs)
-    if sd_diff is None:
-        out["ci_low"] = float(mean_diff)
-        out["ci_high"] = float(mean_diff)
-        return out
-
-    out["sd_diff"] = float(sd_diff)
-
-    if sd_diff < 1e-12:
-        out["ci_low"] = float(mean_diff)
-        out["ci_high"] = float(mean_diff)
-        out["t_stat"] = None
-        out["p_value"] = 1.0 if abs(mean_diff) < 1e-12 else 0.0
-        return out
-
-    se_diff = sd_diff / math.sqrt(float(n))
-    t_stat = mean_diff / se_diff
-    out["t_stat"] = float(t_stat)
-
-    tcrit = _student_t_critical_two_sided_v1(confidence, n - 1)
-    if tcrit is None:
-        out["ci_low"] = float(mean_diff)
-        out["ci_high"] = float(mean_diff)
-    else:
-        margin = float(tcrit) * se_diff
-        out["ci_low"] = float(mean_diff - margin)
-        out["ci_high"] = float(mean_diff + margin)
-
-    p_value = 2.0 * (1.0 - _student_t_cdf_v1(abs(float(t_stat)), n - 1))
-    out["p_value"] = max(0.0, min(1.0, float(p_value)))
-    return out
-
-
-def _experiment_ci_text_v1(low: Any, high: Any) -> str:
-    """Render a compact CI string."""
-    if isinstance(low, (int, float)) and isinstance(high, (int, float)):
-        return f"[{float(low):.3f}, {float(high):.3f}]"
-    return "(none)"
-
-
-def _experiment_p_text_v1(value: Any) -> str:
-    """Render p-values with slightly more useful precision than the generic metric formatter."""
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        return "(none)"
-    p_v = float(value)
-    if p_v < 0.001:
-        return f"{p_v:.3e}"
-    return f"{p_v:.4f}"
-
-
-def _experiment_repeat_metric_label_v1(benchmark_id: str, metric_key: str) -> str:
-    """Map internal metric keys to the short labels printed in submenu 19."""
-    goat_map = {
-        "success_rate": "success_rt",
-        "mean_context_switch_accuracy": "ctx_switch",
-        "mean_oracle_retrieval_precision": "retr_prec",
-        "mean_internal_retrieval_event_ratio": "retr_rt",
-        "mean_stabilization_latency": "stabilize",
-        "mean_cumulative_prediction_error": "pred_e",
-        "mean_llm_call_count": "llm_calls",
-    }
-    newborn_map = {
-        "success_rate": "success_rt",
-        "mean_milestone_score": "milestone_score",
-        "mean_time_to_rested": "rest_t",
-        "mean_newborn_retrieval_event_count": "retr_evt",
-        "mean_newborn_retrieval_non_noop_count": "retr_eff",
-        "mean_cumulative_prediction_error": "pred_e",
-        "mean_llm_call_count": "llm_calls",
-    }
-
-    metric_map = goat_map if benchmark_id == "goat04_context" else newborn_map
-    return metric_map.get(metric_key, metric_key)
-
-
-def render_experiment_repeat_stats_lines_v1(repeated_result: dict[str, Any]) -> list[str]:
-    """Return repeat-level descriptive and paired comparison statistics.
-
-    This renderer now supports any reference-vs-A comparison set, not just B/C.
-    """
-    if not isinstance(repeated_result, dict):
-        return ["[experiments] stats mode   : (invalid)"]
-
-    benchmark_id = repeated_result.get("benchmark_id")
-    benchmark_id = benchmark_id if isinstance(benchmark_id, str) else ""
-
-    metric_keys = repeated_result.get("metric_keys")
-    metric_keys = metric_keys if isinstance(metric_keys, list) else []
-
-    cond_stats = repeated_result.get("condition_metric_stats_by_condition")
-    cond_stats = cond_stats if isinstance(cond_stats, dict) else {}
-
-    paired_vs_a = repeated_result.get("paired_stats_vs_a")
-    paired_vs_a = paired_vs_a if isinstance(paired_vs_a, dict) else {}
-
-    compare_condition_ids = repeated_result.get("compare_condition_ids")
-    if isinstance(compare_condition_ids, list):
-        compare_ids = [cid for cid in compare_condition_ids if isinstance(cid, str) and cid]
-    else:
-        compare_ids = sorted(cid for cid in paired_vs_a.keys() if isinstance(cid, str) and cid)
-
-    lines = [
-        "[experiments] stats mode   : repeat-level paired two-sided t-test; mean, sample SD, and 95% CI.",
-    ]
-
-    for metric_key in metric_keys:
-        label = _experiment_repeat_metric_label_v1(benchmark_id, str(metric_key))
-        a_stats = (cond_stats.get("A") or {}).get(metric_key, {})
-
-        lines.append(f"[experiments] stats {label}")
-        lines.append(
-            f"[experiments]   A mean={_experiment_metric_text_v1(a_stats.get('mean'))} "
-            f"sd={_experiment_metric_text_v1(a_stats.get('sd'))} "
-            f"ci95={_experiment_ci_text_v1(a_stats.get('ci_low'), a_stats.get('ci_high'))} "
-            f"n={_experiment_metric_text_v1(a_stats.get('n'))}"
-        )
-
-        for cmp_cid in compare_ids:
-            cmp_stats = (cond_stats.get(cmp_cid) or {}).get(metric_key, {})
-            cmp_diff = (paired_vs_a.get(cmp_cid) or {}).get(metric_key, {})
-            lines.append(
-                f"[experiments]   {cmp_cid} mean={_experiment_metric_text_v1(cmp_stats.get('mean'))} "
-                f"sd={_experiment_metric_text_v1(cmp_stats.get('sd'))} "
-                f"ci95={_experiment_ci_text_v1(cmp_stats.get('ci_low'), cmp_stats.get('ci_high'))} "
-                f"n={_experiment_metric_text_v1(cmp_stats.get('n'))} "
-                f"vs_A n_pair={_experiment_metric_text_v1(cmp_diff.get('n'))} "
-                f"delta({cmp_cid}-A)={_experiment_metric_text_v1(cmp_diff.get('mean_diff'))} "
-                f"sd_delta={_experiment_metric_text_v1(cmp_diff.get('sd_diff'))} "
-                f"ci95_delta={_experiment_ci_text_v1(cmp_diff.get('ci_low'), cmp_diff.get('ci_high'))} "
-                f"p={_experiment_p_text_v1(cmp_diff.get('p_value'))}"
-            )
-
-    return lines
 
 
 def experiment_run_condition_batch_v1(
@@ -3592,7 +2792,7 @@ def experiment_run_condition_batch_v1(
 
     raw_conditions = condition_ids if isinstance(condition_ids, list) and condition_ids else ["A", "B", "C"]
     run_conditions = experiment_parse_condition_ids_v1(" ".join(str(x) for x in raw_conditions))
-    run_conditions = run_conditions or ["A", "B", "C"]
+    run_conditions = [cid for cid in run_conditions if cid in ("A", "B", "C")] or ["A", "B", "C"]
 
     raw_seeds = seed_list if isinstance(seed_list, list) and seed_list else list(cfg.seed_list)
     run_seeds: list[int] = []
@@ -3667,7 +2867,6 @@ def experiment_run_condition_batch_v1(
         false_retrievals: list[float] = []
         cue_leakages: list[float] = []
         pred_errs: list[float] = []
-        llm_calls: list[float] = []
 
         for row in rows:
             episode_record = row.get("episode_record")
@@ -3676,10 +2875,6 @@ def experiment_run_condition_batch_v1(
             success = episode_record.get("success")
             if isinstance(success, bool):
                 success_vals.append(1.0 if success else 0.0)
-
-            value = episode_record.get("llm_call_count")
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                llm_calls.append(float(value))
 
             if benchmark_id == "goat04_context":
                 value = episode_record.get("context_switch_accuracy")
@@ -3741,7 +2936,6 @@ def experiment_run_condition_batch_v1(
             "n_ok": int(len(rows)),
             "n_fail": int(sum(1 for item in failures if item.get("condition_id") == cid)),
             "success_rate": _experiment_mean_v1(success_vals),
-            "mean_llm_call_count": _experiment_mean_v1(llm_calls),
         }
 
         if benchmark_id == "goat04_context":
@@ -3845,7 +3039,6 @@ def render_experiment_batch_summary_lines_v1(batch_result: dict[str, Any]) -> li
                 f" false_retr={_experiment_metric_text_v1(row.get('mean_false_retrieval_count'))}"
                 f" cue_leak={_experiment_metric_text_v1(row.get('mean_cue_leakage_violations'))}"
                 f" pred_e={_experiment_metric_text_v1(row.get('mean_cumulative_prediction_error'))}"
-                f" llm_calls={_experiment_metric_text_v1(row.get('mean_llm_call_count'))}"
             )
         else:
             tail = (
@@ -3856,7 +3049,6 @@ def render_experiment_batch_summary_lines_v1(batch_result: dict[str, Any]) -> li
                 f" retr_evt={_experiment_metric_text_v1(row.get('mean_newborn_retrieval_event_count'))}"
                 f" retr_eff={_experiment_metric_text_v1(row.get('mean_newborn_retrieval_non_noop_count'))}"
                 f" pred_e={_experiment_metric_text_v1(row.get('mean_cumulative_prediction_error'))}"
-                f" llm_calls={_experiment_metric_text_v1(row.get('mean_llm_call_count'))}"
             )
 
         lines.append(head + tail)
@@ -3882,7 +3074,6 @@ def _experiment_repeat_metric_keys_v1(benchmark_id: str) -> list[str]:
             "mean_internal_retrieval_event_ratio",
             "mean_stabilization_latency",
             "mean_cumulative_prediction_error",
-            "mean_llm_call_count",
         ]
 
     return [
@@ -3892,7 +3083,6 @@ def _experiment_repeat_metric_keys_v1(benchmark_id: str) -> list[str]:
         "mean_newborn_retrieval_event_count",
         "mean_newborn_retrieval_non_noop_count",
         "mean_cumulative_prediction_error",
-        "mean_llm_call_count",
     ]
 
 
@@ -3960,7 +3150,6 @@ def _render_experiment_repeat_condition_line_v1(
             f" retr_rt={_experiment_metric_text_v1(condition_summary.get('mean_internal_retrieval_event_ratio'))}"
             f" stabilize={_experiment_metric_text_v1(condition_summary.get('mean_stabilization_latency'))}"
             f" pred_e={_experiment_metric_text_v1(condition_summary.get('mean_cumulative_prediction_error'))}"
-            f" llm_calls={_experiment_metric_text_v1(condition_summary.get('mean_llm_call_count'))}"
         )
     else:
         tail = (
@@ -3970,40 +3159,29 @@ def _render_experiment_repeat_condition_line_v1(
             f" retr_evt={_experiment_metric_text_v1(condition_summary.get('mean_newborn_retrieval_event_count'))}"
             f" retr_eff={_experiment_metric_text_v1(condition_summary.get('mean_newborn_retrieval_non_noop_count'))}"
             f" pred_e={_experiment_metric_text_v1(condition_summary.get('mean_cumulative_prediction_error'))}"
-            f" llm_calls={_experiment_metric_text_v1(condition_summary.get('mean_llm_call_count'))}"
         )
 
     return head + tail
 
 
-def experiment_run_repeated_selected_vs_a_v1(
+def experiment_run_repeated_random_abc_v1(
     protocol_ctx: Ctx,
     *,
-    condition_ids: list[str] | None = None,
     repeats: int = 20,
     seeds_per_repeat: int | None = None,
     suppress_output: bool = True,
 ) -> dict[str, Any]:
-    """Run selected conditions repeatedly with fresh shared seeds and compare everything against A.
+    """Run A/B/C batches repeatedly with fresh random seeds and aggregate the results.
 
-    Statistical intent
-    ------------------
-    Each repeat builds one shared random seed list, runs the selected condition set on that exact
-    seed list, and then treats the repeat-level summaries as paired observations for comparisons
-    against reference condition A.
+    This is intentionally a thin wrapper around experiment_run_condition_batch_v1(...).
+    I do not create a second execution pathway. That keeps submenu 19 aligned with the
+    already-working submenu 18 behavior.
     """
     if protocol_ctx is None:
         return {"ok": False, "why": "missing_protocol_ctx"}
 
     cfg = experiment_normalize_protocol_v1(getattr(protocol_ctx, "experiment_cfg", None))
     benchmark_id = str(cfg.benchmark_id or "")
-
-    run_conditions = experiment_parse_condition_ids_v1(" ".join(str(x) for x in (condition_ids or ["A", "B", "C"])))
-    run_conditions = run_conditions or ["A", "B", "C"]
-    if "A" not in run_conditions:
-        return {"ok": False, "why": "reference_condition_A_required"}
-
-    compare_ids = [cid for cid in run_conditions if cid != "A"]
 
     try:
         repeat_count = int(repeats)
@@ -4021,10 +3199,13 @@ def experiment_run_repeated_selected_vs_a_v1(
     metric_keys = _experiment_repeat_metric_keys_v1(benchmark_id)
 
     repeat_batches: list[dict[str, Any]] = []
-    repeat_metric_rows: list[dict[str, dict[str, float]]] = []
     result_lines: list[str] = []
 
-    aggregate: dict[str, dict[str, list[float]]] = {cid: defaultdict(list) for cid in run_conditions}
+    aggregate: dict[str, dict[str, list[float]]] = {
+        "A": defaultdict(list),
+        "B": defaultdict(list),
+        "C": defaultdict(list),
+    }
 
     for repeat_idx in range(1, repeat_count + 1):
         seed_values = _experiment_random_seed_list_v1(seed_count, rng=rng)
@@ -4032,7 +3213,7 @@ def experiment_run_repeated_selected_vs_a_v1(
 
         batch = experiment_run_condition_batch_v1(
             protocol_ctx,
-            condition_ids=list(run_conditions),
+            condition_ids=["A", "B", "C"],
             seed_list=seed_values,
             episodes_per_seed=int(cfg.episodes_per_seed),
             suppress_output=suppress_output,
@@ -4046,50 +3227,40 @@ def experiment_run_repeated_selected_vs_a_v1(
             }
         )
 
-        repeat_metric_row: dict[str, dict[str, float]] = {}
-
         if not bool(batch.get("ok")):
             line = f"[experiments] repeat {repeat_idx:02d} failed: {_experiment_metric_text_v1(batch.get('why'))}"
             print(line)
             result_lines.append(line)
-            repeat_metric_rows.append(repeat_metric_row)
             continue
 
         summaries = batch.get("condition_summaries")
         summaries = summaries if isinstance(summaries, list) else []
 
-        for summary_row in summaries:
-            if not isinstance(summary_row, dict):
+        for row in summaries:
+            if not isinstance(row, dict):
                 continue
 
-            cid = summary_row.get("condition_id")
+            cid = row.get("condition_id")
             if cid not in aggregate:
                 continue
 
             line = _render_experiment_repeat_condition_line_v1(
-                summary_row,
+                row,
                 benchmark_id=benchmark_id,
                 repeat_index=repeat_idx,
             )
             print(line)
             result_lines.append(line)
 
-            metric_row: dict[str, float] = {}
             for key in metric_keys:
-                value = summary_row.get(key)
+                value = row.get(key)
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    value_f = float(value)
-                    aggregate[str(cid)][key].append(value_f)
-                    metric_row[key] = value_f
-
-            repeat_metric_row[str(cid)] = metric_row
-
-        repeat_metric_rows.append(repeat_metric_row)
+                    aggregate[cid][key].append(float(value))
 
     averages_by_condition: dict[str, dict[str, Any]] = {}
     average_lines: list[str] = []
 
-    for cid in run_conditions:
+    for cid in ("A", "B", "C"):
         avg_row: dict[str, Any] = {"condition_id": cid}
         for key in metric_keys:
             avg_row[key] = _experiment_mean_v1(aggregate[cid].get(key, []))
@@ -4103,93 +3274,17 @@ def experiment_run_repeated_selected_vs_a_v1(
             )
         )
 
-    condition_metric_stats_by_condition: dict[str, dict[str, dict[str, Any]]] = {}
-    for cid in run_conditions:
-        metric_stats: dict[str, dict[str, Any]] = {}
-        for key in metric_keys:
-            metric_stats[key] = _experiment_descriptive_stats_v1(aggregate[cid].get(key, []), confidence=0.95)
-        condition_metric_stats_by_condition[cid] = metric_stats
-
-    paired_stats_vs_a: dict[str, dict[str, dict[str, Any]]] = {}
-    for cmp_cid in compare_ids:
-        cmp_metric_stats: dict[str, dict[str, Any]] = {}
-        for key in metric_keys:
-            ref_series: list[float] = []
-            cmp_series: list[float] = []
-
-            for repeat_row in repeat_metric_rows:
-                if not isinstance(repeat_row, dict):
-                    continue
-
-                ref_map = repeat_row.get("A")
-                ref_map = ref_map if isinstance(ref_map, dict) else {}
-                cmp_map = repeat_row.get(cmp_cid)
-                cmp_map = cmp_map if isinstance(cmp_map, dict) else {}
-
-                ref_value = ref_map.get(key)
-                cmp_value = cmp_map.get(key)
-
-                ref_ok = isinstance(ref_value, (int, float)) and not isinstance(ref_value, bool)
-                cmp_ok = isinstance(cmp_value, (int, float)) and not isinstance(cmp_value, bool)
-
-                if ref_ok and cmp_ok:
-                    ref_series.append(float(ref_value))
-                    cmp_series.append(float(cmp_value))
-
-            cmp_metric_stats[key] = _experiment_paired_diff_stats_v1(ref_series, cmp_series, confidence=0.95)
-
-        paired_stats_vs_a[cmp_cid] = cmp_metric_stats
-
     return {
         "ok": True,
         "benchmark_id": benchmark_id,
         "repeats": int(repeat_count),
         "seeds_per_repeat": int(seed_count),
-        "condition_ids": list(run_conditions),
-        "compare_condition_ids": list(compare_ids),
         "metric_keys": metric_keys,
         "repeat_batches": repeat_batches,
-        "repeat_metric_rows": repeat_metric_rows,
         "result_lines": result_lines,
         "averages_by_condition": averages_by_condition,
         "average_lines": average_lines,
-        "condition_metric_stats_by_condition": condition_metric_stats_by_condition,
-        "paired_stats_vs_a": paired_stats_vs_a,
     }
-
-
-def experiment_run_repeated_random_abc_v1(
-    protocol_ctx: Ctx,
-    *,
-    repeats: int = 20,
-    seeds_per_repeat: int | None = None,
-    suppress_output: bool = True,
-) -> dict[str, Any]:
-    """Run A/B/C batches repeatedly with fresh random seeds and aggregate repeat-level stats."""
-    return experiment_run_repeated_selected_vs_a_v1(
-        protocol_ctx,
-        condition_ids=["A", "B", "C"],
-        repeats=repeats,
-        seeds_per_repeat=seeds_per_repeat,
-        suppress_output=suppress_output,
-    )
-
-
-def experiment_run_repeated_random_ae_v1(
-    protocol_ctx: Ctx,
-    *,
-    repeats: int = 20,
-    seeds_per_repeat: int | None = None,
-    suppress_output: bool = True,
-) -> dict[str, Any]:
-    """Run A/E batches repeatedly with fresh random seeds and aggregate repeat-level stats."""
-    return experiment_run_repeated_selected_vs_a_v1(
-        protocol_ctx,
-        condition_ids=["A", "E"],
-        repeats=repeats,
-        seeds_per_repeat=seeds_per_repeat,
-        suppress_output=suppress_output,
-    )
 
 
 def experiments_menu_49_interactive(ctx: Ctx) -> None:
@@ -4242,8 +3337,6 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
         print(" 17) Run one prepared experiment episode now (isolated sandbox)")
         print(" 18) Run A/B/C batch over current seeds (isolated sandbox)")
         print(" 19) Run x20 random-seed A/B/C repeats + averages")
-        print(" 20) Run A/E batch over current seeds (isolated sandbox)")
-        print(" 21) Run x20 random-seed A/E repeats + averages")
         print("  0) Return to Main Menu")
 
         sub = input("Experiment menu select: ").strip().lower()
@@ -4524,78 +3617,9 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
             print(f"[experiments] averages over {repeated.get('repeats')} repeats:")
             for line in repeated.get("average_lines", []):
                 print(line)
-
-            print()
-            print("[experiments] repeat-level stats:")
-            for line in render_experiment_repeat_stats_lines_v1(repeated):
-                print(line)
             continue
 
-        if sub == "20":
-            print()
-            print("[experiments] running A/E batch over current seeds...")
-            batch = experiment_run_condition_batch_v1(
-                ctx,
-                condition_ids=["A", "E"],
-                seed_list=list(cfg.seed_list),
-                episodes_per_seed=int(cfg.episodes_per_seed),
-                suppress_output=True,
-            )
-
-            if not bool(batch.get("ok")):
-                print(f"[experiments] batch failed: {batch.get('why')}")
-                continue
-
-            for line in render_experiment_batch_summary_lines_v1(batch):
-                print(line)
-
-            failures = batch.get("failures")
-            if isinstance(failures, list) and failures:
-                print("[experiments] failure details:")
-                for item in failures[:5]:
-                    if not isinstance(item, dict):
-                        continue
-                    print(
-                        f"  condition={item.get('condition_id')} seed={item.get('seed')} "
-                        f"episode={item.get('episode_index')} why={item.get('why')}"
-                    )
-                if len(failures) > 5:
-                    print(f"  ... plus {len(failures) - 5} more failure(s)")
-            continue
-
-        if sub == "21":
-            print()
-            print("[experiments] running x20 A/E batches with fresh random seeds...")
-
-            repeated = experiment_run_repeated_random_ae_v1(
-                ctx,
-                repeats=20,
-                seeds_per_repeat=len(cfg.seed_list) if cfg.seed_list else 5,
-                suppress_output=True,
-            )
-
-            if not bool(repeated.get("ok")):
-                print(f"[experiments] repeated run failed: {repeated.get('why')}")
-                continue
-
-            print()
-            print("[experiments] result list (20 repeats):")
-            for line in repeated.get("result_lines", []):
-                print(line)
-
-            print()
-            print(f"[experiments] averages over {repeated.get('repeats')} repeats:")
-            for line in repeated.get("average_lines", []):
-                print(line)
-
-            print()
-            print("[experiments] repeat-level stats:")
-            for line in render_experiment_repeat_stats_lines_v1(repeated):
-                print(line)
-            continue
-
-
-        print("[experiments] Unknown selection. Use 0..21.")
+        print("[experiments] Unknown selection. Use 0..19.")
 
 
 # Module layout / roadmap
@@ -10772,12 +9796,6 @@ class PolicyRuntime:
         except Exception:
             pass
 
-        try:
-            if ctx is not None:
-                ctx.experiment_last_llm_advice_summary = {}
-        except Exception:
-            pass
-
         # Fallen posture near NOW forces safety-only policies.
         if _fallen_near_now(world, ctx, max_hops=3):
             safety_only = {"policy:recover_fall", "policy:stand_up"}
@@ -10907,92 +9925,6 @@ class PolicyRuntime:
 
             return 0.0
 
-        adviser_choice_name = None
-        llm_pick_note = ""
-        if bool(getattr(ctx, "experiment_llm_adviser_enabled", False)) and len(matches) >= 2:
-            try:
-                cand_info = _experiment_llm_candidate_rows_v1(
-                    matches,
-                    world=world,
-                    drives=drives,
-                    ctx=ctx,
-                    deficit_fn=deficit,
-                    non_drive_fn=non_drive_priority,
-                    stable_idx_fn=stable_idx,
-                )
-                candidate_rows = cand_info.get("candidate_rows") if isinstance(cand_info, dict) else []
-                adviser_summary = _run_experiment_llm_adviser_once_v1(world, drives, ctx, candidate_rows)
-            except Exception as e:
-                adviser_summary = {
-                    "enabled": True,
-                    "called": False,
-                    "ok": False,
-                    "why": "adviser_exception",
-                    "error": f"{e.__class__.__name__}: {e}",
-                }
-
-            try:
-                if ctx is not None:
-                    ctx.experiment_last_llm_advice_summary = dict(adviser_summary) if isinstance(adviser_summary, dict) else {}
-                    if bool(adviser_summary.get("called")):
-                        ctx.experiment_llm_call_count = int(getattr(ctx, "experiment_llm_call_count", 0) or 0) + 1
-                        latency_v = adviser_summary.get("latency_ms")
-                        if isinstance(latency_v, (int, float)) and not isinstance(latency_v, bool):
-                            ctx.experiment_llm_latency_ms_total = (
-                                float(getattr(ctx, "experiment_llm_latency_ms_total", 0.0) or 0.0) + float(latency_v)
-                            )
-            except Exception:
-                pass
-
-            try:
-                if (
-                    ctx is not None
-                    and bool(adviser_summary.get("called"))
-                    and not bool(adviser_summary.get("ok"))
-                    and not bool(getattr(ctx, "experiment_llm_first_error_printed", False))
-                ):
-                    detail = adviser_summary.get("error_detail")
-                    detail = detail if isinstance(detail, dict) else {}
-
-                    msg = detail.get("message") or adviser_summary.get("error") or adviser_summary.get("why")
-                    param = detail.get("param")
-                    code = detail.get("code")
-
-                    summary = str(msg) if msg is not None else str(adviser_summary.get("why"))
-                    if isinstance(param, str) and param:
-                        summary += f" | param={param}"
-                    if isinstance(code, str) and code:
-                        summary += f" | code={code}"
-
-                    print(f"[llm-adviser] first API error: {summary}")
-                    ctx.experiment_llm_first_error_printed = True
-                    ctx.experiment_llm_first_error_summary = summary
-
-                    if param == "text.format.schema" or code == "invalid_json_schema":
-                        ctx.experiment_llm_adviser_enabled = False
-            except Exception:
-                pass
-
-
-            if bool(adviser_summary.get("ok")):
-                rec_policy = adviser_summary.get("recommended_policy")
-                if isinstance(rec_policy, str) and any(p.name == rec_policy for p in matches):
-                    adviser_choice_name = rec_policy
-                    conf_txt = _experiment_metric_text_v1(adviser_summary.get("confidence"))
-                    lat_txt = _experiment_metric_text_v1(adviser_summary.get("latency_ms"))
-                    llm_pick_note = (
-                        "[llm-adviser] "
-                        f"model={adviser_summary.get('model')} recommended={rec_policy} "
-                        f"confidence={conf_txt} latency_ms={lat_txt} "
-                        f"candidates={adviser_summary.get('candidate_policies')}"
-                    )
-            elif bool(adviser_summary.get("called")) or adviser_summary.get("why"):
-                llm_pick_note = (
-                    "[llm-adviser] fallback "
-                    f"why={adviser_summary.get('why')} model={adviser_summary.get('model')} "
-                    f"candidates={adviser_summary.get('candidate_policies')}"
-                )
-
 
         def _run_probe_stub_v1() -> dict[str, Any]:
             """Runner-side probe execution shim.
@@ -11048,17 +9980,9 @@ class PolicyRuntime:
         did_explore = False
         rl_exploit_kind = ""
         tie_break_label = ""
-        selector_kind = "deficit"
-
-        if isinstance(adviser_choice_name, str) and adviser_choice_name:
-            chosen = next((p for p in matches if p.name == adviser_choice_name), None)
-            if chosen is None:
-                adviser_choice_name = None
 
         rl_enabled = bool(getattr(ctx, "rl_enabled", False))
-        if isinstance(adviser_choice_name, str) and adviser_choice_name:
-            selector_kind = "llm_adviser"
-        elif rl_enabled:
+        if rl_enabled:
             eps = getattr(ctx, "rl_epsilon", None)
             if eps is None:
                 eps = getattr(ctx, "jump", 0.0)
@@ -11161,17 +10085,16 @@ class PolicyRuntime:
             except Exception:
                 tie_break_label = ""
 
-        if not (isinstance(adviser_choice_name, str) and adviser_choice_name):
-            selector_kind = "deficit"
-            if rl_enabled:
-                if did_explore:
-                    selector_kind = "rl_explore"
-                elif rl_exploit_kind == "non_drive_tiebreak":
-                    selector_kind = "rl_exploit(non_drive_tiebreak)"
-                elif rl_exploit_kind == "q_soft_tiebreak":
-                    selector_kind = "rl_exploit(q_soft_tiebreak)"
-                else:
-                    selector_kind = "rl_exploit(deficit)"
+        selector_kind = "deficit"
+        if rl_enabled:
+            if did_explore:
+                selector_kind = "rl_explore"
+            elif rl_exploit_kind == "non_drive_tiebreak":
+                selector_kind = "rl_exploit(non_drive_tiebreak)"
+            elif rl_exploit_kind == "q_soft_tiebreak":
+                selector_kind = "rl_exploit(q_soft_tiebreak)"
+            else:
+                selector_kind = "rl_exploit(deficit)"
 
         base = choose_contextual_base(world, ctx, targets=["posture:standing", "stand"])
         foa = compute_foa(world, ctx, max_hops=2)
@@ -11279,12 +10202,10 @@ class PolicyRuntime:
         gate_for_label = next((p for p in self.loaded if p.name == label), chosen)
         post_expl = gate_for_label.explain(exec_target, drives, ctx) if gate_for_label.explain else "explain: (not provided)"
         rl_line = (rl_pick_note + "\n") if rl_pick_note else ""
-        llm_line = (llm_pick_note + "\n") if llm_pick_note else ""
 
         return (
             f"{label} (added {delta_n} bindings)\n"
             f"{pick_debug_line}"
-            f"{llm_line}"
             f"{rl_line}"
             f"{exec_line}"
             f"pre:  {pre_expl}\n"
@@ -20633,10 +19554,6 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                 if not isinstance(navpatch_priors, dict):
                     navpatch_priors = {}
 
-                llm_advice_summary = getattr(ctx, "experiment_last_llm_advice_summary", None)
-                if not isinstance(llm_advice_summary, dict):
-                    llm_advice_summary = {}
-
                 rec = {
                     "controller_steps": int(getattr(ctx, "controller_steps", 0) or 0),
                     "env_step": env_info.get("step_index") if isinstance(env_info, dict) else None,
@@ -20647,7 +19564,6 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                     "zone": zone_now,
                     "action_applied": action_for_env,
                     "policy_fired": policy_fired_val,
-                    "llm_advice_summary": dict(llm_advice_summary),
                     "obs": {
                         "predicates": list(getattr(env_obs, "predicates", []) or []),
                         "cues": list(getattr(env_obs, "cues", []) or []),
@@ -21535,101 +20451,6 @@ def _openai_response_request_options_v1() -> dict[str, Any]:
         opts["reasoning"] = {"effort": effort}
 
     return opts
-
-
-def _openai_quiet_http_loggers_v1() -> None:
-    """Lower transport/client loggers to WARNING so experiment runs do not flood the terminal.
-
-    The runner uses root logging at INFO level. That is fine for CCA8 itself, but it also allows
-    httpx/openai transport logs to print one line per request. During submenu 20/21 runs this can
-    dominate the terminal and make the experiment look "slow" even when the real problem is simply
-    repeated request rejection. This helper quiets only the noisy transport/client loggers.
-    """
-    for name in ("httpx", "httpcore", "openai", "openai._base_client"):
-        try:
-            logging.getLogger(name).setLevel(logging.WARNING)
-        except Exception:
-            pass
-
-
-def _openai_sanitize_adviser_request_options_v1(request_opts: dict[str, Any] | None) -> dict[str, Any]:
-    """Return conservative Responses API kwargs for bounded adviser calls.
-
-    Design choice
-    -------------
-    The submenu-48 advanced settings are useful for interactive demos and smoke tests, but the
-    bounded adviser path is different:
-      - it is schema-first,
-      - it is called many times,
-      - and we want maximum stability, not tunability.
-
-    Therefore, for adviser calls I keep only `max_output_tokens` and drop the menu-level sampling /
-    tuning knobs. That is the safest first step when the current issue is repeated HTTP 400 errors.
-    Once the adviser path is stable, we can selectively reintroduce other options later.
-    """
-    out: dict[str, Any] = {}
-    if isinstance(request_opts, dict):
-        mot = request_opts.get("max_output_tokens")
-        if isinstance(mot, int) and mot > 0:
-            out["max_output_tokens"] = mot
-    return out
-
-
-def _openai_api_error_detail_v1(exc: Any) -> dict[str, Any]:
-    """Extract a compact JSON-safe detail bundle from an OpenAI SDK exception.
-
-    Purpose
-    -------
-    `str(e)` is often too vague for debugging repeated adviser failures. When the SDK gives us an
-    HTTP response body, I try to pull out the API message, offending param, and code so the runner
-    can print one helpful line instead of a wall of transport logs.
-    """
-    out: dict[str, Any] = {
-        "message": str(exc),
-        "status_code": getattr(exc, "status_code", None),
-        "param": None,
-        "code": None,
-        "payload": None,
-        "body_text": None,
-    }
-
-    response = getattr(exc, "response", None)
-    if response is None:
-        return out
-
-    try:
-        payload = response.json()
-    except Exception:
-        payload = None
-
-    if isinstance(payload, dict):
-        err = payload.get("error")
-        err = err if isinstance(err, dict) else {}
-
-        msg = err.get("message")
-        if isinstance(msg, str) and msg:
-            out["message"] = msg
-
-        param = err.get("param")
-        if isinstance(param, str) and param:
-            out["param"] = param
-
-        code = err.get("code")
-        if isinstance(code, str) and code:
-            out["code"] = code
-
-        out["payload"] = payload
-        return out
-
-    try:
-        text = response.text
-    except Exception:
-        text = None
-
-    if isinstance(text, str) and text.strip():
-        out["body_text"] = text[:500]
-
-    return out
 
 
 def _set_openai_advanced_env(name: str, value: Optional[str]) -> None:
@@ -26700,11 +25521,6 @@ def main(argv: Optional[list[str]] = None) -> int:
                       logging.StreamHandler()] )
     logging.info("cca8_run start v%s python=%s platform=%s",
                  __version__, sys.version.split()[0], platform.platform())
-
-    try:
-        _openai_quiet_http_loggers_v1()
-    except Exception:
-        pass
 
     ##argparse and processing of certain flags here
     # argparse flags
