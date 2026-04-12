@@ -26,7 +26,7 @@ def test_experiment_normalize_protocol_v1_sanitizes_invalid_inputs() -> None:
 
     assert norm is not raw
 
-    assert norm.benchmark_id == "goat04_context"
+    assert norm.benchmark_id == "newborn_long_horizon"
     assert norm.condition_ids == ["B", "A", "C", "E"]
     assert norm.seed_list == [11, 23, 41]
 
@@ -36,9 +36,10 @@ def test_experiment_normalize_protocol_v1_sanitizes_invalid_inputs() -> None:
 
     assert norm.llm_model == "gpt-5.4"
     assert norm.run_label == "goat_ctx_run_01"
-    assert norm.output_dir == "experiment_jsonl"
+    assert norm.output_dir == "testvalues"
 
     defaulted = experiment_normalize_protocol_v1(None)
-    assert defaulted.benchmark_id == "goat04_context"
+    assert defaulted.benchmark_id == "newborn_long_horizon"
     assert defaulted.condition_ids == ["A", "B", "C", "D", "E"]
     assert defaulted.seed_list == [11, 23, 37, 41, 53]
+    assert defaulted.output_dir == "testvalues"

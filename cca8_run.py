@@ -237,12 +237,12 @@ class ExperimentProtocolConfig:
     behave exactly as before.
     """
     protocol_version: str = "exp_protocol_v1"
-    benchmark_id: str = "goat04_context"
+    benchmark_id: str = "newborn_long_horizon"
     condition_ids: list[str] = field(default_factory=lambda: ["A", "B", "C", "D", "E"])
     seed_list: list[int] = field(default_factory=lambda: [11, 23, 37, 41, 53])
     episodes_per_seed: int = 1
     max_cycles: int = 60
-    obs_mask_prob: float = 0.0
+    obs_mask_prob: float = 0.50    #independent drop probability for each non-protected observation token
     action_vocab_version: str = "cca8_action_vocab_v1"
     scratch_clear_policy: str = "per_episode_reset"
     jsonl_write_cycle_records: bool = True
@@ -254,8 +254,8 @@ class ExperimentProtocolConfig:
     # Patch-2 additions:
     # - run_label gives the user a stable human-readable tag for filenames.
     # - output_dir is where prepared JSONL files will live once execution is wired in.
-    run_label: str = ""
-    output_dir: str = "experiment_jsonl"
+    run_label: str = "--no run_label chosen--"
+    output_dir: str = "testvalues"   #directory where jsonl and other result files will be written to
 
 
 @dataclass(slots=True)
@@ -1205,7 +1205,7 @@ def experiment_normalize_protocol_v1(cfg: ExperimentProtocolConfig | None) -> Ex
 
     out = ExperimentProtocolConfig(
         protocol_version=str(getattr(src, "protocol_version", "exp_protocol_v1") or "exp_protocol_v1"),
-        benchmark_id=str(getattr(src, "benchmark_id", "goat04_context") or "goat04_context"),
+        benchmark_id=str(getattr(src, "benchmark_id", "newborn_long_horizon") or "newborn_long_horizon"),
         condition_ids=list(getattr(src, "condition_ids", []) or []),
         seed_list=list(getattr(src, "seed_list", []) or []),
         episodes_per_seed=max(1, min(1000, episodes_per_seed)),
@@ -1223,11 +1223,11 @@ def experiment_normalize_protocol_v1(cfg: ExperimentProtocolConfig | None) -> Ex
         llm_adviser_ambiguity_delta=max(0.0, min(1.0, llm_delta)),
         llm_adviser_max_candidates=max(2, min(8, llm_max_candidates)),
         run_label=str(getattr(src, "run_label", "") or ""),
-        output_dir=str(getattr(src, "output_dir", "experiment_jsonl") or "experiment_jsonl"),
+        output_dir=str(getattr(src, "output_dir", "testvalues") or "testvalues"),
     )
 
     if out.benchmark_id not in experiment_benchmark_catalog_v1():
-        out.benchmark_id = "goat04_context"
+        out.benchmark_id = "newborn_long_horizon"
 
     valid_conditions = experiment_parse_condition_ids_v1(" ".join(str(x) for x in out.condition_ids))
     out.condition_ids = valid_conditions or ["A", "B", "C", "D", "E"]
@@ -1247,7 +1247,7 @@ def experiment_normalize_protocol_v1(cfg: ExperimentProtocolConfig | None) -> Ex
     out.seed_list = valid_seeds[:64] or [11, 23, 37, 41, 53]
 
     out.run_label = _experiment_safe_token_v1(out.run_label)
-    out.output_dir = str(out.output_dir).strip() or "experiment_jsonl"
+    out.output_dir = str(out.output_dir).strip() or "testvalues"
 
     return out
 
@@ -1333,6 +1333,226 @@ def append_experiment_jsonl_record_v1(path: str | None, record: dict[str, Any]) 
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         return
+
+
+def _experiment_write_json_file_v1(path: str | None, payload: dict[str, Any]) -> None:
+    """Write one JSON payload to disk as a pretty UTF-8 file.
+
+    Purpose / intent
+    ----------------
+    The experiment runner already has JSONL append helpers for cycle and episode records.
+    For paper-facing repeat statistics, I also want one stable JSON artifact that captures
+    the exact repeat-level metric rows and paired statistics used to generate the tables.
+
+    Design
+    ------
+    - Best effort only: never raise into the interactive runner.
+    - UTF-8 JSON with indentation for human inspection.
+    - Creates parent directories when needed.
+    """
+    if not isinstance(path, str) or not path.strip():
+        return
+    if not isinstance(payload, dict):
+        return
+
+    try:
+        folder = os.path.dirname(path)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, ensure_ascii=False)
+    except Exception:
+        return
+
+
+def _experiment_protocol_snapshot_v1(cfg: ExperimentProtocolConfig) -> dict[str, Any]:
+    """Return a compact JSON-safe snapshot of the current experiment protocol."""
+    return {
+        "protocol_version": str(cfg.protocol_version),
+        "benchmark_id": str(cfg.benchmark_id),
+        "condition_ids": list(cfg.condition_ids),
+        "seed_list": list(cfg.seed_list),
+        "episodes_per_seed": int(cfg.episodes_per_seed),
+        "max_cycles": int(cfg.max_cycles),
+        "obs_mask_prob": float(cfg.obs_mask_prob),
+        "action_vocab_version": str(cfg.action_vocab_version),
+        "scratch_clear_policy": str(cfg.scratch_clear_policy),
+        "jsonl_write_cycle_records": bool(cfg.jsonl_write_cycle_records),
+        "jsonl_write_episode_records": bool(cfg.jsonl_write_episode_records),
+        "llm_model": cfg.llm_model,
+        "llm_adviser_ambiguity_delta": float(cfg.llm_adviser_ambiguity_delta),
+        "llm_adviser_max_candidates": int(cfg.llm_adviser_max_candidates),
+        "run_label": str(cfg.run_label or ""),
+        "output_dir": str(cfg.output_dir or ""),
+    }
+
+
+def _experiment_collect_repeated_bundle_rows_v1(repeated_result: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Flatten one repeated experiment result into episode-level and repeat-level rows.
+
+    Why this exists
+    ---------------
+    The current repeat runner returns the table-generating statistics in memory, but that makes
+    later provenance checking awkward. For paper use, I want two explicit row sets:
+
+      1) episode_rows:
+         one row per successfully completed episode across all repeats / conditions / seeds
+
+      2) repeat_rows:
+         one row per repeat × condition summarizing the metrics that are later aggregated into
+         descriptive means, SDs, confidence intervals, and paired comparisons
+
+    Both outputs are JSON-safe and easy to archive beside the manuscript.
+    """
+    episode_rows: list[dict[str, Any]] = []
+    repeat_rows: list[dict[str, Any]] = []
+
+    repeat_batches = repeated_result.get("repeat_batches")
+    if not isinstance(repeat_batches, list):
+        return episode_rows, repeat_rows
+
+    for repeat_bundle in repeat_batches:
+        if not isinstance(repeat_bundle, dict):
+            continue
+
+        repeat_index = repeat_bundle.get("repeat_index")
+        seed_list = repeat_bundle.get("seed_list")
+        batch = repeat_bundle.get("batch")
+        if not isinstance(batch, dict):
+            continue
+
+        results = batch.get("results")
+        if isinstance(results, list):
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                if not bool(item.get("ok")):
+                    continue
+
+                episode_record = item.get("episode_record")
+                if not isinstance(episode_record, dict):
+                    continue
+
+                row = {
+                    "schema": "experiment_episode_analysis_row_v1",
+                    "repeat_index": int(repeat_index) if isinstance(repeat_index, int) else None,
+                    "repeat_seed_list": list(seed_list) if isinstance(seed_list, list) else [],
+                    "source_episode_run_id": item.get("run_id"),
+                    "condition_label": item.get("condition_label"),
+                    "effective_obs_mask_prob": item.get("effective_obs_mask_prob"),
+                }
+                row.update(dict(episode_record))
+                episode_rows.append(row)
+
+        condition_summaries = batch.get("condition_summaries")
+        if isinstance(condition_summaries, list):
+            for summary_row in condition_summaries:
+                if not isinstance(summary_row, dict):
+                    continue
+
+                row = {
+                    "schema": "experiment_repeat_condition_row_v1",
+                    "repeat_index": int(repeat_index) if isinstance(repeat_index, int) else None,
+                    "repeat_seed_list": list(seed_list) if isinstance(seed_list, list) else [],
+                    "benchmark_id": batch.get("benchmark_id"),
+                }
+                row.update(dict(summary_row))
+                repeat_rows.append(row)
+
+    return episode_rows, repeat_rows
+
+
+def _experiment_write_repeated_result_bundle_v1(
+    ctx: Ctx,
+    repeated_result: dict[str, Any],
+    *,
+    bundle_label: str,
+) -> dict[str, Any]:
+    """Persist the exact repeat-level data used to generate paper-facing statistics.
+
+    Files written
+    -------------
+    1) <run_id>__episode_rows.jsonl
+         one row per successful episode across all repeats
+    2) <run_id>__repeat_rows.jsonl
+         one row per repeat × condition summary
+    3) <run_id>__stats.json
+         the exact repeat-level metric rows and paired statistics used for the tables
+
+    Important scientific point
+    --------------------------
+    The `repeat_metric_rows` object is the closest direct raw input to the repeat-level
+    descriptive statistics and paired t-tests. I therefore write it explicitly into the
+    stats JSON, rather than only writing the already-aggregated numbers.
+    """
+    if ctx is None:
+        return {"ok": False, "why": "missing_ctx"}
+    if not isinstance(repeated_result, dict) or not bool(repeated_result.get("ok")):
+        return {"ok": False, "why": "invalid_repeated_result"}
+
+    cfg = experiment_normalize_protocol_v1(getattr(ctx, "experiment_cfg", None))
+    out_dir = os.path.normpath(cfg.output_dir)
+
+    label = _experiment_safe_token_v1(bundle_label, default="repeat_bundle")
+    run_id = experiment_make_run_id_v1(ctx, cfg)
+    if label:
+        run_id = f"{run_id}__{label}"
+
+    episode_rows_path = os.path.join(out_dir, f"{run_id}__episode_rows.jsonl")
+    repeat_rows_path = os.path.join(out_dir, f"{run_id}__repeat_rows.jsonl")
+    stats_json_path = os.path.join(out_dir, f"{run_id}__stats.json")
+
+    episode_rows, repeat_rows = _experiment_collect_repeated_bundle_rows_v1(repeated_result)
+
+    for row in episode_rows:
+        append_experiment_jsonl_record_v1(episode_rows_path, row)
+
+    for row in repeat_rows:
+        append_experiment_jsonl_record_v1(repeat_rows_path, row)
+
+    stats_payload = {
+        "schema": "experiment_repeated_stats_bundle_v1",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "run_id": run_id,
+        "bundle_label": label,
+        "protocol": _experiment_protocol_snapshot_v1(cfg),
+        "benchmark_id": repeated_result.get("benchmark_id"),
+        "condition_ids": repeated_result.get("condition_ids"),
+        "compare_condition_ids": repeated_result.get("compare_condition_ids"),
+        "repeats": repeated_result.get("repeats"),
+        "seeds_per_repeat": repeated_result.get("seeds_per_repeat"),
+        "metric_keys": repeated_result.get("metric_keys"),
+        "repeat_metric_rows": repeated_result.get("repeat_metric_rows"),
+        "averages_by_condition": repeated_result.get("averages_by_condition"),
+        "condition_metric_stats_by_condition": repeated_result.get("condition_metric_stats_by_condition"),
+        "paired_stats_vs_a": repeated_result.get("paired_stats_vs_a"),
+        "episode_rows_jsonl_path": episode_rows_path,
+        "repeat_rows_jsonl_path": repeat_rows_path,
+        "episode_row_count": int(len(episode_rows)),
+        "repeat_row_count": int(len(repeat_rows)),
+    }
+    _experiment_write_json_file_v1(stats_json_path, stats_payload)
+
+    try:
+        if not isinstance(ctx.experiment_last_summary, dict):
+            ctx.experiment_last_summary = {}
+        ctx.experiment_last_summary["last_repeated_bundle_run_id"] = run_id
+        ctx.experiment_last_summary["last_repeated_bundle_episode_rows_path"] = episode_rows_path
+        ctx.experiment_last_summary["last_repeated_bundle_repeat_rows_path"] = repeat_rows_path
+        ctx.experiment_last_summary["last_repeated_bundle_stats_json_path"] = stats_json_path
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "episode_rows_jsonl_path": episode_rows_path,
+        "repeat_rows_jsonl_path": repeat_rows_path,
+        "stats_json_path": stats_json_path,
+        "episode_row_count": int(len(episode_rows)),
+        "repeat_row_count": int(len(repeat_rows)),
+    }
 
 
 def experiment_prepare_logging_v1(ctx: Ctx, *, reset_buffers: bool = True) -> dict[str, Any]:
@@ -4529,6 +4749,25 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
             print("[experiments] repeat-level stats:")
             for line in render_experiment_repeat_stats_lines_v1(repeated):
                 print(line)
+
+            bundle = _experiment_write_repeated_result_bundle_v1(
+                ctx,
+                repeated,
+                bundle_label="abc_repeats",
+            )
+            if bool(bundle.get("ok")):
+                print()
+                print("[experiments] repeated analysis bundle written:")
+                print(f"  run_id             : {bundle.get('run_id')}")
+                print(f"  episode_rows_path  : {bundle.get('episode_rows_jsonl_path')}")
+                print(f"  repeat_rows_path   : {bundle.get('repeat_rows_jsonl_path')}")
+                print(f"  stats_json_path    : {bundle.get('stats_json_path')}")
+                print(
+                    f"  counts             : episode_rows={bundle.get('episode_row_count')} "
+                    f"repeat_rows={bundle.get('repeat_row_count')}"
+                )
+            else:
+                print(f"[experiments] repeated analysis bundle failed: {bundle.get('why')}")
             continue
 
         if sub == "20":
@@ -4592,8 +4831,26 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
             print("[experiments] repeat-level stats:")
             for line in render_experiment_repeat_stats_lines_v1(repeated):
                 print(line)
-            continue
 
+            bundle = _experiment_write_repeated_result_bundle_v1(
+                ctx,
+                repeated,
+                bundle_label="ae_repeats",
+            )
+            if bool(bundle.get("ok")):
+                print()
+                print("[experiments] repeated analysis bundle written:")
+                print(f"  run_id             : {bundle.get('run_id')}")
+                print(f"  episode_rows_path  : {bundle.get('episode_rows_jsonl_path')}")
+                print(f"  repeat_rows_path   : {bundle.get('repeat_rows_jsonl_path')}")
+                print(f"  stats_json_path    : {bundle.get('stats_json_path')}")
+                print(
+                    f"  counts             : episode_rows={bundle.get('episode_row_count')} "
+                    f"repeat_rows={bundle.get('repeat_row_count')}"
+                )
+            else:
+                print(f"[experiments] repeated analysis bundle failed: {bundle.get('why')}")
+            continue
 
         print("[experiments] Unknown selection. Use 0..21.")
 
