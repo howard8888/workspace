@@ -11,6 +11,13 @@ NOTE: This README is large; if GitHub truncates the preview at the 512 KiB rende
 
 # Executive Overview
 
+## **TL;DR == Run code**
+Requirements
+- Python 3.11
+- All CCA8 Python modules in the same directory
+- Python standard-library modules used by the project (for example: json, argparse, os, math, datetime) are included with a normal Python installation
+- Optional third-party packages may be required for optional features; see any runtime error messages for installation guidance
+
 
 
 
@@ -30,7 +37,7 @@ NOTE: This README is large; if GitHub truncates the preview at the 512 KiB rende
  - Hardware Abstraction Layer (HAL)
  - Low-Level OS / firmware (e.g., Linux, an RTOS, or a PetitCat-style minimal middleware/OS)
  - Hardware Layer
-
+ 
 *CCA8 as RCOS = a cognitive supervisory runtime that organizes goals, memory, world models, and recovery around embodied controllers, rather than pretending that high-level intelligence alone solves robotics*
 
 
@@ -80,7 +87,7 @@ The RCOS is an integration architecture: not “LLM + motors,” but a structure
 
 
 
-<img title="Mountain Goat Calf" src="calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
+<img title="Mountain Goat Calf" src="docs/images/robot_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
 
 *Adult Mountain Goat with recently born calf (walking within minutes
 of birth, and by one week can climb most places its mother can)*
@@ -127,6 +134,7 @@ of birth, and by one week can climb most places its mother can)*
 - [Profiles (1–7): overview and implementation notes](#profiles-17-overview-and-implementation-notes)
 - [Introduction to the Memory Pipeline](#introduction-to-the-memory-pipeline)
 - [CCA8 as a Robotic Cognitive Operating System (RCOS)](#cca8-as-a-robotic-cognitive-operating-system-rcos)
+- [RCOS implementation status and roadmap](#rcos-implementation-status-and-roadmap)
 - [Hardware Abstraction Layer (HAL)](#hardware-abstraction-layer-hal)
 - [Hardware preflight lane (status stub)](#hardware-preflight-lane-status-stub)
 - [FAQ / Pitfalls](#faq--pitfalls)
@@ -922,6 +930,408 @@ In that sense, CCA8 is not just a simulator of a mountain goat calf, but a gener
 
 
 
+## RCOS implementation status and roadmap
+
+### Overview
+
+The CCA8 RCOS is intended to sit **above** ROS 2, vendor middleware, or a custom HAL, not to replace them.
+
+In other words, the intended stack is:
+
+- user task / application layer
+- **CCA8 RCOS cognitive layer**
+- ROS 2, vendor SDK, or custom HAL
+- low-level OS / firmware
+- hardware
+
+This is an important design choice. The CCA8 RCOS is **not** trying to become:
+
+- another ROS 2,
+- another robot motion-planning middleware,
+- another large language model chat product,
+- or another end-to-end motor policy.
+
+Instead, it is intended to become a **cognitive supervisory layer** that supplies:
+
+- task persistence over long horizons,
+- body-state awareness,
+- working memory,
+- episodic memory,
+- policy gating,
+- safety vetoes,
+- bounded LLM / VLA arbitration,
+- recovery after setbacks,
+- and full provenance / replay of why actions were selected.
+
+A useful one-line summary is:
+
+> The CCA8 RCOS is meant to be the robot’s cognitive operating layer, while ROS 2 / HAL / vendor control stacks remain the execution substrate.
+
+---
+
+### Current implementation: Stage 1 RCOS sandbox
+
+At the time of writing, the first concrete RCOS implementation is now present as a **Stage 1 simulated robotics sandbox**.
+
+The new module is:
+
+- `cca8_rcos.py`
+
+Its purpose is deliberately narrow and foundational:
+
+1. define a stable embodied command vocabulary,
+2. simulate a small robot/goat world that responds to those commands,
+3. expose a HAL-like seam,
+4. and provide deterministic observations, metrics, and summaries that can later be connected to the main CCA8 controller.
+
+This Stage 1 work does **not** yet let the main CCA8 Action Center control the robot sandbox directly. That is the next stage. Stage 1 exists to prove the RCOS seam cleanly before controller integration.
+
+---
+
+### What the new RCOS code does
+
+The Stage 1 module currently provides two main pieces:
+
+#### 1. `SimRobotGoatEnv`
+
+A deterministic simulated robot/goat task world.
+
+The default mission is:
+
+    recover -> inspect target -> return to dock -> recharge -> rest
+
+The simulated robot starts:
+
+- fallen,
+- at the dock,
+- with a target marker elsewhere in the map,
+- and with a hazard band that blocks the trivial straight-line path.
+
+So even the first RCOS sandbox already includes:
+
+- posture recovery,
+- locomotion,
+- hazard avoidance,
+- goal-directed inspection,
+- return-home behavior,
+- recharge,
+- and final rest.
+
+This is intentionally more meaningful than a one-step “stand up once” demo.
+
+#### 2. `SimRobotGoatHAL`
+
+A very small HAL-like wrapper over the sandbox environment.
+
+It exposes the seam that later robotics work should preserve:
+
+- `reset(...)`
+- `sense()`
+- `act(command)`
+- `status()`
+- `emergency_stop()`
+
+That means the current sandbox already behaves like a tiny embodiment layer, even though it is still purely simulated.
+
+### Stage 1 command vocabulary
+
+The current RCOS command set is intentionally small and inspectable:
+
+- `stand`
+- `recover_fall`
+- `turn_left`
+- `turn_right`
+- `walk_forward`
+- `inspect`
+- `avoid_hazard`
+- `return_to_dock`
+- `recharge`
+- `rest`
+- `stop`
+
+This vocabulary is important because it creates a clean contract between:
+
+- future CCA8 policy selection,
+- future LLM / adviser ranking,
+- future VLA or skill-provider execution,
+- and future real robot HAL adapters.
+
+The RCOS should make decisions in terms of bounded, interpretable actions like these, not in terms of low-level motor torques.
+
+### Stage 1 state, observations, and metrics
+
+The SimRobotGoat sandbox keeps explicit robot state such as:
+
+- position,
+- heading,
+- posture,
+- battery,
+- fatigue,
+- mission progress,
+- falls,
+- safety violations,
+- repeated-action loop count,
+- and mission completion state.
+
+It emits observations in the same broad style already used elsewhere in CCA8:
+
+- `raw_sensors`
+- `predicates`
+- `cues`
+- `env_meta`
+
+This means the sandbox is already aligned with the rest of the architecture’s observation vocabulary.
+
+The current episode summary includes:
+
+- success / failure,
+- done reason,
+- steps,
+- milestone vector,
+- milestone score,
+- falls,
+- safety violations,
+- repeated-action loop count,
+- final battery / fatigue,
+- target inspected?,
+- returned to dock?,
+- and final posture.
+
+This gives the RCOS work an immediate experimental footing rather than being only a user-interface demo.
+
+### Menu 50: interactive RCOS sandbox
+
+The runner now exposes the Stage 1 sandbox through:
+
+- **Menu 50: SimRobotGoat RCOS sandbox**
+
+This menu is intentionally thin. It does not implement robot logic itself. It simply wraps the RCOS module so the user can:
+
+- reset the episode,
+- view the ASCII map,
+- inspect current status / summary,
+- inspect the current observation,
+- step one Stage 1 command,
+- and trigger HAL emergency stop.
+
+This keeps the main runner lightweight while all RCOS simulation logic remains centralized in `cca8_rcos.py`.
+
+One important implementation principle is:
+
+> The RCOS sandbox is isolated from the main CCA8 simulation state.
+
+In practical terms, you can enter Menu 50, test the robot sandbox, then return to the main menu without mutating the ordinary CCA8 WorldGraph / controller timeline. That isolation is deliberate and useful.
+
+### Why this Stage 1 work matters
+
+The Stage 1 sandbox is not meant to be impressive because it is large. It is meant to be useful because it is clean.
+
+Before the main CCA8 controller or any real robot hardware is connected, we need to prove a minimal outer loop:
+
+    command -> world update -> observation -> metrics -> summary
+
+That gives us:
+
+- deterministic debugging,
+- unit-testable behavior,
+- a portable HAL seam,
+- a place to design RCOS metrics,
+- and a simulation target for the next development stages.
+
+In other words, Stage 1 is the first concrete proof that the RCOS direction is software, not just architecture drawings.
+
+### Design stance of the RCOS
+
+The current RCOS direction can be summarized in five rules.
+
+#### 1. Do not reinvent ROS 2
+
+CCA8 should sit above ROS 2, vendor SDKs, or a custom HAL. Those layers already solve transport, device interfaces, and many execution details.
+
+#### 2. Keep the cognitive layer authoritative
+
+The RCOS should decide:
+
+- what the task is,
+- what the agent currently believes,
+- what is safe,
+- which candidate policy should run,
+- when memory should be retrieved,
+- and how to explain the episode afterward.
+
+#### 3. Keep action vocabulary bounded
+
+Commands should stay interpretable and safety-checkable. Early RCOS work should use high-level commands like:
+
+- walk forward,
+- turn left,
+- inspect,
+- return to dock,
+- and recover fall,
+
+not raw actuator-level control.
+
+#### 4. Treat LLMs and VLAs as bounded modules, not masters
+
+Future LLM or VLA integration should be subordinate to the RCOS, not the other way around.
+
+The intended rule is:
+
+    LLM / VLA proposes.
+    CCA8 validates.
+    HAL executes.
+    CCA8 records provenance.
+
+#### 5. Preserve replay and auditability
+
+Every important RCOS action should ultimately be explainable in terms of:
+
+- observation,
+- body state,
+- working memory,
+- episodic retrieval,
+- candidate policies,
+- selected policy,
+- command sent,
+- and observed outcome.
+
+That is one of the most important ways in which the CCA8 RCOS differs from generic agent shells.
+
+### Planned staged development
+
+The intended RCOS development path is now:
+
+#### Stage 1 — SimRobotGoat sandbox (implemented)
+
+- deterministic simulated robot/goat world,
+- HAL-like wrapper,
+- command vocabulary,
+- mission scoring,
+- runner menu access,
+- and unit tests.
+
+#### Stage 2 — CCA8 controller drives SimRobotGoat
+
+Connect the existing CCA8 controller / policy machinery to the RCOS sandbox so that:
+
+- `EnvObservation` from SimRobotGoat updates CCA8 memory,
+- CCA8 selects one bounded policy,
+- that policy maps to one Stage 1 command,
+- and the command is sent back into the simulated HAL.
+
+This is the first true “CCA8 as RCOS controller” step.
+
+#### Stage 3 — long-horizon RCOS benchmark
+
+Strengthen the sandbox into a benchmark that includes:
+
+- partial observability,
+- setbacks,
+- fall recovery,
+- hazard avoidance,
+- battery pressure,
+- delayed completion,
+- and recovery after interruption.
+
+The important result to demonstrate is not just “the robot can do a task once,” but:
+
+- it can maintain the task over time,
+- remember what matters,
+- recover from failure,
+- and remain interpretable.
+
+#### Stage 4 — bounded LLM adviser
+
+Add a GPT-style adviser only at bounded ambiguity points.
+
+The intended interface is not free-form robot control. Instead, the RCOS should send a small structured packet such as:
+
+- current body state,
+- task context,
+- risk flags,
+- memory summary,
+- and candidate policies,
+
+and receive back:
+
+- recommended policy,
+- ranking,
+- rationale,
+- confidence,
+- and risk flags.
+
+CCA8 remains authoritative.
+
+#### Stage 5 — VLA / skill-provider integration
+
+The RCOS should eventually be able to use a VLA or other embodied skill provider as a bounded module.
+
+The intended decomposition is:
+
+- CCA8 RCOS = memory, persistence, safety, policy gating, recovery, explanation
+- LLM / reasoning model = high-level interpretation or bounded adviser
+- VLA / motor skill provider = execution of specific embodied skills
+- HAL / ROS 2 / vendor SDK = physical execution substrate
+
+That means CCA8 should not try to outcompete robot foundation models directly. Instead, it should provide the cognitive operating layer above them.
+
+#### Stage 6 — real hardware HAL adapters
+
+After the simulated loop is stable, the same RCOS contract can be implemented for real embodiments, for example:
+
+- a PetitCat-style mobile platform,
+- a ROS 2 robot,
+- a quadruped platform,
+- or another supported body.
+
+The important discipline is that the physical adapter should preserve the same high-level contract:
+
+- `sense`
+- `act`
+- `status`
+- `emergency_stop`
+
+so that the RCOS stays portable.
+
+### SimRobotGoat as the first benchmark embodiment
+
+The choice of **SimRobotGoat** is intentional.
+
+It preserves continuity with the existing newborn-goat cognitive architecture while still letting the project move toward robotics. In practical terms, it is “robot enough” to design an RCOS against, while remaining close to the original developmental theory.
+
+The first benchmark embodiment therefore asks the right kind of question:
+
+> Can a brain-inspired, memory-bearing cognitive layer keep a simple embodied agent working over a longer horizon than a reflex-only or script-only control stack?
+
+That is much closer to the eventual robotics goal than simply adding more one-step menu actions.
+
+### Research direction: what would make the RCOS scientifically interesting?
+
+The scientific contribution is not:
+
+- “CCA8 can call an API,”
+- “CCA8 can drive a toy robot,”
+- or “CCA8 has another menu.”
+
+The scientifically interesting question is:
+
+> Can a developmental, brain-inspired, auditable cognitive operating layer improve long-horizon embodied autonomy by adding memory, safety-gated control, recovery, and explainable policy selection above robot middleware and bounded model-based skill providers?
+
+That research direction becomes stronger when the RCOS can demonstrate:
+
+- task persistence,
+- episodic readback,
+- body-state-aware action gating,
+- recovery after interruption,
+- safe behavior under uncertainty,
+- and replayable provenance.
+
+This is the real RCOS target.
+
+
+
+
+
 
 
 # Hardware Abstraction Layer (HAL)
@@ -995,7 +1405,7 @@ Future checks will cover: transport handshake (USB/serial/network), sensor
 enumeration, actuator enable/disable, estop/limits, and simple round-trip
 commands (with timestamps and unit checks).
 
-<img title="Goat Embodiment" src="./robot_goat.jpg" alt="robot_goat" style="zoom:25%;" data-align="center">
+<img title="Goat Embodiment" src="docs/images/robot_goat.jpg"  alt="robot_goat" style="zoom:25%;" data-align="center">
 
 ### Q&A to help you learn this section
 

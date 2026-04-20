@@ -28,6 +28,18 @@ Key ideas for readers and new collaborators
 This runner presents an interactive menu for inspecting the world, planning, adding predicates,
 emitting sensory cues, and running the Action Center ("Instinct step"). It also supports
 non-interactive utility flags for scripting, like `--about`, `--version`, and `--plan <predicate>`.
+
+
+Requirements
+------------
+
+- Python 3.11
+- All CCA8 Python modules in the same directory
+- Python standard-library modules used by the project (for example: json, argparse, os, math, datetime) are included with a normal Python installation
+- Optional third-party packages may be required for optional features; see any runtime error messages for installation guidance
+
+
+
 """
 
 # --- Pragmas and Imports -------------------------------------------------------------
@@ -99,6 +111,10 @@ from cca8_controller import body_shelter_is_near   # pylint: disable=unused-impo
 from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
 from cca8_env import HybridEnvironment, EnvObservation, EnvConfig  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
+from cca8_rcos import (
+    SIM_ROBOT_GOAT_COMMANDS,
+    SimRobotGoatHAL,
+)
 from cca8_features import FactMeta
 import cca8_navpatch
 from cca8_navpatch import (
@@ -23054,6 +23070,263 @@ def openai_menu_48_interactive(world, drives, ctx) -> None:
         print(f"[llm] Unknown selection: {choice!r}")
 
 
+def _sim_robot_goat_value_text_v1(value: Any) -> str:
+    """Return a compact terminal-safe text form for the RCOS sandbox menu."""
+    if value is None:
+        return "(none)"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, float):
+        return f"{value:.3f}"
+    return str(value)
+
+
+def _sim_robot_goat_obs_lines_v1(obs: EnvObservation) -> list[str]:
+    """Return a compact human-readable summary of one SimRobotGoat observation.
+
+    This is a runner-only presentation helper. It does not interpret or mutate the
+    simulated robot world. All state-transition logic remains in cca8_rcos.py.
+    """
+    raw = obs.raw_sensors if isinstance(obs.raw_sensors, dict) else {}
+    meta = obs.env_meta if isinstance(obs.env_meta, dict) else {}
+
+    pos = meta.get("position") if isinstance(meta.get("position"), dict) else {}
+    goal = meta.get("goal") if isinstance(meta.get("goal"), dict) else {}
+    milestones = meta.get("milestones") if isinstance(meta.get("milestones"), list) else []
+
+    x_val = pos.get("x", raw.get("x"))
+    y_val = pos.get("y", raw.get("y"))
+    gx_val = goal.get("x")
+    gy_val = goal.get("y")
+
+    return [
+        "[rcos] observation",
+        (
+            f"  position=({_sim_robot_goat_value_text_v1(x_val)}, {_sim_robot_goat_value_text_v1(y_val)}) "
+            f"heading={_sim_robot_goat_value_text_v1(raw.get('heading', meta.get('heading')))} "
+            f"battery={_sim_robot_goat_value_text_v1(raw.get('battery'))} "
+            f"fatigue={_sim_robot_goat_value_text_v1(raw.get('fatigue'))}"
+        ),
+        (
+            f"  goal=({_sim_robot_goat_value_text_v1(gx_val)}, {_sim_robot_goat_value_text_v1(gy_val)}) "
+            f"hazard_near={_sim_robot_goat_value_text_v1(raw.get('hazard_near'))} "
+            f"at_target={_sim_robot_goat_value_text_v1(raw.get('at_target'))} "
+            f"at_dock={_sim_robot_goat_value_text_v1(raw.get('at_dock'))}"
+        ),
+        f"  predicates={list(obs.predicates or [])}",
+        f"  cues={list(obs.cues or [])}",
+        (
+            f"  step_index={_sim_robot_goat_value_text_v1(meta.get('step_index'))} "
+            f"milestones={milestones}"
+        ),
+    ]
+
+
+def _sim_robot_goat_status_lines_v1(status: dict[str, Any]) -> list[str]:
+    """Return a compact status block for the runner-side SimRobotGoat sandbox menu.
+
+    This helper exists so the menu branch stays readable and the formatting logic is
+    centralized in one small place.
+    """
+    state = status.get("state") if isinstance(status.get("state"), dict) else {}
+    summary = status.get("summary") if isinstance(status.get("summary"), dict) else {}
+    milestones = status.get("milestones") if isinstance(status.get("milestones"), list) else []
+
+    return [
+        "[rcos] status",
+        (
+            f"  done={_sim_robot_goat_value_text_v1(status.get('done'))} "
+            f"hal_estopped={_sim_robot_goat_value_text_v1(status.get('hal_estopped'))} "
+            f"success={_sim_robot_goat_value_text_v1(summary.get('success'))} "
+            f"done_reason={_sim_robot_goat_value_text_v1(summary.get('done_reason'))}"
+        ),
+        (
+            f"  milestone_score={_sim_robot_goat_value_text_v1(summary.get('milestone_score'))} "
+            f"steps={_sim_robot_goat_value_text_v1(summary.get('steps'))}"
+        ),
+        (
+            f"  posture={_sim_robot_goat_value_text_v1(state.get('posture'))} "
+            f"heading={_sim_robot_goat_value_text_v1(state.get('heading'))} "
+            f"position=({_sim_robot_goat_value_text_v1(state.get('x'))}, "
+            f"{_sim_robot_goat_value_text_v1(state.get('y'))})"
+        ),
+        (
+            f"  battery={_sim_robot_goat_value_text_v1(state.get('battery'))} "
+            f"fatigue={_sim_robot_goat_value_text_v1(state.get('fatigue'))} "
+            f"step_index={_sim_robot_goat_value_text_v1(state.get('step_index'))}"
+        ),
+        (
+            f"  milestones={milestones} "
+            f"falls={_sim_robot_goat_value_text_v1(summary.get('falls'))} "
+            f"safety_violations={_sim_robot_goat_value_text_v1(summary.get('safety_violations'))} "
+            f"loops={_sim_robot_goat_value_text_v1(summary.get('repeated_action_loop_count'))}"
+        ),
+        (
+            f"  target_inspected={_sim_robot_goat_value_text_v1(summary.get('target_inspected'))} "
+            f"at_dock={_sim_robot_goat_value_text_v1(summary.get('at_dock'))} "
+            f"returned_to_dock={_sim_robot_goat_value_text_v1(summary.get('returned_to_dock'))} "
+            f"final_posture={_sim_robot_goat_value_text_v1(summary.get('final_posture'))}"
+        ),
+    ]
+
+
+def _sim_robot_goat_ack_lines_v1(ack: Any) -> list[str]:
+    """Return a compact acknowledgement block for one SimRobotGoat command."""
+    data: dict[str, Any]
+
+    if isinstance(ack, dict):
+        data = dict(ack)
+    elif hasattr(ack, "to_dict") and callable(getattr(ack, "to_dict")):
+        try:
+            data = dict(ack.to_dict())
+        except Exception:
+            data = {"note": str(ack)}
+    else:
+        data = {"note": str(ack)}
+
+    new_milestones = data.get("new_milestones")
+    if not isinstance(new_milestones, list):
+        new_milestones = []
+
+    return [
+        "[rcos] ack",
+        (
+            f"  command={_sim_robot_goat_value_text_v1(data.get('command'))} "
+            f"ok={_sim_robot_goat_value_text_v1(data.get('ok'))} "
+            f"status={_sim_robot_goat_value_text_v1(data.get('status'))} "
+            f"changed={_sim_robot_goat_value_text_v1(data.get('changed'))} "
+            f"reward={_sim_robot_goat_value_text_v1(data.get('reward'))}"
+        ),
+        f"  note={_sim_robot_goat_value_text_v1(data.get('note'))}",
+        f"  new_milestones={new_milestones}",
+    ]
+
+
+def sim_robot_goat_menu_50_interactive(sim_hal: Optional[SimRobotGoatHAL]) -> SimRobotGoatHAL:
+    """Interactive Stage-1 RCOS sandbox menu for SimRobotGoat.
+
+    Design intent
+    -------------
+    This is intentionally a thin runner wrapper only. All robot/world logic remains
+    inside cca8_rcos.py. The runner is responsible only for terminal I/O, command
+    selection, and compact status rendering.
+    """
+    hal = sim_hal if isinstance(sim_hal, SimRobotGoatHAL) else SimRobotGoatHAL()
+
+    if getattr(getattr(hal, "env", None), "state", None) is None:
+        obs = hal.reset()
+        print("\n[rcos] Initialized SimRobotGoat sandbox.")
+        for line in _sim_robot_goat_obs_lines_v1(obs):
+            print(line)
+        print()
+        for line in _sim_robot_goat_status_lines_v1(hal.status()):
+            print(line)
+        print()
+        print(hal.env.render_ascii())
+
+    while True:
+        print("\nSelection: SimRobotGoat RCOS sandbox")
+        print("  1) Reset episode")
+        print("  2) Show ASCII map")
+        print("  3) Show status / summary")
+        print("  4) Sense current observation")
+        print("  5) Step one Stage-1 command")
+        print("  6) HAL emergency stop")
+        print("  Enter) Return to main menu")
+
+        choice = input("\nChoose [1,2,3,4,5,6, Enter]: ").strip().lower()
+
+        if choice == "":
+            print("[rcos] Returning to main menu.")
+            return hal
+
+        if choice in ("1", "reset", "r"):
+            raw_seed = input("\nReset seed (blank = keep current deterministic stream): ").strip()
+            seed_value: Optional[int] = None
+
+            if raw_seed:
+                try:
+                    seed_value = int(raw_seed)
+                except ValueError:
+                    print("[rcos] Invalid seed. Please enter an integer or leave blank.")
+                    continue
+
+            obs = hal.reset(seed=seed_value)
+            print("\n[rcos] Episode reset.")
+            for line in _sim_robot_goat_obs_lines_v1(obs):
+                print(line)
+            print()
+            for line in _sim_robot_goat_status_lines_v1(hal.status()):
+                print(line)
+            print()
+            print(hal.env.render_ascii())
+            continue
+
+        if choice in ("2", "map", "ascii", "render"):
+            print("\n[rcos] ASCII map")
+            print(hal.env.render_ascii())
+            continue
+
+        if choice in ("3", "status", "summary"):
+            print()
+            for line in _sim_robot_goat_status_lines_v1(hal.status()):
+                print(line)
+            continue
+
+        if choice in ("4", "sense", "obs", "observe"):
+            obs = hal.sense()
+            print()
+            for line in _sim_robot_goat_obs_lines_v1(obs):
+                print(line)
+            continue
+
+        if choice in ("5", "step", "command", "act"):
+            print("\n[rcos] Available Stage-1 commands:")
+            for idx, command_name in enumerate(SIM_ROBOT_GOAT_COMMANDS, start=1):
+                print(f"  {idx}) {command_name}")
+
+            raw_command = input("\nCommand number or name (blank = cancel): ").strip().lower()
+            if not raw_command:
+                print("[rcos] Command step cancelled.")
+                continue
+
+            command = raw_command
+            if raw_command.isdigit():
+                cmd_index = int(raw_command)
+                if 1 <= cmd_index <= len(SIM_ROBOT_GOAT_COMMANDS):
+                    command = SIM_ROBOT_GOAT_COMMANDS[cmd_index - 1]
+                else:
+                    print("[rcos] Invalid command number.")
+                    continue
+
+            ack = hal.act(command)
+            print()
+            for line in _sim_robot_goat_ack_lines_v1(ack):
+                print(line)
+
+            obs = hal.sense()
+            print()
+            for line in _sim_robot_goat_obs_lines_v1(obs):
+                print(line)
+
+            print()
+            for line in _sim_robot_goat_status_lines_v1(hal.status()):
+                print(line)
+
+            print()
+            print(hal.env.render_ascii())
+            continue
+
+        if choice in ("6", "estop", "stop", "emergency"):
+            hal.emergency_stop()
+            print("\n[rcos] HAL emergency stop latched. Use reset to clear it.")
+            for line in _sim_robot_goat_status_lines_v1(hal.status()):
+                print(line)
+            continue
+
+        print(f"[rcos] Unknown selection: {choice!r}")
+
+
 # --------------------------------------------------------------------------------------
 # Interactive loop
 # --------------------------------------------------------------------------------------
@@ -23101,6 +23374,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
     env = HybridEnvironment()     # Environment simulation: newborn-goat scenario (HybridEnvironment)
     ctx.body_world, ctx.body_ids = init_body_world() # initialize tiny BodyMap (body_world) as a separate WorldGraph instance
     ctx.working_world = init_working_world()
+
+    # Stage-1 RCOS sandbox handle (lazy-init from menu 50 so we do not touch normal CCA8 flows unless requested).
+    sim_robot_goat_hal: Optional[SimRobotGoatHAL] = None
 
     # Optional: start session with a preloaded demo/test world to exercise graph menus.
     # Driven by --demo-world; ignored when --load is used (load takes precedence).
@@ -23194,6 +23470,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
     48) LLM API setup + first demo [llmkey, apikey, openai, llm]
     49) Experiments / Benchmarks (protocol scaffolding) [experiments, bench]
 
+    # RCOS / Robotics
+    50) SimRobotGoat RCOS sandbox [rcos, simgoat, robotgoat]
+
     Select: """
 
     # ---- Text command aliases (words + 3-letter prefixes → legacy actions) -----
@@ -23262,6 +23541,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "wpick": "46", "wpickwm": "46",
     "wload": "47", "wmload": "47",
     "experiments": "49", "experiment": "49", "bench": "49", "benchmark": "49",
+    "rcos": "50", "simgoat": "50", "robotgoat": "50", "simrobotgoat": "50",
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -23329,6 +23609,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "47": "47",  # wmload
     "48": "k",   # Configure OpenAI / LLM API key
     "49": "49",  # Experiments / Benchmarks (protocol scaffolding)
+    "50": "50",  # SimRobotGoat RCOS sandbox
 
 }
 
@@ -26641,6 +26922,14 @@ rl_delta (float)
             # Experiments / Benchmarks (protocol scaffolding only in patch 1)
             experiments_menu_49_interactive(ctx)
             print("Selection: xperiments / Benchmarks\n")
+            loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "50":
+            # SimRobotGoat RCOS sandbox
+            print("Selection: RCOS sandbox\n")
+            sim_robot_goat_hal = sim_robot_goat_menu_50_interactive(sim_robot_goat_hal)
             loop_helper(args.autosave, world, drives, ctx)
 
 
