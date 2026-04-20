@@ -87,7 +87,7 @@ The RCOS is an integration architecture: not “LLM + motors,” but a structure
 
 
 
-<img title="Mountain Goat Calf" src="docs/images/robot_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
+<img title="Mountain Goat Calf" src="docs/images/calf_goat.jpg" alt="loading-ag-2696" style="zoom:200%;">
 
 *Adult Mountain Goat with recently born calf (walking within minutes
 of birth, and by one week can climb most places its mother can)*
