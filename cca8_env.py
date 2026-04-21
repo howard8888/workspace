@@ -643,6 +643,15 @@ class FsmBackend:
 
             env_state.shelter_distance = "far"
             env_state.cliff_distance = "far"
+
+            # Reset coarse geometry explicitly for a new birth episode.
+            # I do this here rather than relying on _update_spatial_label(...), because EnvState
+            # may already carry a meaningful old position from a previous episode. Newborn reset
+            # should always start from the neutral open-field anchor before the later struggle
+            # phase moves the kid toward the cliff-edge storyline.
+            env_state.position = "open_field"
+            env_state.zone = "neutral"
+
             env_state.context_label = ""
             env_state.milestones = []
             env_state.obs_mask_dropped_cues_hint = 0
@@ -660,6 +669,7 @@ class FsmBackend:
             env_state.newborn_benchmark_hard = hard_newborn
             env_state.newborn_follow_attempts = 0
             self._update_spatial_label(env_state)  # initialize coarse geometry / zone.
+            self._sync_positions_from_symbolic_location(env_state)
 
         elif config.scenario_name == "goat_foraging_04":
             env_state.kid_posture = "standing"

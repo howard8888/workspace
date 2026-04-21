@@ -1,13 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-Small helper module for building deterministic test worlds.
-This "Test Worlds" module help to build ahead a test world for you to experiment with.
+cca8_test_fixtures.py
+
+Small fixture module for building deterministic CCA8 test/demo worlds.
 
 These helpers are intended for:
 - Unit tests (pytest) exercising WorldGraph and menu 20 / inspect-binding.
 - Manual experiments in a REPL.
+- Interactive runner demos such as --demo-world.
 
 They are deliberately tiny so you can see the whole layout at a glance.
+
+Naming note
+-----------
+This module is called ``cca8_test_fixtures`` because it holds deterministic
+fixtures rather than full simulation environments. Simulated embodiment worlds
+such as SimRobotGoat live in RCOS/environment modules instead.
 """
 
 from __future__ import annotations
@@ -16,8 +24,8 @@ from typing import Dict, Tuple
 from cca8_world_graph import WorldGraph
 
 
-__version__ = "0.1.0"
-__all__ = ["__version__"]
+__version__ = "0.1.1"
+__all__ = ["build_demo_world_for_inspect", "__version__"]
 
 
 def build_demo_world_for_inspect() -> Tuple[WorldGraph, Dict[str, str]]:

@@ -54,7 +54,7 @@ def test_fsm_reset_initializes_open_field_geometry() -> None:
     assert state.position == "open_field"
     assert state.zone == "neutral"
     assert state.kid_position == pytest.approx((0.8, 0.0))
-    assert state.mom_position == pytest.approx((1.7, 0.0))
+    assert state.mom_position == pytest.approx((2.05, 0.0))    
     assert state.cliff_distance == "far"
     assert state.shelter_distance == "far"
 
@@ -147,7 +147,7 @@ def test_working_surfacegrid_cache_and_snapshot_are_updated_from_observation() -
     assert first["predicates"]
     assert ctx.wm_surfacegrid is not None
     assert isinstance(ctx.wm_surfacegrid_sig16, str) and len(ctx.wm_surfacegrid_sig16) == 16
-    assert ctx.wm_surfacegrid_dirty_reasons == ["patches_changed", "grid_missing"]
+    assert ctx.wm_surfacegrid_dirty_reasons == ["grid_missing", "patches_changed", "hazard_changed"]
     assert ctx.wm_surfacegrid_compose_ms > 0.0
     assert ctx.wm_salience_focus_entities == ["self", "cliff", "shelter", "mom"]
     assert isinstance(ctx.wm_surfacegrid_last_ascii, str)

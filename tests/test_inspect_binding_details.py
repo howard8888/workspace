@@ -18,7 +18,7 @@ from typing import Dict, Tuple
 import pytest
 
 from cca8_world_graph import WorldGraph
-from cca8_test_worlds import build_demo_world_for_inspect
+from cca8_test_fixtures import build_demo_world_for_inspect
 
 
 def _incoming_edges(world: WorldGraph, target_bid: str) -> list[tuple[str, str]]:

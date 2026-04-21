@@ -3393,7 +3393,7 @@ A: (1) Emit a `cue:*` that captures the gist (e.g., `cue:vision:silhouette:mom`)
 - **`cca8_temporal.py`** — Timestamps and simple period/year tagging (used in binding meta).
 - **`cca8_navpatch.py`** — Navpatch map abilities
 - **`cca8_env.py`** — Generate the environment
-- **`cca8_test_worlds.py`** — Sample test worlds for testing and understanding the simulation software.
+- **`cca_test_test_fixtures.py`** — Sample test worlds for testing and understanding the simulation software.
   
   
 

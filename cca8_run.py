@@ -13103,22 +13103,35 @@ def run_preflight_full(args) -> int:
     except Exception as e:
         bad(f"invariants: check raised: {e}")
 
-
     # 3a) Accessory files present (README + image), non-empty
     try:
-        _files = ["README.md", "calf_goat.jpg"]  # add more here if needed
-        for _f in _files:
+        _required_files = {
+            "README.md": ["README.md"],
+            "calf_goat.jpg": [
+                "calf_goat.jpg",
+                os.path.join("docs", "images", "calf_goat.jpg"),
+            ],
+        }
+
+        for _label, _candidates in _required_files.items():
             try:
-                if os.path.exists(_f):
-                    _sz = os.path.getsize(_f)
-                    if _sz > 0:
-                        ok(f"file present: {_f} ({_sz} bytes)")
-                    else:
-                        bad(f"file present but empty: {_f}")
+                _found_path = None
+                for _path in _candidates:
+                    if os.path.exists(_path):
+                        _found_path = _path
+                        break
+
+                if _found_path is None:
+                    bad(f"file missing: {_label}")
+                    continue
+
+                _sz = os.path.getsize(_found_path)
+                if _sz > 0:
+                    ok(f"file present: {_found_path} ({_sz} bytes)")
                 else:
-                    bad(f"file missing: {_f}")
+                    bad(f"file present but empty: {_found_path}")
             except Exception as e:
-                bad(f"file check failed for {_f}: {e}")
+                bad(f"file check failed for {_label}: {e}")
     except Exception as e:
         bad(f"accessory file checks failed: {e}")
 
@@ -13645,7 +13658,7 @@ def run_preflight_full(args) -> int:
 
     # Z9) Demo-world builder smoke (graph shape and provenance)
     try:
-        from cca8_test_worlds import build_demo_world_for_inspect
+        from cca8_test_fixtures import build_demo_world_for_inspect
         _wd, _ids = build_demo_world_for_inspect()
         _now = _ids.get("NOW")
         _rest = _ids.get("rest")
@@ -16456,9 +16469,9 @@ def _wm_surfacegrid_dirty_reasons_v2(ctx: Ctx, fingerprint: dict[str, Any]) -> l
             return (int(raw[0]), int(raw[1]))
         except Exception:
             return None
-
     prev_wh = _fp_grid_wh(prev)
     cur_wh = _fp_grid_wh(fingerprint)
+    has_prev_fingerprint = bool(prev)
 
     # Bootstrap / structural checks first.
     if sg is None:
@@ -16479,19 +16492,23 @@ def _wm_surfacegrid_dirty_reasons_v2(ctx: Ctx, fingerprint: dict[str, Any]) -> l
                 reasons.append("grid_check_error")
 
     # Fingerprint-driven semantic reasons.
+    #
+    # Bootstrap policy:
+    # - On the very first compose, report scene-content reasons such as patches_changed
+    #   and hazard_changed.
+    # - Do NOT report transition-style reasons like self_window_shift / zoom_changed /
+    #   focus_changed until there is an actual previous fingerprint to compare against.
     if list(prev.get("input_sig16", [])) != list(fingerprint.get("input_sig16", [])):
         reasons.append("patches_changed")
-    if list(prev.get("window_anchor", [])) != list(fingerprint.get("window_anchor", [])):
+    if has_prev_fingerprint and list(prev.get("window_anchor", [])) != list(fingerprint.get("window_anchor", [])):
         reasons.append("self_window_shift")
-    if int(prev.get("zoom_level", 0) or 0) != int(fingerprint.get("zoom_level", 0) or 0):
+    if has_prev_fingerprint and int(prev.get("zoom_level", 0) or 0) != int(fingerprint.get("zoom_level", 0) or 0):
         reasons.append("zoom_changed")
-    if list(prev.get("focus_entities", [])) != list(fingerprint.get("focus_entities", [])):
+    if has_prev_fingerprint and list(prev.get("focus_entities", [])) != list(fingerprint.get("focus_entities", [])):
         reasons.append("focus_changed")
     if list(prev.get("hazard_sig", [])) != list(fingerprint.get("hazard_sig", [])):
         reasons.append("hazard_changed")
-
     return reasons or ["cache_hit"]
-
 
 def _surfacegrid_ascii_lines_v1(grid_w: int, grid_h: int, cells: list[int], *, sparse: bool) -> list[str]:
     """Render grid cells to ASCII lines (v1). Display-only: does not mutate the grid.
@@ -23382,7 +23399,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Driven by --demo-world; ignored when --load is used (load takes precedence).
     if getattr(args, "demo_world", False) and not args.load:
         try:
-            from cca8_test_worlds import build_demo_world_for_inspect  # type: ignore
+            from cca8_test_fixtures import build_demo_world_for_inspect  # type: ignore
             demo_world, demo_ids = build_demo_world_for_inspect()
             world = demo_world
             try:
@@ -27303,7 +27320,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         comps = [  # (label, version, path)
             ("cca8_run.py", __version__, os.path.abspath(__file__)),
         ]
-        for name in ["cca8_world_graph", "cca8_controller", "cca8_column", "cca8_features", "cca8_temporal", "cca8_env", "cca8_navpatch", "cca8_test_worlds"]:
+        for name in ["cca8_world_graph", "cca8_controller", "cca8_column", "cca8_features", "cca8_temporal", "cca8_env", "cca8_navpatch", "cca8_test_fixtures"]:
             ver, path = _module_version_and_path(name)
             comps.append((name, ver, path))
 
