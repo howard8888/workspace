@@ -76,6 +76,14 @@ The CCA8 serves as the interpretable runtime that manages context, maps, afforda
 
 The RCOS is an integration architecture: not “LLM + motors,” but a structured system that unifies cognition with embodied control.
 
+● How the CCA8 RCOS deals with the real world: CCA8 should not try to solve all robotics by itself, and it should not treat learned world-model rollouts as truth. Instead, CCA8 uses simulators, physics engines, learned world models, LLMs, VLAs, ROS 2, and HAL adapters as bounded modules. These modules may propose actions, predict consequences, generate synthetic training scenarios, or execute embodied skills, but CCA8 remains the cognitive supervisory layer that checks present-state evidence, body state, task context, memory, uncertainty, and safety before action. The guiding rule is:
+
+    World models rehearse.
+    LLM / VLA proposes.
+    CCA8 validates.
+    HAL executes.
+    Reality corrects.
+    CCA8 records provenance.
 
 
 ● This single document is the canonical “compendium” for the Causal Cognitive Architecture 8 (CCA8). It serves as: README, user guide, architecture notes, design decisions, and maintainer reference.
@@ -772,6 +780,57 @@ In that sense, a robotic cognitive operating system should not be viewed as a si
 This fits the CCA8 direction well: CCA8 can serve as the interpretable runtime that manages context, maps, affordances, episodic traces, and replanning, while lower layers handle tactile sensing, compliance, contact regulation, and micro-adjustment. 
 
 The RCOS is an integration architecture: not “LLM + motors,” but a structured system that unifies cognition with embodied control.
+
+### How CCA8 RCOS deals with the real world
+
+The real world is not just a larger simulation. It is slow, noisy, expensive, partially observable, physically risky, and not perfectly repeatable. A robot may encounter shadows, sensor noise, slip, friction changes, unexpected contact, latency, battery limits, actuator faults, object deformation, and human interruption. Therefore, the CCA8 RCOS should not pretend that a high-level planner, an LLM, a VLA, or a learned world model can directly control the body without a supervisory layer.
+
+CCA8's role is to manage the boundary between imagined futures and real consequences.
+
+In this design, a learned world model is useful because it can rehearse possible futures before the robot acts. It may generate action-conditioned rollouts such as:
+
+- "If I move forward, I may hit the obstacle."
+- "If I push this object, it may move or fall."
+- "If the floor is slippery, this path may be unsafe."
+- "If lighting changes, the same object may still be present."
+
+However, a world-model rollout is not truth. It is a proposal about what might happen. The current sensory state, the HAL status report, the BodyMap, and the WorkingMap remain authoritative for present-state belief.
+
+The intended RCOS discipline is:
+
+    World models rehearse.
+    LLM / VLA proposes.
+    CCA8 validates.
+    HAL executes.
+    Reality corrects.
+    CCA8 records provenance.
+
+This gives CCA8 a practical answer to the sim-to-real problem. CCA8 does not eliminate the sim-to-real gap by internally solving all physics. Instead, it manages the gap by supervising how simulated or learned predictions are used.
+
+The key operating rules are:
+
+1. **Present-state authority**  
+   Real observations override imagined rollouts. If a simulator or world model predicts a clear path but the current HAL sensor packet indicates an obstacle, contact fault, unstable posture, or unsafe zone, CCA8 treats the present observation as authoritative.
+
+2. **Bounded action vocabulary**  
+   CCA8 should issue bounded, interpretable commands such as `recover_fall`, `walk_forward`, `turn_left`, `inspect`, `return_to_dock`, `recharge`, or `stop`, rather than raw actuator torques. Low-level motor control remains the responsibility of the HAL, ROS 2, vendor SDK, VLA skill provider, or robot controller.
+
+3. **World-model rollouts as candidate futures**  
+   A world model may generate possible future states for candidate actions. These rollouts belong conceptually in WorkingMap.Scratch / WorkingMap.Creative or in a future WM1 / OutcomeSketch interface. They should be small, inspectable, uncertainty-aware summaries, not unbounded generated fantasies.
+
+4. **Safety-gated validation**  
+   Before action, CCA8 validates candidate commands against BodyMap, WorkingMap.MapSurface, SurfaceGrid, task goals, battery/fatigue state, hazard flags, uncertainty, and prior episode memory. If uncertainty is high, the correct action may be to stop, probe, zoom perception, ask for help, or choose a safer reversible action.
+
+5. **HAL execution with feedback**  
+   The HAL executes only the approved command and returns structured feedback: accepted, executing, done, blocked, failed, faulted, or emergency-stopped. This keeps hardware-specific execution below the RCOS boundary while preserving a clean cognitive contract.
+
+6. **Reality-correction loop**  
+   After each action, the next HAL / EnvObservation packet updates BodyMap and WorkingMap. CCA8 compares the observed result with the predicted postcondition. Prediction error is not a failure of the architecture; it is the learning signal that tells the RCOS when to update memory, revise policy confidence, retrieve a different prior, or mark a world model as unreliable in that context.
+
+7. **Memory and provenance**  
+   Every important real-world action should leave a trace: observation, body state, candidate policies, selected command, predicted outcome, HAL acknowledgement, observed outcome, prediction error, and safety notes. WorldGraph remains the thin symbolic index, while Columns / Engrams hold heavier scene, map, or sensor payloads.
+
+In short, the CCA8 RCOS does not try to replace physics engines, robot foundation models, ROS 2, or hardware controllers. It organizes them. The scientific claim is not that CCA8 can simulate the whole physical world internally. The claim is that a memory-bearing, safety-gated, auditable cognitive layer can make better use of simulators, world models, LLMs, VLAs, and HALs by deciding when to trust them, when to constrain them, when to ignore them, and how to learn from the difference between prediction and reality.
 
 
 
