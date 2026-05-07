@@ -8240,6 +8240,7 @@ def _wm_blank_grid_cells_v1(grid_w: int, grid_h: int, fill: int = cca8_navpatch.
     return [int(fill)] * (int(grid_w) * int(grid_h))
 
 
+#pylint: disable-next=too-many-positional-arguments
 def _wm_set_grid_cell_v1(cells: list[int], grid_w: int, grid_h: int, x: int, y: int, value: int) -> None:
     """Safely set one flat-grid cell if the coordinates are in bounds."""
     if not (0 <= x < grid_w and 0 <= y < grid_h):
@@ -8247,6 +8248,7 @@ def _wm_set_grid_cell_v1(cells: list[int], grid_w: int, grid_h: int, x: int, y: 
     cells[(y * grid_w) + x] = int(value)
 
 
+#pylint: disable-next=too-many-positional-arguments
 def _wm_paint_diamond_v1(cells: list[int], grid_w: int, grid_h: int, cx: int, cy: int, radius: int, value: int) -> None:
     """Paint a tiny Manhattan-diamond into a flat grid list."""
     radius = max(0, int(radius))
@@ -19942,7 +19944,7 @@ def configure_goat_foraging_04_eval_v1(world, drives, ctx: Ctx, env: HybridEnvir
     except Exception:
         pass
 
-
+#pylint: disable-next=too-many-positional-arguments
 def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) -> None:
     """
     Run N closed-loop steps between the HybridEnvironment and the CCA8 brain
@@ -19962,6 +19964,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
       - nipple_state (hidden → reachable → latched → resting),
       - zone (why we are 'unknown' vs 'unsafe_cliff_near' vs 'safe').
     """
+
 
     def _coarse_zone_from_env(state) -> str | None:
         """Approximate the BodyMap's zone from EnvState distances.
