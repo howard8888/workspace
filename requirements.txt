@@ -1,0 +1,11 @@
+# CCA8 optional tooling and development dependencies.
+# Python 3.11 standard-library modules are not listed here.
+
+openai
+pyvis
+pygount
+psutil
+pytest
+pytest-cov
+pylint
+mypy

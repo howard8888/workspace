@@ -12,11 +12,19 @@ NOTE: This README is large; if GitHub truncates the preview at the 512 KiB rende
 # Executive Overview
 
 ## **TL;DR == Run code**
-Requirements
+
+Requirements:
 - Python 3.11
-- All CCA8 Python modules in the same directory
-- Python standard-library modules used by the project (for example: json, argparse, os, math, datetime) are included with a normal Python installation
-- Optional third-party packages may be required for optional features; see any runtime error messages for installation guidance
+- All CCA8 Python modules in the same repo directory
+- Python standard-library modules are included with a normal Python installation
+- Optional/dev dependencies are listed in `requirements.txt`
+
+Recommended fresh Windows setup (in terminal):
+
+py -m pip install --upgrade pip
+py -m pip install -r requirements.txt
+python cca8_run.py --preflight
+python cca8_run.py
 
 
 
@@ -278,8 +286,15 @@ You will now see the Main Menu.
 
 **From the main menu:**
 
-Select menu 37: Run N Cognitive Cycles (closed-loop env↔controller iteration)
+For a slow, annotated first pass, select:
 
+- **menu 35**: Run 1 Cognitive Cycle (verbose teaching mode)
+
+This prints the same closed-loop cognitive-cycle machinery as menu 37, but adds `[teach]` notes beside the live output.
+
+For a compact multi-cycle run, select:
+
+- **menu 37**: Run n Cognitive Cycles (closed-loop timeline)
 
 Enter N = 20 (or N = 25).
 
@@ -338,7 +353,8 @@ v0 is intentionally minimal (posture only)
 
 ### How to Read the Cognitive Cycle and its Summary (optional: 30-60 minutes)
 
-During **menu 37** closed-loop runs, each cognitive cycle ends with a short **footer block** intended for fast human scanning.
+During **menu 35** and **menu 37** closed-loop runs, each cognitive cycle ends with a short **footer block** intended for fast human scanning.
+Menu 35 adds explanatory `[teach]` blocks for one slow annotated cycle; menu 37 runs the compact multi-cycle timeline.
 This footer is intentionally pragmatic and is **under constant development** as Phase IX evolves; treat it as a reading aid,
 not a stable API.
 
@@ -3452,7 +3468,9 @@ A: (1) Emit a `cue:*` that captures the gist (e.g., `cue:vision:silhouette:mom`)
 - **`cca8_temporal.py`** — Timestamps and simple period/year tagging (used in binding meta).
 - **`cca8_navpatch.py`** — Navpatch map abilities
 - **`cca8_env.py`** — Generate the environment
-- **`cca_test_test_fixtures.py`** — Sample test worlds for testing and understanding the simulation software.
+- **`cca8_test_fixtures.py`** — Deterministic graph fixtures for tests and demo-world inspection.
+- **`cca8_teaching.py`** — Terminal teaching-note helpers used by verbose cognitive-cycle mode.
+- **`requirements.txt`** — Optional/dev dependency list for fresh Python environments.
   
   
 
@@ -3801,11 +3819,14 @@ Start with these:
 
 Once you’re comfortable, these become very useful:
 
-* **Cognitive Cycle (HybridEnvironment → WorldGraph demo)**  
-  Runs one closed-loop tick: env step → perception → WorldGraph update → controller step → action feedback.
+* **Run 1 Cognitive Cycle — verbose teaching mode**  
+  Menu 35 runs one closed-loop cognitive cycle using the same engine as menu 37, but adds `[teach]` notes beside the live output.
+  This is the best entry point when learning or debugging the cognitive-cycle sequence slowly.
 
-* **Run closed-loop cycles (N steps)**  
-  Useful for “does this stabilize?” tests, and for generating `cycle_log.jsonl` traces.
+* **Run n Cognitive Cycles — compact timeline**  
+  Menu 37 runs multiple closed-loop cognitive cycles in compact form. It is useful for “does this stabilize?” tests and for
+  generating `cycle_log.jsonl` traces.
+
 
 * **Export and display interactive graph (Pyvis HTML)**  
   Generates a clickable HTML visualization. Use it when the Snapshot output becomes too dense.
@@ -3829,6 +3850,14 @@ Planning and surgery tools (when you start editing graphs by hand):
 
 * **Connect bindings / Delete edge**  
   Lets you manually edit the graph (helpful for controlled experiments, but watch for duplicates).
+  
+* **Lines of Python code LOC by directory**  
+  Menu 33 reports Python line counts by top-level directory. It prints:
+  - `physical_LOC`: all lines in `.py` files, including comments, docstrings, menu text, teaching text, and blanks
+  - `nonblank_LOC`: all nonblank lines
+  - `code_like_LOC`: nonblank lines minus full-line comments, while still counting docstrings and multiline strings
+
+  This is intended as a human-readable project-size report rather than formal SLOC.
 
 ---
 

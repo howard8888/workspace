@@ -1189,6 +1189,7 @@ class WorldGraph:
         except Exception:
             TensorPayload = None  # type: ignore[assignment, misc]
 
+        payload: object
         if TensorPayload is not None:
             payload = TensorPayload(data=list(vector), shape=shape or (len(vector),),
                                     kind="scene", fmt="tensor/list-f32")

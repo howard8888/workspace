@@ -33,12 +33,33 @@ non-interactive utility flags for scripting, like `--about`, `--version`, and `-
 Requirements
 ------------
 
-- Python 3.11
-- All CCA8 Python modules in the same directory
-- Python standard-library modules used by the project (for example: json, argparse, os, math, datetime) are included with a normal Python installation
-- Optional third-party packages may be required for optional features; see any runtime error messages for installation guidance
+Core runtime:
+- Python 3.11.
+- All CCA8 Python modules in the same repo directory, including:
+  cca8_world_graph.py, cca8_controller.py, cca8_temporal.py, cca8_column.py,
+  cca8_env.py, cca8_rcos.py, cca8_features.py, cca8_navpatch.py, and
+  cca8_teaching.py.
+- Standard-library imports such as argparse, json, hashlib, os, platform,
+  sys, logging, math, datetime, dataclasses, typing, collections, random,
+  time, subprocess, shutil, io, contextlib, copy, tempfile, webbrowser,
+  xml, and ctypes are included with a normal Python installation.
 
+Optional PyPI packages used by menu features / development workflow:
+- pygount: Menu 33 lines-of-code report.
+- pyvis: interactive graph export / display.
+- psutil: optional richer system-memory check during preflight.
+- openai: Menu 48 LLM API setup and hybrid adviser experiments.
+- pytest: unit-test runner used by --preflight.
+- pytest-cov: optional coverage integration for pytest.
+- pylint: external lint command used during development.
+- mypy: external static type checker used during development.
 
+Recommended setup on a fresh Windows Python 3.11 environment:
+    py -m pip install --upgrade openai pyvis pygount psutil pytest pytest-cov pylint mypy
+
+For a more standard repo layout, keep the same package list in requirements.txt
+at the repo root and install with:
+    py -m pip install -r requirements.txt
 
 """
 
@@ -126,6 +147,13 @@ from cca8_navpatch import (
     CELL_TRAVERSABLE,
     CELL_HAZARD,
     CELL_GOAL,
+)
+from cca8_teaching import (
+    menu37_teaching_after_controller_v1,
+    menu37_teaching_after_observation_v1,
+    menu37_teaching_after_run_v1,
+    menu37_teaching_cycle_header_v1,
+    menu37_teaching_intro_v1,
 )
 
 
@@ -8975,93 +9003,161 @@ def print_timekeeping_line(ctx, prefix: str = "[time] ") -> None:
 
 
 # ==== Developer utilities: LOC, vector parsing, and loop helper ===================
+def _python_loc_counts_for_file(path: str) -> dict[str, int]:
+    """Return simple physical/nonblank/code-like line counts for one Python file.
 
-def _compute_loc_by_dir(suffixes=(".py",),skip_folders=(".git", ".venv", "build", "dist", ".pytest_cache", "__pycache__")):
+    This helper intentionally measures what a human usually means by "how large is this file?"
+    rather than only formal SLOC. Physical LOC includes comments, docstrings, blank lines,
+    long menu text, teaching text, and explanatory scaffolding. Code-like LOC is a simple
+    approximation: nonblank lines minus full-line comments. It still counts docstrings and
+    multiline strings because those are important in this repo's readable, teaching-oriented style.
     """
-    Compute SLOC per top-level directory using the pygount CLI.
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            lines = handle.readlines()
+    except Exception:
+        return {"physical": 0, "nonblank": 0, "comment_only": 0, "code_like": 0}
+
+    physical = len(lines)
+    nonblank = 0
+    comment_only = 0
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            nonblank += 1
+        if line.lstrip().startswith("#"):
+            comment_only += 1
+
+    code_like = max(0, nonblank - comment_only)
+
+    return {
+        "physical": int(physical),
+        "nonblank": int(nonblank),
+        "comment_only": int(comment_only),
+        "code_like": int(code_like),
+    }
+
+
+def _compute_loc_by_dir(
+    suffixes=(".py",),
+    skip_folders=(".git", ".venv", "build", "dist", ".pytest_cache", "__pycache__"),
+):
+    """Compute Python line counts per top-level directory using a dependency-free scanner.
 
     Returns:
-        rows: list[(topdir, sloc, files_count)] sorted by sloc desc
-        total_sloc: int
-        errtext: Optional[str]
+        rows:
+            list[(topdir, files_count, physical_loc, nonblank_loc, code_like_loc, comment_only_loc)]
+            sorted by physical LOC descending.
+
+        total:
+            dict with aggregate counts for the same columns.
+
+        errtext:
+            None on success. A string only if the directory walk itself fails.
+
+    Rationale:
+        The old Menu 33 path used pygount SLOC, which intentionally excludes comments,
+        docstrings, and blank lines. That is useful for one purpose, but it under-reports
+        the actual size/readability burden of CCA8. This local scanner reports the project
+        size a human sees in an editor.
     """
-    exe = shutil.which("pygount") or shutil.which("pygount.exe")
-    if not exe:
-        return [], 0, (
-            "pygount not found on PATH.\n"
-            "Install with:  py -m pip install --user pygount\n"
-            "Then restart your terminal so the Scripts directory is on PATH."
+    skip_set = {str(x) for x in skip_folders}
+    suffix_tuple = tuple(str(x) for x in suffixes)
+
+    counts_by_top: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"files": 0, "physical": 0, "nonblank": 0, "code_like": 0, "comment_only": 0}
+    )
+
+    try:
+        for root, dirs, files in os.walk("."):
+            dirs[:] = [d for d in dirs if d not in skip_set and not d.startswith(".")]
+
+            for name in files:
+                if not name.endswith(suffix_tuple):
+                    continue
+
+                path = os.path.join(root, name)
+                rel = os.path.relpath(path, ".")
+                parts = rel.split(os.sep)
+                top = "." if len(parts) == 1 else parts[0]
+
+                if top in skip_set or not top:
+                    continue
+
+                item = _python_loc_counts_for_file(path)
+                counts_by_top[top]["files"] += 1
+                counts_by_top[top]["physical"] += item["physical"]
+                counts_by_top[top]["nonblank"] += item["nonblank"]
+                counts_by_top[top]["code_like"] += item["code_like"]
+                counts_by_top[top]["comment_only"] += item["comment_only"]
+
+    except Exception as e:
+        return [], {}, f"LOC scan failed: {e}"
+
+    rows = []
+    for top, item in counts_by_top.items():
+        rows.append(
+            (
+                top,
+                int(item["files"]),
+                int(item["physical"]),
+                int(item["nonblank"]),
+                int(item["code_like"]),
+                int(item["comment_only"]),
+            )
         )
 
-    cmd = [
-        exe, ".",
-        "--suffix=py",
-        "--folders-to-skip=" + ",".join(skip_folders),
-        "--format=json",
-    ]
-    #proc = subprocess.run(cmd, text=True, capture_output=True)  # pylint: disable=subprocess-run-check
-    try:
-        proc = subprocess.run(cmd, text=True, capture_output=True, check=True, timeout=15)
-        #will timeout in 15 seconds if hung process
-    except subprocess.CalledProcessError as e:
-        msg = (e.stderr or e.stdout or str(e)).strip()
-        return [], 0, f"pygount failed (exit={e.returncode}): {msg}\nTry: py -m pip install --user pygount"
+    rows.sort(key=lambda row: (-row[2], row[0]))
 
-    if proc.returncode != 0:
-        msg = proc.stderr.strip() or proc.stdout.strip() or "unknown error"
-        return [], 0, f"pygount failed (exit={proc.returncode}): {msg}\nTry: py -m pip install --user pygount"
+    total = {
+        "files": sum(row[1] for row in rows),
+        "physical": sum(row[2] for row in rows),
+        "nonblank": sum(row[3] for row in rows),
+        "code_like": sum(row[4] for row in rows),
+        "comment_only": sum(row[5] for row in rows),
+    }
 
-    try:
-        doc = json.loads(proc.stdout)
-    except Exception as e:
-        return [], 0, f"pygount JSON parse error: {e}"
-
-    items = doc.get("files") if isinstance(doc, dict) else (doc if isinstance(doc, list) else [])
-
-    sloc_by_top = defaultdict(int)
-    files_by_top = defaultdict(int)
-
-    for it in items:
-        if it.get("state") != "analyzed":
-            continue
-        if (it.get("language") or "").lower() not in ("python", ""):
-            continue
-        path = it.get("path") or ""
-        if not path.endswith(suffixes):
-            continue
-
-        rel = os.path.relpath(path, ".")
-        top = rel.split(os.sep, 1)[0] if os.sep in rel else "."
-        if top in skip_folders or not top:
-            continue
-
-        sloc = int(it.get("sourceCount") or it.get("codeCount") or 0)
-        sloc_by_top[top] += sloc
-        files_by_top[top] += 1
-
-    rows = sorted(sloc_by_top.items(), key=lambda kv: (-kv[1], kv[0]))
-    rows = [(k, v, files_by_top[k]) for k, v in rows]
-    total = sum(sloc_by_top.values())
     return rows, total, None
 
 
 def _render_loc_by_dir_table(rows, total):
-    """
-    Pretty-print the LOC table. Returns a string for testability, caller prints it.  # pragma: no cover
-    """
+    """Pretty-print the Python LOC table. Returns a string for testability; caller prints it."""
     if not rows:
         return "No Python files (.py) found under the current directory.\n"
-    # column widths
-    name_w = max(25, max(len(k) for k, _, _ in rows))
+
+    totals = total if isinstance(total, dict) else {}
+    name_w = max(25, max(len(str(row[0])) for row in rows))
+
     lines = []
     lines.append("Selection:  LOC by Directory (Python)")
-    lines.append("Counts SLOC (pygount sourceCount) per top-level folder. Includes tests/ and root files under '.'.\n")
-    lines.append(f"{'directory'.ljust(name_w)}  {'files':>7}  {'SLOC':>10}")
-    lines.append(f"{'-'*name_w}  {'-'*7}  {'-'*10}")
-    for k, sloc, nfiles in rows:
-        lines.append(f"{k.ljust(name_w)}  {nfiles:7d}  {sloc:10,d}")
-    lines.append(f"{'-'*name_w}  {'-'*7}  {'-'*10}")
-    lines.append(f"{'TOTAL'.ljust(name_w)}  {sum(n for _,_,n in rows):7d}  {total:10,d}\n")
+    lines.append("Counts Python files per top-level folder.")
+    lines.append("physical_LOC includes comments, docstrings, menu text, teaching text, and blank lines.")
+    lines.append("nonblank_LOC excludes blank lines.")
+    lines.append("code_like_LOC excludes blank lines and full-line comments, but still includes docstrings/multiline strings.\n")
+    lines.append(
+        f"{'directory'.ljust(name_w)}  {'files':>7}  {'physical_LOC':>12}  "
+        f"{'nonblank_LOC':>12}  {'code_like_LOC':>13}  {'comment_LOC':>11}"
+    )
+    lines.append(
+        f"{'-' * name_w}  {'-' * 7}  {'-' * 12}  {'-' * 12}  {'-' * 13}  {'-' * 11}"
+    )
+
+    for top, files_n, physical, nonblank, code_like, comment_only in rows:
+        lines.append(
+            f"{str(top).ljust(name_w)}  {files_n:7d}  {physical:12,d}  "
+            f"{nonblank:12,d}  {code_like:13,d}  {comment_only:11,d}"
+        )
+
+    lines.append(
+        f"{'-' * name_w}  {'-' * 7}  {'-' * 12}  {'-' * 12}  {'-' * 13}  {'-' * 11}"
+    )
+    lines.append(
+        f"{'TOTAL'.ljust(name_w)}  {int(totals.get('files', 0)):7d}  "
+        f"{int(totals.get('physical', 0)):12,d}  {int(totals.get('nonblank', 0)):12,d}  "
+        f"{int(totals.get('code_like', 0)):13,d}  {int(totals.get('comment_only', 0)):11,d}\n"
+    )
+
     return "\n".join(lines)
 
 
@@ -9152,8 +9248,8 @@ def _emit_interoceptive_cues(world, drives, ctx, attach: str = "latest") -> set[
     House style: treat drive thresholds as *evidence* (cue:*), not planner goals.
     """
     try:
-        flags_now = set(_drive_tags(drives))         # e.g., {"drive:hunger_high", "drive:fatigue_high"}
-        flags_prev = getattr(ctx, "last_drive_flags", set()) or set()
+        flags_now: set[str] = set(_drive_tags(drives))         # e.g., {"drive:hunger_high", "drive:fatigue_high"}
+        flags_prev: set[str] = getattr(ctx, "last_drive_flags", set()) or set()
         started = flags_now - flags_prev #perhaps, e.g., {"drive:hunger_high"}
         for f in sorted(started):
             # world.add_cue normalizes to tag "cue:<token>"
@@ -16918,6 +17014,10 @@ def _surfacegrid_ascii_terminal_block_v1(
             ctx.wm_surfacegrid_last_printed_ascii = ascii_txt
         except Exception:
             pass
+
+        if str(line_prefix).startswith("[cycle] SG"):
+            return f"{line_prefix}ASCII map already printed above; no second dump needed"
+
         return f"{line_prefix}++SurfaceGrid ASCII Map is unchanged++"
 
     try:
@@ -19513,11 +19613,106 @@ def _print_cog_cycle_footer(*,
         head = ", ".join(out[:limit])
         return f"{head}, +{len(out) - limit} more"
 
+
     def _get_state_attr(st, name: str):
         try:
             return getattr(st, name, None)
         except Exception:
             return None
+
+
+    def _obs_write_strings(raw: Any) -> list[str]:
+        """Return non-empty strings from common JSON-safe obs-write shapes.
+
+        The EnvObservation injection path has evolved over time. Most runs provide
+        lists such as ["posture:fallen"], but some diagnostic paths may provide a
+        dict such as token_to_bid. This helper keeps the footer defensive without
+        changing the underlying memory write behavior.
+        """
+        if isinstance(raw, str):
+            return [raw] if raw else []
+
+        raw_iter: Any
+        if isinstance(raw, dict):
+            raw_iter = raw.keys()
+        elif isinstance(raw, (list, tuple, set)):
+            raw_iter = raw
+        else:
+            return []
+
+        out: list[str] = []
+        for item in raw_iter:
+            if isinstance(item, str) and item:
+                out.append(item)
+            elif isinstance(item, dict):
+                for key in ("token", "tag", "name"):
+                    val = item.get(key)
+                    if isinstance(val, str) and val:
+                        out.append(val)
+                        break
+        return out
+
+
+    def _clean_obs_family_token(tok: str, *, family: str) -> str | None:
+        """Normalize one pred/cue token for footer display.
+
+        Returned tokens are prefix-free because the footer later adds the display
+        prefix itself via _fmt_items(..., prefix="pred:"/"cue:").
+        """
+        text = str(tok or "").strip()
+        if not text:
+            return None
+
+        own_prefix = f"{family}:"
+        if text.startswith(own_prefix):
+            return text[len(own_prefix):]
+
+        if text.startswith("pred:") or text.startswith("cue:"):
+            return None
+
+        return text
+
+
+    def _dedup_obs_tokens(items: list[str]) -> list[str]:
+        """De-duplicate footer tokens while preserving their original order."""
+        out: list[str] = []
+        seen: set[str] = set()
+
+        for item in items:
+            if item not in seen:
+                seen.add(item)
+                out.append(item)
+
+        return out
+
+
+    def _obs_write_family_values(src: dict[str, Any], keys: tuple[str, ...], *, family: str) -> list[str]:
+        """Return obs-write values from the first matching schema key."""
+        for key in keys:
+            out: list[str] = []
+            for item in _obs_write_strings(src.get(key)):
+                tok = _clean_obs_family_token(item, family=family)
+                if tok:
+                    out.append(tok)
+
+            if out:
+                return _dedup_obs_tokens(out)
+
+        return []
+
+
+    def _looks_like_pred_token(tok: str) -> bool:
+        """Classify unprefixed token_to_bid fallback keys that are clearly predicates."""
+        text = str(tok or "").strip()
+        return (
+            text.startswith("posture:")
+            or text.startswith("proximity:")
+            or text.startswith("hazard:")
+            or text.startswith("nipple:")
+            or text.startswith("milk:")
+            or text in ("resting", "alert", "seeking_mom")
+        )
+
 
     def _surface_deltas(ps, cs) -> list[str]:
         # These correspond to the newborn-goat "big slots" that map cleanly onto MapSurface slot-families.
@@ -19603,13 +19798,72 @@ def _print_cog_cycle_footer(*,
     # WG write summary (env injection)
     wg_preds: list[str] = []
     wg_cues: list[str] = []
+    wg_keyframe = False
+    wg_reason_txt = ""
+
     if isinstance(inj, dict):
-        p = inj.get("predicates")
-        c = inj.get("cues")
-        if isinstance(p, list):
-            wg_preds = [x for x in p if isinstance(x, str) and x]
-        if isinstance(c, list):
-            wg_cues = [x for x in c if isinstance(x, str) and x]
+        wg_preds = _obs_write_family_values(
+            inj,
+            (
+                "predicates",
+                "preds",
+                "created_preds",
+                "created_predicates",
+                "written_predicates",
+                "predicates_written",
+                "preds_written",
+            ),
+            family="pred",
+        )
+        wg_cues = _obs_write_family_values(
+            inj,
+            (
+                "cues",
+                "created_cues",
+                "written_cues",
+                "cues_written",
+            ),
+            family="cue",
+        )
+
+        # Fallback for obs_write schemas that expose only token_to_bid.
+        # Unprefixed fallback keys are only treated as predicates when they are from
+        # known state-slot families, so we do not accidentally label arbitrary cue text.
+        if not (wg_preds or wg_cues):
+            token_to_bid = inj.get("token_to_bid")
+            if isinstance(token_to_bid, dict):
+                pred_fallback: list[str] = []
+                cue_fallback: list[str] = []
+
+                for raw_key in token_to_bid.keys():
+                    if not isinstance(raw_key, str) or not raw_key:
+                        continue
+
+                    key = raw_key.strip()
+                    if key.startswith("cue:"):
+                        tok = _clean_obs_family_token(key, family="cue")
+                        if tok:
+                            cue_fallback.append(tok)
+                    elif key.startswith("pred:"):
+                        tok = _clean_obs_family_token(key, family="pred")
+                        if tok:
+                            pred_fallback.append(tok)
+                    elif _looks_like_pred_token(key):
+                        pred_fallback.append(key)
+
+                wg_preds = _dedup_obs_tokens(pred_fallback)
+                wg_cues = _dedup_obs_tokens(cue_fallback)
+
+        wg_keyframe = bool(inj.get("keyframe"))
+
+        reason_items = _obs_write_strings(
+            inj.get("keyframe_reasons")
+            or inj.get("keyframe_reason")
+            or inj.get("reasons")
+        )
+        reason_items = _dedup_obs_tokens(reason_items)
+        if reason_items:
+            wg_reason_txt = " reason=" + _fmt_items(reason_items, prefix="", limit=3)
 
     # EnvObservation input summary (what crossed the env→agent boundary this tick)
     obs_preds: list[str] = []
@@ -19832,9 +20086,12 @@ def _print_cog_cycle_footer(*,
 
     # ---- line 3: WorldGraph writes this tick
     wg_txt = f"preds+{len(wg_preds)} cues+{len(wg_cues)}"
+    if wg_keyframe:
+        wg_txt += " keyframe=Y"
+
     wg_pred_txt = _fmt_items(wg_preds, prefix="pred:", limit=max_items)
     wg_cue_txt = _fmt_items(wg_cues, prefix="cue:", limit=max_items)
-    print(f"[cycle] WG   wrote {wg_txt} | {wg_pred_txt} | {wg_cue_txt}")
+    print(f"[cycle] WG   wrote {wg_txt}{wg_reason_txt} | {wg_pred_txt} | {wg_cue_txt}")
 
     # ---- line 4: Column ops (only meaningful on keyframes)
     if col_store_txt or col_retrieve_txt or col_apply_txt:
@@ -19944,8 +20201,9 @@ def configure_goat_foraging_04_eval_v1(world, drives, ctx: Ctx, env: HybridEnvir
     except Exception:
         pass
 
+
 #pylint: disable-next=too-many-positional-arguments
-def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) -> None:
+def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, *, teaching_mode: bool = False) -> None:
     """
     Run N closed-loop steps between the HybridEnvironment and the CCA8 brain
     in a condensed, explanatory way.
@@ -20427,6 +20685,10 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
     if n_steps <= 0:
         print("[env-loop] N must be ≥ 1; nothing to do.")
         return
+    if teaching_mode:
+        print()
+        print(menu37_teaching_intro_v1())
+        print()
 
     print_env_loop_tag_legend_once(ctx)
     print(f"[env-loop] Running {n_steps} closed-loop cognitive cycle(s) (env↔controller).")
@@ -20451,6 +20713,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
     for i in range(n_steps):
         print(f"\n[env-loop] Cognitive Cycle {i+1}/{n_steps}")
+        if teaching_mode:
+            print(menu37_teaching_cycle_header_v1(i + 1, n_steps))
+            print()
         # Per-cycle capture for the footer summary (reset each cycle).
         fired_txt = None
         inj = None
@@ -20653,6 +20918,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
         # 3) EnvObservation → WorldGraph + BodyMap
         obs_write = inject_obs_into_world(world, ctx, env_obs)
+        if teaching_mode:
+            print(menu37_teaching_after_observation_v1())
+            print()
 
         # goat_foraging_04 contextual evaluation:
         #   - first fox milestone  -> store fox seed
@@ -20767,6 +21035,10 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
         except Exception as e:
             print(f"[env→controller] controller step error: {e}")
             ctx.env_last_action = None
+
+        if teaching_mode:
+            print(menu37_teaching_after_controller_v1())
+            print()
 
         # --- Capture NEXT-step prediction (Scratch postcondition), v0 = posture only ---
         try:
@@ -20885,7 +21157,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
                     curr_state=st,
                     env_step=step_idx,
                     zone=zone,
-                    inj=inj if isinstance(inj, dict) else None,
+                    inj=obs_write if isinstance(obs_write, dict) else None,
                     fired_txt=fired_txt if isinstance(fired_txt, str) else None,
                     col_store_txt=col_store_txt,
                     col_retrieve_txt=col_retrieve_txt,
@@ -21031,6 +21303,10 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int) 
 
     print("\n[env-loop] Closed-loop cognitive cycle complete. "
           "You can inspect details via Snapshot or the mini-snapshot that follows.")
+    if teaching_mode:
+        print()
+        print(menu37_teaching_after_run_v1())
+
     try:
         if getattr(ctx, "working_enabled", False):
             print()
@@ -23443,7 +23719,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     11) Simulate fall (add posture:fallen and try recovery) [fall, simulate]
 
     # Simulation of the Environment (HybridEnvironment demo)
-    35) Run 1 Cognitive Cycle (HybridEnvironment → WorldGraph demo) [env, hybrid]
+    35) Run 1 Cognitive Cycle (verbose teaching mode) [env, hybrid, verbose]
     37) Run n Cognitive Cycles (closed-loop timeline) [envloop, envrun]
     38) Inspect BodyMap (summary from BodyMap helpers) [bodymap, bsnap]
     39) Spatial scene demo (NOW-near + resting-in-shelter?) [spatial, near]
@@ -25820,13 +26096,14 @@ Attach an existing engram id (eid) to a binding id (bid).
         #----Menu Selection Code Block------------------------
         elif choice == "33":
             print("Selection:  LOC by Directory (Python)")
-            print("\nPrints total lines of Python source code (SLOC)")
-            print("-current settings are for all lines of actual code (includes print() )")
-            print("-will not count docstrings or comments or blank lines")
-            print("-will not count code in .bak files, configuration files, typedown docs, etc. ")
+            print("\nPrints Python line counts by top-level directory")
+            print("-physical_LOC counts all lines in .py files, including comments, docstrings, menu text, and blanks")
+            print("-nonblank_LOC excludes blank lines")
+            print("-code_like_LOC excludes blank lines and full-line comments, but still includes docstrings/multiline strings")
+            print("-will not count code in .bak files, configuration files, typedown docs, etc.")
             print("-will search through current working directory and all of its subdirectories")
             print("-'tests' is the subdirectory of pytest unit tests")
-            print("\nPlease wait.... searching through directories and counting lines of code....\n")
+            print("\nPlease wait.... searching through directories and counting Python lines....\n")
 
             rows, total, err = _compute_loc_by_dir()
             if err:
@@ -25853,13 +26130,13 @@ Attach an existing engram id (eid) to a binding id (bid).
 
         #----Menu Selection Code Block------------------------
         elif choice == "35":
-            # Alias: single-step env↔controller cycle (kept for back-compat; real implementation is menu 37)
-            print("Selection: Run 1 Cognitive Cycle (alias of menu 37)\n")
-            print("(This menu item is intentionally thin so it cannot drift out of sync.)\n")
+            # Verbose teaching mode: one closed-loop cycle using the same engine as menu 37.
+            print("Selection: Run 1 Cognitive Cycle (verbose teaching mode)\n")
+            print("This uses the same closed-loop engine as Menu 37, but adds teaching notes beside the live output.\n")
             try:
-                run_env_closed_loop_steps(env, world, drives, ctx, POLICY_RT, 1)
+                run_env_closed_loop_steps(env, world, drives, ctx, POLICY_RT, 1, teaching_mode=True)
             except Exception as e:
-                print(f"[env-loop] error while running 1 closed-loop step: {e}")
+                print(f"[env-loop] error while running 1 verbose closed-loop step: {e}")
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -25887,8 +26164,8 @@ For each cognitive cycle we will:
   3) Inject the resulting EnvObservation into the WorldGraph as pred:/cue: facts,
   4) Run ONE controller step (Action Center) and remember the last fired policy.
 
-This is like pressing menu 35 multiple times, but with a more compact, per-cycle summary.
-You can still use menu 35 for detailed, single-step inspection.
+Menu 35 runs one cycle in verbose teaching mode.
+Menu 37 runs the compact multi-cycle timeline.
 """)
             print("[policy-selection] Candidates = dev_gate passes AND trigger(...) returns True.")
             print("[policy-selection] Winner = highest deficit → non_drive → (RL: q | non-RL: stable order).")

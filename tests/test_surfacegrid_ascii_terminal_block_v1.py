@@ -5,7 +5,7 @@ Focused regression test for SurfaceGrid terminal change detection.
 This test is intentionally narrow:
 
 - first call with a given wm_surfacegrid_last_ascii should print a full map block
-- second call with the same ASCII should print the short unchanged marker
+- second cycle-footer call with the same ASCII should print the short no-second-dump marker
 
 I monkeypatch the ASCII formatter so the test stays deterministic and does not depend
 on the exact framing/legend implementation of format_surfacegrid_ascii_map_v1(...).
@@ -15,7 +15,7 @@ import cca8_run as runmod
 
 
 def test_surfacegrid_ascii_terminal_block_prints_full_map_then_unchanged(monkeypatch):
-    """The helper should print the full map once, then collapse identical repeats."""
+    """The helper should print the full map once, then collapse identical cycle-footer repeats."""
 
     def fake_format_surfacegrid_ascii_map_v1(ascii_txt, title=None, legend=None, show_axes=True):
         _ = title
@@ -55,7 +55,7 @@ def test_surfacegrid_ascii_terminal_block_prints_full_map_then_unchanged(monkeyp
         legend="legend",
     )
 
-    assert second == "[cycle] SG   ++SurfaceGrid ASCII Map is unchanged++"
+    assert second == "[cycle] SG   ASCII map already printed above; no second dump needed"
     assert ctx.wm_surfacegrid_last_printed_ascii == "@\n"
     
     
@@ -105,5 +105,5 @@ def test_surfacegrid_ascii_terminal_block_suppresses_visually_identical_maps(mon
         legend="legend",
     )
 
-    assert second == "[cycle] SG   ++SurfaceGrid ASCII Map is unchanged++"
+    assert second == "[cycle] SG   ASCII map already printed above; no second dump needed"
     assert ctx.wm_surfacegrid_last_printed_block == "FORMATTED<@>"
