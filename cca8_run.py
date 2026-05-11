@@ -155,6 +155,7 @@ from cca8_teaching import (
     menu37_teaching_cycle_header_v1,
     menu37_teaching_intro_v1,
 )
+
 from cca8_rcos_experiments import (
     render_rcos_robotic_episode_lines_v1,
     render_rcos_robotic_protocol_v1,
@@ -162,9 +163,12 @@ from cca8_rcos_experiments import (
     render_rcos_robotic_suite_lines_v1,
     render_rcos_robotic_perturbation_protocol_v1,
     render_rcos_robotic_perturbed_repeats_lines_v1,
+    render_rcos_robotic_ablation_protocol_v1,
+    render_rcos_robotic_ablation_repeats_lines_v1,
     rcos_robotic_run_episode_v1,
     rcos_robotic_run_repeats_v1,
     rcos_robotic_run_perturbed_repeats_v1,
+    rcos_robotic_run_ablation_repeats_v1,
     rcos_robotic_run_suite_v1,
 )
 
@@ -4525,6 +4529,8 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
         print(" 25) Run x20 RCOS robotic autonomy repeats")
         print(" 26) Show RCOS robotic perturbation protocol")
         print(" 27) Run x50 RCOS robotic perturbation repeats")
+        print(" 28) Run x50 RCOS/no-RCOS ablation comparison")
+        print(" 29) Show RCOS/no-RCOS ablation protocol")
         print("  0) Return to Main Menu")
 
         sub = input("Experiment menu select: ").strip().lower()
@@ -5000,12 +5006,17 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
                 continue
 
             intensity = raw_intensity or "moderate"
+            run_max_steps = max(80, int(cfg.max_cycles))
+
             print()
-            print(f"[rcos-perturb] running x{repeat_count} perturbed RCOS robotic repeats: intensity={intensity}")
+            print(
+                f"[rcos-perturb] running x{repeat_count} perturbed RCOS robotic repeats: "
+                f"intensity={intensity} max_steps={run_max_steps}"
+            )
             repeated = rcos_robotic_run_perturbed_repeats_v1(
                 repeats=repeat_count,
                 intensity=intensity,
-                max_steps=int(cfg.max_cycles),
+                max_steps=run_max_steps,
                 output_dir=str(cfg.output_dir),
                 run_label=str(cfg.run_label or "bica_rcos_perturbed"),
                 write_jsonl=bool(cfg.jsonl_write_cycle_records or cfg.jsonl_write_episode_records),
@@ -5015,7 +5026,43 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
                 print(line)
             continue
 
-        print("[experiments] Unknown selection. Use 0..27.")
+        if sub == "28":
+            raw_repeats = input("Ablation repeat count (blank = 50): ").strip()
+            raw_intensity = input("Perturbation intensity [mild | moderate | severe; blank = moderate]: ").strip()
+
+            try:
+                repeat_count = int(raw_repeats) if raw_repeats else 50
+            except Exception:
+                print("[rcos-ablate] invalid integer repeat count.")
+                continue
+
+            intensity = raw_intensity or "moderate"
+            run_max_steps = max(80, int(cfg.max_cycles))
+
+            print()
+            print(
+                f"[rcos-ablate] running x{repeat_count} paired RCOS/no-RCOS ablation repeats: "
+                f"intensity={intensity} max_steps={run_max_steps}"
+            )
+            ablation = rcos_robotic_run_ablation_repeats_v1(
+                repeats=repeat_count,
+                intensity=intensity,
+                max_steps=run_max_steps,
+                output_dir=str(cfg.output_dir),
+                run_label=str(cfg.run_label or "bica_rcos_ablation"),
+                write_jsonl=bool(cfg.jsonl_write_cycle_records or cfg.jsonl_write_episode_records),
+            )
+
+            for line in render_rcos_robotic_ablation_repeats_lines_v1(ablation):
+                print(line)
+            continue
+
+        if sub == "29":
+            print()
+            print(render_rcos_robotic_ablation_protocol_v1())
+            continue
+
+        print("[experiments] Unknown selection. Use 0..29.")
 
 
 # Module layout / roadmap

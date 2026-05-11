@@ -43,6 +43,9 @@ __all__ = [
     "render_rcos_robotic_perturbation_protocol_v1",
     "rcos_robotic_run_perturbed_repeats_v1",
     "render_rcos_robotic_perturbed_repeats_lines_v1",
+    "render_rcos_robotic_ablation_protocol_v1",
+    "rcos_robotic_run_ablation_repeats_v1",
+    "render_rcos_robotic_ablation_repeats_lines_v1",
 ]
 
 RCOS_ROBOTIC_TASK_ORDER_V1 = [
@@ -60,6 +63,15 @@ RCOS_ROBOTIC_SUITE_SCENARIOS_V1 = [
     "incomplete_no_return_control",
 ]
 
+RCOS_ROBOTIC_ABLATION_CONDITIONS_V1 = [
+    "rcos_supervisory_task_manager",
+    "no_rcos_open_loop_script",
+]
+
+RCOS_ROBOTIC_ABLATION_LABELS_V1 = {
+    "rcos_supervisory_task_manager": "RCOS supervisory task manager",
+    "no_rcos_open_loop_script": "No-RCOS open-loop script",
+}
 
 def _metric_text_v1(value: Any) -> str:
     """Return a compact human-readable value for terminal experiment summaries."""
@@ -193,6 +205,39 @@ def _robotic_pos_from_state_v1(state: dict[str, Any]) -> tuple[int, int] | None:
         return (int(pos[0]), int(pos[1]))
     return None
 
+
+def _robotic_config_pos_v1(config: SimRobotGoatConfig, attr_name: str, default: tuple[int, int]) -> tuple[int, int]:
+    """Return one fixed-width integer position tuple from a SimRobotGoatConfig field.
+
+    Mypy treats tuple(config.some_pos) as variable-width tuple[int, ...], even when the
+    config value is conceptually a 2D position. This helper gives the autonomy code
+    a clear tuple[int, int] value and falls back safely if the config field is malformed.
+    """
+    raw = getattr(config, attr_name, default)
+
+    if isinstance(raw, (list, tuple)) and len(raw) == 2:
+        try:
+            return (int(raw[0]), int(raw[1]))
+        except Exception:
+            return default
+
+    return default
+
+
+def _robotic_strict_success_from_status_v1(status: dict[str, Any]) -> bool:
+    """Return True only when the strict RCOS robotic milestone ladder is complete.
+
+    This intentionally does not trust a loose environment-level mission_complete flag.
+    The perturbation benchmark should stop only after the strict five-part ladder is
+    satisfied: recovered, target inspected, returned to dock, recharged, and rested.
+    """
+    state = _robotic_state_from_status_v1(status)
+    summary = _robotic_summary_from_status_v1(status)
+    milestones = _strict_robotic_milestone_vector_v1(state, summary)
+
+    return all(bool(milestones.get(name)) for name in RCOS_ROBOTIC_TASK_ORDER_V1)
+
+
 #pylint: disable=too-many-locals
 def _robotic_shortest_path_v1(start: tuple[int, int], goal: tuple[int, int], config: SimRobotGoatConfig) -> list[tuple[int, int]]:
     """Return a shortest safe 4-neighbor path, avoiding hazard and obstacle cells.
@@ -279,8 +324,14 @@ def _robotic_turn_command_v1(current: str, desired: str) -> str:
 def _robotic_autonomy_command_v1(status: dict[str, Any], config: SimRobotGoatConfig) -> str:
     """Choose the next bounded command for the autonomy_v1 robotic long-horizon controller.
 
-    This is deliberately not a learned controller. It is a small transparent bridge controller that makes the robot-shaped
-    benchmark executable before the full CCA8 Action Center -> RCOS command bridge is finished.
+    This is deliberately not a learned controller. It is a transparent bridge controller
+    that makes the robot-shaped benchmark executable before the full CCA8 Action Center
+    -> RCOS command bridge is finished.
+
+    Important safety/completion rule:
+        The controller should not emit ``stop`` merely because the environment summary
+        says the mission is complete or because stale blackout status looks complete.
+        It emits ``stop`` only after the strict five-milestone ladder is complete.
     """
     state = _robotic_state_from_status_v1(status)
     summary = _robotic_summary_from_status_v1(status)
@@ -289,19 +340,21 @@ def _robotic_autonomy_command_v1(status: dict[str, Any], config: SimRobotGoatCon
     if posture == "fallen":
         return "recover_fall"
 
-    if bool(summary.get("mission_complete")):
-        return "stop"
-
     pos = _robotic_pos_from_state_v1(state)
     if pos is None:
         return "stop"
 
-    target_pos = tuple(getattr(config, "target_pos", (6, 4)))
-    dock_pos = tuple(getattr(config, "dock_pos", (0, 0)))
-    target_inspected = bool(summary.get("target_inspected")) or bool(state.get("target_inspected"))
-    at_dock = bool(summary.get("at_dock")) or pos == dock_pos
-    recharge_count = int(summary.get("recharge_count", state.get("recharge_count", 0)) or 0)
-    rest_count = int(summary.get("rest_count", state.get("rest_count", 0)) or 0)
+    target_pos = _robotic_config_pos_v1(config, "target_pos", (6, 4))
+    dock_pos = _robotic_config_pos_v1(config, "dock_pos", (1, 1))
+
+    milestones = _strict_robotic_milestone_vector_v1(state, summary)
+    target_inspected = bool(milestones.get("target_inspected"))
+    returned_to_dock = bool(milestones.get("returned_to_dock"))
+    recharged = bool(milestones.get("recharged"))
+    rested = bool(milestones.get("rested"))
+
+    if all(bool(milestones.get(name)) for name in RCOS_ROBOTIC_TASK_ORDER_V1):
+        return "stop"
 
     if not target_inspected:
         if pos == target_pos:
@@ -319,7 +372,10 @@ def _robotic_autonomy_command_v1(status: dict[str, Any], config: SimRobotGoatCon
             return _robotic_turn_command_v1(heading, desired)
         return "walk_forward"
 
-    if not at_dock:
+    if not returned_to_dock:
+        if pos == dock_pos:
+            return "recharge"
+
         path = _robotic_shortest_path_v1(pos, dock_pos, config)
         if len(path) < 2:
             return "return_to_dock"
@@ -332,10 +388,10 @@ def _robotic_autonomy_command_v1(status: dict[str, Any], config: SimRobotGoatCon
             return _robotic_turn_command_v1(heading, desired)
         return "walk_forward"
 
-    if recharge_count <= 0:
+    if not recharged:
         return "recharge"
 
-    if rest_count <= 0:
+    if not rested:
         return "rest"
 
     return "stop"
@@ -409,6 +465,47 @@ def _robotic_script_command_v1(controller_id: str, step_index: int) -> str | Non
         return None
     return seq[step_index]
 
+def _robotic_ablation_condition_id_v1(controller_id: str) -> str:
+    """Normalize a paper-facing RCOS ablation condition id.
+
+    The ablation asks a simple question:
+
+        Does a supervisory RCOS task layer outperform a robot that merely plays
+        a fixed command script under the same perturbation regime?
+
+    The open-loop condition is intentionally weak: it has motor commands but no
+    mission-state supervision, no milestone-aware retry logic, and no adaptive
+    recovery after the script becomes misaligned.
+    """
+    raw = str(controller_id or "").strip().lower()
+
+    if raw in ("no_rcos", "no-rcos", "open_loop", "open-loop", "script", "no_rcos_open_loop_script"):
+        return "no_rcos_open_loop_script"
+
+    if raw in ("rcos", "supervisor", "supervisory", "autonomy_v1", "rcos_supervisory_task_manager"):
+        return "rcos_supervisory_task_manager"
+
+    return "rcos_supervisory_task_manager"
+
+
+def _robotic_ablation_label_v1(controller_id: str) -> str:
+    """Return the human-facing label for one ablation condition id."""
+    condition_id = _robotic_ablation_condition_id_v1(controller_id)
+    return RCOS_ROBOTIC_ABLATION_LABELS_V1.get(condition_id, condition_id)
+
+
+def _robotic_open_loop_no_rcos_command_v1(step_index: int) -> str | None:
+    """Return the next fixed command for the no-RCOS open-loop ablation baseline.
+
+    This intentionally reuses the known-good success script. The key ablation is not
+    whether the command sequence is bad in the clean case; it is whether a fixed command
+    playback can survive perturbations without a supervisory layer that verifies state,
+    retries missed milestones, recovers after falls, and knows what remains unfinished.
+    """
+    return _robotic_script_command_v1("scripted_success", step_index)
+
+
+
 
 def rcos_robotic_run_episode_v1(
     *,
@@ -472,7 +569,7 @@ def rcos_robotic_run_episode_v1(
 
     reset_summary: dict[str, Any]
     if isinstance(reset_obs, dict):
-        reset_summary = reset_obs
+        reset_summary = dict(reset_obs)
     else:
         reset_summary = {"observation_type": type(reset_obs).__name__}
 
@@ -523,7 +620,7 @@ def rcos_robotic_run_episode_v1(
         if write_jsonl:
             _append_jsonl_v1(cycle_path, rec)
 
-        if bool(summary_after.get("success") or summary_after.get("mission_complete")):
+        if _robotic_strict_success_from_status_v1(status_after):
             break
         if str(summary_after.get("done_reason")) in ("battery_empty", "emergency_stop"):
             break
@@ -533,13 +630,7 @@ def rcos_robotic_run_episode_v1(
     final_state = _robotic_state_from_status_v1(final_status)
     final_summary = _robotic_summary_from_status_v1(final_status)
 
-    milestone_vector = {
-        "recovered": str(final_state.get("posture")) != "fallen",
-        "target_inspected": bool(final_summary.get("target_inspected")),
-        "returned_to_dock": bool(final_summary.get("at_dock")) and bool(final_summary.get("target_inspected")),
-        "recharged": int(final_summary.get("recharge_count", final_state.get("recharge_count", 0)) or 0) > 0,
-        "rested": int(final_summary.get("rest_count", final_state.get("rest_count", 0)) or 0) > 0,
-    }
+    milestone_vector = _strict_robotic_milestone_vector_v1(final_state, final_summary)
     milestone_score = sum(1 for name in RCOS_ROBOTIC_TASK_ORDER_V1 if bool(milestone_vector.get(name))) / float(len(RCOS_ROBOTIC_TASK_ORDER_V1))
 
     success = bool(final_summary.get("success") or final_summary.get("mission_complete") or final_state.get("mission_complete"))
@@ -558,6 +649,14 @@ def rcos_robotic_run_episode_v1(
     else:
         expected_outcome_met = success
         expected_success = True
+
+    final_pos_tuple = _robotic_pos_from_state_v1(final_state)
+    final_position = list(final_pos_tuple) if final_pos_tuple is not None else None
+
+    last_command = None
+    if isinstance(last_ack, dict):
+        raw_command = last_ack.get("command")
+        last_command = raw_command if isinstance(raw_command, str) and raw_command else None
 
     episode_record = {
         "schema": "rcos_robotic_episode_record_v1",
@@ -582,6 +681,8 @@ def rcos_robotic_run_episode_v1(
         "recharge_count": int(final_summary.get("recharge_count", final_state.get("recharge_count", 0)) or 0),
         "rest_count": int(final_summary.get("rest_count", final_state.get("rest_count", 0)) or 0),
         "final_posture": final_state.get("posture"),
+        "final_position": final_position,
+        "last_command": last_command,
         "done_reason": final_summary.get("done_reason"),
         "last_ack": last_ack,
         "latency_ms_total": round(float(latency_ms_total), 3),
@@ -843,6 +944,24 @@ def _mean_numeric_v1(values: list[Any]) -> float | None:
     return sum(nums) / float(len(nums))
 
 
+def _bump_count_v1(counts: dict[str, int], key: Any, *, default: str = "(none)") -> None:
+    """Increment a small string-keyed counter used in terminal experiment summaries."""
+    text = str(key).strip() if key is not None else default
+    if not text:
+        text = default
+    counts[text] = int(counts.get(text, 0) or 0) + 1
+
+
+def _position_key_v1(value: Any) -> str:
+    """Return a compact '(x,y)' key for a stored final position value."""
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            return f"({int(value[0])},{int(value[1])})"
+        except Exception:
+            return "(bad_position)"
+    return "(unknown_position)"
+
+
 def _perturb_params_v1(intensity: str) -> dict[str, Any]:
     """Return seed-dependent perturbation parameters for one named stress level.
 
@@ -884,15 +1003,15 @@ def _perturb_params_v1(intensity: str) -> dict[str, Any]:
 
     return {
         "intensity": "moderate",
-        "action_noop_prob": 0.12,
-        "fall_prob": 0.04,
-        "blackout_start_prob": 0.07,
-        "blackout_duration": 3,
-        "target_occlusion_prob": 0.25,
+        "action_noop_prob": 0.07,
+        "fall_prob": 0.02,
+        "blackout_start_prob": 0.05,
+        "blackout_duration": 2,
+        "target_occlusion_prob": 0.18,
         "extra_obstacles": 1,
-        "battery_cost_scale": 1.55,
-        "environmental_battery_drain": 0.005,
-        "environmental_fatigue_gain": 0.004,
+        "battery_cost_scale": 1.25,
+        "environmental_battery_drain": 0.0025,
+        "environmental_fatigue_gain": 0.003,
     }
 
 
@@ -945,6 +1064,10 @@ def _add_seeded_obstacles_v1(config: SimRobotGoatConfig, rng: random.Random, *, 
     candidates = _perturb_obstacle_candidates_v1(config)
     rng.shuffle(candidates)
 
+    start_pos: tuple[int, int] = (int(config.start_pos[0]), int(config.start_pos[1]))
+    target_pos: tuple[int, int] = (int(config.target_pos[0]), int(config.target_pos[1]))
+    dock_pos: tuple[int, int] = (int(config.dock_pos[0]), int(config.dock_pos[1]))
+
     for pos in candidates:
         if len(added) >= max(0, int(count)):
             break
@@ -953,8 +1076,8 @@ def _add_seeded_obstacles_v1(config: SimRobotGoatConfig, rng: random.Random, *, 
         config.obstacle_cells = set(before)
         config.obstacle_cells.add(pos)
 
-        start_to_target = _robotic_shortest_path_v1(tuple(config.start_pos), tuple(config.target_pos), config)
-        target_to_dock = _robotic_shortest_path_v1(tuple(config.target_pos), tuple(config.dock_pos), config)
+        start_to_target = _robotic_shortest_path_v1(start_pos, target_pos, config)
+        target_to_dock = _robotic_shortest_path_v1(target_pos, dock_pos, config)
 
         if len(start_to_target) >= 2 and len(target_to_dock) >= 2:
             added.append(pos)
@@ -1033,23 +1156,88 @@ def _apply_random_fall_v1(hal: SimRobotGoatHAL) -> bool:
         return False
 
 
+def _strict_robotic_milestone_vector_v1(final_state: dict[str, Any], final_summary: dict[str, Any]) -> dict[str, bool]:
+    """Return the robot long-horizon milestone vector using the environment summary when possible.
+
+    The SimRobotGoat environment already tracks mission milestones internally. That is the
+    safest source because it only marks the late milestones when the task sequence is actually
+    correct. The fallback below is intentionally stricter than simply checking raw counters:
+    rest only counts as task-completing rest when the robot has inspected the target, returned
+    to the dock, recharged, and is resting at the dock.
+    """
+    raw = final_summary.get("milestone_vector")
+    if isinstance(raw, dict):
+        out: dict[str, bool] = {}
+        ok = True
+        for name in RCOS_ROBOTIC_TASK_ORDER_V1:
+            if name not in raw:
+                ok = False
+                break
+            out[name] = bool(raw.get(name))
+        if ok:
+            return out
+
+    posture = str(final_state.get("posture", ""))
+    target_inspected = bool(final_summary.get("target_inspected") or final_state.get("target_inspected"))
+    at_dock = bool(final_summary.get("at_dock"))
+
+    recharge_count = int(final_summary.get("recharge_count", final_state.get("recharge_count", 0)) or 0)
+    rest_count = int(final_summary.get("rest_count", final_state.get("rest_count", 0)) or 0)
+
+    recovered = posture != "fallen"
+    returned_to_dock = bool(target_inspected and at_dock)
+    recharged = bool(returned_to_dock and recharge_count > 0)
+    rested = bool(recharged and rest_count > 0 and posture == "resting" and at_dock)
+
+    return {
+        "recovered": recovered,
+        "target_inspected": target_inspected,
+        "returned_to_dock": returned_to_dock,
+        "recharged": recharged,
+        "rested": rested,
+    }
+
+
+def _first_missing_milestone_v1(milestone_vector: dict[str, Any]) -> str:
+    """Return the first missing milestone in the ordered RCOS robotic task ladder."""
+    milestones = milestone_vector if isinstance(milestone_vector, dict) else {}
+
+    for name in RCOS_ROBOTIC_TASK_ORDER_V1:
+        if not bool(milestones.get(name)):
+            return name
+
+    return "complete"
+
+
 def _failure_reason_v1(episode_record: dict[str, Any]) -> str:
-    """Return a compact failure reason for perturbed episode summaries."""
+    """Return a compact normalized failure reason for perturbed episode summaries.
+
+    This deliberately normalizes environment cap labels such as 'max_steps' into
+    'cycle_limit' so the paper-facing failure table does not split the same failure
+    family across multiple names.
+    """
     if bool(episode_record.get("success")):
         return "success"
 
     done_reason = episode_record.get("done_reason")
-    if isinstance(done_reason, str) and done_reason and done_reason != "in_progress":
-        return done_reason
+    if isinstance(done_reason, str):
+        label = done_reason.strip().lower()
+        if label in ("max_steps", "max_cycles", "cycle_limit", "max_steps_exhausted", "max_cycles_exhausted"):
+            return "cycle_limit"
+        if label and label != "in_progress":
+            return label
+
+    if bool(episode_record.get("cycle_limit_reached")):
+        return "cycle_limit"
 
     milestones = episode_record.get("milestone_vector")
     milestones = milestones if isinstance(milestones, dict) else {}
 
-    for name in RCOS_ROBOTIC_TASK_ORDER_V1:
-        if not bool(milestones.get(name)):
-            return f"missing:{name}"
+    first_missing = _first_missing_milestone_v1(milestones)
+    if first_missing != "complete":
+        return f"missing:{first_missing}"
 
-    return "unknown_failure"
+    return "mission_not_completed"
 
 
 # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -1057,6 +1245,7 @@ def rcos_robotic_run_perturbed_episode_v1(
     *,
     seed: int,
     intensity: str = "moderate",
+    controller_id: str = "rcos_supervisory_task_manager",
     max_steps: int | None = None,
     output_dir: str = "testvalues",
     run_label: str = "",
@@ -1070,6 +1259,7 @@ def rcos_robotic_run_perturbed_episode_v1(
     battery pressure, and added obstacles.
     """
     params = _perturb_params_v1(intensity)
+    controller = _robotic_ablation_condition_id_v1(controller_id)
     rng = random.Random(int(seed))
 
     config = SimRobotGoatConfig()
@@ -1089,7 +1279,7 @@ def rcos_robotic_run_perturbed_episode_v1(
     reset_obs = hal.reset(seed=int(seed))
 
     run_id = _make_run_id_v1(
-        controller_id=f"perturbed_{params['intensity']}",
+        controller_id=f"perturbed_{params['intensity']}_{controller}",
         seed=int(seed),
         run_label=run_label or "bica_rcos_perturbed",
     )
@@ -1107,6 +1297,7 @@ def rcos_robotic_run_perturbed_episode_v1(
     last_visible_status: dict[str, Any] | None = None
     blackout_remaining = 0
     last_ack: dict[str, Any] | None = None
+    script_exhausted = False
     started = time.perf_counter()
 
     perturb_counts = {
@@ -1121,7 +1312,7 @@ def rcos_robotic_run_perturbed_episode_v1(
         current_status = hal.status()
         current_summary = _robotic_summary_from_status_v1(current_status)
 
-        if bool(current_summary.get("success") or current_summary.get("mission_complete")):
+        if _robotic_strict_success_from_status_v1(current_status):
             break
         if str(current_summary.get("done_reason")) in ("battery_empty", "emergency_stop"):
             break
@@ -1138,7 +1329,17 @@ def rcos_robotic_run_perturbed_episode_v1(
             control_status = dict(current_status)
             last_visible_status = dict(current_status)
 
-        command = _robotic_autonomy_command_v1(control_status, config)
+        if controller == "no_rcos_open_loop_script":
+            scripted_command = _robotic_open_loop_no_rcos_command_v1(cycle_index)
+            if scripted_command is None:
+                script_exhausted = True
+                break
+            command = scripted_command
+            control_source = "fixed_open_loop_script"
+        else:
+            command = _robotic_autonomy_command_v1(control_status, config)
+            control_source = "rcos_supervisory_status"
+
         perturb_events: list[str] = []
 
         if command == "inspect" and rng.random() < float(params.get("target_occlusion_prob", 0.0) or 0.0):
@@ -1181,6 +1382,7 @@ def rcos_robotic_run_perturbed_episode_v1(
             "cycle_index": int(cycle_index),
             "env_step_index": int(state_after.get("step_index", 0) or 0),
             "sensor_blackout": bool(blackout_active),
+            "control_source": control_source,
             "command": command,
             "ack": ack,
             "perturb_events": list(perturb_events),
@@ -1198,7 +1400,7 @@ def rcos_robotic_run_perturbed_episode_v1(
         if write_jsonl:
             _append_jsonl_v1(cycle_path, rec)
 
-        if bool(summary_after.get("success") or summary_after.get("mission_complete")):
+        if _robotic_strict_success_from_status_v1(status_after):
             break
         if str(summary_after.get("done_reason")) in ("battery_empty", "emergency_stop"):
             break
@@ -1208,34 +1410,51 @@ def rcos_robotic_run_perturbed_episode_v1(
     final_state = _robotic_state_from_status_v1(final_status)
     final_summary = _robotic_summary_from_status_v1(final_status)
 
-    milestone_vector = {
-        "recovered": str(final_state.get("posture")) != "fallen",
-        "target_inspected": bool(final_summary.get("target_inspected")),
-        "returned_to_dock": bool(final_summary.get("at_dock")) and bool(final_summary.get("target_inspected")),
-        "recharged": int(final_summary.get("recharge_count", final_state.get("recharge_count", 0)) or 0) > 0,
-        "rested": int(final_summary.get("rest_count", final_state.get("rest_count", 0)) or 0) > 0,
-    }
+    milestone_vector = _strict_robotic_milestone_vector_v1(final_state, final_summary)
     milestone_score = sum(1 for name in RCOS_ROBOTIC_TASK_ORDER_V1 if bool(milestone_vector.get(name))) / float(len(RCOS_ROBOTIC_TASK_ORDER_V1))
 
     success = bool(final_summary.get("success") or final_summary.get("mission_complete") or final_state.get("mission_complete"))
     success = success and all(bool(milestone_vector.get(name)) for name in RCOS_ROBOTIC_TASK_ORDER_V1)
+    cycle_limit_reached = len(cycle_records) >= int(config.max_steps)
+
+    done_reason_effective = final_summary.get("done_reason")
+    if script_exhausted and not success:
+        done_reason_effective = "script_exhausted"
+
     failure_reason = "success" if success else _failure_reason_v1(
         {
             "success": success,
-            "done_reason": final_summary.get("done_reason"),
+            "done_reason": done_reason_effective,
             "milestone_vector": milestone_vector,
+            "cycle_limit_reached": cycle_limit_reached,
         }
     )
+
+    final_pos_tuple = _robotic_pos_from_state_v1(final_state)
+    final_position = list(final_pos_tuple) if final_pos_tuple is not None else None
+
+    last_command = None
+    if isinstance(last_ack, dict):
+        raw_command = last_ack.get("command")
+        last_command = raw_command if isinstance(raw_command, str) and raw_command else None
+
+    first_missing_milestone = _first_missing_milestone_v1(milestone_vector)
+    completion_stage = "complete" if success else f"missing:{first_missing_milestone}"
 
     episode_record = {
         "schema": "rcos_robotic_perturbed_episode_record_v1",
         "record_type": "episode_summary",
         "run_id": run_id,
-        "controller_id": "autonomous_task_selection_perturbed",
+        "controller_id": controller,
+        "controller_label": _robotic_ablation_label_v1(controller),
         "seed": int(seed),
         "intensity": str(params["intensity"]),
         "success": bool(success),
+        "cycle_limit_reached": bool(cycle_limit_reached),
+        "script_exhausted": bool(script_exhausted),
         "failure_reason": failure_reason,
+        "first_missing_milestone": first_missing_milestone,
+        "completion_stage": completion_stage,
         "cycles": int(len(cycle_records)),
         "env_steps": int(final_state.get("step_index", 0) or 0),
         "max_cycles": int(config.max_steps),
@@ -1251,7 +1470,9 @@ def rcos_robotic_run_perturbed_episode_v1(
         "recharge_count": int(final_summary.get("recharge_count", final_state.get("recharge_count", 0)) or 0),
         "rest_count": int(final_summary.get("rest_count", final_state.get("rest_count", 0)) or 0),
         "final_posture": final_state.get("posture"),
-        "done_reason": final_summary.get("done_reason"),
+        "final_position": final_position,
+        "last_command": last_command,
+        "done_reason": done_reason_effective,
         "last_ack": last_ack,
         "perturbation_params": dict(params),
         "perturbation_counts": dict(perturb_counts),
@@ -1266,7 +1487,8 @@ def rcos_robotic_run_perturbed_episode_v1(
     return {
         "ok": True,
         "run_id": run_id,
-        "controller_id": "autonomous_task_selection_perturbed",
+        "controller_id": controller,
+        "controller_label": _robotic_ablation_label_v1(controller),
         "seed": int(seed),
         "intensity": str(params["intensity"]),
         "cycle_json_path": cycle_path if write_jsonl else None,
@@ -1332,6 +1554,12 @@ def rcos_robotic_run_perturbed_repeats_v1(
     rng = random.SystemRandom()
     rows: list[dict[str, Any]] = []
     failure_reasons: dict[str, int] = {}
+    milestone_hits: dict[str, int] = {name: 0 for name in RCOS_ROBOTIC_TASK_ORDER_V1}
+    completion_stage_counts: dict[str, int] = {}
+    final_posture_counts: dict[str, int] = {}
+    final_position_counts: dict[str, int] = {}
+    last_command_counts: dict[str, int] = {}
+
     perturb_totals: dict[str, int] = {
         "action_noop": 0,
         "sensor_blackout_cycles": 0,
@@ -1345,6 +1573,7 @@ def rcos_robotic_run_perturbed_repeats_v1(
         result = rcos_robotic_run_perturbed_episode_v1(
             seed=seed,
             intensity=str(params["intensity"]),
+            controller_id="rcos_supervisory_task_manager",
             max_steps=max_steps,
             output_dir=output_dir,
             run_label=run_label or "bica_rcos_perturbed",
@@ -1355,7 +1584,24 @@ def rcos_robotic_run_perturbed_repeats_v1(
         rec = rec if isinstance(rec, dict) else {}
 
         reason = str(rec.get("failure_reason") or "unknown")
-        failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
+        _bump_count_v1(failure_reasons, reason)
+
+        milestones = rec.get("milestone_vector")
+        milestones = milestones if isinstance(milestones, dict) else {}
+
+        for name in RCOS_ROBOTIC_TASK_ORDER_V1:
+            if bool(milestones.get(name)):
+                milestone_hits[name] = int(milestone_hits.get(name, 0) or 0) + 1
+
+        completion_stage = rec.get("completion_stage")
+        if not isinstance(completion_stage, str) or not completion_stage:
+            first_missing = _first_missing_milestone_v1(milestones)
+            completion_stage = "complete" if bool(rec.get("success")) else f"missing:{first_missing}"
+
+        _bump_count_v1(completion_stage_counts, completion_stage)
+        _bump_count_v1(final_posture_counts, rec.get("final_posture"))
+        _bump_count_v1(final_position_counts, _position_key_v1(rec.get("final_position")))
+        _bump_count_v1(last_command_counts, rec.get("last_command"))
 
         counts = rec.get("perturbation_counts")
         counts = counts if isinstance(counts, dict) else {}
@@ -1372,20 +1618,32 @@ def rcos_robotic_run_perturbed_repeats_v1(
                 "ok": bool(result.get("ok")) if isinstance(result, dict) else False,
                 "success": bool(rec.get("success")),
                 "failure_reason": reason,
+                "completion_stage": completion_stage,
+                "first_missing_milestone": rec.get("first_missing_milestone"),
+                "milestone_vector": dict(milestones),
                 "milestone_score": rec.get("milestone_score"),
                 "cycles": rec.get("cycles"),
                 "env_steps": rec.get("env_steps"),
                 "falls": rec.get("falls"),
                 "safety_violations": rec.get("safety_violations"),
                 "battery_final": rec.get("battery_final"),
+                "final_posture": rec.get("final_posture"),
+                "final_position": rec.get("final_position"),
+                "last_command": rec.get("last_command"),
                 "perturbation_counts": counts,
                 "run_id": result.get("run_id") if isinstance(result, dict) else None,
             }
         )
 
     ok_rows = [row for row in rows if bool(row.get("ok"))]
+    ok_count = len(ok_rows)
     success_count = sum(1 for row in ok_rows if bool(row.get("success")))
-    ci_low, ci_high = _wilson_ci95_v1(success_count, len(ok_rows))
+    ci_low, ci_high = _wilson_ci95_v1(success_count, ok_count)
+
+    milestone_rates = {
+        name: (float(milestone_hits.get(name, 0)) / float(ok_count)) if ok_count else None
+        for name in RCOS_ROBOTIC_TASK_ORDER_V1
+    }
 
     scores = [row.get("milestone_score") for row in ok_rows]
     cycles = [row.get("cycles") for row in ok_rows]
@@ -1399,7 +1657,7 @@ def rcos_robotic_run_perturbed_repeats_v1(
         "controller_id": "autonomous_task_selection_perturbed",
         "intensity": str(params["intensity"]),
         "repeats": int(repeat_count),
-        "ok_count": int(len(ok_rows)),
+        "ok_count": int(ok_count),
         "success_count": int(success_count),
         "success_rate": (float(success_count) / float(len(ok_rows))) if ok_rows else None,
         "success_ci95_low": ci_low,
@@ -1410,6 +1668,11 @@ def rcos_robotic_run_perturbed_repeats_v1(
         "mean_falls": _mean_numeric_v1(falls),
         "mean_safety_violations": _mean_numeric_v1(safety),
         "mean_battery_final": _mean_numeric_v1(battery),
+        "milestone_rates": milestone_rates,
+        "completion_stage_counts": completion_stage_counts,
+        "final_posture_counts": final_posture_counts,
+        "final_position_counts": final_position_counts,
+        "last_command_counts": last_command_counts,
         "perturbation_params": dict(params),
         "perturbation_totals": perturb_totals,
         "failure_reasons": failure_reasons,
@@ -1441,6 +1704,11 @@ def render_rcos_robotic_perturbed_repeats_lines_v1(result: dict[str, Any]) -> li
         f"[rcos-perturb] mean_falls      : {_metric_text_v1(result.get('mean_falls'))}",
         f"[rcos-perturb] mean_safety     : {_metric_text_v1(result.get('mean_safety_violations'))}",
         f"[rcos-perturb] mean_battery    : {_metric_text_v1(result.get('mean_battery_final'))}",
+        f"[rcos-perturb] milestone_rates : {_metric_text_v1(result.get('milestone_rates'))}",
+        f"[rcos-perturb] stage_counts    : {_metric_text_v1(result.get('completion_stage_counts'))}",
+        f"[rcos-perturb] final_postures  : {_metric_text_v1(result.get('final_posture_counts'))}",
+        f"[rcos-perturb] final_positions : {_metric_text_v1(result.get('final_position_counts'))}",
+        f"[rcos-perturb] last_commands   : {_metric_text_v1(result.get('last_command_counts'))}",
         f"[rcos-perturb] perturb_totals  : {_metric_text_v1(result.get('perturbation_totals'))}",
         f"[rcos-perturb] failure_reasons : {_metric_text_v1(result.get('failure_reasons'))}",
     ]
@@ -1455,10 +1723,369 @@ def render_rcos_robotic_perturbed_repeats_lines_v1(result: dict[str, Any]) -> li
             f"[rcos-perturb]   repeat={_metric_text_v1(row.get('repeat_index'))} "
             f"seed={_metric_text_v1(row.get('seed'))} success={_metric_text_v1(row.get('success'))} "
             f"score={_metric_text_v1(row.get('milestone_score'))} cycles={_metric_text_v1(row.get('cycles'))} "
+            f"stage={_metric_text_v1(row.get('completion_stage'))} cmd={_metric_text_v1(row.get('last_command'))} "
             f"falls={_metric_text_v1(row.get('falls'))} safety={_metric_text_v1(row.get('safety_violations'))} "
             f"reason={_metric_text_v1(row.get('failure_reason'))}"
         )
     if len(rows) > 10:
         lines.append(f"[rcos-perturb]   ... plus {len(rows) - 10} more repeat row(s)")
+
+    return lines
+
+
+# -----------------------------------------------------------------------------
+# RCOS ablation benchmark: no-RCOS open loop vs RCOS supervisory task manager
+# -----------------------------------------------------------------------------
+
+
+def render_rcos_robotic_ablation_protocol_v1() -> str:
+    """Return a human-readable protocol summary for the RCOS ablation benchmark."""
+    lines = []
+    lines.append("RCOS robotic ablation benchmark v1")
+    lines.append("")
+    lines.append("Scientific question:")
+    lines.append("  Does a supervisory RCOS task layer improve robotic long-horizon task completion")
+    lines.append("  compared with a robot that only plays a fixed command script?")
+    lines.append("")
+    lines.append("Shared task:")
+    lines.append("  recover posture -> inspect target -> return to dock -> recharge -> rest")
+    lines.append("")
+    lines.append("Compared conditions:")
+    lines.append("  1) RCOS supervisory task manager")
+    lines.append("     Uses status feedback, milestone tracking, fall recovery, return-to-dock logic,")
+    lines.append("     recharge/rest completion criteria, and strict stop-after-completion.")
+    lines.append("")
+    lines.append("  2) No-RCOS open-loop script")
+    lines.append("     Plays the known-good command sequence forward. It does not adapt if an action")
+    lines.append("     no-ops, the target is occluded, the robot falls after the initial recovery step,")
+    lines.append("     or the script becomes spatially misaligned.")
+    lines.append("")
+    lines.append("Perturbations:")
+    lines.append("  The same mild/moderate/severe perturbation machinery is used for both conditions.")
+    lines.append("  Each repeat uses the same seed for both conditions, so the comparison is paired by seed.")
+    lines.append("")
+    lines.append("Interpretation:")
+    lines.append("  If the RCOS condition succeeds more often, reaches more milestones, or fails more")
+    lines.append("  gracefully, the result supports the claim that an RCOS adds mission supervision,")
+    lines.append("  not merely low-level motor execution.")
+    return "\n".join(lines)
+
+
+def _ablation_row_from_result_v1(result: dict[str, Any], *, repeat_index: int, condition_id: str, seed: int) -> dict[str, Any]:
+    """Extract one compact ablation row from a perturbed episode result."""
+    rec = result.get("episode_record") if isinstance(result, dict) else None
+    rec = rec if isinstance(rec, dict) else {}
+
+    milestones = rec.get("milestone_vector")
+    milestones = milestones if isinstance(milestones, dict) else {}
+
+    counts = rec.get("perturbation_counts")
+    counts = counts if isinstance(counts, dict) else {}
+
+    return {
+        "repeat_index": int(repeat_index),
+        "condition_id": condition_id,
+        "condition_label": _robotic_ablation_label_v1(condition_id),
+        "seed": int(seed),
+        "ok": bool(result.get("ok")) if isinstance(result, dict) else False,
+        "success": bool(rec.get("success")),
+        "failure_reason": str(rec.get("failure_reason") or "unknown"),
+        "completion_stage": rec.get("completion_stage"),
+        "first_missing_milestone": rec.get("first_missing_milestone"),
+        "milestone_vector": dict(milestones),
+        "milestone_score": rec.get("milestone_score"),
+        "cycles": rec.get("cycles"),
+        "env_steps": rec.get("env_steps"),
+        "falls": rec.get("falls"),
+        "safety_violations": rec.get("safety_violations"),
+        "battery_final": rec.get("battery_final"),
+        "final_posture": rec.get("final_posture"),
+        "final_position": rec.get("final_position"),
+        "last_command": rec.get("last_command"),
+        "script_exhausted": bool(rec.get("script_exhausted")),
+        "perturbation_counts": dict(counts),
+        "run_id": result.get("run_id") if isinstance(result, dict) else None,
+    }
+
+
+def _ablation_condition_summary_v1(rows: list[dict[str, Any]], *, condition_id: str) -> dict[str, Any]:
+    """Aggregate ablation rows for one condition."""
+    ok_rows = [row for row in rows if bool(row.get("ok"))]
+    ok_count = len(ok_rows)
+    success_count = sum(1 for row in ok_rows if bool(row.get("success")))
+    ci_low, ci_high = _wilson_ci95_v1(success_count, ok_count)
+
+    milestone_hits: dict[str, int] = {name: 0 for name in RCOS_ROBOTIC_TASK_ORDER_V1}
+    failure_reasons: dict[str, int] = {}
+    completion_stage_counts: dict[str, int] = {}
+    final_position_counts: dict[str, int] = {}
+    last_command_counts: dict[str, int] = {}
+
+    perturb_totals: dict[str, int] = {
+        "action_noop": 0,
+        "sensor_blackout_cycles": 0,
+        "target_occlusion": 0,
+        "random_fall": 0,
+        "added_obstacles": 0,
+    }
+
+    for row in ok_rows:
+        milestones = row.get("milestone_vector")
+        milestones = milestones if isinstance(milestones, dict) else {}
+
+        for name in RCOS_ROBOTIC_TASK_ORDER_V1:
+            if bool(milestones.get(name)):
+                milestone_hits[name] = int(milestone_hits.get(name, 0) or 0) + 1
+
+        _bump_count_v1(failure_reasons, row.get("failure_reason"))
+        _bump_count_v1(completion_stage_counts, row.get("completion_stage"))
+        _bump_count_v1(final_position_counts, _position_key_v1(row.get("final_position")))
+        _bump_count_v1(last_command_counts, row.get("last_command"))
+
+        counts = row.get("perturbation_counts")
+        counts = counts if isinstance(counts, dict) else {}
+        for key in perturb_totals:
+            try:
+                perturb_totals[key] += int(counts.get(key, 0) or 0)
+            except Exception:
+                pass
+
+    milestone_rates = {
+        name: (float(milestone_hits.get(name, 0)) / float(ok_count)) if ok_count else None
+        for name in RCOS_ROBOTIC_TASK_ORDER_V1
+    }
+
+    return {
+        "condition_id": condition_id,
+        "condition_label": _robotic_ablation_label_v1(condition_id),
+        "ok_count": int(ok_count),
+        "success_count": int(success_count),
+        "success_rate": (float(success_count) / float(ok_count)) if ok_count else None,
+        "success_ci95_low": ci_low,
+        "success_ci95_high": ci_high,
+        "mean_milestone_score": _mean_numeric_v1([row.get("milestone_score") for row in ok_rows]),
+        "mean_cycles": _mean_numeric_v1([row.get("cycles") for row in ok_rows]),
+        "mean_env_steps": _mean_numeric_v1([row.get("env_steps") for row in ok_rows]),
+        "mean_falls": _mean_numeric_v1([row.get("falls") for row in ok_rows]),
+        "mean_safety_violations": _mean_numeric_v1([row.get("safety_violations") for row in ok_rows]),
+        "mean_battery_final": _mean_numeric_v1([row.get("battery_final") for row in ok_rows]),
+        "milestone_rates": milestone_rates,
+        "completion_stage_counts": completion_stage_counts,
+        "final_position_counts": final_position_counts,
+        "last_command_counts": last_command_counts,
+        "perturbation_totals": perturb_totals,
+        "failure_reasons": failure_reasons,
+    }
+
+
+def _ablation_paired_advantage_v1(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return paired seed-level advantage counts for RCOS vs no-RCOS."""
+    by_repeat: dict[int, dict[str, dict[str, Any]]] = {}
+
+    for row in rows:
+        raw_repeat_index = row.get("repeat_index")
+        if not isinstance(raw_repeat_index, int) or isinstance(raw_repeat_index, bool):
+            continue
+        repeat_index = int(raw_repeat_index)
+
+        condition_id = row.get("condition_id")
+        if not isinstance(condition_id, str) or not condition_id:
+            continue
+
+        by_repeat.setdefault(repeat_index, {})[condition_id] = row
+
+    paired_count = 0
+    rcos_win_count = 0
+    no_rcos_win_count = 0
+    tie_success_count = 0
+    tie_failure_count = 0
+    success_deltas: list[float] = []
+    score_deltas: list[float] = []
+
+    for pair in by_repeat.values():
+        rcos = pair.get("rcos_supervisory_task_manager")
+        no_rcos = pair.get("no_rcos_open_loop_script")
+        if not (isinstance(rcos, dict) and isinstance(no_rcos, dict)):
+            continue
+        if not (bool(rcos.get("ok")) and bool(no_rcos.get("ok"))):
+            continue
+
+        paired_count += 1
+
+        rcos_success = bool(rcos.get("success"))
+        no_success = bool(no_rcos.get("success"))
+
+        rcos_success_val = 1.0 if rcos_success else 0.0
+        no_success_val = 1.0 if no_success else 0.0
+        success_deltas.append(rcos_success_val - no_success_val)
+
+        if rcos_success and not no_success:
+            rcos_win_count += 1
+        elif no_success and not rcos_success:
+            no_rcos_win_count += 1
+        elif rcos_success and no_success:
+            tie_success_count += 1
+        else:
+            tie_failure_count += 1
+
+        rcos_score = rcos.get("milestone_score")
+        no_score = no_rcos.get("milestone_score")
+        if isinstance(rcos_score, (int, float)) and isinstance(no_score, (int, float)):
+            score_deltas.append(float(rcos_score) - float(no_score))
+
+    return {
+        "paired_count": int(paired_count),
+        "rcos_win_count": int(rcos_win_count),
+        "no_rcos_win_count": int(no_rcos_win_count),
+        "tie_success_count": int(tie_success_count),
+        "tie_failure_count": int(tie_failure_count),
+        "mean_success_delta": _mean_numeric_v1(success_deltas),
+        "mean_milestone_score_delta": _mean_numeric_v1(score_deltas),
+    }
+
+
+def rcos_robotic_run_ablation_repeats_v1(
+    *,
+    repeats: int = 50,
+    intensity: str = "moderate",
+    max_steps: int | None = None,
+    output_dir: str = "testvalues",
+    run_label: str = "",
+    write_jsonl: bool = True,
+) -> dict[str, Any]:
+    """Run paired no-RCOS vs RCOS perturbed ablation repeats.
+
+    Each repeat draws one seed and runs both ablation conditions with that same seed:
+      - rcos_supervisory_task_manager
+      - no_rcos_open_loop_script
+
+    This gives the paper a direct comparison between command playback and RCOS-style
+    mission supervision under the same perturbation intensity.
+    """
+    try:
+        repeat_count = int(repeats)
+    except Exception:
+        repeat_count = 50
+    repeat_count = max(1, min(500, repeat_count))
+
+    params = _perturb_params_v1(intensity)
+    rng = random.SystemRandom()
+    rows: list[dict[str, Any]] = []
+
+    for repeat_index in range(1, repeat_count + 1):
+        seed = int(rng.randrange(1, 999_999 + 1))
+
+        for condition_id in RCOS_ROBOTIC_ABLATION_CONDITIONS_V1:
+            result = rcos_robotic_run_perturbed_episode_v1(
+                seed=seed,
+                intensity=str(params["intensity"]),
+                controller_id=condition_id,
+                max_steps=max_steps,
+                output_dir=output_dir,
+                run_label=run_label or "bica_rcos_ablation",
+                write_jsonl=write_jsonl,
+            )
+            rows.append(
+                _ablation_row_from_result_v1(
+                    result,
+                    repeat_index=repeat_index,
+                    condition_id=condition_id,
+                    seed=seed,
+                )
+            )
+
+    condition_summaries = [
+        _ablation_condition_summary_v1(
+            [row for row in rows if row.get("condition_id") == condition_id],
+            condition_id=condition_id,
+        )
+        for condition_id in RCOS_ROBOTIC_ABLATION_CONDITIONS_V1
+    ]
+
+    return {
+        "ok": True,
+        "schema": "rcos_robotic_ablation_repeats_v1",
+        "intensity": str(params["intensity"]),
+        "repeats": int(repeat_count),
+        "conditions": list(RCOS_ROBOTIC_ABLATION_CONDITIONS_V1),
+        "condition_summaries": condition_summaries,
+        "paired_advantage": _ablation_paired_advantage_v1(rows),
+        "perturbation_params": dict(params),
+        "rows": rows,
+    }
+
+
+def render_rcos_robotic_ablation_repeats_lines_v1(result: dict[str, Any]) -> list[str]:
+    """Return terminal lines for paired no-RCOS vs RCOS ablation repeats."""
+    if not isinstance(result, dict) or not bool(result.get("ok")):
+        return [f"[rcos-ablate] repeats failed: {_metric_text_v1(result.get('why') if isinstance(result, dict) else None)}"]
+
+    lines = [
+        f"[rcos-ablate] intensity       : {_metric_text_v1(result.get('intensity'))}",
+        f"[rcos-ablate] repeats         : {_metric_text_v1(result.get('repeats'))}",
+        "[rcos-ablate] comparison      : RCOS supervisory task manager vs no-RCOS open-loop script",
+    ]
+
+    summaries = result.get("condition_summaries")
+    summaries = summaries if isinstance(summaries, list) else []
+
+    for summary in summaries:
+        if not isinstance(summary, dict):
+            continue
+
+        ci_low = summary.get("success_ci95_low")
+        ci_high = summary.get("success_ci95_high")
+        if isinstance(ci_low, (int, float)) and isinstance(ci_high, (int, float)):
+            ci_txt = f"[{float(ci_low):.3f}, {float(ci_high):.3f}]"
+        else:
+            ci_txt = "(none)"
+
+        lines.extend(
+            [
+                f"[rcos-ablate] condition       : {_metric_text_v1(summary.get('condition_label'))}",
+                f"[rcos-ablate]   ok_count      : {_metric_text_v1(summary.get('ok_count'))}",
+                f"[rcos-ablate]   success_count : {_metric_text_v1(summary.get('success_count'))}",
+                f"[rcos-ablate]   success_rate  : {_metric_text_v1(summary.get('success_rate'))}  Wilson95={ci_txt}",
+                f"[rcos-ablate]   mean_score    : {_metric_text_v1(summary.get('mean_milestone_score'))}",
+                f"[rcos-ablate]   mean_cycles   : {_metric_text_v1(summary.get('mean_cycles'))}",
+                f"[rcos-ablate]   mean_falls    : {_metric_text_v1(summary.get('mean_falls'))}",
+                f"[rcos-ablate]   mean_safety   : {_metric_text_v1(summary.get('mean_safety_violations'))}",
+                f"[rcos-ablate]   mean_battery  : {_metric_text_v1(summary.get('mean_battery_final'))}",
+                f"[rcos-ablate]   milestones    : {_metric_text_v1(summary.get('milestone_rates'))}",
+                f"[rcos-ablate]   stages        : {_metric_text_v1(summary.get('completion_stage_counts'))}",
+                f"[rcos-ablate]   failures      : {_metric_text_v1(summary.get('failure_reasons'))}",
+            ]
+        )
+
+    paired = result.get("paired_advantage")
+    paired = paired if isinstance(paired, dict) else {}
+    lines.extend(
+        [
+            "[rcos-ablate] paired advantage:",
+            f"[rcos-ablate]   paired_count       : {_metric_text_v1(paired.get('paired_count'))}",
+            f"[rcos-ablate]   rcos_wins          : {_metric_text_v1(paired.get('rcos_win_count'))}",
+            f"[rcos-ablate]   no_rcos_wins       : {_metric_text_v1(paired.get('no_rcos_win_count'))}",
+            f"[rcos-ablate]   ties_success       : {_metric_text_v1(paired.get('tie_success_count'))}",
+            f"[rcos-ablate]   ties_failure       : {_metric_text_v1(paired.get('tie_failure_count'))}",
+            f"[rcos-ablate]   mean_success_delta : {_metric_text_v1(paired.get('mean_success_delta'))}",
+            f"[rcos-ablate]   mean_score_delta   : {_metric_text_v1(paired.get('mean_milestone_score_delta'))}",
+        ]
+    )
+
+    rows = result.get("rows")
+    rows = rows if isinstance(rows, list) else []
+    lines.append("[rcos-ablate] first paired rows:")
+    for row in rows[:12]:
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"[rcos-ablate]   repeat={_metric_text_v1(row.get('repeat_index'))} "
+            f"cond={_metric_text_v1(row.get('condition_id'))} seed={_metric_text_v1(row.get('seed'))} "
+            f"success={_metric_text_v1(row.get('success'))} score={_metric_text_v1(row.get('milestone_score'))} "
+            f"stage={_metric_text_v1(row.get('completion_stage'))} cmd={_metric_text_v1(row.get('last_command'))} "
+            f"reason={_metric_text_v1(row.get('failure_reason'))}"
+        )
+    if len(rows) > 12:
+        lines.append(f"[rcos-ablate]   ... plus {len(rows) - 12} more row(s)")
 
     return lines
