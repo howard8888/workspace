@@ -53,6 +53,10 @@ venv/
 Thumbs.db
 *.swp
 
+# Local generated experiment outputs
+testvalues/
+
+
 # Patches/temp
 *.patch
 *.rej

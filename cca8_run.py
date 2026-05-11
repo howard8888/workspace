@@ -155,7 +155,18 @@ from cca8_teaching import (
     menu37_teaching_cycle_header_v1,
     menu37_teaching_intro_v1,
 )
-
+from cca8_rcos_experiments import (
+    render_rcos_robotic_episode_lines_v1,
+    render_rcos_robotic_protocol_v1,
+    render_rcos_robotic_repeats_lines_v1,
+    render_rcos_robotic_suite_lines_v1,
+    render_rcos_robotic_perturbation_protocol_v1,
+    render_rcos_robotic_perturbed_repeats_lines_v1,
+    rcos_robotic_run_episode_v1,
+    rcos_robotic_run_repeats_v1,
+    rcos_robotic_run_perturbed_repeats_v1,
+    rcos_robotic_run_suite_v1,
+)
 
 # --- Public API index, version, global variables and constants ----------------------------------------
 #nb version number of different modules are unique to that module
@@ -4508,6 +4519,12 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
         print(" 19) Run x20 random-seed A/B/C repeats + averages")
         print(" 20) Run A/E batch over current seeds (isolated sandbox)")
         print(" 21) Run x20 random-seed A/E repeats + averages")
+        print(" 22) Show RCOS robotic long-horizon protocol")
+        print(" 23) Run one RCOS robotic long-horizon episode")
+        print(" 24) Run RCOS robotic success/control suite")
+        print(" 25) Run x20 RCOS robotic autonomy repeats")
+        print(" 26) Show RCOS robotic perturbation protocol")
+        print(" 27) Run x50 RCOS robotic perturbation repeats")
         print("  0) Return to Main Menu")
 
         sub = input("Experiment menu select: ").strip().lower()
@@ -4896,7 +4913,109 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
                 print(f"[experiments] repeated analysis bundle failed: {bundle.get('why')}")
             continue
 
-        print("[experiments] Unknown selection. Use 0..21.")
+        if sub == "22":
+            print()
+            print(render_rcos_robotic_protocol_v1())
+            continue
+
+        if sub == "23":
+            raw_controller = input(
+                "Controller [autonomy_v1 | scripted_success | hazard_negative_control | incomplete_no_return_control; "
+                "blank=autonomy_v1]: "
+            ).strip()
+            raw_seed = input("Seed for RCOS robotic run (blank = 11): ").strip()
+
+            controller_id = raw_controller or "autonomy_v1"
+            try:
+                run_seed = int(raw_seed) if raw_seed else 11
+            except Exception:
+                print("[rcos-exp] invalid integer seed.")
+                continue
+
+            print()
+            print(f"[rcos-exp] running one RCOS robotic episode: controller={controller_id} seed={run_seed}")
+            result = rcos_robotic_run_episode_v1(
+                controller_id=controller_id,
+                seed=run_seed,
+                max_steps=int(cfg.max_cycles),
+                output_dir=str(cfg.output_dir),
+                run_label=str(cfg.run_label or "bica_rcos"),
+                write_jsonl=bool(cfg.jsonl_write_cycle_records or cfg.jsonl_write_episode_records),
+            )
+
+            for line in render_rcos_robotic_episode_lines_v1(result):
+                print(line)
+            continue
+
+        if sub == "24":
+            raw_seed = input("Seed for RCOS robotic suite (blank = 11): ").strip()
+            try:
+                run_seed = int(raw_seed) if raw_seed else 11
+            except Exception:
+                print("[rcos-exp] invalid integer seed.")
+                continue
+
+            print()
+            print(f"[rcos-exp] running RCOS robotic success/control suite: seed={run_seed}")
+            suite = rcos_robotic_run_suite_v1(
+                seed=run_seed,
+                max_steps=int(cfg.max_cycles),
+                output_dir=str(cfg.output_dir),
+                run_label=str(cfg.run_label or "bica_rcos"),
+                write_jsonl=bool(cfg.jsonl_write_cycle_records or cfg.jsonl_write_episode_records),
+            )
+
+            for line in render_rcos_robotic_suite_lines_v1(suite):
+                print(line)
+            continue
+
+        if sub == "25":
+            print()
+            print("[rcos-exp] running x20 RCOS robotic autonomy repeats...")
+            repeated = rcos_robotic_run_repeats_v1(
+                repeats=20,
+                max_steps=int(cfg.max_cycles),
+                output_dir=str(cfg.output_dir),
+                run_label=str(cfg.run_label or "bica_rcos"),
+                write_jsonl=bool(cfg.jsonl_write_cycle_records or cfg.jsonl_write_episode_records),
+            )
+
+            for line in render_rcos_robotic_repeats_lines_v1(repeated):
+                print(line)
+            continue
+
+        if sub == "26":
+            print()
+            print(render_rcos_robotic_perturbation_protocol_v1())
+            continue
+
+        if sub == "27":
+            raw_repeats = input("Perturbed repeat count (blank = 50): ").strip()
+            raw_intensity = input("Perturbation intensity [mild | moderate | severe; blank = moderate]: ").strip()
+
+            try:
+                repeat_count = int(raw_repeats) if raw_repeats else 50
+            except Exception:
+                print("[rcos-perturb] invalid integer repeat count.")
+                continue
+
+            intensity = raw_intensity or "moderate"
+            print()
+            print(f"[rcos-perturb] running x{repeat_count} perturbed RCOS robotic repeats: intensity={intensity}")
+            repeated = rcos_robotic_run_perturbed_repeats_v1(
+                repeats=repeat_count,
+                intensity=intensity,
+                max_steps=int(cfg.max_cycles),
+                output_dir=str(cfg.output_dir),
+                run_label=str(cfg.run_label or "bica_rcos_perturbed"),
+                write_jsonl=bool(cfg.jsonl_write_cycle_records or cfg.jsonl_write_episode_records),
+            )
+
+            for line in render_rcos_robotic_perturbed_repeats_lines_v1(repeated):
+                print(line)
+            continue
+
+        print("[experiments] Unknown selection. Use 0..27.")
 
 
 # Module layout / roadmap
