@@ -33,7 +33,7 @@ __all__ = ["ColumnMemory", "mem", "__version__"]
 try:
     from cca8_features import FeaturePayload, FactMeta, TensorPayload  #pylint:disable=unused-import
 except ImportError as e:
-    raise RuntimeError("Place cca8_features.py alongside column01_patched.py") from e
+    raise RuntimeError("Place cca8_features.py alongside cca8_column.py") from e
 
 @dataclass
 class ColumnMemory:

@@ -2456,7 +2456,7 @@ def _experiment_extract_generic_milestones_v1(raw_record: dict[str, Any]) -> lis
 def _experiment_summarize_newborn_b2_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize the paper-frozen B2 newborn benchmark from raw cycle records.
 
-    B2 is the behavioral long-horizon benchmark from the AGI-2026 paper. The paper freezes a
+    B2 is the behavioral long-horizon benchmark. The experiment freezes a
     six-step ordered milestone ladder:
         1) stood_up
         2) reached_mom
