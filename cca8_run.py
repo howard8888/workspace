@@ -155,7 +155,10 @@ from cca8_teaching import (
     menu37_teaching_cycle_header_v1,
     menu37_teaching_intro_v1,
 )
-
+from cca8_state_integrity import (
+    render_state_integrity_event_detail_lines_v1,
+    summarize_newborn_state_integrity_v1,
+)
 from cca8_rcos_experiments import (
     render_rcos_robotic_episode_lines_v1,
     render_rcos_robotic_protocol_v1,
@@ -1080,6 +1083,10 @@ def render_experiment_jsonl_schema_summary_v1() -> str:
         "repeated_action_loop_count", "llm_call_count", "llm_latency_ms_total", "latency_ms_total", "recovery_latency",
         "oracle_action_accuracy", "oracle_retrieval_precision", "internal_retrieval_event_ratio",
         "stabilization_latency", "retrieval_action_dissociation_count",
+        "state_integrity_summary", "lhsi_state_integrity_score", "lhsi_wrong_stage_action_count",
+        "lhsi_repeated_action_loop_count", "lhsi_current_state_overwrite_proxy_count",
+        "lhsi_stale_memory_intrusion_proxy_count", "lhsi_retrieval_action_dissociation_proxy_count",
+        "lhsi_provenance_complete_cycle_rate",
     ]
 
     lines = []
@@ -3132,6 +3139,27 @@ def _experiment_summarize_generic_episode_v1(
         record["newborn_retrieval_replace_count"] = int(retrieval_dbg.get("retrieval_replace_count", 0) or 0)
         record["newborn_retrieval_steps"] = list(retrieval_dbg.get("retrieval_steps", []) or [])
 
+        lhsi = summarize_newborn_state_integrity_v1(raw_records)
+        record["state_integrity_summary"] = dict(lhsi)
+
+        lhsi_numeric_fields = {
+            "state_integrity_score": "lhsi_state_integrity_score",
+            "wrong_stage_action_count": "lhsi_wrong_stage_action_count",
+            "repeated_action_loop_count_lhsi": "lhsi_repeated_action_loop_count",
+            "current_state_overwrite_proxy_count": "lhsi_current_state_overwrite_proxy_count",
+            "stale_memory_intrusion_proxy_count": "lhsi_stale_memory_intrusion_proxy_count",
+            "retrieval_action_dissociation_proxy_count": "lhsi_retrieval_action_dissociation_proxy_count",
+            "provenance_complete_cycle_rate": "lhsi_provenance_complete_cycle_rate",
+            "cumulative_prediction_error_lhsi": "lhsi_cumulative_prediction_error",
+        }
+
+        for source_key, record_key in lhsi_numeric_fields.items():
+            value = lhsi.get(source_key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                record[record_key] = float(value)
+            else:
+                record[record_key] = None
+
     record["success"] = success
     record["cycles_to_end"] = int(len(raw_records))
     record["milestone_vector"] = milestone_vector
@@ -3432,8 +3460,25 @@ def render_experiment_episode_summary_lines_v1(result: dict[str, Any]) -> list[s
                 f"nonnoop={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_non_noop_count'))} "
                 f"merge_noop={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_merge_noop_count'))} "
                 f"replace={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_replace_count'))}",
+                f"[experiments] lhsi_state        : score={_experiment_metric_text_v1(episode_record.get('lhsi_state_integrity_score'))} "
+                f"wrong={_experiment_metric_text_v1(episode_record.get('lhsi_wrong_stage_action_count'))} "
+                f"loops={_experiment_metric_text_v1(episode_record.get('lhsi_repeated_action_loop_count'))}",
+                f"[experiments] lhsi_retrieval    : overwrite={_experiment_metric_text_v1(episode_record.get('lhsi_current_state_overwrite_proxy_count'))} "
+                f"stale={_experiment_metric_text_v1(episode_record.get('lhsi_stale_memory_intrusion_proxy_count'))} "
+                f"dissoc={_experiment_metric_text_v1(episode_record.get('lhsi_retrieval_action_dissociation_proxy_count'))} "
+                f"prov={_experiment_metric_text_v1(episode_record.get('lhsi_provenance_complete_cycle_rate'))}",
             ]
         )
+
+        lhsi_summary = episode_record.get("state_integrity_summary")
+        if isinstance(lhsi_summary, dict):
+            lines.extend(
+                render_state_integrity_event_detail_lines_v1(
+                    lhsi_summary,
+                    max_events=3,
+                    prefix="[experiments]",
+                )
+            )
 
     lines.extend(
         [
@@ -3761,6 +3806,12 @@ def _experiment_repeat_metric_label_v1(benchmark_id: str, metric_key: str) -> st
         "mean_time_to_rested": "rest_t",
         "mean_newborn_retrieval_event_count": "retr_evt",
         "mean_newborn_retrieval_non_noop_count": "retr_eff",
+        "mean_lhsi_state_integrity_score": "lhsi",
+        "mean_lhsi_wrong_stage_action_count": "wrong_stage",
+        "mean_lhsi_current_state_overwrite_proxy_count": "overwrite",
+        "mean_lhsi_stale_memory_intrusion_proxy_count": "stale",
+        "mean_lhsi_retrieval_action_dissociation_proxy_count": "dissoc",
+        "mean_lhsi_provenance_complete_cycle_rate": "provenance",
         "mean_cumulative_prediction_error": "pred_e",
         "mean_llm_call_count": "llm_calls",
     }
@@ -3939,6 +3990,13 @@ def experiment_run_condition_batch_v1(
         repeated_loops: list[float] = []
         retrieval_event_counts: list[float] = []
         retrieval_non_noop_counts: list[float] = []
+        lhsi_scores: list[float] = []
+        lhsi_wrong_stage: list[float] = []
+        lhsi_repeated_loops: list[float] = []
+        lhsi_overwrite_proxy: list[float] = []
+        lhsi_stale_proxy: list[float] = []
+        lhsi_dissoc_proxy: list[float] = []
+        lhsi_provenance_rates: list[float] = []
         context_switch_accs: list[float] = []
         oracle_retr_precs: list[float] = []
         internal_retr_rts: list[float] = []
@@ -4010,6 +4068,34 @@ def experiment_run_condition_batch_v1(
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     retrieval_non_noop_counts.append(float(value))
 
+                value = episode_record.get("lhsi_state_integrity_score")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    lhsi_scores.append(float(value))
+
+                value = episode_record.get("lhsi_wrong_stage_action_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    lhsi_wrong_stage.append(float(value))
+
+                value = episode_record.get("lhsi_repeated_action_loop_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    lhsi_repeated_loops.append(float(value))
+
+                value = episode_record.get("lhsi_current_state_overwrite_proxy_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    lhsi_overwrite_proxy.append(float(value))
+
+                value = episode_record.get("lhsi_stale_memory_intrusion_proxy_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    lhsi_stale_proxy.append(float(value))
+
+                value = episode_record.get("lhsi_retrieval_action_dissociation_proxy_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    lhsi_dissoc_proxy.append(float(value))
+
+                value = episode_record.get("lhsi_provenance_complete_cycle_rate")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    lhsi_provenance_rates.append(float(value))
+
             value = episode_record.get("cumulative_prediction_error")
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 pred_errs.append(float(value))
@@ -4035,6 +4121,7 @@ def experiment_run_condition_batch_v1(
                     "mean_cumulative_prediction_error": _experiment_mean_v1(pred_errs),
                 }
             )
+
         else:
             summary.update(
                 {
@@ -4044,6 +4131,13 @@ def experiment_run_condition_batch_v1(
                     "mean_repeated_loops": _experiment_mean_v1(repeated_loops),
                     "mean_newborn_retrieval_event_count": _experiment_mean_v1(retrieval_event_counts),
                     "mean_newborn_retrieval_non_noop_count": _experiment_mean_v1(retrieval_non_noop_counts),
+                    "mean_lhsi_state_integrity_score": _experiment_mean_v1(lhsi_scores),
+                    "mean_lhsi_wrong_stage_action_count": _experiment_mean_v1(lhsi_wrong_stage),
+                    "mean_lhsi_repeated_action_loop_count": _experiment_mean_v1(lhsi_repeated_loops),
+                    "mean_lhsi_current_state_overwrite_proxy_count": _experiment_mean_v1(lhsi_overwrite_proxy),
+                    "mean_lhsi_stale_memory_intrusion_proxy_count": _experiment_mean_v1(lhsi_stale_proxy),
+                    "mean_lhsi_retrieval_action_dissociation_proxy_count": _experiment_mean_v1(lhsi_dissoc_proxy),
+                    "mean_lhsi_provenance_complete_cycle_rate": _experiment_mean_v1(lhsi_provenance_rates),
                     "mean_cumulative_prediction_error": _experiment_mean_v1(pred_errs),
                 }
             )
@@ -4134,6 +4228,11 @@ def render_experiment_batch_summary_lines_v1(batch_result: dict[str, Any]) -> li
                 f" loops={_experiment_metric_text_v1(row.get('mean_repeated_loops'))}"
                 f" retr_evt={_experiment_metric_text_v1(row.get('mean_newborn_retrieval_event_count'))}"
                 f" retr_eff={_experiment_metric_text_v1(row.get('mean_newborn_retrieval_non_noop_count'))}"
+                f" lhsi={_experiment_metric_text_v1(row.get('mean_lhsi_state_integrity_score'))}"
+                f" wrong={_experiment_metric_text_v1(row.get('mean_lhsi_wrong_stage_action_count'))}"
+                f" overwrite={_experiment_metric_text_v1(row.get('mean_lhsi_current_state_overwrite_proxy_count'))}"
+                f" stale={_experiment_metric_text_v1(row.get('mean_lhsi_stale_memory_intrusion_proxy_count'))}"
+                f" dissoc={_experiment_metric_text_v1(row.get('mean_lhsi_retrieval_action_dissociation_proxy_count'))}"
                 f" pred_e={_experiment_metric_text_v1(row.get('mean_cumulative_prediction_error'))}"
                 f" llm_calls={_experiment_metric_text_v1(row.get('mean_llm_call_count'))}"
             )
@@ -4170,6 +4269,12 @@ def _experiment_repeat_metric_keys_v1(benchmark_id: str) -> list[str]:
         "mean_time_to_rested",
         "mean_newborn_retrieval_event_count",
         "mean_newborn_retrieval_non_noop_count",
+        "mean_lhsi_state_integrity_score",
+        "mean_lhsi_wrong_stage_action_count",
+        "mean_lhsi_current_state_overwrite_proxy_count",
+        "mean_lhsi_stale_memory_intrusion_proxy_count",
+        "mean_lhsi_retrieval_action_dissociation_proxy_count",
+        "mean_lhsi_provenance_complete_cycle_rate",
         "mean_cumulative_prediction_error",
         "mean_llm_call_count",
     ]
@@ -4248,6 +4353,11 @@ def _render_experiment_repeat_condition_line_v1(
             f" rest_t={_experiment_metric_text_v1(condition_summary.get('mean_time_to_rested'))}"
             f" retr_evt={_experiment_metric_text_v1(condition_summary.get('mean_newborn_retrieval_event_count'))}"
             f" retr_eff={_experiment_metric_text_v1(condition_summary.get('mean_newborn_retrieval_non_noop_count'))}"
+            f" lhsi={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_state_integrity_score'))}"
+            f" wrong={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_wrong_stage_action_count'))}"
+            f" overwrite={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_current_state_overwrite_proxy_count'))}"
+            f" stale={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_stale_memory_intrusion_proxy_count'))}"
+            f" dissoc={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_retrieval_action_dissociation_proxy_count'))}"
             f" pred_e={_experiment_metric_text_v1(condition_summary.get('mean_cumulative_prediction_error'))}"
             f" llm_calls={_experiment_metric_text_v1(condition_summary.get('mean_llm_call_count'))}"
         )
