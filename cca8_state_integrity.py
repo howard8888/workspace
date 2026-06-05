@@ -295,13 +295,67 @@ def _milestone_summary_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _wrong_stage_reason_v1(raw_record: dict[str, Any], prior_milestones: dict[str, bool]) -> str | None:
+def _completion_cutoff_index_v1(raw_records: list[dict[str, Any]]) -> int | None:
+    """Return the first cycle index where the ordered newborn milestone sequence completes.
+
+    This defines the active task horizon for LHSI scoring. If the agent reaches
+    final rest at cycle N, later controller behavior is post-completion behavior
+    and should not inflate wrong-stage, loop, stale-memory, or dissociation metrics.
+
+    Returns None when the episode never completes the ordered milestone sequence.
+    """
+    state = {name: False for name in NEWBORN_LHSI_MILESTONE_ORDER_V1}
+    next_index = 0
+
+    for index, raw in enumerate(raw_records):
+        events = _milestone_events_from_raw_v1(raw)
+        while next_index < len(NEWBORN_LHSI_MILESTONE_ORDER_V1):
+            name = NEWBORN_LHSI_MILESTONE_ORDER_V1[next_index]
+            if name not in events:
+                break
+
+            state[name] = True
+            next_index += 1
+
+        if next_index >= len(NEWBORN_LHSI_MILESTONE_ORDER_V1):
+            return int(index)
+
+    return None
+
+
+def _cycle_advances_ordered_milestone_v1(
+    events: set[str],
+    prior_milestones: dict[str, bool],
+) -> bool:
+    """Return True when this cycle advances at least one not-yet-achieved milestone.
+
+    LHSI wrong-stage scoring should be conservative around transition cycles.
+    The raw trace records the policy and the resulting observed state in one
+    cycle-level row, so a cycle that first achieves a milestone can otherwise
+    look like a policy/state mismatch. We therefore do not count wrong-stage
+    actions on cycles that visibly advance the ordered task.
+    """
+    if not isinstance(events, set) or not isinstance(prior_milestones, dict):
+        return False
+
+    for name in NEWBORN_LHSI_MILESTONE_ORDER_V1:
+        if not bool(prior_milestones.get(name)) and name in events:
+            return True
+
+    return False
+
+
+def _wrong_stage_reason_v1(
+    raw_record: dict[str, Any],
+    prior_milestones: dict[str, bool],
+    current_events: set[str] | None = None,
+) -> str | None:
     """Return a conservative wrong-stage label for one cycle, or None.
 
-    The classifier intentionally flags only clear stage/action mismatches. It
-    does not try to judge every possible action, because the controller may have
-    legitimate recovery or exploratory reasons that are not obvious from one
-    record.
+    The classifier intentionally flags only clear stage/action mismatches. Current
+    observed state is treated as more authoritative than cumulative milestone
+    history. This matters because the newborn task can regress locally, for
+    example if a latch is lost after a previous latch milestone.
     """
     if not isinstance(raw_record, dict) or not isinstance(prior_milestones, dict):
         return None
@@ -309,6 +363,8 @@ def _wrong_stage_reason_v1(raw_record: dict[str, Any], prior_milestones: dict[st
     policy = _policy_from_raw_v1(raw_record)
     if policy is None:
         return None
+
+    events = current_events if isinstance(current_events, set) else set()
 
     posture = _string_or_none_v1(raw_record.get("posture"))
     mom_distance = _string_or_none_v1(raw_record.get("mom_distance"))
@@ -318,9 +374,11 @@ def _wrong_stage_reason_v1(raw_record: dict[str, Any], prior_milestones: dict[st
     stood = bool(prior_milestones.get("stood_up"))
     reached = bool(prior_milestones.get("reached_mom"))
     found = bool(prior_milestones.get("found_nipple"))
-    latched = bool(prior_milestones.get("latched_nipple"))
-    drinking = bool(prior_milestones.get("milk_drinking"))
     rested = bool(prior_milestones.get("rested"))
+
+    current_latched = nipple_state == "latched" or "latched_nipple" in events
+    current_drinking = "milk_drinking" in events
+    current_resting_safe = "rested" in events or (posture == "resting" and zone == "safe")
 
     if rested and policy not in ("policy:rest", "policy:explore_check", "policy:probe"):
         return "action_after_final_rest"
@@ -333,19 +391,19 @@ def _wrong_stage_reason_v1(raw_record: dict[str, Any], prior_milestones: dict[st
             return "seek_before_standing"
         if not reached and mom_distance not in ("near", "touching"):
             return "seek_before_reaching_mom"
-        if latched or drinking:
-            return "seek_after_latch_or_drink"
+        if current_latched or current_drinking:
+            return "seek_while_currently_latched_or_drinking"
 
     if policy == "policy:suckle":
-        if not latched and nipple_state != "latched":
-            return "suckle_before_latch"
+        if not current_latched:
+            return "suckle_before_current_latch"
         if posture == "fallen":
             return "suckle_while_fallen"
 
     if policy == "policy:rest":
-        if not drinking:
-            return "rest_before_drinking"
-        if zone not in (None, "safe"):
+        if not current_drinking and not current_resting_safe:
+            return "rest_before_current_drinking"
+        if zone not in (None, "safe", "unknown"):
             return "rest_before_safe_zone"
 
     if policy in ("policy:stand_up", "policy:recover_fall"):
@@ -353,8 +411,8 @@ def _wrong_stage_reason_v1(raw_record: dict[str, Any], prior_milestones: dict[st
             return "posture_recovery_after_upright"
 
     if policy == "policy:follow_mom":
-        if latched or drinking or nipple_state == "latched":
-            return "follow_after_latch_or_drink"
+        if current_latched or current_drinking:
+            return "follow_while_currently_latched_or_drinking"
 
     if found and not reached:
         return "milestone_order_incoherence"
@@ -369,7 +427,10 @@ def _wrong_stage_events_v1(raw_records: list[dict[str, Any]]) -> list[dict[str, 
 
     for index, raw in enumerate(raw_records):
         prior = prior_states[index] if index < len(prior_states) else {}
-        reason = _wrong_stage_reason_v1(raw, prior)
+        events = _milestone_events_from_raw_v1(raw)
+        if _cycle_advances_ordered_milestone_v1(events, prior):
+            continue
+        reason = _wrong_stage_reason_v1(raw, prior, current_events=events)
         if reason is None:
             continue
 
@@ -427,9 +488,11 @@ def _repeated_action_loop_events_v1(raw_records: list[dict[str, Any]]) -> list[d
 def _retrieval_summary_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
     """Return retrieval and state-governance proxy metrics.
 
-    Some measures are true counts from the existing retrieval event structure.
-    Others are labeled as proxy counts because the current raw logs do not yet
-    contain complete pre-retrieval and post-retrieval slot snapshots.
+    Retrieval attempts are separated from effective retrievals. This matters for
+    LHSI scoring because a merge retrieval can legitimately be a no-op when the
+    current WorkingMap already has the relevant state. Stale-memory intrusion and
+    retrieval-action dissociation should be evaluated only after retrievals that
+    actually changed or filled state.
     """
     retrieval_event_count = 0
     retrieval_ok_count = 0
@@ -437,9 +500,11 @@ def _retrieval_summary_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
     retrieval_merge_noop_count = 0
     retrieval_replace_count = 0
     current_state_overwrite_proxy_count = 0
-    retrieval_steps: list[int] = []
 
+    retrieval_steps: list[int] = []
+    retrieval_non_noop_steps: list[int] = []
     retrieval_cycle_indices: list[int] = []
+    retrieval_non_noop_cycle_indices: list[int] = []
     retrieval_modes_by_cycle: dict[int, str] = {}
 
     for index, raw in enumerate(raw_records):
@@ -448,9 +513,11 @@ def _retrieval_summary_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
             continue
 
         for event in events:
+            step_value = _env_step_from_raw_v1(raw, index)
+
             retrieval_event_count += 1
             retrieval_cycle_indices.append(int(index))
-            retrieval_steps.append(_env_step_from_raw_v1(raw, index))
+            retrieval_steps.append(step_value)
 
             if bool(event.get("ok")):
                 retrieval_ok_count += 1
@@ -459,12 +526,14 @@ def _retrieval_summary_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
             mode = str(load.get("mode") or "").strip().lower()
             retrieval_modes_by_cycle[index] = mode or "merge"
 
+            non_noop = False
+
             if mode == "replace":
                 retrieval_replace_count += 1
                 ent_n = _int_or_none_v1(load.get("entities")) or 0
                 rel_n = _int_or_none_v1(load.get("relations")) or 0
                 if ent_n > 0 or rel_n > 0:
-                    retrieval_non_noop_count += 1
+                    non_noop = True
                     current_state_overwrite_proxy_count += 1
             else:
                 added_entities = _int_or_none_v1(load.get("added_entities")) or 0
@@ -473,9 +542,18 @@ def _retrieval_summary_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
                 stored_prior_cues = _int_or_none_v1(load.get("stored_prior_cues")) or 0
 
                 if added_entities > 0 or filled_slots > 0 or added_edges > 0 or stored_prior_cues > 0:
-                    retrieval_non_noop_count += 1
+                    non_noop = True
                 else:
                     retrieval_merge_noop_count += 1
+
+            if non_noop:
+                retrieval_non_noop_count += 1
+
+                if int(index) not in retrieval_non_noop_cycle_indices:
+                    retrieval_non_noop_cycle_indices.append(int(index))
+
+                if step_value not in retrieval_non_noop_steps:
+                    retrieval_non_noop_steps.append(step_value)
 
     return {
         "retrieval_event_count": int(retrieval_event_count),
@@ -484,8 +562,11 @@ def _retrieval_summary_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
         "retrieval_merge_noop_count": int(retrieval_merge_noop_count),
         "retrieval_replace_count": int(retrieval_replace_count),
         "current_state_overwrite_proxy_count": int(current_state_overwrite_proxy_count),
+        "retrieval_followup_basis_count": int(len(retrieval_non_noop_cycle_indices)),
         "retrieval_steps": retrieval_steps[:24],
+        "retrieval_non_noop_steps": retrieval_non_noop_steps[:24],
         "retrieval_cycle_indices": retrieval_cycle_indices,
+        "retrieval_non_noop_cycle_indices": retrieval_non_noop_cycle_indices,
         "retrieval_modes_by_cycle": retrieval_modes_by_cycle,
     }
 
@@ -662,7 +743,13 @@ def summarize_newborn_state_integrity_v1(
         JSON-safe state-integrity summary. Metrics with ``_proxy`` in the name
         are derived proxies, not full slot-level overwrite/staleness audits.
     """
-    records = raw_records if isinstance(raw_records, list) else []
+    records_all = raw_records if isinstance(raw_records, list) else []
+    completion_cutoff_index = _completion_cutoff_index_v1(records_all)
+
+    if completion_cutoff_index is not None:
+        records = records_all[: completion_cutoff_index + 1]
+    else:
+        records = records_all
 
     milestone = _milestone_summary_v1(records)
     wrong_events = _wrong_stage_events_v1(records)
@@ -670,7 +757,7 @@ def summarize_newborn_state_integrity_v1(
     retrieval = _retrieval_summary_v1(records)
     followup = _retrieval_followup_proxy_events_v1(
         records,
-        list(retrieval.get("retrieval_cycle_indices", []) or []),
+        list(retrieval.get("retrieval_non_noop_cycle_indices", []) or []),
         wrong_events,
         window=int(followup_window),
     )
@@ -690,9 +777,17 @@ def summarize_newborn_state_integrity_v1(
         provenance_rate=float(provenance_rate) if isinstance(provenance_rate, (int, float)) else None,
     )
 
+    completion_cutoff_env_step = None
+    if completion_cutoff_index is not None and 0 <= completion_cutoff_index < len(records_all):
+        completion_cutoff_env_step = _env_step_from_raw_v1(records_all[completion_cutoff_index], completion_cutoff_index)
+
     out: dict[str, Any] = {
         "schema": "newborn_state_integrity_summary_v1",
-        "raw_cycle_count": int(len(records)),
+        "raw_cycle_count": int(len(records_all)),
+        "active_cycle_count": int(len(records)),
+        "active_horizon_applied": bool(completion_cutoff_index is not None),
+        "completion_cutoff_cycle_index": completion_cutoff_index,
+        "completion_cutoff_env_step": completion_cutoff_env_step,
         "state_integrity_score": float(score),
         "wrong_stage_action_count": int(len(wrong_events)),
         "wrong_stage_action_events": wrong_events[:24],
@@ -707,6 +802,7 @@ def summarize_newborn_state_integrity_v1(
     out.update(provenance)
 
     out.pop("retrieval_cycle_indices", None)
+    out.pop("retrieval_non_noop_cycle_indices", None)
     out.pop("retrieval_modes_by_cycle", None)
 
     return out
@@ -731,12 +827,13 @@ def _metric_text_v1(value: Any) -> str:
 
 
 def render_state_integrity_summary_lines_v1(summary: dict[str, Any]) -> list[str]:
-    """Return compact terminal lines for one state-integrity summary."""
+    """Return compact terminal lines for one state-integrity summary. """
     if not isinstance(summary, dict):
         return ["[lhsi] state integrity summary: (invalid)"]
 
     return [
         f"[lhsi] cycles              : {_metric_text_v1(summary.get('raw_cycle_count'))}",
+        f"[lhsi] active_cycles       : {_metric_text_v1(summary.get('active_cycle_count'))}",
         f"[lhsi] success             : {_metric_text_v1(summary.get('success'))}",
         f"[lhsi] milestone_score     : {_metric_text_v1(summary.get('milestone_score'))}",
         f"[lhsi] state_score         : {_metric_text_v1(summary.get('state_integrity_score'))}",
@@ -801,14 +898,23 @@ def render_state_integrity_event_detail_lines_v1(
     dissoc_events = _event_list_v1(summary, "retrieval_action_dissociation_proxy_events")
     loop_events = _event_list_v1(summary, "repeated_action_loop_events")
 
-    counts = (
-        f"wrong={len(wrong_events)} "
-        f"stale_proxy={len(stale_events)} "
-        f"dissoc_proxy={len(dissoc_events)} "
-        f"loops={len(loop_events)}"
-    )
+    wrong_count = summary.get("wrong_stage_action_count", len(wrong_events))
+    stale_count = summary.get("stale_memory_intrusion_proxy_count", len(stale_events))
+    dissoc_count = summary.get("retrieval_action_dissociation_proxy_count", len(dissoc_events))
+    loop_count = summary.get("repeated_action_loop_count_lhsi", len(loop_events))
 
-    lines = [f"{prefix} lhsi_detail       : {counts}; showing first {limit} per class"]
+    counts = (
+        f"wrong={_short_event_value_v1(wrong_count)} "
+        f"stale_proxy={_short_event_value_v1(stale_count)} "
+        f"dissoc_proxy={_short_event_value_v1(dissoc_count)} "
+        f"loops={_short_event_value_v1(loop_count)}"
+    )
+    active_txt = (
+        f"active_cycles={_short_event_value_v1(summary.get('active_cycle_count'))}/"
+        f"{_short_event_value_v1(summary.get('raw_cycle_count'))} "
+        f"cutoff_step={_short_event_value_v1(summary.get('completion_cutoff_env_step'))}"
+    )
+    lines = [f"{prefix} lhsi_detail       : {counts}; {active_txt}; showing first {limit} per class"]
 
     if limit <= 0:
         return lines

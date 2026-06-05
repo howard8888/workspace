@@ -82,7 +82,9 @@ def test_render_experiment_episode_summary_lines_v1_newborn_shows_milestones() -
     assert "[experiments] benchmark         : newborn_long_horizon" in text
     assert "[experiments] milestones        :" in text
     assert '"stood_up": true' in text
-    assert "[experiments] repeated_loops    : 14" in text
+    #assert "[experiments] repeated_loops    : 14" in text  #updated the code with LHSI benchmark
+    assert "[experiments] repeated_loops    : 14" not in text
+    assert "[experiments] full_run_loops    : 14" in text    
     assert "[experiments] cumulative_pred_e : 2.500" in text
     assert "[experiments] oracle_action_acc :" not in text
     assert "[experiments] oracle_retr_prec  :" not in text

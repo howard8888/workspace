@@ -305,6 +305,12 @@ class ExperimentProtocolConfig:
     episodes_per_seed: int = 1
     max_cycles: int = 60
     obs_mask_prob: float = 0.50    #independent drop probability for each non-protected observation token
+    # Newborn long-horizon stress profile.
+    # baseline       : existing task, with ordinary obs_mask only
+    # blackout_short : milestone-locked local-state blackout, usually 2-3 cycles
+    # blackout_long  : longer local-state blackout, usually 5+ cycles
+    newborn_stress_profile: str = "baseline"
+    newborn_blackout_length: int = 3
     action_vocab_version: str = "cca8_action_vocab_v1"
     scratch_clear_policy: str = "per_episode_reset"
     jsonl_write_cycle_records: bool = True
@@ -852,6 +858,11 @@ class Ctx:
     experiment_newborn_retrieved_hint: dict[str, Any] = field(default_factory=dict)
     experiment_newborn_retrieved_hint_until_step: int = -1
     experiment_newborn_retrieved_hint_source: Optional[str] = None
+    # Newborn benchmark stressor runtime state.
+    # These fields are episode-local and are reset by experiment_configure_benchmark_runtime_v1.
+    experiment_newborn_blackout_start_step: int = -1
+    experiment_newborn_blackout_until_step: int = -1
+    experiment_newborn_blackout_reason: Optional[str] = None
 
     def reset_controller_steps(self) -> None:
         """quick reset of Ctx.controller_steps counter
@@ -1007,6 +1018,256 @@ def experiment_benchmark_catalog_v1() -> dict[str, ExperimentBenchmarkDef]:
     ]
     return {item.benchmark_id: item for item in items}
 
+NEWBORN_STRESS_PROFILES_V1 = ("baseline", "blackout_short", "blackout_long")
+
+NEWBORN_STRESS_DROP_PRED_PREFIXES_V1 = (
+    "proximity:mom:",
+    "nipple:",
+    "milk:",
+    "proximity:shelter:",
+    "hazard:cliff:",
+)
+
+NEWBORN_STRESS_DROP_CUE_PREFIXES_V1 = (
+    "vision:silhouette:mom",
+    "touch:nipple",
+    "odor:milk",
+    "smell:milk",
+    "warmth:mom",
+)
+
+
+def _newborn_stress_profile_from_ctx_v1(ctx: Ctx | None) -> str:
+    """Return the active newborn stress profile."""
+    if ctx is None:
+        return "baseline"
+
+    cfg = getattr(ctx, "experiment_cfg", None)
+    raw = getattr(cfg, "newborn_stress_profile", "baseline")
+    profile = str(raw or "baseline").strip().lower()
+
+    if profile not in NEWBORN_STRESS_PROFILES_V1:
+        return "baseline"
+    return profile
+
+
+def _newborn_blackout_length_from_ctx_v1(ctx: Ctx | None, profile: str) -> int:
+    """Return the effective blackout length for a newborn stress profile."""
+    default_len = 3
+    if profile == "blackout_short":
+        default_len = 3
+    elif profile == "blackout_long":
+        default_len = 5
+
+    if ctx is None:
+        return default_len
+
+    cfg = getattr(ctx, "experiment_cfg", None)
+    try:
+        raw = int(getattr(cfg, "newborn_blackout_length", default_len) or default_len)
+    except Exception:
+        raw = default_len
+
+    if profile == "blackout_short":
+        return max(1, min(4, raw))
+    if profile == "blackout_long":
+        return max(5, min(20, raw))
+    return max(1, min(20, raw))
+
+
+def _newborn_stress_env_meta_v1(env_obs: EnvObservation) -> dict[str, Any]:
+    """Return a mutable env_meta dict for a newborn stress operation."""
+    meta = getattr(env_obs, "env_meta", None)
+    if isinstance(meta, dict):
+        return meta
+
+    meta = {}
+    try:
+        setattr(env_obs, "env_meta", meta)
+    except Exception:
+        pass
+    return meta
+
+
+def _newborn_stress_milestones_from_obs_v1(env_obs: EnvObservation) -> list[str]:
+    """Return milestone labels from an EnvObservation metadata packet."""
+    meta = getattr(env_obs, "env_meta", None)
+    meta = meta if isinstance(meta, dict) else {}
+
+    raw = meta.get("milestones")
+    if raw is None:
+        raw = meta.get("milestone")
+
+    if isinstance(raw, str) and raw:
+        return [raw]
+
+    out: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, str) and item:
+                out.append(item)
+    return out
+
+
+def _newborn_stress_drop_predicates_v1(tokens: list[Any]) -> tuple[list[str], list[str]]:
+    """Drop local-state predicates for a newborn blackout stressor."""
+    kept: list[str] = []
+    dropped: list[str] = []
+
+    for item in tokens:
+        if not isinstance(item, str):
+            continue
+
+        token = item.strip()
+        if not token:
+            continue
+
+        token_check = token.replace("pred:", "", 1) if token.startswith("pred:") else token
+        if any(token_check.startswith(prefix) for prefix in NEWBORN_STRESS_DROP_PRED_PREFIXES_V1):
+            dropped.append(token)
+            continue
+
+        kept.append(token)
+
+    return kept, dropped
+
+
+def _newborn_stress_drop_cues_v1(tokens: list[Any]) -> tuple[list[str], list[str]]:
+    """Drop local-state cues for a newborn blackout stressor."""
+    kept: list[str] = []
+    dropped: list[str] = []
+
+    for item in tokens:
+        if not isinstance(item, str):
+            continue
+
+        token = item.strip()
+        if not token:
+            continue
+
+        if any(token.startswith(prefix) for prefix in NEWBORN_STRESS_DROP_CUE_PREFIXES_V1):
+            dropped.append(token)
+            continue
+
+        kept.append(token)
+
+    return kept, dropped
+
+
+def _newborn_stress_schedule_blackout_v1(
+    ctx: Ctx,
+    *,
+    step_now: int,
+    profile: str,
+    milestone: str,
+) -> None:
+    """Schedule a deterministic blackout beginning on the next cycle."""
+    length = _newborn_blackout_length_from_ctx_v1(ctx, profile)
+    start_step = int(step_now) + 1
+    until_step = start_step + int(length) - 1
+
+    try:
+        current_until = int(getattr(ctx, "experiment_newborn_blackout_until_step", -1) or -1)
+    except Exception:
+        current_until = -1
+
+    if until_step <= current_until:
+        return
+
+    try:
+        ctx.experiment_newborn_blackout_start_step = int(start_step)
+        ctx.experiment_newborn_blackout_until_step = int(until_step)
+        ctx.experiment_newborn_blackout_reason = f"after_{milestone}"
+    except Exception:
+        pass
+
+
+def apply_newborn_experiment_stress_v1(ctx: Ctx | None, env_obs: EnvObservation) -> EnvObservation:
+    """Apply deterministic newborn benchmark stressors to the visible observation packet.
+
+    This changes what the agent observes. It does not change hidden environment truth.
+    The first implemented stressor is a milestone-locked local-state blackout:
+    after selected milestones, local relation and feeding-state tokens are hidden
+    for a short interval.
+
+    This makes the benchmark more memory-critical without giving any condition
+    hidden information.
+    """
+    if ctx is None or env_obs is None:
+        return env_obs
+
+    if not bool(getattr(ctx, "experiment_newborn_require_resume_memory", False)):
+        return env_obs
+
+    profile = _newborn_stress_profile_from_ctx_v1(ctx)
+    if profile == "baseline":
+        return env_obs
+
+    try:
+        step_now = int(getattr(ctx, "controller_steps", 0) or 0)
+    except Exception:
+        step_now = 0
+
+    meta = _newborn_stress_env_meta_v1(env_obs)
+    milestones = _newborn_stress_milestones_from_obs_v1(env_obs)
+
+    meta["newborn_stress_profile"] = profile
+
+    # Apply any currently active blackout first. Milestone scheduling below starts
+    # on the next cycle, so the milestone observation itself remains available for
+    # seed storage and scoring.
+    try:
+        start_step = int(getattr(ctx, "experiment_newborn_blackout_start_step", -1) or -1)
+        until_step = int(getattr(ctx, "experiment_newborn_blackout_until_step", -1) or -1)
+    except Exception:
+        start_step = -1
+        until_step = -1
+
+    blackout_active = bool(start_step >= 0 and start_step <= step_now <= until_step) #pylint: disable=chained-comparison
+    dropped_preds: list[str] = []
+    dropped_cues: list[str] = []
+
+    if blackout_active:
+        preds_raw = list(getattr(env_obs, "predicates", []) or [])
+        cues_raw = list(getattr(env_obs, "cues", []) or [])
+
+        preds_kept, dropped_preds = _newborn_stress_drop_predicates_v1(preds_raw)
+        cues_kept, dropped_cues = _newborn_stress_drop_cues_v1(cues_raw)
+
+        try:
+            setattr(env_obs, "predicates", preds_kept)
+            setattr(env_obs, "cues", cues_kept)
+        except Exception:
+            pass
+
+        meta["newborn_blackout_active"] = True
+        meta["newborn_blackout_reason"] = getattr(ctx, "experiment_newborn_blackout_reason", None)
+        meta["newborn_blackout_start_step"] = int(start_step)
+        meta["newborn_blackout_until_step"] = int(until_step)
+        meta["newborn_blackout_dropped_preds"] = int(len(dropped_preds))
+        meta["newborn_blackout_dropped_cues"] = int(len(dropped_cues))
+        meta["newborn_blackout_dropped_pred_tokens"] = dropped_preds[:16]
+        meta["newborn_blackout_dropped_cue_tokens"] = dropped_cues[:16]
+    else:
+        meta["newborn_blackout_active"] = False
+        meta["newborn_blackout_dropped_preds"] = 0
+        meta["newborn_blackout_dropped_cues"] = 0
+
+    # Schedule the next blackout after meaningful task-boundary milestones.
+    # This creates a memory-critical interval after progress, without erasing
+    # the milestone observation itself.
+    for milestone in milestones:
+        if milestone in ("stood_up", "reached_mom", "latched_nipple"):
+            _newborn_stress_schedule_blackout_v1(
+                ctx,
+                step_now=step_now,
+                profile=profile,
+                milestone=milestone,
+            )
+            break
+
+    return env_obs
+
 
 def reset_experiment_protocol_v1(ctx: Ctx) -> None:
     """Reset ctx experiment settings to the frozen paper defaults."""
@@ -1083,10 +1344,12 @@ def render_experiment_jsonl_schema_summary_v1() -> str:
         "repeated_action_loop_count", "llm_call_count", "llm_latency_ms_total", "latency_ms_total", "recovery_latency",
         "oracle_action_accuracy", "oracle_retrieval_precision", "internal_retrieval_event_ratio",
         "stabilization_latency", "retrieval_action_dissociation_count",
+        "newborn_stress_profile", "newborn_stress_active_cycle_count",
+        "newborn_stress_dropped_pred_count", "newborn_stress_dropped_cue_count",
         "state_integrity_summary", "lhsi_state_integrity_score", "lhsi_wrong_stage_action_count",
         "lhsi_repeated_action_loop_count", "lhsi_current_state_overwrite_proxy_count",
         "lhsi_stale_memory_intrusion_proxy_count", "lhsi_retrieval_action_dissociation_proxy_count",
-        "lhsi_provenance_complete_cycle_rate",
+        "lhsi_retrieval_followup_basis_count", "lhsi_provenance_complete_cycle_rate",
     ]
 
     lines = []
@@ -1123,6 +1386,8 @@ def render_experiment_protocol_summary_v1(ctx: Ctx) -> str:
     lines.append(f"  episodes_per_seed    : {cfg.episodes_per_seed}")
     lines.append(f"  max_cycles           : {cfg.max_cycles}")
     lines.append(f"  obs_mask_prob        : {cfg.obs_mask_prob:.3f}")
+    lines.append(f"  newborn_stress       : {cfg.newborn_stress_profile}")
+    lines.append(f"  blackout_length      : {cfg.newborn_blackout_length}")
     lines.append(f"  action_vocab_version : {cfg.action_vocab_version}")
     lines.append(f"  scratch_clear_policy : {cfg.scratch_clear_policy}")
     lines.append(f"  jsonl_cycle_records  : {cfg.jsonl_write_cycle_records}")
@@ -1254,6 +1519,16 @@ def experiment_normalize_protocol_v1(cfg: ExperimentProtocolConfig | None) -> Ex
     except Exception:
         obs_mask_prob = 0.0
 
+    stress_profile = str(getattr(src, "newborn_stress_profile", "baseline") or "baseline").strip().lower()
+    if stress_profile not in ("baseline", "blackout_short", "blackout_long"):
+        stress_profile = "baseline"
+
+    try:
+        newborn_blackout_length = int(getattr(src, "newborn_blackout_length", 3) or 3)
+    except Exception:
+        newborn_blackout_length = 3
+    newborn_blackout_length = max(1, min(20, newborn_blackout_length))
+
     llm_model_raw = getattr(src, "llm_model", None)
     llm_model = None
     if isinstance(llm_model_raw, str) and llm_model_raw.strip():
@@ -1277,6 +1552,8 @@ def experiment_normalize_protocol_v1(cfg: ExperimentProtocolConfig | None) -> Ex
         episodes_per_seed=max(1, min(1000, episodes_per_seed)),
         max_cycles=max(1, min(100000, max_cycles)),
         obs_mask_prob=max(0.0, min(1.0, obs_mask_prob)),
+        newborn_stress_profile=stress_profile,
+        newborn_blackout_length=newborn_blackout_length,
         action_vocab_version=str(
             getattr(src, "action_vocab_version", "cca8_action_vocab_v1") or "cca8_action_vocab_v1"
         ),
@@ -1442,6 +1719,8 @@ def _experiment_protocol_snapshot_v1(cfg: ExperimentProtocolConfig) -> dict[str,
         "episodes_per_seed": int(cfg.episodes_per_seed),
         "max_cycles": int(cfg.max_cycles),
         "obs_mask_prob": float(cfg.obs_mask_prob),
+        "newborn_stress_profile": str(getattr(cfg, "newborn_stress_profile", "baseline")),
+        "newborn_blackout_length": int(getattr(cfg, "newborn_blackout_length", 3) or 3),
         "action_vocab_version": str(cfg.action_vocab_version),
         "scratch_clear_policy": str(cfg.scratch_clear_policy),
         "jsonl_write_cycle_records": bool(cfg.jsonl_write_cycle_records),
@@ -1981,6 +2260,10 @@ def experiment_configure_benchmark_runtime_v1(world, drives, ctx: Ctx, env: Hybr
             ctx.experiment_newborn_retrieved_hint = {}
             ctx.experiment_newborn_retrieved_hint_until_step = -1
             ctx.experiment_newborn_retrieved_hint_source = None
+
+            ctx.experiment_newborn_blackout_start_step = -1
+            ctx.experiment_newborn_blackout_until_step = -1
+            ctx.experiment_newborn_blackout_reason = None
         except Exception:
             pass
 
@@ -2653,6 +2936,61 @@ def _newborn_retrieval_debug_from_raw_records_v1(raw_records: list[dict[str, Any
     }
 
 
+def _newborn_stress_debug_from_raw_records_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize newborn stress exposure from raw cycle records."""
+    profiles: set[str] = set()
+    active_cycle_count = 0
+    dropped_pred_count = 0
+    dropped_cue_count = 0
+    reasons: set[str] = set()
+
+    for raw in raw_records:
+        if not isinstance(raw, dict):
+            continue
+
+        obs = raw.get("obs")
+        obs = obs if isinstance(obs, dict) else {}
+        meta = obs.get("env_meta")
+        meta = meta if isinstance(meta, dict) else {}
+
+        profile = meta.get("newborn_stress_profile")
+        if isinstance(profile, str) and profile:
+            profiles.add(profile)
+
+        if bool(meta.get("newborn_blackout_active")):
+            active_cycle_count += 1
+
+        try:
+            dropped_pred_count += int(meta.get("newborn_blackout_dropped_preds", 0) or 0)
+        except Exception:
+            pass
+
+        try:
+            dropped_cue_count += int(meta.get("newborn_blackout_dropped_cues", 0) or 0)
+        except Exception:
+            pass
+
+        reason = meta.get("newborn_blackout_reason")
+        if isinstance(reason, str) and reason:
+            reasons.add(reason)
+
+    if not profiles:
+        profiles.add("baseline")
+
+    if len(profiles) == 1:
+        profile_out = sorted(profiles)[0]
+    else:
+        profile_out = "+".join(sorted(profiles))
+
+    return {
+        "newborn_stress_profile": profile_out,
+        "newborn_stress_active_cycle_count": int(active_cycle_count),
+        "newborn_stress_dropped_pred_count": int(dropped_pred_count),
+        "newborn_stress_dropped_cue_count": int(dropped_cue_count),
+        "newborn_stress_reasons": sorted(reasons),
+    }
+
+
 def _goat04_oracle_from_raw_record_v1(raw_record: dict[str, Any]) -> dict[str, Any]:
     """Return the hidden goat04 oracle payload from one raw cycle record."""
     oracle = raw_record.get("oracle") if isinstance(raw_record, dict) else None
@@ -3111,6 +3449,7 @@ def _experiment_summarize_generic_episode_v1(
     else:
         newborn = _experiment_summarize_newborn_b2_v1(raw_records)
         retrieval_dbg = _newborn_retrieval_debug_from_raw_records_v1(raw_records)
+        stress_dbg = _newborn_stress_debug_from_raw_records_v1(raw_records)
 
         milestone_vector = dict(newborn.get("milestone_vector", {}) or {})
         success = bool(newborn.get("success"))
@@ -3138,6 +3477,17 @@ def _experiment_summarize_generic_episode_v1(
         record["newborn_retrieval_merge_noop_count"] = int(retrieval_dbg.get("retrieval_merge_noop_count", 0) or 0)
         record["newborn_retrieval_replace_count"] = int(retrieval_dbg.get("retrieval_replace_count", 0) or 0)
         record["newborn_retrieval_steps"] = list(retrieval_dbg.get("retrieval_steps", []) or [])
+        record["newborn_stress_profile"] = str(stress_dbg.get("newborn_stress_profile") or "baseline")
+        record["newborn_stress_active_cycle_count"] = int(
+            stress_dbg.get("newborn_stress_active_cycle_count", 0) or 0
+        )
+        record["newborn_stress_dropped_pred_count"] = int(
+            stress_dbg.get("newborn_stress_dropped_pred_count", 0) or 0
+        )
+        record["newborn_stress_dropped_cue_count"] = int(
+            stress_dbg.get("newborn_stress_dropped_cue_count", 0) or 0
+        )
+        record["newborn_stress_reasons"] = list(stress_dbg.get("newborn_stress_reasons", []) or [])
 
         lhsi = summarize_newborn_state_integrity_v1(raw_records)
         record["state_integrity_summary"] = dict(lhsi)
@@ -3149,6 +3499,7 @@ def _experiment_summarize_generic_episode_v1(
             "current_state_overwrite_proxy_count": "lhsi_current_state_overwrite_proxy_count",
             "stale_memory_intrusion_proxy_count": "lhsi_stale_memory_intrusion_proxy_count",
             "retrieval_action_dissociation_proxy_count": "lhsi_retrieval_action_dissociation_proxy_count",
+            "retrieval_followup_basis_count": "lhsi_retrieval_followup_basis_count",
             "provenance_complete_cycle_rate": "lhsi_provenance_complete_cycle_rate",
             "cumulative_prediction_error_lhsi": "lhsi_cumulative_prediction_error",
         }
@@ -3332,6 +3683,8 @@ def experiment_run_one_episode_v1(
         "condition_label": cond_info.get("label"),
         "seed": int(chosen_seed),
         "effective_obs_mask_prob": float(cfg.obs_mask_prob),
+        "effective_newborn_stress_profile": str(getattr(cfg, "newborn_stress_profile", "baseline")),
+        "effective_newborn_blackout_length": int(getattr(cfg, "newborn_blackout_length", 3) or 3),
         "episode_index": int(episode_index),
         "cycle_record_count": int(len(cycle_records)),
         "episode_record": episode_record,
@@ -3456,6 +3809,10 @@ def render_experiment_episode_summary_lines_v1(result: dict[str, Any]) -> list[s
                 f"find={_experiment_metric_text_v1(episode_record.get('nipple_find_latency'))} "
                 f"latch={_experiment_metric_text_v1(episode_record.get('latch_latency'))} "
                 f"rest={_experiment_metric_text_v1(episode_record.get('rest_completion_latency'))}",
+                f"[experiments] newborn_stress   : profile={_experiment_metric_text_v1(episode_record.get('newborn_stress_profile'))} "
+                f"active={_experiment_metric_text_v1(episode_record.get('newborn_stress_active_cycle_count'))} "
+                f"drop_pred={_experiment_metric_text_v1(episode_record.get('newborn_stress_dropped_pred_count'))} "
+                f"drop_cue={_experiment_metric_text_v1(episode_record.get('newborn_stress_dropped_cue_count'))}",
                 f"[experiments] retrieval_debug   : evt={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_event_count'))} "
                 f"nonnoop={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_non_noop_count'))} "
                 f"merge_noop={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_merge_noop_count'))} "
@@ -3466,6 +3823,7 @@ def render_experiment_episode_summary_lines_v1(result: dict[str, Any]) -> list[s
                 f"[experiments] lhsi_retrieval    : overwrite={_experiment_metric_text_v1(episode_record.get('lhsi_current_state_overwrite_proxy_count'))} "
                 f"stale={_experiment_metric_text_v1(episode_record.get('lhsi_stale_memory_intrusion_proxy_count'))} "
                 f"dissoc={_experiment_metric_text_v1(episode_record.get('lhsi_retrieval_action_dissociation_proxy_count'))} "
+                f"basis={_experiment_metric_text_v1(episode_record.get('lhsi_retrieval_followup_basis_count'))} "
                 f"prov={_experiment_metric_text_v1(episode_record.get('lhsi_provenance_complete_cycle_rate'))}",
             ]
         )
@@ -3482,7 +3840,7 @@ def render_experiment_episode_summary_lines_v1(result: dict[str, Any]) -> list[s
 
     lines.extend(
         [
-            f"[experiments] repeated_loops    : {_experiment_metric_text_v1(episode_record.get('repeated_action_loop_count'))}",
+            f"[experiments] full_run_loops    : {_experiment_metric_text_v1(episode_record.get('repeated_action_loop_count'))}",
             f"[experiments] cumulative_pred_e : {_experiment_metric_text_v1(episode_record.get('cumulative_prediction_error'))}",
             f"[experiments] latency_ms_total  : {_experiment_metric_text_v1(episode_record.get('latency_ms_total'))}",
         ]
@@ -3808,9 +4166,11 @@ def _experiment_repeat_metric_label_v1(benchmark_id: str, metric_key: str) -> st
         "mean_newborn_retrieval_non_noop_count": "retr_eff",
         "mean_lhsi_state_integrity_score": "lhsi",
         "mean_lhsi_wrong_stage_action_count": "wrong_stage",
+        "mean_lhsi_repeated_action_loop_count": "lhsi_loops",
         "mean_lhsi_current_state_overwrite_proxy_count": "overwrite",
         "mean_lhsi_stale_memory_intrusion_proxy_count": "stale",
         "mean_lhsi_retrieval_action_dissociation_proxy_count": "dissoc",
+        "mean_lhsi_retrieval_followup_basis_count": "basis",
         "mean_lhsi_provenance_complete_cycle_rate": "provenance",
         "mean_cumulative_prediction_error": "pred_e",
         "mean_llm_call_count": "llm_calls",
@@ -3996,6 +4356,7 @@ def experiment_run_condition_batch_v1(
         lhsi_overwrite_proxy: list[float] = []
         lhsi_stale_proxy: list[float] = []
         lhsi_dissoc_proxy: list[float] = []
+        lhsi_followup_basis: list[float] = []
         lhsi_provenance_rates: list[float] = []
         context_switch_accs: list[float] = []
         oracle_retr_precs: list[float] = []
@@ -4092,6 +4453,10 @@ def experiment_run_condition_batch_v1(
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     lhsi_dissoc_proxy.append(float(value))
 
+                value = episode_record.get("lhsi_retrieval_followup_basis_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    lhsi_followup_basis.append(float(value))
+
                 value = episode_record.get("lhsi_provenance_complete_cycle_rate")
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     lhsi_provenance_rates.append(float(value))
@@ -4137,6 +4502,7 @@ def experiment_run_condition_batch_v1(
                     "mean_lhsi_current_state_overwrite_proxy_count": _experiment_mean_v1(lhsi_overwrite_proxy),
                     "mean_lhsi_stale_memory_intrusion_proxy_count": _experiment_mean_v1(lhsi_stale_proxy),
                     "mean_lhsi_retrieval_action_dissociation_proxy_count": _experiment_mean_v1(lhsi_dissoc_proxy),
+                    "mean_lhsi_retrieval_followup_basis_count": _experiment_mean_v1(lhsi_followup_basis),
                     "mean_lhsi_provenance_complete_cycle_rate": _experiment_mean_v1(lhsi_provenance_rates),
                     "mean_cumulative_prediction_error": _experiment_mean_v1(pred_errs),
                 }
@@ -4161,6 +4527,8 @@ def experiment_run_condition_batch_v1(
         "condition_ids": list(run_conditions),
         "seed_list": list(run_seeds),
         "effective_obs_mask_prob": float(cfg.obs_mask_prob),
+        "effective_newborn_stress_profile": str(getattr(cfg, "newborn_stress_profile", "baseline")),
+        "effective_newborn_blackout_length": int(getattr(cfg, "newborn_blackout_length", 3) or 3),
         "episodes_per_seed": int(eps),
         "run_count": int(len(results)),
         "ok_count": int(len(results) - len(failures)),
@@ -4188,6 +4556,8 @@ def render_experiment_batch_summary_lines_v1(batch_result: dict[str, Any]) -> li
         f"[experiments] batch conditions  : {_experiment_metric_text_v1(batch_result.get('condition_ids'))}",
         f"[experiments] batch seeds       : {_experiment_metric_text_v1(batch_result.get('seed_list'))}",
         f"[experiments] batch obs_mask    : {_experiment_metric_text_v1(batch_result.get('effective_obs_mask_prob'))}",
+        f"[experiments] batch stress      : {_experiment_metric_text_v1(batch_result.get('effective_newborn_stress_profile'))} "
+        f"blackout_len={_experiment_metric_text_v1(batch_result.get('effective_newborn_blackout_length'))}",
         f"[experiments] batch eps/seed    : {_experiment_metric_text_v1(batch_result.get('episodes_per_seed'))}",
         f"[experiments] batch run_count   : {_experiment_metric_text_v1(batch_result.get('run_count'))}",
         f"[experiments] batch fail_count  : {_experiment_metric_text_v1(batch_result.get('fail_count'))}",
@@ -4225,16 +4595,17 @@ def render_experiment_batch_summary_lines_v1(batch_result: dict[str, Any]) -> li
                 f" milestone_score={_experiment_metric_text_v1(row.get('mean_milestone_score'))}"
                 f" recovery_lat={_experiment_metric_text_v1(row.get('mean_recovery_latency'))}"
                 f" rest_t={_experiment_metric_text_v1(row.get('mean_time_to_rested'))}"
-                f" loops={_experiment_metric_text_v1(row.get('mean_repeated_loops'))}"
+                f" full_loops={_experiment_metric_text_v1(row.get('mean_repeated_loops'))}"
                 f" retr_evt={_experiment_metric_text_v1(row.get('mean_newborn_retrieval_event_count'))}"
                 f" retr_eff={_experiment_metric_text_v1(row.get('mean_newborn_retrieval_non_noop_count'))}"
                 f" lhsi={_experiment_metric_text_v1(row.get('mean_lhsi_state_integrity_score'))}"
                 f" wrong={_experiment_metric_text_v1(row.get('mean_lhsi_wrong_stage_action_count'))}"
+                f" lhsi_loops={_experiment_metric_text_v1(row.get('mean_lhsi_repeated_action_loop_count'))}"
                 f" overwrite={_experiment_metric_text_v1(row.get('mean_lhsi_current_state_overwrite_proxy_count'))}"
                 f" stale={_experiment_metric_text_v1(row.get('mean_lhsi_stale_memory_intrusion_proxy_count'))}"
                 f" dissoc={_experiment_metric_text_v1(row.get('mean_lhsi_retrieval_action_dissociation_proxy_count'))}"
+                f" basis={_experiment_metric_text_v1(row.get('mean_lhsi_retrieval_followup_basis_count'))}"
                 f" pred_e={_experiment_metric_text_v1(row.get('mean_cumulative_prediction_error'))}"
-                f" llm_calls={_experiment_metric_text_v1(row.get('mean_llm_call_count'))}"
             )
 
         lines.append(head + tail)
@@ -4271,9 +4642,11 @@ def _experiment_repeat_metric_keys_v1(benchmark_id: str) -> list[str]:
         "mean_newborn_retrieval_non_noop_count",
         "mean_lhsi_state_integrity_score",
         "mean_lhsi_wrong_stage_action_count",
+        "mean_lhsi_repeated_action_loop_count",
         "mean_lhsi_current_state_overwrite_proxy_count",
         "mean_lhsi_stale_memory_intrusion_proxy_count",
         "mean_lhsi_retrieval_action_dissociation_proxy_count",
+        "mean_lhsi_retrieval_followup_basis_count",
         "mean_lhsi_provenance_complete_cycle_rate",
         "mean_cumulative_prediction_error",
         "mean_llm_call_count",
@@ -4355,9 +4728,11 @@ def _render_experiment_repeat_condition_line_v1(
             f" retr_eff={_experiment_metric_text_v1(condition_summary.get('mean_newborn_retrieval_non_noop_count'))}"
             f" lhsi={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_state_integrity_score'))}"
             f" wrong={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_wrong_stage_action_count'))}"
+            f" lhsi_loops={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_repeated_action_loop_count'))}"
             f" overwrite={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_current_state_overwrite_proxy_count'))}"
             f" stale={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_stale_memory_intrusion_proxy_count'))}"
             f" dissoc={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_retrieval_action_dissociation_proxy_count'))}"
+            f" basis={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_retrieval_followup_basis_count'))}"
             f" pred_e={_experiment_metric_text_v1(condition_summary.get('mean_cumulative_prediction_error'))}"
             f" llm_calls={_experiment_metric_text_v1(condition_summary.get('mean_llm_call_count'))}"
         )
@@ -4609,7 +4984,8 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
             f"episodes_per_seed={cfg.episodes_per_seed}  max_cycles={cfg.max_cycles}"
         )
         print(
-            f"  obs_mask_prob={cfg.obs_mask_prob:.3f}  run_label={cfg.run_label or '(none)'}  "
+            f"  obs_mask_prob={cfg.obs_mask_prob:.3f}  stress={cfg.newborn_stress_profile} "
+            f"blackout_len={cfg.newborn_blackout_length}  run_label={cfg.run_label or '(none)'}  "
             f"output_dir={cfg.output_dir}"
         )
         print("  1) Show frozen protocol summary")
@@ -4641,6 +5017,8 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
         print(" 27) Run x50 RCOS robotic perturbation repeats")
         print(" 28) Run x50 RCOS/no-RCOS ablation comparison")
         print(" 29) Show RCOS/no-RCOS ablation protocol")
+        print(" 30) Set newborn stress profile")
+        print(" 31) Set newborn blackout length")
         print("  0) Return to Main Menu")
 
         sub = input("Experiment menu select: ").strip().lower()
@@ -5172,7 +5550,40 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
             print(render_rcos_robotic_ablation_protocol_v1())
             continue
 
-        print("[experiments] Unknown selection. Use 0..29.")
+        if sub == "30":
+            raw = input(
+                "Newborn stress profile [baseline | blackout_short | blackout_long; blank=keep current]: "
+            ).strip().lower()
+
+            if not raw:
+                continue
+
+            if raw not in NEWBORN_STRESS_PROFILES_V1:
+                print("[experiments] invalid newborn stress profile.")
+                continue
+
+            ctx.experiment_cfg.newborn_stress_profile = raw
+            ctx.experiment_cfg = experiment_normalize_protocol_v1(ctx.experiment_cfg)
+            print(f"[experiments] newborn_stress_profile set to {ctx.experiment_cfg.newborn_stress_profile}")
+            continue
+
+        if sub == "31":
+            raw = input(
+                f"Newborn blackout length in cycles [current: {cfg.newborn_blackout_length}]: "
+            ).strip()
+
+            if not raw:
+                continue
+
+            try:
+                ctx.experiment_cfg.newborn_blackout_length = int(raw)
+                ctx.experiment_cfg = experiment_normalize_protocol_v1(ctx.experiment_cfg)
+                print(f"[experiments] newborn_blackout_length set to {ctx.experiment_cfg.newborn_blackout_length}")
+            except Exception:
+                print("[experiments] invalid integer for newborn blackout length.")
+            continue
+
+        print("[experiments] Unknown selection. Use 0..31.")
 
 
 # Module layout / roadmap
@@ -21193,6 +21604,13 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             pass
 
         # 3) EnvObservation → WorldGraph + BodyMap
+        # Benchmark-only stressors modify the agent-visible observation packet,
+        # not hidden environment truth.
+        try:
+            env_obs = apply_newborn_experiment_stress_v1(ctx, env_obs)
+        except Exception:
+            pass
+
         obs_write = inject_obs_into_world(world, ctx, env_obs)
         if teaching_mode:
             print(menu37_teaching_after_observation_v1())
