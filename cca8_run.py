@@ -309,6 +309,7 @@ class ExperimentProtocolConfig:
     # baseline       : existing task, with ordinary obs_mask only
     # blackout_short : milestone-locked local-state blackout, usually 2-3 cycles
     # blackout_long  : longer local-state blackout, usually 5+ cycles
+    # route_loss     : memory-critical external route/task-state loss, usually 8+ cycles
     newborn_stress_profile: str = "baseline"
     newborn_blackout_length: int = 3
     action_vocab_version: str = "cca8_action_vocab_v1"
@@ -823,6 +824,10 @@ class Ctx:
     # controlled A/B/C/D/E batches from the main runner.
     experiment_cfg: ExperimentProtocolConfig = field(default_factory=ExperimentProtocolConfig)
     experiment_last_summary: dict[str, Any] = field(default_factory=dict)
+    # Policy-selection debug trace for benchmark regression diagnosis.
+    # Diagnostic only: does not affect policy triggers, filtering, scoring, or execution.
+    experiment_policy_debug_last: dict[str, Any] = field(default_factory=dict)
+    experiment_policy_debug_events: list[dict[str, Any]] = field(default_factory=list)
     experiment_active_condition_id: Optional[str] = None
     experiment_active_condition_label: Optional[str] = None
     experiment_llm_adviser_enabled: bool = False
@@ -858,6 +863,17 @@ class Ctx:
     experiment_newborn_retrieved_hint: dict[str, Any] = field(default_factory=dict)
     experiment_newborn_retrieved_hint_until_step: int = -1
     experiment_newborn_retrieved_hint_source: Optional[str] = None
+
+    # Retrieved-hint instrumentation.
+    # "used_step_count" is a conservative control-use proxy: it counts a cycle when
+    # the active retrieved hint is returned to a newborn bridge/gate helper.
+    experiment_newborn_retrieved_hint_set_count: int = 0
+    experiment_newborn_retrieved_hint_active_step_count: int = 0
+    experiment_newborn_retrieved_hint_used_step_count: int = 0
+    experiment_newborn_retrieved_hint_last_active_step_counted: int = -1
+    experiment_newborn_retrieved_hint_last_used_step_counted: int = -1
+    experiment_newborn_retrieved_hint_events: list[dict[str, Any]] = field(default_factory=list)
+
     # Newborn benchmark stressor runtime state.
     # These fields are episode-local and are reset by experiment_configure_benchmark_runtime_v1.
     experiment_newborn_blackout_start_step: int = -1
@@ -898,6 +914,29 @@ class Ctx:
             return None
         v = tv.vector()
         return sum(a*b for a, b in zip(v, lb))
+
+
+def _experiment_policy_debug_record_v1(ctx: Ctx | None, event: dict[str, Any]) -> None:
+    """Store one policy-selection debug event without changing behavior."""
+    if ctx is None or not isinstance(event, dict):
+        return
+
+    try:
+        event_copy = dict(event)
+        ctx.experiment_policy_debug_last = event_copy
+
+        hist = getattr(ctx, "experiment_policy_debug_events", None)
+        if not isinstance(hist, list):
+            hist = []
+
+        hist.append(event_copy)
+
+        if len(hist) > 128:
+            del hist[:-128]
+
+        ctx.experiment_policy_debug_events = hist
+    except Exception:
+        pass
 
 
 def experiment_action_vocab_v1() -> list[str]:
@@ -1018,7 +1057,7 @@ def experiment_benchmark_catalog_v1() -> dict[str, ExperimentBenchmarkDef]:
     ]
     return {item.benchmark_id: item for item in items}
 
-NEWBORN_STRESS_PROFILES_V1 = ("baseline", "blackout_short", "blackout_long")
+NEWBORN_STRESS_PROFILES_V1 = ("baseline", "blackout_short", "blackout_long", "route_loss")
 
 NEWBORN_STRESS_DROP_PRED_PREFIXES_V1 = (
     "proximity:mom:",
@@ -1035,6 +1074,242 @@ NEWBORN_STRESS_DROP_CUE_PREFIXES_V1 = (
     "smell:milk",
     "warmth:mom",
 )
+
+NEWBORN_ROUTE_LOSS_DROP_PRED_PREFIXES_V1 = (
+    "proximity:mom:",
+    "nipple:",
+    "milk:",
+    "proximity:shelter:",
+    "hazard:cliff:",
+    "terrain:",
+    "goal:",
+    "landmark:",
+    "route:",
+    "nav:",
+)
+
+NEWBORN_ROUTE_LOSS_DROP_CUE_PREFIXES_V1 = (
+    "vision:silhouette:mom",
+    "vision:landmark",
+    "vision:shelter",
+    "vision:cliff",
+    "touch:nipple",
+    "touch:terrain",
+    "odor:milk",
+    "smell:milk",
+    "warmth:mom",
+    "nav:",
+    "route:",
+)
+
+NEWBORN_ROUTE_LOSS_RAW_SENSOR_KEY_INFIXES_V1 = (
+    "mom",
+    "nipple",
+    "milk",
+    "shelter",
+    "cliff",
+    "hazard",
+    "landmark",
+    "route",
+    "bearing",
+    "distance",
+    "goal",
+)
+
+NEWBORN_ROUTE_LOSS_META_PROTECTED_KEYS_V1 = {
+    "scenario_stage",
+    "milestone",
+    "milestones",
+    "step",
+    "env_step",
+    "episode_step",
+    "time",
+    "time_s",
+    "dt",
+}
+
+
+def _newborn_route_loss_drop_predicates_v1(tokens: list[Any]) -> tuple[list[str], list[str]]:
+    """Drop external route/task-state predicates while preserving body posture cues."""
+    kept: list[str] = []
+    dropped: list[str] = []
+
+    for item in tokens:
+        if not isinstance(item, str):
+            continue
+
+        token = item.strip()
+        if not token:
+            continue
+
+        token_check = token.replace("pred:", "", 1) if token.startswith("pred:") else token
+
+        # Preserve proprioceptive/body-state information. Route loss is not amnesia
+        # about the body; it is loss of external route/task context.
+        if token_check.startswith("posture:") or token_check in ("resting", "alert"):
+            kept.append(token)
+            continue
+
+        if any(token_check.startswith(prefix) for prefix in NEWBORN_ROUTE_LOSS_DROP_PRED_PREFIXES_V1):
+            dropped.append(token)
+            continue
+
+        kept.append(token)
+
+    return kept, dropped
+
+
+def _newborn_route_loss_drop_cues_v1(tokens: list[Any]) -> tuple[list[str], list[str]]:
+    """Drop external route/task-state cues while preserving proprioceptive cues."""
+    kept: list[str] = []
+    dropped: list[str] = []
+
+    for item in tokens:
+        if not isinstance(item, str):
+            continue
+
+        token = item.strip()
+        if not token:
+            continue
+
+        # Preserve fall/body/balance cues. The agent still knows its own posture.
+        if token.startswith(("vestibular:", "balance:", "touch:flank_on_ground")):
+            kept.append(token)
+            continue
+
+        if any(token.startswith(prefix) for prefix in NEWBORN_ROUTE_LOSS_DROP_CUE_PREFIXES_V1):
+            dropped.append(token)
+            continue
+
+        kept.append(token)
+
+    return kept, dropped
+
+
+def _newborn_route_loss_drop_raw_sensors_v1(raw_sensors: Any) -> tuple[Any, list[str]]:
+    """Drop external route/task-state raw sensor fields, when raw_sensors is a dict."""
+    if not isinstance(raw_sensors, dict):
+        return raw_sensors, []
+
+    kept: dict[str, Any] = {}
+    dropped_keys: list[str] = []
+
+    for key, value in raw_sensors.items():
+        key_text = str(key)
+        key_norm = key_text.lower()
+
+        if any(fragment in key_norm for fragment in NEWBORN_ROUTE_LOSS_RAW_SENSOR_KEY_INFIXES_V1):
+            dropped_keys.append(key_text)
+            continue
+
+        kept[key] = value
+
+    return kept, dropped_keys
+
+
+def _newborn_route_loss_mask_env_meta_v1(meta: dict[str, Any]) -> list[str]:
+    """Remove agent-visible external route hints from env_meta while preserving scoring metadata.
+
+    env_meta is still part of the visible observation packet in this runner, so route
+    loss should not leave direct route hints such as mom_position or bearing_to_mom.
+    We preserve scenario_stage and milestones because they are used by the benchmark
+    harness for storage/scoring and do not directly provide a route vector.
+    """
+    if not isinstance(meta, dict):
+        return []
+
+    dropped_keys: list[str] = []
+
+    for key in list(meta.keys()):
+        key_text = str(key)
+        key_norm = key_text.lower()
+
+        if key_norm.startswith("newborn_"):
+            continue
+
+        if key_norm in NEWBORN_ROUTE_LOSS_META_PROTECTED_KEYS_V1:
+            continue
+
+        drop = False
+        for fragment in (
+            "mom_position",
+            "nipple_position",
+            "shelter_position",
+            "cliff_position",
+            "hazard_position",
+            "goal_position",
+            "landmark_position",
+            "mom_distance",
+            "nipple_distance",
+            "shelter_distance",
+            "cliff_distance",
+            "hazard_distance",
+            "goal_distance",
+            "bearing",
+            "route",
+            "path",
+            "landmark",
+        ):
+            if fragment in key_norm:
+                drop = True
+                break
+
+        if drop:
+            dropped_keys.append(key_text)
+            try:
+                meta.pop(key, None)
+            except Exception:
+                pass
+
+    return dropped_keys
+
+
+def _newborn_route_loss_drop_nav_fields_v1(env_obs: EnvObservation) -> dict[str, int]:
+    """Drop external navigation surfaces from the visible observation packet."""
+    out = {
+        "dropped_nav_patches": 0,
+        "dropped_surface_grid": 0,
+    }
+
+    try:
+        nav_patches = getattr(env_obs, "nav_patches", None)
+        if isinstance(nav_patches, list):
+            out["dropped_nav_patches"] = int(len(nav_patches))
+            setattr(env_obs, "nav_patches", [])
+    except Exception:
+        pass
+
+    try:
+        surface_grid = getattr(env_obs, "surface_grid", None)
+        if isinstance(surface_grid, dict) and surface_grid:
+            out["dropped_surface_grid"] = 1
+            setattr(env_obs, "surface_grid", {})
+    except Exception:
+        pass
+
+    return out
+
+
+def _newborn_effective_blackout_length_v1(profile: str, configured_length: Any) -> int:
+    """Return the effective blackout length used by a newborn stress profile.
+
+    The protocol stores one configurable length value, but each stress profile has
+    its own allowed range. This helper makes the displayed/provenance value match
+    the value actually used by the stressor runtime.
+    """
+    profile_norm = str(profile or "baseline").strip().lower()
+    try:
+        raw = int(configured_length or 3)
+    except Exception:
+        raw = 3
+    raw = max(1, min(20, raw))
+    if profile_norm == "blackout_short":
+        return max(1, min(4, raw))
+    if profile_norm == "blackout_long":
+        return max(5, min(20, raw))
+    if profile_norm == "route_loss":
+        return max(8, min(20, raw))
+    return raw
 
 
 def _newborn_stress_profile_from_ctx_v1(ctx: Ctx | None) -> str:
@@ -1053,26 +1328,24 @@ def _newborn_stress_profile_from_ctx_v1(ctx: Ctx | None) -> str:
 
 def _newborn_blackout_length_from_ctx_v1(ctx: Ctx | None, profile: str) -> int:
     """Return the effective blackout length for a newborn stress profile."""
-    default_len = 3
-    if profile == "blackout_short":
+    profile_norm = str(profile or "baseline").strip().lower()
+
+    if profile_norm == "blackout_short":
         default_len = 3
-    elif profile == "blackout_long":
+    elif profile_norm == "blackout_long":
         default_len = 5
+    elif profile_norm == "route_loss":
+        default_len = 8
+    else:
+        default_len = 3
 
     if ctx is None:
-        return default_len
+        return _newborn_effective_blackout_length_v1(profile_norm, default_len)
 
     cfg = getattr(ctx, "experiment_cfg", None)
-    try:
-        raw = int(getattr(cfg, "newborn_blackout_length", default_len) or default_len)
-    except Exception:
-        raw = default_len
+    raw = getattr(cfg, "newborn_blackout_length", default_len)
 
-    if profile == "blackout_short":
-        return max(1, min(4, raw))
-    if profile == "blackout_long":
-        return max(5, min(20, raw))
-    return max(1, min(20, raw))
+    return _newborn_effective_blackout_length_v1(profile_norm, raw)
 
 
 def _newborn_stress_env_meta_v1(env_obs: EnvObservation) -> dict[str, Any]:
@@ -1186,12 +1459,22 @@ def apply_newborn_experiment_stress_v1(ctx: Ctx | None, env_obs: EnvObservation)
     """Apply deterministic newborn benchmark stressors to the visible observation packet.
 
     This changes what the agent observes. It does not change hidden environment truth.
-    The first implemented stressor is a milestone-locked local-state blackout:
-    after selected milestones, local relation and feeding-state tokens are hidden
-    for a short interval.
 
-    This makes the benchmark more memory-critical without giving any condition
-    hidden information.
+    Stress profiles
+    ---------------
+    baseline:
+        No structured stressor beyond ordinary observation masking.
+
+    blackout_short / blackout_long:
+        Hide selected local relation and feeding-state tokens after milestones.
+
+    route_loss:
+        A stronger memory-critical stressor. The agent keeps body/proprioceptive
+        state, but loses external route/task-state evidence such as mother
+        direction/proximity, nipple/milk state, shelter/cliff relations, and local
+        navigation surfaces for a longer interval. During active route loss, the
+        benchmark forces keyframes so guarded retrieval has a chance to restore
+        continuity, while no-readback cannot silently coast on fresh route cues.
     """
     if ctx is None or env_obs is None:
         return env_obs
@@ -1203,6 +1486,8 @@ def apply_newborn_experiment_stress_v1(ctx: Ctx | None, env_obs: EnvObservation)
     if profile == "baseline":
         return env_obs
 
+    route_loss = profile == "route_loss"
+
     try:
         step_now = int(getattr(ctx, "controller_steps", 0) or 0)
     except Exception:
@@ -1213,9 +1498,6 @@ def apply_newborn_experiment_stress_v1(ctx: Ctx | None, env_obs: EnvObservation)
 
     meta["newborn_stress_profile"] = profile
 
-    # Apply any currently active blackout first. Milestone scheduling below starts
-    # on the next cycle, so the milestone observation itself remains available for
-    # seed storage and scoring.
     try:
         start_step = int(getattr(ctx, "experiment_newborn_blackout_start_step", -1) or -1)
         until_step = int(getattr(ctx, "experiment_newborn_blackout_until_step", -1) or -1)
@@ -1223,16 +1505,43 @@ def apply_newborn_experiment_stress_v1(ctx: Ctx | None, env_obs: EnvObservation)
         start_step = -1
         until_step = -1
 
-    blackout_active = bool(start_step >= 0 and start_step <= step_now <= until_step) #pylint: disable=chained-comparison
+    blackout_active = bool(start_step >= 0 and start_step <= step_now <= until_step)  # pylint: disable=chained-comparison
+
     dropped_preds: list[str] = []
     dropped_cues: list[str] = []
+    dropped_raw_keys: list[str] = []
+    dropped_meta_keys: list[str] = []
+    dropped_nav = {"dropped_nav_patches": 0, "dropped_surface_grid": 0}
 
     if blackout_active:
         preds_raw = list(getattr(env_obs, "predicates", []) or [])
         cues_raw = list(getattr(env_obs, "cues", []) or [])
 
-        preds_kept, dropped_preds = _newborn_stress_drop_predicates_v1(preds_raw)
-        cues_kept, dropped_cues = _newborn_stress_drop_cues_v1(cues_raw)
+        if route_loss:
+            preds_kept, dropped_preds = _newborn_route_loss_drop_predicates_v1(preds_raw)
+            cues_kept, dropped_cues = _newborn_route_loss_drop_cues_v1(cues_raw)
+
+            raw_sensors = getattr(env_obs, "raw_sensors", None)
+            raw_sensors_kept, dropped_raw_keys = _newborn_route_loss_drop_raw_sensors_v1(raw_sensors)
+            try:
+                setattr(env_obs, "raw_sensors", raw_sensors_kept)
+            except Exception:
+                pass
+
+            dropped_meta_keys = _newborn_route_loss_mask_env_meta_v1(meta)
+            dropped_nav = _newborn_route_loss_drop_nav_fields_v1(env_obs)
+
+            # Force a keyframe during active route loss. This gives condition A a
+            # fair chance to retrieve prior route/task context, while condition B
+            # cannot use readback.
+            meta["newborn_force_keyframe"] = True
+            meta["newborn_route_loss_active"] = True
+
+        else:
+            preds_kept, dropped_preds = _newborn_stress_drop_predicates_v1(preds_raw)
+            cues_kept, dropped_cues = _newborn_stress_drop_cues_v1(cues_raw)
+            meta["newborn_force_keyframe"] = False
+            meta["newborn_route_loss_active"] = False
 
         try:
             setattr(env_obs, "predicates", preds_kept)
@@ -1248,16 +1557,30 @@ def apply_newborn_experiment_stress_v1(ctx: Ctx | None, env_obs: EnvObservation)
         meta["newborn_blackout_dropped_cues"] = int(len(dropped_cues))
         meta["newborn_blackout_dropped_pred_tokens"] = dropped_preds[:16]
         meta["newborn_blackout_dropped_cue_tokens"] = dropped_cues[:16]
+
+        meta["newborn_route_loss_dropped_raw_keys"] = dropped_raw_keys[:16]
+        meta["newborn_route_loss_dropped_meta_keys"] = dropped_meta_keys[:16]
+        meta["newborn_route_loss_dropped_nav_patches"] = int(dropped_nav.get("dropped_nav_patches", 0))
+        meta["newborn_route_loss_dropped_surface_grid"] = int(dropped_nav.get("dropped_surface_grid", 0))
+
     else:
         meta["newborn_blackout_active"] = False
         meta["newborn_blackout_dropped_preds"] = 0
         meta["newborn_blackout_dropped_cues"] = 0
+        meta["newborn_force_keyframe"] = False
+        meta["newborn_route_loss_active"] = False
+        meta["newborn_route_loss_dropped_raw_keys"] = []
+        meta["newborn_route_loss_dropped_meta_keys"] = []
+        meta["newborn_route_loss_dropped_nav_patches"] = 0
+        meta["newborn_route_loss_dropped_surface_grid"] = 0
 
-    # Schedule the next blackout after meaningful task-boundary milestones.
-    # This creates a memory-critical interval after progress, without erasing
-    # the milestone observation itself.
+    if route_loss:
+        trigger_milestones = ("stood_up", "reached_mom", "found_nipple", "latched_nipple", "milk_drinking")
+    else:
+        trigger_milestones = ("stood_up", "reached_mom", "latched_nipple")
+
     for milestone in milestones:
-        if milestone in ("stood_up", "reached_mom", "latched_nipple"):
+        if milestone in trigger_milestones:
             _newborn_stress_schedule_blackout_v1(
                 ctx,
                 step_now=step_now,
@@ -1265,7 +1588,6 @@ def apply_newborn_experiment_stress_v1(ctx: Ctx | None, env_obs: EnvObservation)
                 milestone=milestone,
             )
             break
-
     return env_obs
 
 
@@ -1344,8 +1666,12 @@ def render_experiment_jsonl_schema_summary_v1() -> str:
         "repeated_action_loop_count", "llm_call_count", "llm_latency_ms_total", "latency_ms_total", "recovery_latency",
         "oracle_action_accuracy", "oracle_retrieval_precision", "internal_retrieval_event_ratio",
         "stabilization_latency", "retrieval_action_dissociation_count",
+        "time_to_rested_or_max_cycles",
         "newborn_stress_profile", "newborn_stress_active_cycle_count",
         "newborn_stress_dropped_pred_count", "newborn_stress_dropped_cue_count",
+        "newborn_stress_reasons",
+        "newborn_retrieved_hint_set_count", "newborn_retrieved_hint_active_step_count",
+        "newborn_retrieved_hint_used_step_count", "newborn_retrieved_hint_events",
         "state_integrity_summary", "lhsi_state_integrity_score", "lhsi_wrong_stage_action_count",
         "lhsi_repeated_action_loop_count", "lhsi_current_state_overwrite_proxy_count",
         "lhsi_stale_memory_intrusion_proxy_count", "lhsi_retrieval_action_dissociation_proxy_count",
@@ -1388,6 +1714,10 @@ def render_experiment_protocol_summary_v1(ctx: Ctx) -> str:
     lines.append(f"  obs_mask_prob        : {cfg.obs_mask_prob:.3f}")
     lines.append(f"  newborn_stress       : {cfg.newborn_stress_profile}")
     lines.append(f"  blackout_length      : {cfg.newborn_blackout_length}")
+    lines.append(
+        "  effective_blackout   : "
+        f"{_newborn_effective_blackout_length_v1(cfg.newborn_stress_profile, cfg.newborn_blackout_length)}"
+    )
     lines.append(f"  action_vocab_version : {cfg.action_vocab_version}")
     lines.append(f"  scratch_clear_policy : {cfg.scratch_clear_policy}")
     lines.append(f"  jsonl_cycle_records  : {cfg.jsonl_write_cycle_records}")
@@ -1520,7 +1850,7 @@ def experiment_normalize_protocol_v1(cfg: ExperimentProtocolConfig | None) -> Ex
         obs_mask_prob = 0.0
 
     stress_profile = str(getattr(src, "newborn_stress_profile", "baseline") or "baseline").strip().lower()
-    if stress_profile not in ("baseline", "blackout_short", "blackout_long"):
+    if stress_profile not in NEWBORN_STRESS_PROFILES_V1:
         stress_profile = "baseline"
 
     try:
@@ -1721,6 +2051,10 @@ def _experiment_protocol_snapshot_v1(cfg: ExperimentProtocolConfig) -> dict[str,
         "obs_mask_prob": float(cfg.obs_mask_prob),
         "newborn_stress_profile": str(getattr(cfg, "newborn_stress_profile", "baseline")),
         "newborn_blackout_length": int(getattr(cfg, "newborn_blackout_length", 3) or 3),
+        "effective_newborn_blackout_length": _newborn_effective_blackout_length_v1(
+            getattr(cfg, "newborn_stress_profile", "baseline"),
+            getattr(cfg, "newborn_blackout_length", 3),
+        ),
         "action_vocab_version": str(cfg.action_vocab_version),
         "scratch_clear_policy": str(cfg.scratch_clear_policy),
         "jsonl_write_cycle_records": bool(cfg.jsonl_write_cycle_records),
@@ -1956,6 +2290,12 @@ def experiment_prepare_logging_v1(ctx: Ctx, *, reset_buffers: bool = True) -> di
         "episodes_per_seed": int(cfg.episodes_per_seed),
         "max_cycles": int(cfg.max_cycles),
         "obs_mask_prob": float(cfg.obs_mask_prob),
+        "newborn_stress_profile": str(getattr(cfg, "newborn_stress_profile", "baseline")),
+        "newborn_blackout_length": int(getattr(cfg, "newborn_blackout_length", 3) or 3),
+        "effective_newborn_blackout_length": _newborn_effective_blackout_length_v1(
+            getattr(cfg, "newborn_stress_profile", "baseline"),
+            getattr(cfg, "newborn_blackout_length", 3),
+        ),
         "run_label": cfg.run_label,
         "output_dir": out_dir,
         "cycle_json_enabled": bool(ctx.cycle_json_enabled),
@@ -2260,7 +2600,14 @@ def experiment_configure_benchmark_runtime_v1(world, drives, ctx: Ctx, env: Hybr
             ctx.experiment_newborn_retrieved_hint = {}
             ctx.experiment_newborn_retrieved_hint_until_step = -1
             ctx.experiment_newborn_retrieved_hint_source = None
-
+            ctx.experiment_newborn_retrieved_hint_set_count = 0
+            ctx.experiment_newborn_retrieved_hint_active_step_count = 0
+            ctx.experiment_newborn_retrieved_hint_used_step_count = 0
+            ctx.experiment_newborn_retrieved_hint_last_active_step_counted = -1
+            ctx.experiment_newborn_retrieved_hint_last_used_step_counted = -1
+            ctx.experiment_newborn_retrieved_hint_events = []
+            ctx.experiment_policy_debug_last = {}
+            ctx.experiment_policy_debug_events = []
             ctx.experiment_newborn_blackout_start_step = -1
             ctx.experiment_newborn_blackout_until_step = -1
             ctx.experiment_newborn_blackout_reason = None
@@ -3217,8 +3564,12 @@ def _experiment_transform_generic_cycle_records_v1(
             "retrieval_event": retrieval_event,
             "pred_err": pred_err,
             "selected_policy": selected_policy,
-            "llm_advice_summary": dict(raw.get("llm_advice_summary", {}) or {}),
             "executed_action": executed_action,
+            "posture": raw.get("posture") if isinstance(raw.get("posture"), str) else None,
+            "mom_distance": raw.get("mom_distance") if isinstance(raw.get("mom_distance"), str) else None,
+            "nipple_state": raw.get("nipple_state") if isinstance(raw.get("nipple_state"), str) else None,
+            "policy_debug": dict(raw.get("policy_debug", {}) or {}) if isinstance(raw.get("policy_debug"), dict) else {},
+            "llm_advice_summary": dict(raw.get("llm_advice_summary", {}) or {}),
             "milestones": _experiment_extract_generic_milestones_v1(raw),
             "oracle": oracle_block,
             "done": bool(idx == (len(raw_records) - 1)),
@@ -3253,6 +3604,7 @@ def _experiment_summarize_generic_episode_v1(
         episode_index=episode_index,
     )
 
+    cfg = experiment_normalize_protocol_v1(getattr(ctx, "experiment_cfg", None))
     milestone_vector: dict[str, Any] = {}
     repeated_action_loop_count = 0
     same_action_streak = 0
@@ -3450,6 +3802,7 @@ def _experiment_summarize_generic_episode_v1(
         newborn = _experiment_summarize_newborn_b2_v1(raw_records)
         retrieval_dbg = _newborn_retrieval_debug_from_raw_records_v1(raw_records)
         stress_dbg = _newborn_stress_debug_from_raw_records_v1(raw_records)
+        hint_dbg = _newborn_retrieved_hint_debug_from_ctx_v1(ctx)
 
         milestone_vector = dict(newborn.get("milestone_vector", {}) or {})
         success = bool(newborn.get("success"))
@@ -3471,6 +3824,12 @@ def _experiment_summarize_generic_episode_v1(
             value = newborn.get(key)
             record[key] = float(value) if isinstance(value, (int, float)) else None
 
+        rest_t = record.get("time_to_rested")
+        if isinstance(rest_t, (int, float)) and not isinstance(rest_t, bool):
+            record["time_to_rested_or_max_cycles"] = float(rest_t)
+        else:
+            record["time_to_rested_or_max_cycles"] = float(cfg.max_cycles)
+
         record["newborn_retrieval_event_count"] = int(retrieval_dbg.get("retrieval_event_count", 0) or 0)
         record["newborn_retrieval_ok_count"] = int(retrieval_dbg.get("retrieval_ok_count", 0) or 0)
         record["newborn_retrieval_non_noop_count"] = int(retrieval_dbg.get("retrieval_non_noop_count", 0) or 0)
@@ -3488,6 +3847,19 @@ def _experiment_summarize_generic_episode_v1(
             stress_dbg.get("newborn_stress_dropped_cue_count", 0) or 0
         )
         record["newborn_stress_reasons"] = list(stress_dbg.get("newborn_stress_reasons", []) or [])
+
+        record["newborn_retrieved_hint_set_count"] = int(
+            hint_dbg.get("newborn_retrieved_hint_set_count", 0) or 0
+        )
+        record["newborn_retrieved_hint_active_step_count"] = int(
+            hint_dbg.get("newborn_retrieved_hint_active_step_count", 0) or 0
+        )
+        record["newborn_retrieved_hint_used_step_count"] = int(
+            hint_dbg.get("newborn_retrieved_hint_used_step_count", 0) or 0
+        )
+        record["newborn_retrieved_hint_events"] = list(
+            hint_dbg.get("newborn_retrieved_hint_events", []) or []
+        )
 
         lhsi = summarize_newborn_state_integrity_v1(raw_records)
         record["state_integrity_summary"] = dict(lhsi)
@@ -3684,7 +4056,10 @@ def experiment_run_one_episode_v1(
         "seed": int(chosen_seed),
         "effective_obs_mask_prob": float(cfg.obs_mask_prob),
         "effective_newborn_stress_profile": str(getattr(cfg, "newborn_stress_profile", "baseline")),
-        "effective_newborn_blackout_length": int(getattr(cfg, "newborn_blackout_length", 3) or 3),
+        "effective_newborn_blackout_length": _newborn_effective_blackout_length_v1(
+            getattr(cfg, "newborn_stress_profile", "baseline"),
+            getattr(cfg, "newborn_blackout_length", 3),
+        ),
         "episode_index": int(episode_index),
         "cycle_record_count": int(len(cycle_records)),
         "episode_record": episode_record,
@@ -3805,6 +4180,7 @@ def render_experiment_episode_summary_lines_v1(result: dict[str, Any]) -> list[s
                 f"[experiments] milestone_score   : {_experiment_metric_text_v1(episode_record.get('milestone_score'))}",
                 f"[experiments] recovery_latency  : {_experiment_metric_text_v1(episode_record.get('recovery_latency'))}",
                 f"[experiments] time_to_rested    : {_experiment_metric_text_v1(episode_record.get('time_to_rested'))}",
+                f"[experiments] rest_t_or_max     : {_experiment_metric_text_v1(episode_record.get('time_to_rested_or_max_cycles'))}",
                 f"[experiments] phase_lats        : mom={_experiment_metric_text_v1(episode_record.get('mom_approach_latency'))} "
                 f"find={_experiment_metric_text_v1(episode_record.get('nipple_find_latency'))} "
                 f"latch={_experiment_metric_text_v1(episode_record.get('latch_latency'))} "
@@ -3813,6 +4189,9 @@ def render_experiment_episode_summary_lines_v1(result: dict[str, Any]) -> list[s
                 f"active={_experiment_metric_text_v1(episode_record.get('newborn_stress_active_cycle_count'))} "
                 f"drop_pred={_experiment_metric_text_v1(episode_record.get('newborn_stress_dropped_pred_count'))} "
                 f"drop_cue={_experiment_metric_text_v1(episode_record.get('newborn_stress_dropped_cue_count'))}",
+                f"[experiments] retrieved_hint   : set={_experiment_metric_text_v1(episode_record.get('newborn_retrieved_hint_set_count'))} "
+                f"active_steps={_experiment_metric_text_v1(episode_record.get('newborn_retrieved_hint_active_step_count'))} "
+                f"used_steps={_experiment_metric_text_v1(episode_record.get('newborn_retrieved_hint_used_step_count'))}",
                 f"[experiments] retrieval_debug   : evt={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_event_count'))} "
                 f"nonnoop={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_non_noop_count'))} "
                 f"merge_noop={_experiment_metric_text_v1(episode_record.get('newborn_retrieval_merge_noop_count'))} "
@@ -4161,7 +4540,8 @@ def _experiment_repeat_metric_label_v1(benchmark_id: str, metric_key: str) -> st
     newborn_map = {
         "success_rate": "success_rt",
         "mean_milestone_score": "milestone_score",
-        "mean_time_to_rested": "rest_t",
+        "mean_time_to_rested": "rest_t_success",
+        "mean_time_to_rested_or_max_cycles": "rest_t_or_max",
         "mean_newborn_retrieval_event_count": "retr_evt",
         "mean_newborn_retrieval_non_noop_count": "retr_eff",
         "mean_lhsi_state_integrity_score": "lhsi",
@@ -4172,6 +4552,12 @@ def _experiment_repeat_metric_label_v1(benchmark_id: str, metric_key: str) -> st
         "mean_lhsi_retrieval_action_dissociation_proxy_count": "dissoc",
         "mean_lhsi_retrieval_followup_basis_count": "basis",
         "mean_lhsi_provenance_complete_cycle_rate": "provenance",
+        "mean_newborn_stress_active_cycle_count": "stress_act",
+        "mean_newborn_stress_dropped_pred_count": "stress_pred",
+        "mean_newborn_stress_dropped_cue_count": "stress_cue",
+        "mean_newborn_retrieved_hint_set_count": "hint_set",
+        "mean_newborn_retrieved_hint_active_step_count": "hint_active",
+        "mean_newborn_retrieved_hint_used_step_count": "hint_used",
         "mean_cumulative_prediction_error": "pred_e",
         "mean_llm_call_count": "llm_calls",
     }
@@ -4347,6 +4733,7 @@ def experiment_run_condition_batch_v1(
         milestone_scores: list[float] = []
         recovery_latencies: list[float] = []
         time_to_rested_vals: list[float] = []
+        time_to_rested_or_max_vals: list[float] = []
         repeated_loops: list[float] = []
         retrieval_event_counts: list[float] = []
         retrieval_non_noop_counts: list[float] = []
@@ -4358,6 +4745,12 @@ def experiment_run_condition_batch_v1(
         lhsi_dissoc_proxy: list[float] = []
         lhsi_followup_basis: list[float] = []
         lhsi_provenance_rates: list[float] = []
+        stress_active_counts: list[float] = []
+        stress_dropped_pred_counts: list[float] = []
+        stress_dropped_cue_counts: list[float] = []
+        hint_set_counts: list[float] = []
+        hint_active_step_counts: list[float] = []
+        hint_used_step_counts: list[float] = []
         context_switch_accs: list[float] = []
         oracle_retr_precs: list[float] = []
         internal_retr_rts: list[float] = []
@@ -4417,6 +4810,10 @@ def experiment_run_condition_batch_v1(
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     time_to_rested_vals.append(float(value))
 
+                value = episode_record.get("time_to_rested_or_max_cycles")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    time_to_rested_or_max_vals.append(float(value))
+
                 value = episode_record.get("repeated_action_loop_count")
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     repeated_loops.append(float(value))
@@ -4461,6 +4858,30 @@ def experiment_run_condition_batch_v1(
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     lhsi_provenance_rates.append(float(value))
 
+                value = episode_record.get("newborn_stress_active_cycle_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    stress_active_counts.append(float(value))
+
+                value = episode_record.get("newborn_stress_dropped_pred_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    stress_dropped_pred_counts.append(float(value))
+
+                value = episode_record.get("newborn_stress_dropped_cue_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    stress_dropped_cue_counts.append(float(value))
+
+                value = episode_record.get("newborn_retrieved_hint_set_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    hint_set_counts.append(float(value))
+
+                value = episode_record.get("newborn_retrieved_hint_active_step_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    hint_active_step_counts.append(float(value))
+
+                value = episode_record.get("newborn_retrieved_hint_used_step_count")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    hint_used_step_counts.append(float(value))
+
             value = episode_record.get("cumulative_prediction_error")
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 pred_errs.append(float(value))
@@ -4493,6 +4914,7 @@ def experiment_run_condition_batch_v1(
                     "mean_milestone_score": _experiment_mean_v1(milestone_scores),
                     "mean_recovery_latency": _experiment_mean_v1(recovery_latencies),
                     "mean_time_to_rested": _experiment_mean_v1(time_to_rested_vals),
+                    "mean_time_to_rested_or_max_cycles": _experiment_mean_v1(time_to_rested_or_max_vals),
                     "mean_repeated_loops": _experiment_mean_v1(repeated_loops),
                     "mean_newborn_retrieval_event_count": _experiment_mean_v1(retrieval_event_counts),
                     "mean_newborn_retrieval_non_noop_count": _experiment_mean_v1(retrieval_non_noop_counts),
@@ -4504,6 +4926,12 @@ def experiment_run_condition_batch_v1(
                     "mean_lhsi_retrieval_action_dissociation_proxy_count": _experiment_mean_v1(lhsi_dissoc_proxy),
                     "mean_lhsi_retrieval_followup_basis_count": _experiment_mean_v1(lhsi_followup_basis),
                     "mean_lhsi_provenance_complete_cycle_rate": _experiment_mean_v1(lhsi_provenance_rates),
+                    "mean_newborn_stress_active_cycle_count": _experiment_mean_v1(stress_active_counts),
+                    "mean_newborn_stress_dropped_pred_count": _experiment_mean_v1(stress_dropped_pred_counts),
+                    "mean_newborn_stress_dropped_cue_count": _experiment_mean_v1(stress_dropped_cue_counts),
+                    "mean_newborn_retrieved_hint_set_count": _experiment_mean_v1(hint_set_counts),
+                    "mean_newborn_retrieved_hint_active_step_count": _experiment_mean_v1(hint_active_step_counts),
+                    "mean_newborn_retrieved_hint_used_step_count": _experiment_mean_v1(hint_used_step_counts),
                     "mean_cumulative_prediction_error": _experiment_mean_v1(pred_errs),
                 }
             )
@@ -4528,7 +4956,10 @@ def experiment_run_condition_batch_v1(
         "seed_list": list(run_seeds),
         "effective_obs_mask_prob": float(cfg.obs_mask_prob),
         "effective_newborn_stress_profile": str(getattr(cfg, "newborn_stress_profile", "baseline")),
-        "effective_newborn_blackout_length": int(getattr(cfg, "newborn_blackout_length", 3) or 3),
+        "effective_newborn_blackout_length": _newborn_effective_blackout_length_v1(
+            getattr(cfg, "newborn_stress_profile", "baseline"),
+            getattr(cfg, "newborn_blackout_length", 3),
+        ),
         "episodes_per_seed": int(eps),
         "run_count": int(len(results)),
         "ok_count": int(len(results) - len(failures)),
@@ -4557,7 +4988,7 @@ def render_experiment_batch_summary_lines_v1(batch_result: dict[str, Any]) -> li
         f"[experiments] batch seeds       : {_experiment_metric_text_v1(batch_result.get('seed_list'))}",
         f"[experiments] batch obs_mask    : {_experiment_metric_text_v1(batch_result.get('effective_obs_mask_prob'))}",
         f"[experiments] batch stress      : {_experiment_metric_text_v1(batch_result.get('effective_newborn_stress_profile'))} "
-        f"blackout_len={_experiment_metric_text_v1(batch_result.get('effective_newborn_blackout_length'))}",
+        f"effective_blackout_len={_experiment_metric_text_v1(batch_result.get('effective_newborn_blackout_length'))}",
         f"[experiments] batch eps/seed    : {_experiment_metric_text_v1(batch_result.get('episodes_per_seed'))}",
         f"[experiments] batch run_count   : {_experiment_metric_text_v1(batch_result.get('run_count'))}",
         f"[experiments] batch fail_count  : {_experiment_metric_text_v1(batch_result.get('fail_count'))}",
@@ -4594,7 +5025,8 @@ def render_experiment_batch_summary_lines_v1(batch_result: dict[str, Any]) -> li
             tail = (
                 f" milestone_score={_experiment_metric_text_v1(row.get('mean_milestone_score'))}"
                 f" recovery_lat={_experiment_metric_text_v1(row.get('mean_recovery_latency'))}"
-                f" rest_t={_experiment_metric_text_v1(row.get('mean_time_to_rested'))}"
+                f" rest_t_success={_experiment_metric_text_v1(row.get('mean_time_to_rested'))}"
+                f" rest_t_or_max={_experiment_metric_text_v1(row.get('mean_time_to_rested_or_max_cycles'))}"
                 f" full_loops={_experiment_metric_text_v1(row.get('mean_repeated_loops'))}"
                 f" retr_evt={_experiment_metric_text_v1(row.get('mean_newborn_retrieval_event_count'))}"
                 f" retr_eff={_experiment_metric_text_v1(row.get('mean_newborn_retrieval_non_noop_count'))}"
@@ -4605,6 +5037,11 @@ def render_experiment_batch_summary_lines_v1(batch_result: dict[str, Any]) -> li
                 f" stale={_experiment_metric_text_v1(row.get('mean_lhsi_stale_memory_intrusion_proxy_count'))}"
                 f" dissoc={_experiment_metric_text_v1(row.get('mean_lhsi_retrieval_action_dissociation_proxy_count'))}"
                 f" basis={_experiment_metric_text_v1(row.get('mean_lhsi_retrieval_followup_basis_count'))}"
+                f" stress_act={_experiment_metric_text_v1(row.get('mean_newborn_stress_active_cycle_count'))}"
+                f" stress_pred={_experiment_metric_text_v1(row.get('mean_newborn_stress_dropped_pred_count'))}"
+                f" stress_cue={_experiment_metric_text_v1(row.get('mean_newborn_stress_dropped_cue_count'))}"
+                f" hint_set={_experiment_metric_text_v1(row.get('mean_newborn_retrieved_hint_set_count'))}"
+                f" hint_used={_experiment_metric_text_v1(row.get('mean_newborn_retrieved_hint_used_step_count'))}"
                 f" pred_e={_experiment_metric_text_v1(row.get('mean_cumulative_prediction_error'))}"
             )
 
@@ -4638,6 +5075,7 @@ def _experiment_repeat_metric_keys_v1(benchmark_id: str) -> list[str]:
         "success_rate",
         "mean_milestone_score",
         "mean_time_to_rested",
+        "mean_time_to_rested_or_max_cycles",
         "mean_newborn_retrieval_event_count",
         "mean_newborn_retrieval_non_noop_count",
         "mean_lhsi_state_integrity_score",
@@ -4648,6 +5086,12 @@ def _experiment_repeat_metric_keys_v1(benchmark_id: str) -> list[str]:
         "mean_lhsi_retrieval_action_dissociation_proxy_count",
         "mean_lhsi_retrieval_followup_basis_count",
         "mean_lhsi_provenance_complete_cycle_rate",
+        "mean_newborn_stress_active_cycle_count",
+        "mean_newborn_stress_dropped_pred_count",
+        "mean_newborn_stress_dropped_cue_count",
+        "mean_newborn_retrieved_hint_set_count",
+        "mean_newborn_retrieved_hint_active_step_count",
+        "mean_newborn_retrieved_hint_used_step_count",
         "mean_cumulative_prediction_error",
         "mean_llm_call_count",
     ]
@@ -4723,7 +5167,8 @@ def _render_experiment_repeat_condition_line_v1(
         tail = (
             f" success_rt={_experiment_metric_text_v1(condition_summary.get('success_rate'))}"
             f" milestone_score={_experiment_metric_text_v1(condition_summary.get('mean_milestone_score'))}"
-            f" rest_t={_experiment_metric_text_v1(condition_summary.get('mean_time_to_rested'))}"
+            f" rest_t_success={_experiment_metric_text_v1(condition_summary.get('mean_time_to_rested'))}"
+            f" rest_t_or_max={_experiment_metric_text_v1(condition_summary.get('mean_time_to_rested_or_max_cycles'))}"
             f" retr_evt={_experiment_metric_text_v1(condition_summary.get('mean_newborn_retrieval_event_count'))}"
             f" retr_eff={_experiment_metric_text_v1(condition_summary.get('mean_newborn_retrieval_non_noop_count'))}"
             f" lhsi={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_state_integrity_score'))}"
@@ -4733,6 +5178,11 @@ def _render_experiment_repeat_condition_line_v1(
             f" stale={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_stale_memory_intrusion_proxy_count'))}"
             f" dissoc={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_retrieval_action_dissociation_proxy_count'))}"
             f" basis={_experiment_metric_text_v1(condition_summary.get('mean_lhsi_retrieval_followup_basis_count'))}"
+            f" stress_act={_experiment_metric_text_v1(condition_summary.get('mean_newborn_stress_active_cycle_count'))}"
+            f" stress_pred={_experiment_metric_text_v1(condition_summary.get('mean_newborn_stress_dropped_pred_count'))}"
+            f" stress_cue={_experiment_metric_text_v1(condition_summary.get('mean_newborn_stress_dropped_cue_count'))}"
+            f" hint_set={_experiment_metric_text_v1(condition_summary.get('mean_newborn_retrieved_hint_set_count'))}"
+            f" hint_used={_experiment_metric_text_v1(condition_summary.get('mean_newborn_retrieved_hint_used_step_count'))}"
             f" pred_e={_experiment_metric_text_v1(condition_summary.get('mean_cumulative_prediction_error'))}"
             f" llm_calls={_experiment_metric_text_v1(condition_summary.get('mean_llm_call_count'))}"
         )
@@ -4983,10 +5433,14 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
             f"  benchmark={cfg.benchmark_id}  conditions={cfg.condition_ids}  seeds={cfg.seed_list}  "
             f"episodes_per_seed={cfg.episodes_per_seed}  max_cycles={cfg.max_cycles}"
         )
+        effective_blackout_len = _newborn_effective_blackout_length_v1(
+            cfg.newborn_stress_profile,
+            cfg.newborn_blackout_length,
+        )
         print(
             f"  obs_mask_prob={cfg.obs_mask_prob:.3f}  stress={cfg.newborn_stress_profile} "
-            f"blackout_len={cfg.newborn_blackout_length}  run_label={cfg.run_label or '(none)'}  "
-            f"output_dir={cfg.output_dir}"
+            f"blackout_len={cfg.newborn_blackout_length} effective_blackout_len={effective_blackout_len}  "
+            f"run_label={cfg.run_label or '(none)'}  output_dir={cfg.output_dir}"
         )
         print("  1) Show frozen protocol summary")
         print("  2) Show A-E condition table")
@@ -5552,16 +6006,13 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
 
         if sub == "30":
             raw = input(
-                "Newborn stress profile [baseline | blackout_short | blackout_long; blank=keep current]: "
+                "Newborn stress profile [baseline | blackout_short | blackout_long | route_loss; blank=keep current]: "
             ).strip().lower()
-
             if not raw:
                 continue
-
             if raw not in NEWBORN_STRESS_PROFILES_V1:
                 print("[experiments] invalid newborn stress profile.")
                 continue
-
             ctx.experiment_cfg.newborn_stress_profile = raw
             ctx.experiment_cfg = experiment_normalize_protocol_v1(ctx.experiment_cfg)
             print(f"[experiments] newborn_stress_profile set to {ctx.experiment_cfg.newborn_stress_profile}")
@@ -8468,6 +8919,7 @@ def _newborn_b2_seed_label_v1(env_obs: EnvObservation) -> str | None:
       - stood_up
       - reached_mom
       - latched_nipple
+      - milk drinking
       - rested
 
     That gives the benchmark a small reusable memory library inside one episode
@@ -8484,7 +8936,7 @@ def _newborn_b2_seed_label_v1(env_obs: EnvObservation) -> str | None:
     elif isinstance(raw, list):
         items = [m for m in raw if isinstance(m, str) and m]
 
-    for label in ("stood_up", "reached_mom", "latched_nipple", "rested"):
+    for label in ("stood_up", "reached_mom", "latched_nipple", "milk_drinking", "rested"):
         if label in items:
             return label
     return None
@@ -8667,6 +9119,109 @@ def maybe_newborn_b2_mapswitch_on_keyframe_v1(world, ctx: Ctx, env_obs: EnvObser
     return out
 
 
+def _newborn_controller_step_int_v1(ctx: Ctx | None) -> int:
+    """Return the current controller step as an int for newborn instrumentation."""
+    if ctx is None:
+        return 0
+    try:
+        return int(getattr(ctx, "controller_steps", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _append_newborn_retrieved_hint_event_v1(ctx: Ctx | None, event: dict[str, Any]) -> None:
+    """Append one bounded retrieved-hint instrumentation event."""
+    if ctx is None or not isinstance(event, dict):
+        return
+
+    try:
+        events = getattr(ctx, "experiment_newborn_retrieved_hint_events", None)
+        if not isinstance(events, list):
+            events = []
+        events.append(dict(event))
+
+        if len(events) > 64:
+            del events[:-64]
+
+        ctx.experiment_newborn_retrieved_hint_events = events
+    except Exception:
+        pass
+
+
+def _note_newborn_retrieved_hint_returned_v1(ctx: Ctx | None, hint: dict[str, Any]) -> None:
+    """Record that a retrieved hint was active and returned to control this cycle.
+
+    This is a control-use proxy. The helper counts each controller step at most
+    once, even if several gate helpers consult the hint during the same cycle.
+    """
+    if ctx is None or not isinstance(hint, dict) or not hint:
+        return
+
+    step_now = _newborn_controller_step_int_v1(ctx)
+
+    try:
+        last_active = int(getattr(ctx, "experiment_newborn_retrieved_hint_last_active_step_counted", -1) or -1)
+    except Exception:
+        last_active = -1
+
+    if last_active != step_now:
+        try:
+            ctx.experiment_newborn_retrieved_hint_active_step_count += 1
+            ctx.experiment_newborn_retrieved_hint_last_active_step_counted = step_now
+        except Exception:
+            pass
+
+    try:
+        last_used = int(getattr(ctx, "experiment_newborn_retrieved_hint_last_used_step_counted", -1) or -1)
+    except Exception:
+        last_used = -1
+
+    if last_used != step_now:
+        try:
+            ctx.experiment_newborn_retrieved_hint_used_step_count += 1
+            ctx.experiment_newborn_retrieved_hint_last_used_step_counted = step_now
+        except Exception:
+            pass
+
+        _append_newborn_retrieved_hint_event_v1(
+            ctx,
+            {
+                "kind": "returned_to_control",
+                "step": int(step_now),
+                "source": getattr(ctx, "experiment_newborn_retrieved_hint_source", None),
+                "until_step": getattr(ctx, "experiment_newborn_retrieved_hint_until_step", None),
+                "hint_keys": sorted(k for k in hint.keys() if isinstance(k, str)),
+            },
+        )
+
+
+def _newborn_retrieved_hint_debug_from_ctx_v1(ctx: Ctx | None) -> dict[str, Any]:
+    """Return episode-level retrieved-hint instrumentation counters."""
+    if ctx is None:
+        return {
+            "newborn_retrieved_hint_set_count": 0,
+            "newborn_retrieved_hint_active_step_count": 0,
+            "newborn_retrieved_hint_used_step_count": 0,
+            "newborn_retrieved_hint_events": [],
+        }
+
+    def int_attr(name: str) -> int:
+        try:
+            return int(getattr(ctx, name, 0) or 0)
+        except Exception:
+            return 0
+
+    events = getattr(ctx, "experiment_newborn_retrieved_hint_events", [])
+    events = [dict(item) for item in events if isinstance(item, dict)] if isinstance(events, list) else []
+
+    return {
+        "newborn_retrieved_hint_set_count": int_attr("experiment_newborn_retrieved_hint_set_count"),
+        "newborn_retrieved_hint_active_step_count": int_attr("experiment_newborn_retrieved_hint_active_step_count"),
+        "newborn_retrieved_hint_used_step_count": int_attr("experiment_newborn_retrieved_hint_used_step_count"),
+        "newborn_retrieved_hint_events": events[:24],
+    }
+
+
 def _clear_newborn_retrieved_hint_v1(ctx: Ctx | None) -> None:
     """Clear the short-lived newborn B2 retrieved-state hint."""
     if ctx is None:
@@ -8701,6 +9256,7 @@ def _newborn_active_retrieved_hint_v1(ctx: Ctx | None) -> dict[str, Any]:
         _clear_newborn_retrieved_hint_v1(ctx)
         return {}
 
+    _note_newborn_retrieved_hint_returned_v1(ctx, hint)
     return dict(hint)
 
 
@@ -8768,6 +9324,9 @@ def _decode_newborn_hint_from_mapsurface_record_v1(rec: dict[str, Any]) -> dict[
                 elif tok == "proximity:mom:far":
                     hint["mom_distance"] = "far"
 
+            if tok == "milk:drinking":
+                hint["milk_drinking"] = True
+
             if "nipple_state" not in hint:
                 if tok in ("nipple:latched", "milk:drinking"):
                     hint["nipple_state"] = "latched"
@@ -8821,9 +9380,22 @@ def _set_newborn_retrieved_hint_from_engram_v1(ctx: Ctx | None, engram_id: str, 
     ttl_i = max(1, int(ttl_steps))
 
     try:
+        until_step = step_now + ttl_i
         ctx.experiment_newborn_retrieved_hint = dict(hint)
-        ctx.experiment_newborn_retrieved_hint_until_step = step_now + ttl_i
+        ctx.experiment_newborn_retrieved_hint_until_step = until_step
         ctx.experiment_newborn_retrieved_hint_source = engram_id
+        ctx.experiment_newborn_retrieved_hint_set_count += 1
+
+        _append_newborn_retrieved_hint_event_v1(
+            ctx,
+            {
+                "kind": "set",
+                "step": int(step_now),
+                "until_step": int(until_step),
+                "source": engram_id,
+                "hint": dict(hint),
+            },
+        )
     except Exception:
         pass
 
@@ -10387,6 +10959,10 @@ def _gate_seek_nipple_trigger_body_first(world, drives: Drives, ctx) -> bool:
     short-lived retrieved hint to supply that information. This is the missing bridge
     between "retrieval happened" and "retrieval changed control".
     """
+    # Once latched, do not search for the nipple again. The correct next bridge
+    # is suckle, then rest.
+    if _newborn_post_latch_sequence_active_v1(world, ctx):
+        return False
     # Prefer BodyMap posture when it is not stale; otherwise fall back to graph.
     stale = bodymap_is_stale(ctx) if ctx is not None else True
     bp = body_posture(ctx) if ctx is not None and not stale else None
@@ -10613,6 +11189,7 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
     posture = None
     mom_distance = None
     nipple_state = None
+    milk_drinking = None
     zone = "unknown"
 
     try:
@@ -10652,6 +11229,10 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
             if isinstance(hn, str) and hn:
                 nipple_state = hn
 
+        hm_drinking = hint.get("milk_drinking")
+        if isinstance(hm_drinking, bool):
+            milk_drinking = hm_drinking
+
         if zone in (None, "", "unknown"):
             hz = hint.get("zone")
             if isinstance(hz, str) and hz:
@@ -10662,6 +11243,7 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
             "posture": posture,
             "mom_distance": mom_distance,
             "nipple_state": nipple_state,
+            "milk_drinking": milk_drinking,
             "zone": zone,
         }
 
@@ -10687,11 +11269,17 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
         elif has_pred_near_now(world, "nipple:hidden"):
             nipple_state = "hidden"
 
+    try:
+        milk_drinking = has_pred_near_now(world, "milk:drinking")
+    except Exception:
+        milk_drinking = None
+
     return {
         "bodymap_stale": bool(stale),
         "posture": posture,
         "mom_distance": mom_distance,
         "nipple_state": nipple_state,
+        "milk_drinking": milk_drinking,
         "zone": zone,
     }
 
@@ -10848,38 +11436,79 @@ def _should_force_follow_mom_bridge_v1(world, ctx) -> bool:
     return _newborn_recent_retrieval_ok_v1(ctx, max_age_steps=3)
 
 
+def _newborn_milk_drinking_slot_seen_v1(ctx) -> bool:
+    """Return True when the current observation slot cache has recorded milk drinking.
+
+    This is a narrow newborn benchmark helper. It does not allow latch alone to
+    count as feeding. It only returns True after the long-term observation slot
+    cache has actually seen the token "milk:drinking".
+
+    Rationale:
+        Under route_loss, the visible milk predicate can disappear from the near-NOW
+        graph immediately after the milk-drinking milestone, while the slot cache
+        still records that the milk slot reached "milk:drinking". The rest bridge
+        should be allowed to use that current-state cache to complete the feeding
+        sequence.
+    """
+    if ctx is None:
+        return False
+
+    try:
+        slots = getattr(ctx, "lt_obs_slots", None)
+        if not isinstance(slots, dict):
+            return False
+
+        milk_slot = slots.get("milk")
+        if not isinstance(milk_slot, dict):
+            return False
+
+        return milk_slot.get("token") == "milk:drinking"
+    except Exception:
+        return False
+
+
 def _should_force_rest_bridge_v1(world, ctx) -> bool:
     """Return True when rest should bridge the newborn from feeding into completion.
 
-    Why this exists
-    ---------------
-    In the hardened newborn benchmark, ``first_latch`` is the state where the kid
-    is already latched and feeding. A fresh ``seek_nipple`` there can break latch
-    and push the environment back to ``first_stand``. This rest bridge protects
-    the completion path.
-
-    New benchmark hardening
-    -----------------------
-    In newborn benchmark resume-memory mode, the bridge may carry progress through
-    a blackout only when a recent successful retrieval occurred. That matters
-    especially when the environment stage says ``first_latch`` but current nipple /
-    mom / zone evidence has temporarily become sparse.
+    In route_loss, rest is deliberately stricter: the agent must have current or
+    retrieved evidence that milk drinking occurred. Latch alone is not enough.
+    This prevents retrieved latch-state from skipping the milk-drinking milestone.
     """
     if ctx is None:
         return False
 
     st = _follow_mom_bridge_state_v1(world, ctx)
     stage = getattr(ctx, "lt_obs_last_stage", None)
+    route_loss_active = _newborn_stress_profile_from_ctx_v1(ctx) == "route_loss"
 
-    feeding_now = stage == "first_latch"
-    if not feeding_now:
-        if st.get("nipple_state") == "latched":
-            feeding_now = True
-        else:
-            try:
-                feeding_now = has_pred_near_now(world, "milk:drinking")
-            except Exception:
-                feeding_now = False
+    milk_drinking_now = st.get("milk_drinking") is True
+
+    # BodyMap does not currently expose a separate "milk_drinking" slot, so
+    # route_loss can leave the rest bridge blind to milk evidence even after the
+    # current episode has observed milk:drinking. This lookup is still conservative:
+    # it requires milk:drinking to be near NOW, so latch alone cannot skip the
+    # milk-drinking milestone.
+    if not milk_drinking_now:
+        try:
+            milk_drinking_now = has_pred_near_now(world, "milk:drinking")
+        except Exception:
+            milk_drinking_now = False
+
+    if not milk_drinking_now:
+        milk_drinking_now = _newborn_milk_drinking_slot_seen_v1(ctx)
+
+    feeding_now = bool(milk_drinking_now)
+
+    if not feeding_now and not route_loss_active:
+        feeding_now = stage == "first_latch"
+        if not feeding_now:
+            if st.get("nipple_state") == "latched":
+                feeding_now = True
+            else:
+                try:
+                    feeding_now = has_pred_near_now(world, "milk:drinking")
+                except Exception:
+                    feeding_now = False
 
     if not feeding_now:
         return False
@@ -10894,10 +11523,15 @@ def _should_force_rest_bridge_v1(world, ctx) -> bool:
     if not require_resume_memory:
         return True
 
-    # If we are relying mainly on stage-local logic while current feeding/space evidence is
-    # sparse, require a recent retrieval before we let the bridge continue the task.
     bodymap_stale = bool(st.get("bodymap_stale"))
     evidence_sparse = bodymap_stale or (st.get("nipple_state") is None) or (st.get("mom_distance") is None)
+
+    if route_loss_active:
+        if not milk_drinking_now:
+            return False
+        if evidence_sparse:
+            return _newborn_recent_retrieval_ok_v1(ctx, max_age_steps=3)
+        return True
 
     if not evidence_sparse:
         return True
@@ -10958,22 +11592,146 @@ def _should_quiesce_rest_v1(world, ctx) -> bool:
     return True
 
 
+def _newborn_post_latch_sequence_active_v1(world, ctx) -> bool:
+    """Return True when the newborn sequence has entered the post-latch feeding phase.
+
+    This benchmark helper prevents the controller from continuing earlier search
+    or locomotor policies after latch has already been reached. Once latched, the
+    correct sequence is suckle, then rest. This helper is conservative and accepts
+    current BodyMap state, retrieved hint state, or the benchmark stage boundary.
+    """
+    if ctx is None:
+        return False
+
+    try:
+        st = _follow_mom_bridge_state_v1(world, ctx)
+    except Exception:
+        st = {}
+
+    if st.get("posture") == "latched":
+        return True
+
+    if st.get("nipple_state") == "latched":
+        return True
+
+    if st.get("milk_drinking") is True:
+        return True
+
+    try:
+        stage = getattr(ctx, "lt_obs_last_stage", None)
+    except Exception:
+        stage = None
+
+    require_resume_memory = bool(getattr(ctx, "experiment_newborn_require_resume_memory", False))
+
+    if require_resume_memory and stage == "first_latch":
+        return True
+
+    if not require_resume_memory:
+        try:
+            return has_pred_near_now(world, "nipple:latched") or has_pred_near_now(world, "milk:drinking")
+        except Exception:
+            return False
+
+    return False
+
+
+def _should_force_suckle_bridge_v1(world, ctx) -> bool:
+    """Return True when suckle should bridge latch into milk-drinking.
+
+    Route-loss stress can hide the predicates that usually prove the kid is
+    latched. This bridge lets the controller continue feeding when latch is
+    current or has just been recovered from guarded retrieved state. It does not
+    allow suckling after milk drinking is already established, because the next
+    correct bridge is rest.
+    """
+    if ctx is None:
+        return False
+
+    try:
+        st = _follow_mom_bridge_state_v1(world, ctx)
+    except Exception:
+        return False
+
+    if st.get("posture") == "fallen":
+        return False
+
+    if st.get("zone") == "unsafe_cliff_near":
+        return False
+
+    if st.get("mom_distance") == "far":
+        return False
+
+    if st.get("milk_drinking") is True:
+        return False
+
+    try:
+        stage = getattr(ctx, "lt_obs_last_stage", None)
+    except Exception:
+        stage = None
+
+    # Important environment contract:
+    # in the current newborn benchmark, policy:suckle is interpreted as a seek-like
+    # action by the environment. During first_latch, seek-like actions break latch.
+    # Feeding/milk progression occurs by remaining latched; the correct completion
+    # action is policy:rest, not policy:suckle.
+    if stage in ("first_latch", "rest"):
+        return False
+
+    if st.get("posture") == "latched":
+        return True
+
+    if st.get("nipple_state") == "latched":
+        return True
+
+    require_resume_memory = bool(getattr(ctx, "experiment_newborn_require_resume_memory", False))
+
+    if require_resume_memory and stage == "first_latch":
+        return _newborn_recent_retrieval_ok_v1(ctx, max_age_steps=3)
+
+    if not require_resume_memory:
+        try:
+            return has_pred_near_now(world, "nipple:latched")
+        except Exception:
+            return False
+
+    return False
+
+
+def _gate_suckle_trigger_newborn_v1(world, _drives: Drives, ctx) -> bool:
+    """Trigger suckling after latch and before rest."""
+    return _should_force_suckle_bridge_v1(world, ctx)
+
+
+def _gate_suckle_explain_newborn_v1(world, _drives: Drives, ctx) -> str:
+    """Human-readable explanation matching _gate_suckle_trigger_newborn_v1."""
+    try:
+        st = _follow_mom_bridge_state_v1(world, ctx)
+    except Exception:
+        st = {}
+
+    try:
+        stage = getattr(ctx, "lt_obs_last_stage", None)
+    except Exception:
+        stage = None
+
+    try:
+        recent_retrieval = _newborn_recent_retrieval_ok_v1(ctx, max_age_steps=3)
+    except Exception:
+        recent_retrieval = False
+
+    return (
+        "dev_gate: True, trigger: newborn_suckle_bridge="
+        f"{_should_force_suckle_bridge_v1(world, ctx)} "
+        f"stage={stage!r} posture={st.get('posture')!r} "
+        f"mom={st.get('mom_distance')!r} nipple={st.get('nipple_state')!r} "
+        f"milk_drinking={st.get('milk_drinking')!r} zone={st.get('zone')!r} "
+        f"recent_retrieval={recent_retrieval}"
+    )
+
+
 def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool:  # pylint: disable=unused-argument
-    """
-    FollowMom gate with two roles:
-
-      1) goat04 contextual control bridge:
-         - hawk hint suppresses follow_mom
-         - fox hint allows follow_mom
-
-      2) newborn post-stand locomotor bridge:
-         - once standing with mom still far and nipple not yet secured,
-           allow follow_mom even if the generic topology fallback would
-           otherwise be too conservative.
-
-    We keep one important quiescence invariant:
-      - do not follow_mom when posture is fallen or resting.
-    """
+    """FollowMom gate with goat04/context behavior and newborn post-latch discipline."""
     hint = _goat04_context_hint_active_v1(ctx)
     if hint == "hawk":
         return False
@@ -10986,18 +11744,15 @@ def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool:  # 
     if posture in ("fallen", "resting"):
         return False
 
-    # Explicit newborn bridge: after successful stand-up, do not let the controller
-    # deadlock in first_stand just because the generic topology fallback is cautious.
+    if _newborn_post_latch_sequence_active_v1(world, ctx):
+        return False
+
     if _should_force_follow_mom_bridge_v1(world, ctx):
         return True
 
-    # In the hardened newborn benchmark, do not let the generic follow_mom fallback
-    # carry progress through a blackout-like sparse state unless retrieval just
-    # restored context.
     if _newborn_follow_fallback_blocked_without_memory_v1(world, ctx):
         return False
 
-    # Only use the graph-side resting fallback when posture is still unknown.
     if posture is None:
         try:
             if has_pred_near_now(world, "resting", hops=3):
@@ -11005,7 +11760,6 @@ def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool:  # 
         except Exception:
             pass
 
-    # Generic permissive fallback still respects topology.
     try:
         if _wm_follow_mom_blocked_by_topology_v1(ctx):
             return False
@@ -11782,13 +12536,68 @@ class PolicyRuntime:
         """
         _ = tie_break  # compatibility seam for older call sites / docs, avoid unused-argument warning
         matches = [p for p in self.loaded if _safe(p.trigger, world, drives, ctx)]
+        triggered_all = [p.name for p in matches]
 
+        try:
+            debug_state = _follow_mom_bridge_state_v1(world, ctx)
+        except Exception as e:
+            debug_state = {"error": f"{e.__class__.__name__}: {e}"}
+        try:
+            debug_stage = getattr(ctx, "lt_obs_last_stage", None)
+        except Exception:
+            debug_stage = None
+        try:
+            debug_step = int(getattr(ctx, "controller_steps", 0) or 0)
+        except Exception:
+            debug_step = -1
+        policy_debug: dict[str, Any] = {
+            "schema": "experiment_policy_debug_v1",
+            "step": int(debug_step),
+            "stage": debug_stage if isinstance(debug_stage, str) else None,
+            "state": dict(debug_state) if isinstance(debug_state, dict) else {},
+            "matches_initial": list(triggered_all),
+            "post_latch_sequence": None,
+            "matches_after_post_latch": None,
+            "bridge_follow_mom": None,
+            "forced_follow_mom": None,
+            "matches_after_bridge": None,
+            "suppress_follow_mom": None,
+            "matches_after_topology": None,
+            "fallen_safety_filter": None,
+            "matches_after_safety": None,
+            "matches_before_choice": None,
+            "chosen": None,
+        }
+
+        post_latch_sequence = False
+        try:
+            post_latch_sequence = _newborn_post_latch_sequence_active_v1(world, ctx)
+        except Exception:
+            post_latch_sequence = False
+        policy_debug["post_latch_sequence"] = bool(post_latch_sequence)
+
+        # Hard sequence lock: after latch, earlier locomotor/search policies should
+        # not compete with suckle/rest. This protects the selector from permissive
+        # fallback paths that may still have triggered.
+        if post_latch_sequence:
+            matches = [p for p in matches if p.name not in ("policy:follow_mom", "policy:seek_nipple")]
+
+            if not any(p.name == "policy:suckle" for p in matches):
+                try:
+                    suckle_gate = next((p for p in self.loaded if p.name == "policy:suckle"), None)
+                except Exception:
+                    suckle_gate = None
+
+                if suckle_gate is not None and _safe(suckle_gate.trigger, world, drives, ctx):
+                    matches.append(suckle_gate)
+        policy_debug["matches_after_post_latch"] = [p.name for p in matches]
         forced_follow_mom = False
         bridge_follow_mom = False
-        try:
-            bridge_follow_mom = _should_force_follow_mom_bridge_v1(world, ctx)
-        except Exception:
-            bridge_follow_mom = False
+        if not post_latch_sequence:
+            try:
+                bridge_follow_mom = _should_force_follow_mom_bridge_v1(world, ctx)
+            except Exception:
+                bridge_follow_mom = False
 
         # If follow_mom already matched because its own gate fired under the newborn bridge,
         # remember that now so the later topology suppression step does not remove it.
@@ -11797,19 +12606,24 @@ class PolicyRuntime:
 
         if not matches:
             forced = None
-            if bridge_follow_mom:
+            if (not post_latch_sequence) and bridge_follow_mom:
                 try:
                     forced = next((p for p in self.loaded if p.name == "policy:follow_mom"), None)
                 except Exception:
                     forced = None
 
             if forced is None:
+                policy_debug["bridge_follow_mom"] = bool(bridge_follow_mom)
+                policy_debug["forced_follow_mom"] = bool(forced_follow_mom)
+                policy_debug["matches_after_bridge"] = []
+                _experiment_policy_debug_record_v1(ctx, policy_debug)
                 return "no_match"
 
             matches = [forced]
             forced_follow_mom = True
-
-        triggered_all = [p.name for p in matches]
+        policy_debug["bridge_follow_mom"] = bool(bridge_follow_mom)
+        policy_debug["forced_follow_mom"] = bool(forced_follow_mom)
+        policy_debug["matches_after_bridge"] = [p.name for p in matches]
 
         # SurfaceGrid/NavSummary-first suppression hook:
         # block the fallback follow_mom path only when local topology says the move is
@@ -11822,7 +12636,13 @@ class PolicyRuntime:
         if suppress_follow_mom and not forced_follow_mom:
             matches = [p for p in matches if p.name != "policy:follow_mom"]
             if not matches:
+                policy_debug["suppress_follow_mom"] = bool(suppress_follow_mom)
+                policy_debug["matches_after_topology"] = []
+                _experiment_policy_debug_record_v1(ctx, policy_debug)
                 return "no_match"
+
+        policy_debug["suppress_follow_mom"] = bool(suppress_follow_mom)
+        policy_debug["matches_after_topology"] = [p.name for p in matches]
 
         try:
             if ctx is not None:
@@ -11837,11 +12657,18 @@ class PolicyRuntime:
             pass
 
         # Fallen posture near NOW forces safety-only policies.
-        if _fallen_near_now(world, ctx, max_hops=3):
+        fallen_safety_active = _fallen_near_now(world, ctx, max_hops=3)
+        policy_debug["fallen_safety_filter"] = bool(fallen_safety_active)
+
+        if fallen_safety_active:
             safety_only = {"policy:recover_fall", "policy:stand_up"}
             matches = [p for p in matches if p.name in safety_only]
             if not matches:
+                policy_debug["matches_after_safety"] = []
+                _experiment_policy_debug_record_v1(ctx, policy_debug)
                 return "no_match"
+
+        policy_debug["matches_after_safety"] = [p.name for p in matches]
 
         # --- EFE scoring (diagnostic only) ---
         try:
@@ -11890,7 +12717,9 @@ class PolicyRuntime:
               - StandUp: prefer when BodyMap is fresh and posture == 'fallen'.
               - SeekNipple: once the kid is upright and genuinely near mom, prefer
                 nipple-seeking over continuing to spam follow_mom.
-              - Rest: once the newborn is in ``first_latch``, prefer resting over
+              - Suckle: once the newborn is latched but not yet drinking, prefer
+                feeding continuation over renewed search/follow actions.
+              - Rest: once milk drinking has occurred, prefer resting over
                 re-seeking so short blackout windows do not keep breaking latch.
               - RecoverFall: prefer when explicit fall cues are present or when
                 repeated stand-up attempts are not taking effect.
@@ -11918,6 +12747,14 @@ class PolicyRuntime:
                             and zone != "unsafe_cliff_near"
                         ):
                             return 1.5
+                except Exception:
+                    pass
+                return 0.0
+
+            if name == "policy:suckle":
+                try:
+                    if _should_force_suckle_bridge_v1(world, ctx):
+                        return 4.5
                 except Exception:
                     pass
                 return 0.0
@@ -12231,6 +13068,13 @@ class PolicyRuntime:
                 else:
                     selector_kind = "rl_exploit(deficit)"
 
+        try:
+            policy_debug["matches_before_choice"] = [p.name for p in matches]
+            policy_debug["chosen"] = getattr(chosen, "name", None)
+            _experiment_policy_debug_record_v1(ctx, policy_debug)
+        except Exception:
+            pass
+
         base = choose_contextual_base(world, ctx, targets=["posture:standing", "stand"])
         foa = compute_foa(world, ctx, max_hops=2)
         cands = candidate_anchors(world, ctx)
@@ -12402,10 +13246,8 @@ CATALOG_GATES: List[PolicyGate] = [
     PolicyGate(
         name="policy:suckle",
         dev_gate=lambda ctx: True,
-        trigger=lambda W, D, ctx: has_pred_near_now(W, "mom:close"),
-        explain=lambda W, D, ctx: (
-            f"dev_gate: True, trigger: mom:close near NOW={has_pred_near_now(W,'mom:close')}"
-        ),
+        trigger=_gate_suckle_trigger_newborn_v1,
+        explain=_gate_suckle_explain_newborn_v1,
     ),
 
     PolicyGate(
@@ -19425,6 +20267,22 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
                 force_snapshot = True
                 reasons.append(f"zone_change {last_zone!r}→{zone_now!r}")
 
+        # Benchmark-only newborn route-loss keyframe.
+        # During route_loss, current route/task evidence is deliberately hidden,
+        # so the experiment must create retrieval opportunities instead of
+        # waiting for ordinary stage/zone changes.
+        try:
+            env_meta_for_stress = getattr(env_obs, "env_meta", None)
+            env_meta_for_stress = env_meta_for_stress if isinstance(env_meta_for_stress, dict) else {}
+
+            if bool(env_meta_for_stress.get("newborn_force_keyframe")):
+                force_snapshot = True
+                route_reason = env_meta_for_stress.get("newborn_blackout_reason")
+                route_reason = route_reason if isinstance(route_reason, str) and route_reason else "route_loss"
+                reasons.append(f"newborn_stress:{route_reason}")
+        except Exception:
+            pass
+
         # Periodic keyframe (optional; safe: evaluated only at this boundary hook)
         #
         # Two semantics:
@@ -21906,6 +22764,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "zone": zone_now,
                     "action_applied": action_for_env,
                     "policy_fired": policy_fired_val,
+                    "policy_debug": dict(getattr(ctx, "experiment_policy_debug_last", {}) or {}),
                     "llm_advice_summary": dict(llm_advice_summary),
                     "obs": {
                         "predicates": list(getattr(env_obs, "predicates", []) or []),
