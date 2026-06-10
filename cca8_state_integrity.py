@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=duplicate-code
+#   while there may be some (tiny) amount of duplicated code, it is not worth refactoring it into a common module, increases complexity
 """State-integrity analysis helpers for CCA8 long-horizon experiments.
 
 Purpose

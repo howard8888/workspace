@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=duplicate-code
+#   while there may be some (tiny) amount of duplicated code, it is not worth refactoring it into a common module, increases complexity
+
 """
 CCA8 Environment module (EnvState, EnvObservation, HybridEnvironment)
 
@@ -1145,7 +1148,16 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         """
         priority = {"cliff": 100, "shelter": 80, "mom": 70, "nipple": 60, "self": 50}
 
-        def _entry(token: str, entity: str, rel_dx: float, rel_dy: float, rel_dist: float, kind: str) -> Dict[str, Any]:
+
+        def _entry(
+            token: str,
+            entity: str,
+            *,
+            rel_dx: float,
+            rel_dy: float,
+            rel_dist: float,
+            kind: str,
+        ) -> Dict[str, Any]:
             item: Dict[str, Any] = {
                 "token": token,
                 "entity": entity,
@@ -1159,18 +1171,19 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
                 item["focused"] = True
             return item
 
-        landmarks: List[Dict[str, Any]] = [_entry("self", "kid", 0.0, 0.0, 0.0, "ego_anchor")]
-        landmarks.append(_entry("mom", "mom", dx, dy, dist, "social"))
 
+        landmarks: List[Dict[str, Any]] = [
+            _entry("self", "kid", rel_dx=0.0, rel_dy=0.0, rel_dist=0.0, kind="ego_anchor")
+        ]
+        landmarks.append(_entry("mom", "mom", rel_dx=dx, rel_dy=dy, rel_dist=dist, kind="social"))
         if env_state.cliff_distance == "near":
-            landmarks.append(_entry("cliff", "cliff", 1.0, 0.0, 1.0, "hazard"))
+            landmarks.append(_entry("cliff", "cliff", rel_dx=1.0, rel_dy=0.0, rel_dist=1.0, kind="hazard"))
 
         if env_state.shelter_distance in ("near", "touching") or env_state.position == "shelter_area":
-            landmarks.append(_entry("shelter", "shelter", 1.0, 0.0, 1.0, "goal"))
+            landmarks.append(_entry("shelter", "shelter", rel_dx=1.0, rel_dy=0.0, rel_dist=1.0, kind="goal"))
 
         if env_state.nipple_state in ("visible", "reachable", "latched"):
-            landmarks.append(_entry("nipple", "nipple", 0.3, 0.0, 0.3, "feeding"))
-
+            landmarks.append(_entry("nipple", "nipple", rel_dx=0.3, rel_dy=0.0, rel_dist=0.3, kind="feeding"))
         return landmarks
 
 

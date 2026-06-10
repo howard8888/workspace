@@ -168,22 +168,69 @@ import random
 
 __version__ = "0.2.1"
 __all__ = [
+    # Version
+    "__version__",
+
+    # Drives and thresholds
     "Drives",
+    "HUNGER_HIGH",
+    "FATIGUE_HIGH",
+    "WARMTH_COLD",
+    "STANDUP_RETRY_WINDOW",
+
+    # Skill ledger
     "SkillStat",
     "skill_q",
+    "update_skill",
+    "reset_skills",
     "skills_to_dict",
     "skills_from_dict",
     "skill_readout",
+
+    # Policy base and concrete primitives
     "Primitive",
     "StandUp",
+    "RecoverFall",
     "SeekNipple",
     "FollowMom",
     "ExploreCheck",
-    "Rest",
     "Probe",
+    "Rest",
     "PRIMITIVES",
     "action_center_step",
-    "__version__",
+    "drives_summary",
+
+    # BodyMap / current-state helpers
+    "body_posture",
+    "body_mom_distance",
+    "body_shelter_distance",
+    "body_cliff_distance",
+    "body_space_zone",
+    "body_nipple_state",
+    "body_is_standing",
+    "body_is_fallen",
+    "body_mom_is_near",
+    "body_nipple_latched",
+    "bodymap_is_stale",
+    "body_shelter_is_near",
+    "body_cliff_is_near",
+
+    # Public token constants
+    "STATE_POSTURE_STANDING",
+    "STATE_POSTURE_FALLEN",
+    "STATE_RESTING",
+    "STATE_ALERT",
+    "STATE_SEEKING_MOM",
+    "ACTION_PUSH_UP",
+    "ACTION_EXTEND_LEGS",
+    "ACTION_LOOK_AROUND",
+    "ACTION_ORIENT_TO_MOM",
+    "ACTION_RECOVER_FALL",
+    "VALENCE_LIKE",
+    "VALENCE_HATE",
+
+    # Small helper surface
+    "add_valence_binding",
 ]
 
 # Drive thresholds

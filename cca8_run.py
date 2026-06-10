@@ -1,6 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+*************************************
+
+Superintelligence article submission note  June 2026:
+NOTE: This OSF repository contains the selected CCA8 software modules, data files, and supporting materials used
+ to generate the results reported in the associated Superintelligence article. It is a reproducibility package
+ for this article and is not intended to represent the full scope of ongoing CCA8 development.
+
+Software was developed in a Windows environment but should run with minimal changes in a macOS or Linux environment.
+Requires Python 3.11
+Please contact hschneidermd [at] alum [dot] mit [dot] edu for inquiries about additional software modules, related
+ materials, or ongoing development.
+
+*************************************
+
 CCA8 World Runner, i.e. the module that runs the CCA8 project
 
 This script is the interactive and CLI entry point for the CCA8 simulation.
@@ -36,9 +50,10 @@ Requirements
 Core runtime:
 - Python 3.11.
 - All CCA8 Python modules in the same repo directory, including:
-  cca8_world_graph.py, cca8_controller.py, cca8_temporal.py, cca8_column.py,
-  cca8_env.py, cca8_rcos.py, cca8_features.py, cca8_navpatch.py, and
-  cca8_teaching.py.
+  cca8_world_graph.py, cca8_controller.py, cca8_temporal.py,
+  cca8_column.py, cca8_features.py, cca8_env.py, cca8_navpatch.py,
+  cca8_rcos.py, cca8_rcos_experiments.py, cca8_state_integrity.py,
+  cca8_teaching.py, and cca8_test_fixtures.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
   sys, logging, math, datetime, dataclasses, typing, collections, random,
   time, subprocess, shutil, io, contextlib, copy, tempfile, webbrowser,
@@ -77,6 +92,8 @@ at the repo root and install with:
 #   we treat the cca8_runner module as a trusted friend module and thus silence warnings for acces to _objects
 # pylint: disable=import-outside-toplevel
 #   a number of the imports in profile/preflight stubs are by design and leave for now
+# pylint: disable=duplicate-code
+#   while there may be some (tiny) amount of duplicated code, it is not worth refactoring it into a common module, increases complexity
 
 # Standard Library Imports
 from __future__ import annotations
@@ -14125,26 +14142,60 @@ def choose_profile(ctx, world) -> dict:
 
 
 def versions_dict() -> dict:
-    """Collect versions/paths for core CCA8 components and environment."""
-    mods = ["cca8_world_graph", "cca8_controller", "cca8_column", "cca8_features", "cca8_temporal"]
-    info = {"runner": __version__, "platform": platform.platform(), "python": sys.version.split()[0]}
+    """Collect versions/paths for CCA8 runner components and environment modules."""
+    mods = [
+        "cca8_world_graph",
+        "cca8_controller",
+        "cca8_temporal",
+        "cca8_column",
+        "cca8_features",
+        "cca8_env",
+        "cca8_navpatch",
+        "cca8_rcos",
+        "cca8_rcos_experiments",
+        "cca8_state_integrity",
+        "cca8_teaching",
+        "cca8_test_fixtures",
+    ]
+
+    info = {
+        "runner": __version__,
+        "platform": platform.platform(),
+        "python": sys.version.split()[0],
+    }
+
     for m in mods:
         ver, path = _module_version_and_path(m)
-        key = m.replace("cca8_", "")          # world_graph, controller, column, features, temporal
+        key = m.replace("cca8_", "")
         info[key] = ver
         info[key + "_path"] = path
+
     return info
 
 
 def versions_text() -> str:
     """
-    Return a human-readable summary of core component versions.
+    Return a human-readable summary of CCA8 component versions.
 
-    Includes: runner, world_graph, controller, column, features, temporal.
-    Internally formats `versions_dict()` so tests (and users) have a quick glanceable string.
+    Includes the runner plus the main non-debug CCA8 modules used by the
+    interactive runner, environment, memory, experiments, and test fixtures.
     """
-    d = versions_dict()  # existing function
-    keys = ("runner", "world_graph", "controller", "column", "features", "temporal")
+    d = versions_dict()
+    keys = (
+        "runner",
+        "world_graph",
+        "controller",
+        "temporal",
+        "column",
+        "features",
+        "env",
+        "navpatch",
+        "rcos",
+        "rcos_experiments",
+        "state_integrity",
+        "teaching",
+        "test_fixtures",
+    )
     lines = [f"{k}: {d.get(k, 'n/a')}" for k in keys]
     return "\n".join(lines)
 
@@ -29153,7 +29204,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         comps = [  # (label, version, path)
             ("cca8_run.py", __version__, os.path.abspath(__file__)),
         ]
-        for name in ["cca8_world_graph", "cca8_controller", "cca8_column", "cca8_features", "cca8_temporal", "cca8_env", "cca8_navpatch", "cca8_test_fixtures"]:
+        for name in [
+            "cca8_world_graph",
+            "cca8_controller",
+            "cca8_temporal",
+            "cca8_column",
+            "cca8_features",
+            "cca8_env",
+            "cca8_navpatch",
+            "cca8_rcos",
+            "cca8_rcos_experiments",
+            "cca8_state_integrity",
+            "cca8_teaching",
+            "cca8_test_fixtures",
+        ]:
             ver, path = _module_version_and_path(name)
             comps.append((name, ver, path))
 

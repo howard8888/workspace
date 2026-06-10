@@ -19,6 +19,7 @@
 
 # Windows scripts: keep CRLF because Windows expects it
 *.bat       text eol=crlf
+*.cmd		text eol=crlf
 *.ps1       text eol=crlf
 
 # Binary files: never modify line endings, avoid diff noise
@@ -37,4 +38,9 @@
 *.otf       binary
 *.mp3       binary
 *.mp4       binary
-
+*.docx      binary
+*.pptx      binary
+*.xlsx      binary
+*.doc       binary
+*.ppt       binary
+*.xls       binary

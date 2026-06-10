@@ -11,8 +11,7 @@ bounded command vocabulary to create a robot-shaped long-horizon benchmark:
 
 These helpers do not claim physical robot control and do not yet route through
 the full CCA8 Action Center. They provide a deterministic software benchmark and
-smoke-test suite for the RCOS/HAL contract, with JSONL provenance records that
-can be cited in the BICA paper as preliminary implementation evidence.
+smoke-test suite for the RCOS/HAL contract, with JSONL provenance records.
 """
 
 from __future__ import annotations

@@ -7,6 +7,15 @@ Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 NOTE: This README is large; if GitHub truncates the preview at the 512 KiB render limit, open the file directly to view the full document.
 
 
+Superintelligence article submission note  June 2026:
+NOTE: This OSF repository contains the selected CCA8 software modules, data files, and supporting materials used
+ to generate the results reported in the associated Superintelligence article. It is a reproducibility package
+ for this article and is not intended to represent the full scope of ongoing CCA8 development.
+
+Software was developed in a Windows environment but should run with minimal changes in a macOS or Linux environment.
+Requires Python 3.11
+Please contact hschneidermd [at] alum [dot] mit [dot] edu for inquiries about additional software modules, related
+ materials, or ongoing development.
 
 
 # Executive Overview
@@ -72,7 +81,7 @@ python cca8_run.py
  - Low-Level OS / firmware (e.g., Linux, an RTOS, or a PetitCat-style minimal middleware/OS)
  - Hardware Layer
 
- 
+● Experimentation harness. The CCA8 includes an experimental benchmark harness for testing whether an agent can maintain coherent state across extended closed-loop tasks. The harness supports repeatable condition-based runs, partial observability, structured stress profiles such as route loss, JSONL provenance logs, and state-integrity metrics for comparing memory-governance strategies such as guarded merge retrieval, no episodic readback, and replacement-style prior injection.
 
 ● The CCA8 RCOS gives a more mammalian-like or human-like operation than current robotic and non-robotic agentic frameworks, e.g., LangChain-like products.
 
@@ -182,8 +191,6 @@ of birth, and by one week can climb most places its mother can)*
 - [Experiment protocol: conditions A–E](#experiment-protocol-conditions-ae)
 - [Current benchmark suite](#current-benchmark-suite)
 - [Experiment outputs and JSONL records](#experiment-outputs-and-jsonl-records)
-- [Current status and limitations of the experiment harness](#current-status-and-limitations-of-the-experiment-harness)
-- [Current observed behavior in the benchmark harness](#current-observed-behavior-in-the-benchmark-harness)
 - [Preflight (four-part self-test)](#preflight-four-part-self-test)
 - [Logging](#logging)
 - [WorkingMap Layer Contracts](#workingmap-layer-contracts)
@@ -1749,8 +1756,7 @@ NOTE: This README is large; if GitHub truncates the preview at the 512 KiB rende
 
 NOTE: This Instructive Tutorial is correct at the time of writing but needs to be periodically updated as the CCA8 architecture and simulation is further developed.
 
-NOTE: If this README is included as part of the software repo for a paper submission, then some terms may inadvertently be deleted to ensure anonymous submission. 
-
+NOTE: If this README is redistributed in an anonymized or restricted-review setting, review identifying terms separately.
 
 
 ## CCA8 tutorial: structure and function of the memory components and representations
@@ -1796,7 +1802,7 @@ The cleanest way to begin is with the architecture boundary. In CCA8, the enviro
 
 That boundary immediately explains why CCA8 needs multiple memory structures. Some internal questions are urgent and cheap: “Am I fallen?”, “Is mom near?”, “Am I in a risky zone?”, “Should this policy even trigger?” Other questions are structural and slower: “What happened across this episode?”, “What did the scene look like at the last keyframe?”, “Which prior WorkingMap snapshot is the best contextual match?” Still other questions are representationally heavy: “What exactly was the stored map payload?” or “Which patch prototype matched the current terrain fragment?”
 
-A useful slogan is this: reality is singular, but internal memory is plural. CCA8 therefore separates immediate body-state beliefs, live scene structure, sparse episodic indexing, and heavy reusable payloads. If you compress all of those into one graph or one log, you make the system harder to search, harder to update, and harder to explain in papers.
+A useful slogan is this: reality is singular, but internal memory is plural. CCA8 therefore separates immediate body-state beliefs, live scene structure, sparse episodic indexing, and heavy reusable payloads. If you compress all of those into one graph or one log, you make the system harder to search, harder to update, and harder to explain in documentation or analysis notes.
 
 The current runner makes this boundary especially clear during a closed-loop cognitive cycle. The flow is: EnvObservation arrives; BodyMap updates; WorkingMap.MapSurface updates; on keyframe cycles the WorkingMap ⇄ Column pipeline may store or retrieve; SurfaceGrid is composed as a derived topological view; the Action Center selects and executes one policy; then the chosen action is fed back into env.step() for the next cycle. Once you can say that sentence without hesitation, the rest of the architecture becomes much easier to read.
 
@@ -1864,7 +1870,8 @@ At the SurfaceGrid level, the dominant form is a cell-based topological view. Ce
 }
 ```
 
-A good paper sentence to remember is this: CCA8 uses different representations because the same content becomes computationally useful in different forms at different stages of the loop. A posture fact may be a pred:* tag in WorldGraph, a slot value in MapSurface, and a field inside a stored wm_mapsurface payload.
+A useful documentation sentence to remember is this - CCA8 uses different representations because the same content becomes computationally useful in different forms at different stages of the loop. A posture fact may be a pred:* tag in WorldGraph, a slot value in MapSurface, and a field inside a stored wm_mapsurface payload.
+
 
 ## 4. BodyMap: fast belief registers for gating and safety
 
@@ -1942,7 +1949,7 @@ Another subtle point is that MapSurface can hold prior material without pretendi
 
 Because MapSurface is a scene sketch, not a theorem prover, you should resist the temptation to push every temporary inference into it. If the agent briefly entertains two competing interpretations of a patch match, that ambiguity belongs in Scratch or Creative. MapSurface should stay readable as the current committed working scene.
 
-This also gives you a clean paper distinction. MapSurface is not a vague “working memory” blob. It is the committed semantic layer of working memory. Scratch and Creative are the uncommitted layers. That phrasing is often clearer than calling everything “working memory” and hoping the reader infers the internal structure.
+MapSurface is not a vague “working memory” blob. It is the committed semantic layer of working memory. Scratch and Creative are the uncommitted layers. That phrasing is often clearer than calling everything “working memory” and hoping the reader infers the internal structure.
 
 ## 7. SurfaceGrid and NavPatch: topological memory and reusable local maps
 
@@ -2142,7 +2149,7 @@ The current log vocabulary already supports this style of reading. [env] tells y
 
 ## 14. Conceptual synthesis and writing vocabulary
 
-If you are preparing a paper, the most useful conceptual move is to stop calling CCA8 memory a single store. Instead, describe it as a memory ecology. The body-facing ecology consists of fast belief registers and current scene commitments. The episode-facing ecology consists of sparse index nodes and heavy stored payloads. The planning-facing ecology consists of current topology and transient predicted outcomes. These ecologies overlap, but they are not identical.
+If you are discussing the architecture, the most useful conceptual move is to stop calling CCA8 memory a single store. Instead, describe it as a memory ecology. The body-facing ecology consists of fast belief registers and current scene commitments. The episode-facing ecology consists of sparse index nodes and heavy stored payloads. The planning-facing ecology consists of current topology and transient predicted outcomes. These ecologies overlap, but they are not identical.
 
 A second useful move is to give each representation a sentence-level role. BodyMap is the low-latency gating layer. MapSurface is the committed semantic working scene. SurfaceGrid is the derived topological action field. Scratch is the transient trace of recent action and predicted postcondition. Creative is the counterfactual proposal pool. WorldGraph is the sparse episode index. Columns are the heavy long-term payload store.
 
@@ -4102,121 +4109,109 @@ A: Yes — `--demo-world` seeds a small deterministic graph that is also used by
 
 # Experiments
 
-CCA8 now contains a dedicated experiment harness for controlled benchmark runs. The purpose of this harness is not merely to
-“run the goat many times,” but to let us compare memory and control conditions against frozen benchmark definitions using a
-stable action vocabulary, repeatable seeds, machine-readable JSONL records, and compact batch summaries.
-
-The experiment harness is intentionally additive. If you never enter the experiments menu, ordinary CCA8 simulation behavior
-remains unchanged. When you do use the harness, runs are executed in an isolated sandbox runtime so that benchmark execution
-does not mutate the user’s live interactive session.
-
-The current experimental focus is long-horizon memory and control:
-- mechanistic contextual retrieval and switching in a partially observable task,
-- and milestone completion in a closed-loop newborn-goat task.
-
-This section documents the current harness as implemented in the runner at the time of writing.
 
 
+CCA8 contains a dedicated experiment harness for controlled benchmark runs. The purpose of this harness is not merely to “run the goat many times,” but to compare memory-governance and control conditions against frozen benchmark definitions using a stable action vocabulary, repeatable seeds, machine-readable JSONL records, and repeat-level statistics.
 
-# Menu 49: Experiments / Benchmarks
+The experiment harness is intentionally additive. Ordinary interactive CCA8 simulation behavior is unchanged unless the experiment menu is explicitly used. Experiment episodes are executed in isolated sandbox runtimes so that benchmark execution does not mutate the user’s live interactive session.
 
-Menu 49 is the current entry point for experiment work.
-
-It provides:
-- protocol inspection,
-- benchmark and condition configuration,
-- seed and run-budget configuration,
-- JSONL output-path preparation,
-- example cycle/episode records,
-- one isolated benchmark episode,
-- and A/B/C batch execution over the selected seeds.
-
-At present, the menu includes the following practical actions:
-
-1. Show frozen protocol summary  
-2. Show A–E condition table  
-3. Show benchmark suite  
-4. Show JSONL schema summary  
-5. Show logging / output status  
-6. Set benchmark id  
-7. Set condition ids  
-8. Set random seed list  
-9. Set episodes per seed  
-10. Set max cycles  
-11. Set observation-mask probability  
-12. Set run label  
-13. Set output directory  
-14. Show example cycle / episode records  
-15. Prepare JSONL logging / output paths  
-16. Reset experiment protocol to defaults  
-17. Run one prepared experiment episode now (isolated sandbox)  
-18. Run A/B/C batch over current seeds (isolated sandbox)
-
-The current menu text still mentions “config + JSONL plumbing,” but the harness has already progressed beyond scaffolding:
-submenu 17 and submenu 18 now execute real experiment runs.
+The current experimental focus is **long-horizon state integrity**: whether the architecture can maintain the correct relationship among current evidence, prior memory, task stage, goals, and selected actions over an extended closed-loop trajectory.
 
 
+## Menu 49: Experiments / Benchmarks
 
-# Experiment protocol: conditions A–E
+Menu 49 is the entry point for experiment work.
 
-The current experiment protocol freezes five comparison conditions.
+It currently supports:
 
-## A) Full CCA8 (merge retrieval)
-Reference condition. Full layered CCA8 with episodic readback enabled and conservative merge-mode prior injection.
+* protocol inspection and reset,
+* benchmark and condition selection,
+* seed-list and run-budget configuration,
+* observation-mask probability,
+* newborn stress-profile configuration,
+* JSONL output-path preparation,
+* example cycle and episode records,
+* isolated single-episode benchmark runs,
+* A/B/C condition batches,
+* repeated A/B/C random-seed runs with repeat-level statistics,
+* optional A/E hybrid-adviser runs,
+* and preliminary RCOS robotic long-horizon experiments.
 
-## B) CCA8 without episodic readback
-Storage remains available, but automatic episodic retrieval is disabled. This isolates the contribution of readback rather than
-storage alone.
+Useful submenu entries include:
 
-## C) CCA8 with replace-mode prior injection
-Episodic retrieval is enabled, but retrieved MapSurface priors are applied in replace mode rather than conservative merge mode.
-This is intended to test whether guarded merge is better than stronger overwrite-style priors.
+* **17** — run one prepared experiment episode in an isolated sandbox
+* **18** — run an A/B/C batch over the current seed list
+* **19** — run 20 random-seed A/B/C repeat blocks and print repeat-level statistics
+* **20** — run an A/E batch over the current seed list
+* **21** — run 20 random-seed A/E repeat blocks
+* **30** — set the newborn stress profile
+* **31** — set the newborn blackout length
 
-## D) LLM-only controller baseline
-Reserved condition. Intended future baseline where an LLM selects actions from the same bounded action vocabulary using only
-agent-visible state summaries.
-
-## E) Hybrid CCA8 + LLM adviser
-Reserved condition. Intended future hybrid where CCA8 remains the authoritative controller while an LLM ranks or advises among
-bounded candidate actions.
-
-At the time of writing:
-- A, B, and C execute real sandboxed CCA8 runs.
-- D and E are intentionally reported as not yet supported until the later LLM action-selection hook is implemented.
+The RCOS robotic entries in Menu 49 are preliminary simulation benchmarks for later robotics work. They are useful for testing RCOS/HAL task sequencing, perturbations, and ablations, but they are separate from the native newborn A/B/C memory-governance benchmark.
 
 
+## Experiment protocol: conditions A–E
 
-# Current benchmark suite
+The experiment protocol defines five comparison conditions.
 
-The harness currently defines two benchmarks.
+### A) Full CCA8 with guarded merge retrieval
 
-## 1) `goat04_context`
+Reference condition. Stored prior state may be retrieved and conservatively merged into the current WorkingMap / MapSurface. Retrieved memory can fill missing information or provide a prior, but it should not overwrite fresh current evidence or active safety/task constraints.
+
+### B) CCA8 without episodic readback
+
+Storage remains available, but automatic episodic readback is disabled. This condition tests whether storing prior state is sufficient when stored state is not functionally reintroduced into ongoing control.
+
+### C) CCA8 with replace-mode prior injection
+
+Episodic retrieval is enabled, but retrieved MapSurface priors are applied in replace mode rather than conservative merge mode. This condition tests the risk of giving prior memory too much authority over current state.
+
+### D) LLM-only controller baseline
+
+Reserved future condition. The intended baseline is an LLM controller choosing from the same bounded action vocabulary using only agent-visible state summaries. This condition is not part of the reported CCA8 native A/B/C benchmark runs.
+
+### E) Hybrid CCA8 + LLM adviser
+
+Optional experimental condition. CCA8 remains the authoritative controller, while an LLM adviser may rank or recommend among bounded candidate policies when the candidate set is ambiguous. The adviser is subordinate to CCA8 and is not used as an unconstrained controller.
+
+The native CCA8 A/B/C benchmark runs do not use external LLM processing, API calls, or a language-model controller. Conditions D and E are reserved or optional LLM-related comparison conditions.
+
+## Current benchmark suite
+
+The harness currently defines two main CCA8 benchmarks.
+
+### 1) `goat04_context`
+
 This is the contextual map-switch benchmark built around the `goat_foraging_04` evaluation world.
 
-Its purpose is mechanistic rather than ethological:
-- partial observability,
-- sparse fox / hawk contextual switching,
-- retrieval of the appropriate prior map,
-- contamination control,
-- and stabilization after a context switch.
+Its purpose is mechanistic:
 
-The primary metrics currently associated with this benchmark are:
+* partial observability,
+* sparse fox / hawk contextual switching,
+* retrieval of the appropriate prior map,
+* contamination control,
+* and stabilization after a context switch.
 
-- `context_switch_accuracy`
-- `cycles_to_stabilization`
-- `false_retrieval_count`
-- `cue_leakage_violations`
-- `cumulative_prediction_error`
+Representative metrics include:
 
-This benchmark is currently the clearest place to test whether retrieved context actually changes downstream control.
+* `context_switch_accuracy`
+* `false_retrieval_count`
+* `cue_leakage_violations`
+* `oracle_action_accuracy`
+* `oracle_retrieval_precision`
+* `internal_retrieval_event_ratio`
+* `stabilization_latency`
+* `cumulative_prediction_error`
 
-## 2) `newborn_long_horizon`
-This is the closed-loop newborn-goat milestone benchmark.
+This benchmark is useful for testing whether retrieved context changes downstream control.
 
-Its purpose is behavioral:
-can the system progress through the task ladder from birth-like fallen posture to successful resting after feeding?
+### 2) `newborn_long_horizon`
 
-The current milestone ladder is:
+This is the Long-Horizon State-Integrity Benchmark.
+
+Its purpose is behavioral and state-governance oriented: can the system preserve coherent state while progressing through an ordered newborn survival sequence under partial observability and structured stress?
+
+The milestone ladder is:
 
 1. `stood_up`
 2. `reached_mom`
@@ -4225,218 +4220,173 @@ The current milestone ladder is:
 5. `milk_drinking`
 6. `rested`
 
-The primary metrics currently associated with this benchmark are:
+Representative task-completion metrics include:
 
-- `episode_success`
-- `milestone_vector`
-- `milestone_score`
-- `cycles_to_end`
-- `repeated_action_loop_count`
-- `cumulative_prediction_error`
-- `recovery_latency`
+* `success`
+* `milestone_vector`
+* `milestone_steps`
+* `milestone_score`
+* `time_to_rested`
+* `time_to_rested_or_max_cycles`
+* `recovery_latency`
+* `cycles_to_end`
+* `cumulative_prediction_error`
 
-At the time of writing, this benchmark is valuable both as a behavioral regression test and as a long-horizon task-completion
-sandbox, even though its condition ablations are not yet strongly separated.
+The newborn benchmark also records long-horizon state-integrity metrics through `cca8_state_integrity.py`.
 
+## Newborn stress profiles
 
+The newborn benchmark supports the following stress profiles:
 
-# Experiment outputs and JSONL records
+### `baseline`
 
-The experiment harness can prepare and write JSONL files to a configurable output directory.
+Ordinary partial observability only. The observation-mask probability still applies, so this is not a fully observable control. It is the partially observable baseline without structured route-loss perturbation.
 
-Current protocol knobs include:
-- benchmark id,
-- selected condition ids,
-- seed list,
-- episodes per seed,
-- max cycles,
-- observation-mask probability,
-- run label,
-- output directory,
-- and booleans controlling whether cycle records and episode-summary records are written.
+### `blackout_short`
 
-## Run identity and paths
+A short structured blackout after selected milestone events. It removes selected local relation and feeding-state tokens for a small number of cycles.
 
-Each prepared run uses a stable human-readable run id, composed from:
-- timestamp,
-- benchmark id,
-- and optionally a run label (or profile when no label is provided).
+### `blackout_long`
 
-Prepared output files typically follow the pattern:
+A longer version of the structured blackout stressor.
 
-- `<run_id>__cycle.jsonl`
-- `<run_id>__episode.jsonl`
+### `route_loss`
 
-inside the configured `output_dir`.
+The main memory-critical stress profile for the `newborn_long_horizon` benchmark. During route-loss periods, the agent retains body/proprioceptive information, but external route and task-continuity evidence is removed from the visible observation packet. This includes mother/nipple/shelter/hazard relation fields, route/navigation cues, selected raw-sensor fields, and local navigation surfaces.
 
-## Cycle-record contract
+Route loss is designed to make memory useful but potentially dangerous. A no-readback agent may fail because it cannot recover route/task continuity. A replace-mode agent may preserve outward progress while allowing old state to overwrite current state. A guarded-merge agent should use prior state as support while preserving current-state authority.
 
-Cycle records are intended to be machine-readable per-cycle traces. The current schema includes fields such as:
+## State-integrity metrics
 
-- schema / record_type
-- experiment_id
-- benchmark / condition / seed / episode_index
-- cycle_index / env_step
-- stage / zone
-- obs_mask_stats
-- retrieval_event
-- pred_err
-- selected_policy
-- executed_action
-- milestones
-- oracle
-- done / termination_reason
+The module `cca8_state_integrity.py` provides read-only post-processing for newborn long-horizon cycle records. It does not change the controller, environment, memory system, or action-selection behavior.
 
-## Episode-summary contract
+The state-integrity summary includes:
 
-Episode summaries are the compact evaluation artifact for one run. The current schema includes fields such as:
+* `state_integrity_score`
+* `wrong_stage_action_count`
+* `repeated_action_loop_count_lhsi`
+* `cumulative_prediction_error_lhsi`
+* `retrieval_event_count`
+* `retrieval_ok_count`
+* `retrieval_non_noop_count`
+* `retrieval_merge_noop_count`
+* `retrieval_replace_count`
+* `current_state_overwrite_proxy_count`
+* `stale_memory_intrusion_proxy_count`
+* `retrieval_action_dissociation_proxy_count`
+* `retrieval_followup_basis_count`
+* `provenance_complete_cycle_rate`
 
-- success
-- cycles_to_end
-- milestone_vector
-- milestone_score
-- context_switch_accuracy
-- false_retrieval_count
-- cue_leakage_violations
-- cumulative_prediction_error
-- repeated_action_loop_count
-- latency_ms_total
-- recovery_latency
-- oracle_action_accuracy
-- oracle_retrieval_precision
-- internal_retrieval_event_ratio
-- stabilization_latency
-- retrieval_action_dissociation_count
+Important interpretation note: metrics with `_proxy` in the name are conservative proxy measures derived from available cycle records. They are not yet full slot-level pre/post audits. Component metrics should be inspected alongside the composite `state_integrity_score`.
 
-These records are built from the generic per-cycle trace captured during the sandbox run.
+## Experiment outputs and provenance files
 
+The experiment harness can write machine-readable artifacts to a configurable output directory, usually `testvalues`.
 
+Common per-run artifacts include:
 
-# Current status and limitations of the experiment harness
+* `<run_id>__cycle.jsonl`
+* `<run_id>__episode.jsonl`
 
-The current harness is real and useful, but it is still an evolving research tool rather than a finished paper-grade evaluation suite.
+Repeated-run analysis can also write:
 
-## What already works
+* `<run_id>__episode_rows.jsonl`
+* `<run_id>__repeat_rows.jsonl`
+* `<run_id>__stats.json`
 
-- isolated sandbox runtime creation,
-- benchmark-specific runtime configuration,
-- real execution for conditions A/B/C,
-- hidden-oracle scoring for the goat04 contextual benchmark,
-- milestone summarization for the newborn benchmark,
-- per-episode JSONL writing,
-- and compact terminal summaries for single runs and A/B/C batches.
+The repeated-run bundle is the preferred provenance artifact for analysis tables, regression checks, and release notes because it preserves:
 
-## Important current limitations
+* episode-level rows,
+* repeat-level condition summaries,
+* repeat metric rows,
+* descriptive statistics,
+* and paired comparisons against Condition A.
 
-### 1) D and E are not yet supported
-The LLM-only and hybrid LLM conditions are defined in the protocol but intentionally return a “not yet supported” result until
-the later LLM action-selection hook is implemented.
+## Example repeated-run protocol
 
-### 2) `cycles_to_end` is not yet true early termination
-At present, the single-episode runner executes up to `max_cycles` and then summarizes what happened.
-This means that `cycles_to_end` currently reflects the number of raw cycle records collected, not a true “the task terminated
-naturally at cycle N” measure.
+The following configuration is a useful reproducible stress-test configuration for the `newborn_long_horizon` benchmark:
 
-In other words, it is currently best read as:
-- “how many cycles this benchmark run consumed under the current run budget”
-rather than:
-- “the exact cycle at which the task ended.”
+* benchmark: `newborn_long_horizon`
+* conditions: `A`, `B`, `C`
+* stress profiles: `baseline` and `route_loss`
+* observation-mask probability: `0.50`
+* maximum cycles: `60`
+* repeat blocks: `20`
+* seeds per repeat: `5`
+* episodes per seed: `1`
+* episodes per condition per stress profile: `100`
+* total episodes across baseline and route-loss profiles: `600`
+* external LLM calls for native A/B/C runs: `0`
 
-### 3) Batch mode currently reuses the single-episode runner
-A/B/C batch execution is already useful, but each episode still writes its own JSONL files.
-The harness does not yet consolidate an entire batch under one shared run id or one unified batch artifact.
+A practical way to run this workflow from Menu 49 is:
 
-### 4) The newborn benchmark is not yet a strong episodic-readback ablation
-The newborn long-horizon task currently serves very well as a behavioral regression and long-horizon task-completion benchmark,
-but at the time of writing it does not yet strongly separate A/B/C. That means it is not yet sufficient, by itself, to support a
-claim that episodic readback materially improves newborn long-horizon success.
+1. Set benchmark id to `newborn_long_horizon`.
+2. Set condition ids to `A B C`.
+3. Set observation-mask probability to `0.50`.
+4. Set max cycles to `60`.
+5. Set episodes per seed to `1`.
+6. Set stress profile to `baseline`.
+7. Run submenu 19 and save the repeated analysis bundle.
+8. Set stress profile to `route_loss`.
+9. Run submenu 19 again and save the repeated analysis bundle.
 
-### 5) A vs C separation is still weak in the contextual benchmark
-The goat04 contextual benchmark already separates “retrieval present” vs “retrieval absent,” but A and C can still look very
-similar in batch summaries. This means the current benchmark is stronger for testing the presence or absence of retrieval than
-for testing merge-mode vs replace-mode priors.
-
-These limitations are not failures. They define the next development targets for the benchmark harness.
+This protocol can be used to compare ordinary partial observability against structured route-loss stress. The route-loss profile is expected to be more memory-critical than the baseline profile, but numerical results should always be regenerated from saved JSONL/statistics artifacts rather than treated as hard-coded behavior.
 
 
+## Source-file map for the experiment additions
 
-# Current observed behavior in the benchmark harness
+### `cca8_run.py`
 
-The following summarizes the current behavior seen in the benchmark harness at the time of writing.
+The runner now contains the experiment protocol definitions, Menu 49, A–E condition catalog, benchmark catalog, stress-profile logic, sandbox episode execution, batch execution, repeated random-seed runs, JSONL writing helpers, repeat-level statistics, and integration with state-integrity post-processing.
 
-## `goat04_context`
+Important concepts in this file include:
 
-In a representative single run under condition A:
-- `success = True`
-- `context_switch_acc = 0.750`
-- `oracle_action_acc = 0.750`
-- `oracle_retr_prec = 1.000`
-- `internal_retr_rt = 0.500`
-- `false_retrievals = 0`
-- `cue_leakage = 0`
-- `repeated_loops = 54`
-- `cumulative_pred_e = 0.000`
+* `ExperimentConditionDef`
+* `ExperimentBenchmarkDef`
+* `ExperimentProtocolConfig`
+* `experiment_condition_catalog_v1`
+* `experiment_benchmark_catalog_v1`
+* `NEWBORN_STRESS_PROFILES_V1`
+* `apply_newborn_experiment_stress_v1`
+* `experiment_run_one_episode_v1`
+* `experiment_run_condition_batch_v1`
+* `experiment_run_repeated_random_abc_v1`
+* `_experiment_write_repeated_result_bundle_v1`
 
-In the current A/B/C batch over the default seed set:
-- A and C both succeed and outperform B,
-- B loses contextual retrieval accuracy and retrieval precision,
-- cue leakage remains controlled,
-- and A/C currently appear much closer to one another than either is to B.
+### `cca8_state_integrity.py`
 
-Interpretation:
-- the contextual benchmark is already discriminative for “episodic readback on” vs “episodic readback off,”
-- but it is not yet strongly discriminative for merge-mode vs replace-mode priors.
+Read-only post-processing for newborn long-horizon state-integrity metrics. This module analyzes saved cycle records and returns JSON-safe summaries. It is deliberately separated from the main runner so the analysis metrics remain inspectable and do not alter runtime behavior.
 
-## `newborn_long_horizon`
+### `cca8_rcos_experiments.py`
 
-In a representative single run under condition A:
-- all six milestones are reached,
-- `milestone_score = 1.000`,
-- `recovery_latency = 5.000`,
-- `repeated_loops = 2`,
-- `cumulative_pred_e = 4.000`.
+Preliminary RCOS robotic long-horizon experiment helpers. These use the SimRobotGoat HAL seam and bounded command vocabulary to test robot-shaped task sequencing, perturbations, and RCOS/no-RCOS ablations in simulation. This module is useful for later RCOS robotics work, but it is separate from the native newborn A/B/C memory-governance benchmark.
 
-In the current A/B/C batch over the default seed set:
-- A, B, and C all succeed,
-- milestone score remains perfect,
-- recovery latency remains stable,
-- and the summary values are currently identical across A/B/C.
+### `cca8_teaching.py`
 
-Interpretation:
-- the newborn benchmark is currently a strong stability / regression benchmark,
-- but it does not yet separate episodic readback conditions in a scientifically interesting way.
+Teaching text helpers used to keep longer tutorial explanations out of `cca8_run.py`. The first use case is the verbose Menu 35 cognitive-cycle teaching mode.
 
-This is an honest and useful result: the benchmark harness is functioning, but not every benchmark is yet measuring the same kind
-of architectural dependence.
+### `cca8_world_graph.py`
 
----
+The WorldGraph remains the thin symbolic episode index. Recent supporting features include configurable memory mode, semantic consolidation support, prominence bookkeeping, planner selection, and safer NOW-anchor movement. These features support longer experimental runs by reducing clutter, improving traceability, and keeping graph orientation explicit.
 
-## Practical recommendation for reading Menu 49 results
+### `cca8_column.py`
 
-At the time of writing, the fastest way to interpret the experiment menu is:
+Column memory remains the heavy engram store. WorldGraph bindings point to ColumnMemory records rather than inlining large payloads. This remains central to the MapSurface snapshot/retrieval pipeline used by the long-horizon benchmark.
 
-- use `goat04_context` when you want to test contextual retrieval, map switching, contamination control, and whether memory
-  changes downstream behavior;
+## Current limitations
 
-- use `newborn_long_horizon` when you want to test closed-loop task completion, milestone stability, and whether recent
-  changes broke the basic newborn behavioral sequence.
+The experiment harness is a research tool, not a finished general benchmark suite.
 
-These benchmarks should be treated as complementary rather than interchangeable.
+Current limitations include:
 
----
+1. The newborn benchmark is intentionally small and controlled. It tests one proposed prerequisite for long-horizon agency, not general intelligence or real-world autonomy by itself.
+2. The route-loss stressor is artificial and designed to isolate memory-governance behavior.
+3. Proxy metrics are conservative and depend on available cycle records.
+4. The LLM-only Condition D is reserved for future work.
+5. The optional hybrid LLM adviser Condition E is not part of the native CCA8 A/B/C benchmark configuration.
+6. The RCOS robotic experiment helpers are preliminary software benchmarks and do not yet demonstrate full CCA8 Action Center control of physical hardware.
 
-## Planned next improvements
-
-A natural next sequence of improvements is:
-
-1. introduce true early benchmark termination for completed or failed episodes,
-2. strengthen the newborn benchmark so that condition B genuinely loses something when episodic readback is removed,
-3. improve A vs C separation in the contextual benchmark,
-4. consolidate batch outputs under cleaner batch-level logging,
-5. and later add D/E once the LLM action hook is ready.
-
-That trajectory keeps the harness scientifically honest while steadily increasing its paper-readiness.
-
+These limitations are useful boundaries. They keep the README honest and prevent readers from overinterpreting the experimental code.
 
 
 
@@ -4803,7 +4753,7 @@ Whether the next cycle is a keyframe is decided fresh each cycle based on the ke
 Note:
 Predictions/hypotheses exist, are compared to the next observation, and produce a mismatch signal (v0 “prediction error vector” plan is already aligned with this).
 
-An optional internal reprocessing loop exists as a reserved capability, where intermediate results can be fed back into the next cycle’s “input stream” (or internal buffer) instead of (or in addition to) relying purely on fresh external observation. This is the CCA8 analog to the “feed WNM back to association modules” idea in the published papers on the CCA.
+An optional internal reprocessing loop exists as a reserved capability, where intermediate results can be fed back into the next cycle’s “input stream” (or internal buffer) instead of (or in addition to) relying purely on fresh external observation. This is the CCA8 analog to the “feed WNM back to association modules” idea in the published work on the CCA.
 
 In reprocessing mode, the architecture may temporarily down-weight or ignore fresh external observation (attention diverted) and instead iterate on an internal buffer; when external observation is present, EnvObservation remains the authority for ‘truth-now’.
 
@@ -12170,7 +12120,7 @@ o   where to attach in time,
 
 o   how to relate these to its existingWorldGraph.
 
-This is more practical earlyon (we don’t have to build our own vision stack inside CCA8), and it’s what weimplicitly assumed in the paper.
+This is more practical earlyon (we don’t have to build our own vision stack inside CCA8), and it’s what weimplicitly assumed in the associated work on the architecture.
 
 ### Variant C – Hybrid
 
@@ -13772,7 +13722,7 @@ The goal of this section is *not* heavyweight compliance — it’s to help a ma
 
 - “Where in the code is requirement X implemented?”
 - “If I change this behavior, what else should I re-test?”
-- “What should I cite when writing a paper / note about this feature?”
+
 
 ---
 

@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=duplicate-code
+#   while there may be some (tiny) amount of duplicated code, it is not worth refactoring it into a common module, increases complexity
+
 """
 CCA8 World Graph (episode index)
 
@@ -1077,7 +1080,7 @@ class WorldGraph:
         """
         # pylint: disable=import-outside-toplevel
         _ = column  #to mark used and keep for future multi-column routing
-        from cca8_column import mem as _mem   # column memory (RAM)  :contentReference[oaicite:3]{index=3}
+        from cca8_column import mem as _mem   # column memory (RAM)
         return _mem.get(engram_id)
 
 
@@ -1108,9 +1111,9 @@ class WorldGraph:
         bid = self.add_predicate(token, attach=attach, meta=meta)
 
         # 2) assert a lightweight engram in column memory
-        from cca8_column import mem as _mem   #, ColumnMemory   # :contentReference[oaicite:4]{index=4}
+        from cca8_column import mem as _mem   #, ColumnMemory
         try:
-            from cca8_features import FactMeta              # optional sugar  :contentReference[oaicite:5]{index=5}
+            from cca8_features import FactMeta              # optional sugar
             _fm = FactMeta(name=(name or token), links=links, attrs=attrs)
         except Exception:
             _fm = None
@@ -1146,9 +1149,9 @@ class WorldGraph:
 
         # 2) assert a lightweight engram in column memory
         # pylint: disable=import-outside-toplevel
-        from cca8_column import mem as _mem                    # :contentReference[oaicite:6]{index=6}
+        from cca8_column import mem as _mem                    # :contentReference
         try:
-            from cca8_features import FactMeta                 # :contentReference[oaicite:7]{index=7}
+            from cca8_features import FactMeta                 # :contentReference
             _fm = FactMeta(name=(name or cue_token), links=links, attrs=attrs)
         except Exception:
             _fm = None
@@ -1185,7 +1188,7 @@ class WorldGraph:
         """
         # pylint: disable=import-outside-toplevel
         try:
-            from cca8_features import TensorPayload           # :contentReference[oaicite:8]{index=8}
+            from cca8_features import TensorPayload           # :contentReference
         except Exception:
             TensorPayload = None  # type: ignore[assignment, misc]
 

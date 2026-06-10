@@ -25,6 +25,12 @@ example_*.txt
 echo cycle_log.jsonl
 echo terminal.txt
 
+# Backups
+nppBackup/
+baks/
+_old_bak/
+htmlcov/
+
 
 # Build/dist
 build/

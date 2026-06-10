@@ -1,5 +1,7 @@
 # CCA8 optional tooling and development dependencies.
 # Python 3.11 standard-library modules are not listed here.
+# Note that CCA8 code will run without an LLM/LRM but it may be used in particular setups, although for many
+#  experimental setups we explicitly do not make use of the LLM/LRM.
 
 openai
 pyvis

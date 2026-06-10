@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=duplicate-code
+#   while there may be some (tiny) amount of duplicated code, it is not worth refactoring it into a common module, increases complexity
+
 """
 CCA8 teaching text helpers.
 
@@ -11,7 +14,7 @@ This module is deliberately simple:
 - no CCA8 imports,
 - no side effects,
 - all functions return strings,
-- explanations can be expanded cumulatively as we discuss more terminal output.
+- explanations can be expanded cumulatively as additional terminal output is documented.
 
 The first use case is Menu 35, which runs one closed-loop cognitive cycle using
 the same engine as Menu 37, but with extra tutorial text.
