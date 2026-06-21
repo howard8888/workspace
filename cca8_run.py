@@ -215,6 +215,8 @@ __all__ = [
     "Ctx",
     "HAL",
     "PolicyRuntime",
+    "run_autonomous_newborn_survival_demo_v1",
+    "render_autonomous_newborn_survival_demo_lines_v1",
     "ExperimentConditionDef",
     "ExperimentBenchmarkDef",
     "ExperimentProtocolConfig",
@@ -4085,6 +4087,313 @@ def experiment_run_one_episode_v1(
         "suppressed_output": bool(suppress_output),
         "captured_output_lines": int(len(captured_stdout.splitlines())) if captured_stdout else 0,
     }
+
+
+AUTONOMOUS_NEWBORN_SURVIVAL_MILESTONES_V1 = (
+    "stood_up",
+    "reached_mom",
+    "found_nipple",
+    "latched_nipple",
+    "milk_drinking",
+    "rested",
+)
+
+
+def _autonomous_newborn_demo_final_state_v1(state: Any) -> dict[str, Any]:
+    """Return a compact final-state summary for the autonomous newborn survival demo."""
+    return {
+        "stage": getattr(state, "scenario_stage", None),
+        "posture": getattr(state, "kid_posture", None),
+        "mom_distance": getattr(state, "mom_distance", None),
+        "nipple_state": getattr(state, "nipple_state", None),
+        "shelter_distance": getattr(state, "shelter_distance", None),
+        "cliff_distance": getattr(state, "cliff_distance", None),
+        "position": getattr(state, "position", None),
+        "zone": getattr(state, "zone", None),
+        "milestones": list(getattr(state, "milestones", []) or []),
+        "stand_attempts": int(getattr(state, "newborn_stand_attempts", 0) or 0),
+        "follow_attempts": int(getattr(state, "newborn_follow_attempts", 0) or 0),
+        "seek_attempts": int(getattr(state, "newborn_seek_attempts", 0) or 0),
+        "rest_attempts": int(getattr(state, "newborn_rest_attempts", 0) or 0),
+        "milk_ticks": int(getattr(state, "newborn_milk_ticks", 0) or 0),
+        "setbacks": int(getattr(state, "newborn_setback_count", 0) or 0),
+        "step_index": int(getattr(state, "step_index", 0) or 0),
+    }
+
+
+def _autonomous_newborn_demo_policy_counts_v1(raw_records: list[dict[str, Any]]) -> dict[str, int]:
+    """Count selected policies from generic cycle JSON records."""
+    out: dict[str, int] = {}
+
+    for record in raw_records:
+        if not isinstance(record, dict):
+            continue
+
+        policy = record.get("policy_fired")
+        if not isinstance(policy, str) or not policy.startswith("policy:"):
+            continue
+
+        out[policy] = out.get(policy, 0) + 1
+
+    return out
+
+
+def _autonomous_newborn_demo_policy_counts_from_stdout_v1(text: str) -> dict[str, int]:
+    """Fallback policy counter for captured Menu-37-style terminal output."""
+    out: dict[str, int] = {}
+
+    if not isinstance(text, str):
+        return out
+
+    for line in text.splitlines():
+        if "[env→controller]" not in line:
+            continue
+
+        tail = line.split("[env→controller]", 1)[1].strip()
+        if not tail:
+            continue
+
+        token = tail.split(maxsplit=1)[0].strip()
+        if token.startswith("policy:"):
+            out[token] = out.get(token, 0) + 1
+
+    return out
+
+
+def _autonomous_newborn_demo_counts_text_v1(policy_counts: dict[str, int]) -> str:
+    """Return a stable, compact policy-count string for terminal display."""
+    preferred = [
+        "policy:stand_up",
+        "policy:recover_fall",
+        "policy:follow_mom",
+        "policy:seek_nipple",
+        "policy:rest",
+        "policy:suckle",
+        "policy:probe",
+        "policy:explore_check",
+    ]
+
+    parts: list[str] = []
+    seen: set[str] = set()
+
+    for name in preferred:
+        count = int(policy_counts.get(name, 0) or 0)
+        if count > 0:
+            parts.append(f"{name}={count}")
+            seen.add(name)
+
+    for name in sorted(policy_counts):
+        if name not in seen:
+            parts.append(f"{name}={int(policy_counts.get(name, 0) or 0)}")
+
+    return ", ".join(parts) if parts else "(none)"
+
+
+def run_autonomous_newborn_survival_demo_v1(max_cycles: int = 60, *, show_timeline: bool = True) -> dict[str, Any]:
+    """Run an isolated hard-mode newborn survival demo using CCA8 autonomous policy selection.
+
+    This is a user-facing demo wrapper around the same closed-loop machinery as Menu 37, but with
+    a fresh sandbox runtime so the live interactive WorldGraph/session is not mutated.
+
+    The demo intentionally disables observation masking and route-loss stress. It asks the simpler
+    baseline question first:
+
+        Can the newborn goat autonomously complete the hard survival ladder when the current state
+        is fully observable?
+
+    Returns a JSON-safe summary suitable for terminal rendering and pytest assertions.
+    """
+    try:
+        cycles = int(max_cycles)
+    except Exception:
+        cycles = 60
+    cycles = max(1, min(500, cycles))
+
+    prior_skills: dict[str, Any] = {}
+    try:
+        prior_skills = skills_to_dict()
+    except Exception:
+        prior_skills = {}
+
+    started = time.perf_counter()
+    captured_stdout = ""
+
+    try:
+        # Keep this demo isolated from the user's live skill ledger as much as the current global
+        # skill-ledger implementation allows.
+        try:
+            skills_from_dict({})
+        except Exception:
+            pass
+
+        sandbox = experiment_make_sandbox_runtime_v1()
+        world = sandbox["world"]
+        drives = sandbox["drives"]
+        run_ctx = sandbox["ctx"]
+        env = sandbox["env"]
+        policy_rt = sandbox["policy_rt"]
+
+        setup = experiment_configure_benchmark_runtime_v1(
+            world,
+            drives,
+            run_ctx,
+            env,
+            "newborn_long_horizon",
+        )
+        if not bool(setup.get("ok")):
+            return {
+                "ok": False,
+                "why": setup.get("why", "benchmark_setup_failed"),
+                "success": False,
+            }
+
+        # Baseline survival demo: no route-loss / blackout stress. Those remain Menu 49 work.
+        run_ctx.obs_mask_prob = 0.0
+        run_ctx.obs_mask_verbose = False
+        run_ctx.obs_mask_seed = 123
+        run_ctx.obs_mask_last_cfg_sig = None
+        run_ctx.cycle_json_enabled = True
+        run_ctx.cycle_json_path = None
+        run_ctx.cycle_json_records = []
+        run_ctx.cycle_json_max_records = max(2000, cycles + 10)
+        run_ctx.experiment_newborn_require_resume_memory = False
+        run_ctx.experiment_newborn_blackout_start_step = -1
+        run_ctx.experiment_newborn_blackout_until_step = -1
+        run_ctx.experiment_newborn_blackout_reason = None
+
+        drives.hunger = 0.50
+        drives.fatigue = 0.30
+        drives.warmth = 0.60
+
+        try:
+            policy_rt.refresh_loaded(run_ctx)
+        except Exception:
+            pass
+
+        random.seed(123)
+
+        if show_timeline:
+            run_env_closed_loop_steps(env, world, drives, run_ctx, policy_rt, cycles)
+        else:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                run_env_closed_loop_steps(env, world, drives, run_ctx, policy_rt, cycles)
+            captured_stdout = buf.getvalue()
+
+        raw_records = list(getattr(run_ctx, "cycle_json_records", []) or [])
+
+        if raw_records:
+            newborn_summary = _experiment_summarize_newborn_b2_v1(raw_records)
+        else:
+            newborn_summary = {
+                "milestone_vector": {},
+                "milestone_steps": {},
+                "milestone_score": 0.0,
+                "success": False,
+            }
+
+        final_state = _autonomous_newborn_demo_final_state_v1(getattr(env, "state", None))
+        milestone_vector = newborn_summary.get("milestone_vector")
+        if not isinstance(milestone_vector, dict):
+            milestone_vector = {}
+
+        missing_milestones = [
+            name for name in AUTONOMOUS_NEWBORN_SURVIVAL_MILESTONES_V1
+            if not bool(milestone_vector.get(name))
+        ]
+
+        policy_counts = _autonomous_newborn_demo_policy_counts_v1(raw_records)
+        if not policy_counts and captured_stdout:
+            policy_counts = _autonomous_newborn_demo_policy_counts_from_stdout_v1(captured_stdout)
+
+        stand_actions = int(policy_counts.get("policy:stand_up", 0) or 0)
+        stand_actions += int(policy_counts.get("policy:recover_fall", 0) or 0)
+
+        final_rest_state = (
+            final_state.get("stage") == "rest"
+            and final_state.get("posture") == "resting"
+            and final_state.get("mom_distance") == "touching"
+            and final_state.get("nipple_state") == "latched"
+            and final_state.get("shelter_distance") == "near"
+            and final_state.get("cliff_distance") == "far"
+        )
+
+        required_policy_evidence = (
+            stand_actions >= 2
+            and int(policy_counts.get("policy:follow_mom", 0) or 0) >= 2
+            and int(policy_counts.get("policy:seek_nipple", 0) or 0) >= 2
+            and int(policy_counts.get("policy:rest", 0) or 0) >= 1
+        )
+
+        success = bool(final_rest_state and not missing_milestones and required_policy_evidence)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+        return {
+            "ok": True,
+            "success": success,
+            "max_cycles": int(cycles),
+            "cycles_recorded": int(len(raw_records)),
+            "latency_ms_total": round(float(elapsed_ms), 3),
+            "final_rest_state": bool(final_rest_state),
+            "required_policy_evidence": bool(required_policy_evidence),
+            "missing_milestones": missing_milestones,
+            "milestone_vector": dict(milestone_vector),
+            "milestone_steps": dict(newborn_summary.get("milestone_steps", {}) or {}),
+            "milestone_score": float(newborn_summary.get("milestone_score", 0.0) or 0.0),
+            "policy_counts": dict(policy_counts),
+            "policy_counts_text": _autonomous_newborn_demo_counts_text_v1(policy_counts),
+            "final_state": final_state,
+            "captured_output_lines": int(len(captured_stdout.splitlines())) if captured_stdout else 0,
+            "captured_output_tail": "\n".join(captured_stdout.splitlines()[-80:]) if captured_stdout else "",
+        }
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "why": f"{e.__class__.__name__}: {e}",
+            "success": False,
+            "max_cycles": int(cycles),
+        }
+
+    finally:
+        try:
+            skills_from_dict(prior_skills)
+        except Exception:
+            pass
+
+
+def render_autonomous_newborn_survival_demo_lines_v1(result: dict[str, Any]) -> list[str]:
+    """Return terminal summary lines for the autonomous newborn survival demo."""
+    if not isinstance(result, dict):
+        return ["[newborn-demo] result: invalid result payload"]
+
+    if not bool(result.get("ok")):
+        return [
+            "[newborn-demo] RESULT: ERROR",
+            f"[newborn-demo] why: {result.get('why', '(unknown)')}",
+        ]
+
+    status = "PASS" if bool(result.get("success")) else "FAIL"
+    lines = [
+        f"[newborn-demo] RESULT: {status}",
+        f"[newborn-demo] cycles_recorded: {result.get('cycles_recorded')} / max_cycles={result.get('max_cycles')}",
+        f"[newborn-demo] milestone_score: {result.get('milestone_score')}",
+        f"[newborn-demo] missing_milestones: {result.get('missing_milestones')}",
+        f"[newborn-demo] policy_counts: {result.get('policy_counts_text')}",
+        f"[newborn-demo] final_rest_state: {result.get('final_rest_state')}",
+        f"[newborn-demo] required_policy_evidence: {result.get('required_policy_evidence')}",
+        f"[newborn-demo] final_state: {json.dumps(result.get('final_state', {}), ensure_ascii=False, sort_keys=True)}",
+        f"[newborn-demo] milestone_steps: {json.dumps(result.get('milestone_steps', {}), ensure_ascii=False, sort_keys=True)}",
+        f"[newborn-demo] elapsed_ms: {result.get('latency_ms_total')}",
+    ]
+
+    tail = result.get("captured_output_tail")
+    if not bool(result.get("success")) and isinstance(tail, str) and tail:
+        lines.append("")
+        lines.append("[newborn-demo] captured output tail:")
+        lines.extend(tail.splitlines())
+
+    return lines
 
 
 def render_experiment_logging_status_v1(ctx: Ctx) -> str:
@@ -25327,6 +25636,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     37) Run n Cognitive Cycles (closed-loop timeline) [envloop, envrun]
     38) Inspect BodyMap (summary from BodyMap helpers) [bodymap, bsnap]
     39) Spatial scene demo (NOW-near + resting-in-shelter?) [spatial, near]
+    51) Autonomous newborn survival demo (isolated hard-mode sandbox) [survival, newborn-demo]
 
     # Perception & Memory (Cues & Engrams)
     12) Input [sensory] cue [sensory, cue]
@@ -25442,6 +25752,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "wload": "47", "wmload": "47",
     "experiments": "49", "experiment": "49", "bench": "49", "benchmark": "49",
     "rcos": "50", "simgoat": "50", "robotgoat": "50", "simrobotgoat": "50",
+    "survival": "51", "survival-demo": "51", "newborn-demo": "51", "newborn-survival": "51",
 
     # Keep letter shortcuts working too
     "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
@@ -25510,7 +25821,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     "48": "k",   # Configure OpenAI / LLM API key
     "49": "49",  # Experiments / Benchmarks (protocol scaffolding)
     "50": "50",  # SimRobotGoat RCOS sandbox
-
+    "51": "51",  # autonomous newborn survival demo
 }
 
     # Attempt to load a prior session if requested
@@ -27804,6 +28115,52 @@ Menu 37 runs the compact multi-cycle timeline.
 
             print(skills_hud_text(ctx, top_n=8))
             loop_helper(args.autosave, world, drives, ctx)
+
+
+        #----Menu Selection Code Block------------------------
+        elif choice == "51":
+            # Isolated autonomous newborn survival demo
+            print("Selection: Autonomous newborn survival demo\n")
+            print("""This runs an isolated hard-mode newborn-goat sandbox.
+
+It does NOT mutate the current interactive WorldGraph/session.
+It reuses the same closed-loop engine as Menu 37, but with a fresh sandbox runtime.
+
+Goal:
+  fallen -> stand -> follow mom -> find/latch nipple -> milk drinking -> rest
+
+This baseline demo disables observation masking and route-loss stress. Menu 49 remains the
+right place for harder A/B/C stress tests.
+""")
+
+            try:
+                raw_cycles = input("Max cognitive cycles [default: 60]: ").strip()
+            except Exception:
+                raw_cycles = ""
+
+            try:
+                max_cycles = int(raw_cycles) if raw_cycles else 60
+            except Exception:
+                max_cycles = 60
+            max_cycles = max(1, min(500, max_cycles))
+
+            try:
+                raw_show = input("Print full cycle timeline? [Y/n]: ").strip().lower()
+            except Exception:
+                raw_show = ""
+            show_timeline = raw_show not in ("n", "no")
+
+            result = run_autonomous_newborn_survival_demo_v1(
+                max_cycles=max_cycles,
+                show_timeline=show_timeline,
+            )
+
+            print()
+            for line in render_autonomous_newborn_survival_demo_lines_v1(result):
+                print(line)
+
+            loop_helper(args.autosave, world, drives, ctx)
+
 
         #----Menu Selection Code Block------------------------
         elif choice == "38":
