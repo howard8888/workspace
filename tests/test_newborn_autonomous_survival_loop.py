@@ -118,6 +118,7 @@ def _final_state_summary(state: Any) -> dict[str, Any]:
         "seek_attempts": int(getattr(state, "newborn_seek_attempts", 0) or 0),
         "rest_attempts": int(getattr(state, "newborn_rest_attempts", 0) or 0),
         "milk_ticks": int(getattr(state, "newborn_milk_ticks", 0) or 0),
+        "suckle_ticks": int(getattr(state, "newborn_suckle_ticks", 0) or 0),
         "setbacks": int(getattr(state, "newborn_setback_count", 0) or 0),
         "step_index": int(getattr(state, "step_index", 0) or 0),
     }
@@ -201,7 +202,8 @@ def _run_autonomous_newborn_episode(max_cycles: int = 60) -> dict[str, Any]:
         stand_actions >= 2
         and policy_counts.get("policy:follow_mom", 0) >= 2
         and policy_counts.get("policy:seek_nipple", 0) >= 2
-        and policy_counts.get("policy:rest", 0) >= 1
+        and policy_counts.get("policy:suckle", 0) > 0
+        and policy_counts.get("policy:rest", 0) >= 2
     )
 
     return {

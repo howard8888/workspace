@@ -19,3 +19,6 @@ def test_autonomous_newborn_survival_demo_helper_completes() -> None:
     assert result["final_state"]["posture"] == "resting"
     assert result["final_state"]["nipple_state"] == "latched"
     assert result["final_state"]["milk_ticks"] >= 3
+    assert result["policy_counts"].get("policy:suckle", 0) > 0
+    assert result["final_state"]["suckle_ticks"] >= 3
+    assert result["policy_counts"].get("policy:rest", 0) >= 2

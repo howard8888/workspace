@@ -4116,6 +4116,7 @@ def _autonomous_newborn_demo_final_state_v1(state: Any) -> dict[str, Any]:
         "seek_attempts": int(getattr(state, "newborn_seek_attempts", 0) or 0),
         "rest_attempts": int(getattr(state, "newborn_rest_attempts", 0) or 0),
         "milk_ticks": int(getattr(state, "newborn_milk_ticks", 0) or 0),
+        "suckle_ticks": int(getattr(state, "newborn_suckle_ticks", 0) or 0),
         "setbacks": int(getattr(state, "newborn_setback_count", 0) or 0),
         "step_index": int(getattr(state, "step_index", 0) or 0),
     }
@@ -4322,7 +4323,8 @@ def run_autonomous_newborn_survival_demo_v1(max_cycles: int = 60, *, show_timeli
             stand_actions >= 2
             and int(policy_counts.get("policy:follow_mom", 0) or 0) >= 2
             and int(policy_counts.get("policy:seek_nipple", 0) or 0) >= 2
-            and int(policy_counts.get("policy:rest", 0) or 0) >= 1
+            and int(policy_counts.get("policy:suckle", 0) or 0) > 0
+            and int(policy_counts.get("policy:rest", 0) or 0) >= 2
         )
 
         success = bool(final_rest_state and not missing_milestones and required_policy_evidence)
@@ -11405,8 +11407,8 @@ def _gate_rest_trigger_body_space(world, drives: Drives, ctx) -> bool:
     ---------------
     In the hardened newborn benchmark, ``rest`` is the correct bridge action in
     ``first_latch``. However, once the newborn has already reached the stable
-    solved end-state (resting safely against mom while still latched/drinking),
-    repeatedly firing ``policy:rest`` adds clutter without helping behavior.
+    solved end-state, repeatedly firing ``policy:rest`` adds clutter without
+    helping behavior.
 
     Rules
     -----
@@ -11416,8 +11418,8 @@ def _gate_rest_trigger_body_space(world, drives: Drives, ctx) -> bool:
         an active hawk hint may request rest even when fatigue is mild
         an active fox hint suppresses rest
     - newborn bridge:
-        ``_should_force_rest_bridge_v1(...)`` may request rest in
-        ``first_latch`` even when fatigue is still low
+        ``_should_force_rest_bridge_v1(...)`` may request rest in ``first_latch``
+        even when fatigue is still low
     - newborn solved-state quiescence:
         ``_should_quiesce_rest_v1(...)`` suppresses rest once the newborn is
         already in stable ``stage='rest'`` with safe geometry
@@ -11428,7 +11430,7 @@ def _gate_rest_trigger_body_space(world, drives: Drives, ctx) -> bool:
     fatigue_high = fatigue > float(FATIGUE_HIGH)
     fatigue_cue = any_cue_tokens_present(world, ["drive:fatigue_high"])
     goat04_hint = _goat04_context_hint_active_v1(ctx)
-    rest_bridge = _should_force_rest_bridge_v1(world, ctx)
+    newborn_rest_bridge = _should_force_rest_bridge_v1(world, ctx)
     rest_quiesce = _should_quiesce_rest_v1(world, ctx)
 
     if goat04_hint == "fox":
@@ -11437,7 +11439,14 @@ def _gate_rest_trigger_body_space(world, drives: Drives, ctx) -> bool:
     if rest_quiesce:
         return False
 
-    if not (fatigue_high or fatigue_cue or goat04_hint == "hawk" or rest_bridge):
+    # Newborn hard-mode bridge:
+    # after explicit suckling has produced milk:drinking, Rest is the correct
+    # task-completion action even if ordinary fatigue is not high.
+    if newborn_rest_bridge:
+        return True
+
+    # goat04 hawk-context bridge or ordinary fatigue-based Rest gate.
+    if not (fatigue_high or fatigue_cue or goat04_hint == "hawk"):
         return False
 
     try:
@@ -11458,7 +11467,7 @@ def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
     fatigue = float(getattr(drives, "fatigue", 0.0))
     fatigue_cue = any_cue_tokens_present(world, ["drive:fatigue_high"])
     goat04_hint = _goat04_context_hint_active_v1(ctx)
-    rest_bridge = _should_force_rest_bridge_v1(world, ctx)
+    newborn_rest_bridge = _should_force_rest_bridge_v1(world, ctx)
     rest_quiesce = _should_quiesce_rest_v1(world, ctx)
     stage = getattr(ctx, "lt_obs_last_stage", None) if ctx is not None else None
 
@@ -11478,8 +11487,9 @@ def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
         f"dev_gate: True, trigger: fatigue={fatigue:.2f}>{float(FATIGUE_HIGH):.2f} "
         f"or cue:drive:fatigue_high present={fatigue_cue} "
         f"or goat04_hint={goat04_hint!r} "
-        f"or newborn_rest_bridge={rest_bridge} "
-        f"(newborn_rest_quiesce={rest_quiesce}, stage={stage!r}, rest_zone={zone}, shelter={shelter}, cliff={cliff})"
+        f"or newborn_rest_bridge={newborn_rest_bridge} "
+        f"(newborn_rest_quiesce={rest_quiesce}, stage={stage!r}, "
+        f"rest_zone={zone}, shelter={shelter}, cliff={cliff})"
     )
 
 
@@ -11796,36 +11806,28 @@ def _newborn_milk_drinking_slot_seen_v1(ctx) -> bool:
 def _should_force_rest_bridge_v1(world, ctx) -> bool:
     """Return True when rest should bridge the newborn from feeding into completion.
 
-    In route_loss, rest is deliberately stricter: the agent must have current or
-    retrieved evidence that milk drinking occurred. Latch alone is not enough.
-    This prevents retrieved latch-state from skipping the milk-drinking milestone.
+    In hard newborn mode, Rest must not skip the explicit Suckle -> milk_drinking
+    seam. Once milk drinking is visible, however, Rest should be allowed even when
+    ordinary fatigue is still low.
     """
     if ctx is None:
         return False
 
     st = _follow_mom_bridge_state_v1(world, ctx)
     stage = getattr(ctx, "lt_obs_last_stage", None)
-    route_loss_active = _newborn_stress_profile_from_ctx_v1(ctx) == "route_loss"
 
-    milk_drinking_now = st.get("milk_drinking") is True
+    try:
+        route_loss_active = _newborn_stress_profile_from_ctx_v1(ctx) == "route_loss"
+    except Exception:
+        route_loss_active = False
 
-    # BodyMap does not currently expose a separate "milk_drinking" slot, so
-    # route_loss can leave the rest bridge blind to milk evidence even after the
-    # current episode has observed milk:drinking. This lookup is still conservative:
-    # it requires milk:drinking to be near NOW, so latch alone cannot skip the
-    # milk-drinking milestone.
-    if not milk_drinking_now:
-        try:
-            milk_drinking_now = has_pred_near_now(world, "milk:drinking")
-        except Exception:
-            milk_drinking_now = False
-
-    if not milk_drinking_now:
-        milk_drinking_now = _newborn_milk_drinking_slot_seen_v1(ctx)
-
+    hard_newborn = bool(getattr(ctx, "experiment_newborn_require_current_state", False))
+    milk_drinking_now = _newborn_milk_drinking_current_v1(world, ctx)
     feeding_now = bool(milk_drinking_now)
 
-    if not feeding_now and not route_loss_active:
+    # Back-compatible non-hard path: ordinary storyboard may still treat latch/first_latch
+    # as feeding. Hard newborn mode must require milk_drinking first.
+    if not feeding_now and not hard_newborn and not route_loss_active:
         feeding_now = stage == "first_latch"
         if not feeding_now:
             if st.get("nipple_state") == "latched":
@@ -11861,6 +11863,7 @@ def _should_force_rest_bridge_v1(world, ctx) -> bool:
 
     if not evidence_sparse:
         return True
+
     return _newborn_recent_retrieval_ok_v1(ctx, max_age_steps=3)
 
 
@@ -11962,14 +11965,229 @@ def _newborn_post_latch_sequence_active_v1(world, ctx) -> bool:
     return False
 
 
-def _should_force_suckle_bridge_v1(world, ctx) -> bool:
-    """Return True when suckle should bridge latch into milk-drinking.
+def _bodymap_slot_has_pred_v1(ctx, slot_name: str, pred_token: str) -> bool:
+    """Return True if a BodyMap slot currently carries a specific pred:* tag.
 
-    Route-loss stress can hide the predicates that usually prove the kid is
-    latched. This bridge lets the controller continue feeding when latch is
-    current or has just been recovered from guarded retrieved state. It does not
-    allow suckling after milk drinking is already established, because the next
-    correct bridge is rest.
+    This is intentionally a tiny runner-side helper. It lets bridge gates read the
+    same current-state BodyMap that policy gates already trust, without adding a
+    new public controller API just for this newborn benchmark seam.
+    """
+    if ctx is None:
+        return False
+
+    try:
+        if bodymap_is_stale(ctx):
+            return False
+    except Exception:
+        return False
+
+    try:
+        body_world = getattr(ctx, "body_world", None)
+        body_ids = getattr(ctx, "body_ids", {}) or {}
+        if body_world is None or not isinstance(body_ids, dict):
+            return False
+
+        bid = body_ids.get(slot_name)
+        if not isinstance(bid, str):
+            return False
+
+        binding = getattr(body_world, "_bindings", {}).get(bid)
+        if binding is None:
+            return False
+
+        tags = set(getattr(binding, "tags", []) or [])
+        want = pred_token if pred_token.startswith("pred:") else f"pred:{pred_token}"
+        return want in tags
+
+    except Exception:
+        return False
+
+
+def _newborn_graph_has_pred_anywhere_v1(graph, pred_token: str) -> bool:
+    """Return True if a graph-like object currently contains a pred:* token anywhere.
+
+    This is intentionally broader than ``has_pred_near_now``. The current newborn
+    loop can execute policies in WorkingMap while long-term WorldGraph remains sparse.
+    During the late feeding/rest seam, the most reliable current evidence may therefore
+    live on WorkingMap's SELF entity rather than near the long-term NOW anchor.
+    """
+    if graph is None:
+        return False
+
+    token = str(pred_token or "").strip()
+    if not token:
+        return False
+    if token.startswith("pred:"):
+        token = token.replace("pred:", "", 1)
+
+    want = f"pred:{token}"
+
+    try:
+        bindings = getattr(graph, "_bindings", {})
+        if not isinstance(bindings, dict):
+            return False
+
+        for binding in bindings.values():
+            tags = getattr(binding, "tags", None)
+            if isinstance(tags, (set, list, tuple)) and want in tags:
+                return True
+
+    except Exception:
+        return False
+
+    return False
+
+
+def _newborn_pred_seen_in_control_worlds_v1(world, ctx, pred_token: str) -> bool:
+    """Return True if a predicate is visible in long-term, WorkingMap, MapSurface, or BodyMap."""
+    token = str(pred_token or "").strip()
+    if not token:
+        return False
+    if token.startswith("pred:"):
+        token = token.replace("pred:", "", 1)
+
+    graphs: list[Any] = [world]
+
+    if ctx is not None:
+        for attr_name in ("working_world", "map_surface_world", "body_world"):
+            try:
+                graph = getattr(ctx, attr_name, None)
+            except Exception:
+                graph = None
+            if graph is not None:
+                graphs.append(graph)
+
+    for graph in graphs:
+        if graph is None:
+            continue
+
+        try:
+            if has_pred_near_now(graph, token, hops=6):
+                return True
+        except TypeError:
+            try:
+                if has_pred_near_now(graph, token):
+                    return True
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        if _newborn_graph_has_pred_anywhere_v1(graph, token):
+            return True
+
+    return False
+
+
+def _newborn_milk_drinking_current_v1(world, ctx) -> bool:
+    """Return True once the controller has agent-visible evidence of milk drinking.
+
+    Hard newborn mode now separates:
+
+        nipple:latched -> policy:suckle -> milk:drinking -> policy:rest
+
+    BodyMap still stores nipple/milk state in a compact slot, and policy execution
+    may write into WorkingMap first. This helper therefore checks all current
+    control-visible surfaces before deciding that Suckle should stop and Rest should
+    take over.
+    """
+    try:
+        st = _follow_mom_bridge_state_v1(world, ctx)
+        if st.get("milk_drinking") is True:
+            return True
+    except Exception:
+        pass
+
+    if _newborn_pred_seen_in_control_worlds_v1(world, ctx, "milk:drinking"):
+        return True
+
+    try:
+        if _newborn_milk_drinking_slot_seen_v1(ctx):
+            return True
+    except Exception:
+        pass
+
+    try:
+        records = getattr(ctx, "cycle_json_records", None)
+    except Exception:
+        records = None
+
+    if isinstance(records, list):
+        for record in records[-12:]:
+            if not isinstance(record, dict):
+                continue
+
+            obs = record.get("obs")
+            obs = obs if isinstance(obs, dict) else {}
+
+            preds = obs.get("predicates")
+            if isinstance(preds, list) and "milk:drinking" in preds:
+                return True
+
+            meta = obs.get("env_meta")
+            meta = meta if isinstance(meta, dict) else {}
+
+            raw = meta.get("milestones")
+            if raw is None:
+                raw = meta.get("milestone")
+
+            if raw == "milk_drinking":
+                return True
+            if isinstance(raw, list) and "milk_drinking" in raw:
+                return True
+
+    return False
+
+
+def _should_force_newborn_rest_after_milk_v1(world, ctx) -> bool:
+    """Return True when Rest should bridge milk drinking into the final resting state."""
+    if ctx is None:
+        return False
+
+    if not _newborn_milk_drinking_current_v1(world, ctx):
+        return False
+
+    try:
+        stage = getattr(ctx, "lt_obs_last_stage", None)
+    except Exception:
+        stage = None
+
+    # The bridge is specifically for the post-latch newborn feeding phase.
+    if stage == "rest":
+        return False
+
+    if stage != "first_latch":
+        try:
+            st = _follow_mom_bridge_state_v1(world, ctx)
+        except Exception:
+            st = {}
+
+        if st.get("posture") != "latched" and st.get("nipple_state") != "latched":
+            return False
+
+    try:
+        if body_space_zone(ctx) == "unsafe_cliff_near":
+            return False
+    except Exception:
+        pass
+
+    try:
+        st = _follow_mom_bridge_state_v1(world, ctx)
+        if st.get("posture") == "fallen":
+            return False
+        if st.get("zone") == "unsafe_cliff_near":
+            return False
+    except Exception:
+        pass
+
+    return True
+
+
+def _should_force_suckle_bridge_v1(world, ctx) -> bool:
+    """Return True when Suckle should bridge latch into milk drinking.
+
+    Once milk_drinking is visible anywhere in the current control surfaces, Suckle
+    should stop. The next correct bridge is Rest.
     """
     if ctx is None:
         return False
@@ -11988,7 +12206,7 @@ def _should_force_suckle_bridge_v1(world, ctx) -> bool:
     if st.get("mom_distance") == "far":
         return False
 
-    if st.get("milk_drinking") is True:
+    if _newborn_milk_drinking_current_v1(world, ctx):
         return False
 
     try:
@@ -11996,13 +12214,11 @@ def _should_force_suckle_bridge_v1(world, ctx) -> bool:
     except Exception:
         stage = None
 
-    # Important environment contract:
-    # in the current newborn benchmark, policy:suckle is interpreted as a seek-like
-    # action by the environment. During first_latch, seek-like actions break latch.
-    # Feeding/milk progression occurs by remaining latched; the correct completion
-    # action is policy:rest, not policy:suckle.
-    if stage in ("first_latch", "rest"):
+    if stage == "rest":
         return False
+
+    if stage == "first_latch":
+        return True
 
     if st.get("posture") == "latched":
         return True
@@ -12903,12 +13119,25 @@ class PolicyRuntime:
         policy_debug["post_latch_sequence"] = bool(post_latch_sequence)
 
         # Hard sequence lock: after latch, earlier locomotor/search policies should
-        # not compete with suckle/rest. This protects the selector from permissive
-        # fallback paths that may still have triggered.
+        # not compete with the late feeding/rest sequence.
+        #
+        #   before milk_drinking: allow Suckle, block Rest
+        #   after milk_drinking : allow Rest, block Suckle
+        #
+        # This prevents the failure mode where one settling Rest occurs, then the
+        # selector falls back into repeated Suckle forever.
         if post_latch_sequence:
-            matches = [p for p in matches if p.name not in ("policy:follow_mom", "policy:seek_nipple")]
+            milk_drinking_now = _newborn_milk_drinking_current_v1(world, ctx)
 
-            if not any(p.name == "policy:suckle" for p in matches):
+            blocked_post_latch = {"policy:follow_mom", "policy:seek_nipple"}
+            if milk_drinking_now:
+                blocked_post_latch.add("policy:suckle")
+            else:
+                blocked_post_latch.add("policy:rest")
+
+            matches = [p for p in matches if p.name not in blocked_post_latch]
+
+            if not milk_drinking_now and not any(p.name == "policy:suckle" for p in matches):
                 try:
                     suckle_gate = next((p for p in self.loaded if p.name == "policy:suckle"), None)
                 except Exception:
@@ -12916,6 +13145,16 @@ class PolicyRuntime:
 
                 if suckle_gate is not None and _safe(suckle_gate.trigger, world, drives, ctx):
                     matches.append(suckle_gate)
+
+            if milk_drinking_now and not any(p.name == "policy:rest" for p in matches):
+                try:
+                    rest_gate = next((p for p in self.loaded if p.name == "policy:rest"), None)
+                except Exception:
+                    rest_gate = None
+
+                if rest_gate is not None and _safe(rest_gate.trigger, world, drives, ctx):
+                    matches.append(rest_gate)
+
         policy_debug["matches_after_post_latch"] = [p.name for p in matches]
         forced_follow_mom = False
         bridge_follow_mom = False
@@ -28127,7 +28366,7 @@ It does NOT mutate the current interactive WorldGraph/session.
 It reuses the same closed-loop engine as Menu 37, but with a fresh sandbox runtime.
 
 Goal:
-  fallen -> stand -> follow mom -> find/latch nipple -> milk drinking -> rest
+    fallen -> stand -> follow mom -> find/latch nipple -> suckle -> milk drinking -> rest
 
 This baseline demo disables observation masking and route-loss stress. Menu 49 remains the
 right place for harder A/B/C stress tests.

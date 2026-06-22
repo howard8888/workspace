@@ -267,6 +267,7 @@ class EnvState:
     newborn_seek_attempts: int = 0
     newborn_rest_attempts: int = 0
     newborn_milk_ticks: int = 0
+    newborn_suckle_ticks: int = 0
     newborn_last_progress_step: int = -1
     newborn_setback_count: int = 0
     newborn_obs_blackout_until_step: int = -1
@@ -314,6 +315,7 @@ class EnvState:
             newborn_seek_attempts=self.newborn_seek_attempts,
             newborn_rest_attempts=self.newborn_rest_attempts,
             newborn_milk_ticks=self.newborn_milk_ticks,
+            newborn_suckle_ticks=self.newborn_suckle_ticks,
             newborn_last_progress_step=self.newborn_last_progress_step,
             newborn_setback_count=self.newborn_setback_count,
             newborn_obs_blackout_until_step=self.newborn_obs_blackout_until_step,
@@ -665,6 +667,7 @@ class FsmBackend:
             env_state.newborn_seek_attempts = 0
             env_state.newborn_rest_attempts = 0
             env_state.newborn_milk_ticks = 0
+            env_state.newborn_suckle_ticks = 0
             env_state.newborn_last_progress_step = -1
             env_state.newborn_setback_count = 0
             env_state.newborn_obs_blackout_until_step = -1
@@ -753,7 +756,8 @@ class FsmBackend:
             return isinstance(action, str) and action.startswith(prefix)
 
         did_stand = _has_action("policy:stand_up") or _has_action("policy:recover_fall")
-        did_seek = _has_action("policy:seek_nipple") or _has_action("policy:suckle")
+        did_seek = _has_action("policy:seek_nipple")
+        did_suckle = _has_action("policy:suckle")
         did_follow = _has_action("policy:follow_mom")
         did_rest = _has_action("policy:rest")
 
@@ -922,8 +926,17 @@ class FsmBackend:
                         state.kid_posture = "latched"
                         state.scenario_stage = "first_latch"
                         state.newborn_milk_ticks = 0
+                        state.newborn_suckle_ticks = 0
                         state.newborn_rest_attempts = 0
                         _emit_progress("latched_nipple", blackout_kind="nipple")
+
+            elif did_suckle:
+                # Suckling before latch is a poorly staged action. It should not
+                # create milk progress or latch progress.
+                state.newborn_setback_count += 1
+                state.kid_fatigue = min(1.0, state.kid_fatigue + self._MISS_FATIGUE_PENALTY)
+                state.newborn_suckle_ticks = 0
+                _open_blackout("setback", self._newborn_setback_blackout_steps_v1(state))
 
             elif did_rest:
                 # Resting before reaching a safe niche can knock the kid backward.
@@ -943,32 +956,20 @@ class FsmBackend:
         # Stage: first_latch
         # -------------------------------
         elif stage == "first_latch":
-            # Latching is no longer enough. The kid must remain latched long enough
-            # to count as feeding, and then rest in the safe niche.
+            # The kid is latched, but in benchmark-hard mode milk drinking is not
+            # passive. The agent must explicitly continue the feeding action via
+            # policy:suckle until enough suckle ticks have accumulated.
             state.kid_posture = "latched"
             state.nipple_state = "latched"
             state.mom_distance = "near"
             state.shelter_distance = "near"
             state.cliff_distance = "far"
 
-            state.newborn_milk_ticks += 1
             required_milk_ticks = self._newborn_rest_success_min_milk_ticks_v1(state)
             required_rest_actions = self._newborn_rest_commit_actions_v1(state)
 
-            # In ordinary mode, "milk_drinking" appears immediately on the first latched tick.
-            # In benchmark-hard mode, only count it once feeding has persisted long enough to be
-            # behaviorally meaningful. This keeps the late-phase seam where the current A/B/C
-            # separation is already emerging.
-            milk_progress_tick = required_milk_ticks if hard_newborn else 1
-            if state.newborn_milk_ticks == milk_progress_tick:
-                if hard_newborn:
-                    state.milestones.append("milk_drinking")
-                    state.newborn_last_progress_step = int(steps)
-                    _open_blackout("milk", self._newborn_late_progress_blackout_steps_v1(state))
-                else:
-                    _emit_progress("milk_drinking", blackout_kind="milk")
-
-            if did_rest:
+            def _handle_rest_attempt() -> None:
+                """Handle one rest action during the latched feeding phase."""
                 state.newborn_rest_attempts += 1
                 feeding_ready = state.newborn_milk_ticks >= required_milk_ticks and state.position == "shelter_area"
 
@@ -992,20 +993,56 @@ class FsmBackend:
                     # Resting too early delays completion.
                     state.kid_fatigue = min(1.0, state.kid_fatigue + self._MISS_FATIGUE_PENALTY)
 
-            elif did_stand or did_seek or (hard_newborn and did_follow):
-                # Breaking latch should matter. In the benchmark-hard late phase, an
-                # obviously wrong locomotor action like follow_mom should also break latch.
+            def _break_latch_setback() -> None:
+                """Break latch after an obviously wrong post-latch action."""
                 state.newborn_setback_count += 1
                 state.newborn_follow_attempts = 0
                 state.newborn_seek_attempts = 1
                 state.newborn_rest_attempts = 0
                 state.newborn_milk_ticks = 0
+                state.newborn_suckle_ticks = 0
                 state.kid_posture = "standing"
                 state.nipple_state = "reachable"
                 state.scenario_stage = "first_stand"
                 state.kid_fatigue = min(1.0, state.kid_fatigue + self._SETBACK_FATIGUE_PENALTY)
                 _open_blackout("setback", self._newborn_setback_blackout_steps_v1(state))
 
+            if hard_newborn:
+                if did_suckle:
+                    state.newborn_suckle_ticks += 1
+                    state.newborn_milk_ticks = int(state.newborn_suckle_ticks)
+
+                    if state.newborn_milk_ticks == required_milk_ticks:
+                        state.milestones.append("milk_drinking")
+                        state.newborn_last_progress_step = int(steps)
+                        _open_blackout("milk", self._newborn_late_progress_blackout_steps_v1(state))
+
+                elif did_rest:
+                    _handle_rest_attempt()
+
+                elif did_stand or did_seek or did_follow:
+                    # Breaking latch should matter. In benchmark-hard mode, locomotor/search
+                    # actions after latch are wrong-stage actions.
+                    _break_latch_setback()
+
+                else:
+                    # Passive waiting keeps latch, but does not create milk progress in hard mode.
+                    state.kid_fatigue = min(1.0, state.kid_fatigue + self._MISS_FATIGUE_PENALTY)
+
+            else:
+                # Ordinary storyboard keeps the old convenience behavior: latched means
+                # milk progresses automatically.
+                state.newborn_milk_ticks += 1
+                state.newborn_suckle_ticks = max(state.newborn_suckle_ticks, state.newborn_milk_ticks)
+
+                if state.newborn_milk_ticks == 1:
+                    _emit_progress("milk_drinking", blackout_kind="milk")
+
+                if did_rest:
+                    _handle_rest_attempt()
+
+                elif did_stand or did_seek or did_follow:
+                    _break_latch_setback()
         # -------------------------------
         # Stage: rest
         # -------------------------------
@@ -1310,7 +1347,22 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
             preds.append("nipple:found")
         elif env_state.nipple_state == "latched":
             preds.append("nipple:latched")
-            preds.append("milk:drinking")
+
+            hard_newborn = bool(getattr(env_state, "newborn_benchmark_hard", False))
+            if not hard_newborn:
+                # Back-compatible ordinary storyboard behavior:
+                # outside hard newborn benchmark mode, latch is enough to report milk drinking.
+                preds.append("milk:drinking")
+            else:
+                try:
+                    milk_ticks = int(getattr(env_state, "newborn_milk_ticks", 0) or 0)
+                except Exception:
+                    milk_ticks = 0
+
+                # In hard newborn mode, latch alone is not milk drinking. The environment
+                # should emit milk:drinking only after enough explicit policy:suckle ticks.
+                if milk_ticks >= 3:
+                    preds.append("milk:drinking")
 
         # --- simple cues ---
         if env_state.mom_distance in ("near", "touching"):

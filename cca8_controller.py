@@ -199,6 +199,7 @@ __all__ = [
     "PRIMITIVES",
     "action_center_step",
     "drives_summary",
+    "Suckle",
 
     # BodyMap / current-state helpers
     "body_posture",
@@ -226,6 +227,7 @@ __all__ = [
     "ACTION_LOOK_AROUND",
     "ACTION_ORIENT_TO_MOM",
     "ACTION_RECOVER_FALL",
+    "ACTION_SUCKLE",
     "VALENCE_LIKE",
     "VALENCE_HATE",
 
@@ -258,6 +260,7 @@ ACTION_EXTEND_LEGS     = "action:extend_legs"
 ACTION_LOOK_AROUND     = "action:look_around"
 ACTION_ORIENT_TO_MOM   = "action:orient_to_mom"
 ACTION_RECOVER_FALL    = "action:recover_fall"
+ACTION_SUCKLE          = "action:suckle"
 
 VALENCE_LIKE           = "valence:like"
 VALENCE_HATE           = "valence:hate"
@@ -1312,6 +1315,53 @@ class SeekNipple(Primitive):
         return self._success(reward=0.5, notes="seeking mom", binding=b)
 
 
+class Suckle(Primitive):
+    """Suckle after the nipple is latched.
+
+    Intent
+    ------
+    Represent the explicit feeding action that bridges:
+
+        nipple:latched -> milk:drinking
+
+    Important design rule
+    ---------------------
+    This primitive does NOT directly assert ``milk:drinking``. The environment
+    must confirm milk drinking after enough successful suckling ticks. That keeps
+    the closed-loop contract clean:
+
+        policy chooses action -> environment updates state -> perception emits evidence
+
+    Trigger
+    -------
+    The standalone primitive trigger is conservative and graph-based so older
+    Action Center calls remain safe. In the full Menu 37 / Menu 51 path, the
+    runner's ``PolicyRuntime`` gate is the stronger BodyMap/context-aware trigger.
+
+    Execution
+    ---------
+    Writes one action binding ``action:suckle`` and returns success. The next
+    environment step interprets ``policy:suckle`` and decides whether feeding
+    progress occurred.
+    """
+
+    name = "policy:suckle"
+
+
+    def trigger(self, world, drives: Drives) -> bool:  # pylint: disable=unused-argument
+        """Return True after latch and before confirmed milk drinking."""
+        if _has(world, "milk:drinking"):
+            return False
+        return _has(world, "nipple:latched")
+
+
+    def execute(self, world, ctx, drives: Drives) -> dict:  # pylint: disable=unused-argument
+        """Append an explicit suckle action binding."""
+        meta = _policy_meta(ctx, self.name)
+        b = _add_action(world, ACTION_SUCKLE, attach="now", meta=meta)
+        return self._success(reward=0.6, notes="suckling", binding=b)
+
+
 class FollowMom(Primitive):
     """
     Permissive fallback policy: keep the agent alert and scanning.
@@ -1667,6 +1717,7 @@ PRIMITIVES: List[Primitive] = [
     StandUp(),
     RecoverFall(),
     SeekNipple(),
+    Suckle(),
     Rest(),         # check restorative action before permissive fallback
     Probe(),        # Step 15C: inspect/probe when WM.Scratch reports safety-relevant ambiguity
     FollowMom(),    # permissive default should be after concrete needs
