@@ -16800,6 +16800,61 @@ def recent_bindings_text(world, limit: int = 5) -> str:
     return "\n".join(lines) + "\n"
 
 
+def prediction_observed_slots_from_env_obs_v1(env_obs: EnvObservation) -> dict[str, str]:
+    """Return the tiny observed slot map used by prediction-error records.
+
+    The prediction layer should compare hypotheses against an agent-facing
+    observation packet, not against a confirmed long-term WorldGraph fact. This
+    helper extracts the first small map vocabulary that Step 3 cares about:
+
+      - posture
+      - mom_distance
+      - nipple_state
+      - zone
+
+    Missing slots are left absent. A missing observed slot counts as a mismatch
+    only when the prediction explicitly expected that slot.
+    """
+    if env_obs is None:
+        return {}
+
+    preds_raw = getattr(env_obs, "predicates", []) or []
+    preds = {str(item).strip() for item in preds_raw if isinstance(item, str) and item.strip()}
+
+    out: dict[str, str] = {}
+
+    if "posture:standing" in preds:
+        out["posture"] = "standing"
+    elif "posture:fallen" in preds:
+        out["posture"] = "fallen"
+    elif "resting" in preds:
+        out["posture"] = "resting"
+
+    if "proximity:mom:close" in preds:
+        out["mom_distance"] = "near"
+    elif "proximity:mom:far" in preds:
+        out["mom_distance"] = "far"
+
+    if "nipple:latched" in preds:
+        out["nipple_state"] = "latched"
+    elif "nipple:found" in preds:
+        out["nipple_state"] = "found"
+    elif "nipple:hidden" in preds:
+        out["nipple_state"] = "hidden"
+
+    meta = getattr(env_obs, "env_meta", {}) or {}
+    if isinstance(meta, dict):
+        zone_val = meta.get("zone")
+        if isinstance(zone_val, str) and zone_val.strip():
+            out["zone"] = zone_val.strip()
+
+        if "mom_distance" not in out:
+            mom_val = meta.get("mom_proximity_from_raw")
+            if isinstance(mom_val, str) and mom_val.strip() in ("near", "far"):
+                out["mom_distance"] = mom_val.strip()
+    return out
+
+
 def update_body_world_from_obs(ctx, env_obs) -> None:
     """
     Update the tiny BodyMap (ctx.body_world) from an EnvObservation.
@@ -22967,8 +23022,8 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     ).as_dict()
 
             if isinstance(prediction_raw, dict) and prediction_raw:
-                obs_posture = getattr(getattr(env, "state", None), "kid_posture", None)
-                observed_slots = {"posture": obs_posture} if isinstance(obs_posture, str) and obs_posture else {}
+                observed_slots = prediction_observed_slots_from_env_obs_v1(env_obs)
+                obs_posture = observed_slots.get("posture")
                 pred_error = compare_prediction_to_observed(
                     prediction_raw,
                     observed_slots,
@@ -23453,6 +23508,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                         "warmth": float(getattr(drives, "warmth", 0.0) or 0.0),
                     },
                     "pred_err_v0": dict(getattr(ctx, "pred_err_v0_last", {}) or {}),
+                    "prediction_next_record": dict(getattr(ctx, "prediction_next_record", {}) or {}),
+                    "prediction_last_error_record": dict(getattr(ctx, "prediction_last_error_record", {}) or {}),
+                    # Back-compatible aliases for older trace readers.
                     "prediction_next": dict(getattr(ctx, "prediction_next_record", {}) or {}),
                     "prediction_error": dict(getattr(ctx, "prediction_last_error_record", {}) or {}),
                 }

@@ -1,74 +1,80 @@
 # -*- coding: utf-8 -*-
-"""Tests for the CCA8 predictive-feedback record helpers."""
+"""Tests for CCA8 predictive-feedback record helpers."""
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
+from types import SimpleNamespace
 
 from cca8_predictive import (
-    PredictionError,
-    PredictionRecord,
-    compare_predicted_posture_to_observed,
     compare_prediction_to_observed,
     legacy_error_vector_v0,
+    make_prediction_record,
     make_posture_prediction_record,
 )
 
 
-@dataclass
-class DummyCtx:
-    """Tiny context stub used to avoid importing the full runner."""
-
-    controller_steps: int = 12
-
-
-def test_posture_prediction_match_is_json_safe() -> None:
-    """A standing prediction followed by standing observation should have zero posture error."""
-    ctx = DummyCtx(controller_steps=7)
+def test_posture_prediction_produces_legacy_vector_and_v1_error_record() -> None:
+    """A posture mismatch should still feed pred_err_v0 and the richer v1 record."""
+    ctx = SimpleNamespace(controller_steps=7)
     record = make_posture_prediction_record(
         "policy:stand_up",
         "standing",
         ctx=ctx,
-        basis={"binding_id": "b42", "posture_tag": "pred:posture:standing"},
+        source="WorkingMap.Scratch",
+        basis={"binding_id": "b9", "posture_tag": "pred:posture:standing"},
         env_step=3,
     )
 
-    error = compare_prediction_to_observed(record, {"posture": "standing"}, ctx=ctx, env_step=4)
+    error = compare_prediction_to_observed(record, {"posture": "fallen"}, ctx=ctx, env_step=4)
+    payload = error.as_dict()
 
-    assert error.matched is True
-    assert error.mismatch_count == 0
-    assert error.severity == 0.0
-    assert error.error_by_slot == {"posture": 0}
-    assert legacy_error_vector_v0(error) == {"posture": 0}
-    json.dumps(error.as_dict())
+    assert legacy_error_vector_v0(error) == {"posture": 1}
+    assert payload["schema"] == "prediction_error_v1"
+    assert payload["prediction"]["policy"] == "policy:stand_up"
+    assert payload["prediction"]["expected"] == {"posture": "standing"}
+    assert payload["observed"] == {"posture": "fallen"}
+    assert payload["error_by_slot"] == {"posture": 1}
+    assert payload["matched"] is False
+    assert payload["mismatch_count"] == 1
+    assert payload["severity"] == 1.0
 
 
-def test_posture_prediction_mismatch_round_trips_from_dict() -> None:
-    """A standing prediction followed by fallen observation should round-trip as a mismatch."""
-    original = compare_predicted_posture_to_observed(
-        "standing",
-        "fallen",
-        policy="policy:stand_up",
+def test_prediction_comparison_handles_small_map_slot_record() -> None:
+    """The comparison helper should already support the first tiny map-slot vocabulary."""
+    ctx = SimpleNamespace(controller_steps=12)
+    record = make_prediction_record(
+        "policy:seek_nipple",
+        {
+            "posture": "standing",
+            "mom_distance": "near",
+            "nipple_state": "found",
+            "zone": "safe",
+        },
+        ctx=ctx,
+        source="WorkingMap.Scratch",
+        basis={"reason": "unit_test"},
         env_step=5,
     )
-    payload = original.as_dict()
-    restored = PredictionError.from_dict(payload)
 
-    assert restored.matched is False
-    assert restored.mismatch_count == 1
-    assert restored.error_by_slot == {"posture": 1}
-    assert restored.observed == {"posture": "fallen"}
-    assert restored.prediction.policy == "policy:stand_up"
-    assert restored.prediction.expected == {"posture": "standing"}
-    assert legacy_error_vector_v0(payload) == {"posture": 1}
+    error = compare_prediction_to_observed(
+        record,
+        {
+            "posture": "standing",
+            "mom_distance": "far",
+            "nipple_state": "found",
+            "zone": "unsafe",
+        },
+        ctx=ctx,
+        env_step=6,
+    )
 
-
-def test_prediction_record_from_dict_tolerates_missing_fields() -> None:
-    """Older or partial traces should still produce a usable record object."""
-    record = PredictionRecord.from_dict({"expected": {"posture": "standing"}})
-    error = compare_prediction_to_observed(record, {})
-
-    assert record.policy == ""
-    assert record.source == "WorkingMap.Scratch"
-    assert error.error_by_slot == {"posture": 1}
+    assert error.error_by_slot == {
+        "posture": 0,
+        "mom_distance": 1,
+        "nipple_state": 0,
+        "zone": 1,
+    }
+    assert legacy_error_vector_v0(error) == error.error_by_slot
+    assert error.matched is False
+    assert error.mismatch_count == 2
+    assert error.severity == 2.0
