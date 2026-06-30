@@ -176,6 +176,11 @@ from cca8_state_integrity import (
     render_state_integrity_event_detail_lines_v1,
     summarize_newborn_state_integrity_v1,
 )
+from cca8_predictive import (
+    compare_prediction_to_observed,
+    legacy_error_vector_v0,
+    make_posture_prediction_record,
+)
 from cca8_rcos_experiments import (
     render_rcos_robotic_episode_lines_v1,
     render_rcos_robotic_protocol_v1,
@@ -404,6 +409,13 @@ class Ctx:
     pred_next_posture: Optional[str] = None
     pred_next_policy: Optional[str] = None
     pred_err_v0_last: dict[str, int] = field(default_factory=dict)
+
+    # Formal predictive-feedback records (first NavMap prediction milestone).
+    # These are JSON-safe dicts built from cca8_predictive.PredictionRecord / PredictionError.
+    # They do not change policy selection; they make the existing posture-only pred_err_v0 path inspectable.
+    prediction_next_record: dict[str, Any] = field(default_factory=dict)
+    prediction_last_error_record: dict[str, Any] = field(default_factory=dict)
+    prediction_error_history: list[dict[str, Any]] = field(default_factory=list)
 
     last_drive_flags: Optional[set[str]] = None
     env_episode_started: bool = False       # Environment / HybridEnvironment integration
@@ -14703,6 +14715,7 @@ def versions_dict() -> dict:
         "cca8_rcos_experiments",
         "cca8_state_integrity",
         "cca8_teaching",
+        "cca8_predictive",
         "cca8_test_fixtures",
     ]
 
@@ -22929,37 +22942,74 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 f"action={action_for_env!r}"
             )
 
-        # --- Prediction error v0 (no behavior change; just measure + log) ---
+        # --- Prediction error v1 record + legacy v0 vector (display/log only) ---
         # Compare last cycle's predicted postcondition (hypothesis) vs this cycle's observed env posture.
+        # The rich record stays JSON-safe in ctx.prediction_last_error_record; pred_err_v0_last remains
+        # the compatibility vector used by existing retrieval/keyframe/state-integrity code.
         pred_posture: str | None = None
         obs_posture: str | None = None
         err_vec: dict[str, int] = {}
         src_txt = "(n/a)"
 
         try:
-            pred_posture = getattr(ctx, "pred_next_posture", None)
-            if isinstance(pred_posture, str) and pred_posture:
+            prediction_raw = getattr(ctx, "prediction_next_record", {})
+            if not isinstance(prediction_raw, dict) or not prediction_raw:
+                # Back-compat fallback for any old path that still sets pred_next_posture directly.
+                pred_old = getattr(ctx, "pred_next_posture", None)
+                src_old = getattr(ctx, "pred_next_policy", None)
+                if isinstance(pred_old, str) and pred_old:
+                    prediction_raw = make_posture_prediction_record(
+                        str(src_old or ""),
+                        pred_old,
+                        ctx=ctx,
+                        source="legacy:pred_next_posture",
+                        env_step=step_idx if isinstance(step_idx, int) else None,
+                    ).as_dict()
+
+            if isinstance(prediction_raw, dict) and prediction_raw:
                 obs_posture = getattr(getattr(env, "state", None), "kid_posture", None)
-                if isinstance(obs_posture, str) and obs_posture:
-                    mismatch = 0 if obs_posture == pred_posture else 1
-                    err_vec = {"posture": mismatch}
-                    ctx.pred_err_v0_last = err_vec
-                    src = getattr(ctx, "pred_next_policy", None)
-                    src_txt = src if isinstance(src, str) and src else "(n/a)"
-                    print(
-                        f"[pred_err] v0 err={err_vec} pred_posture={pred_posture} obs_posture={obs_posture} "
-                        f"from={src_txt}"
-                    )
-                else:
-                    err_vec = {"posture": 1}
-                    ctx.pred_err_v0_last = err_vec
+                observed_slots = {"posture": obs_posture} if isinstance(obs_posture, str) and obs_posture else {}
+                pred_error = compare_prediction_to_observed(
+                    prediction_raw,
+                    observed_slots,
+                    ctx=ctx,
+                    env_step=step_idx if isinstance(step_idx, int) else None,
+                )
+
+                err_vec = legacy_error_vector_v0(pred_error)
+                ctx.pred_err_v0_last = dict(err_vec)
+                ctx.prediction_last_error_record = pred_error.as_dict()
+
+                try:
+                    hist = getattr(ctx, "prediction_error_history", [])
+                    if not isinstance(hist, list):
+                        hist = []
+                    hist.append(pred_error.as_dict())
+                    if len(hist) > 50:
+                        del hist[:-50]
+                    ctx.prediction_error_history = hist
+                except Exception:
+                    pass
+
+                pred_posture = pred_error.prediction.expected.get("posture")
+                if isinstance(pred_posture, str) and not pred_posture:
+                    pred_posture = None
+                src = pred_error.prediction.policy
+                src_txt = src if isinstance(src, str) and src else "(n/a)"
+
+                print(
+                    f"[pred_err] v1 err={err_vec} pred_posture={pred_posture} obs_posture={obs_posture} "
+                    f"from={src_txt} matched={pred_error.matched}"
+                )
             else:
                 err_vec = {}
                 ctx.pred_err_v0_last = {}
+                ctx.prediction_last_error_record = {}
         except Exception:
             # If anything goes wrong, keep the signal empty rather than crashing the env-loop.
             err_vec = {}
             ctx.pred_err_v0_last = {}
+            ctx.prediction_last_error_record = {}
 
         # ----------------------------------------------------------------------------------
         # [pred_err] shaping penalty (extinction pressure when postconditions fail)
@@ -23191,19 +23241,37 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             print(menu37_teaching_after_controller_v1())
             print()
 
-        # --- Capture NEXT-step prediction (Scratch postcondition), v0 = posture only ---
+        # --- Capture NEXT-step prediction (Scratch postcondition), v1 record; v0 posture fields kept for compatibility ---
         try:
             ctx.pred_next_policy = policy_name if isinstance(policy_name, str) and policy_name else None
             ctx.pred_next_posture = None
+            ctx.prediction_next_record = {}
 
             if isinstance(ctx.pred_next_policy, str):
                 w_scan = exec_world if exec_world is not None else world
                 _bid_p, posture_tag, meta_p = _latest_posture_binding(w_scan, require_policy=True)
                 if posture_tag and isinstance(meta_p, dict) and meta_p.get("policy") == ctx.pred_next_policy:
                     # posture_tag like "pred:posture:standing"
-                    ctx.pred_next_posture = posture_tag.split(":")[-1]
+                    expected_posture = posture_tag.split(":")[-1]
+                    ctx.pred_next_posture = expected_posture
+                    pred_record = make_posture_prediction_record(
+                        ctx.pred_next_policy,
+                        expected_posture,
+                        ctx=ctx,
+                        source="WorkingMap.Scratch" if exec_world is not world else "WorldGraph.policy_trace",
+                        basis={
+                            "binding_id": _bid_p,
+                            "posture_tag": posture_tag,
+                            "meta_policy": meta_p.get("policy"),
+                        },
+                        env_step=step_idx if isinstance(step_idx, int) else None,
+                    )
+                    ctx.prediction_next_record = pred_record.as_dict()
         except Exception:
-            pass
+            try:
+                ctx.prediction_next_record = {}
+            except Exception:
+                pass
 
         # start/extend run for the policy we just chose (applied on the NEXT env step)
         if _phase7_enabled():
@@ -23385,6 +23453,8 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                         "warmth": float(getattr(drives, "warmth", 0.0) or 0.0),
                     },
                     "pred_err_v0": dict(getattr(ctx, "pred_err_v0_last", {}) or {}),
+                    "prediction_next": dict(getattr(ctx, "prediction_next_record", {}) or {}),
+                    "prediction_error": dict(getattr(ctx, "prediction_last_error_record", {}) or {}),
                 }
                 try:
                     if getattr(st, "scenario_stage", None) == "goat_foraging_04_scan":
@@ -29812,6 +29882,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             "cca8_rcos_experiments",
             "cca8_state_integrity",
             "cca8_teaching",
+            "cca8_predictive",
             "cca8_test_fixtures",
         ]:
             ver, path = _module_version_and_path(name)
