@@ -207,6 +207,9 @@ __all__ = [
     "interactive_loop",
     "run_preflight_full",
     "snapshot_text",
+    "prediction_feedback_summary_v1",
+    "render_prediction_feedback_lines_v1",
+    "prediction_feedback_mini_line_v1",
     "export_snapshot",
     "world_delete_edge",
     "boot_prime_stand",
@@ -16452,6 +16455,192 @@ def _sorted_bids(world) -> list[str]:
     return sorted(world._bindings.keys(), key=key_fn)
 
 
+def _prediction_safe_dict_v1(value: Any) -> dict[str, Any]:
+    """Return a shallow dict only when value is a dict.
+
+    Prediction feedback records are deliberately stored on ctx as JSON-safe dicts.
+    This helper keeps the readout layer defensive: malformed or missing values
+    become an empty dict instead of crashing snapshot/mini-snapshot rendering.
+    """
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _prediction_safe_history_count_v1(value: Any) -> int:
+    """Return the number of stored prediction-error history rows."""
+    return len(value) if isinstance(value, list) else 0
+
+
+def _prediction_compact_map_text_v1(value: Any) -> str:
+    """Return a stable compact rendering of a small slot/error map."""
+    if not isinstance(value, dict) or not value:
+        return "(none)"
+
+    parts: list[str] = []
+    for key in sorted(value.keys()):
+        if not isinstance(key, str):
+            continue
+        parts.append(f"{key}={value.get(key)}")
+
+    return ", ".join(parts) if parts else "(none)"
+
+
+def prediction_feedback_summary_v1(ctx: Any) -> dict[str, Any]:
+    """Return the read-only predictive-feedback register summary.
+
+    This is a diagnostic/status view over fields already stored on ``Ctx``:
+    ``prediction_next_record``, ``prediction_last_error_record``,
+    ``prediction_error_history``, and ``pred_err_v0_last``. It does not compute a
+    new prediction, compare observations, write memory, change policy selection,
+    or update the skill ledger.
+    """
+    if ctx is None:
+        return {
+            "schema": "prediction_feedback_summary_v1",
+            "status": "ctx_unavailable",
+            "has_next_prediction": False,
+            "has_last_error": False,
+            "history_count": 0,
+            "pred_err_v0": {},
+            "next_policy": None,
+            "next_expected": {},
+            "next_source": None,
+            "next_controller_step": None,
+            "next_env_step": None,
+            "last_policy": None,
+            "last_expected": {},
+            "last_observed": {},
+            "last_error_by_slot": {},
+            "last_matched": None,
+            "last_mismatch_count": 0,
+            "last_severity": 0.0,
+            "last_controller_step": None,
+            "last_env_step": None,
+        }
+
+    next_record = _prediction_safe_dict_v1(getattr(ctx, "prediction_next_record", {}))
+    last_error = _prediction_safe_dict_v1(getattr(ctx, "prediction_last_error_record", {}))
+    pred_err_v0 = _prediction_safe_dict_v1(getattr(ctx, "pred_err_v0_last", {}))
+    history_count = _prediction_safe_history_count_v1(getattr(ctx, "prediction_error_history", []))
+
+    next_expected = _prediction_safe_dict_v1(next_record.get("expected"))
+
+    pred_block = _prediction_safe_dict_v1(last_error.get("prediction"))
+    last_expected = _prediction_safe_dict_v1(pred_block.get("expected"))
+    last_observed = _prediction_safe_dict_v1(last_error.get("observed"))
+    last_error_by_slot = _prediction_safe_dict_v1(last_error.get("error_by_slot"))
+
+    mismatch_raw = last_error.get("mismatch_count", 0)
+    try:
+        mismatch_count = int(mismatch_raw)
+    except Exception:
+        mismatch_count = 0
+
+    severity_raw = last_error.get("severity", float(mismatch_count))
+    try:
+        severity = float(severity_raw)
+    except Exception:
+        severity = float(mismatch_count)
+
+    matched_raw = last_error.get("matched")
+    matched = matched_raw if isinstance(matched_raw, bool) else None
+
+    status = "idle"
+    if next_record or last_error or history_count or pred_err_v0:
+        status = "active"
+
+    return {
+        "schema": "prediction_feedback_summary_v1",
+        "status": status,
+        "has_next_prediction": bool(next_record),
+        "has_last_error": bool(last_error),
+        "history_count": int(history_count),
+        "pred_err_v0": pred_err_v0,
+        "next_policy": next_record.get("policy") if isinstance(next_record.get("policy"), str) else None,
+        "next_expected": next_expected,
+        "next_source": next_record.get("source") if isinstance(next_record.get("source"), str) else None,
+        "next_controller_step": next_record.get("controller_step"),
+        "next_env_step": next_record.get("env_step"),
+        "last_policy": pred_block.get("policy") if isinstance(pred_block.get("policy"), str) else None,
+        "last_expected": last_expected,
+        "last_observed": last_observed,
+        "last_error_by_slot": last_error_by_slot,
+        "last_matched": matched,
+        "last_mismatch_count": int(mismatch_count),
+        "last_severity": float(severity),
+        "last_controller_step": last_error.get("controller_step"),
+        "last_env_step": last_error.get("env_step"),
+    }
+
+
+def render_prediction_feedback_lines_v1(ctx: Any) -> list[str]:
+    """Return human-readable lines for the predictive-feedback register."""
+    s = prediction_feedback_summary_v1(ctx)
+    lines: list[str] = []
+
+    lines.append("PREDICTION FEEDBACK:")
+    lines.append(
+        "  "
+        f"status={s['status']} "
+        f"history_count={s['history_count']} "
+        f"pred_err_v0={{{_prediction_compact_map_text_v1(s['pred_err_v0'])}}} "
+        "[src=ctx.pred_err_v0_last]"
+    )
+
+    if s["has_next_prediction"]:
+        lines.append(
+            "  next: "
+            f"policy={s['next_policy'] or '(n/a)'} "
+            f"expected={{{_prediction_compact_map_text_v1(s['next_expected'])}}} "
+            f"source={s['next_source'] or '(n/a)'} "
+            f"controller_step={s['next_controller_step']} env_step={s['next_env_step']} "
+            "[src=ctx.prediction_next_record]"
+        )
+    else:
+        lines.append("  next: (none)  [src=ctx.prediction_next_record]")
+
+    if s["has_last_error"]:
+        lines.append(
+            "  last_error: "
+            f"policy={s['last_policy'] or '(n/a)'} "
+            f"matched={s['last_matched']} "
+            f"mismatch_count={s['last_mismatch_count']} "
+            f"severity={s['last_severity']:.2f} "
+            f"errors={{{_prediction_compact_map_text_v1(s['last_error_by_slot'])}}} "
+            "[src=ctx.prediction_last_error_record]"
+        )
+        lines.append(
+            "  observed: "
+            f"{{{_prediction_compact_map_text_v1(s['last_observed'])}}} "
+            f"expected={{{_prediction_compact_map_text_v1(s['last_expected'])}}}"
+        )
+    else:
+        lines.append("  last_error: (none)  [src=ctx.prediction_last_error_record]")
+
+    return lines
+
+
+def prediction_feedback_mini_line_v1(ctx: Any) -> str:
+    """Return a one-line predictive-feedback readout for mini-snapshots."""
+    s = prediction_feedback_summary_v1(ctx)
+
+    if s["status"] == "ctx_unavailable":
+        return "[pred] ctx unavailable"
+
+    next_txt = "none"
+    if s["has_next_prediction"]:
+        next_txt = f"{s['next_policy'] or '?'} expected={{{_prediction_compact_map_text_v1(s['next_expected'])}}}"
+
+    last_txt = "none"
+    if s["has_last_error"]:
+        last_txt = (
+            f"matched={s['last_matched']} mismatches={s['last_mismatch_count']} "
+            f"severity={s['last_severity']:.2f} errors={{{_prediction_compact_map_text_v1(s['last_error_by_slot'])}}}"
+        )
+
+    return f"[pred] status={s['status']} next={next_txt}; last={last_txt}; history_count={s['history_count']}"
+
+
+
 def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     """
     Render a human-readable snapshot of the runtime state.
@@ -16627,6 +16816,8 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
         lines.append("BODY: (ctx unavailable)")
     lines.append("")
 
+    lines.extend(render_prediction_feedback_lines_v1(ctx))
+    lines.append("")
 
     # POLICIES (skills readout)
     lines.append("POLICIES:\n (already run at least once, with their SkillStat statistics)  [src=skill_readout()]")
@@ -23510,9 +23701,11 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "pred_err_v0": dict(getattr(ctx, "pred_err_v0_last", {}) or {}),
                     "prediction_next_record": dict(getattr(ctx, "prediction_next_record", {}) or {}),
                     "prediction_last_error_record": dict(getattr(ctx, "prediction_last_error_record", {}) or {}),
+
                     # Back-compatible aliases for older trace readers.
                     "prediction_next": dict(getattr(ctx, "prediction_next_record", {}) or {}),
                     "prediction_error": dict(getattr(ctx, "prediction_last_error_record", {}) or {}),
+                    "prediction_feedback": prediction_feedback_summary_v1(ctx),
                 }
                 try:
                     if getattr(st, "scenario_stage", None) == "goat_foraging_04_scan":
@@ -23665,6 +23858,11 @@ def mini_snapshot_text(world, ctx=None, limit: int = 50) -> str:
             lines.append("[time] (unavailable)")
     else:
         lines.append("[time] (ctx unavailable)")
+
+    try:
+        lines.append(prediction_feedback_mini_line_v1(ctx))
+    except Exception:
+        lines.append("[pred] (unavailable)")
 
     # Compact world view: last `limit` bindings with their outgoing edges
     try:
