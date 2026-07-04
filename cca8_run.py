@@ -208,6 +208,8 @@ __all__ = [
     "run_preflight_full",
     "snapshot_text",
     "prediction_feedback_summary_v1",
+    "prediction_next_record_from_policy_posture_v1",
+    "prediction_error_history_append_v1",
     "render_prediction_feedback_lines_v1",
     "prediction_feedback_mini_line_v1",
     "export_snapshot",
@@ -16470,6 +16472,91 @@ def _prediction_safe_history_count_v1(value: Any) -> int:
     return len(value) if isinstance(value, list) else 0
 
 
+def prediction_error_history_append_v1(ctx: Any, error_record: Any, *, limit: int = 50) -> int:
+    """Append one prediction-error record to the bounded history buffer.
+
+    Prediction-error history is a diagnostic/scratch trace, not long-term memory.
+    This helper centralizes the small ring-buffer rule that was previously inline
+    in the environment loop:
+
+      - tolerate a missing or malformed existing history by starting a new list
+      - append only JSON-like dict records
+      - keep only the newest ``limit`` records
+
+    The function returns the resulting history count. It does not update policy
+    choice, skill values, WorldGraph facts, or prediction comparison results.
+    """
+    if ctx is None or not isinstance(error_record, dict):
+        return 0
+
+    hist = getattr(ctx, "prediction_error_history", [])
+    if not isinstance(hist, list):
+        hist = []
+
+    try:
+        cap = int(limit)
+    except Exception:
+        cap = 50
+    cap = max(1, cap)
+
+    hist.append(dict(error_record))
+    if len(hist) > cap:
+        del hist[:-cap]
+
+    ctx.prediction_error_history = hist
+    return len(hist)
+
+
+def prediction_next_record_from_policy_posture_v1(
+    ctx: Any,
+    world: Any,
+    policy_name: Any,
+    *,
+    env_step: Optional[int] = None,
+    source: str = "WorkingMap.Scratch",
+) -> dict[str, Any]:
+    """Return a next-step prediction record from the latest policy posture binding.
+
+    This helper formalizes the runner boundary where a policy-written posture
+    postcondition becomes a prediction hypothesis. It is intentionally read-only:
+    it scans the supplied world, creates a JSON-safe prediction record if the
+    latest policy posture binding belongs to ``policy_name``, and returns ``{}``
+    when no valid match exists.
+
+    The function does not update ctx, write memory, compare observations, or
+    change policy selection. The caller remains responsible for assigning
+    ``ctx.pred_next_posture`` and ``ctx.prediction_next_record``.
+    """
+    if not isinstance(policy_name, str) or not policy_name:
+        return {}
+    if world is None:
+        return {}
+
+    binding_id, posture_tag, meta = _latest_posture_binding(world, require_policy=True)
+    if not isinstance(posture_tag, str) or not posture_tag.startswith("pred:posture:"):
+        return {}
+    if not isinstance(meta, dict) or meta.get("policy") != policy_name:
+        return {}
+
+    expected_posture = posture_tag.split(":")[-1].strip()
+    if not expected_posture:
+        return {}
+
+    pred_record = make_posture_prediction_record(
+        policy_name,
+        expected_posture,
+        ctx=ctx,
+        source=source,
+        basis={
+            "binding_id": binding_id,
+            "posture_tag": posture_tag,
+            "meta_policy": meta.get("policy"),
+        },
+        env_step=env_step,
+    )
+    return pred_record.as_dict()
+
+
 def _prediction_compact_map_text_v1(value: Any) -> str:
     """Return a stable compact rendering of a small slot/error map."""
     if not isinstance(value, dict) or not value:
@@ -23224,16 +23311,10 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
 
                 err_vec = legacy_error_vector_v0(pred_error)
                 ctx.pred_err_v0_last = dict(err_vec)
-                ctx.prediction_last_error_record = pred_error.as_dict()
-
+                error_record = pred_error.as_dict()
+                ctx.prediction_last_error_record = error_record
                 try:
-                    hist = getattr(ctx, "prediction_error_history", [])
-                    if not isinstance(hist, list):
-                        hist = []
-                    hist.append(pred_error.as_dict())
-                    if len(hist) > 50:
-                        del hist[:-50]
-                    ctx.prediction_error_history = hist
+                    prediction_error_history_append_v1(ctx, error_record, limit=50)
                 except Exception:
                     pass
 
@@ -23495,24 +23576,20 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
 
             if isinstance(ctx.pred_next_policy, str):
                 w_scan = exec_world if exec_world is not None else world
-                _bid_p, posture_tag, meta_p = _latest_posture_binding(w_scan, require_policy=True)
-                if posture_tag and isinstance(meta_p, dict) and meta_p.get("policy") == ctx.pred_next_policy:
-                    # posture_tag like "pred:posture:standing"
-                    expected_posture = posture_tag.split(":")[-1]
-                    ctx.pred_next_posture = expected_posture
-                    pred_record = make_posture_prediction_record(
-                        ctx.pred_next_policy,
-                        expected_posture,
-                        ctx=ctx,
-                        source="WorkingMap.Scratch" if exec_world is not world else "WorldGraph.policy_trace",
-                        basis={
-                            "binding_id": _bid_p,
-                            "posture_tag": posture_tag,
-                            "meta_policy": meta_p.get("policy"),
-                        },
-                        env_step=step_idx if isinstance(step_idx, int) else None,
-                    )
-                    ctx.prediction_next_record = pred_record.as_dict()
+                pred_record = prediction_next_record_from_policy_posture_v1(
+                    ctx,
+                    w_scan,
+                    ctx.pred_next_policy,
+                    env_step=step_idx if isinstance(step_idx, int) else None,
+                    source="WorkingMap.Scratch" if exec_world is not world else "WorldGraph.policy_trace",
+                )
+                if pred_record:
+                    expected_slots = pred_record.get("expected")
+                    if isinstance(expected_slots, dict):
+                        expected_posture = expected_slots.get("posture")
+                        if isinstance(expected_posture, str) and expected_posture:
+                            ctx.pred_next_posture = expected_posture
+                    ctx.prediction_next_record = pred_record
         except Exception:
             try:
                 ctx.prediction_next_record = {}

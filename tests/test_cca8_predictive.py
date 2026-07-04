@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 from cca8_predictive import (
     compare_prediction_to_observed,
@@ -78,7 +79,167 @@ def test_prediction_comparison_handles_small_map_slot_record() -> None:
     assert error.matched is False
     assert error.mismatch_count == 2
     assert error.severity == 2.0
-    
+
+
+def _env_obs_stub(predicates: list[str], env_meta: dict[str, Any] | None = None) -> Any:
+    """Return a tiny EnvObservation-like object for runner helper tests."""
+    return SimpleNamespace(predicates=predicates, env_meta=env_meta or {})
+
+
+def test_prediction_observed_slots_extracts_direct_predicates_and_zone() -> None:
+    """Observed-slot extraction should convert direct EnvObservation predicates."""
+    from cca8_run import prediction_observed_slots_from_env_obs_v1
+
+    obs = _env_obs_stub(
+        ["posture:standing", "proximity:mom:close", "nipple:found"],
+        {"zone": "safe"},
+    )
+
+    assert prediction_observed_slots_from_env_obs_v1(obs) == {
+        "posture": "standing",
+        "mom_distance": "near",
+        "nipple_state": "found",
+        "zone": "safe",
+    }
+
+
+def test_prediction_observed_slots_extracts_alternate_predicates() -> None:
+    """Observed-slot extraction should cover the other first-milepost values."""
+    from cca8_run import prediction_observed_slots_from_env_obs_v1
+
+    obs = _env_obs_stub(
+        ["posture:fallen", "proximity:mom:far", "nipple:latched"],
+        {},
+    )
+
+    assert prediction_observed_slots_from_env_obs_v1(obs) == {
+        "posture": "fallen",
+        "mom_distance": "far",
+        "nipple_state": "latched",
+    }
+
+
+def test_prediction_observed_slots_uses_raw_mom_proximity_fallback() -> None:
+    """The raw mom-proximity fallback should fill only a missing mom slot."""
+    from cca8_run import prediction_observed_slots_from_env_obs_v1
+
+    fallback_obs = _env_obs_stub(
+        ["nipple:hidden"],
+        {"zone": " nursery ", "mom_proximity_from_raw": "far"},
+    )
+    direct_obs = _env_obs_stub(
+        ["proximity:mom:close"],
+        {"mom_proximity_from_raw": "far"},
+    )
+
+    assert prediction_observed_slots_from_env_obs_v1(fallback_obs) == {
+        "mom_distance": "far",
+        "nipple_state": "hidden",
+        "zone": "nursery",
+    }
+    assert prediction_observed_slots_from_env_obs_v1(direct_obs) == {
+        "mom_distance": "near",
+    }
+
+
+def test_prediction_next_record_from_policy_posture_builds_matching_record() -> None:
+    """The runner helper should convert a policy-written posture binding into a prediction record."""
+    from cca8_run import prediction_next_record_from_policy_posture_v1
+
+    ctx = SimpleNamespace(controller_steps=21)
+    world = SimpleNamespace(
+        _bindings={
+            "b1": SimpleNamespace(
+                tags={"pred:posture:fallen"},
+                meta={"policy": "policy:recover_fall"},
+            ),
+            "b2": SimpleNamespace(
+                tags={"pred:posture:standing"},
+                meta={"policy": "policy:stand_up"},
+            ),
+        }
+    )
+
+    record = prediction_next_record_from_policy_posture_v1(
+        ctx,
+        world,
+        "policy:stand_up",
+        env_step=8,
+        source="WorkingMap.Scratch",
+    )
+
+    assert record["schema"] == "prediction_record_v1"
+    assert record["policy"] == "policy:stand_up"
+    assert record["source"] == "WorkingMap.Scratch"
+    assert record["expected"] == {"posture": "standing"}
+    assert record["controller_step"] == 21
+    assert record["env_step"] == 8
+    assert record["basis"] == {
+        "binding_id": "b2",
+        "posture_tag": "pred:posture:standing",
+        "meta_policy": "policy:stand_up",
+    }
+
+
+def test_prediction_next_record_from_policy_posture_requires_latest_matching_policy() -> None:
+    """The capture helper should preserve the current latest-binding policy check."""
+    from cca8_run import prediction_next_record_from_policy_posture_v1
+
+    ctx = SimpleNamespace(controller_steps=22)
+    world = SimpleNamespace(
+        _bindings={
+            "b1": SimpleNamespace(
+                tags={"pred:posture:standing"},
+                meta={"policy": "policy:stand_up"},
+            ),
+            "b2": SimpleNamespace(
+                tags={"pred:posture:fallen"},
+                meta={"policy": "policy:recover_fall"},
+            ),
+        }
+    )
+
+    assert prediction_next_record_from_policy_posture_v1(ctx, world, "policy:stand_up", env_step=9) == {}
+
+
+def test_prediction_next_record_from_policy_posture_ignores_invalid_inputs() -> None:
+    """Invalid predictor inputs should produce no next prediction record."""
+    from cca8_run import prediction_next_record_from_policy_posture_v1
+
+    ctx = SimpleNamespace(controller_steps=23)
+    world = SimpleNamespace(
+        _bindings={
+            "b1": SimpleNamespace(
+                tags={"pred:posture:standing"},
+                meta={"policy": "policy:stand_up"},
+            ),
+        }
+    )
+
+    assert prediction_next_record_from_policy_posture_v1(ctx, world, "", env_step=10) == {}
+    assert prediction_next_record_from_policy_posture_v1(ctx, None, "policy:stand_up", env_step=10) == {}
+
+
+def test_prediction_error_history_append_recovers_and_caps_to_newest_records() -> None:
+    """Prediction-error history should remain a bounded diagnostic trace."""
+    from cca8_run import prediction_error_history_append_v1
+
+    ctx = SimpleNamespace(prediction_error_history="not-a-list")
+
+    assert prediction_error_history_append_v1(ctx, {"schema": "prediction_error_v1", "seq": 0}, limit=50) == 1
+    assert ctx.prediction_error_history == [{"schema": "prediction_error_v1", "seq": 0}]
+
+    count = 0
+    for seq in range(1, 56):
+        count = prediction_error_history_append_v1(ctx, {"schema": "prediction_error_v1", "seq": seq}, limit=50)
+
+    assert count == 50
+    assert len(ctx.prediction_error_history) == 50
+    assert ctx.prediction_error_history[0]["seq"] == 6
+    assert ctx.prediction_error_history[-1]["seq"] == 55
+    assert prediction_error_history_append_v1(None, {"schema": "prediction_error_v1"}, limit=50) == 0
+
+
 def test_prediction_feedback_summary_empty_ctx_is_stable() -> None:
     """The read-only feedback register should be stable before any prediction exists."""
     from cca8_run import prediction_feedback_mini_line_v1, prediction_feedback_summary_v1
