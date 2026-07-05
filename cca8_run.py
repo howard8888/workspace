@@ -209,7 +209,13 @@ __all__ = [
     "snapshot_text",
     "prediction_feedback_summary_v1",
     "prediction_next_record_from_policy_posture_v1",
+    "prediction_pending_record_from_ctx_v1",
+    "prediction_compare_pending_to_observed_v1",
+    "prediction_feedback_step_from_ctx_obs_v1",
+    "prediction_policy_expected_slots_v1",
+    "prediction_record_with_expected_slots_v1",
     "prediction_error_history_append_v1",
+    "prediction_error_record_apply_to_ctx_v1",
     "render_prediction_feedback_lines_v1",
     "prediction_feedback_mini_line_v1",
     "export_snapshot",
@@ -16507,6 +16513,47 @@ def prediction_error_history_append_v1(ctx: Any, error_record: Any, *, limit: in
     return len(hist)
 
 
+def prediction_error_record_apply_to_ctx_v1(ctx: Any, error_record: Any, *, limit: int = 50) -> dict[str, int]:
+    """Store one prediction-error record in the runner's diagnostic registers.
+
+    This helper centralizes the write-back part of the predictive-feedback
+    display path. It accepts either a ``PredictionError``-like object with
+    ``as_dict()`` or an already JSON-safe dict, updates the legacy v0 vector,
+    stores the v1 error record, and appends the bounded diagnostic history.
+
+    The function does not update policy choice, skill values, WorldGraph facts,
+    BodyMap state, or action selection. It only preserves the existing display
+    and JSON-cycle bookkeeping behavior in one testable place.
+    """
+    if ctx is None:
+        return {}
+
+    as_dict = getattr(error_record, "as_dict", None)
+    if callable(as_dict):
+        try:
+            payload = as_dict()
+        except Exception:
+            return {}
+    elif isinstance(error_record, dict):
+        payload = dict(error_record)
+    else:
+        return {}
+
+    if not isinstance(payload, dict) or not payload:
+        return {}
+
+    err_vec = legacy_error_vector_v0(payload)
+    ctx.pred_err_v0_last = dict(err_vec)
+    ctx.prediction_last_error_record = dict(payload)
+
+    try:
+        prediction_error_history_append_v1(ctx, payload, limit=limit)
+    except Exception:
+        pass
+
+    return dict(err_vec)
+
+
 def prediction_next_record_from_policy_posture_v1(
     ctx: Any,
     world: Any,
@@ -16525,7 +16572,9 @@ def prediction_next_record_from_policy_posture_v1(
 
     The function does not update ctx, write memory, compare observations, or
     change policy selection. The caller remains responsible for assigning
-    ``ctx.pred_next_posture`` and ``ctx.prediction_next_record``.
+    ``ctx.pred_next_posture`` and ``ctx.prediction_next_record``. When safe
+    policy-level slot expectations exist, they are added without overwriting the
+    explicitly captured posture postcondition.
     """
     if not isinstance(policy_name, str) or not policy_name:
         return {}
@@ -16554,7 +16603,243 @@ def prediction_next_record_from_policy_posture_v1(
         },
         env_step=env_step,
     )
-    return pred_record.as_dict()
+    policy_slots = prediction_policy_expected_slots_v1(policy_name, expected_posture=expected_posture)
+    return prediction_record_with_expected_slots_v1(pred_record.as_dict(), policy_slots)
+
+
+def prediction_pending_record_from_ctx_v1(ctx: Any, *, env_step: Optional[int] = None) -> dict[str, Any]:
+    """Return the pending prediction record that should be compared this tick.
+
+    The environment loop currently stores next-step predictions in two forms:
+
+      - the formal v1 record at ``ctx.prediction_next_record``
+      - the older posture-only fields ``ctx.pred_next_posture`` / ``ctx.pred_next_policy``
+
+    This read-only helper preserves that compatibility rule while making the
+    comparison boundary testable. A non-empty dict in ``prediction_next_record``
+    wins. Otherwise the legacy posture fields are converted into the same
+    JSON-safe ``PredictionRecord`` shape used by the v1 path and enriched with
+    safe policy-level slot expectations when available. No policy choice,
+    memory write, WorldGraph fact, or prediction history is changed here.
+    """
+    prediction_raw = getattr(ctx, "prediction_next_record", {})
+    if isinstance(prediction_raw, dict) and prediction_raw:
+        return dict(prediction_raw)
+
+    pred_old = getattr(ctx, "pred_next_posture", None)
+    src_old = getattr(ctx, "pred_next_policy", None)
+    if isinstance(pred_old, str) and pred_old:
+        legacy_record = make_posture_prediction_record(
+            str(src_old or ""),
+            pred_old,
+            ctx=ctx,
+            source="legacy:pred_next_posture",
+            env_step=env_step,
+        ).as_dict()
+        policy_slots = prediction_policy_expected_slots_v1(str(src_old or ""), expected_posture=pred_old)
+        return prediction_record_with_expected_slots_v1(legacy_record, policy_slots)
+
+    return {}
+
+
+def prediction_policy_expected_slots_v1(policy_name: Any, *, expected_posture: Any = None) -> dict[str, str]:
+    """Return the first tiny map-slot expectations associated with a policy.
+
+    This helper is deliberately conservative and not yet wired into live control.
+    It gives CCA8 a tested place to name policy-level hypotheses beyond posture,
+    while preserving the rule that predictions are hypotheses, not WorldGraph
+    facts. Explicitly supplied posture wins over policy defaults.
+    """
+    out: dict[str, str] = {}
+
+    if isinstance(expected_posture, str) and expected_posture.strip():
+        out["posture"] = expected_posture.strip()
+
+    if not isinstance(policy_name, str) or not policy_name:
+        return out
+
+    if policy_name in ("policy:stand_up", "policy:recover_fall"):
+        out.setdefault("posture", "standing")
+    elif policy_name == "policy:rest":
+        out.setdefault("posture", "resting")
+    elif policy_name == "policy:seek_nipple":
+        out.setdefault("mom_distance", "near")
+        out.setdefault("nipple_state", "found")
+    elif policy_name == "policy:suckle":
+        out.setdefault("nipple_state", "latched")
+
+    return out
+
+
+def prediction_record_with_expected_slots_v1(
+    prediction_record: Any,
+    expected_slots: Any,
+    *,
+    source: str = "policy_expected_slots_v1",
+) -> dict[str, Any]:
+    """Return a prediction record copy enriched with additional expected slots.
+
+    Existing expected slots are preserved. This lets an explicit captured
+    postcondition, such as ``posture=standing``, remain authoritative while
+    future map-slot expectations can be added around it. The original record is
+    not mutated.
+    """
+    if not isinstance(prediction_record, dict) or not prediction_record:
+        return {}
+
+    out = dict(prediction_record)
+    expected = dict(out.get("expected")) if isinstance(out.get("expected"), dict) else {}
+
+    added: list[str] = []
+    if isinstance(expected_slots, dict):
+        for key, value in expected_slots.items():
+            if not isinstance(key, str) or not key:
+                continue
+            if value is None:
+                continue
+            if key not in expected:
+                expected[key] = str(value)
+                added.append(key)
+
+    out["expected"] = expected
+    if added:
+        basis = dict(out.get("basis")) if isinstance(out.get("basis"), dict) else {}
+        basis["slot_expectation_source"] = str(source or "policy_expected_slots_v1")
+        basis["slot_expectation_added"] = sorted(added)
+        out["basis"] = basis
+
+    return out
+
+
+def prediction_compare_pending_to_observed_v1(
+    ctx: Any,
+    prediction_raw: Any,
+    env_obs: Any,
+    *,
+    env_step: Optional[int] = None,
+) -> dict[str, Any]:
+    """Compare one pending prediction record to one EnvObservation-like object.
+
+    This read-only helper is the middle of the predictive-feedback diagnostic
+    chain. It accepts the pending prediction record selected by
+    ``prediction_pending_record_from_ctx_v1()``, extracts the observed slots
+    from the current observation, and returns a JSON-safe comparison summary.
+
+    The function deliberately does not write to ``ctx``, append history, update
+    the skill ledger, write WorldGraph facts, or change action selection. The
+    caller remains responsible for applying the returned ``error_record`` with
+    ``prediction_error_record_apply_to_ctx_v1()``.
+    """
+    empty_result: dict[str, Any] = {
+        "schema": "prediction_comparison_result_v1",
+        "has_prediction": False,
+        "observed_slots": {},
+        "error_record": {},
+        "err_vec": {},
+        "pred_posture": None,
+        "obs_posture": None,
+        "source_policy": None,
+        "matched": None,
+    }
+
+    if not isinstance(prediction_raw, dict) or not prediction_raw:
+        return empty_result
+
+    observed_slots = prediction_observed_slots_from_env_obs_v1(env_obs)
+    pred_error = compare_prediction_to_observed(
+        prediction_raw,
+        observed_slots,
+        ctx=ctx,
+        env_step=env_step,
+    )
+    error_record = pred_error.as_dict()
+    err_vec = legacy_error_vector_v0(error_record)
+
+    pred_posture = pred_error.prediction.expected.get("posture")
+    if isinstance(pred_posture, str) and not pred_posture:
+        pred_posture = None
+
+    source_policy = pred_error.prediction.policy
+    if isinstance(source_policy, str) and not source_policy:
+        source_policy = None
+
+    return {
+        "schema": "prediction_comparison_result_v1",
+        "has_prediction": True,
+        "observed_slots": observed_slots,
+        "error_record": error_record,
+        "err_vec": err_vec,
+        "pred_posture": pred_posture if isinstance(pred_posture, str) else None,
+        "obs_posture": observed_slots.get("posture"),
+        "source_policy": source_policy if isinstance(source_policy, str) else None,
+        "matched": pred_error.matched,
+    }
+
+
+def prediction_feedback_step_from_ctx_obs_v1(
+    ctx: Any,
+    env_obs: Any,
+    *,
+    env_step: Optional[int] = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Run one diagnostic predictive-feedback step for the current observation.
+
+    This is the runner-level bridge for the first predictive-coding milestone:
+
+      pending prediction -> observed slots -> comparison -> diagnostic ctx write-back
+
+    It intentionally remains a display/logging operation. It does not change
+    policy selection, skill values, BodyMap state, WorldGraph facts, or action
+    selection. When no pending prediction exists, the current error registers
+    are cleared while the bounded history is left intact.
+    """
+    prediction_raw = prediction_pending_record_from_ctx_v1(ctx, env_step=env_step)
+    comparison = prediction_compare_pending_to_observed_v1(
+        ctx,
+        prediction_raw,
+        env_obs,
+        env_step=env_step,
+    )
+
+    if comparison.get("has_prediction") is not True:
+        if ctx is not None:
+            ctx.pred_err_v0_last = {}
+            ctx.prediction_last_error_record = {}
+        return {
+            "schema": "prediction_feedback_step_v1",
+            "status": "idle",
+            "has_prediction": False,
+            "applied": False,
+            "err_vec": {},
+            "pred_posture": None,
+            "obs_posture": None,
+            "source_policy": None,
+            "matched": None,
+            "comparison": comparison,
+        }
+
+    err_vec = prediction_error_record_apply_to_ctx_v1(
+        ctx,
+        comparison.get("error_record", {}),
+        limit=limit,
+    )
+    pred_raw = comparison.get("pred_posture")
+    obs_raw = comparison.get("obs_posture")
+    src_raw = comparison.get("source_policy")
+
+    return {
+        "schema": "prediction_feedback_step_v1",
+        "status": "compared",
+        "has_prediction": True,
+        "applied": bool(ctx is not None and isinstance(comparison.get("error_record"), dict)),
+        "err_vec": err_vec,
+        "pred_posture": pred_raw if isinstance(pred_raw, str) and pred_raw else None,
+        "obs_posture": obs_raw if isinstance(obs_raw, str) and obs_raw else None,
+        "source_policy": src_raw if isinstance(src_raw, str) and src_raw else None,
+        "matched": comparison.get("matched"),
+        "comparison": comparison,
+    }
 
 
 def _prediction_compact_map_text_v1(value: Any) -> str:
@@ -23285,53 +23570,30 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
         src_txt = "(n/a)"
 
         try:
-            prediction_raw = getattr(ctx, "prediction_next_record", {})
-            if not isinstance(prediction_raw, dict) or not prediction_raw:
-                # Back-compat fallback for any old path that still sets pred_next_posture directly.
-                pred_old = getattr(ctx, "pred_next_posture", None)
-                src_old = getattr(ctx, "pred_next_policy", None)
-                if isinstance(pred_old, str) and pred_old:
-                    prediction_raw = make_posture_prediction_record(
-                        str(src_old or ""),
-                        pred_old,
-                        ctx=ctx,
-                        source="legacy:pred_next_posture",
-                        env_step=step_idx if isinstance(step_idx, int) else None,
-                    ).as_dict()
+            feedback_step = prediction_feedback_step_from_ctx_obs_v1(
+                ctx,
+                env_obs,
+                env_step=step_idx if isinstance(step_idx, int) else None,
+                limit=50,
+            )
+            err_vec = dict(feedback_step.get("err_vec", {}) or {})
 
-            if isinstance(prediction_raw, dict) and prediction_raw:
-                observed_slots = prediction_observed_slots_from_env_obs_v1(env_obs)
-                obs_posture = observed_slots.get("posture")
-                pred_error = compare_prediction_to_observed(
-                    prediction_raw,
-                    observed_slots,
-                    ctx=ctx,
-                    env_step=step_idx if isinstance(step_idx, int) else None,
-                )
-
-                err_vec = legacy_error_vector_v0(pred_error)
-                ctx.pred_err_v0_last = dict(err_vec)
-                error_record = pred_error.as_dict()
-                ctx.prediction_last_error_record = error_record
-                try:
-                    prediction_error_history_append_v1(ctx, error_record, limit=50)
-                except Exception:
-                    pass
-
-                pred_posture = pred_error.prediction.expected.get("posture")
-                if isinstance(pred_posture, str) and not pred_posture:
-                    pred_posture = None
-                src = pred_error.prediction.policy
+            if feedback_step.get("has_prediction") is True:
+                pred_raw = feedback_step.get("pred_posture")
+                pred_posture = pred_raw if isinstance(pred_raw, str) and pred_raw else None
+                obs_raw = feedback_step.get("obs_posture")
+                obs_posture = obs_raw if isinstance(obs_raw, str) and obs_raw else None
+                src = feedback_step.get("source_policy")
                 src_txt = src if isinstance(src, str) and src else "(n/a)"
+                matched = feedback_step.get("matched")
 
                 print(
                     f"[pred_err] v1 err={err_vec} pred_posture={pred_posture} obs_posture={obs_posture} "
-                    f"from={src_txt} matched={pred_error.matched}"
+                    f"from={src_txt} matched={matched}"
                 )
             else:
                 err_vec = {}
-                ctx.pred_err_v0_last = {}
-                ctx.prediction_last_error_record = {}
+
         except Exception:
             # If anything goes wrong, keep the signal empty rather than crashing the env-loop.
             err_vec = {}
