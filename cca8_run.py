@@ -238,9 +238,14 @@ __all__ = [
     "render_navmap_observation_update_lines_v1",
     "navmap_observation_update_mini_line_v1",
     "navmap_observation_update_history_append_v1",
+    "navmap_transition_summary_v1",
+    "render_navmap_transition_lines_v1",
+    "navmap_transition_mini_line_v1",
+    "navmap_transition_history_append_v1",
+    "navmap_policy_outcome_index_update_v1",
+    "navmap_policy_outcome_index_update_v1",
     "navmap_ctx_observation_update_step_v1",
     "navmap_ctx_transition_from_payloads_v1",
-    "navmap_ctx_observation_update_step_v1",
     "HAL",
     "PolicyRuntime",
     "run_autonomous_newborn_survival_demo_v1",
@@ -877,6 +882,9 @@ class Ctx:
     navmap_last_policy_outcome_v1: Optional[dict[str, Any]] = None
     navmap_policy_outcome_history_v1: list[dict[str, Any]] = field(default_factory=list)
     navmap_policy_outcome_history_limit_v1: int = 25
+    navmap_policy_outcome_index_v1: dict[str, dict[str, Any]] = field(default_factory=dict)
+    navmap_policy_outcome_index_limit_v1: int = 100
+    navmap_last_policy_outcome_index_row_v1: Optional[dict[str, Any]] = None
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------
@@ -17223,6 +17231,182 @@ def navmap_observation_update_mini_line_v1(ctx: Any) -> str:
     )
 
 
+def _navmap_slots_from_payload_dict_v1(payload: Any) -> dict[str, Any]:
+    """Return a shallow slot map from a JSON-safe NavMap payload dict."""
+    payload_dict = _navmap_safe_dict_v1(payload)
+    slots = _navmap_safe_dict_v1(payload_dict.get("slots"))
+    return {str(key): value for key, value in slots.items() if isinstance(key, str)}
+
+
+def _navmap_transition_slot_change_text_v1(slot_changes: Any) -> str:
+    """Return compact text for a NavMap policy-outcome slot-change map."""
+    if not isinstance(slot_changes, dict) or not slot_changes:
+        return "(none)"
+
+    parts: list[str] = []
+    for key in sorted(slot_changes):
+        if not isinstance(key, str):
+            continue
+        val = slot_changes.get(key)
+        if isinstance(val, dict):
+            before = val.get("before", "")
+            after = val.get("after", "")
+            parts.append(f"{key}:{before}->{after}")
+        else:
+            parts.append(f"{key}:{val}")
+    return ", ".join(parts) if parts else "(none)"
+
+
+def navmap_transition_summary_v1(ctx: Any) -> dict[str, Any]:
+    """Return a read-only summary of the runner's last action-conditioned NavMap transition."""
+    base: dict[str, Any] = {
+        "schema": "navmap_transition_summary_v1",
+        "status": "idle",
+        "has_last_transition": False,
+        "action": None,
+        "reward": 0.0,
+        "changed": None,
+        "changed_slots": 0,
+        "transition_history_count": 0,
+        "policy_outcome_history_count": 0,
+        "policy_outcome_index_count": 0,
+        "indexed_sample_count": 0,
+        "indexed_success_rate": 0.0,
+        "indexed_mean_reward": 0.0,
+        "before_slots": {},
+        "after_slots": {},
+        "slot_changes": {},
+        "success": None,
+        "confidence": None,
+        "policy_key": None,
+        "context_signature": None,
+        "created_at": None,
+    }
+
+    if ctx is None:
+        out = dict(base)
+        out["status"] = "ctx_unavailable"
+        return out
+
+    base["transition_history_count"] = _navmap_safe_list_count_v1(getattr(ctx, "navmap_transition_history_v1", []))
+    base["policy_outcome_history_count"] = _navmap_safe_list_count_v1(getattr(ctx, "navmap_policy_outcome_history_v1", []))
+    raw_index = getattr(ctx, "navmap_policy_outcome_index_v1", {})
+    base["policy_outcome_index_count"] = len(raw_index) if isinstance(raw_index, dict) else 0
+
+    transition = _navmap_safe_dict_v1(getattr(ctx, "navmap_last_transition_v1", {}))
+    if not transition:
+        return base
+
+    outcome = _navmap_safe_dict_v1(getattr(ctx, "navmap_last_policy_outcome_v1", {}))
+    index_row = _navmap_safe_dict_v1(getattr(ctx, "navmap_last_policy_outcome_index_row_v1", {}))
+    action_raw = transition.get("action")
+    changed_raw = transition.get("changed")
+    success_raw = outcome.get("success")
+    created_at_raw = transition.get("created_at")
+
+    out = dict(base)
+    out.update(
+        {
+            "status": "active",
+            "has_last_transition": True,
+            "action": action_raw if isinstance(action_raw, str) and action_raw else None,
+            "reward": _navmap_safe_float_or_none_v1(transition.get("reward")) or 0.0,
+            "changed": changed_raw if isinstance(changed_raw, bool) else None,
+            "changed_slots": _navmap_safe_int_v1(transition.get("changed_slots"), 0),
+            "indexed_sample_count": _navmap_safe_int_v1(index_row.get("sample_count"), 0),
+            "indexed_success_rate": _navmap_safe_float_or_none_v1(index_row.get("success_rate")) or 0.0,
+            "indexed_mean_reward": _navmap_safe_float_or_none_v1(index_row.get("mean_reward")) or 0.0,
+            "before_slots": _navmap_slots_from_payload_dict_v1(transition.get("before_payload")),
+            "after_slots": _navmap_slots_from_payload_dict_v1(transition.get("after_payload")),
+            "slot_changes": _navmap_safe_dict_v1(outcome.get("slot_changes")),
+            "success": success_raw if isinstance(success_raw, bool) else None,
+            "confidence": _navmap_safe_float_or_none_v1(outcome.get("confidence")),
+            "policy_key": outcome.get("policy_key") if isinstance(outcome.get("policy_key"), str) else None,
+            "context_signature": (
+                outcome.get("context_signature") if isinstance(outcome.get("context_signature"), str) else None
+            ),
+            "created_at": created_at_raw if isinstance(created_at_raw, str) and created_at_raw else None,
+        }
+    )
+    return out
+
+
+def render_navmap_transition_lines_v1(ctx: Any) -> list[str]:
+    """Return human-readable lines for the runner's action-conditioned NavMap transition."""
+    s = navmap_transition_summary_v1(ctx)
+    lines: list[str] = ["NAVMAP TRANSITION:"]
+
+    if s["status"] == "ctx_unavailable":
+        lines.append("  status=ctx_unavailable")
+        return lines
+
+    if not s["has_last_transition"]:
+        lines.append(
+            "  status=idle "
+            f"transition_history_count={s['transition_history_count']} "
+            f"policy_outcome_history_count={s['policy_outcome_history_count']} "
+            "[src=ctx.navmap_last_transition_v1]"
+        )
+        return lines
+
+    confidence = s["confidence"]
+    confidence_txt = f"{confidence:.2f}" if isinstance(confidence, float) else "n/a"
+    lines.append(
+        "  "
+        f"status={s['status']} "
+        f"action={s['action'] or '(none)'} "
+        f"reward={s['reward']:.2f} "
+        f"changed={s['changed']} "
+        f"changed_slots={s['changed_slots']} "
+        f"success={s['success']} "
+        f"confidence={confidence_txt} "
+        "[src=ctx.navmap_last_transition_v1]"
+    )
+    lines.append(
+        "  "
+        f"before={{{_prediction_compact_map_text_v1(s['before_slots'])}}} "
+        f"after={{{_prediction_compact_map_text_v1(s['after_slots'])}}}"
+    )
+    lines.append(
+        "  "
+        f"slot_changes={{{_navmap_transition_slot_change_text_v1(s['slot_changes'])}}} "
+        f"transition_history_count={s['transition_history_count']} "
+        f"policy_outcome_history_count={s['policy_outcome_history_count']} "
+        f"index_count={s['policy_outcome_index_count']} "
+        f"indexed_samples={s['indexed_sample_count']} "
+        f"indexed_success_rate={s['indexed_success_rate']:.2f} "
+        f"indexed_mean_reward={s['indexed_mean_reward']:.2f}"
+    )
+    return lines
+
+
+def navmap_transition_mini_line_v1(ctx: Any) -> str:
+    """Return a one-line NavMap transition readout for mini-snapshots."""
+    s = navmap_transition_summary_v1(ctx)
+
+    if s["status"] == "ctx_unavailable":
+        return "[navmap-transition] ctx unavailable"
+
+    if not s["has_last_transition"]:
+        return (
+            "[navmap-transition] status=idle "
+            f"history_count={s['transition_history_count']} "
+            f"outcome_count={s['policy_outcome_history_count']}"
+        )
+
+    return (
+        "[navmap-transition] "
+        f"action={s['action'] or '(none)'} "
+        f"reward={s['reward']:.2f} "
+        f"changed_slots={s['changed_slots']} "
+        f"success={s['success']} "
+        f"before={{{_prediction_compact_map_text_v1(s['before_slots'])}}} "
+        f"after={{{_prediction_compact_map_text_v1(s['after_slots'])}}} "
+        f"history_count={s['transition_history_count']} "
+        f"indexed_samples={s['indexed_sample_count']}"
+    )
+
+
 def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     """
     Render a human-readable snapshot of the runtime state.
@@ -17399,6 +17583,12 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.append("")
 
     lines.extend(render_prediction_feedback_lines_v1(ctx))
+    lines.append("")
+
+    lines.extend(render_navmap_observation_update_lines_v1(ctx))
+    lines.append("")
+
+    lines.extend(render_navmap_transition_lines_v1(ctx))
     lines.append("")
 
     # POLICIES (skills readout)
@@ -21494,6 +21684,92 @@ def navmap_transition_history_append_v1(
     return navmap_observation_update_history_append_v1(history, record, limit=limit)
 
 
+def navmap_policy_outcome_index_update_v1(ctx: Ctx, outcome: dict[str, Any]) -> dict[str, Any]:
+    """Update the ctx-local NavMap policy-outcome index with one outcome sample.
+
+    The index is the first runner-side table for the CCA8 idea:
+
+      in this map context, this action has produced this next map/outcome.
+
+    It is diagnostic-only. It does not alter policy choice, skill values, WorldGraph
+    facts, Column engrams, or controller gates.
+    """
+    if ctx is None or not isinstance(outcome, dict) or not outcome:
+        return {}
+
+    policy_key_raw = outcome.get("policy_key")
+    policy_key = policy_key_raw if isinstance(policy_key_raw, str) and policy_key_raw else ""
+    if not policy_key:
+        context_sig = outcome.get("context_signature")
+        action_raw = outcome.get("action")
+        action = action_raw if isinstance(action_raw, str) and action_raw else ""
+        if isinstance(context_sig, str) and context_sig and action:
+            policy_key = f"{context_sig}::{action}"
+        elif action:
+            policy_key = action
+        elif isinstance(context_sig, str) and context_sig:
+            policy_key = context_sig
+    if not policy_key:
+        return {}
+
+    raw_index = getattr(ctx, "navmap_policy_outcome_index_v1", {})
+    index = {str(key): dict(val) for key, val in raw_index.items() if isinstance(key, str) and isinstance(val, dict)}
+    old = dict(index.get(policy_key, {}))
+
+    old_n = _navmap_safe_int_v1(old.get("sample_count"), 0)
+    old_success = _navmap_safe_int_v1(old.get("success_count"), 0)
+    old_reward_total = _navmap_safe_float_or_none_v1(old.get("reward_total")) or 0.0
+    old_conf_total = _navmap_safe_float_or_none_v1(old.get("confidence_total")) or 0.0
+
+    reward = _navmap_safe_float_or_none_v1(outcome.get("reward")) or 0.0
+    confidence = _navmap_safe_float_or_none_v1(outcome.get("confidence")) or 0.0
+    success = bool(outcome.get("success")) if isinstance(outcome.get("success"), bool) else False
+
+    sample_count = old_n + 1
+    success_count = old_success + (1 if success else 0)
+    reward_total = old_reward_total + reward
+    confidence_total = old_conf_total + confidence
+
+    action_out = outcome.get("action") if isinstance(outcome.get("action"), str) else None
+    context_sig_out = outcome.get("context_signature") if isinstance(outcome.get("context_signature"), str) else None
+    created_at_raw = outcome.get("created_at")
+
+    row = {
+        "schema": "navmap_policy_outcome_index_row_v1",
+        "policy_key": policy_key,
+        "action": action_out,
+        "context_signature": context_sig_out,
+        "sample_count": int(sample_count),
+        "success_count": int(success_count),
+        "success_rate": float(success_count / sample_count) if sample_count > 0 else 0.0,
+        "reward_total": float(reward_total),
+        "mean_reward": float(reward_total / sample_count) if sample_count > 0 else 0.0,
+        "confidence_total": float(confidence_total),
+        "mean_confidence": float(confidence_total / sample_count) if sample_count > 0 else 0.0,
+        "last_reward": float(reward),
+        "last_success": bool(success),
+        "context_slots": _navmap_safe_dict_v1(outcome.get("context_slots")),
+        "expected_slots": _navmap_safe_dict_v1(outcome.get("expected_slots")),
+        "slot_changes": _navmap_safe_dict_v1(outcome.get("slot_changes")),
+        "updated_at": created_at_raw if isinstance(created_at_raw, str) and created_at_raw else datetime.now().isoformat(),
+    }
+
+    if policy_key in index:
+        del index[policy_key]
+    index[policy_key] = dict(row)
+
+    index_limit = _navmap_safe_int_v1(getattr(ctx, "navmap_policy_outcome_index_limit_v1", 100), 100)
+    if index_limit <= 0:
+        index_limit = 100
+    while len(index) > index_limit:
+        oldest_key = next(iter(index))
+        del index[oldest_key]
+
+    ctx.navmap_policy_outcome_index_v1 = index
+    ctx.navmap_last_policy_outcome_index_row_v1 = dict(row)
+    return row
+
+
 def navmap_ctx_transition_from_payloads_v1(
     ctx: Ctx,
     before_payload: dict[str, Any],
@@ -21564,6 +21840,7 @@ def navmap_ctx_transition_from_payloads_v1(
         )
         outcome_dict = outcome.as_dict()
         ctx.navmap_last_policy_outcome_v1 = dict(outcome_dict)
+        navmap_policy_outcome_index_update_v1(ctx, outcome_dict)
 
         outcome_limit = _navmap_safe_int_v1(
             getattr(ctx, "navmap_policy_outcome_history_limit_v1", 25),
@@ -21578,6 +21855,7 @@ def navmap_ctx_transition_from_payloads_v1(
         )
     else:
         ctx.navmap_last_policy_outcome_v1 = None
+        ctx.navmap_last_policy_outcome_index_row_v1 = None
 
     return transition_dict
 
@@ -21655,6 +21933,7 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
     else:
         ctx.navmap_last_transition_v1 = None
         ctx.navmap_last_policy_outcome_v1 = None
+        ctx.navmap_last_policy_outcome_index_row_v1 = None
 
     ctx.navmap_last_payload_v1 = dict(current_payload_dict) if current_payload_dict else None
     ctx.navmap_pending_action_v1 = None
@@ -24657,6 +24936,11 @@ def mini_snapshot_text(world, ctx=None, limit: int = 50) -> str:
         lines.append(navmap_observation_update_mini_line_v1(ctx))
     except Exception:
         lines.append("[navmap] (unavailable)")
+
+    try:
+        lines.append(navmap_transition_mini_line_v1(ctx))
+    except Exception:
+        lines.append("[navmap-transition] (unavailable)")
 
     # Compact world view: last `limit` bindings with their outgoing edges
     try:

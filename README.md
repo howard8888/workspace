@@ -58,6 +58,20 @@ python cca8_run.py
 *CCA8 as RCOS = a cognitive supervisory runtime that organizes goals, memory, world models, and recovery around embodied controllers, rather than pretending that high-level intelligence alone solves robotics*
 
 
+
+## **TL;DR == Theoretical framing**
+
+CCA8 is built around a simple but strong hypothesis: the useful result of predictive processing is not merely a prediction-error number, a latent vector, or a symbolic fact. The useful result is an updated **map**. In CCA8, incoming observation becomes an evidence map; current context, drives, memory, and selected primitive policies supply expected maps; residuals between the two update the current WorkingMap, candidate NavMaps, context, and map-policy associations.
+
+This makes CCA8 related to predictive coding, Friston-style active inference, and enactive robotics, but not identical to any of them. Predictive coding emphasizes prediction plus residual error. Active inference emphasizes perception and action as ways of reducing mismatch. Enactive approaches emphasize learned action-outcome interactions. CCA8 emphasizes the object being maintained through all of these loops: an embodied, inspectable NavMap / WorkingMap that the agent can use for action, memory, recovery, and learning.
+
+The biological research motivation is that mammalian cognition may be built from generalized navigation-map machinery: body maps, scene maps, object maps, action maps, social maps, and eventually more abstract maps. The CCA8 goat-level system intentionally stays primitive: embodied map matching, short-horizon policy expectations, residual-driven map update/create behavior, and primitive map-policy transition learning. Later CCA9/CCA10 work can explore stronger recursive map reprocessing as a possible path toward chimpanzee-like and human-like causal reasoning, analogical reasoning, and language-like compositionality.
+
+The pragmatic robotics motivation is similar. A robot does not only need commands; it needs a current map of what it is doing, what it expected, what actually happened, and what matters next. In the RCOS view, world models rehearse, LLM/VLA systems may propose, HAL executes, reality corrects, and CCA8 maintains the map, residuals, provenance, and safety-relevant context needed to keep the embodied agent coherent over time.
+
+
+
+
 ## **TL;DR == Five-minute summary**
 
 ● The CCA8 Project is the simulation of a brain inspired by a mountain goat through its lifecycle. It is intended as a testbed of the navigation map-based theory of mammalian brain evolution and functioning (see References for academic citations). 
@@ -174,6 +188,7 @@ of birth, and by one week can climb most places its mother can)*
 
 **Detailed Tutorials and Technical Deep Dives**
 
+- [Predictive Coding, Active Inference, Enactive Inference, and CCA8] (#predictive-coding-active-interference-enactive-inference-and-cca8)
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
 - [The WorldGraph in detail](#the-worldgraph-in-detail)
 - [Tagging Standard (bindings, predicates, cues, anchors, actions, provenance & engrams)](#tagging-standard-bindings-predicates-cues-anchors-actions-provenance--engrams)
@@ -2464,10 +2479,1032 @@ NOTE: This README is large; if GitHub truncates the preview at the 512 KiB rende
 # DETAILED TUTORIALS AND TECHNICAL DEEP DIVES
 
 
-
 NOTE: This README.md file exceeds the 512K GitHub rendering limit. Therefore, some topics
     are not accessible by scrolling, but via the Table of Contents which will link you
     to another similar README.md file.
+
+
+# Predictive Coding, Active Inference, Enactive Inference, and CCA8
+
+
+This section explains how CCA8 relates to three neighboring theoretical traditions:
+
+1. **Predictive coding** — perception as prediction plus residual error.
+2. **Friston-style active inference / free-energy minimization** — perception and action as ways of reducing mismatch between expected and actual sensory states.
+3. **Georgeon-style enactive inference / interactional learning** — cognition as learned action-outcome interaction, rather than detached passive perception.
+
+CCA8 is influenced by all three, but it is not identical to any of them.
+
+The main difference is this:
+
+ 
+Predictive coding emphasizes the error-correction mechanism.
+Active inference emphasizes perception-action mismatch reduction.
+Enactive inference emphasizes enacted interaction loops.
+
+CCA8 emphasizes the representational object being updated:
+
+    NavMaps / WorkingMaps / map-policy transition structures.
+ `
+
+In CCA8, prediction error is not treated as the central cognitive object. Prediction error is treated as a **residual over a map**. The updated map is the useful product.
+
+---
+
+## 1. Core CCA8 stance: residuals update maps
+
+The working CCA8 doctrine is:
+
+ 
+The brain is not passively receiving a world.
+The brain is actively maintaining map-hypotheses,
+testing those map-hypotheses against current sensory evidence,
+and updating, splitting, creating, or reweighting maps when residuals appear.
+ 
+
+In CCA8 terms:
+
+ 
+EnvObservation-derived evidence
++ context / previous map / selected primitive
++ stored or candidate NavMaps
+→ map matching
+→ residuals
+→ map update / candidate creation / context adjustment
+→ policy selection and map-policy learning
+ 
+
+The important design rule is:
+
+ 
+Prediction error is a signal.
+The updated map is the cognitive product.
+ 
+
+This differs from many predictive-coding descriptions, where the main vocabulary is:
+
+ 
+prediction
+prediction error
+latent state
+hidden cause
+belief update
+precision
+generative model
+ 
+
+CCA8 accepts that vocabulary as useful, but interprets the “belief update” as a map-centered operation:
+
+ 
+What is being updated?
+    a NavMap / WorkingMap / generalized cognitive map.
+
+What is the prediction error?
+    a residual between expected map and evidence map.
+
+What is learned?
+    map structure, map transitions, and policy-to-map outcome associations.
+ 
+
+---
+
+## 2. EnvObservation, evidence maps, prior maps, and accepted maps
+
+CCA8 distinguishes three related but different objects:
+
+ 
+1. EnvObservation
+   The transient sensory/perceptual packet crossing from environment to agent.
+
+2. Evidence NavMap
+   The map-hypothesis built from the current EnvObservation.
+
+3. Expected / prior NavMap
+   The map-hypothesis expected from current context, previous map, drives,
+   and selected primitive/policy.
+
+4. Accepted WorkingMap
+   The current best map after evidence and expectation have been compared.
+ 
+
+So the intended CCA8 loop is not merely:
+
+ 
+EnvObservation
+→ store facts
+ 
+
+and not merely:
+
+ 
+EnvObservation
+→ match candidate maps
+ 
+
+The fuller predictive CCA8 loop is:
+
+ 
+previous WorkingMap / context / selected primitive
+→ expected current map
+
+EnvObservation
+→ evidence current map
+
+expected current map
+vs
+evidence current map
+→ predictive residual
+
+predictive residual
+→ update accepted WorkingMap, context, candidate maps,
+   and map-policy transition history
+ 
+
+This is the CCA8 version of predictive coding.
+
+---
+
+## 3. Context is a prior, not a hallucination engine
+
+A central CCA8 rule is:
+
+ 
+Context biases perception.
+Context does not overwrite strong evidence.
+ 
+
+The current context may make some maps easier to activate. For example, if a newborn goat is hungry, near mother, and engaged in a latching/nursing primitive, the active context may expect:
+
+ 
+mom_distance = near
+nipple_state = found or latched
+zone = safe
+ 
+
+If the next observation is weak or ambiguous, that context may help interpret the evidence. Missing or uncertain sensory slots may be tentatively filled by prior expectations.
+
+But if the next observation contains strong contradictory evidence, especially safety-relevant evidence, the prior must yield:
+
+ 
+expected context:
+    mother / nipple / milk / safety
+
+observed evidence:
+    threat / predator-like cue / unsafe zone
+
+correct CCA8 response:
+    large residual
+    current map updates toward threat/unsafe
+    context changes
+    future actions are selected under the new context
+ 
+
+The incorrect response would be:
+
+ 
+prior says mother/milk
+therefore predator is perceived as mother/milk
+ 
+
+CCA8 explicitly rejects that.
+
+This rule matters for both robotics and biological plausibility. It prevents expected maps, retrieved maps, or internally generated maps from being treated as current reality unless current evidence supports them.
+
+---
+
+## 4. CCA8 and classical predictive coding
+
+Classical predictive coding is often described as:
+
+ 
+higher levels send predictions downward
+lower levels compare predictions against incoming activity
+feedforward signals carry residual errors
+residual errors update the current estimate
+ 
+
+CCA8 maps this idea into architecture terms:
+
+ 
+Predictive-coding term             CCA8 interpretation
+---------------------------------------------------------------
+Top-down prediction                Expected NavMap / context prior
+Bottom-up sensory evidence          EnvObservation-derived evidence map
+Prediction error                    NavMap residual
+Belief update                       WorkingMap / NavMap update
+Model learning                      Update/create candidate NavMaps
+Precision / attention               Slot authority, context weighting, safety weighting
+Higher-level context shift          Map family / active context change
+ 
+
+CCA8 does not attempt to reproduce cortical microcircuits directly. It implements a software-level architecture inspired by the same principle:
+
+ 
+The agent maintains a map-hypothesis,
+compares it with evidence,
+and updates the map when residuals appear.
+ 
+
+The CCA8 difference is that the residual is always attached to a map comparison. It is not allowed to float as a detached scalar control signal.
+
+---
+
+## 5. CCA8 and Friston-style active inference
+
+Friston-style active inference extends predictive coding by treating both perception and action as ways to reduce mismatch.
+
+A simple predictive-coding example is:
+
+ 
+Expectation:
+    mom is near
+
+Evidence:
+    mom is far
+
+Perceptual update:
+    revise the map/belief: mom_distance = far
+ 
+
+Active inference adds action:
+
+ 
+Need / preference:
+    mom should be near because hunger/warmth/contact needs are active
+
+Current map:
+    mom_distance = far
+
+Primitive action:
+    seek_mom / follow_mom / seek_nipple
+
+Expected result:
+    mom_distance should become near, nipple_state may become found/latched
+
+Next observation:
+    compare expected next map with actual evidence map
+ 
+
+CCA8 is therefore closer to an active-inference-style system than to passive predictive coding, because CCA8 is an embodied closed loop:
+
+ 
+map → policy primitive → action → environment changes → observation → map update
+ 
+
+However, CCA8 is not a formal Friston implementation.
+
+CCA8 does not currently compute:
+
+ 
+variational free energy
+expected free energy
+precision matrices
+formal Bayesian posterior updates
+ 
+
+Instead, CCA8 uses the engineering equivalent:
+
+ 
+map residuals
+drive-relevant mismatch
+safety-relevant context shifts
+policy-conditioned next-map expectations
+map-policy transition learning
+ 
+
+So the relationship is:
+
+ 
+Friston / active inference:
+    organisms minimize free energy through perception and action.
+
+CCA8:
+    embodied agents reduce map residuals and drive-relevant mismatch
+    by updating maps and acting through primitive policies.
+ 
+
+---
+
+## 6. Why “minimize free energy” is not enough for CCA
+
+CCA8 accepts the broad intuition that organisms reduce mismatch between expected and actual states. But CCA does not treat “minimize free energy” as a complete cognitive architecture.
+
+A naive system that only minimizes mismatch may fall into poor local minima:
+
+ 
+avoid novelty
+prefer familiar states
+explain away conflicting evidence
+restore old priors too aggressively
+stabilize a wrong map
+ 
+
+The metallurgy analogy is useful here. A metal can settle into a low-energy configuration that is locally stable but brittle. Making a strong sword requires controlled heating, cooling, tempering, and stress relief. Likewise, intelligent cognition requires more than immediate minimization:
+
+ 
+stabilize maps when evidence is clear
+destabilize maps when residuals remain high
+create candidate maps when existing maps fail
+explore when uncertainty is useful
+consolidate only after evidence-gating
+ 
+
+For CCA8, this remains simple:
+
+ 
+map matching
+residuals
+candidate creation
+context shift
+primitive map-policy learning
+ 
+
+For later CCA9/CCA10, the same principle becomes more powerful and dangerous:
+
+ 
+recursive map reprocessing
+alternative-map generation
+causal intervention maps
+analogy across maps
+language-like composition
+evidence-gated imagination
+ 
+
+Thus:
+
+ 
+Free-energy minimization may describe a broad pressure.
+CCA supplies the map-centered machinery that can exploit that pressure.
+ 
+
+---
+
+## 7. CCA8 and Georgeon-style enactive inference
+
+Olivier Georgeon’s enactive / interactional approach emphasizes that perception and action should not be treated as separate from the start. In that view, the basic unit is often an enacted interaction:
+
+ 
+interaction = action + outcome
+ 
+
+The agent learns by discovering which interactions it can successfully enact, which sequences of interactions are reliable, and which interactions are intrinsically or extrinsically valuable.
+
+CCA8 agrees with the importance of embodied interaction. It also treats the agent-environment loop as primary:
+
+ 
+current state
+→ primitive policy
+→ action
+→ outcome
+→ new observation
+→ learning
+ 
+
+But CCA8 chooses a different central object.
+
+Georgeon-style framing:
+
+ 
+The interaction is the primitive cognitive unit.
+The agent learns action-outcome structures.
+ 
+
+CCA8 framing:
+
+ 
+The map is the primitive cognitive unit.
+Interactions are transitions between maps.
+ 
+
+In CCA8:
+
+ 
+current map
++ selected primitive
+→ expected next map
+
+actual next observation
+→ evidence map
+
+expected next map vs evidence map
+→ residual
+
+residual
+→ map update and map-policy transition learning
+ 
+
+So CCA8 can be viewed as:
+
+ 
+NavMap-centered enactive predictive control.
+ 
+
+It borrows the enactive insight that cognition is built through action, but it insists that the interaction is represented as a transformation of map structure.
+
+---
+
+## 8. CCA8 and counterfactual behavior
+
+CCA8 should not be interpreted as doing human-style counterfactual reasoning.
+
+A human may explicitly reason:
+
+ 
+If I had gone behind the car instead of around it,
+where would the dog expect me to reappear?
+ 
+
+A newborn goat should not be modeled that way.
+
+In CCA8, apparent counterfactual behavior is mostly mechanical and embodied:
+
+ 
+current WorkingMap
++ active drive/context
++ selected primitive
+→ expected next-map consequence
+ 
+
+The goat does not simulate many alternative futures. It does not run a human-like planner over imagined worlds. Instead, a primitive policy carries an implicit expected result:
+
+ 
+fallen + policy:stand_up
+→ expect posture=standing
+
+mom_distance=far + policy:seek_mom
+→ expect mom_distance=near
+
+nipple_state=found + policy:suckle
+→ expect nipple_state=latched / milk=drinking
+ 
+
+When the next observation arrives, CCA8 compares the expected consequence with the evidence map:
+
+ 
+expected:
+    posture = standing
+
+observed:
+    posture = fallen
+
+residual:
+    stand_up failed or was incomplete
+ 
+
+That is not full counterfactual reasoning. It is policy-conditioned map expectation.
+
+This distinction matters for the CCA8 → CCA9 → CCA10 boundary:
+
+ 
+CCA8 / goat:
+    embodied map matching
+    primitive policy expectations
+    action-conditioned map transitions
+
+CCA9 / chimp-like:
+    stronger internal reprocessing
+    limited causal/counterfactual fragments
+    richer social/object/action maps
+
+CCA10 / human-like:
+    recursive map operations
+    full causal reasoning
+    analogical mapping
+    compositional language-like processing
+ 
+
+---
+
+## 9. Psychosis, autism, blindness, and human cognition: why NavMaps matter
+
+The NavMap hypothesis was not chosen merely as an AI implementation trick. It is also a proposed explanatory bridge across several biological and psychiatric puzzles:
+
+ 
+Why are humans uniquely vulnerable to psychosis-like failure modes?
+How did human cognition rapidly acquire full causal reasoning, analogical reasoning,
+and compositional language-like abilities?
+Why might congenital blindness alter psychosis risk?
+Why are autism-spectrum developmental differences so human-loaded?
+ 
+
+CCA does not claim to solve these questions clinically. It does not make treatment claims.
+
+The working architectural hypothesis is narrower:
+
+ 
+Humans may have evolved much stronger recursive map generation,
+map reprocessing, map binding, and cross-map composition.
+
+Those mechanisms enable:
+    causal reasoning
+    analogical reasoning
+    language-like composition
+    imagination
+    future simulation
+
+But the same mechanisms create failure modes:
+    internally generated maps treated as current evidence
+    priors overpowering sensory residuals
+    false context binding
+    unstable or overstable map consolidation
+    difficulty integrating sensory/social/contextual maps
+ 
+
+In this view:
+
+ 
+Normal cognition:
+    expected map + evidence map → residual → updated WorkingMap
+
+Psychosis-like failure:
+    generated/retrieved map is accepted as current reality
+    despite weak or contradictory evidence
+
+Autism-like differences:
+    atypical map integration, precision weighting, context use,
+    sensory binding, or social-map construction
+
+Congenital blindness clue:
+    early alteration of high-bandwidth visual-world map construction
+    may change later vulnerability to certain recursive map failure modes
+ 
+
+Again, these are architectural hypotheses, not clinical claims.
+
+The important CCA8 rule is:
+
+ 
+Retrieved maps are priors.
+Expected maps are priors.
+Imagined maps are priors.
+Current sensory evidence must remain distinguishable from all of them.
+ 
+
+This rule is central both to biological plausibility and to avoiding unsafe artificial agents.
+
+---
+
+
+## 10. Robot Cognitive Operating System (RCOS): why NavMaps matter
+
+The NavMap hypothesis is not only a biological or psychiatric theory. It also has a pragmatic robotics motivation.
+
+A real robot does not merely need isolated perception, isolated planning, isolated motor control, or isolated language guidance. It needs an ongoing, inspectable, updateable account of:
+
+ 
+Where am I?
+What body state am I in?
+What objects, hazards, goals, and affordances matter right now?
+What was I trying to do?
+What did I expect to happen?
+What actually happened?
+What should I try next?
+ `
+
+That account is map-like.
+
+In CCA8, a NavMap is the proposed working object that holds this account. It is not simply a geometric occupancy grid, although it may include spatial information. It is a generalized navigation structure over body state, local scene, task context, affordances, action history, and expected consequences.
+
+For an RCOS, this matters because the real world is not a clean command-response interface. It is noisy, partially observable, delayed, physically risky, and constantly correcting the robot. A robot may receive a camera frame, a tactile reading, an IMU disturbance, a blocked motor command, a low-battery warning, and a task instruction at nearly the same time. Without a map-like working structure, those signals remain scattered across ROS topics, HAL packets, callback chains, logs, and planner state.
+
+The NavMap gives the RCOS a central object to update.
+
+ 
+EnvObservation / HAL sensory packet
+→ evidence map
+
+current context / selected primitive / task state
+→ expected map
+
+evidence map vs expected map
+→ residual
+
+residual
+→ update map, change context, retry, recover, stop, or ask for help
+ 
+
+This is the pragmatic robotics version of predictive coding. The prediction error is not treated as a detached score. It is a residual over the robot’s current working map. The useful result is the updated map.
+
+### NavMaps make robot cognition inspectable
+
+One of the main problems with modern agentic robotics is opacity. A language model may propose an action. A VLA may execute a skill. A learned world model may predict a rollout. A ROS graph may pass messages among many nodes. But when the robot fails, it is often difficult to answer simple questions:
+
+ 
+What did the robot think was true?
+What did it expect?
+Which observation contradicted the expectation?
+Which memory or context biased the action?
+Why did it continue, stop, retry, or recover?
+ 
+
+NavMaps give CCA8 an inspectable answer.
+
+The RCOS can expose:
+
+ 
+current evidence map
+current expected map
+accepted WorkingMap
+residuals by slot
+active context
+selected primitive
+expected next-map consequence
+observed next-map consequence
+policy-outcome history
+ 
+
+This is closer to an operating-system diagnostic surface than to a black-box policy network. A conventional OS exposes processes, logs, files, device status, and errors. A robotic cognitive OS should expose maps, context, predictions, residuals, policy traces, and recovery decisions.
+
+### NavMaps separate present evidence from imagined futures
+
+A practical RCOS must manage proposals from many sources:
+
+ 
+LLM adviser:
+    “try going around the obstacle”
+
+VLA / skill provider:
+    “I can execute a grasp”
+
+world model:
+    “if the robot moves forward, the path may remain clear”
+
+simulator:
+    “this route should work”
+
+current HAL / sensor packet:
+    “front contact detected; left wheel slipping”
+ 
+
+The RCOS cannot treat all of these as equal. The current body state and current sensory packet have special authority. Imagined futures and generated plans are useful, but they are not truth.
+
+NavMaps help maintain this discipline:
+
+ 
+present evidence map:
+    what current sensing supports
+
+expected / imagined map:
+    what context, policy, model, or adviser predicts
+
+accepted WorkingMap:
+    what CCA8 currently commits to after comparison
+ 
+
+This is essential for robotics safety. If a world model predicts a clear path but the robot’s current contact sensors report blockage, the RCOS must believe the present evidence, not the rollout. If an LLM proposes “move forward” but the current map marks the zone as unsafe, the RCOS must reject or modify the command.
+
+The guiding rule is:
+
+ 
+World models rehearse.
+LLM / VLA proposes.
+CCA8 validates.
+HAL executes.
+Reality corrects.
+CCA8 records provenance.
+ 
+
+NavMaps are the working structure that makes this validation possible.
+
+
+### NavMaps make action outcomes learnable
+
+A robot should not only execute actions. It should learn what actions tend to do in particular contexts.
+
+In CCA8 terms:
+
+ 
+before map:
+    posture = fallen
+    terrain = uneven
+    goal = stand
+
+selected primitive:
+    recover_fall / stand_up
+
+expected next map:
+    posture = standing
+
+observed next map:
+    posture = fallen
+
+residual:
+    recovery failed in this context
+ 
+
+That residual should not vanish into a scalar reward. It should update the robot’s map-policy association:
+
+ 
+in this kind of map,
+this primitive did not produce the expected next map
+ 
+
+Likewise:
+
+ 
+before map:
+    obstacle = near
+    path_left = open
+
+selected primitive:
+    turn_left
+
+observed next map:
+    obstacle_distance increased
+    route_progress improved
+
+learning:
+    turn_left worked in this context
+ 
+
+This is the RCOS version of primitive causal learning. It does not require human-like reasoning. It only requires that policies be understood as transformations over maps.
+
+That makes NavMaps useful for long-horizon robot autonomy. A script-only system may retry the same failed action. A black-box policy may adapt but remain difficult to inspect. A NavMap-based RCOS can say:
+
+ 
+this action failed in this map context
+this other action succeeded in a related map context
+this residual is safety-relevant
+this episode should be remembered as a keyframe
+ 
+
+### NavMaps support portability across embodiments
+
+A robotic cognitive operating system should not be rewritten for every body.
+
+A wheeled robot, a quadruped, a small PetitCat-style platform, and a simulated goat body will have different motors, sensors, coordinate frames, latencies, and failure modes. The HAL or middleware layer handles those differences. But the cognitive layer still needs stable concepts:
+
+ 
+body state
+local traversability
+hazard proximity
+goal relation
+task progress
+available primitive actions
+expected outcome
+observed outcome
+ 
+
+NavMaps provide an embodiment-independent cognitive surface above the HAL.
+
+The exact sensor stream may differ:
+
+ 
+camera + IMU + wheel odometry
+joint encoders + foot contact sensors
+depth camera + tactile gripper
+simulated EnvObservation
+ 
+
+But the RCOS can normalize those into map slots and map fragments:
+
+ 
+zone = safe / unsafe
+posture = stable / fallen
+path = open / blocked
+object = reachable / not_reachable
+contact = expected / unexpected
+goal = nearer / farther
+ 
+
+That does not remove the need for low-level robotics. It gives the high-level cognitive layer a portable object to reason over, update, and inspect.
+
+### NavMaps are not a replacement for ROS, HALs, VLAs, or controllers
+
+CCA8 as RCOS should not try to solve all robotics inside one monolithic brain.
+
+Fast control, compliance, tactile servoing, motor safety, perception pipelines, kinematics, SLAM, and vendor-specific actuation can remain below or beside CCA8. A VLA or skill provider may be very good at executing particular embodied skills. A learned world model may be useful for rehearsal. An LLM may be useful as a bounded adviser.
+
+The NavMap layer asks a different question:
+
+ 
+How does the robot maintain a coherent, inspectable, action-relevant account
+of its current situation across time?
+ 
+
+In this view:
+
+ 
+HAL / ROS 2 / firmware:
+    execute and report embodied commands
+
+perception systems:
+    produce sensory evidence
+
+LLM / VLA / world model:
+    propose interpretations, actions, or rollouts
+
+CCA8 RCOS:
+    maintains maps, validates present evidence, selects or gates primitives,
+    tracks residuals, updates memory, and records provenance
+ 
+
+This division of labor is important. The RCOS is not “LLM + motors.” It is a supervisory cognitive runtime that keeps perception, memory, action, safety, and recovery organized around an explicit working map.
+
+### Why this matters for real robots
+
+Real robots fail in ordinary ways:
+
+ 
+they slip
+they bump into things
+they lose track of goals
+they repeat failed actions
+they confuse stale memory with current state
+they follow plausible but unsafe plans
+they cannot explain why they acted
+they do not know when a context has changed
+ 
+
+NavMaps address these failures at the cognitive-operating-system level.
+
+They provide a place to represent:
+
+ 
+current evidence
+current context
+expected outcome
+observed outcome
+residual mismatch
+safety-relevant contradiction
+policy success or failure
+episode provenance
+ 
+
+That gives the RCOS a practical control loop:
+
+ 
+sense
+→ update evidence map
+→ compare with expected map
+→ accept / revise current WorkingMap
+→ select or validate a primitive
+→ send bounded command through HAL
+→ observe result
+→ update map-policy association
+→ store keyframes and provenance
+ 
+
+This is not merely biologically inspired. It is a pragmatic architecture for keeping embodied robots coherent over time.
+
+The short version is:
+
+
+Robots need more than commands.
+Robots need a current map of what they are doing, what they expected,
+what actually happened, and what matters next.
+
+In CCA8, that object is the NavMap.
+ 
+
+ 
+ 
+
+
+## 11. Practical CCA8 design doctrine
+
+The practical doctrine for CCA8 is:
+
+ 
+EnvObservation is evidence, not truth.
+The evidence NavMap is a current observation-derived hypothesis.
+Stored/candidate NavMaps are priors, not truth.
+Policy-outcome maps are predictions, not truth.
+Residuals are update signals, not the main object.
+The accepted WorkingMap is the current best map after comparison.
+ 
+
+The intended map-processing loop is:
+
+ 
+previous context / selected primitive / drives
+→ expected current map
+
+EnvObservation
+→ evidence current map
+
+expected current map
+vs
+evidence current map
+→ predictive residual
+
+predictive residual
+→ accepted WorkingMap update
+→ candidate map update/create
+→ context shift if needed
+→ map-policy transition learning
+ 
+
+The anti-hallucination rule is:
+
+ 
+Context may bias missing or ambiguous evidence.
+Context must not overwrite strong or safety-relevant evidence.
+ 
+
+The anti-overbuilding rule is:
+
+ 
+Do not import human-like counterfactual reasoning into CCA8.
+Keep CCA8 at the newborn-goat level:
+    embodied maps,
+    primitive policies,
+    short-horizon expectations,
+    residual-driven map learning.
+ 
+
+---
+
+## 12. How CCA8 differs from neighboring theories
+
+Short version:
+
+ 
+Predictive coding:
+    prediction + evidence → error → update hidden state
+
+CCA8:
+    expected map + evidence map → residual → update NavMap / WorkingMap
+ 
+
+ 
+Friston active inference:
+    perception and action minimize free energy / expected free energy
+
+CCA8:
+    perception and action reduce map residuals and drive-relevant mismatch
+    through map update and primitive embodied policies
+ 
+
+ 
+Georgeon enactive inference:
+    cognition develops through enacted action-outcome interactions
+
+CCA8:
+    enacted interactions are map transitions;
+    policies act on maps and learn expected next maps
+ 
+
+ 
+Mainstream ML:
+    often optimizes latent vectors, policies, rewards, or prediction losses
+
+CCA8:
+    uses prediction residuals and action outcomes to maintain,
+    update, and link inspectable map hypotheses
+ 
+
+The strongest one-line summary is:
+
+ 
+CCA8 treats cognition as enactive predictive map maintenance:
+the agent acts through primitive policies over WorkingMaps,
+and residuals update the maps rather than becoming detached control signals.
+ 
+
+---
+
+## 13. Final summary
+
+CCA8 is not merely a symbolic planner, not merely a predictive-coding network, not a formal Friston active-inference implementation, and not simply an enactive action-outcome learner.
+
+CCA8 is a **NavMap-centered mammalian cognitive architecture**.
+
+Its central claim is:
+
+ 
+The useful result of predictive processing is an updated map.
+ 
+
+Perception supplies evidence. Context supplies priors. Primitive policies supply expected map transitions. Residuals update maps. Large or safety-relevant residuals can change context. Learning links maps, actions, and outcomes.
+
+For CCA8, the newborn-goat version is intentionally simple:
+
+ 
+evidence map
+prior/context map
+residual
+map update/create
+primitive policy
+observed next map
+map-policy transition learning
+ 
+
+
+## 14. Improvements, CCA9, CCA10
+
+For later CCA9 and CCA10, this same map substrate can be extended toward stronger internal reprocessing, causal reasoning, analogy, and compositional language-like processing. But CCA8 itself remains grounded in embodied mammalian map learning.
+
+
+This section deliberately avoids listing upcoming software features. It records the theory and gives future code changes a stable rationale.
+ 
+
+
+
+
+
+
+
 
 
 # Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts

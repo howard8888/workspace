@@ -12,6 +12,12 @@ from cca8_run import (
     render_navmap_observation_update_lines_v1,
     navmap_ctx_transition_from_payloads_v1,
     navmap_transition_history_append_v1,
+    mini_snapshot_text,
+    navmap_transition_mini_line_v1,
+    navmap_transition_summary_v1,
+    render_navmap_transition_lines_v1,
+    snapshot_text,
+    navmap_policy_outcome_index_update_v1,
 )
 from cca8_world_graph import WorldGraph
 
@@ -105,7 +111,7 @@ def test_inject_obs_into_world_uses_local_navmap_candidate_store_across_ticks() 
     assert second["matched"] is True
     assert len(ctx.navmap_scene_body_candidates_v1) == 1
     assert len(ctx.navmap_observation_update_history_v1) == 2
-    
+
 
 def test_navmap_observation_update_summary_is_idle_before_first_update() -> None:
     """The NavMap summary should be readable before any env observation arrives."""
@@ -233,3 +239,147 @@ def test_navmap_observation_update_step_records_transition_after_second_payload(
     assert ctx.navmap_last_policy_outcome_v1["action"] == "policy:stand_up"
     assert ctx.navmap_pending_action_v1 is None
     assert ctx.navmap_pending_reward_v1 == 0.0
+
+def test_navmap_transition_summary_is_idle_before_first_transition() -> None:
+    """The transition summary should be readable before any transition exists."""
+    ctx = Ctx()
+
+    summary = navmap_transition_summary_v1(ctx)
+
+    assert summary["schema"] == "navmap_transition_summary_v1"
+    assert summary["status"] == "idle"
+    assert summary["has_last_transition"] is False
+    assert summary["transition_history_count"] == 0
+    assert summary["policy_outcome_history_count"] == 0
+    assert summary["before_slots"] == {}
+    assert summary["after_slots"] == {}
+
+    lines = render_navmap_transition_lines_v1(ctx)
+    assert lines[0] == "NAVMAP TRANSITION:"
+    assert "status=idle" in lines[1]
+    assert navmap_transition_mini_line_v1(ctx) == "[navmap-transition] status=idle history_count=0 outcome_count=0"
+
+
+def test_navmap_transition_summary_renders_active_transition() -> None:
+    """The transition summary/render helpers should expose the latest transition."""
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    ctx.navmap_pending_reward_v1 = 1.0
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+
+    summary = navmap_transition_summary_v1(ctx)
+
+    assert summary["status"] == "active"
+    assert summary["has_last_transition"] is True
+    assert summary["action"] == "policy:stand_up"
+    assert summary["reward"] == 1.0
+    assert summary["changed"] is True
+    assert summary["changed_slots"] >= 1
+    assert summary["transition_history_count"] == 1
+    assert summary["policy_outcome_history_count"] == 1
+    assert summary["success"] is True
+    assert summary["before_slots"]["posture"] == "fallen"
+    assert summary["after_slots"]["posture"] == "standing"
+
+    rendered = "\n".join(render_navmap_transition_lines_v1(ctx))
+    assert "NAVMAP TRANSITION:" in rendered
+    assert "action=policy:stand_up" in rendered
+    assert "before={" in rendered
+    assert "after={" in rendered
+
+    mini = navmap_transition_mini_line_v1(ctx)
+    assert mini.startswith("[navmap-transition] action=policy:stand_up")
+    assert "changed_slots=" in mini
+    assert "posture=fallen" in mini
+    assert "posture=standing" in mini
+
+
+def test_snapshot_and_mini_snapshot_include_navmap_transition_display() -> None:
+    """Existing snapshots should expose read-only NavMap observation and transition diagnostics."""
+    world = WorldGraph()
+    world.ensure_anchor("NOW")
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    ctx.navmap_pending_reward_v1 = 1.0
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+
+    full_snapshot = snapshot_text(world, ctx=ctx)
+    assert "NAVMAP OBSERVATION UPDATE:" in full_snapshot
+    assert "NAVMAP TRANSITION:" in full_snapshot
+    assert "action=policy:stand_up" in full_snapshot
+
+    mini_snapshot = mini_snapshot_text(world, ctx=ctx, limit=5)
+    assert "[navmap]" in mini_snapshot
+    assert "[navmap-transition]" in mini_snapshot
+    assert "action=policy:stand_up" in mini_snapshot
+
+def test_navmap_policy_outcome_index_update_aggregates_repeated_samples() -> None:
+    """The policy-outcome index should aggregate repeated samples by policy_key."""
+    ctx = Ctx()
+    outcome = {
+        "schema": "navmap_policy_outcome_v1",
+        "action": "policy:stand_up",
+        "context_signature": "mom_distance=far|posture=fallen",
+        "policy_key": "mom_distance=far|posture=fallen::policy:stand_up",
+        "context_slots": {"posture": "fallen", "mom_distance": "far"},
+        "expected_slots": {"posture": "standing", "mom_distance": "near"},
+        "slot_changes": {"posture": {"before": "fallen", "after": "standing"}},
+        "reward": 1.0,
+        "success": True,
+        "confidence": 0.8,
+        "sample_count": 1,
+    }
+
+    row1 = navmap_policy_outcome_index_update_v1(ctx, outcome)
+    outcome2 = dict(outcome)
+    outcome2["reward"] = 0.0
+    outcome2["success"] = False
+    outcome2["confidence"] = 0.6
+    row2 = navmap_policy_outcome_index_update_v1(ctx, outcome2)
+
+    assert row1["sample_count"] == 1
+    assert row2["sample_count"] == 2
+    assert row2["success_count"] == 1
+    assert row2["success_rate"] == 0.5
+    assert row2["reward_total"] == 1.0
+    assert row2["mean_reward"] == 0.5
+    assert abs(row2["confidence_total"] - 1.4) < 0.000001
+    assert abs(row2["mean_confidence"] - 0.7) < 0.000001
+    assert row2["last_reward"] == 0.0
+    assert row2["last_success"] is False
+    assert len(ctx.navmap_policy_outcome_index_v1) == 1
+    assert ctx.navmap_last_policy_outcome_index_row_v1 == row2
+
+
+def test_navmap_transition_path_updates_policy_outcome_index() -> None:
+    """The normal transition helper should update the policy-outcome index."""
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    ctx.navmap_pending_reward_v1 = 1.0
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+
+    row = ctx.navmap_last_policy_outcome_index_row_v1
+    assert row is not None
+    assert row["schema"] == "navmap_policy_outcome_index_row_v1"
+    assert row["action"] == "policy:stand_up"
+    assert row["sample_count"] == 1
+    assert row["success_count"] == 1
+    assert row["success_rate"] == 1.0
+    assert row["mean_reward"] == 1.0
+    assert len(ctx.navmap_policy_outcome_index_v1) == 1
+
+    summary = navmap_transition_summary_v1(ctx)
+    assert summary["policy_outcome_index_count"] == 1
+    assert summary["indexed_sample_count"] == 1
+    assert summary["indexed_success_rate"] == 1.0
+    assert summary["indexed_mean_reward"] == 1.0
+
+    rendered = "\n".join(render_navmap_transition_lines_v1(ctx))
+    assert "index_count=1" in rendered
+    assert "indexed_samples=1" in rendered
