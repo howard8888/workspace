@@ -149,6 +149,11 @@ from cca8_controller import body_shelter_is_near   # pylint: disable=unused-impo
 from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
 from cca8_env import HybridEnvironment, EnvObservation, EnvConfig  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
+from cca8_navmap import (
+    make_navmap_transition_v1,
+    navmap_observation_update_from_env_obs_v1,
+    navmap_policy_outcome_from_transition_v1,
+)
 from cca8_rcos import (
     SIM_ROBOT_GOAT_COMMANDS,
     SimRobotGoatHAL,
@@ -229,6 +234,13 @@ __all__ = [
     "candidate_anchors",
     "__version__",
     "Ctx",
+    "navmap_observation_update_summary_v1",
+    "render_navmap_observation_update_lines_v1",
+    "navmap_observation_update_mini_line_v1",
+    "navmap_observation_update_history_append_v1",
+    "navmap_ctx_observation_update_step_v1",
+    "navmap_ctx_transition_from_payloads_v1",
+    "navmap_ctx_observation_update_step_v1",
     "HAL",
     "PolicyRuntime",
     "run_autonomous_newborn_survival_demo_v1",
@@ -849,6 +861,22 @@ class Ctx:
     # Private state: per-slot last (token, bid, emit_step) used by longterm_obs_mode="changes".
     lt_obs_slots: dict[str, dict[str, Any]] = field(default_factory=dict)
     lt_obs_last_stage: Optional[str] = None
+
+    # NavMap read-only diagnostics (scene_body candidate pool; no policy/WorldGraph/Column effects)
+    navmap_scene_body_candidates_v1: list[dict[str, Any]] = field(default_factory=list)
+    navmap_scene_body_max_candidates_v1: int = 25
+    navmap_last_observation_update_v1: Optional[dict[str, Any]] = None
+    navmap_observation_update_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    navmap_observation_update_history_limit_v1: int = 25
+    navmap_last_payload_v1: Optional[dict[str, Any]] = None
+    navmap_pending_action_v1: Optional[str] = None
+    navmap_pending_reward_v1: float = 0.0
+    navmap_last_transition_v1: Optional[dict[str, Any]] = None
+    navmap_transition_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    navmap_transition_history_limit_v1: int = 25
+    navmap_last_policy_outcome_v1: Optional[dict[str, Any]] = None
+    navmap_policy_outcome_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    navmap_policy_outcome_history_limit_v1: int = 25
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------
@@ -17012,6 +17040,188 @@ def prediction_feedback_mini_line_v1(ctx: Any) -> str:
     return f"[pred] status={s['status']} next={next_txt}; last={last_txt}; history_count={s['history_count']}"
 
 
+def _navmap_safe_dict_v1(value: Any) -> dict[str, Any]:
+    """Return a shallow dict only when value is a dict."""
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _navmap_safe_list_count_v1(value: Any) -> int:
+    """Return the length of a list-like diagnostic buffer."""
+    return len(value) if isinstance(value, list) else 0
+
+
+def _navmap_safe_int_v1(value: Any, default: int = 0) -> int:
+    """Return an int for ordinary scalar values, excluding bools."""
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _navmap_safe_float_or_none_v1(value: Any) -> Optional[float]:
+    """Return a float for ordinary scalar values, or None when unavailable."""
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def navmap_observation_update_summary_v1(ctx: Any) -> dict[str, Any]:
+    """Return a read-only summary of the runner's last scene_body NavMap update."""
+    base: dict[str, Any] = {
+        "schema": "navmap_observation_update_summary_v1",
+        "status": "idle",
+        "has_last_update": False,
+        "action": None,
+        "matched": None,
+        "changed": None,
+        "candidate_count_before": 0,
+        "candidate_count_after": 0,
+        "candidate_store_count": 0,
+        "history_count": 0,
+        "candidate_index": None,
+        "match_score": None,
+        "residual_count": 0,
+        "slot_count": 0,
+        "slots": {},
+        "created_at": None,
+    }
+
+    if ctx is None:
+        out = dict(base)
+        out["status"] = "ctx_unavailable"
+        return out
+
+    base["candidate_store_count"] = _navmap_safe_list_count_v1(
+        getattr(ctx, "navmap_scene_body_candidates_v1", [])
+    )
+    base["history_count"] = _navmap_safe_list_count_v1(
+        getattr(ctx, "navmap_observation_update_history_v1", [])
+    )
+
+    update = _navmap_safe_dict_v1(getattr(ctx, "navmap_last_observation_update_v1", {}))
+    if not update:
+        return base
+
+    current_payload = _navmap_safe_dict_v1(update.get("current_payload"))
+    slots_raw = _navmap_safe_dict_v1(current_payload.get("slots"))
+    slots = {str(key): value for key, value in slots_raw.items() if isinstance(key, str)}
+
+    cycle = _navmap_safe_dict_v1(update.get("cycle"))
+    match = _navmap_safe_dict_v1(cycle.get("match"))
+    proposal = _navmap_safe_dict_v1(cycle.get("proposal"))
+    residual = _navmap_safe_dict_v1(proposal.get("residual"))
+    if not residual:
+        residual = _navmap_safe_dict_v1(match.get("residual"))
+    store_update = _navmap_safe_dict_v1(update.get("store_update"))
+
+    action_raw = update.get("action") or store_update.get("action") or cycle.get("action")
+    candidate_index_raw = store_update.get("candidate_index")
+    if candidate_index_raw is None:
+        candidate_index_raw = proposal.get("candidate_index")
+    if candidate_index_raw is None:
+        candidate_index_raw = match.get("candidate_index")
+
+    out = dict(base)
+    out.update(
+        {
+            "status": "active",
+            "has_last_update": True,
+            "action": action_raw if isinstance(action_raw, str) and action_raw else None,
+            "matched": update.get("matched") if isinstance(update.get("matched"), bool) else None,
+            "changed": update.get("changed") if isinstance(update.get("changed"), bool) else None,
+            "candidate_count_before": _navmap_safe_int_v1(
+                update.get("candidate_count_before"),
+                _navmap_safe_int_v1(store_update.get("before_count"), 0),
+            ),
+            "candidate_count_after": _navmap_safe_int_v1(
+                update.get("candidate_count_after"),
+                _navmap_safe_int_v1(store_update.get("after_count"), 0),
+            ),
+            "candidate_index": _navmap_safe_int_v1(candidate_index_raw, -1),
+            "match_score": _navmap_safe_float_or_none_v1(match.get("score")),
+            "residual_count": _navmap_safe_int_v1(residual.get("residual_count"), 0),
+            "slot_count": len(slots),
+            "slots": slots,
+            "created_at": update.get("created_at") if isinstance(update.get("created_at"), str) else None,
+        }
+    )
+    if out["candidate_index"] < 0:
+        out["candidate_index"] = None
+    return out
+
+
+def render_navmap_observation_update_lines_v1(ctx: Any) -> list[str]:
+    """Return human-readable lines for the runner's scene_body NavMap diagnostic."""
+    s = navmap_observation_update_summary_v1(ctx)
+    lines: list[str] = ["NAVMAP OBSERVATION UPDATE:"]
+
+    if s["status"] == "ctx_unavailable":
+        lines.append("  status=ctx_unavailable")
+        return lines
+
+    if not s["has_last_update"]:
+        lines.append(
+            "  status=idle "
+            f"candidate_store_count={s['candidate_store_count']} "
+            f"history_count={s['history_count']} "
+            "[src=ctx.navmap_last_observation_update_v1]"
+        )
+        return lines
+
+    score = s["match_score"]
+    score_txt = f"{score:.2f}" if isinstance(score, float) else "n/a"
+    lines.append(
+        "  "
+        f"status={s['status']} "
+        f"action={s['action'] or '(n/a)'} "
+        f"matched={s['matched']} "
+        f"changed={s['changed']} "
+        f"residual_count={s['residual_count']} "
+        f"match_score={score_txt} "
+        "[src=ctx.navmap_last_observation_update_v1]"
+    )
+    lines.append(
+        "  "
+        f"candidates={s['candidate_count_before']}->{s['candidate_count_after']} "
+        f"store_count={s['candidate_store_count']} "
+        f"history_count={s['history_count']} "
+        f"candidate_index={s['candidate_index']}"
+    )
+    lines.append(
+        "  "
+        f"current_slots={{{_prediction_compact_map_text_v1(s['slots'])}}} "
+        f"slot_count={s['slot_count']}"
+    )
+    return lines
+
+
+def navmap_observation_update_mini_line_v1(ctx: Any) -> str:
+    """Return a one-line NavMap readout for mini-snapshots."""
+    s = navmap_observation_update_summary_v1(ctx)
+
+    if s["status"] == "ctx_unavailable":
+        return "[navmap] ctx unavailable"
+
+    if not s["has_last_update"]:
+        return (
+            "[navmap] status=idle "
+            f"store_count={s['candidate_store_count']} history_count={s['history_count']}"
+        )
+
+    return (
+        "[navmap] "
+        f"action={s['action'] or '(n/a)'} "
+        f"matched={s['matched']} changed={s['changed']} "
+        f"residuals={s['residual_count']} slots={{{_prediction_compact_map_text_v1(s['slots'])}}} "
+        f"candidates={s['candidate_count_before']}->{s['candidate_count_after']} "
+        f"history_count={s['history_count']}"
+    )
+
 
 def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     """
@@ -21226,6 +21436,232 @@ def inject_obs_into_working_world(ctx: Ctx, env_obs: EnvObservation) -> dict[str
     return {"predicates": created_preds, "cues": created_cues}
 
 
+def navmap_observation_update_history_append_v1(
+    history: list[dict[str, Any]],
+    record: dict[str, Any],
+    *,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """Return a bounded NavMap observation-update history without mutating inputs.
+
+    Parameters
+    ----------
+    history:
+        Existing JSON-safe history records. Malformed rows are ignored so a bad
+        caller-owned list cannot poison ctx history.
+
+    record:
+        The newest JSON-safe NavMapObservationUpdateV1 dictionary to append. If
+        it is empty, the returned list is just the bounded clean history.
+
+    limit:
+        Maximum number of records to keep. Non-positive or malformed values are
+        treated as 25.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Newest-bounded history, preserving order from older to newer records.
+    """
+    try:
+        max_len = int(limit)
+    except (TypeError, ValueError):
+        max_len = 25
+    if max_len <= 0:
+        max_len = 25
+
+    clean_history: list[dict[str, Any]] = []
+    if isinstance(history, list):
+        for item in history:
+            if isinstance(item, dict):
+                clean_history.append(dict(item))
+
+    if isinstance(record, dict) and record:
+        clean_history.append(dict(record))
+
+    if len(clean_history) > max_len:
+        return clean_history[-max_len:]
+    return clean_history
+
+
+def navmap_transition_history_append_v1(
+    history: list[dict[str, Any]],
+    record: dict[str, Any],
+    *,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """Return a bounded NavMap transition history without mutating inputs."""
+    return navmap_observation_update_history_append_v1(history, record, limit=limit)
+
+
+def navmap_ctx_transition_from_payloads_v1(
+    ctx: Ctx,
+    before_payload: dict[str, Any],
+    after_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Store one ctx-local action-conditioned NavMap transition diagnostic.
+
+    This helper is the runner bridge for primitive causal learning:
+
+      previous scene_body map + action applied by the environment + current scene_body map
+      -> NavMapTransitionV1
+      -> optional NavMapPolicyOutcomeV1 sample
+
+    It is deliberately diagnostic-only. It does not write WorldGraph facts, Column
+    engrams, controller state, skill values, or policy-selection inputs.
+    """
+    if ctx is None:
+        return {}
+    if not isinstance(before_payload, dict) or not before_payload:
+        return {}
+    if not isinstance(after_payload, dict) or not after_payload:
+        return {}
+
+    action_raw = getattr(ctx, "navmap_pending_action_v1", None)
+    action = action_raw if isinstance(action_raw, str) and action_raw else ""
+
+    try:
+        reward = float(getattr(ctx, "navmap_pending_reward_v1", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        reward = 0.0
+
+    basis = {
+        "diagnostic_source": "cca8_run.navmap_ctx_transition_from_payloads_v1",
+        "controller_steps": getattr(ctx, "controller_steps", None),
+        "ticks": getattr(ctx, "ticks", None),
+        "profile": getattr(ctx, "profile", None),
+    }
+
+    transition = make_navmap_transition_v1(
+        before_payload,
+        after_payload,
+        action=action,
+        reward=reward,
+        drive_delta={},
+        basis=basis,
+    )
+    transition_dict = transition.as_dict()
+    ctx.navmap_last_transition_v1 = dict(transition_dict)
+
+    transition_limit = _navmap_safe_int_v1(
+        getattr(ctx, "navmap_transition_history_limit_v1", 25),
+        25,
+    )
+    if transition_limit <= 0:
+        transition_limit = 25
+    ctx.navmap_transition_history_v1 = navmap_transition_history_append_v1(
+        getattr(ctx, "navmap_transition_history_v1", []),
+        transition_dict,
+        limit=transition_limit,
+    )
+
+    if action:
+        outcome = navmap_policy_outcome_from_transition_v1(
+            transition,
+            success_threshold=0.0,
+            confidence=1.0,
+            basis={"diagnostic_source": "cca8_run.navmap_ctx_transition_from_payloads_v1"},
+        )
+        outcome_dict = outcome.as_dict()
+        ctx.navmap_last_policy_outcome_v1 = dict(outcome_dict)
+
+        outcome_limit = _navmap_safe_int_v1(
+            getattr(ctx, "navmap_policy_outcome_history_limit_v1", 25),
+            25,
+        )
+        if outcome_limit <= 0:
+            outcome_limit = 25
+        ctx.navmap_policy_outcome_history_v1 = navmap_transition_history_append_v1(
+            getattr(ctx, "navmap_policy_outcome_history_v1", []),
+            outcome_dict,
+            limit=outcome_limit,
+        )
+    else:
+        ctx.navmap_last_policy_outcome_v1 = None
+
+    return transition_dict
+
+
+def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
+    """Run one read-only scene_body NavMap diagnostic update and store it on ctx.
+
+    This is the first runtime bridge from EnvObservation into the NavMap helper
+    module. It deliberately does not write WorldGraph facts, Column engrams, or
+    controller/policy selection state. The only effects are ctx-local diagnostic
+    fields:
+
+      - ctx.navmap_scene_body_candidates_v1
+      - ctx.navmap_last_observation_update_v1
+      - ctx.navmap_observation_update_history_v1
+
+    The candidate pool is a small in-memory diagnostic store. It is updated with
+    the pure candidate list returned by cca8_navmap.navmap_observation_update_from_env_obs_v1.
+    """
+    if ctx is None or env_obs is None:
+        return {}
+
+    candidate_store = getattr(ctx, "navmap_scene_body_candidates_v1", [])
+    if not isinstance(candidate_store, list):
+        candidate_store = []
+
+    try:
+        max_candidates = int(getattr(ctx, "navmap_scene_body_max_candidates_v1", 25) or 25)
+    except (TypeError, ValueError):
+        max_candidates = 25
+    if max_candidates <= 0:
+        max_candidates = 25
+
+    basis = {
+        "diagnostic_source": "cca8_run.navmap_ctx_observation_update_step_v1",
+        "controller_steps": getattr(ctx, "controller_steps", None),
+        "ticks": getattr(ctx, "ticks", None),
+        "profile": getattr(ctx, "profile", None),
+    }
+
+    update = navmap_observation_update_from_env_obs_v1(
+        env_obs,
+        candidate_store,
+        basis=basis,
+        max_candidates=max_candidates,
+    )
+    update_dict = update.as_dict()
+
+    store_update = update_dict.get("store_update", {})
+    new_candidates = store_update.get("candidates") if isinstance(store_update, dict) else None
+    if isinstance(new_candidates, list):
+        ctx.navmap_scene_body_candidates_v1 = [dict(item) for item in new_candidates if isinstance(item, dict)]
+    else:
+        ctx.navmap_scene_body_candidates_v1 = []
+
+    ctx.navmap_last_observation_update_v1 = dict(update_dict)
+
+    try:
+        history_limit = int(getattr(ctx, "navmap_observation_update_history_limit_v1", 25) or 25)
+    except (TypeError, ValueError):
+        history_limit = 25
+    ctx.navmap_observation_update_history_v1 = navmap_observation_update_history_append_v1(
+        getattr(ctx, "navmap_observation_update_history_v1", []),
+        update_dict,
+        limit=history_limit,
+    )
+
+    current_payload = update_dict.get("current_payload")
+    current_payload_dict = dict(current_payload) if isinstance(current_payload, dict) else {}
+    previous_payload = getattr(ctx, "navmap_last_payload_v1", None)
+    previous_payload_dict = dict(previous_payload) if isinstance(previous_payload, dict) else {}
+
+    if previous_payload_dict and current_payload_dict:
+        navmap_ctx_transition_from_payloads_v1(ctx, previous_payload_dict, current_payload_dict)
+    else:
+        ctx.navmap_last_transition_v1 = None
+        ctx.navmap_last_policy_outcome_v1 = None
+
+    ctx.navmap_last_payload_v1 = dict(current_payload_dict) if current_payload_dict else None
+    ctx.navmap_pending_action_v1 = None
+    ctx.navmap_pending_reward_v1 = 0.0
+    return update_dict
+
+
 def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
     """Write env observation tokens into the long-term WorldGraph with clear attach semantics.
 
@@ -21428,6 +21864,12 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         update_body_world_from_obs(ctx, env_obs)
     except Exception:
         # BodyMap update should never be allowed to break env stepping.
+        pass
+
+    # Read-only NavMap diagnostic bridge. This updates ctx-local candidate/history fields only.
+    try:
+        navmap_ctx_observation_update_step_v1(ctx, env_obs)
+    except Exception:
         pass
 
     # Allow turning off long-term injection entirely (BodyMap/WorkingMap still update).
@@ -23525,6 +23967,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             _phase7_reset_run_state() # phase7 s/w devpt: clear any previous run state on env reset
             ctx.env_episode_started = True
             ctx.env_last_action = None
+            ctx.navmap_pending_action_v1 = None
+            ctx.navmap_pending_reward_v1 = 0.0
+            ctx.navmap_last_payload_v1 = None
             step_idx = env_info.get("step_index", 0)
             print(
                 f"[env] Reset env scenario: "
@@ -23544,6 +23989,11 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 ctx=ctx,
             )
             ctx.env_last_action = None
+            ctx.navmap_pending_action_v1 = action_for_env if isinstance(action_for_env, str) else None
+            try:
+                ctx.navmap_pending_reward_v1 = float(_env_reward)
+            except (TypeError, ValueError):
+                ctx.navmap_pending_reward_v1 = 0.0
             st = env.state
             step_idx = env_info.get("step_index")
             ctx_txt = ""
@@ -24202,6 +24652,11 @@ def mini_snapshot_text(world, ctx=None, limit: int = 50) -> str:
         lines.append(prediction_feedback_mini_line_v1(ctx))
     except Exception:
         lines.append("[pred] (unavailable)")
+
+    try:
+        lines.append(navmap_observation_update_mini_line_v1(ctx))
+    except Exception:
+        lines.append("[navmap] (unavailable)")
 
     # Compact world view: last `limit` bindings with their outgoing edges
     try:
