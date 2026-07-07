@@ -27,8 +27,11 @@ Requirements:
 Recommended fresh Windows setup (in terminal):
 
 >py -m pip install --upgrade pip
+
 >py -m pip install -r requirements.txt
+
 >python cca8_run.py --preflight
+
 >python cca8_run.py
 
 
