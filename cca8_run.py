@@ -150,9 +150,11 @@ from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
 from cca8_env import HybridEnvironment, EnvObservation, EnvConfig  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
 from cca8_navmap import (
+    make_navmap_payload_v1,
     make_navmap_transition_v1,
     navmap_observation_update_from_env_obs_v1,
     navmap_policy_outcome_from_transition_v1,
+    navmap_residual_v1,
 )
 from cca8_rcos import (
     SIM_ROBOT_GOAT_COMMANDS,
@@ -238,11 +240,22 @@ __all__ = [
     "render_navmap_observation_update_lines_v1",
     "navmap_observation_update_mini_line_v1",
     "navmap_observation_update_history_append_v1",
+    "navmap_expected_current_summary_v1",
+    "render_navmap_expected_current_lines_v1",
+    "navmap_expected_current_mini_line_v1",
+    "navmap_expected_current_history_append_v1",
+    "navmap_accepted_current_history_append_v1",
+    "navmap_accepted_current_from_comparison_v1",
+    "navmap_expected_current_payload_from_ctx_v1",
+    "navmap_expected_current_comparison_step_v1",
     "navmap_transition_summary_v1",
     "render_navmap_transition_lines_v1",
     "navmap_transition_mini_line_v1",
+    "navmap_scope_frame_v1",
+    "render_navmap_scope_frame_lines_v1",
+    "render_navmap_scope_legend_lines_v1",
+    "navmap_scope_mini_line_v1",
     "navmap_transition_history_append_v1",
-    "navmap_policy_outcome_index_update_v1",
     "navmap_policy_outcome_index_update_v1",
     "navmap_ctx_observation_update_step_v1",
     "navmap_ctx_transition_from_payloads_v1",
@@ -885,6 +898,14 @@ class Ctx:
     navmap_policy_outcome_index_v1: dict[str, dict[str, Any]] = field(default_factory=dict)
     navmap_policy_outcome_index_limit_v1: int = 100
     navmap_last_policy_outcome_index_row_v1: Optional[dict[str, Any]] = None
+    navmap_last_expected_current_payload_v1: Optional[dict[str, Any]] = None
+    navmap_last_expected_current_comparison_v1: Optional[dict[str, Any]] = None
+    navmap_expected_current_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    navmap_expected_current_history_limit_v1: int = 25
+    navmap_expected_current_context_shift_threshold_v1: int = 3
+    navmap_last_accepted_current_v1: Optional[dict[str, Any]] = None
+    navmap_accepted_current_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    navmap_accepted_current_history_limit_v1: int = 25
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------
@@ -17257,6 +17278,160 @@ def _navmap_transition_slot_change_text_v1(slot_changes: Any) -> str:
     return ", ".join(parts) if parts else "(none)"
 
 
+def _navmap_compact_list_text_v1(value: Any) -> str:
+    """Return compact text for a small diagnostic list."""
+    if not isinstance(value, list) or not value:
+        return "(none)"
+
+    parts: list[str] = []
+    for item in value:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if text:
+            parts.append(text)
+    return ", ".join(parts) if parts else "(none)"
+
+
+def navmap_expected_current_summary_v1(ctx: Any) -> dict[str, Any]:
+    """Return a read-only summary of expected-current NavMap predictive diagnostics."""
+    base: dict[str, Any] = {
+        "schema": "navmap_expected_current_summary_v1",
+        "status": "idle",
+        "has_last_comparison": False,
+        "action": None,
+        "reason": None,
+        "residual_count": 0,
+        "exact_match": None,
+        "context_shift_recommended": False,
+        "context_break_recommended": False,
+        "history_count": 0,
+        "expected_slots": {},
+        "observed_slots": {},
+        "evidence_override_slots": {},
+        "safety_residual_slots": [],
+        "created_at": None,
+    }
+
+    if ctx is None:
+        out = dict(base)
+        out["status"] = "ctx_unavailable"
+        return out
+
+    base["history_count"] = _navmap_safe_list_count_v1(
+        getattr(ctx, "navmap_expected_current_history_v1", [])
+    )
+
+    comparison = _navmap_safe_dict_v1(getattr(ctx, "navmap_last_expected_current_comparison_v1", {}))
+    if not comparison:
+        return base
+
+    expected_payload = _navmap_safe_dict_v1(comparison.get("expected_payload"))
+    observed_payload = _navmap_safe_dict_v1(comparison.get("observed_payload"))
+    safety_slots_raw = comparison.get("safety_residual_slots")
+    safety_slots = [str(item) for item in safety_slots_raw if isinstance(item, str)] if isinstance(
+        safety_slots_raw, list
+    ) else []
+
+    status_raw = comparison.get("status")
+    action_raw = comparison.get("action")
+    reason_raw = comparison.get("reason")
+    created_at_raw = comparison.get("created_at")
+    exact_raw = comparison.get("exact_match")
+    context_shift_raw = comparison.get("context_shift_recommended")
+    context_break_raw = comparison.get("context_break_recommended")
+
+    out = dict(base)
+    out.update(
+        {
+            "status": status_raw if isinstance(status_raw, str) and status_raw else "active",
+            "has_last_comparison": True,
+            "action": action_raw if isinstance(action_raw, str) and action_raw else None,
+            "reason": reason_raw if isinstance(reason_raw, str) and reason_raw else None,
+            "residual_count": _navmap_safe_int_v1(comparison.get("residual_count"), 0),
+            "exact_match": exact_raw if isinstance(exact_raw, bool) else None,
+            "context_shift_recommended": (
+                context_shift_raw if isinstance(context_shift_raw, bool) else False
+            ),
+            "context_break_recommended": (
+                context_break_raw if isinstance(context_break_raw, bool) else False
+            ),
+            "expected_slots": _navmap_slots_from_payload_dict_v1(expected_payload),
+            "observed_slots": _navmap_slots_from_payload_dict_v1(observed_payload),
+            "evidence_override_slots": _navmap_safe_dict_v1(comparison.get("evidence_override_slots")),
+            "safety_residual_slots": safety_slots,
+            "created_at": created_at_raw if isinstance(created_at_raw, str) and created_at_raw else None,
+        }
+    )
+    return out
+
+
+def render_navmap_expected_current_lines_v1(ctx: Any) -> list[str]:
+    """Return human-readable lines for expected-current NavMap predictive diagnostics."""
+    s = navmap_expected_current_summary_v1(ctx)
+    lines: list[str] = ["NAVMAP EXPECTED-CURRENT:"]
+
+    if s["status"] == "ctx_unavailable":
+        lines.append("  status=ctx_unavailable")
+        return lines
+
+    if not s["has_last_comparison"]:
+        lines.append(
+            "  status=idle "
+            f"history_count={s['history_count']} "
+            "[src=ctx.navmap_last_expected_current_comparison_v1]"
+        )
+        return lines
+
+    lines.append(
+        "  "
+        f"status={s['status']} "
+        f"action={s['action'] or '(none)'} "
+        f"residual_count={s['residual_count']} "
+        f"exact_match={s['exact_match']} "
+        f"context_shift={s['context_shift_recommended']} "
+        f"context_break={s['context_break_recommended']} "
+        "[src=ctx.navmap_last_expected_current_comparison_v1]"
+    )
+    lines.append(
+        "  "
+        f"expected={{{_prediction_compact_map_text_v1(s['expected_slots'])}}} "
+        f"observed={{{_prediction_compact_map_text_v1(s['observed_slots'])}}}"
+    )
+    lines.append(
+        "  "
+        f"evidence_override={{{_prediction_compact_map_text_v1(s['evidence_override_slots'])}}} "
+        f"safety_slots={{{_navmap_compact_list_text_v1(s['safety_residual_slots'])}}} "
+        f"history_count={s['history_count']} "
+        f"reason={s['reason'] or '(n/a)'}"
+    )
+    return lines
+
+
+def navmap_expected_current_mini_line_v1(ctx: Any) -> str:
+    """Return a one-line expected-current NavMap readout for mini-snapshots."""
+    s = navmap_expected_current_summary_v1(ctx)
+
+    if s["status"] == "ctx_unavailable":
+        return "[navmap-expected] ctx unavailable"
+
+    if not s["has_last_comparison"]:
+        return f"[navmap-expected] status=idle history_count={s['history_count']}"
+
+    return (
+        "[navmap-expected] "
+        f"status={s['status']} "
+        f"action={s['action'] or '(none)'} "
+        f"residuals={s['residual_count']} "
+        f"shift={s['context_shift_recommended']} "
+        f"break={s['context_break_recommended']} "
+        f"expected={{{_prediction_compact_map_text_v1(s['expected_slots'])}}} "
+        f"observed={{{_prediction_compact_map_text_v1(s['observed_slots'])}}} "
+        f"overrides={{{_prediction_compact_map_text_v1(s['evidence_override_slots'])}}} "
+        f"history_count={s['history_count']}"
+    )
+
+
 def navmap_transition_summary_v1(ctx: Any) -> dict[str, Any]:
     """Return a read-only summary of the runner's last action-conditioned NavMap transition."""
     base: dict[str, Any] = {
@@ -17404,6 +17579,243 @@ def navmap_transition_mini_line_v1(ctx: Any) -> str:
         f"after={{{_prediction_compact_map_text_v1(s['after_slots'])}}} "
         f"history_count={s['transition_history_count']} "
         f"indexed_samples={s['indexed_sample_count']}"
+    )
+
+
+NAVMAP_SCOPE_MARKER_V1 = "(~~)"
+
+
+def navmap_scope_frame_v1(ctx: Any) -> dict[str, Any]:
+    """Return a read-only NavMap Oscilloscope frame over the current ctx registers.
+
+    This is intentionally high-impedance test equipment: it reads existing NavMap
+    diagnostic registers and formats a single signal-path frame. It does not run
+    NavMap matching, mutate ctx, write memory, choose policies, or append history.
+    """
+    base: dict[str, Any] = {
+        "schema": "navmap_scope_frame_v1",
+        "status": "idle",
+        "has_evidence": False,
+        "has_expected": False,
+        "has_residual": False,
+        "has_accepted": False,
+        "has_transition": False,
+        "has_policy_outcome": False,
+        "evidence_action": None,
+        "evidence_slots": {},
+        "expected_action": None,
+        "expected_slots": {},
+        "observed_slots": {},
+        "residual_count": 0,
+        "exact_match": None,
+        "context_shift_recommended": False,
+        "context_break_recommended": False,
+        "evidence_override_slots": {},
+        "safety_residual_slots": [],
+        "acceptance": None,
+        "accepted_slots": {},
+        "transition_action": None,
+        "transition_reward": 0.0,
+        "transition_before_slots": {},
+        "transition_after_slots": {},
+        "transition_changed_slots": 0,
+        "policy_success": None,
+        "policy_confidence": None,
+        "policy_key": None,
+        "indexed_sample_count": 0,
+        "indexed_success_rate": 0.0,
+        "indexed_mean_reward": 0.0,
+        "probe_order": [
+            "evidence",
+            "expected",
+            "residual",
+            "accepted",
+            "transition",
+            "policy_outcome",
+        ],
+    }
+
+    if ctx is None:
+        out = dict(base)
+        out["status"] = "ctx_unavailable"
+        return out
+
+    observation = navmap_observation_update_summary_v1(ctx)
+    expected = navmap_expected_current_summary_v1(ctx)
+    transition = navmap_transition_summary_v1(ctx)
+    accepted = _navmap_safe_dict_v1(getattr(ctx, "navmap_last_accepted_current_v1", {}))
+
+    accepted_payload = _navmap_safe_dict_v1(accepted.get("accepted_payload"))
+    accepted_slots = _navmap_slots_from_payload_dict_v1(accepted_payload)
+    if not accepted_slots:
+        accepted_slots = _navmap_safe_dict_v1(accepted.get("observed_slots"))
+
+    observed_slots = _navmap_safe_dict_v1(expected.get("observed_slots"))
+    if not observed_slots:
+        observed_slots = _navmap_safe_dict_v1(observation.get("slots"))
+
+    has_evidence = bool(observation.get("has_last_update"))
+    has_expected = bool(expected.get("expected_slots"))
+    has_residual = bool(expected.get("has_last_comparison"))
+    has_accepted = bool(accepted)
+    has_transition = bool(transition.get("has_last_transition"))
+    has_policy_outcome = bool(transition.get("success") is not None or transition.get("indexed_sample_count"))
+
+    out = dict(base)
+    out.update(
+        {
+            "status": "active" if any(
+                [has_evidence, has_expected, has_residual, has_accepted, has_transition, has_policy_outcome]
+            ) else "idle",
+            "has_evidence": has_evidence,
+            "has_expected": has_expected,
+            "has_residual": has_residual,
+            "has_accepted": has_accepted,
+            "has_transition": has_transition,
+            "has_policy_outcome": has_policy_outcome,
+            "evidence_action": observation.get("action") if isinstance(observation.get("action"), str) else None,
+            "evidence_slots": _navmap_safe_dict_v1(observation.get("slots")),
+            "expected_action": expected.get("action") if isinstance(expected.get("action"), str) else None,
+            "expected_slots": _navmap_safe_dict_v1(expected.get("expected_slots")),
+            "observed_slots": observed_slots,
+            "residual_count": _navmap_safe_int_v1(expected.get("residual_count"), 0),
+            "exact_match": expected.get("exact_match") if isinstance(expected.get("exact_match"), bool) else None,
+            "context_shift_recommended": bool(expected.get("context_shift_recommended")),
+            "context_break_recommended": bool(expected.get("context_break_recommended")),
+            "evidence_override_slots": _navmap_safe_dict_v1(expected.get("evidence_override_slots")),
+            "safety_residual_slots": (
+                list(expected.get("safety_residual_slots"))
+                if isinstance(expected.get("safety_residual_slots"), list)
+                else []
+            ),
+            "acceptance": accepted.get("acceptance") if isinstance(accepted.get("acceptance"), str) else None,
+            "accepted_slots": accepted_slots,
+            "transition_action": transition.get("action") if isinstance(transition.get("action"), str) else None,
+            "transition_reward": _navmap_safe_float_or_none_v1(transition.get("reward")) or 0.0,
+            "transition_before_slots": _navmap_safe_dict_v1(transition.get("before_slots")),
+            "transition_after_slots": _navmap_safe_dict_v1(transition.get("after_slots")),
+            "transition_changed_slots": _navmap_safe_int_v1(transition.get("changed_slots"), 0),
+            "policy_success": transition.get("success") if isinstance(transition.get("success"), bool) else None,
+            "policy_confidence": _navmap_safe_float_or_none_v1(transition.get("confidence")),
+            "policy_key": transition.get("policy_key") if isinstance(transition.get("policy_key"), str) else None,
+            "indexed_sample_count": _navmap_safe_int_v1(transition.get("indexed_sample_count"), 0),
+            "indexed_success_rate": _navmap_safe_float_or_none_v1(
+                transition.get("indexed_success_rate")
+            ) or 0.0,
+            "indexed_mean_reward": _navmap_safe_float_or_none_v1(transition.get("indexed_mean_reward")) or 0.0,
+        }
+    )
+    return out
+
+
+def _navmap_scope_probe_status_text_v1(frame: dict[str, Any]) -> str:
+    """Return compact on/off probe status text for a NavMap Oscilloscope frame."""
+    labels = [
+        ("evidence", "has_evidence"),
+        ("expected", "has_expected"),
+        ("residual", "has_residual"),
+        ("accepted", "has_accepted"),
+        ("transition", "has_transition"),
+        ("outcome", "has_policy_outcome"),
+    ]
+    parts = [f"{name}={'on' if frame.get(key) else 'off'}" for name, key in labels]
+    return ", ".join(parts)
+
+
+def render_navmap_scope_legend_lines_v1() -> list[str]:
+    """Return a compact teaching legend for NavMap Oscilloscope output."""
+    return [
+        f"{NAVMAP_SCOPE_MARKER_V1} NAVMAP OSCILLOSCOPE LEGEND:",
+        "  evidence  = EnvObservation-derived NavMap; the current sensory/body evidence packet.",
+        "  expected  = context/policy prior; what the previous map and selected primitive predicted.",
+        "  residual  = slot-level difference between expected map and evidence map.",
+        "  accepted  = current accepted map; evidence remains authoritative in this diagnostic slice.",
+        "  transition= previous accepted map + action + current accepted map.",
+        "  outcome   = ctx-local policy-outcome sample/index evidence for that map/action path.",
+        "  shift/break: shift suggests context update; break marks safety/context-breaking evidence.",
+    ]
+
+
+def render_navmap_scope_frame_lines_v1(ctx: Any) -> list[str]:
+    """Return human-readable NavMap Oscilloscope lines for the current ctx registers."""
+    frame = navmap_scope_frame_v1(ctx)
+    lines: list[str] = [f"{NAVMAP_SCOPE_MARKER_V1} NAVMAP OSCILLOSCOPE:"]
+
+    if frame["status"] == "ctx_unavailable":
+        lines.append("  status=ctx_unavailable")
+        return lines
+
+    if frame["status"] == "idle":
+        lines.append("  status=idle probes=all_off [src=ctx.navmap_* diagnostic registers]")
+        lines.append("  legend: run menu 35 or 37 to put evidence/expectation/residual signals on the scope.")
+        return lines
+
+    confidence = frame["policy_confidence"]
+    confidence_txt = f"{confidence:.2f}" if isinstance(confidence, float) else "n/a"
+    lines.append(
+        "  "
+        f"status={frame['status']} probes={_navmap_scope_probe_status_text_v1(frame)} "
+        "[src=ctx.navmap_* diagnostic registers]"
+    )
+    lines.append("  legend: evidence=input map; expected=prior; residual=difference; accepted=current map")
+    lines.append(
+        "  "
+        f"1 evidence  : action={frame['evidence_action'] or '(n/a)'} "
+        f"slots={{{_prediction_compact_map_text_v1(frame['evidence_slots'])}}}"
+    )
+    lines.append(
+        "  "
+        f"2 expected  : action={frame['expected_action'] or '(none)'} "
+        f"slots={{{_prediction_compact_map_text_v1(frame['expected_slots'])}}}"
+    )
+    lines.append(
+        "  "
+        f"3 residual  : count={frame['residual_count']} exact={frame['exact_match']} "
+        f"shift={frame['context_shift_recommended']} break={frame['context_break_recommended']} "
+        f"overrides={{{_prediction_compact_map_text_v1(frame['evidence_override_slots'])}}} "
+        f"safety={{{_navmap_compact_list_text_v1(frame['safety_residual_slots'])}}}"
+    )
+    lines.append(
+        "  "
+        f"4 accepted  : acceptance={frame['acceptance'] or '(none)'} "
+        f"slots={{{_prediction_compact_map_text_v1(frame['accepted_slots'])}}}"
+    )
+    lines.append(
+        "  "
+        f"5 transition: before={{{_prediction_compact_map_text_v1(frame['transition_before_slots'])}}} "
+        f"action={frame['transition_action'] or '(none)'} "
+        f"after={{{_prediction_compact_map_text_v1(frame['transition_after_slots'])}}} "
+        f"reward={frame['transition_reward']:.2f} changed_slots={frame['transition_changed_slots']}"
+    )
+    lines.append(
+        "  "
+        f"6 outcome   : success={frame['policy_success']} confidence={confidence_txt} "
+        f"indexed_samples={frame['indexed_sample_count']} "
+        f"indexed_success_rate={frame['indexed_success_rate']:.2f} "
+        f"indexed_mean_reward={frame['indexed_mean_reward']:.2f}"
+    )
+    return lines
+
+
+def navmap_scope_mini_line_v1(ctx: Any) -> str:
+    """Return a one-line NavMap Oscilloscope readout for mini-snapshots."""
+    frame = navmap_scope_frame_v1(ctx)
+
+    if frame["status"] == "ctx_unavailable":
+        return f"{NAVMAP_SCOPE_MARKER_V1} [navmap-scope] ctx unavailable"
+
+    if frame["status"] == "idle":
+        return f"{NAVMAP_SCOPE_MARKER_V1} [navmap-scope] status=idle probes=all_off"
+
+    return (
+        f"{NAVMAP_SCOPE_MARKER_V1} [navmap-scope] "
+        f"acceptance={frame['acceptance'] or '(none)'} "
+        f"residuals={frame['residual_count']} "
+        f"shift={frame['context_shift_recommended']} "
+        f"break={frame['context_break_recommended']} "
+        f"accepted={{{_prediction_compact_map_text_v1(frame['accepted_slots'])}}} "
+        f"action={frame['transition_action'] or frame['expected_action'] or '(none)'} "
+        f"outcome_samples={frame['indexed_sample_count']}"
     )
 
 
@@ -17588,7 +18000,13 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.extend(render_navmap_observation_update_lines_v1(ctx))
     lines.append("")
 
+    lines.extend(render_navmap_expected_current_lines_v1(ctx))
+    lines.append("")
+
     lines.extend(render_navmap_transition_lines_v1(ctx))
+    lines.append("")
+
+    lines.extend(render_navmap_scope_frame_lines_v1(ctx))
     lines.append("")
 
     # POLICIES (skills readout)
@@ -21770,6 +22188,317 @@ def navmap_policy_outcome_index_update_v1(ctx: Ctx, outcome: dict[str, Any]) -> 
     return row
 
 
+def navmap_expected_current_history_append_v1(
+    history: list[dict[str, Any]],
+    record: dict[str, Any],
+    *,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """Return a bounded expected-current NavMap diagnostic history without mutating inputs."""
+    return navmap_observation_update_history_append_v1(history, record, limit=limit)
+
+
+def navmap_accepted_current_history_append_v1(
+    history: list[dict[str, Any]],
+    record: dict[str, Any],
+    *,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """Return a bounded accepted-current NavMap diagnostic history without mutating inputs."""
+    return navmap_observation_update_history_append_v1(history, record, limit=limit)
+
+
+def _navmap_slot_signature_from_slots_v1(slots: Any) -> str:
+    """Return a stable context signature from a slot map."""
+    slot_map = _navmap_safe_dict_v1(slots)
+    clean: dict[str, str] = {}
+    for key, value in slot_map.items():
+        if not isinstance(key, str) or value is None:
+            continue
+        clean_key = key.strip()
+        clean_value = str(value).strip().lower()
+        if clean_key and clean_value:
+            clean[clean_key] = clean_value
+    return "|".join(f"{key}={clean[key]}" for key in sorted(clean))
+
+
+def _navmap_policy_index_row_for_action_v1(ctx: Ctx, action: str, context_slots: dict[str, Any]) -> dict[str, Any]:
+    """Return the exact ctx-local policy-outcome index row for context/action, if present."""
+    if ctx is None or not isinstance(action, str) or not action:
+        return {}
+
+    context_signature = _navmap_slot_signature_from_slots_v1(context_slots)
+    policy_key = f"{context_signature}::{action}" if context_signature else action
+
+    raw_index = getattr(ctx, "navmap_policy_outcome_index_v1", {})
+    if not isinstance(raw_index, dict):
+        return {}
+
+    row = raw_index.get(policy_key)
+    return dict(row) if isinstance(row, dict) else {}
+
+
+def navmap_expected_current_payload_from_ctx_v1(ctx: Ctx) -> dict[str, Any]:
+    """Build the ctx-local expected-current scene_body NavMap diagnostic.
+
+    This is the first explicit top-down prior surface for the runner's NavMap
+    path. It combines previous scene_body continuity with the selected primitive:
+
+      previous scene_body map + pending primitive/action -> expected current map
+
+    This helper is goat-level, short-horizon, and behavior-preserving. It does
+    not simulate alternative policies, choose actions, write WorldGraph facts,
+    write Column engrams, update BodyMap, or alter policy selection.
+    """
+    if ctx is None:
+        return {}
+
+    previous_payload = _navmap_safe_dict_v1(getattr(ctx, "navmap_last_payload_v1", {}))
+    previous_slots = _navmap_slots_from_payload_dict_v1(previous_payload)
+
+    action_raw = getattr(ctx, "navmap_pending_action_v1", None)
+    action = action_raw if isinstance(action_raw, str) and action_raw else ""
+
+    expected_slots: dict[str, Any] = dict(previous_slots)
+    sources: list[str] = []
+    if previous_slots:
+        sources.append("previous_payload_continuity")
+
+    learned_row = _navmap_policy_index_row_for_action_v1(ctx, action, previous_slots)
+    learned_expected = _navmap_safe_dict_v1(learned_row.get("expected_slots"))
+    if learned_expected:
+        expected_slots.update(learned_expected)
+        sources.append("policy_outcome_index_expected_slots")
+    else:
+        policy_defaults = prediction_policy_expected_slots_v1(action)
+        if policy_defaults:
+            expected_slots.update(policy_defaults)
+            sources.append("policy_default_expected_slots")
+
+    if not expected_slots:
+        ctx.navmap_last_expected_current_payload_v1 = None
+        return {}
+
+    basis = {
+        "diagnostic_source": "cca8_run.navmap_expected_current_payload_from_ctx_v1",
+        "action": action or None,
+        "sources": list(sources),
+        "context_signature": _navmap_slot_signature_from_slots_v1(previous_slots),
+        "controller_steps": getattr(ctx, "controller_steps", None),
+        "ticks": getattr(ctx, "ticks", None),
+        "profile": getattr(ctx, "profile", None),
+    }
+    if learned_row:
+        basis["learned_policy_key"] = learned_row.get("policy_key")
+        basis["learned_sample_count"] = learned_row.get("sample_count")
+
+    payload = make_navmap_payload_v1(
+        expected_slots,
+        confidence=0.60 if sources else 0.25,
+        source="ctx_expected_current_v1",
+        basis=basis,
+    )
+    payload_dict = payload.as_dict()
+    ctx.navmap_last_expected_current_payload_v1 = dict(payload_dict)
+    return payload_dict
+
+
+def _navmap_expected_current_safety_slots_v1(residual: dict[str, Any]) -> list[str]:
+    """Return safety-relevant residual slot names for expected-vs-evidence comparison."""
+    safety_slot_names = {"zone", "space_zone", "hazard", "cliff_distance", "cliff_state", "shelter_distance"}
+    out: set[str] = set()
+    for field_name in ("mismatched_slots", "missing_slots", "novel_slots"):
+        values = residual.get(field_name)
+        if not isinstance(values, dict):
+            continue
+        for key in values:
+            if isinstance(key, str) and key in safety_slot_names:
+                out.add(key)
+    return sorted(out)
+
+
+def _navmap_expected_current_evidence_override_slots_v1(residual: dict[str, Any]) -> dict[str, Any]:
+    """Return observed evidence slots that directly override or extend expectation."""
+    out: dict[str, Any] = {}
+
+    mismatched = residual.get("mismatched_slots")
+    if isinstance(mismatched, dict):
+        for key, value in mismatched.items():
+            if isinstance(key, str) and isinstance(value, dict) and "current" in value:
+                out[key] = value.get("current")
+
+    novel = residual.get("novel_slots")
+    if isinstance(novel, dict):
+        for key, value in novel.items():
+            if isinstance(key, str):
+                out[key] = value
+
+    return out
+
+
+def _navmap_accepted_current_label_v1(comparison: dict[str, Any]) -> str:
+    """Return the accepted-current diagnostic label for a comparison record."""
+    status = comparison.get("status")
+    if status == "no_expectation":
+        return "evidence_only"
+    if comparison.get("context_break_recommended") is True:
+        return "context_break"
+    if comparison.get("context_shift_recommended") is True:
+        return "context_shift"
+    if comparison.get("exact_match") is True:
+        return "confirmed"
+    if _navmap_safe_int_v1(comparison.get("residual_count"), 0) > 0:
+        return "adjusted_by_evidence"
+    return "confirmed"
+
+
+def navmap_accepted_current_from_comparison_v1(ctx: Ctx, comparison: dict[str, Any]) -> dict[str, Any]:
+    """Store the ctx-local accepted-current NavMap after prior-vs-evidence comparison.
+
+    This is the first explicit acceptance surface for the NavMap predictive path.
+    It is deliberately conservative: the accepted current payload is the observed
+    evidence payload. Expected/prior payloads can be confirmed, adjusted, shifted,
+    or broken by evidence, but they do not overwrite direct observation here.
+    """
+    if ctx is None or not isinstance(comparison, dict) or not comparison:
+        return {}
+
+    observed_payload = _navmap_safe_dict_v1(comparison.get("observed_payload"))
+    if not observed_payload:
+        return {}
+
+    expected_payload = _navmap_safe_dict_v1(comparison.get("expected_payload"))
+    safety_raw = comparison.get("safety_residual_slots")
+    safety_slots = [str(item) for item in safety_raw if isinstance(item, str)] if isinstance(safety_raw, list) else []
+
+    action_raw = comparison.get("action")
+    status_raw = comparison.get("status")
+    reason_raw = comparison.get("reason")
+    created_at_raw = comparison.get("created_at")
+
+    record = {
+        "schema": "navmap_accepted_current_v1",
+        "acceptance": _navmap_accepted_current_label_v1(comparison),
+        "comparison_status": status_raw if isinstance(status_raw, str) and status_raw else None,
+        "comparison_reason": reason_raw if isinstance(reason_raw, str) and reason_raw else None,
+        "action": action_raw if isinstance(action_raw, str) and action_raw else None,
+        "accepted_payload": dict(observed_payload),
+        "expected_payload": dict(expected_payload),
+        "observed_slots": _navmap_slots_from_payload_dict_v1(observed_payload),
+        "expected_slots": _navmap_slots_from_payload_dict_v1(expected_payload),
+        "residual_count": _navmap_safe_int_v1(comparison.get("residual_count"), 0),
+        "exact_match": comparison.get("exact_match") if isinstance(comparison.get("exact_match"), bool) else None,
+        "context_shift_recommended": bool(comparison.get("context_shift_recommended")),
+        "context_break_recommended": bool(comparison.get("context_break_recommended")),
+        "evidence_override_slots": _navmap_safe_dict_v1(comparison.get("evidence_override_slots")),
+        "safety_residual_slots": safety_slots,
+        "created_at": (
+            created_at_raw if isinstance(created_at_raw, str) and created_at_raw else datetime.now().isoformat()
+        ),
+    }
+
+    ctx.navmap_last_accepted_current_v1 = dict(record)
+
+    history_limit = _navmap_safe_int_v1(getattr(ctx, "navmap_accepted_current_history_limit_v1", 25), 25)
+    if history_limit <= 0:
+        history_limit = 25
+    ctx.navmap_accepted_current_history_v1 = navmap_accepted_current_history_append_v1(
+        getattr(ctx, "navmap_accepted_current_history_v1", []),
+        record,
+        limit=history_limit,
+    )
+    return record
+
+
+def navmap_expected_current_comparison_step_v1(ctx: Ctx, observed_payload: dict[str, Any]) -> dict[str, Any]:
+    """Compare the expected current NavMap prior with the observed evidence NavMap.
+
+    This helper makes the first explicit predictive-coding-style runner diagnostic:
+
+      context / previous map / selected primitive -> expected current map
+      EnvObservation-derived payload             -> observed evidence map
+      expected current map vs evidence map       -> predictive residual
+
+    It records ctx-local diagnostics only. Strong evidence is never overwritten;
+    conflicts are reported as residuals and evidence_override_slots.
+    """
+    if ctx is None:
+        return {}
+    observed = _navmap_safe_dict_v1(observed_payload)
+    if not observed:
+        return {}
+
+    expected = navmap_expected_current_payload_from_ctx_v1(ctx)
+
+    action_raw = getattr(ctx, "navmap_pending_action_v1", None)
+    action = action_raw if isinstance(action_raw, str) and action_raw else None
+    comparison: dict[str, Any]
+    if not expected:
+        comparison = {
+            "schema": "navmap_expected_current_comparison_v1",
+            "status": "no_expectation",
+            "reason": "no_previous_payload_or_policy_expectation",
+            "action": action,
+            "expected_payload": {},
+            "observed_payload": dict(observed),
+            "residual": {},
+            "residual_count": 0,
+            "exact_match": False,
+            "context_shift_recommended": False,
+            "context_break_recommended": False,
+            "safety_residual_slots": [],
+            "evidence_override_slots": {},
+            "created_at": datetime.now().isoformat(),
+        }
+    else:
+        residual_obj = navmap_residual_v1(observed, expected)
+        residual = residual_obj.as_dict()
+        safety_slots = _navmap_expected_current_safety_slots_v1(residual)
+        override_slots = _navmap_expected_current_evidence_override_slots_v1(residual)
+        residual_count = _navmap_safe_int_v1(residual.get("residual_count"), 0)
+
+        observed_slots = _navmap_slots_from_payload_dict_v1(observed)
+        expected_slots = _navmap_slots_from_payload_dict_v1(expected)
+        observed_zone = str(observed_slots.get("zone", "") or "").strip().lower()
+        expected_zone = str(expected_slots.get("zone", "") or "").strip().lower()
+        context_break = bool(observed_zone in {"unsafe", "hazard", "cliff", "danger"} and observed_zone != expected_zone)
+
+        threshold = _navmap_safe_int_v1(getattr(ctx, "navmap_expected_current_context_shift_threshold_v1", 3), 3)
+        if threshold <= 0:
+            threshold = 3
+        context_shift = bool(residual_count >= threshold or safety_slots)
+
+        comparison = {
+            "schema": "navmap_expected_current_comparison_v1",
+            "status": "active",
+            "reason": "compared_expected_current_to_observed_current",
+            "action": action,
+            "expected_payload": dict(expected),
+            "observed_payload": dict(observed),
+            "residual": residual,
+            "residual_count": int(residual_count),
+            "exact_match": bool(residual.get("exact_match")),
+            "context_shift_recommended": bool(context_shift),
+            "context_break_recommended": bool(context_break),
+            "safety_residual_slots": list(safety_slots),
+            "evidence_override_slots": dict(override_slots),
+            "created_at": datetime.now().isoformat(),
+        }
+
+    ctx.navmap_last_expected_current_comparison_v1 = dict(comparison)
+
+    history_limit = _navmap_safe_int_v1(getattr(ctx, "navmap_expected_current_history_limit_v1", 25), 25)
+    if history_limit <= 0:
+        history_limit = 25
+    ctx.navmap_expected_current_history_v1 = navmap_expected_current_history_append_v1(
+        getattr(ctx, "navmap_expected_current_history_v1", []),
+        comparison,
+        limit=history_limit,
+    )
+    navmap_accepted_current_from_comparison_v1(ctx, comparison)
+    return comparison
+
+
 def navmap_ctx_transition_from_payloads_v1(
     ctx: Ctx,
     before_payload: dict[str, Any],
@@ -21927,6 +22656,13 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
     current_payload_dict = dict(current_payload) if isinstance(current_payload, dict) else {}
     previous_payload = getattr(ctx, "navmap_last_payload_v1", None)
     previous_payload_dict = dict(previous_payload) if isinstance(previous_payload, dict) else {}
+
+    if current_payload_dict:
+        navmap_expected_current_comparison_step_v1(ctx, current_payload_dict)
+    else:
+        ctx.navmap_last_expected_current_payload_v1 = None
+        ctx.navmap_last_expected_current_comparison_v1 = None
+        ctx.navmap_last_accepted_current_v1 = None
 
     if previous_payload_dict and current_payload_dict:
         navmap_ctx_transition_from_payloads_v1(ctx, previous_payload_dict, current_payload_dict)
@@ -24184,6 +24920,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
     if teaching_mode:
         print()
         print(menu37_teaching_intro_v1())
+        print("\n".join(render_navmap_scope_legend_lines_v1()))
         print()
 
     print_env_loop_tag_legend_once(ctx)
@@ -24249,6 +24986,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             ctx.navmap_pending_action_v1 = None
             ctx.navmap_pending_reward_v1 = 0.0
             ctx.navmap_last_payload_v1 = None
+            ctx.navmap_last_expected_current_payload_v1 = None
+            ctx.navmap_last_expected_current_comparison_v1 = None
+            ctx.navmap_last_accepted_current_v1 = None
             step_idx = env_info.get("step_index", 0)
             print(
                 f"[env] Reset env scenario: "
@@ -24938,9 +25678,19 @@ def mini_snapshot_text(world, ctx=None, limit: int = 50) -> str:
         lines.append("[navmap] (unavailable)")
 
     try:
+        lines.append(navmap_expected_current_mini_line_v1(ctx))
+    except Exception:
+        lines.append("[navmap-expected] (unavailable)")
+
+    try:
         lines.append(navmap_transition_mini_line_v1(ctx))
     except Exception:
         lines.append("[navmap-transition] (unavailable)")
+
+    try:
+        lines.append(navmap_scope_mini_line_v1(ctx))
+    except Exception:
+        lines.append(f"{NAVMAP_SCOPE_MARKER_V1} [navmap-scope] (unavailable)")
 
     # Compact world view: last `limit` bindings with their outgoing edges
     try:

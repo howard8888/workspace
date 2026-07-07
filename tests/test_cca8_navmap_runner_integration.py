@@ -18,6 +18,16 @@ from cca8_run import (
     render_navmap_transition_lines_v1,
     snapshot_text,
     navmap_policy_outcome_index_update_v1,
+    navmap_expected_current_comparison_step_v1,
+    navmap_expected_current_payload_from_ctx_v1,
+    navmap_expected_current_mini_line_v1,
+    navmap_expected_current_summary_v1,
+    render_navmap_expected_current_lines_v1,
+    navmap_accepted_current_history_append_v1,
+    navmap_scope_frame_v1,
+    navmap_scope_mini_line_v1,
+    render_navmap_scope_frame_lines_v1,
+    render_navmap_scope_legend_lines_v1,
 )
 from cca8_world_graph import WorldGraph
 
@@ -383,3 +393,340 @@ def test_navmap_transition_path_updates_policy_outcome_index() -> None:
     rendered = "\n".join(render_navmap_transition_lines_v1(ctx))
     assert "index_count=1" in rendered
     assert "indexed_samples=1" in rendered
+
+def test_navmap_expected_current_payload_from_ctx_uses_pending_policy_default() -> None:
+    """Expected-current payload should combine previous map continuity with selected primitive expectations."""
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    payload = navmap_expected_current_payload_from_ctx_v1(ctx)
+
+    assert payload["schema"] == "navmap_payload_v1"
+    assert payload["source"] == "ctx_expected_current_v1"
+    assert payload["slots"]["posture"] == "standing"
+    assert payload["slots"]["mom_distance"] == "far"
+    assert payload["slots"]["nipple_state"] == "hidden"
+    assert payload["slots"]["zone"] == "unsafe"
+    assert payload["basis"]["action"] == "policy:stand_up"
+    assert "previous_payload_continuity" in payload["basis"]["sources"]
+    assert "policy_default_expected_slots" in payload["basis"]["sources"]
+    assert ctx.navmap_last_expected_current_payload_v1 == payload
+
+
+def test_navmap_expected_current_comparison_records_no_expectation_then_policy_residual() -> None:
+    """The observation bridge should compare policy-conditioned expectation against the next evidence map."""
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    first_comparison = ctx.navmap_last_expected_current_comparison_v1
+
+    assert first_comparison is not None
+    assert first_comparison["schema"] == "navmap_expected_current_comparison_v1"
+    assert first_comparison["status"] == "no_expectation"
+    assert first_comparison["context_shift_recommended"] is False
+    assert first_comparison["context_break_recommended"] is False
+
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+    comparison = ctx.navmap_last_expected_current_comparison_v1
+
+    assert comparison is not None
+    assert comparison["schema"] == "navmap_expected_current_comparison_v1"
+    assert comparison["status"] == "active"
+    assert comparison["action"] == "policy:stand_up"
+    assert comparison["expected_payload"]["slots"]["posture"] == "standing"
+    assert comparison["observed_payload"]["slots"]["posture"] == "standing"
+    assert comparison["residual_count"] >= 1
+    assert comparison["context_shift_recommended"] is True
+    assert comparison["context_break_recommended"] is False
+    assert comparison["evidence_override_slots"]["mom_distance"] == "near"
+    assert comparison["evidence_override_slots"]["nipple_state"] == "found"
+    assert len(ctx.navmap_expected_current_history_v1) == 2
+
+
+def test_navmap_expected_current_comparison_flags_unsafe_evidence_break() -> None:
+    """Unsafe evidence should be recorded as a context-breaking residual when it contradicts the prior."""
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+    ctx.navmap_pending_action_v1 = "policy:suckle"
+    observed_payload = {
+        "schema": "navmap_payload_v1",
+        "map_kind": "local_navmap",
+        "modality": "scene_body",
+        "slots": {"posture": "standing", "mom_distance": "near", "nipple_state": "found", "zone": "unsafe"},
+        "confidence": 1.0,
+        "source": "test_observed_payload",
+        "basis": {},
+        "created_at": "test",
+    }
+
+    comparison = navmap_expected_current_comparison_step_v1(ctx, observed_payload)
+
+    assert comparison["schema"] == "navmap_expected_current_comparison_v1"
+    assert comparison["status"] == "active"
+    assert comparison["action"] == "policy:suckle"
+    assert comparison["expected_payload"]["slots"]["zone"] == "safe"
+    assert comparison["observed_payload"]["slots"]["zone"] == "unsafe"
+    assert comparison["context_shift_recommended"] is True
+    assert comparison["context_break_recommended"] is True
+    assert "zone" in comparison["safety_residual_slots"]
+    assert comparison["evidence_override_slots"]["zone"] == "unsafe"
+
+def test_navmap_expected_current_summary_is_idle_before_first_comparison() -> None:
+    """The expected-current summary should be readable before any comparison exists."""
+    ctx = Ctx()
+
+    summary = navmap_expected_current_summary_v1(ctx)
+
+    assert summary["schema"] == "navmap_expected_current_summary_v1"
+    assert summary["status"] == "idle"
+    assert summary["has_last_comparison"] is False
+    assert summary["history_count"] == 0
+    assert summary["expected_slots"] == {}
+    assert summary["observed_slots"] == {}
+
+    rendered = "\n".join(render_navmap_expected_current_lines_v1(ctx))
+    assert "NAVMAP EXPECTED-CURRENT:" in rendered
+    assert "status=idle" in rendered
+    assert navmap_expected_current_mini_line_v1(ctx) == "[navmap-expected] status=idle history_count=0"
+
+
+def test_navmap_expected_current_summary_renders_active_comparison() -> None:
+    """Expected-current summary/render helpers should expose prior-vs-evidence residuals."""
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+
+    summary = navmap_expected_current_summary_v1(ctx)
+
+    assert summary["status"] == "active"
+    assert summary["has_last_comparison"] is True
+    assert summary["action"] == "policy:stand_up"
+    assert summary["residual_count"] >= 1
+    assert summary["context_shift_recommended"] is True
+    assert summary["context_break_recommended"] is False
+    assert summary["expected_slots"]["posture"] == "standing"
+    assert summary["observed_slots"]["posture"] == "standing"
+    assert summary["evidence_override_slots"]["mom_distance"] == "near"
+    assert summary["evidence_override_slots"]["nipple_state"] == "found"
+    assert summary["history_count"] == 2
+
+    rendered = "\n".join(render_navmap_expected_current_lines_v1(ctx))
+    assert "NAVMAP EXPECTED-CURRENT:" in rendered
+    assert "action=policy:stand_up" in rendered
+    assert "expected={" in rendered
+    assert "observed={" in rendered
+    assert "evidence_override={" in rendered
+
+    mini = navmap_expected_current_mini_line_v1(ctx)
+    assert mini.startswith("[navmap-expected] status=active")
+    assert "action=policy:stand_up" in mini
+    assert "residuals=" in mini
+    assert "posture=standing" in mini
+    assert "overrides={" in mini
+
+
+def test_snapshot_and_mini_snapshot_include_expected_current_display() -> None:
+    """Existing snapshots should expose expected-current predictive diagnostics."""
+    world = WorldGraph()
+    world.ensure_anchor("NOW")
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+
+    full_snapshot = snapshot_text(world, ctx=ctx)
+    assert "NAVMAP EXPECTED-CURRENT:" in full_snapshot
+    assert "expected={" in full_snapshot
+    assert "observed={" in full_snapshot
+    assert "evidence_override={" in full_snapshot
+
+    mini_snapshot = mini_snapshot_text(world, ctx=ctx, limit=5)
+    assert "[navmap-expected]" in mini_snapshot
+    assert "action=policy:stand_up" in mini_snapshot
+    assert "overrides={" in mini_snapshot
+
+
+def test_navmap_accepted_current_history_append_is_bounded_and_pure() -> None:
+    """Accepted-current history should use the same bounded-history semantics."""
+    original = [{"n": 1}, {"n": 2}]
+
+    bounded = navmap_accepted_current_history_append_v1(original, {"n": 3}, limit=2)
+
+    assert original == [{"n": 1}, {"n": 2}]
+    assert bounded == [{"n": 2}, {"n": 3}]
+
+
+def test_navmap_first_observation_accepts_current_evidence_without_prior() -> None:
+    """The first evidence map should become accepted-current even with no prior expectation."""
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    accepted = ctx.navmap_last_accepted_current_v1
+
+    assert accepted is not None
+    assert accepted["schema"] == "navmap_accepted_current_v1"
+    assert accepted["acceptance"] == "evidence_only"
+    assert accepted["comparison_status"] == "no_expectation"
+    assert accepted["accepted_payload"]["slots"]["posture"] == "fallen"
+    assert accepted["accepted_payload"]["slots"]["mom_distance"] == "far"
+    assert accepted["expected_payload"] == {}
+    assert accepted["residual_count"] == 0
+    assert accepted["context_shift_recommended"] is False
+    assert accepted["context_break_recommended"] is False
+    assert len(ctx.navmap_accepted_current_history_v1) == 1
+
+
+def test_navmap_policy_residual_accepts_observed_map_as_context_shift() -> None:
+    """Observed evidence should remain accepted-current when it adjusts the prior."""
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+    accepted = ctx.navmap_last_accepted_current_v1
+
+    assert accepted is not None
+    assert accepted["schema"] == "navmap_accepted_current_v1"
+    assert accepted["acceptance"] == "context_shift"
+    assert accepted["action"] == "policy:stand_up"
+    assert accepted["accepted_payload"]["slots"]["posture"] == "standing"
+    assert accepted["accepted_payload"]["slots"]["mom_distance"] == "near"
+    assert accepted["accepted_payload"]["slots"]["nipple_state"] == "found"
+    assert accepted["expected_slots"]["posture"] == "standing"
+    assert accepted["evidence_override_slots"]["mom_distance"] == "near"
+    assert accepted["evidence_override_slots"]["nipple_state"] == "found"
+    assert accepted["context_shift_recommended"] is True
+    assert accepted["context_break_recommended"] is False
+    assert len(ctx.navmap_accepted_current_history_v1) == 2
+
+
+def test_navmap_unsafe_residual_accepts_observed_map_as_context_break() -> None:
+    """Safety-relevant contradictory evidence should be accepted as a context break."""
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+    ctx.navmap_pending_action_v1 = "policy:suckle"
+    observed_payload = {
+        "schema": "navmap_payload_v1",
+        "map_kind": "local_navmap",
+        "modality": "scene_body",
+        "slots": {"posture": "standing", "mom_distance": "near", "nipple_state": "found", "zone": "unsafe"},
+        "confidence": 1.0,
+        "source": "test_observed_payload",
+        "basis": {},
+        "created_at": "test",
+    }
+
+    navmap_expected_current_comparison_step_v1(ctx, observed_payload)
+    accepted = ctx.navmap_last_accepted_current_v1
+
+    assert accepted is not None
+    assert accepted["schema"] == "navmap_accepted_current_v1"
+    assert accepted["acceptance"] == "context_break"
+    assert accepted["accepted_payload"]["slots"]["zone"] == "unsafe"
+    assert accepted["expected_payload"]["slots"]["zone"] == "safe"
+    assert accepted["evidence_override_slots"]["zone"] == "unsafe"
+    assert accepted["context_shift_recommended"] is True
+    assert accepted["context_break_recommended"] is True
+    assert "zone" in accepted["safety_residual_slots"]
+
+
+def test_navmap_scope_frame_is_idle_before_first_observation() -> None:
+    """The NavMap Oscilloscope should be readable before any signal exists."""
+    ctx = Ctx()
+
+    frame = navmap_scope_frame_v1(ctx)
+
+    assert frame["schema"] == "navmap_scope_frame_v1"
+    assert frame["status"] == "idle"
+    assert frame["has_evidence"] is False
+    assert frame["has_expected"] is False
+    assert frame["has_residual"] is False
+    assert frame["has_accepted"] is False
+    assert frame["has_transition"] is False
+    assert frame["has_policy_outcome"] is False
+
+    rendered = "\n".join(render_navmap_scope_frame_lines_v1(ctx))
+    assert "(~~) NAVMAP OSCILLOSCOPE:" in rendered
+    assert "status=idle" in rendered
+    assert navmap_scope_mini_line_v1(ctx) == "(~~) [navmap-scope] status=idle probes=all_off"
+
+
+def test_navmap_scope_frame_shows_signal_path_after_two_observations() -> None:
+    """The scope should show evidence, expectation, residual, acceptance, transition, and outcome."""
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    ctx.navmap_pending_reward_v1 = 1.0
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+
+    frame = navmap_scope_frame_v1(ctx)
+
+    assert frame["status"] == "active"
+    assert frame["has_evidence"] is True
+    assert frame["has_expected"] is True
+    assert frame["has_residual"] is True
+    assert frame["has_accepted"] is True
+    assert frame["has_transition"] is True
+    assert frame["has_policy_outcome"] is True
+    assert frame["acceptance"] == "context_shift"
+    assert frame["accepted_slots"]["posture"] == "standing"
+    assert frame["transition_action"] == "policy:stand_up"
+    assert frame["policy_success"] is True
+    assert frame["indexed_sample_count"] == 1
+
+    rendered = "\n".join(render_navmap_scope_frame_lines_v1(ctx))
+    assert "(~~) NAVMAP OSCILLOSCOPE:" in rendered
+    assert "1 evidence" in rendered
+    assert "2 expected" in rendered
+    assert "3 residual" in rendered
+    assert "4 accepted" in rendered
+    assert "5 transition" in rendered
+    assert "6 outcome" in rendered
+
+    mini = navmap_scope_mini_line_v1(ctx)
+    assert mini.startswith("(~~) [navmap-scope]")
+    assert "acceptance=context_shift" in mini
+    assert "action=policy:stand_up" in mini
+
+
+def test_snapshot_and_mini_snapshot_include_navmap_scope() -> None:
+    """Existing snapshots should expose the read-only NavMap Oscilloscope."""
+    world = WorldGraph()
+    world.ensure_anchor("NOW")
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    ctx.navmap_pending_reward_v1 = 1.0
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+
+    full_snapshot = snapshot_text(world, ctx=ctx)
+    assert "NAVMAP OSCILLOSCOPE:" in full_snapshot
+    assert "3 residual" in full_snapshot
+    assert "4 accepted" in full_snapshot
+
+    mini_snapshot = mini_snapshot_text(world, ctx=ctx, limit=5)
+    assert "[navmap-scope]" in mini_snapshot
+    assert "acceptance=context_shift" in mini_snapshot
+
+
+def test_navmap_scope_legend_explains_probe_meanings() -> None:
+    """The scope legend should define the compact readout fields used in teaching mode."""
+    legend = "\n".join(render_navmap_scope_legend_lines_v1())
+
+    assert "(~~) NAVMAP OSCILLOSCOPE LEGEND:" in legend
+    assert "evidence  = EnvObservation-derived NavMap" in legend
+    assert "expected  = context/policy prior" in legend
+    assert "residual  = slot-level difference" in legend
+    assert "accepted  = current accepted map" in legend
+    assert "shift/break" in legend
+
+

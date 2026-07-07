@@ -25,6 +25,7 @@ Please contact hschneidermd [at] alum [dot] mit [dot] edu for inquiries about ad
 Requirements:
 - Python 3.11
 - All CCA8 Python modules in the same repo directory
+- Optional: all unit test Python files in a \test directory (runs with '--preflight' flag)
 - Python standard-library modules are included with a normal Python installation
 - Optional/dev dependencies are listed in `requirements.txt`
 
@@ -61,14 +62,59 @@ python cca8_run.py
 
 ## **TL;DR == Theoretical framing**
 
-CCA8 is built around a simple but strong hypothesis: the useful result of predictive processing is not merely a prediction-error number, a latent vector, or a symbolic fact. The useful result is an updated **map**. In CCA8, incoming observation becomes an evidence map; current context, drives, memory, and selected primitive policies supply expected maps; residuals between the two update the current WorkingMap, candidate NavMaps, context, and map-policy associations.
+CCA8 is built around a simple but strong hypothesis that the useful result of predictive processing is not merely a prediction-error number, a latent vector, or a symbolic fact. The useful result is an updated **map**. In CCA8, incoming observation becomes an evidence map. Current context, drives, memory, and selected primitive policies supply expected maps. Residuals between the two update the current WorkingMap, candidate NavMaps, context, and map-policy associations.
 
 This makes CCA8 related to predictive coding, Friston-style active inference, and enactive robotics, but not identical to any of them. Predictive coding emphasizes prediction plus residual error. Active inference emphasizes perception and action as ways of reducing mismatch. Enactive approaches emphasize learned action-outcome interactions. CCA8 emphasizes the object being maintained through all of these loops: an embodied, inspectable NavMap / WorkingMap that the agent can use for action, memory, recovery, and learning.
 
 The biological research motivation is that mammalian cognition may be built from generalized navigation-map machinery: body maps, scene maps, object maps, action maps, social maps, and eventually more abstract maps. The CCA8 goat-level system intentionally stays primitive: embodied map matching, short-horizon policy expectations, residual-driven map update/create behavior, and primitive map-policy transition learning. Later CCA9/CCA10 work can explore stronger recursive map reprocessing as a possible path toward chimpanzee-like and human-like causal reasoning, analogical reasoning, and language-like compositionality.
 
-The pragmatic robotics motivation is similar. A robot does not only need commands; it needs a current map of what it is doing, what it expected, what actually happened, and what matters next. In the RCOS view, world models rehearse, LLM/VLA systems may propose, HAL executes, reality corrects, and CCA8 maintains the map, residuals, provenance, and safety-relevant context needed to keep the embodied agent coherent over time.
+The pragmatic robotics motivation is similar. A robot does not only need commands. It needs a current map of what it is doing, what it expected, what actually happened, and what matters next. In the RCOS view, world models rehearse, LLM/VLA systems may propose, HAL executes, reality corrects, and CCA8 maintains the map, residuals, provenance, and safety-relevant context needed to keep the embodied agent coherent over time.
 
+
+## **TL;DR == Current runnable NavMap predictive path**
+**THIS SECTION MUST BE UPDATED PERIODICALLY**
+
+The current runner now contains a read-only NavMap predictive-processing path. It is not yet allowed to drive policy selection, overwrite WorldGraph truth, or write Column memory. It is diagnostic and inspectable first.
+
+The live signal path is:
+
+
+EnvObservation
+→ evidence NavMap
+
+previous scene_body map + selected primitive / context
+→ expected-current NavMap
+
+expected-current NavMap vs evidence NavMap
+→ predictive residual
+
+predictive residual
+→ accepted-current NavMap diagnostic
+
+previous accepted/evidence map + action + current accepted/evidence map
+→ action-conditioned transition
+
+transition
+→ policy-outcome sample / policy-outcome index
+
+all of the above
+→ visible through the NavMap Oscilloscope
+
+
+**The important current design rule is:**
+-expected maps are priors
+-observed/evidence maps remain authoritative
+-accepted-current map is currently the observed evidence payload plus diagnostic labels
+-So if the prior expected one map but the observation supports another, CCA8 records the mismatch instead of hallucinating the prior over the evidence.
+-The current unit-test checkpoint after this integration is:
+		391/391 unit tests passed
+		pytest green
+		pylint green
+		mypy green
+		preflight green
+-The new oscilloscope marker in terminal output is:
+(~~) [navmap-scope] ...
+This marker indicates a read-only diagnostic probe over the current NavMap signal path.
 
 
 
@@ -188,7 +234,7 @@ of birth, and by one week can climb most places its mother can)*
 
 **Detailed Tutorials and Technical Deep Dives**
 
-- [Predictive Coding, Active Inference, Enactive Inference, and CCA8] (#predictive-coding-active-interference-enactive-inference-and-cca8)
+- [Predictive Coding, Active Inference, Enactive Inference, and CCA8](#predictive-coding-active-interference-enactive-inference-and-cca8)
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
 - [The WorldGraph in detail](#the-worldgraph-in-detail)
 - [Tagging Standard (bindings, predicates, cues, anchors, actions, provenance & engrams)](#tagging-standard-bindings-predicates-cues-anchors-actions-provenance--engrams)
@@ -310,16 +356,17 @@ You will now see the Main Menu.
 
 For a slow, annotated first pass, select:
 
-- **menu 35**: Run 1 Cognitive Cycle (verbose teaching mode)
+- **menu 35**: Run 1 Cognitive Cycle, verbose teaching mode
 
-This prints the same closed-loop cognitive-cycle machinery as menu 37, but adds `[teach]` notes beside the live output.
+This is the best first NavMap Oscilloscope demo. It shows one closed-loop environment → evidence map → expected map → residual → accepted map signal path, with `[teach]` notes beside the live output.
 
 For a compact multi-cycle run, select:
 
-- **menu 37**: Run n Cognitive Cycles (closed-loop timeline)
+- **menu 37**: Run n Cognitive Cycles, compact timeline
+
+This is the best multi-cycle run. It shows compact environment/controller/skills output plus mini-snapshot NavMap Oscilloscope lines.
 
 Enter N = 20 (or N = 25).
-
 
 **What you should see over a short run:**
 
@@ -514,6 +561,78 @@ Display snapshot / world stats (to see NOW/LATEST, counts, drives, CTX timekeepi
 Plan from NOW to a target predicate (e.g., milk:drinking) to confirm the episode index is searchable.
 
 Export interactive graph (HTML) if you want a visual of the episode skeleton.
+
+
+### Quick NavMap Oscilloscope test
+
+The NavMap Oscilloscope is the easiest way to see whether the new predictive NavMap path is doing anything real.
+
+It is read-only instrumentation. It does not change policy selection, WorldGraph, Column memory, BodyMap, WorkingMap, or skill values. It reads existing diagnostic registers and formats them as one signal path.
+
+Run:
+
+ 
+python cca8_run.py
+Choose:
+Profile 1: Mountain Goat-like brain simulation
+Then at the Main Menu:
+3
+
+Expected before any environment cycle:
+(~~) NAVMAP OSCILLOSCOPE:
+  status=idle probes=all_off
+Then run one verbose closed-loop cognitive cycle:
+35
+
+Expected first-cycle pattern:
+(~~) [navmap-scope] acceptance=evidence_only residuals=0 shift=False break=False ...
+This means CCA8 has evidence from the first EnvObservation, but no previous map/action prior yet.
+Run a second verbose cycle:
+35
+
+Expected second-cycle pattern:
+(~~) [navmap-scope] acceptance=adjusted_by_evidence residuals=... shift=... break=... action=policy:...
+This means CCA8 now has a previous map and a selected primitive/action context, so it can compare:
+expected current map
+vs
+observed evidence map
+Then inspect the full snapshot again:
+3
+
+Look for:
+(~~) NAVMAP OSCILLOSCOPE:
+  1 evidence
+  
+  2 expected
+  
+  3 residual
+  
+  4 accepted
+  
+  5 transition
+  
+  6 outcome
+  
+  
+The six probes mean:
+
+1 evidence   = EnvObservation-derived NavMap
+
+2 expected   = prior from previous map/context/selected primitive
+
+3 residual   = slot-level mismatch between expected and evidence maps
+
+4 accepted   = accepted-current diagnostic map; evidence remains authoritative
+
+5 transition = previous map + action + current map
+
+6 outcome    = policy-outcome sample and indexed learning surface
+
+Menu 35 is best for teaching because it prints explanatory text. Menu 37 is best for watching several compact cycles run in sequence.
+
+---
+
+
 
 
 **Where to learn more (after the first run)**
@@ -2464,7 +2583,28 @@ Finally, if you need one compact thesis sentence, here is a good candidate: CCA8
 - Keyframe — a cycle where consolidation and optional retrieval/apply logic can run.
 - Merge mode — conservative apply semantics that fill missing structure without cue leakage.
 - Replace mode — strong-prior apply semantics that rebuild MapSurface from a stored snapshot.
+- NavMap — a compact local map hypothesis used by the predictive map-processing path. In the current runner, the first NavMap stream is `scene_body`.
 
+- Evidence NavMap — the current map payload derived from `EnvObservation`.
+
+- Expected-current NavMap — the prior map payload expected from previous map/context and the selected primitive or policy.
+
+- Predictive residual — the slot-level mismatch between expected-current map and evidence map.
+
+- Accepted-current NavMap — the current diagnostic map accepted after comparison. In the current conservative implementation, direct observed evidence remains authoritative.
+
+- Context shift — a diagnostic suggestion that residuals are large or meaningful enough to update the active context.
+
+- Context break — a stronger diagnostic suggestion, usually for safety/context-breaking evidence such as unsafe-zone contradiction.
+
+- NavMap transition — an action-conditioned record of before map + action + after map.
+
+- Policy-outcome sample — a diagnostic record saying that in this map context, this policy/action produced this next map/outcome.
+
+- Policy-outcome index — a ctx-local aggregation of policy-outcome samples, keyed by map context and action.
+
+- NavMap Oscilloscope — read-only terminal instrumentation marked by `(~~)` that shows evidence, expected, residual, accepted, transition, and outcome probes in one signal path.
+________________________________________
 
 
 
@@ -3491,14 +3631,117 @@ map-policy transition learning
  
 
 
-## 14. Improvements, CCA9, CCA10
-
-For later CCA9 and CCA10, this same map substrate can be extended toward stronger internal reprocessing, causal reasoning, analogy, and compositional language-like processing. But CCA8 itself remains grounded in embodied mammalian map learning.
 
 
-This section deliberately avoids listing upcoming software features. It records the theory and gives future code changes a stable rationale.
+## 14. Current NavMap runner implementation: what is actually running
+
+The current CCA8 runner implements the first read-only predictive NavMap diagnostic path.
+
+This is not yet the final CCA8 WorkingMap fusion path. The current implementation is intentionally conservative. It exposes the signal path before using it to change behavior.
+
+### Implemented runner surfaces
+
+The runner currently stores these ctx-local NavMap diagnostics:
+
  
+ctx.navmap_scene_body_candidates_v1
+ctx.navmap_last_observation_update_v1
+ctx.navmap_observation_update_history_v1
 
+ctx.navmap_last_expected_current_payload_v1
+ctx.navmap_last_expected_current_comparison_v1
+ctx.navmap_expected_current_history_v1
+
+ctx.navmap_last_accepted_current_v1
+ctx.navmap_accepted_current_history_v1
+
+ctx.navmap_last_transition_v1
+ctx.navmap_transition_history_v1
+
+ctx.navmap_last_policy_outcome_v1
+ctx.navmap_policy_outcome_history_v1
+ctx.navmap_policy_outcome_index_v1
+ctx.navmap_last_policy_outcome_index_row_v1
+
+The corresponding display helpers summarize those registers in snapshots and mini-snapshots. The most compact view is the NavMap Oscilloscope:
+navmap_scope_frame_v1(ctx)
+render_navmap_scope_frame_lines_v1(ctx)
+navmap_scope_mini_line_v1(ctx)
+The source code describes navmap_scope_frame_v1 as high-impedance test equipment: it reads existing NavMap diagnostic registers and formats a signal-path frame, but does not run NavMap matching, mutate ctx, write memory, choose policies, or append history.
+
+Current signal path
+
+At each environment observation point, the current software path is:
+EnvObservation
+→ scene_body slots
+→ current/evidence NavMapPayloadV1
+→ candidate matching and store update
+→ expected-current comparison
+→ accepted-current diagnostic
+→ transition diagnostic
+→ policy-outcome sample/index
+The explicit predictive-coding bridge is:
+previous map / context / selected primitive
+→ expected-current NavMap
+
+EnvObservation
+→ observed/evidence NavMap
+
+expected-current NavMap vs observed/evidence NavMap
+→ residual
+The accepted-current helper is deliberately conservative: the accepted current payload is the observed evidence payload. Expected/prior payloads can be confirmed, adjusted, shifted, or broken by evidence, but they do not overwrite direct observation.
+Current acceptance labels
+The accepted-current diagnostic currently uses these labels:
+evidence_only
+    First observation or no expected-current prior exists yet.
+
+confirmed
+    Expected map and observed/evidence map match closely enough.
+
+adjusted_by_evidence
+    Evidence differs from expectation, but not enough to recommend context shift.
+
+context_shift
+    Residual is large enough or important enough to suggest context update.
+
+context_break
+    Safety/context-breaking evidence contradicts the prior, such as unsafe-zone evidence.
+
+These labels are diagnostic. They do not yet change policy selection.
+
+Current safety rule
+
+The current simplified safety rule is:
+observed slots override expected slots on direct conflict
+conflicts are recorded as residuals
+safety-relevant residuals can mark context shift or context break
+
+This is the software version of the broader CCA8 doctrine:
+context biases perception
+context must not overwrite strong evidence
+
+What this does not do yet
+
+The current NavMap path does not yet:
+change policy selection
+write NavMaps into WorldGraph as truth facts
+write NavMaps into Columns as long-term memory
+replace WorkingMap.MapSurface
+perform full multi-branch counterfactual planning
+perform CCA9/CCA10 causal or analogical reasoning
+
+The current purpose is visibility and testability.
+
+Before expected maps are allowed to influence action selection or WorkingMap fusion, CCA8 needs to show that the signal path is coherent:
+evidence
+expected
+residual
+accepted
+transition
+outcome
+
+
+The NavMap Oscilloscope is the tool for inspecting that path.
 
 
 
