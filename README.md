@@ -7,11 +7,6 @@ Questions?  Send me an email: hschneidermd [at] alum [dot] mit [dot] edu
 NOTE: This README is large; if GitHub truncates the preview at the 512 KiB render limit, open the file directly to view the full document.
 
 
-Superintelligence article submission note  June 2026:
-NOTE: This OSF repository contains the selected CCA8 software modules, data files, and supporting materials used
- to generate the results reported in the associated Superintelligence article. It is a reproducibility package
- for this article and is not intended to represent the full scope of ongoing CCA8 development.
-
 Software was developed in a Windows environment but should run with minimal changes in a macOS or Linux environment.
 Requires Python 3.11
 Please contact hschneidermd [at] alum [dot] mit [dot] edu for inquiries about additional software modules, related
@@ -31,10 +26,10 @@ Requirements:
 
 Recommended fresh Windows setup (in terminal):
 
-py -m pip install --upgrade pip
-py -m pip install -r requirements.txt
-python cca8_run.py --preflight
-python cca8_run.py
+>py -m pip install --upgrade pip
+>py -m pip install -r requirements.txt
+>python cca8_run.py --preflight
+>python cca8_run.py
 
 
 
@@ -103,18 +98,22 @@ all of the above
 
 **The important current design rule is:**
 -expected maps are priors
+
 -observed/evidence maps remain authoritative
+
 -accepted-current map is currently the observed evidence payload plus diagnostic labels
+
 -So if the prior expected one map but the observation supports another, CCA8 records the mismatch instead of hallucinating the prior over the evidence.
+
 -The current unit-test checkpoint after this integration is:
-		391/391 unit tests passed
-		pytest green
-		pylint green
-		mypy green
-		preflight green
--The new oscilloscope marker in terminal output is:
-(~~) [navmap-scope] ...
-This marker indicates a read-only diagnostic probe over the current NavMap signal path.
+		-391/391 unit tests passed
+		-pytest green
+		-pylint green
+		-mypy green
+		-preflight green
+		
+-The new oscilloscope marker in terminal output is: (~~) [navmap-scope] ...
+-This marker indicates a read-only diagnostic probe over the current NavMap signal path.
 
 
 
@@ -234,7 +233,7 @@ of birth, and by one week can climb most places its mother can)*
 
 **Detailed Tutorials and Technical Deep Dives**
 
-- [Predictive Coding, Active Inference, Enactive Inference, and CCA8](#predictive-coding-active-interference-enactive-inference-and-cca8)
+- [Predictive Coding, Active Inference, Enactive Inference, and CCA8](#predictive-coding-active-inference-enactive-inference-and-cca8)
 - [Tutorial on WorldGraph, Bindings, Edges, Tags and Concepts](#tutorial-on-worldgraph-bindings-edges-tags-and-concepts)
 - [The WorldGraph in detail](#the-worldgraph-in-detail)
 - [Tagging Standard (bindings, predicates, cues, anchors, actions, provenance & engrams)](#tagging-standard-bindings-predicates-cues-anchors-actions-provenance--engrams)
