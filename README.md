@@ -26,8 +26,6 @@ Requirements:
 
 Recommended fresh Windows setup (in terminal):
 
->py -m pip install --upgrade pip
-
 >py -m pip install -r requirements.txt
 
 >python cca8_run.py --preflight
@@ -70,7 +68,7 @@ The pragmatic robotics motivation is similar. A robot does not only need command
 
 
 ## **TL;DR == Current runnable NavMap predictive path**
-**THIS SECTION MUST BE UPDATED PERIODICALLY**
+**THIS SECTION IS UPDATED PERIODICALLY**
 
 The current runner now contains a read-only NavMap predictive-processing path. It is not yet allowed to drive policy selection, overwrite WorldGraph truth, or write Column memory. It is diagnostic and inspectable first.
 
