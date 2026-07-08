@@ -24,7 +24,15 @@ from cca8_run import (
     navmap_expected_current_summary_v1,
     render_navmap_expected_current_lines_v1,
     navmap_accepted_current_history_append_v1,
+    navmap_accepted_current_mini_line_v1,
+    navmap_accepted_current_summary_v1,
+    render_navmap_accepted_current_lines_v1,
+    working_navmap_surface_mini_line_v1,
+    working_navmap_surface_summary_v1,
+    render_working_navmap_surface_lines_v1,
     navmap_scope_frame_v1,
+    navmap_scope_frame_is_complete_v1,
+    navmap_scope_missing_probe_reasons_v1,
     navmap_scope_mini_line_v1,
     render_navmap_scope_frame_lines_v1,
     render_navmap_scope_legend_lines_v1,
@@ -326,6 +334,7 @@ def test_snapshot_and_mini_snapshot_include_navmap_transition_display() -> None:
     assert "[navmap]" in mini_snapshot
     assert "[navmap-transition]" in mini_snapshot
     assert "action=policy:stand_up" in mini_snapshot
+
 
 def test_navmap_policy_outcome_index_update_aggregates_repeated_samples() -> None:
     """The policy-outcome index should aggregate repeated samples by policy_key."""
@@ -635,6 +644,209 @@ def test_navmap_unsafe_residual_accepts_observed_map_as_context_break() -> None:
     assert accepted["context_shift_recommended"] is True
     assert accepted["context_break_recommended"] is True
     assert "zone" in accepted["safety_residual_slots"]
+
+
+def test_navmap_accepted_current_summary_renders_idle_and_active_record() -> None:
+    """Accepted-current display helpers should expose the accepted evidence map independently of the scope."""
+    ctx = Ctx()
+
+    idle_summary = navmap_accepted_current_summary_v1(ctx)
+    assert idle_summary["schema"] == "navmap_accepted_current_summary_v1"
+    assert idle_summary["status"] == "idle"
+    assert idle_summary["has_last_accepted_current"] is False
+    assert idle_summary["history_count"] == 0
+    assert idle_summary["accepted_slots"] == {}
+
+    idle_rendered = "\n".join(render_navmap_accepted_current_lines_v1(ctx))
+    assert "NAVMAP ACCEPTED-CURRENT:" in idle_rendered
+    assert "status=idle" in idle_rendered
+    assert navmap_accepted_current_mini_line_v1(ctx) == "[navmap-accepted] status=idle history_count=0"
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+
+    active_summary = navmap_accepted_current_summary_v1(ctx)
+    assert active_summary["status"] == "active"
+    assert active_summary["has_last_accepted_current"] is True
+    assert active_summary["acceptance"] == "context_shift"
+    assert active_summary["action"] == "policy:stand_up"
+    assert active_summary["accepted_slots"]["posture"] == "standing"
+    assert active_summary["accepted_slots"]["mom_distance"] == "near"
+    assert active_summary["expected_slots"]["posture"] == "standing"
+    assert active_summary["evidence_override_slots"]["mom_distance"] == "near"
+    assert active_summary["history_count"] == 2
+
+    active_rendered = "\n".join(render_navmap_accepted_current_lines_v1(ctx))
+    assert "NAVMAP ACCEPTED-CURRENT:" in active_rendered
+    assert "acceptance=context_shift" in active_rendered
+    assert "accepted={" in active_rendered
+    assert "evidence_override={" in active_rendered
+
+    mini = navmap_accepted_current_mini_line_v1(ctx)
+    assert mini.startswith("[navmap-accepted] acceptance=context_shift")
+    assert "action=policy:stand_up" in mini
+    assert "accepted={" in mini
+    assert "overrides={" in mini
+
+
+def test_working_navmap_surface_is_populated_from_accepted_current() -> None:
+    """Working NavMap surface should mirror accepted-current as a diagnostic-only handoff register."""
+    ctx = Ctx()
+
+    idle_summary = working_navmap_surface_summary_v1(ctx)
+    assert idle_summary["schema"] == "working_navmap_surface_summary_v1"
+    assert idle_summary["status"] == "idle"
+    assert idle_summary["has_surface"] is False
+    assert idle_summary["history_count"] == 0
+    assert idle_summary["slots"] == {}
+
+    idle_rendered = "\n".join(render_working_navmap_surface_lines_v1(ctx))
+    assert "WORKING NAVMAP SURFACE:" in idle_rendered
+    assert "status=idle" in idle_rendered
+    assert working_navmap_surface_mini_line_v1(ctx) == "[working-navmap] status=idle history_count=0"
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+
+    active_summary = working_navmap_surface_summary_v1(ctx)
+    assert active_summary["status"] == "active"
+    assert active_summary["has_surface"] is True
+    assert active_summary["surface_kind"] == "scene_body"
+    assert active_summary["bridge_role"] == "accepted_current_to_workingmap_candidate"
+    assert active_summary["source_register"] == "ctx.navmap_last_accepted_current_v1"
+    assert active_summary["acceptance"] == "evidence_only"
+    assert active_summary["slots"]["posture"] == "fallen"
+    assert active_summary["slots"]["mom_distance"] == "far"
+    assert active_summary["writes_enabled"] is False
+    assert active_summary["used_for_policy_selection"] is False
+    assert active_summary["used_for_worldgraph_truth"] is False
+    assert active_summary["used_for_column_write"] is False
+    assert active_summary["history_count"] == 1
+
+    assert isinstance(ctx.working_navmap_surface_v1, dict)
+    assert ctx.working_navmap_surface_v1["schema"] == "working_navmap_surface_v1"
+
+    active_rendered = "\n".join(render_working_navmap_surface_lines_v1(ctx))
+    assert "WORKING NAVMAP SURFACE:" in active_rendered
+    assert "role=accepted_current_to_workingmap_candidate" in active_rendered
+    assert "used_for_policy_selection=False" in active_rendered
+    assert "worldgraph_truth=False" in active_rendered
+    assert "column_write=False" in active_rendered
+
+    mini = working_navmap_surface_mini_line_v1(ctx)
+    assert mini.startswith("[working-navmap] role=accepted_current_to_workingmap_candidate")
+    assert "acceptance=evidence_only" in mini
+    assert "policy_used=False" in mini
+    assert "writes=False" in mini
+
+
+def test_snapshot_and_mini_snapshot_include_working_navmap_surface_display() -> None:
+    """Snapshots should show the diagnostic Working NavMap surface after accepted-current."""
+    world = WorldGraph()
+    world.ensure_anchor("NOW")
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+
+    full_snapshot = snapshot_text(world, ctx=ctx)
+    assert "NAVMAP ACCEPTED-CURRENT:" in full_snapshot
+    assert "WORKING NAVMAP SURFACE:" in full_snapshot
+    assert "role=accepted_current_to_workingmap_candidate" in full_snapshot
+    assert "used_for_policy_selection=False" in full_snapshot
+
+    mini_snapshot = mini_snapshot_text(world, ctx=ctx, limit=5)
+    assert "[navmap-accepted]" in mini_snapshot
+    assert "[working-navmap]" in mini_snapshot
+    assert "acceptance=evidence_only" in mini_snapshot
+    assert "writes=False" in mini_snapshot
+
+
+def test_snapshot_and_mini_snapshot_include_accepted_current_display() -> None:
+    """Existing snapshots should expose accepted-current separately from the NavMap Oscilloscope."""
+    world = WorldGraph()
+    world.ensure_anchor("NOW")
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+
+    full_snapshot = snapshot_text(world, ctx=ctx)
+    assert "NAVMAP EXPECTED-CURRENT:" in full_snapshot
+    assert "NAVMAP ACCEPTED-CURRENT:" in full_snapshot
+    assert "acceptance=context_shift" in full_snapshot
+    assert "accepted={" in full_snapshot
+
+    mini_snapshot = mini_snapshot_text(world, ctx=ctx, limit=5)
+    assert "[navmap-expected]" in mini_snapshot
+    assert "[navmap-accepted]" in mini_snapshot
+    assert "acceptance=context_shift" in mini_snapshot
+
+
+def test_navmap_scope_frame_reports_missing_probe_reasons_after_first_observation() -> None:
+    """First-cycle oscilloscope output should explain why the full signal path is not complete yet."""
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    frame = navmap_scope_frame_v1(ctx)
+
+    assert frame["status"] == "active"
+    assert frame["has_evidence"] is True
+    assert frame["has_accepted"] is True
+    assert frame["complete"] is False
+    assert navmap_scope_frame_is_complete_v1(frame) is False
+
+    missing = navmap_scope_missing_probe_reasons_v1(frame)
+    assert missing == frame["missing_probe_reasons"]
+    assert frame["missing_probe_count"] == len(missing)
+    assert "expected" in missing
+    assert "transition" in missing
+    assert "outcome" in missing
+    assert "first cycle" in missing["expected"]
+
+    rendered = "\n".join(render_navmap_scope_frame_lines_v1(ctx))
+    assert "complete=False" in rendered
+    assert "missing=" in rendered
+    assert "missing reasons:" in rendered
+    assert "- expected:" in rendered
+    assert "- transition:" in rendered
+    assert "- outcome:" in rendered
+
+    mini = navmap_scope_mini_line_v1(ctx)
+    assert mini.startswith("(~~) [navmap-scope]")
+    assert "complete=False" in mini
+    assert "missing=" in mini
+    assert "acceptance=evidence_only" in mini
+
+
+def test_navmap_scope_frame_reports_complete_after_policy_outcome_path() -> None:
+    """Second-cycle oscilloscope output should show a complete six-probe signal path."""
+    ctx = Ctx()
+
+    navmap_ctx_observation_update_step_v1(ctx, _fallen_mom_far_obs())
+    ctx.navmap_pending_action_v1 = "policy:stand_up"
+    ctx.navmap_pending_reward_v1 = 1.0
+    navmap_ctx_observation_update_step_v1(ctx, _standing_mom_near_obs())
+
+    frame = navmap_scope_frame_v1(ctx)
+
+    assert frame["status"] == "active"
+    assert frame["complete"] is True
+    assert frame["missing_probe_count"] == 0
+    assert frame["missing_probe_reasons"] == {}
+    assert navmap_scope_frame_is_complete_v1(frame) is True
+    assert navmap_scope_missing_probe_reasons_v1(frame) == {}
+
+    rendered = "\n".join(render_navmap_scope_frame_lines_v1(ctx))
+    assert "complete=True" in rendered
+    assert "missing=(none)" in rendered
+    assert "missing reasons:" not in rendered
+
+    mini = navmap_scope_mini_line_v1(ctx)
+    assert "complete=True" in mini
+    assert "missing=(none)" in mini
+    assert "acceptance=context_shift" in mini
+    assert "action=policy:stand_up" in mini
 
 
 def test_navmap_scope_frame_is_idle_before_first_observation() -> None:

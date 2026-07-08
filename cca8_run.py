@@ -246,12 +246,22 @@ __all__ = [
     "navmap_expected_current_history_append_v1",
     "navmap_accepted_current_history_append_v1",
     "navmap_accepted_current_from_comparison_v1",
+    "navmap_accepted_current_summary_v1",
+    "render_navmap_accepted_current_lines_v1",
+    "navmap_accepted_current_mini_line_v1",
+    "working_navmap_surface_history_append_v1",
+    "working_navmap_surface_from_accepted_current_v1",
+    "working_navmap_surface_summary_v1",
+    "render_working_navmap_surface_lines_v1",
+    "working_navmap_surface_mini_line_v1",
     "navmap_expected_current_payload_from_ctx_v1",
     "navmap_expected_current_comparison_step_v1",
     "navmap_transition_summary_v1",
     "render_navmap_transition_lines_v1",
     "navmap_transition_mini_line_v1",
     "navmap_scope_frame_v1",
+    "navmap_scope_frame_is_complete_v1",
+    "navmap_scope_missing_probe_reasons_v1",
     "render_navmap_scope_frame_lines_v1",
     "render_navmap_scope_legend_lines_v1",
     "navmap_scope_mini_line_v1",
@@ -906,6 +916,11 @@ class Ctx:
     navmap_last_accepted_current_v1: Optional[dict[str, Any]] = None
     navmap_accepted_current_history_v1: list[dict[str, Any]] = field(default_factory=list)
     navmap_accepted_current_history_limit_v1: int = 25
+
+    # Working NavMap surface bridge (diagnostic-only; not a policy/WorldGraph/Column writer)
+    working_navmap_surface_v1: Optional[dict[str, Any]] = None
+    working_navmap_surface_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    working_navmap_surface_history_limit_v1: int = 25
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------
@@ -17432,6 +17447,382 @@ def navmap_expected_current_mini_line_v1(ctx: Any) -> str:
     )
 
 
+def navmap_accepted_current_summary_v1(ctx: Any) -> dict[str, Any]:
+    """Return a read-only summary of the accepted-current NavMap diagnostic.
+
+    Accepted-current is the conservative handoff point between residual checking
+    and the future WorkingMap bridge. This summary intentionally reads only the
+    existing ctx register written by ``navmap_accepted_current_from_comparison_v1``.
+    It does not run a new comparison, mutate ctx, append history, or write memory.
+    """
+    base: dict[str, Any] = {
+        "schema": "navmap_accepted_current_summary_v1",
+        "status": "idle",
+        "has_last_accepted_current": False,
+        "acceptance": None,
+        "action": None,
+        "comparison_status": None,
+        "comparison_reason": None,
+        "residual_count": 0,
+        "exact_match": None,
+        "context_shift_recommended": False,
+        "context_break_recommended": False,
+        "history_count": 0,
+        "accepted_slots": {},
+        "observed_slots": {},
+        "expected_slots": {},
+        "evidence_override_slots": {},
+        "safety_residual_slots": [],
+        "created_at": None,
+    }
+
+    if ctx is None:
+        out = dict(base)
+        out["status"] = "ctx_unavailable"
+        return out
+
+    base["history_count"] = _navmap_safe_list_count_v1(
+        getattr(ctx, "navmap_accepted_current_history_v1", [])
+    )
+
+    record = _navmap_safe_dict_v1(getattr(ctx, "navmap_last_accepted_current_v1", {}))
+    if not record:
+        return base
+
+    accepted_payload = _navmap_safe_dict_v1(record.get("accepted_payload"))
+    expected_payload = _navmap_safe_dict_v1(record.get("expected_payload"))
+    accepted_slots = _navmap_slots_from_payload_dict_v1(accepted_payload)
+    observed_slots = _navmap_safe_dict_v1(record.get("observed_slots"))
+    expected_slots = _navmap_safe_dict_v1(record.get("expected_slots"))
+    if not observed_slots:
+        observed_slots = dict(accepted_slots)
+    if not accepted_slots:
+        accepted_slots = dict(observed_slots)
+    if not expected_slots:
+        expected_slots = _navmap_slots_from_payload_dict_v1(expected_payload)
+
+    safety_slots_raw = record.get("safety_residual_slots")
+    safety_slots = [str(item) for item in safety_slots_raw if isinstance(item, str)] if isinstance(
+        safety_slots_raw, list
+    ) else []
+
+    acceptance_raw = record.get("acceptance")
+    action_raw = record.get("action")
+    status_raw = record.get("comparison_status")
+    reason_raw = record.get("comparison_reason")
+    created_at_raw = record.get("created_at")
+    exact_raw = record.get("exact_match")
+    context_shift_raw = record.get("context_shift_recommended")
+    context_break_raw = record.get("context_break_recommended")
+
+    out = dict(base)
+    out.update(
+        {
+            "status": "active",
+            "has_last_accepted_current": True,
+            "acceptance": acceptance_raw if isinstance(acceptance_raw, str) and acceptance_raw else None,
+            "action": action_raw if isinstance(action_raw, str) and action_raw else None,
+            "comparison_status": status_raw if isinstance(status_raw, str) and status_raw else None,
+            "comparison_reason": reason_raw if isinstance(reason_raw, str) and reason_raw else None,
+            "residual_count": _navmap_safe_int_v1(record.get("residual_count"), 0),
+            "exact_match": exact_raw if isinstance(exact_raw, bool) else None,
+            "context_shift_recommended": context_shift_raw if isinstance(context_shift_raw, bool) else False,
+            "context_break_recommended": context_break_raw if isinstance(context_break_raw, bool) else False,
+            "accepted_slots": accepted_slots,
+            "observed_slots": observed_slots,
+            "expected_slots": expected_slots,
+            "evidence_override_slots": _navmap_safe_dict_v1(record.get("evidence_override_slots")),
+            "safety_residual_slots": safety_slots,
+            "created_at": created_at_raw if isinstance(created_at_raw, str) and created_at_raw else None,
+        }
+    )
+    return out
+
+
+def render_navmap_accepted_current_lines_v1(ctx: Any) -> list[str]:
+    """Return human-readable lines for accepted-current NavMap diagnostics."""
+    s = navmap_accepted_current_summary_v1(ctx)
+    lines: list[str] = ["NAVMAP ACCEPTED-CURRENT:"]
+
+    if s["status"] == "ctx_unavailable":
+        lines.append("  status=ctx_unavailable")
+        return lines
+
+    if not s["has_last_accepted_current"]:
+        lines.append(
+            "  status=idle "
+            f"history_count={s['history_count']} "
+            "[src=ctx.navmap_last_accepted_current_v1]"
+        )
+        return lines
+
+    lines.append(
+        "  "
+        f"status={s['status']} "
+        f"acceptance={s['acceptance'] or '(none)'} "
+        f"action={s['action'] or '(none)'} "
+        f"residual_count={s['residual_count']} "
+        f"exact_match={s['exact_match']} "
+        f"context_shift={s['context_shift_recommended']} "
+        f"context_break={s['context_break_recommended']} "
+        "[src=ctx.navmap_last_accepted_current_v1]"
+    )
+    lines.append(
+        "  "
+        f"accepted={{{_prediction_compact_map_text_v1(s['accepted_slots'])}}} "
+        f"expected={{{_prediction_compact_map_text_v1(s['expected_slots'])}}} "
+        f"observed={{{_prediction_compact_map_text_v1(s['observed_slots'])}}}"
+    )
+    lines.append(
+        "  "
+        f"evidence_override={{{_prediction_compact_map_text_v1(s['evidence_override_slots'])}}} "
+        f"safety_slots={{{_navmap_compact_list_text_v1(s['safety_residual_slots'])}}} "
+        f"history_count={s['history_count']} "
+        f"comparison_status={s['comparison_status'] or '(n/a)'} "
+        f"reason={s['comparison_reason'] or '(n/a)'}"
+    )
+    return lines
+
+
+def navmap_accepted_current_mini_line_v1(ctx: Any) -> str:
+    """Return a one-line accepted-current NavMap readout for mini-snapshots."""
+    s = navmap_accepted_current_summary_v1(ctx)
+
+    if s["status"] == "ctx_unavailable":
+        return "[navmap-accepted] ctx unavailable"
+
+    if not s["has_last_accepted_current"]:
+        return f"[navmap-accepted] status=idle history_count={s['history_count']}"
+
+    return (
+        "[navmap-accepted] "
+        f"acceptance={s['acceptance'] or '(none)'} "
+        f"action={s['action'] or '(none)'} "
+        f"residuals={s['residual_count']} "
+        f"shift={s['context_shift_recommended']} "
+        f"break={s['context_break_recommended']} "
+        f"accepted={{{_prediction_compact_map_text_v1(s['accepted_slots'])}}} "
+        f"overrides={{{_prediction_compact_map_text_v1(s['evidence_override_slots'])}}} "
+        f"history_count={s['history_count']}"
+    )
+
+
+def working_navmap_surface_history_append_v1(
+    history: list[dict[str, Any]],
+    record: dict[str, Any],
+    *,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """Return a bounded Working NavMap surface history without mutating inputs."""
+    return navmap_observation_update_history_append_v1(history, record, limit=limit)
+
+
+def working_navmap_surface_from_accepted_current_v1(ctx: Any, accepted_record: dict[str, Any]) -> dict[str, Any]:
+    """Copy accepted-current into a ctx-local Working NavMap surface register.
+
+    This is the first explicit handoff seam from the NavMap predictive path toward
+    a future WorkingMap / Navigation Module surface. It is deliberately diagnostic-only:
+    it copies the existing accepted-current payload into ``ctx.working_navmap_surface_v1``
+    and appends a bounded ctx-local history. It does not write WorldGraph facts,
+    write Column engrams, alter ``ctx.working_world``, update BodyMap, choose policies,
+    or change the accepted-current semantics.
+    """
+    if ctx is None or not isinstance(accepted_record, dict) or not accepted_record:
+        return {}
+
+    accepted_payload = _navmap_safe_dict_v1(accepted_record.get("accepted_payload"))
+    if not accepted_payload:
+        return {}
+
+    slots = _navmap_slots_from_payload_dict_v1(accepted_payload)
+    if not slots:
+        slots = _navmap_safe_dict_v1(accepted_record.get("observed_slots"))
+
+    created_at_raw = accepted_record.get("created_at")
+    acceptance_raw = accepted_record.get("acceptance")
+    action_raw = accepted_record.get("action")
+
+    record = {
+        "schema": "working_navmap_surface_v1",
+        "status": "active",
+        "surface_kind": "scene_body",
+        "bridge_role": "accepted_current_to_workingmap_candidate",
+        "source_register": "ctx.navmap_last_accepted_current_v1",
+        "writes_enabled": False,
+        "used_for_policy_selection": False,
+        "used_for_worldgraph_truth": False,
+        "used_for_column_write": False,
+        "acceptance": acceptance_raw if isinstance(acceptance_raw, str) and acceptance_raw else None,
+        "action": action_raw if isinstance(action_raw, str) and action_raw else None,
+        "accepted_payload": dict(accepted_payload),
+        "slots": dict(slots),
+        "slot_signature": _navmap_slot_signature_from_slots_v1(slots),
+        "residual_count": _navmap_safe_int_v1(accepted_record.get("residual_count"), 0),
+        "context_shift_recommended": bool(accepted_record.get("context_shift_recommended")),
+        "context_break_recommended": bool(accepted_record.get("context_break_recommended")),
+        "evidence_override_slots": _navmap_safe_dict_v1(accepted_record.get("evidence_override_slots")),
+        "created_at": created_at_raw if isinstance(created_at_raw, str) and created_at_raw else datetime.now().isoformat(),
+    }
+
+    try:
+        ctx.working_navmap_surface_v1 = dict(record)
+
+        history_limit = _navmap_safe_int_v1(getattr(ctx, "working_navmap_surface_history_limit_v1", 25), 25)
+        if history_limit <= 0:
+            history_limit = 25
+        ctx.working_navmap_surface_history_v1 = working_navmap_surface_history_append_v1(
+            getattr(ctx, "working_navmap_surface_history_v1", []),
+            record,
+            limit=history_limit,
+        )
+    except Exception:
+        return {}
+
+    return record
+
+
+def working_navmap_surface_summary_v1(ctx: Any) -> dict[str, Any]:
+    """Return a read-only summary of the diagnostic Working NavMap surface bridge."""
+    base: dict[str, Any] = {
+        "schema": "working_navmap_surface_summary_v1",
+        "status": "idle",
+        "has_surface": False,
+        "surface_kind": None,
+        "bridge_role": None,
+        "source_register": None,
+        "acceptance": None,
+        "action": None,
+        "residual_count": 0,
+        "context_shift_recommended": False,
+        "context_break_recommended": False,
+        "writes_enabled": False,
+        "used_for_policy_selection": False,
+        "used_for_worldgraph_truth": False,
+        "used_for_column_write": False,
+        "history_count": 0,
+        "slot_count": 0,
+        "slot_signature": "",
+        "slots": {},
+        "evidence_override_slots": {},
+        "created_at": None,
+    }
+
+    if ctx is None:
+        out = dict(base)
+        out["status"] = "ctx_unavailable"
+        return out
+
+    base["history_count"] = _navmap_safe_list_count_v1(getattr(ctx, "working_navmap_surface_history_v1", []))
+
+    record = _navmap_safe_dict_v1(getattr(ctx, "working_navmap_surface_v1", {}))
+    if not record:
+        return base
+
+    slots = _navmap_safe_dict_v1(record.get("slots"))
+    if not slots:
+        slots = _navmap_slots_from_payload_dict_v1(record.get("accepted_payload"))
+
+    out = dict(base)
+    out.update(
+        {
+            "status": "active",
+            "has_surface": True,
+            "surface_kind": record.get("surface_kind") if isinstance(record.get("surface_kind"), str) else None,
+            "bridge_role": record.get("bridge_role") if isinstance(record.get("bridge_role"), str) else None,
+            "source_register": record.get("source_register") if isinstance(record.get("source_register"), str) else None,
+            "acceptance": record.get("acceptance") if isinstance(record.get("acceptance"), str) else None,
+            "action": record.get("action") if isinstance(record.get("action"), str) else None,
+            "residual_count": _navmap_safe_int_v1(record.get("residual_count"), 0),
+            "context_shift_recommended": bool(record.get("context_shift_recommended")),
+            "context_break_recommended": bool(record.get("context_break_recommended")),
+            "writes_enabled": bool(record.get("writes_enabled")),
+            "used_for_policy_selection": bool(record.get("used_for_policy_selection")),
+            "used_for_worldgraph_truth": bool(record.get("used_for_worldgraph_truth")),
+            "used_for_column_write": bool(record.get("used_for_column_write")),
+            "slot_count": len(slots),
+            "slot_signature": str(record.get("slot_signature") or ""),
+            "slots": slots,
+            "evidence_override_slots": _navmap_safe_dict_v1(record.get("evidence_override_slots")),
+            "created_at": record.get("created_at") if isinstance(record.get("created_at"), str) else None,
+        }
+    )
+    return out
+
+
+def render_working_navmap_surface_lines_v1(ctx: Any) -> list[str]:
+    """Return human-readable lines for the diagnostic Working NavMap surface bridge."""
+    s = working_navmap_surface_summary_v1(ctx)
+    lines: list[str] = ["WORKING NAVMAP SURFACE:"]
+
+    if s["status"] == "ctx_unavailable":
+        lines.append("  status=ctx_unavailable")
+        return lines
+
+    if not s["has_surface"]:
+        lines.append(
+            "  status=idle "
+            f"history_count={s['history_count']} "
+            "[src=ctx.working_navmap_surface_v1]"
+        )
+        lines.append("  note=diagnostic-only bridge; waiting for accepted-current NavMap")
+        return lines
+
+    lines.append(
+        "  "
+        f"status={s['status']} "
+        f"kind={s['surface_kind'] or '(none)'} "
+        f"role={s['bridge_role'] or '(none)'} "
+        f"acceptance={s['acceptance'] or '(none)'} "
+        f"action={s['action'] or '(none)'} "
+        f"residual_count={s['residual_count']} "
+        "[src=ctx.working_navmap_surface_v1]"
+    )
+    lines.append(
+        "  "
+        f"slots={{{_prediction_compact_map_text_v1(s['slots'])}}} "
+        f"slot_count={s['slot_count']} "
+        f"signature={s['slot_signature'] or '(none)'}"
+    )
+    lines.append(
+        "  "
+        f"overrides={{{_prediction_compact_map_text_v1(s['evidence_override_slots'])}}} "
+        f"shift={s['context_shift_recommended']} "
+        f"break={s['context_break_recommended']} "
+        f"history_count={s['history_count']}"
+    )
+    lines.append(
+        "  "
+        f"used_for_policy_selection={s['used_for_policy_selection']} "
+        f"worldgraph_truth={s['used_for_worldgraph_truth']} "
+        f"column_write={s['used_for_column_write']} "
+        f"writes_enabled={s['writes_enabled']}"
+    )
+    return lines
+
+
+def working_navmap_surface_mini_line_v1(ctx: Any) -> str:
+    """Return a one-line Working NavMap surface bridge readout for mini-snapshots."""
+    s = working_navmap_surface_summary_v1(ctx)
+
+    if s["status"] == "ctx_unavailable":
+        return "[working-navmap] ctx unavailable"
+
+    if not s["has_surface"]:
+        return f"[working-navmap] status=idle history_count={s['history_count']}"
+
+    return (
+        "[working-navmap] "
+        f"role={s['bridge_role'] or '(none)'} "
+        f"acceptance={s['acceptance'] or '(none)'} "
+        f"action={s['action'] or '(none)'} "
+        f"residuals={s['residual_count']} "
+        f"slots={{{_prediction_compact_map_text_v1(s['slots'])}}} "
+        f"policy_used={s['used_for_policy_selection']} "
+        f"writes={s['writes_enabled']} "
+        f"history_count={s['history_count']}"
+    )
+
+
 def navmap_transition_summary_v1(ctx: Any) -> dict[str, Any]:
     """Return a read-only summary of the runner's last action-conditioned NavMap transition."""
     base: dict[str, Any] = {
@@ -17584,6 +17975,51 @@ def navmap_transition_mini_line_v1(ctx: Any) -> str:
 
 NAVMAP_SCOPE_MARKER_V1 = "(~~)"
 
+NAVMAP_SCOPE_PROBES_V1 = (
+    ("evidence", "has_evidence", "waiting for EnvObservation-derived evidence map"),
+    ("expected", "has_expected", "first cycle or no selected-primitive prior yet"),
+    ("residual", "has_residual", "waiting for expected-current vs evidence comparison"),
+    ("accepted", "has_accepted", "waiting for accepted-current map diagnostic"),
+    ("transition", "has_transition", "needs previous map + action + current map"),
+    ("outcome", "has_policy_outcome", "needs transition policy-outcome sample/index row"),
+)
+
+
+def navmap_scope_missing_probe_reasons_v1(frame: dict[str, Any]) -> dict[str, str]:
+    """Return a probe-name -> reason map for missing NavMap Oscilloscope probes.
+
+    The oscilloscope is a read-only instrument. This helper inspects one already-built
+    frame and explains why the six-probe signal path is incomplete. It does not read
+    ctx directly, mutate runtime state, run new matching, append history, or write memory.
+    """
+    if not isinstance(frame, dict):
+        return {name: reason for name, _key, reason in NAVMAP_SCOPE_PROBES_V1}
+
+    reasons: dict[str, str] = {}
+    for name, key, reason in NAVMAP_SCOPE_PROBES_V1:
+        if not bool(frame.get(key)):
+            reasons[name] = reason
+    return reasons
+
+
+def navmap_scope_frame_is_complete_v1(frame: dict[str, Any]) -> bool:
+    """Return True when all six NavMap Oscilloscope probes are present.
+
+    Complete means the current frame contains evidence, expected-current, residual,
+    accepted-current, transition, and policy-outcome/index signals. This is a
+    display/readiness check only; it does not imply the map is correct or safe.
+    """
+    if not isinstance(frame, dict):
+        return False
+    return not navmap_scope_missing_probe_reasons_v1(frame)
+
+
+def _navmap_scope_compact_missing_text_v1(value: Any) -> str:
+    """Return compact missing-probe text for terminal display."""
+    if not isinstance(value, dict) or not value:
+        return "(none)"
+    return ",".join(str(key) for key in sorted(value))
+
 
 def navmap_scope_frame_v1(ctx: Any) -> dict[str, Any]:
     """Return a read-only NavMap Oscilloscope frame over the current ctx registers.
@@ -17601,6 +18037,9 @@ def navmap_scope_frame_v1(ctx: Any) -> dict[str, Any]:
         "has_accepted": False,
         "has_transition": False,
         "has_policy_outcome": False,
+        "complete": False,
+        "missing_probe_count": 6,
+        "missing_probe_reasons": {},
         "evidence_action": None,
         "evidence_slots": {},
         "expected_action": None,
@@ -17705,20 +18144,17 @@ def navmap_scope_frame_v1(ctx: Any) -> dict[str, Any]:
             "indexed_mean_reward": _navmap_safe_float_or_none_v1(transition.get("indexed_mean_reward")) or 0.0,
         }
     )
+
+    missing_reasons = navmap_scope_missing_probe_reasons_v1(out)
+    out["missing_probe_reasons"] = missing_reasons
+    out["missing_probe_count"] = len(missing_reasons)
+    out["complete"] = not missing_reasons
     return out
 
 
 def _navmap_scope_probe_status_text_v1(frame: dict[str, Any]) -> str:
     """Return compact on/off probe status text for a NavMap Oscilloscope frame."""
-    labels = [
-        ("evidence", "has_evidence"),
-        ("expected", "has_expected"),
-        ("residual", "has_residual"),
-        ("accepted", "has_accepted"),
-        ("transition", "has_transition"),
-        ("outcome", "has_policy_outcome"),
-    ]
-    parts = [f"{name}={'on' if frame.get(key) else 'off'}" for name, key in labels]
+    parts = [f"{name}={'on' if frame.get(key) else 'off'}" for name, key, _reason in NAVMAP_SCOPE_PROBES_V1]
     return ", ".join(parts)
 
 
@@ -17732,6 +18168,8 @@ def render_navmap_scope_legend_lines_v1() -> list[str]:
         "  accepted  = current accepted map; evidence remains authoritative in this diagnostic slice.",
         "  transition= previous accepted map + action + current accepted map.",
         "  outcome   = ctx-local policy-outcome sample/index evidence for that map/action path.",
+        "  complete  = all six probes are on; incomplete usually means first-cycle warm-up or no action yet.",
+        "  missing   = compact list of probes not yet present in the current signal path.",
         "  shift/break: shift suggests context update; break marks safety/context-breaking evidence.",
     ]
 
@@ -17754,9 +18192,15 @@ def render_navmap_scope_frame_lines_v1(ctx: Any) -> list[str]:
     confidence_txt = f"{confidence:.2f}" if isinstance(confidence, float) else "n/a"
     lines.append(
         "  "
-        f"status={frame['status']} probes={_navmap_scope_probe_status_text_v1(frame)} "
+        f"status={frame['status']} complete={frame['complete']} "
+        f"missing={_navmap_scope_compact_missing_text_v1(frame['missing_probe_reasons'])} "
+        f"probes={_navmap_scope_probe_status_text_v1(frame)} "
         "[src=ctx.navmap_* diagnostic registers]"
     )
+    if frame["missing_probe_reasons"]:
+        lines.append("  missing reasons:")
+        for probe_name, reason in frame["missing_probe_reasons"].items():
+            lines.append(f"    - {probe_name}: {reason}")
     lines.append("  legend: evidence=input map; expected=prior; residual=difference; accepted=current map")
     lines.append(
         "  "
@@ -17809,6 +18253,8 @@ def navmap_scope_mini_line_v1(ctx: Any) -> str:
 
     return (
         f"{NAVMAP_SCOPE_MARKER_V1} [navmap-scope] "
+        f"complete={frame['complete']} "
+        f"missing={_navmap_scope_compact_missing_text_v1(frame['missing_probe_reasons'])} "
         f"acceptance={frame['acceptance'] or '(none)'} "
         f"residuals={frame['residual_count']} "
         f"shift={frame['context_shift_recommended']} "
@@ -18001,6 +18447,12 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.append("")
 
     lines.extend(render_navmap_expected_current_lines_v1(ctx))
+    lines.append("")
+
+    lines.extend(render_navmap_accepted_current_lines_v1(ctx))
+    lines.append("")
+
+    lines.extend(render_working_navmap_surface_lines_v1(ctx))
     lines.append("")
 
     lines.extend(render_navmap_transition_lines_v1(ctx))
@@ -22407,6 +22859,7 @@ def navmap_accepted_current_from_comparison_v1(ctx: Ctx, comparison: dict[str, A
         record,
         limit=history_limit,
     )
+    working_navmap_surface_from_accepted_current_v1(ctx, record)
     return record
 
 
@@ -22663,6 +23116,7 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
         ctx.navmap_last_expected_current_payload_v1 = None
         ctx.navmap_last_expected_current_comparison_v1 = None
         ctx.navmap_last_accepted_current_v1 = None
+        ctx.working_navmap_surface_v1 = None
 
     if previous_payload_dict and current_payload_dict:
         navmap_ctx_transition_from_payloads_v1(ctx, previous_payload_dict, current_payload_dict)
@@ -25681,6 +26135,16 @@ def mini_snapshot_text(world, ctx=None, limit: int = 50) -> str:
         lines.append(navmap_expected_current_mini_line_v1(ctx))
     except Exception:
         lines.append("[navmap-expected] (unavailable)")
+
+    try:
+        lines.append(navmap_accepted_current_mini_line_v1(ctx))
+    except Exception:
+        lines.append("[navmap-accepted] (unavailable)")
+
+    try:
+        lines.append(working_navmap_surface_mini_line_v1(ctx))
+    except Exception:
+        lines.append("[working-navmap] (unavailable)")
 
     try:
         lines.append(navmap_transition_mini_line_v1(ctx))
