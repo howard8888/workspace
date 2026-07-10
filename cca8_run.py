@@ -3,11 +3,6 @@
 """
 *************************************
 
-Superintelligence article submission note  June 2026:
-NOTE: This OSF repository contains the selected CCA8 software modules, data files, and supporting materials used
- to generate the results reported in the associated Superintelligence article. It is a reproducibility package
- for this article and is not intended to represent the full scope of ongoing CCA8 development.
-
 Software was developed in a Windows environment but should run with minimal changes in a macOS or Linux environment.
 Requires Python 3.11
 Please contact hschneidermd [at] alum [dot] mit [dot] edu for inquiries about additional software modules, related
@@ -28,6 +23,7 @@ The program is run at the command line interface:
         e.g., > python cca8_run.py
         e.g., > python cca8_run.py --about
         e.g., > python cca8_run.py --preflight
+        e.g., > python cca8_run.py --rcos-api
 
 Key ideas for readers and new collaborators
 ------------------------------------------
@@ -41,7 +37,7 @@ Key ideas for readers and new collaborators
 
 This runner presents an interactive menu for inspecting the world, planning, adding predicates,
 emitting sensory cues, and running the Action Center ("Instinct step"). It also supports
-non-interactive utility flags for scripting, like `--about`, `--version`, and `--plan <predicate>`.
+non-interactive utility flags for scripting, like `--about`, `--version`.
 
 
 Requirements
@@ -208,7 +204,7 @@ from cca8_rcos_experiments import (
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.8.2"
+__version__ = "0.9.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -295,6 +291,7 @@ __all__ = [
 
 NON_WIN_LINUX = False  #set if non-Win, non-macOS, non-Linux/like OS
 PLACEHOLDER_EMBODIMENT = '0.0.0 : none specified'
+TECH_MANUAL = 'http://github.com/howard8888/workspace'
 
 ASCII_LOGOS = {
     "badge": r"""
@@ -6502,7 +6499,7 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
 #
 # CLI (printing/input; menus; argparse) – terminal user experience:
 #   • interactive_loop(args): main menu + per-selection code blocks.
-#   • main(argv): argument parsing, logging, “one-shot” flags (about/version/preflight/plan), and then interactive_loop.
+#   • main(argv): argument parsing, logging, one-shot flags (about/version/preflight), and then interactive_loop.
 #   • if __name__ == "__main__": sys.exit(main()): standard Python script entry point.
 
 
@@ -10544,6 +10541,7 @@ def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Bod
     print('(for non-interactive execution, ">python cca8_run.py --help" to see optional flags you can set)')
     print(f'\nEmbodiment:  HAL (hardware abstraction layer) setting: {hal_str}')
     print(f'Embodiment:  body_type|version_number|serial_number (i.e., robotic embodiment): {body_str} ')
+    print(f'User and Technical Manual (including portions of source code): {TECH_MANUAL}')
 
     print("\nThe simulation of the cognitive architecture can be adjusted to add or take away")
     print("  various features, allowing exploration of different evolutionary-like configurations.\n")
@@ -14110,8 +14108,41 @@ def _goat_defaults():
 
 def _print_goat_fallback():
     """Explain that the chosen profile is not implemented and we fall back to Mountain Goat."""
-    print("Although scaffolding is in place, currently this evolutionary-like configuration is not available. "
-          "Profile will be set to mountain goat-like brain simulation.\n")
+    print("\n\n======================\n\nAlthough scaffolding is in place, currently this evolutionary-like configuration is not available. "
+          "\nProfile will be set to mountain goat-like brain simulation.\n\n======================\n\n")
+
+
+def profile_rcos_api(_ctx) -> tuple[str, float, float, int]:
+    """Explain the planned RCOS API configuration; fall back to Mountain Goat defaults."""
+    print(r"""
+Robotic Cognitive Operating System (RCOS)
+
+CCA8 can be considered in two ways:
+
+1. As a developmental cognitive architecture inspired by early mammalian brains.
+
+OR
+
+2. As the kernel of a Robotic Cognitive Operating System (RCOS): a layer that manages embodiment,
+   behavior, and cognition on top of low-level robot firmware, real-time operating systems, and
+   middleware such as ROS 2.
+
+The RCOS is an integration architecture: not "LLM + motors," but a structured system that unifies
+cognition with embodied control.
+
+The real world is not merely a larger simulation. It is slow, noisy, expensive, partially observable,
+physically risky, and not perfectly repeatable. A robot may encounter shadows, sensor noise, slip,
+friction changes, unexpected contact, latency, battery limits, actuator faults, object deformation,
+and human interruption.
+
+Therefore, a CCA8 RCOS should not allow a high-level planner, LLM, VLA, or learned world model to
+control the body directly without a supervisory layer. CCA8's role is to manage the boundary between
+imagined futures and real consequences.
+
+Although scaffolding is in place, an RCOS API configuration is not available.
+    """)
+    _print_goat_fallback()
+    return _goat_defaults()
 
 
 def profile_chimpanzee(_ctx) -> tuple[str, float, float, int]:
@@ -28444,32 +28475,29 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Stage-1 RCOS sandbox handle (lazy-init from menu 50 so we do not touch normal CCA8 flows unless requested).
     sim_robot_goat_hal: Optional[SimRobotGoatHAL] = None
 
-    # Optional: start session with a preloaded demo/test world to exercise graph menus.
-    # Driven by --demo-world; ignored when --load is used (load takes precedence).
-    if getattr(args, "demo_world", False) and not args.load:
-        try:
-            from cca8_test_fixtures import build_demo_world_for_inspect  # type: ignore
-            demo_world, demo_ids = build_demo_world_for_inspect()
-            world = demo_world
-            try:
-                now_demo = demo_ids.get("NOW") if isinstance(demo_ids, dict) else _anchor_id(world, "NOW")
-                print(f"[demo_world] Preloaded demo world (NOW={now_demo}, bindings={len(world._bindings)})")
-            except Exception:
-                print(f"[demo_world] Preloaded demo world (bindings={len(world._bindings)})")
-        except Exception as e:
-            print(f"[demo_world] Could not preload demo world: {e}")
-    elif getattr(args, "demo_world", False) and args.load:
-        # Both flags given: be explicit that --load wins.
-        print("[demo_world] --demo-world ignored because --load was also provided.")
-
     POLICY_RT = PolicyRuntime(CATALOG_GATES)
     POLICY_RT.refresh_loaded(ctx)
     loaded_ok = False
     loaded_src = None
 
-    # ---- Menu text ----
+    # ---- Main Menu presentation ----
+    MAIN_MENU_HEADER = """\
+    \nSCROLL UP TO SEE ANY OF THE DATA SCREENS WHICH MAY HAVE SCROLLED BY QUICKLY
+
+
+    ============================================================================
+                               CCA8 MAIN MENU
+    ============================================================================
+
+        New user suggestion:
+      #35: Watch one cognitive cycle slowly -->
+      #3: Inspect what that cycle produced -->
+      #51: Watch the architecture conduct a complete autonomous episode
+      (Use #2 at any time for the tutorial and documentation)
+
+    """
     MENU = """\
-    [hints for text selection instead of numerical selection]
+    Enter a menu number or one of the bracketed text commands.
 
     # Quick Start & Tutorial
     1) Understanding bindings, edges, predicates, policies [understanding, tagging]
@@ -28540,7 +28568,14 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # RCOS / Robotics
     50) SimRobotGoat RCOS sandbox [rcos, simgoat, robotgoat]
 
-    Select: """
+        New user suggestion:
+      #35: Watch one cognitive cycle slowly -->
+      #3 : Inspect what that cycle produced -->
+      #51: Watch the architecture conduct a complete autonomous episode
+      (Use #2 at any time for the tutorial and documentation)
+      SCROLL UP TO SEE ALL OF THE MENU CHOICES
+
+    Enter Menu Choice: """
 
     # ---- Text command aliases (words + 3-letter prefixes → legacy actions) -----
     #will map to current menu which then must be mapped to original menu numbers
@@ -28717,33 +28752,38 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Banner & profile selection
     if not args.no_intro:
         print_header(args.hal_status_str, args.body_status_str)
-    if args.profile:
-        mapping = {"goat": ("Mountain Goat", 0.015, 0.2, 2),
-                   "chimp": ("Chimpanzee", 0.02, 0.25, 3),
-                   "human": ("Human", 0.03, 0.3, 4),
-                   "super": ("Super-Human", 0.05, 0.35, 5)}
-        name, sigma, jump, k = mapping[args.profile]
-        ctx.profile, ctx.sigma, ctx.jump = name, sigma, jump
-        ctx.winners_k = k
-        print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})")
-        print("  sigma/jump = TemporalContext drift/jump noise scales; k = reserved top-k winners knob (future WTA selection).\n")
-
-        POLICY_RT.refresh_loaded(ctx)
+    if getattr(args, "rcos_api", False):
+        name, sigma, jump, k = profile_rcos_api(ctx)
+    elif args.profile:
+        if args.profile == "goat":
+            name, sigma, jump, k = _goat_defaults()
+        elif args.profile == "chimp":
+            name, sigma, jump, k = profile_chimpanzee(ctx)
+        elif args.profile == "human":
+            name, sigma, jump, k = profile_human(ctx)
+        else:
+            name, sigma, jump, k = profile_superhuman(ctx)
     else:
         profile = choose_profile(ctx, world)
         name = profile["name"]
-        sigma, jump, k = profile["ctx_sigma"], profile["ctx_jump"], profile["winners_k"]
-        ctx.sigma, ctx.jump = sigma, jump
-        ctx.winners_k = k
-        print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})")
-        print("  sigma/jump = TemporalContext drift/jump noise scales; k = reserved top-k winners knob (future WTA selection).\n")
+        sigma = profile["ctx_sigma"]
+        jump = profile["ctx_jump"]
+        k = profile["winners_k"]
 
-        POLICY_RT.refresh_loaded(ctx)
-    _io_banner(args, loaded_src, loaded_ok)
+    ctx.profile = name
+    ctx.sigma = sigma
+    ctx.jump = jump
+    ctx.winners_k = k
+    print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})")
+    print(
+        "  sigma/jump = TemporalContext drift/jump noise scales; "
+        "k = reserved top-k winners knob (future WTA selection).\n"
+    )
+
+    POLICY_RT.refresh_loaded(ctx)
 
     world.set_stage_from_ctx(ctx)        # derive 'neonate'/'infant' from ctx.age_days
     world.set_tag_policy("warn")         # or "strict" once you’re ready
-
 
     # HAL instantiation (although already set in class Ctx, but can modify here)
     ctx.hal  = None
@@ -28755,9 +28795,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
     # Ensure NOW anchor exists for the episode (so attachments from "now" resolve)
     world.ensure_anchor("NOW")
-    # boot policy, e.g., mountain goat should stand up
-    if not args.no_boot_prime:
-        boot_prime_stand(world, ctx)
+    # Seed the newborn Mountain Goat's default stand-up intent.
+    boot_prime_stand(world, ctx)
     # Pin NOW_ORIGIN to this initial NOW (episode root)
     ensure_now_origin(world)
     # Startup notices (print here so they appear as part of the session boot block).
@@ -28766,28 +28805,22 @@ def interactive_loop(args: argparse.Namespace) -> None:
     print_startup_notices(world)
     print("[profile] Hardwired memory pipeline: phase7 daily-driver (no options menu needed).")
 
-    # Non-interactive plan flag (one-shot planning and exit)
-    if args.plan:
-        src_id = world.ensure_anchor("NOW")
-        path = world.plan_to_predicate(src_id, args.plan)
-        if path:
-            print("Plan to", args.plan, ":", " -> ".join(path))
-        else:
-            print("No path found to", args.plan)
-        return
-
-
     run_preflight_lite_maybe()  # optional preflight-lite
     pretty_scroll = True        #to see changes before terminal menu scrolls over screen
-
 
     # Interactive menu loop  >>>>>>>>>>>>>>>>>>>
     while True:
         try:
+            print(f"\n{MAIN_MENU_HEADER}")
+
             if pretty_scroll:
-                temp = input('\nPlease press any key (* stops this scroll pause) to continue with menu (above screen will scroll)....\n')
+                temp = input(
+                    "\nPress Enter to display the CCA8 Main Menu, "
+                    "or type * then Enter to disable this pause for the session.\n"
+                )
                 if temp == "*":
                     pretty_scroll = False
+
             choice = input(MENU).strip()
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye.")
@@ -30902,13 +30935,57 @@ Attach an existing engram id (eid) to a binding id (bid).
 
         #----Menu Selection Code Block------------------------
         elif choice == "35":
-            # Verbose teaching mode: one closed-loop cycle using the same engine as menu 37.
+            # Verbose teaching mode: one closed-loop cycle using the same engine as Menu 37.
             print("Selection: Run 1 Cognitive Cycle (verbose teaching mode)\n")
-            print("This uses the same closed-loop engine as Menu 37, but adds teaching notes beside the live output.\n")
+            print("""What is a cognitive cycle?
+--------------------------
+
+A cognitive cycle is one complete perceive-update-decide-act loop between an agent
+(for example, a goat, chimpanzee, human, or robot) and its environment.
+
+The agent's brain or control system is simulated using the CCA8 cognitive architecture.
+CCA8 receives evidence from the environment, updates its internal state, selects an action,
+and then begins the cycle again.
+
+At a high level, this cycle will:
+
+  1) --> Let the simulated or real environment report what the agent is sensing now -->
+  2) Convert that evidence into current internal maps and compare it with what was expected -->
+  3) Record any mismatch as a prediction-error or residual signal -->
+  4) Let the Action Center select a behavior, called a policy, for the next cycle --> REPEAT
+
+  Note: In the CCA literature, "Navigation Module" means "Action Center," and
+  "Primitive" means "Policy."
+
+Current sensory evidence remains authoritative when it disagrees with a prediction. (This is
+important to realize -- the CCA8 does not force observations to conform to its expectations.)
+
+The environment is stepped using the action selected during the previous cycle. The new
+observation is then processed, and CCA8 selects the action to be used during the next cycle.
+
+During the first cycle, there may be no previous action or prediction, so some diagnostic
+fields may say "missing" or "incomplete." This is normal.
+
+The output below may scroll down quickly. After the cycle finishes, scroll upward to read
+the sections in order.
+""")
+
+            input("Press Enter to begin the cognitive cycle...")
+            print()
+
             try:
-                run_env_closed_loop_steps(env, world, drives, ctx, POLICY_RT, 1, teaching_mode=True)
+                run_env_closed_loop_steps(
+                    env,
+                    world,
+                    drives,
+                    ctx,
+                    POLICY_RT,
+                    1,
+                    teaching_mode=True,
+                )
             except Exception as e:
                 print(f"[env-loop] error while running 1 verbose closed-loop step: {e}")
+
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -32337,7 +32414,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     Responsibilities
     ----------------
     - Configure logging (file + console).
-    - Parse CLI flags (about/version/load/save/autosave/preflight/plan/profile/hal/body/demo-world/…).
+    - Parse CLI flags (about/version/load/save/autosave/preflight/profile/rcos-api/hal/body/…).
     - Handle one-shot modes:
          --version / --about → print version/component info and exit.
          --preflight         → run full unit tests + preflight probes and exit.
@@ -32377,16 +32454,25 @@ def main(argv: Optional[list[str]] = None) -> int:
     #p.add_argument("--period", type=int, default=None, help="Optional period (for tagging)")
     #p.add_argument("--year", type=int, default=None, help="Optional year (for tagging)")
     p.add_argument("--no-intro", action="store_true", help="Skip the intro banner")
-    p.add_argument("--profile", choices=["goat","chimp","human","super"],
-               help="Pick a profile without prompting (goat=Mountain Goat, chimp=Chimpanzee, human=Human, super=Super-Human), usage may be unstable")
+    startup_mode = p.add_mutually_exclusive_group()
+    startup_mode.add_argument(
+        "--profile",
+        choices=["goat", "chimp", "human", "super"],
+        help=(
+            "Select a startup profile without prompting; currently only goat is "
+            "implemented, and other profiles fall back to Mountain Goat"
+        ),
+    )
+    startup_mode.add_argument(
+        "--rcos-api",
+        action="store_true",
+        help="Describe the planned RCOS API configuration, then fall back to Mountain Goat",
+    )
     p.add_argument("--preflight", action="store_true", help="Run full unit tests and preflight and exit")
     #p.add_argument("--write-artifacts", action="store_true", help="Write preflight artifacts to disk")
     p.add_argument("--load", help="Load session from JSON file")
     p.add_argument("--save", help="Save session to JSON file on exit")
     p.add_argument("--autosave", help="Autosave session to JSON file after each action")
-    p.add_argument("--plan", metavar="PRED", help="Plan from NOW to predicate and exit")
-    p.add_argument("--no-boot-prime", action="store_true", help="Disable boot/default intent for calf to stand")
-    p.add_argument("--demo-world", action="store_true", help="Start with a small preloaded demo world for graph/menu testing")
 
     try:
         args = p.parse_args(argv)
