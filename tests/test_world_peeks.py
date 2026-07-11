@@ -1,48 +1,64 @@
-# tests/test_world_peeks.py
+"""Guard current CCA8 production modules from direct world._bindings access."""
+
+from __future__ import annotations
+
 import ast
-import pathlib
+from pathlib import Path
 
-# Files where peeking is allowed (trusted-friend seam + world internals + run script + example)
-# Note: If you make a copy of some python code that peeks in world internals, etc and that copy is lying around your working directory,
-#  then this unit test will find it and report an error -- you should move the file out of your working directory or else allow it below
+
+# These modules currently have deliberate access to WorldGraph internals.
+# The TEMPORARY exceptions should eventually be replaced with public methods.
 ALLOW_FILES = {
-    "cca8_controller.py",
     "cca8_world_graph.py",
-    "cca8_run.py",          # TEMP allow
-    "example_test.py",      # TEMP allow
-    "temp.py",
-    "tester.py"
+    "cca8_controller.py",  # TEMPORARY
+    "cca8_run.py",         # TEMPORARY
 }
 
-# Directories we don't scan
-SKIP_DIRS = {
-    "tests", "archive", ".git", ".venv", "venv", "build", "dist", "__pycache__", "examples", "scripts"
-}
 
-def _offenders_in_file(path: pathlib.Path) -> list[str]:
+def _offenders_in_file(path: Path) -> list[str]:
+    """Return locations containing direct world._bindings access."""
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
         tree = ast.parse(text, filename=str(path))
-    except Exception:
+    except (OSError, SyntaxError):
+        # Syntax validation is outside this architectural test's purpose.
         return []
-    hits = []
-    class V(ast.NodeVisitor):
-        def visit_Attribute(self, node: ast.Attribute):
-            # match: world._bindings
-            if isinstance(node.value, ast.Name) and node.value.id == "world" and node.attr == "_bindings":
-                hits.append(f"{path}:{node.lineno}")
+
+    hits: list[str] = []
+
+    class BindingVisitor(ast.NodeVisitor):
+        def visit_Attribute(self, node: ast.Attribute) -> None:
+            if (
+                isinstance(node.value, ast.Name)
+                and node.value.id == "world"
+                and node.attr == "_bindings"
+            ):
+                hits.append(
+                    f"{path.name}:{node.lineno}:{node.col_offset + 1}"
+                )
+
             self.generic_visit(node)
-    V().visit(tree)
+
+    BindingVisitor().visit(tree)
     return hits
 
-def test_world_bindings_peek_is_quarantined():
-    root = pathlib.Path(__file__).resolve().parents[1]
+
+def test_world_bindings_peek_is_quarantined() -> None:
+    """CCA8 production modules should use the public WorldGraph interface."""
+    root = Path(__file__).resolve().parents[1]
     offenders: list[str] = []
-    for p in root.rglob("*.py"):
-        if any(seg in SKIP_DIRS for seg in p.parts):
+
+    # Deliberately inspect only current root-level CCA8 production modules.
+    for path in sorted(root.glob("cca8_*.py")):
+        if path.name in ALLOW_FILES:
             continue
-        if p.name in ALLOW_FILES:
-            continue
-        offenders.extend(_offenders_in_file(p))
+
+        offenders.extend(_offenders_in_file(path))
+
     offenders.sort()
-    assert not offenders, "See test_world_peeks.py. File with non-allowed peeks (move/delete please): " + ", ".join(offenders)
+
+    assert not offenders, (
+        "Direct world._bindings access found outside the approved modules. "
+        "Use a public WorldGraph method or deliberately update ALLOW_FILES:\n"
+        + "\n".join(offenders)
+    )

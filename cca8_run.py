@@ -28489,11 +28489,12 @@ def interactive_loop(args: argparse.Namespace) -> None:
                                CCA8 MAIN MENU
     ============================================================================
 
-        New user suggestion:
+        New user suggestion (enter at the *bottom* of the menu)
       #35: Watch one cognitive cycle slowly -->
       #3: Inspect what that cycle produced -->
       #51: Watch the architecture conduct a complete autonomous episode
       (Use #2 at any time for the tutorial and documentation)
+      (Press ENTER... menu will display and then enter your choice at the bottom of the menu)\n
 
     """
     MENU = """\
@@ -28815,8 +28816,8 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
             if pretty_scroll:
                 temp = input(
-                    "\nPress Enter to display the CCA8 Main Menu, "
-                    "or type * then Enter to disable this pause for the session.\n"
+                    "\nPress ENTER to continue and display the CCA8 Main Menu "
+                    "\n(Type * then Enter to disable these pauses for the session) "
                 )
                 if temp == "*":
                     pretty_scroll = False
@@ -30957,8 +30958,11 @@ At a high level, this cycle will:
   Note: In the CCA literature, "Navigation Module" means "Action Center," and
   "Primitive" means "Policy."
 
-Current sensory evidence remains authoritative when it disagrees with a prediction. (This is
-important to realize -- the CCA8 does not force observations to conform to its expectations.)
+Predictions help CCA8 interpret noisy or incomplete sensory evidence. When the
+incoming pattern closely matches a known NavMap, CCA8 may treat it as the same
+map with updated details. However, strong, persistent, or safety-critical
+differences must not be forced to conform to the prediction; they may trigger
+an alternative or new NavMap interpretation.
 
 The environment is stepped using the action selected during the previous cycle. The new
 observation is then processed, and CCA8 selects the action to be used during the next cycle.
@@ -32459,14 +32463,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--profile",
         choices=["goat", "chimp", "human", "super"],
         help=(
-            "Select a startup profile without prompting; currently only goat is "
-            "implemented, and other profiles fall back to Mountain Goat"
+            "Select a startup profile without prompting"
         ),
     )
     startup_mode.add_argument(
         "--rcos-api",
         action="store_true",
-        help="Describe the planned RCOS API configuration, then fall back to Mountain Goat",
+        help="Use CCA8 as RCOS (Robot Cognitive Operationg System)",
     )
     p.add_argument("--preflight", action="store_true", help="Run full unit tests and preflight and exit")
     #p.add_argument("--write-artifacts", action="store_true", help="Write preflight artifacts to disk")
