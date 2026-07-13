@@ -94,15 +94,16 @@ def menu37_teaching_after_observation_v1() -> str:
     """Return a teaching note printed after observation injection."""
     return """
 [teach] Observation injection checkpoint:
-  At this point the environment has produced an EnvObservation.
+  Near the start of this cognitive cycle, the environment produced an EnvObservation.
 
-  The same observation can update several memory systems:
+  That observation has now updated several memory systems:
     - BodyMap: the fast current-state body schema.
     - WorkingMap / MapSurface: the short-term scene/entity workspace.
     - WorldGraph: the long-term symbolic episode index.
 
   The WorkingMap is allowed to be high-bandwidth and current.
-  The WorldGraph is more selective; repeated unchanged facts may be skipped to avoid clutter.
+  The WorldGraph is more selective; repeated unchanged facts may be skipped and we may not
+     create more nodes and/or tags to avoid clutter.
 """.strip()
 
 

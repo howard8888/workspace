@@ -28485,16 +28485,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
     \nSCROLL UP TO SEE ANY OF THE DATA SCREENS WHICH MAY HAVE SCROLLED BY QUICKLY
 
 
+
     ============================================================================
                                CCA8 MAIN MENU
     ============================================================================
-
-        New user suggestion (enter at the *bottom* of the menu)
-      #35: Watch one cognitive cycle slowly -->
-      #3: Inspect what that cycle produced -->
-      #51: Watch the architecture conduct a complete autonomous episode
-      (Use #2 at any time for the tutorial and documentation)
-      (Press ENTER... menu will display and then enter your choice at the bottom of the menu)\n
 
     """
     MENU = """\
@@ -30966,16 +30960,73 @@ an alternative or new NavMap interpretation.
 
 The environment is stepped using the action selected during the previous cycle. The new
 observation is then processed, and CCA8 selects the action to be used during the next cycle.
+""")
+            input("Press Enter to continue reading...\n\n")
+
+            print("""To make it easier to read the information about the cog cycle, note this
+key being used:
+        [teach]       explanation for the human reader
+        [env...]      information from the simulated (or real) environment
+        [navmap...]   map-processing diagnostics
+        [controller]  policy-selection or action information
+        [cycle]       compact end-of-cycle summary
+
+In the CCA literature, 'controller'===Navigation Module -- this is where the mechanics of
+the 'policy'==='primitive' acts on the Working Navigation Map.
+
+The term 'cycle' refers to a 'cognitive cycle' of information going through the CCA8-generated
+architecture, i.e., sensory, processing and output, and then another cognitive cycle starts.
+
+***Tip: If this is the first time you are seeing this architecture, you should make some pen and
+paper notes to become familiar with and consolidate the basic terms and functioning of the
+architecture. Consider reading some of the literature on the subject as well.***
 
 During the first cycle, there may be no previous action or prediction, so some diagnostic
-fields may say "missing" or "incomplete." This is normal.
+fields may say "missing" or "incomplete." This is normal.\n""")
+            input("Press Enter to continue reading...\n\n")
+            
+            print("""Optional discussion about matching navigation maps:
+-If you have read some of the literature on the Cognitive Causal Architecture then you are aware it
+uses NavMaps (i.e., map-like basic data structures) in its core processing. Sensory information (as
+well as intermediate results) are mapped onto NavMaps and a new sensory NavMap is matched against
+stored NavMaps. There are three types of matches that occur:
+Very close match
+    → interpret the observation using an existing NavMap
+    e.g., sensory image of tree will be matched to other pre-existing trees usually; the small differences among
+    the leaves and branches will be ignored (although if many such sensory inputs there is finer assortment of
+    NavMaps stored on the subject).
+Clearly poor match
+    → treat it as novel and form a new NavMap candidate
+    e.g., have never seen an automobile before -- a new NavMap will be created; it will not be forced matched as
+    a type of tree, for example.
+Middle region
+    → preserve uncertainty and gather more evidence
+    e.g., sensory image of a large bushy shrub -- do we just perceive it as a tree perhaps under different lighting
+    or different angles, or is it a totally different match and we should create a new NavMap for it?
 
-The output below may scroll down quickly. After the cycle finishes, scroll upward to read
-the sections in order.
-""")
+There is ongoing development of the CCA8's NavMap learning and context-management system. With regard to matching:
+    -close and unambiguous  → reuse/update an existing NavMap
+    -close but ambiguous    → preserve several hypotheses or inspect further
+    -poor match             → create a new NavMap candidate
+    -safety-critical contradiction → immediately reconsider the current context
 
+Optional discussion: Current threshold cutoff values:
+    -exact content signature
+        → reuse_exact
+    -best score >= 0.85
+    -and best - second >= 0.05
+        → commit to the best existing interpretation
+    -best score >= 0.85
+    -but best - second < 0.05
+        → ambiguous
+    -best score < 0.85
+        → unknown / novel
+
+***The output below may scroll down quickly. After computations are completed and terminal output has stopped,
+   SCROLL upward to be able to read all the text.***\n""")
             input("Press Enter to begin the cognitive cycle...")
-            print()
+            print('\n\nSTART COGNITIVE CYCLE')
+            print('=====================\n')
 
             try:
                 run_env_closed_loop_steps(
