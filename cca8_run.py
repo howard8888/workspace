@@ -49,8 +49,8 @@ Core runtime:
   cca8_world_graph.py, cca8_controller.py, cca8_temporal.py,
   cca8_column.py, cca8_features.py, cca8_env.py, cca8_navpatch.py,
   cca8_rcos.py, cca8_rcos_experiments.py, cca8_state_integrity.py,
-  cca8_teaching.py, cca8_test_fixtures.py, cca8_context.py, and
-  cca8_preflight.py.
+  cca8_teaching.py, cca8_test_fixtures.py, cca8_context.py, cca8_cli.py,
+  and cca8_preflight.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
   sys, logging, math, datetime, dataclasses, typing, collections, random,
   time, subprocess, shutil, io, contextlib, copy, tempfile, webbrowser,
@@ -118,6 +118,7 @@ from contextlib import redirect_stdout
 
 # CCA8 Module Imports
 #import cca8_world_graph as wgmod  # modular alternative: allows swapping WorldGraph engines
+import cca8_cli
 import cca8_world_graph
 from cca8_controller import (
     PRIMITIVES,
@@ -293,23 +294,11 @@ __all__ = [
 
 NON_WIN_LINUX = False  #set if non-Win, non-macOS, non-Linux/like OS
 PLACEHOLDER_EMBODIMENT = '0.0.0 : none specified'
-TECH_MANUAL = 'http://github.com/howard8888/workspace'
-
-ASCII_LOGOS = {
-    "badge": r"""
-
-
-+--------------------------------------------------------------+
-|  C C A 8  —  Causal Cognitive Architecture                   |
-+--------------------------------------------------------------+""".strip("\n"),
-    "goat": r"""
-    ____            CCA8
- .'    `-.       mountain goat
-/  _  _   \
-| (o)(o)  |
-\    __  /
- `'-.____'""".strip("\n"),
-}
+# Compatibility aliases for callers that historically accessed CLI constants
+# and the logo function through cca8_run.
+TECH_MANUAL = cca8_cli.TECH_MANUAL
+ASCII_LOGOS = cca8_cli.ASCII_LOGOS
+print_ascii_logo = cca8_cli.print_ascii_logo
 
 
 # --- Runtime Context (ENGINE↔CLI seam) --------------------------------------------
@@ -9847,56 +9836,20 @@ def _fmt_base(d: dict) -> str:
     return str(d)
 
 
-def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Body: (none)"):
-    """Print the intro banner and a brief explanation of the simulation profiles and CLI usage."""
-    print('\n\n# --------------------------------------------------------------------------------------')
-    print('# NEW RUN   NEW RUN')
-    print('# --------------------------------------------------------------------------------------')
-    print("\nA Warm Welcome to the CCA8 Mammalian Brain Simulation")
-    print(f"(cca8_run.py v{__version__})\n")
-    print_ascii_logo(style="goat", color=True)
-    print(f"Entry point program being run: {os.path.abspath(sys.argv[0])}")
-    print(f"OS: {sys.platform} (see system-dependent utilities for more detailed system/simulation info)")
-    print('(for non-interactive execution, ">python cca8_run.py --help" to see optional flags you can set)')
-    print(f'\nEmbodiment:  HAL (hardware abstraction layer) setting: {hal_str}')
-    print(f'Embodiment:  body_type|version_number|serial_number (i.e., robotic embodiment): {body_str} ')
-    print(f'User and Technical Manual (including portions of source code): {TECH_MANUAL}')
+def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Body: (none)") -> None:
+    """Print the startup banner through the extracted CLI presentation module.
 
-    print("\nThe simulation of the cognitive architecture can be adjusted to add or take away")
-    print("  various features, allowing exploration of different evolutionary-like configurations.\n")
-    print("  1. Mountain Goat-like brain simulation")
-    print("  2. Chimpanzee-like brain simulation")
-    print("  3. Human-like brain simulation")
-    print("  4. Human-like one-agent multiple-brains simulation")
-    print("  5. Human-like one-brain simulation × multiple-agents society")
-    print("  6. Human-like one-agent multiple-brains simulation with combinatorial planning")
-    print("  7. Super-Human-like machine simulation")
-    print("  T. Tutorial (more information) on using and maintaining this program, references\n")
-
-
-def print_ascii_logo(style: str = None, color: bool = True) -> None:  # pragma: no cover
+    The wrapper preserves the historical ``cca8_run.print_header`` call
+    signature while supplying the runner version and current runner-visible logo
+    callback to ``cca8_cli``.
     """
-    Print a small ASCII logo once at program start.
-    Env overrides:
-      CCA8_LOGO=badge|goat|off   (off disables)
-      NO_COLOR (set to disable ANSI colors)
-    """
-    style = (style or os.getenv("CCA8_LOGO", "badge")).lower()
-    if style == "off":
-        return
-    art = ASCII_LOGOS.get(style, ASCII_LOGOS["badge"])
-
-    # Optional ANSI color (Windows Terminal supports ANSI; NO_COLOR disables)
-    want_color = color and sys.stdout.isatty() and not os.getenv("NO_COLOR")
-    if want_color:
-        CYAN = "\033[36m"; YEL = "\033[33m"; B = "\033[1m"; R = "\033[0m"
-        if style == "badge":
-            art = art.replace("C C A 8", f"{B}{CYAN}C C A 8{R}")
-        elif style == "goat":
-            art = f"{YEL}{art}{R}"
-
-    print(art)  # pragma: no cover
-    print()     # spacer  # pragma: no cover
+    cca8_cli.print_header(
+        hal_str,
+        body_str,
+        runner_version=__version__,
+        technical_manual=TECH_MANUAL,
+        logo_printer=print_ascii_logo,
+    )
 
 
 # --- WorldGraph snapshot + engram helpers (runner-facing) ------------------------
@@ -26376,236 +26329,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     loaded_ok = False
     loaded_src = None
 
-    # ---- Main Menu presentation ----
-    MAIN_MENU_HEADER = """\
-    \nSCROLL UP TO SEE ANY OF THE DATA SCREENS WHICH MAY HAVE SCROLLED BY QUICKLY
-
-
-
-    ============================================================================
-                               CCA8 MAIN MENU
-    ============================================================================
-
-    """
-    MENU = """\
-    Enter a menu number or one of the bracketed text commands.
-
-    # Quick Start & Tutorial
-    1) Understanding bindings, edges, predicates, policies [understanding, tagging]
-    2) Help: System Docs and/or Tutorial with demo tour [help, tutorial, demo]
-
-    # Quick Start / Overview
-    3) Snapshot (bindings + edges + ctx + policies) [snapshot, display]
-    4) World stats [world, stats]
-    5) Recent bindings (last 5) [last, bindings]
-    6) Drives & drive tags [drives]
-    7) Skill ledger [skills]
-    8) Temporal probe (epoch/hash/cos/hamming) [temporal, probe]
-
-    # Act / Simulate
-    9) Instinct step (Action Center) [instinct, act]
-    10) Autonomic tick (emit interoceptive cues) [autonomic, tick]
-    11) Simulate fall (add posture:fallen and try recovery) [fall, simulate]
-
-    # Simulation of the Environment (HybridEnvironment demo)
-    35) Run 1 Cognitive Cycle (verbose teaching mode) [env, hybrid, verbose]
-    37) Run n Cognitive Cycles (closed-loop timeline) [envloop, envrun]
-    38) Inspect BodyMap (summary from BodyMap helpers) [bodymap, bsnap]
-    39) Spatial scene demo (NOW-near + resting-in-shelter?) [spatial, near]
-    51) Autonomous newborn survival demo (isolated hard-mode sandbox) [survival, newborn-demo]
-
-    # Perception & Memory (Cues & Engrams)
-    12) Input [sensory] cue [sensory, cue]
-    13) Capture scene → tiny engram (signal bridge) [capture, scene]
-    14) Resolve engrams on a binding [resolve, engrams]
-    15) Inspect engram by id (or binding) [engram, ei]
-    16) List all engrams [engrams-all, list-engrams]
-    17) Search engrams (by name / epoch) [search-engrams, find-engrams]
-    18) Delete engram by bid or eid [delete-engram, del-engram]
-    19) Attach existing engram to a binding [attach-engram, ae]
-
-    # Graph Inspect / Build / Plan
-    20) Inspect binding details [inspect, details]
-    21) List predicates [listpredicates, listpreds]
-    22) [Add] predicate [add, predicate]
-    23) Connect two bindings (src, dst, relation) [connect, link]
-    24) Delete edge (source, destn, relation) [delete, rm]
-    25) Plan from NOW -> <predicate> [plan]
-    26) Planner strategy (toggle BFS ↔ Dijkstra) [planner, strategy]
-    27) Export and display interactive graph with options [pyvis, graph]
-
-    # Save / System / Help
-    28) Export snapshot (text only) [export snapshot]
-    29) Save session → path [save]
-    30) Load session → path [load]
-    31) Run preflight now [preflight]
-    32) Quit [quit, exit]
-    33) Lines of Python code LOC by directory [loc, sloc]
-    34) Reset current saved session [reset]
-    36) Toggle mini-snapshot after each menu selection [mini, msnap]
-
-    # Memories
-    40) Configure episode starting state (drives + age_days) [config-episode, cfg-epi]
-    41) Retired: WorkingMap & WorldGraph settings, toggle RL policy
-    42) Configure goat_foraging_04 contextual map-switch evaluation [goat04]
-    43) WorkingMap snapshot (last N bindings; optional clear) [wsnap, wmsnap]
-    44) Store MapSurface snapshot to Column + WG pointer (dedup vs last) [wstore, wmstore]
-    45) List recent wm_mapsurface engrams (Column)
-    46) Pick best wm_mapsurface engram for current stage/zone (read-only) [wpick, wpickwm]
-    47) Load wm_mapsurface engram into WorkingMap (replace MapSurface) [wload, wmload]
-    48) LLM API setup + first demo [llmkey, apikey, openai, llm]
-    49) Experiments / Benchmarks (protocol scaffolding) [experiments, bench]
-
-    # RCOS / Robotics
-    50) SimRobotGoat RCOS sandbox [rcos, simgoat, robotgoat]
-
-        New user suggestion:
-      #35: Watch one cognitive cycle slowly -->
-      #3 : Inspect what that cycle produced -->
-      #51: Watch the architecture conduct a complete autonomous episode
-      (Use #2 at any time for the tutorial and documentation)
-      SCROLL UP TO SEE ALL OF THE MENU CHOICES
-
-    Enter Menu Choice: """
-
-    # ---- Text command aliases (words + 3-letter prefixes → legacy actions) -----
-    #will map to current menu which then must be mapped to original menu numbers
-    #intentionally keep here so easier for development visualization than up at top with constants
-    MIN_PREFIX = 3 #if not perfect match then this specifies how many letters to match
-    _ALIASES = {
-    # Quick Start & Tutorial
-    "understanding": "1", "tagging": "1",
-    "help": "2", "tutorial": "2", "tour": "2", "demo": "2",
-
-    # Quick Start / Overview
-    "snapshot": "3", "display": "3",
-    "world": "4", "stats": "4",
-    "last": "5", "bindings": "5",
-    "drives": "6",
-    "skills": "7",
-    "temporal": "8", "tp": "8", "probe": "8",
-
-    # Act / Simulate
-    "instinct": "9", "act": "9",
-    "autonomic": "10", "tick": "10",
-    "fall": "11", "simulate": "11",
-
-    # Perception & Memory
-    "sensory": "12", "cue": "12",
-    "capture": "13", "cap": "13", "scene": "13",
-    "resolve": "14", "engrams": "14",
-    "engram": "15", "engr": "15", "ei": "15",
-    "engrams-all": "16", "list-engrams": "16", "le": "16", "la": "16",
-    "search-engrams": "17", "find-engrams": "17", "se": "17",
-    "delete-engram": "18", "del-engram": "18", "de": "18",
-    "attach-engram": "19", "ae": "19",
-
-    # Graph Inspect / Build / Plan
-    "inspect": "20", "details": "20", "id": "20",
-    "listpredicates": "21", "listpreds": "21", "listp": "21",
-    "add": "22", "predicate": "22",
-    "connect": "23", "link": "23",
-    "delete": "24", "del": "24", "rm": "24",
-    "plan": "25",
-    "planner": "26", "strategy": "26", "dijkstra": "26", "bfs": "26",
-    "pyvis": "27", "graph": "27", "viz": "27", "html": "27", "interactive": "27", "export and display": "27",
-
-    # Save / System / Help
-    "export snapshot": "28",
-    "save": "29",
-    "load": "30",
-    "preflight": "31",
-    "quit": "32", "exit": "32",
-    "loc": "33", "sloc": "33", "pygount": "33",
-    "reset": "34",
-    "env": "35", "environment": "35", "hybrid": "35",
-    "mini": "36", "msnap": "36",
-
-    # Memories
-    "envloop": "37", "envrun": "37", "envsteps": "37",
-    "bodymap": "38", "bsnap": "38",
-    "spatial": "39", "near": "39",
-    "config-episode": "40", "cfg-epi": "40",
-    "retired": "41",
-    "future": "42",
-    "wsnap": "43", "wm-snapshot": "43", "wmsnap": "43",
-    "wstore": "44", "wmstore": "44",
-    "recent_wm_amp": "45",
-    "wpick": "46", "wpickwm": "46",
-    "wload": "47", "wmload": "47",
-    "experiments": "49", "experiment": "49", "bench": "49", "benchmark": "49",
-    "rcos": "50", "simgoat": "50", "robotgoat": "50", "simrobotgoat": "50",
-    "survival": "51", "survival-demo": "51", "newborn-demo": "51", "newborn-survival": "51",
-
-    # Keep letter shortcuts working too
-    "s": "s", "l": "l", "t": "t", "d": "d", "r": "r",
-    "llmkey": "k", "apikey": "k", "openai": "k", "llm": "k",
-}
-    # NEW MENU compatibility: accept new grouped numbers and legacy ones.
-    NEW_TO_OLD = {
-    # Quick Start & Tutorial
-    "1": "23",  # Understanding (help pane)
-    "2": "t",   # Tutorial (letter branch)
-
-    # Quick Start / Overview
-    "3": "17",  # Snapshot (display)
-    "4": "1",   # World stats
-    "5": "7",   # Recent bindings (last 5)
-    "6": "d",   # Drives & tags (letter branch)
-    "7": "13",  # Skill ledger
-    "8": "26",  # Temporal probe
-
-    # Act / Simulate
-    "9": "12",   # Instinct step
-    "10": "14",  # Autonomic tick
-    "11": "18",  # Simulate fall
-
-    # Perception & Memory
-    "12": "11",  # Input sensory cue
-    "13": "24",  # Capture scene → engram
-    "14": "6",   # Resolve engrams on a binding
-    "15": "27",  # Inspect engram by id
-    "16": "28",  # List all engrams
-    "17": "29",  # Search engrams
-    "18": "30",  # Delete engram by id
-    "19": "31",  # Attach existing engram
-
-    # Graph Inspect / Build / Plan
-    "20": "10",  # Inspect binding details
-    "21": "2",   # List predicates
-    "22": "3",   # Add predicate
-    "23": "4",   # Connect two bindings
-    "24": "15",  # Delete edge
-    "25": "5",   # Plan from NOW -> <predicate>
-    "26": "25",  # Planner strategy (toggle)
-    "27": "22",  # Export interactive graph
-
-    # Save / System / Help
-    "28": "16",  # Export snapshot (text)
-    "29": "s",   # Save session
-    "30": "l",   # Load session
-    "31": "9",   # Run preflight now
-    "32": "8",   # Quit
-    "33": "33",  # Lines of Count
-    "34": "r",   # Reset current saved session
-    "35": "35",  # environment simulation
-    "36": "36",  # mini-snapshot toggle
-    "37": "37",  # envr't loop
-    "38": "38",  # inspect bodymap
-    "39": "39",  # spatial, near demo
-    "40": "40",  # Configure episode starting state (drives + age_days)
-    "41": "41",  # retired: Toggle RL policy selection, select memory knobs
-    "42": "42",  # future usage
-    "43": "43",  # wm snapshot
-    "44": "44",  # store mapsurface snapshot
-    "45": "45",  # list recent wm_mapsurface engrams
-    "46": "46",  # wpickwm
-    "47": "47",  # wmload
-    "48": "k",   # Configure OpenAI / LLM API key
-    "49": "49",  # Experiments / Benchmarks (protocol scaffolding)
-    "50": "50",  # SimRobotGoat RCOS sandbox
-    "51": "51",  # autonomous newborn survival demo
-}
+    # Main-menu presentation and deterministic routing live in cca8_cli.
 
     # Attempt to load a prior session if requested
     if args.load:
@@ -26702,7 +26426,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Interactive menu loop  >>>>>>>>>>>>>>>>>>>
     while True:
         try:
-            print(f"\n{MAIN_MENU_HEADER}")
+            print(f"\n{cca8_cli.MAIN_MENU_HEADER}")
 
             if pretty_scroll:
                 temp = input(
@@ -26712,29 +26436,18 @@ def interactive_loop(args: argparse.Namespace) -> None:
                 if temp == "*":
                     pretty_scroll = False
 
-            choice = input(MENU).strip()
+            choice = input(cca8_cli.MAIN_MENU_PROMPT).strip()
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye.")
             return
 
-        def _route_alias(cmd: str) -> tuple[str | None, list[str]]:
-            """Return (routed_choice, matches). routed_choice is None if no unique match.
-            matches lists alias keys that begin with the provided prefix (for help)."""
-            s = cmd.strip().lower() #s not a number and that's why routed here
-            if s in _ALIASES: #check to see if s is a whole word in _ALIASES
-                return _ALIASES[s], []  #returns ("routed", matches[]) <--
-            if len(s) >= MIN_PREFIX: #s not a number and not a whole matching word and at least 3/variable letters
-                matches = [k for k in _ALIASES if k.startswith(s)] #
-                if len(matches) == 1:
-                    return _ALIASES[matches[0]], matches #returns ("routed", matches[]) <--
-                return None, matches #returns (None, [matches]) if more than one match  <--
-            return None, [] #returns (None, matches[]]) if no match  <--
 
         ckey = choice.strip().lower()
 
         # If it's not a pure number, try word/prefix routing first
         if not ckey.isdigit():
-            routed, matches = _route_alias(ckey) #(routed, []), if no match -- (None, []), if multiple matches -- (None, [matches])
+            # A successful route returns a displayed menu number; ambiguous prefixes return candidate aliases.
+            routed, matches = cca8_cli.route_menu_alias(ckey)
             if routed is not None:
                 if pretty_scroll:
                     print(f"[text input menu selection successfully matched: '{ckey}' → {routed}]")
@@ -26747,14 +26460,13 @@ def interactive_loop(args: argparse.Namespace) -> None:
                     continue #ambiguous entry thus restart while loop above for new input
 
         ckey = choice.strip().lower() #ensure any present or future routed value is in correct form
-        if ckey in NEW_TO_OLD:
-            routed = NEW_TO_OLD[ckey]
-            if pretty_scroll:
-                if ckey != routed:
-                    print(f"[[menu numbering auto-compatibility] processed input entry routed to old value: {ckey} → {routed}]\n")
-            choice = routed
-        else:
-            choice = ckey
+        routed = cca8_cli.route_menu_number(ckey)
+        if pretty_scroll and ckey != routed:
+            print(
+                "[[menu numbering auto-compatibility] processed input entry "
+                f"routed to old value: {ckey} → {routed}]\n"
+            )
+        choice = routed
 
         #FIRST MENU SELECTION CODE BLOCK.... WITHIN interactive menu while loop >>>>>> of interactive_menu()
         #----Menu Selection Code Block------------------------

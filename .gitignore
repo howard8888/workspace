@@ -5,6 +5,12 @@ __pycache__/
 *.pyd
 *.egg-info/
 
+
+# Zip files which are often for temporary usage
+# remove this ignore if want to push zip files to GitHub
+*.zip
+
+
 # Non-project code
 example_*.py
 tester.py
