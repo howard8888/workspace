@@ -50,7 +50,8 @@ Core runtime:
   cca8_column.py, cca8_features.py, cca8_env.py, cca8_navpatch.py,
   cca8_rcos.py, cca8_rcos_experiments.py, cca8_state_integrity.py,
   cca8_teaching.py, cca8_test_fixtures.py, cca8_context.py, cca8_cli.py,
-  cca8_experiments.py, cca8_openai.py, cca8_working_memory.py, and cca8_preflight.py.
+  cca8_experiments.py, cca8_openai.py, cca8_working_memory.py, cca8_profiles.py,
+  cca8_guidance.py, and cca8_preflight.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
   sys, logging, math, datetime, dataclasses, typing, collections, random,
   time, subprocess, shutil, io, contextlib, copy, tempfile, webbrowser,
@@ -103,7 +104,6 @@ import logging
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional, Any, Dict, List, Callable
-from typing import DefaultDict
 from collections import defaultdict
 import random
 
@@ -113,6 +113,8 @@ import random
 # CCA8 Module Imports
 #import cca8_world_graph as wgmod  # modular alternative: allows swapping WorldGraph engines
 import cca8_cli
+import cca8_guidance
+import cca8_profiles
 import cca8_experiments
 import cca8_openai
 import cca8_working_memory
@@ -259,6 +261,9 @@ __all__ = [
     "OpenAIRuntime",
     "build_cca8_llm_state_summary_v1",
     "openai_menu_48_interactive",
+    "ProfileOperations",
+    "ProfileRuntime",
+    "TutorialRuntime",
 ]
 
 NON_WIN_LINUX = False  #set if non-Win, non-macOS, non-Linux/like OS
@@ -268,6 +273,102 @@ PLACEHOLDER_EMBODIMENT = '0.0.0 : none specified'
 TECH_MANUAL = cca8_cli.TECH_MANUAL
 ASCII_LOGOS = cca8_cli.ASCII_LOGOS
 print_ascii_logo = cca8_cli.print_ascii_logo
+
+
+# --- Profiles and explanatory guidance compatibility seam ---------------------------
+# Startup profile selection/narratives live in cca8_profiles.  Static help and
+# the hands-on new-user tour live in cca8_guidance.  Runner-visible wrappers
+# preserve historical imports and resolve callbacks at call time.
+ProfileRuntime = cca8_profiles.ProfileRuntime
+ProfileOperations = cca8_profiles.ProfileOperations
+TutorialRuntime = cca8_guidance.TutorialRuntime
+
+_goat_defaults = cca8_profiles._goat_defaults
+_print_goat_fallback = cca8_profiles._print_goat_fallback
+profile_rcos_api = cca8_profiles.profile_rcos_api
+profile_chimpanzee = cca8_profiles.profile_chimpanzee
+profile_human = cca8_profiles.profile_human
+profile_multi_brains_adv_planning = cca8_profiles.profile_multi_brains_adv_planning
+profile_superhuman = cca8_profiles.profile_superhuman
+_open_readme_tutorial = cca8_profiles.open_readme_tutorial
+print_tagging_and_policies_help = cca8_guidance.print_tagging_and_policies_help
+
+
+def _profile_runtime_v1() -> ProfileRuntime:
+    """Build profile-demo operations from current runner-visible dependencies."""
+    return ProfileRuntime(
+        world_factory=cca8_world_graph.WorldGraph,
+        world_from_dict=cca8_world_graph.WorldGraph.from_dict,
+        drives_factory=Drives,
+        action_center_step=action_center_step,
+    )
+
+
+def profile_human_multi_brains(ctx: Any, world: Any) -> tuple[str, float, float, int]:
+    """Run the extracted multi-brain profile scaffold through current runner dependencies."""
+    return cca8_profiles.profile_human_multi_brains(ctx, world, runtime=_profile_runtime_v1())
+
+
+def profile_society_multi_agents(ctx: Any) -> tuple[str, float, float, int]:
+    """Run the extracted society profile scaffold through current runner dependencies."""
+    return cca8_profiles.profile_society_multi_agents(ctx, runtime=_profile_runtime_v1())
+
+
+def _profile_operations_v1() -> ProfileOperations:
+    """Build profile-selection callbacks from the runner compatibility surface."""
+    return ProfileOperations(
+        open_tutorial=_open_readme_tutorial,
+        chimpanzee=profile_chimpanzee,
+        human=profile_human,
+        human_multi_brains=profile_human_multi_brains,
+        society_multi_agents=profile_society_multi_agents,
+        multi_brains_adv_planning=profile_multi_brains_adv_planning,
+        superhuman=profile_superhuman,
+    )
+
+
+def choose_profile(ctx: Any, world: Any) -> dict[str, Any]:
+    """Prompt through the extracted profile chooser using current runner callbacks."""
+    return cca8_profiles.choose_profile(ctx, world, operations=_profile_operations_v1())
+
+
+def _tutorial_binding_engrams_v1(world: Any, bid: str) -> Any:
+    """Return one binding's engram map for the extracted tutorial bridge."""
+    try:
+        binding = world._bindings.get(bid)
+    except Exception:
+        return None
+    return getattr(binding, "engrams", None) if binding is not None else None
+
+
+def _tutorial_runtime_v1() -> TutorialRuntime:
+    """Build tutorial operations from the runner compatibility surface."""
+    return TutorialRuntime(
+        snapshot_text=snapshot_text,
+        hamming_hex64=_hamming_hex64,
+        sorted_bids=_sorted_bids,
+        engrams_on_binding=_engrams_on_binding,
+        binding_engrams=_tutorial_binding_engrams_v1,
+        action_center_step=action_center_step,
+    )
+
+
+def run_new_user_tour(
+    world: Any,
+    drives: Any,
+    ctx: Any,
+    policy_rt: Any,
+    autosave_cb: Optional[Callable[[], None]] = None,
+) -> None:
+    """Run the extracted new-user tour through current runner callbacks."""
+    cca8_guidance.run_new_user_tour(
+        world,
+        drives,
+        ctx,
+        policy_rt,
+        autosave_cb,
+        runtime=_tutorial_runtime_v1(),
+    )
 
 
 # --- OpenAI / LLM compatibility seam ---------------------------------------------
@@ -1132,9 +1233,9 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
 #   • Tagging / help text:
 #       - print_tagging_and_policies_help(...): console explainer for bindings, edges, tags, and policies.
 #   • Profiles & tutorials:
-#       - profile_* functions: chimpanzee / human / multi-brain / society / ASI stubs (dry-run, no writes).
-#       - choose_profile(...): profile picker at startup.
-#       - run_new_user_tour(...), _open_readme_tutorial(...): quick tour + README/compendium helpers.
+#       - profile narratives/scaffolds and choose_profile(...) live in cca8_profiles.py.
+#       - explanatory tagging help and run_new_user_tour(...) live in cca8_guidance.py.
+#       - runner callbacks are supplied through explicit compatibility bridges.
 #   • Experiment subsystem:
 #       - protocol, stressors, execution, scoring, statistics, rendering, and Menu 49 live in cca8_experiments.py.
 #       - runner-private policy/loop operations and runner-visible OpenAI hooks use explicit callback bridges.
@@ -5371,839 +5472,51 @@ def boot_prime_stand(world, ctx) -> None:
         print(f"[boot] Could not seed posture:fallen: {e}")
 
 
-def print_tagging_and_policies_help(policy_rt=None) -> None:
-    """Terminal help: bindings, edges, predicates, cues, anchors, provenance/engrams, and policies.
-    """
-
-    print("""
-
-==================== Understanding Bindings, Edges, Predicates, Cues & Policies ====================
-
-What is a Binding?
-  • A small 'episode card' that binds together:
-      - tags (symbols: predicates / actions / cues / anchors)
-      - engrams (pointers to rich memory outside WorldGraph)
-      - meta (provenance, timestamps, light notes)
-      - edges (directed links from this binding)
-
-  Structure (conceptual):
-      { id:'bN', tags:[...], engrams:{...}, meta:{...}, edges:[{'to': 'bK', 'label':'then', 'meta':{...}}, ...] }
-
-Tag Families (use these prefixes)
-  • pred:*        → predicates (facts / goals you might plan TO)
-      examples: pred:posture:standing, pred:posture:fallen, pred:nipple:latched, pred:milk:drinking,
-                pred:proximity:mom:close, pred:proximity:shelter:near, pred:hazard:cliff:near
-
-  • action:*      → actions (verbs; what the agent did or is doing)
-      examples: action:push_up, action:extend_legs, action:orient_to_mom
-
-  • cue:*         → evidence/context you NOTICE (policy triggers); not planner goals
-      examples: cue:vision:silhouette:mom, cue:scent:milk, cue:sound:bleat:mom, cue:terrain:rocky
-                cue:drive:hunger_high, cue:drive:fatigue_high
-
-  • anchor:*      → orientation markers (e.g., anchor:NOW); also mapped in engine anchors {'NOW': 'b1'}
-
-Drive thresholds (house style)
-  • Canonical storage: numeric values live in the Drives object:
-        drives.hunger, drives.fatigue, drives.warmth
-  • Threshold flags are *derived* (e.g., hunger>=HUNGER_HIGH) and are optionally emitted as
-    rising-edge *cues* to avoid clutter:
-        cue:drive:hunger_high, cue:drive:fatigue_high
-  • Only use pred:drive:* when you deliberately want a planner goal like "pred:drive:warm_enough".
-    Otherwise treat thresholds as evidence (cue:drive:*).
-
-Edges = Transitions
-  • We treat edge labels as weak episode links (often just 'then').
-  • Most semantics live in bindings (pred:* and action:*); edge labels are for readability and metrics.
-  • Quantities about the transition live in edge.meta (e.g., meters, duration_s, created_by).
-  • Planner behavior today: BFS/Dijkstra follow structure (node/edge graph), not label meaning.
-  • Duplicate protection: the UI warns on exact duplicates of (src, label, dst)
-
-Provenance & Engrams
-  • Who created a binding?   binding.meta['policy'] = 'policy:<name>' (or meta.created_by for non-policy writes)
-  • Who created an edge?     edge.meta['created_by'] = 'policy:<name>' (or similar)
-  • Where is the rich data?  binding.engrams[...] → pointers (large payloads live outside WorldGraph)
-
-Maps & Memory (where things live)
-  • WorldGraph  → symbolic episode index (bindings/edges/tags); great for inspection + planning over pred:*.
-  • BodyMap     → agent-centric working state used for gating (fast, “what do I believe right now?”).
-  • Drives      → numeric interoception state (hunger/fatigue/etc.); may emit cue:drive:* threshold events.
-  • Engrams     → pointers from bindings to richer payloads stored outside the graph (future: Column / disk store).
-
-Memory types (rough mapping)
-  • Declarative / semantic → stable pred:* summaries (small in WorldGraph; richer payloads via engrams / Column later).
-  • Episodic               → sequences of bindings/edges anchored by NOW (plus engram payload pointers).
-  • Procedural             → policies + any learned parameters/weights/skill stats used to select/execute actions.
-
-Anchors
-  • anchor:NOW exists; used as the start for planning; may have no pred:*
-  • Other anchors (e.g., HERE, NOW_ORIGIN) are allowed; anchors are bindings with special meaning
-
-Planner (BFS/Dijkstra) Basics
-  • Goal test: reach a binding whose tags contain the target 'pred:<token>'
-  • BFS → fewest hops (unweighted)
-  • Dijkstra → lowest total edge weight; weights come from edge.meta keys in this order:
-      'weight' → 'cost' → 'distance' → 'duration_s' (default 1.0 if none present)
-  • Pretty paths show first pred:* (or id) as the node label and --label--> between nodes
-
-Policies (Action Center overview)
-  • Policies live in cca8_controller and expose:
-      - dev_gate(ctx)               → availability by development stage/context
-      - trigger(world, drives, ctx) → should we act now?
-      - execute(world, ctx, drives) → writes bindings/edges; stamps provenance
-
-  • Per controller step the Action Center:
-      1) filters by dev_gate and safety overrides (e.g., fallen → recovery-only),
-      2) evaluates triggers to form a candidate set,
-      3) chooses ONE winner (drive-deficit heuristic; optional RL q soft tie-break),
-      4) executes the winner and updates skill stats.
-        (NOTE: "deficit" here means drive-urgency = max(0, drive_value - HIGH_THRESHOLD) (amount ABOVE threshold, not a negative deficit).
-        (Policies without a drive-urgency term score 0.00 and will tie-break by stable policy order (or RL tie-break, if enabled).
-
-    """)
-
-    # If we can read the currently loaded policy names, show them:
-    try:
-        names = policy_rt.list_loaded_names() if policy_rt is not None else []
-        if names:
-            print("Policies currently loaded (meet dev requirements):")
-            for nm in names:
-                print(f"  - {nm}")
-            print()
-    except Exception:
-        pass
-
-    print("Do / Don’t (project house style)")
-    print("  ✓ Use pred:* for facts/goals/events")
-    print("  ✓ Use action:* for verbs (what the agent does)")
-    print("  ✓ Use cue:* for evidence/conditions/triggers (including cue:drive:* threshold events)")
-    print("  ✓ Put creator/time/notes in meta; put action measurements in edge.meta")
-    print("  ✓ Allow anchor-only bindings (e.g., anchor:NOW)")
-    print("  ✗ Don’t store large data in tags; put it in engrams")
-
-    print("\nExamples")
-    print("  pred:posture:fallen --then--> action:push_up --then--> action:extend_legs --then--> pred:posture:standing")
-    print("  pred:posture:standing --then--> action:orient_to_mom --then--> pred:seeking_mom --then--> pred:nipple:latched")
-
-    print("\n(See README.md → Tagging Standard for more information.)\n")
+# print_tagging_and_policies_help moved to cca8_profiles.py or cca8_guidance.py.
 
 # --------------------------------------------------------------------------------------
 # Profiles & tutorials: experimental profiles (dry-run) + narrative fallbacks
 # --------------------------------------------------------------------------------------
 
 
-def _goat_defaults():
-    """Return the Mountain Goat default profile tuple: (name, sigma, jump, winners_k)."""
-    return ("Mountain Goat", 0.015, 0.2, 2)
+# _goat_defaults moved to cca8_profiles.py or cca8_guidance.py.
 
 
-def _print_goat_fallback():
-    """Explain that the chosen profile is not implemented and we fall back to Mountain Goat."""
-    print("\n\n======================\n\nAlthough scaffolding is in place, currently this evolutionary-like configuration is not available. "
-          "\nProfile will be set to mountain goat-like brain simulation.\n\n======================\n\n")
+# _print_goat_fallback moved to cca8_profiles.py or cca8_guidance.py.
 
 
-def profile_rcos_api(_ctx) -> tuple[str, float, float, int]:
-    """Explain the planned RCOS API configuration; fall back to Mountain Goat defaults."""
-    print(r"""
-Robotic Cognitive Operating System (RCOS)
+# profile_rcos_api moved to cca8_profiles.py or cca8_guidance.py.
 
-CCA8 can be considered in two ways:
 
-1. As a developmental cognitive architecture inspired by early mammalian brains.
+# profile_chimpanzee moved to cca8_profiles.py or cca8_guidance.py.
 
-OR
 
-2. As the kernel of a Robotic Cognitive Operating System (RCOS): a layer that manages embodiment,
-   behavior, and cognition on top of low-level robot firmware, real-time operating systems, and
-   middleware such as ROS 2.
+# profile_human moved to cca8_profiles.py or cca8_guidance.py.
 
-The RCOS is an integration architecture: not "LLM + motors," but a structured system that unifies
-cognition with embodied control.
 
-The real world is not merely a larger simulation. It is slow, noisy, expensive, partially observable,
-physically risky, and not perfectly repeatable. A robot may encounter shadows, sensor noise, slip,
-friction changes, unexpected contact, latency, battery limits, actuator faults, object deformation,
-and human interruption.
+# profile_human_multi_brains moved to cca8_profiles.py or cca8_guidance.py.
 
-Therefore, a CCA8 RCOS should not allow a high-level planner, LLM, VLA, or learned world model to
-control the body directly without a supervisory layer. CCA8's role is to manage the boundary between
-imagined futures and real consequences.
 
-Although scaffolding is in place, an RCOS API configuration is not available.
-    """)
-    _print_goat_fallback()
-    return _goat_defaults()
+# profile_society_multi_agents moved to cca8_profiles.py or cca8_guidance.py.
 
 
-def profile_chimpanzee(_ctx) -> tuple[str, float, float, int]:
-    """Print a narrative about the chimpanzee profile; fall back to Mountain Goat defaults."""
-    print('''
-Chimpanzee-like brain simulation
-\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
-The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
-    "similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better
-    combinatorial language.\n
-    ''')
-    _print_goat_fallback()
-    return _goat_defaults()
+# profile_multi_brains_adv_planning moved to cca8_profiles.py or cca8_guidance.py.
 
 
-def profile_human(_ctx) -> tuple[str, float, float, int]:
-    """Print a narrative about the human profile; fall back to Mountain Goat defaults."""
-    print('''
-\nHuman-like brain simulation
-\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
-The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
-    "similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better
-    combinatorial language.
-The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning
-    and compositional reasoning/language.\n
-    ''')
-    _print_goat_fallback()
-    return _goat_defaults()
+# profile_superhuman moved to cca8_profiles.py or cca8_guidance.py.
 
 
-def profile_human_multi_brains(_ctx, world) -> tuple[str, float, float, int]:
-    """Dry-run multi-brain sandbox (no writes); print trace; fall back to Mountain Goat defaults."""
-    # Narrative
-    print('''
-\nHuman-like one-agent multiple-brains simulation
-\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
-The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
-    "similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better
-    combinatorial language.
-The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning
-    and compositional reasoning/language.\n"
-In this model each agent has multiple brains operating in parallel. There is an intelligent voting mechanism to
-    decide on a response whereby each of the 5 processes running in parallel can give a response with an indication
-    of how certain they are this is the best response, and the most certain + most popular response is chosen.
-As well, all 5 symbolic maps along with their rich store of information in their engrams are continually learning
-    and constantly updated.\n"
-    ''')
-    print(
-        "Implementation scaffolding for multiple-brains in one agent:"
-        "\n  • Representation: 5 symbolic hippocampal-like maps (5 sandbox WorldGraphs) running in parallel."
-        "\n  • Fork: each sandbox starts as a deep copy of the live WorldGraph (later: thin overlay base+delta)."
-        "\n  • Propose: each sandbox generates a candidate next action and a confidence in that proposal."
-        "\n  • Vote: choose the most popular action; tie-break by highest average confidence, then max confidence."
-        "\n  • Learn: (future) on commit, merge only new nodes/edges from the winning sandbox into the live world; "
-        "re-id new nodes to avoid bN collisions; keep provenance in meta."
-        "\n  • Safety: this stub does a dry-run only; it does not commit changes to the live world.\n"
-    )
+# _open_readme_tutorial moved to cca8_profiles.py or cca8_guidance.py.
 
-    # Scaffolding (non-crashing; prints a trace and falls back)
-    try:
-        import copy
-        random.seed(42)  # deterministic demo
 
-        print("[scaffold] Spawning 5 parallel 'brains' (sandbox worlds)...")
-        # Thick clones for now; later this could be a thin overlay (base + delta)
-        base_dict = world.to_dict()
-        brains = []
-        for i in range(5):
-            try:
-                clone = cca8_world_graph.WorldGraph.from_dict(copy.deepcopy(base_dict))
-            except Exception:
-                # Fallback: construct an empty world (still fine for a stub)
-                clone = cca8_world_graph.WorldGraph()
-            brains.append(clone)
-        print(f"[scaffold] Created {len(brains)} sandbox worlds.")
-
-        # Each brain proposes a response + confidence + short rationale
-        possible = ["stand", "seek_mom", "suckle", "recover_fall", "idle"]
-        proposals = []
-        for i, _ in enumerate(brains, start=1):
-            resp = random.choice(possible)
-            conf = round(random.uniform(0.40, 0.95), 2)
-            why  = {
-                "stand":        "posture not yet stable, maximize readiness",
-                "seek_mom":     "hunger cues + mom likely nearby",
-                "suckle":       "latched recently → continue reward behavior",
-                "recover_fall": "vestibular/touch cues suggest instability",
-                "idle":         "no strong drive signal; conserve energy",
-            }.get(resp, "heuristic selection")
-            proposals.append((resp, conf, why))
-            print(f"[scaffold] Brain#{i} proposes: {resp:12s}  (confidence={conf:.2f})  rationale: {why}")
-
-        # Voting: most popular; tie-break by highest avg confidence, then max confidence
-        from collections import Counter
-        counts = Counter(r for r, _, _ in proposals)
-        avg_conf = defaultdict(list)
-        #max_conf = defaultdict(float)
-        max_conf: DefaultDict[int, float] = defaultdict(float)
-        for r, c, _ in proposals:
-            avg_conf[r].append(c)
-            if c > max_conf[r]: max_conf[r] = c
-        for r in list(avg_conf.keys()):
-            avg_conf[r] = sum(avg_conf[r]) / len(avg_conf[r])
-
-        popular = max(counts.items(), key=lambda kv: (kv[1], avg_conf[kv[0]], max_conf[kv[0]]))
-        winning_resp = popular[0]
-        print(f"[scaffold] Winner by popularity: {winning_resp} "
-              f"(votes={counts[winning_resp]}, avg_conf={avg_conf[winning_resp]:.2f}, max_conf={max_conf[winning_resp]:.2f})")
-
-        print("[scaffold] (No changes committed—this is a dry run only.)\n")
-    except Exception as e:
-        print(f"[scaffold] Note: sandbox demo encountered a recoverable issue: {e}\n")
-
-    _print_goat_fallback()
-    return _goat_defaults()
-
-
-def profile_society_multi_agents(_ctx) -> tuple[str, float, float, int]:
-    """Dry-run 3-agent society (no writes); print trace; fall back to Mountain Goat defaults."""
-    print('''
-\nHuman-like one-brain simulation × multiple-agents society
-\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
-The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
-    "similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better
-    combinatorial language.
-The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning
-    and compositional reasoning/language.\n
-\nIn this simulation we have multiple agents each with one human-like brain, all interacting with each other.\n
-    ''')
-    print(
-        "Implementation scaffolding for multiple agents (one brain per agent):"
-        "\n  • Representation: each agent has its own WorldGraph, Drives, and policy set; no shared mutable state."
-        "\n  • Scheduler: iterate agents each tick (single process first; later, one process per agent with queues)."
-        "\n  • Communication: send messages as tags/edges in the receiver’s world (e.g., pred:sound:bleat:mom)."
-        "\n  • Persistence: autosave per agent (session_A1.json, session_A2.json, ...)."
-        "\n  • Safety: this stub simulates 3 agents for one tick; everything is printed only; no files are written.\n"
-    )
-
-    # Scaffolding: create 3 tiny agents, run one tick, pass a simple message
-    try:
-        random.seed(7)  # deterministic print
-
-        @dataclass
-        class _Agent:
-            name: str
-            world: Any
-            drives: Any
-
-        agents: list[_Agent] = []
-        for i in range(3):
-            w = cca8_world_graph.WorldGraph()
-            w.ensure_anchor("NOW")
-            d = Drives()
-            agents.append(_Agent(name=f"A{i+1}", world=w, drives=d))
-
-        print(f"[scaffold] Created {len(agents)} agents: {', '.join(a.name for a in agents)}")
-
-        # One tick: each agent runs action_center_step (dry outcome)
-        for a in agents:
-            try:
-                res = action_center_step(a.world, _ctx, a.drives)
-                print(f"[scaffold] {a.name}: Action Center → {res}")
-            except Exception as e:
-                print(f"[scaffold] {a.name}: controller error: {e}")
-
-        # Simple broadcast message: A1 'bleats', A2 receives a cue (sound:bleat:mom)
-        try:
-            print("[scaffold] A1 broadcasts 'sound:bleat:mom' → A2")
-            bid = agents[1].world.add_cue("sound:bleat:mom", attach="now", meta={"sender": agents[0].name})
-            #bid = agents[1].world.add_predicate("sound:bleat:mom", attach="now", meta={"sender": agents[0].name})
-            print(f"[scaffold] A2 received cue as binding {bid}; running one controller step on A2...")
-            res2 = action_center_step(agents[1].world, _ctx, agents[1].drives)
-            print(f"[scaffold] A2: Action Center → {res2}")
-        except Exception as e:
-            print(f"[scaffold] message/cue demo note: {e}")
-
-        print("[scaffold] (End of society dry-run; no snapshots written.)\n")
-    except Exception as e:
-        print(f"[scaffold] Society demo encountered a recoverable issue: {e}\n")
-
-    _print_goat_fallback()
-    return _goat_defaults()
-
-
-def profile_multi_brains_adv_planning(_ctx) -> tuple[str, float, float, int]:
-    """Dry-run 5x256 combinatorial planning stub (no writes); print trace; fall back to Mountain Goat defaults."""
-    print('''
-\nHuman-like one-agent multiple-brains simulation with combinatorial planning
-\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
-The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
-"similar" structures) but hanced feedback pathways allowing better causal reasoning. Also better
-combinatorial language. "
-The human simulation has further enhanced feedback pathways and full causal reasoning, full analogical reasoning
- and compositional reasoning/language.\n
-\nIn this model there are multiple brains, e.g., 5 at the time of this writing, in one agent.
-There is an intelligent voting mechanism to decide on a response whereby each of the 5 processes running in
- parallel can give a response with an indication of how certain they are this is the best response, and the most
- certain + most popular response is chosen. As well, all 5 symbolic maps along with their rich store of
- information in their engrams are continually learning and updated.\n
-\nIn addition, in this model each brain has multiple von Neumann processors to independently explore different
- possible routes to take or different possible decisions to make.\n
-
-Implementation scaffolding (this stub does not commit changes to the live world):
-\n  • Brains: 5 symbolic hippocampal-like maps (conceptual ‘brains’) exploring in parallel.
-\n  • Processors: each brain has 256 von Neumann processors that independently explore candidate plans.
-\n  • Rollouts: each processor tries a short action sequence (horizon H=3) from a small discrete action set.
-\n  • Scoring: utility(plan) = Σ reward(action) − cost_per_step·len(plan) (simple, deterministic toy scoring).
-\n  • Selection: within a brain, keep the best plan; across brains, pick the champion by best score, then avg score.
-\n  • Commit rule: in a real system we would commit only the FIRST action of the winning plan after a safety check.
-\n  • Parallelism note: this stub runs sequentially; a real build would farm processors to separate OS processes.\n
-    ''')
-
-    # Scaffolding: 5 brains × 256 processors → 1280 candidate plans; pick a champion (no world writes)
-    try:
-        random.seed(20251)  # reproducible demo
-
-        brain_count       = 5
-        procs_per_brain   = 256
-        horizon           = 3
-        actions           = ["stand", "seek_mom", "suckle", "recover_fall", "idle"]
-        reward            = {"stand": 0.20, "seek_mom": 0.45, "suckle": 1.00, "recover_fall": 0.30, "idle": -0.10}
-        cost_per_step     = 0.05
-
-        # (plan, score) comparison: higher score better; tie-break by shorter, then lexical
-        def _better(a, b):
-            if a is None: return True
-            pa, sa = a
-            pb, sb = b
-            return (sb > sa) or (sb == sa and (len(pb) < len(pa) or (len(pb) == len(pa) and tuple(pb) < tuple(pa))))
-
-        brain_summaries = []  # list of (brain_idx, best_plan, best_score, avg_score)
-
-        for bi in range(1, brain_count + 1):
-            best = None
-            sum_scores = 0.0
-            for _ in range(procs_per_brain):
-                plan  = [random.choice(actions) for _ in range(horizon)]
-                score = sum(reward.get(a, 0.0) for a in plan) - cost_per_step * len(plan)
-                sum_scores += score
-                if _better(best, (plan, score)):
-                    best = (plan, score)
-            avg = sum_scores / procs_per_brain
-            brain_summaries.append((bi, best[0], best[1], avg))
-            print(f"[scaffold] Brain#{bi:>2}: best={best[0]}  best_score={best[1]:.3f}  avg_score={avg:.3f}  (processors={procs_per_brain})")
-
-        # Champion across brains: choose by best_score, then avg_score, then shorter plan, then lexical
-        champion = max(
-            brain_summaries,
-            key=lambda t: (t[2], t[3], -len(t[1]), tuple(t[1]))
-        )
-        champ_idx, champ_plan, champ_best, champ_avg = champion
-        print(f"[scaffold] Champion brain: #{champ_idx}  best_score={champ_best:.3f}  avg_score={champ_avg:.3f}")
-        print(f"[scaffold] Winning plan: {champ_plan}")
-        print(f"[scaffold] Commit rule (not executed here): take FIRST action '{champ_plan[0]}' on the live world.\n")
-
-    except Exception as e:
-        print(f"[scaffold] advanced-planning demo encountered a recoverable issue: {e}\n")
-
-    _print_goat_fallback()
-    return _goat_defaults()
-
-
-def profile_superhuman(_ctx) -> tuple[str, float, float, int]:
-    """Dry-run ‘ASI’ meta-controller stub (no writes); print trace; fall back to Mountain Goat defaults."""
-    print('''
-\nSuper-human-like machine simulation
-\n\nFeatures scaffolding for an ASI-grade architecture:
-\n  • Hierarchical memory: massive multi-modal engrams (vision/sound/touch/text) linked to a compact symbolic index.
-\n  • Weighted graph planning: edges carry costs/uncertainty; A*/landmarks for long-range navigation in concept space.
-\n  • Meta-controller: blends proposals from symbolic search, neural value estimation, and program-synthesis planning.
-\n  • Self-healing & explanation: detect/repair inconsistent states; produce human-readable rationales for actions.
-\n  • Tool-use & embodiment: external tools (math/vision/robots) wrapped as policies with provenances and safeguards.
-\n  • Safety envelope: constraint-checking policies that can veto/redirect unsafe plans.
-\n\nThis stub prints a dry-run of the meta-controller triage and falls back to the current==Mountain Goat profile.\n
-    ''')
-
-    # Scaffolding: three-module meta-controller, pick best proposal (no world writes)
-    try:
-        random.seed(123)
-
-        modules = [
-            ("symbolic_search", ["stand", "seek_mom", "suckle"]),
-            ("neural_value",    ["seek_mom", "suckle", "stand"]),
-            ("prog_synthesis",  ["suckle", "seek_mom", "recover_fall"]),
-        ]
-        proposals = []
-        for name, pref in modules:
-            action = pref[0]                           # top preference
-            score  = round(random.uniform(0.50, 0.98), 3)  # mock utility
-            why = {
-                "symbolic_search": "shortest-hop path to immediate reward",
-                "neural_value":   "high expected value under learned drive model",
-                "prog_synthesis": "small program proves preconditions & reward",
-            }[name]
-            proposals.append((name, action, score, why))
-            print(f"[scaffold] {name:15s} → {action:12s} score={score:.3f}  rationale: {why}")
-
-        # pick by score; tie-break by a fixed preference order
-        pref_order = {"suckle": 3, "seek_mom": 2, "stand": 1, "recover_fall": 1, "idle": 0}
-        best = max(proposals, key=lambda t: (t[2], pref_order.get(t[1], 0)))
-        print(f"[scaffold] Meta-controller winner: action={best[1]} "
-              f"(score={best[2]:.3f}) from {best[0]}")
-
-        print("[scaffold] (No changes committed—safety envelope would check constraints before execution.)\n")
-    except Exception as e:
-        print(f"[scaffold] ASI meta-controller demo encountered a recoverable issue: {e}\n")
-
-    _print_goat_fallback()
-    return _goat_defaults()
-
-
-def _open_readme_tutorial() -> None:
-    """Open README.md in the default viewer, then return.
-    This may or may not have the same behavior as main-menu 'T'
-    (it does at time of writing but future versions may diverge
-    """
-    # pylint: disable=import-outside-toplevel
-    import webbrowser
-    path = os.path.abspath("README.md")
-    try:
-        if os.name == "nt":
-            os.startfile(path)  # type: ignore[attr-defined]
-        else:
-            webbrowser.open_new_tab(f"file://{path}")
-        print("[tutorial] Opened compendium document showing you how to use code, references, and technical details")
-        print("      Please close it to return to the profile selection.")
-    except Exception as e:
-        print(f"[tutorial] Could not open the compendium document automatically: {e}\n"
-              f"          You can open it manually at:\n  {path}")
-
-
-def run_new_user_tour(world, drives, ctx, policy_rt,autosave_cb: Optional[Callable[[], None]] = None):
-    """Quick, hands-on console tour for first-time users.
-    Runs a baseline snapshot, probe, capture scene, pointer/engram inspect, and list/search.
-    """
-
-    def _pause(step_label: str) -> bool:
-        try:
-            s = input(f"\n[Tour] {step_label} — press Enter to continue, or type * to finish the tour: ").strip()
-            return s == "*"
-        except Exception:
-            return False
-
-    print("""
-   === CCA8 Quick Tour ===
-
-Note:   Pending more tutorial-like upgrade.
-        Currently this 'tour' really just runs some of the menu routines without much explanation.
-        New version to be more interactive and provide better explanations.
-
-
-This tour will do the following and show the following displays:
-               (1) snapshot, (2) temporal context probe, (3) capture a small
-               engram, (4) show the binding pointer (b#), (5) inspect that
-               engram, (6) list/search engrams.
-Hints: Press Enter to accept defaults. Type Q to exit.
-
-**The tutorial portion of the tour is still under construction. All components shown here are available
-    as individual menu selections also -- see those and the README.md file for more details.**
-
-[tour] 1/6 — Baseline snapshot
-Shows CTX and TEMPORAL (dim/sigma/jump; cosine; hash). Next: temporal probe.
-  • CTX shows agent counters (profile, age_days, ticks) and run context.
-  • TEMPORAL is a soft clock (dim/sigma/jump), not wall time.
-  • cosine≈1.000 → same event; <0.90 → “new event soon.”
-  • vhash64 is a compact fingerprint for quick comparisons.
-
-[tour] 2/6 — Temporal context probe
-Updates the soft clock; prints dim/sigma/jump and cosine to last boundary.
-Next: capture a tiny engram.
-  • boundary() jumps the vector and increments the epoch (event count).
-  • vhash64 vs last_boundary_vhash64 → Hamming bits changed (0..64).
-  • Cosine compares “now” vs last boundary; drift lowers cosine.
-  • Status line summarizes phase (ON-BOUNDARY / DRIFTING / BOUNDARY-SOON).
-
-[tour] 3/6 — Capture a tiny engram
-Adds a memory item with time/provenance; visible in Snapshot. Next: show b#.
-  • capture_scene creates a binding (cue/pred) and a Column engram.
-  • The binding gets a pointer slot (e.g., column01 → EID).
-  • Time attrs (ticks, epoch, tvec64) come from ctx at capture time.
-  • binding.meta['policy'] records provenance when created by a policy.
-
-[tour] 4/6 — Show binding pointer (b#)
-Displays the new binding id and its attach target. Next: inspect that engram.
-  • A binding is the symbolic “memory link”; engram is the rich payload.
-  • The pointer (b#.engrams['slot']=EID) glues symbol ↔ rich memory.
-  • Attaching near NOW/LATEST keeps episodes readable for planning.
-  • Follow the pointer via Snapshot or “Inspect engram by id.”
-
-[tour] 5/6 — Inspect engram
-Shows engram fields (channel, token, attrs). Next: list/search engrams.
-  • meta → attrs (ticks, epoch, tvec64, epoch_vhash64) for time context.
-  • payload → kind/shape/bytes (varies by Column implementation).
-  • Use this to verify data shape and provenance after capture.
-  • Engrams persist across saves; pointers can be re-attached later.
-
-
-[tour] 6/6 — List/search engrams
-Lists and filters engrams by token/family.
-  • Deduped EIDs with source binding (b#) for quick auditing.
-  • Search by name substring and/or by epoch number.
-  • Useful to confirm capture cadence across boundaries/epochs.
-  • Pair with “Plan from NOW” to see if memory supports behavior.
-
-    """)
-
-    # 1) Baseline snapshot
-    print("\n[tour] 1/6 — Baseline snapshot")
-    try:
-        print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=policy_rt))
-    except Exception as e:
-        print(f"(tour) snapshot error: {e}")
-    if autosave_cb is not None:
-        try: autosave_cb()
-        except Exception: pass
-    if _pause("1/6"):
-        return
-
-    # 2) Temporal probe (same signals as menu 26)
-    print("\n[tour] 2/6 — Temporal probe")
-    try:
-        epoch = getattr(ctx, "boundary_no", 0)
-        vhash = ctx.tvec64() if hasattr(ctx, "tvec64") else None
-        lbvh  = getattr(ctx, "boundary_vhash64", None)
-        print(f"  epoch={epoch}")
-        print(f"  vhash64={vhash if vhash else '(n/a)'}")
-        print(f"  last_boundary_vhash64={lbvh if lbvh else '(n/a)'}")
-        cos = None
-        try: cos = ctx.cos_to_last_boundary()
-        except Exception: pass
-        if isinstance(cos, float):
-            print(f"  cos_to_last_boundary={cos:.4f}")
-        if vhash and lbvh:
-            try:
-                h = _hamming_hex64(vhash, lbvh)
-                if h >= 0:
-                    print(f"  hamming(vhash,last_boundary)={h} bits (0..64)")
-            except Exception:
-                pass
-        tv = getattr(ctx, "temporal", None)
-        if tv:
-            print(f"  dim={getattr(tv,'dim',0)} sigma={getattr(tv,'sigma',0.0):.4f} jump={getattr(tv,'jump',0.0):.4f}")
-        if isinstance(cos, float):
-            if cos >= 0.99:      status = "ON-EVENT BOUNDARY"
-            elif cos < 0.90:     status = "EVENT BOUNDARY-SOON"
-            else:                status = "DRIFTING slowly forward in time"
-            print(f"  status={status}")
-    except Exception as e:
-        print(f"(tour) probe error: {e}")
-    if autosave_cb is not None:
-        try: autosave_cb()
-        except Exception: pass
-    if _pause("2/6"):
-        return
-
-    # 3) Capture scene (pre-capture boundary so the engram mirrors a new epoch)
-    print("\n[tour] 3/6 — Capture a small scene as a CUE engram")
-    try:
-        # Boundary jump before capture
-        if ctx.temporal:
-            new_v = ctx.temporal.boundary()
-            ctx.tvec_last_boundary = list(new_v)
-            ctx.boundary_no = getattr(ctx, "boundary_no", 0) + 1
-            try:
-                ctx.boundary_vhash64 = ctx.tvec64()
-            except Exception:
-                ctx.boundary_vhash64 = None
-            print(f"[temporal] event/boundary (pre-capture) → epoch={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
-
-        from cca8_features import time_attrs_from_ctx  # local import OK
-        attrs = time_attrs_from_ctx(ctx)
-        vec = [0.10, 0.20, 0.30]
-        channel, token, family, attach = "vision", "silhouette:mom", "cue", "now"
-        bid, eid = world.capture_scene(channel, token, vec, attach=attach, family=family, attrs=attrs)
-
-        print(f"[bridge] created binding {bid} with tag {family}:{channel}:{token} and attached engram id={eid}")
-        # Fetch + summarize the engram record
-        try:
-            rec = world.get_engram(engram_id=eid)
-            meta = rec.get("meta", {}) if isinstance(rec, dict) else {}
-            tattrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
-            if tattrs:
-                print(f"[bridge] time on engram: ticks={tattrs.get('ticks')} tvec64={tattrs.get('tvec64')} "
-                      f"epoch={tattrs.get('epoch')} epoch_vhash64={tattrs.get('epoch_vhash64')}")
-        except Exception as e:
-            print(f"(tour) get_engram note: {e}")
-
-        # Print the exact pointer slot we attached
-        try:
-            slot = None
-            b = world._bindings.get(bid)
-            eng = getattr(b, "engrams", None)
-            if isinstance(eng, dict):
-                for s, v in eng.items():
-                    if isinstance(v, dict) and v.get("id") == eid:
-                        slot = s; break
-            if slot:
-                print(f'[bridge] attached pointer: {bid}.engrams["{slot}"] = {eid}')
-        except Exception:
-            pass
-
-        # Nudge controller once (pretty summary)
-        try:
-            res = action_center_step(world, ctx, drives)
-            if isinstance(res, dict) and res.get("status") != "noop":
-                policy  = res.get("policy"); status = res.get("status")
-                reward  = res.get("reward"); binding = res.get("binding")
-                rtxt = f"{reward:+.2f}" if isinstance(reward, (int, float)) else "n/a"
-                print(f"[executed] {policy} ({status}, reward={rtxt}) binding={binding}")
-                gate = next((p for p in policy_rt.loaded if p.name == policy), None)
-                explain_fn: Optional[Callable[[Any, Any, Any], str]] = getattr(gate, "explain", None) if gate else None
-                if explain_fn is not None:
-                    try:
-                        why = explain_fn(world, drives, ctx)
-                        print(f"[why {policy}] {why}")
-                    except Exception:
-                        pass
-        except Exception as e:
-            print(f"(tour) controller step note: {e}")
-
-    except Exception as e:
-        print(f"(tour) capture error: {e}")
-
-    if autosave_cb is not None:
-        try: autosave_cb()
-        except Exception: pass
-    if _pause("3/6"):
-        return
-
-    # 4) Inspect the binding pointer and the engram
-    print("\n[tour] 4/6 — Inspect binding pointer and engram")
-    try:
-        b = world._bindings.get(bid)
-        print(f"Binding {bid} → Engrams:", b.engrams if getattr(b, "engrams", None) else "(none)")
-        rec = world.get_engram(engram_id=eid)
-        meta = rec.get("meta", {}) if isinstance(rec, dict) else {}
-        print("Engram meta:", json.dumps(meta, indent=2))
-        payload = rec.get("payload") if isinstance(rec, dict) else None
-        if hasattr(payload, "meta"):
-            pmeta = payload.meta()
-            print(f"Engram payload: shape={pmeta.get('shape')} kind={pmeta.get('kind')}")
-    except Exception as e:
-        print(f"(tour) inspect error: {e}")
-    if autosave_cb is not None:
-        try: autosave_cb()
-        except Exception: pass
-    if _pause("4/6"):
-        return
-
-    # 5) List all engrams (one-line summary)
-    print("\n[tour] 5/6 — List all engrams")
-    try:
-        seen = set()
-        any_found = False
-        for _bid in _sorted_bids(world):
-            for _eid in _engrams_on_binding(world, _bid):
-                if _eid in seen:
-                    continue
-                seen.add(_eid); any_found = True
-                rec = None
-                try: rec = world.get_engram(engram_id=_eid)
-                except Exception: rec = None
-                shape = dtype = None
-                if isinstance(rec, dict):
-                    pl = rec.get("payload")
-                    if hasattr(pl, "meta"):
-                        try:
-                            pm = pl.meta()
-                            shape, dtype = pm.get("shape"), pm.get("kind")
-                        except Exception:
-                            pass
-                print(f"EID={_eid} src={_bid} payload(shape={shape}, dtype={dtype})")
-        if not any_found:
-            print("(no engrams found)")
-    except Exception as e:
-        print(f"(tour) list error: {e}")
-    if autosave_cb is not None:
-        try: autosave_cb()
-        except Exception: pass
-    if _pause("5/6"):
-        return
-
-    # 6) Search demonstration (by name substring)
-    print("\n[tour] 6/6 — Search engrams by name (substring='silhouette')")
-    try:
-        found = False
-        seen = set()
-        for _bid in _sorted_bids(world):
-            for _eid in _engrams_on_binding(world, _bid):
-                if _eid in seen:
-                    continue
-                seen.add(_eid)
-                rec = world.get_engram(engram_id=_eid)
-                name = (rec.get("name") or "") if isinstance(rec, dict) else ""
-                if "silhouette" in name:
-                    attrs = rec.get("meta", {}).get("attrs", {}) if isinstance(rec, dict) else {}
-                    print(f"EID={_eid} src={_bid} name={name} epoch={attrs.get('epoch')} tvec64={attrs.get('tvec64')}")
-                    found = True
-        if not found:
-            print("(no matches)")
-    except Exception as e:
-        print(f"(tour) search error: {e}")
-
-    print("\n=== End of Quick Tour ===")
+# run_new_user_tour moved to cca8_profiles.py or cca8_guidance.py.
 
 
 # --------------------------------------------------------------------------------------
 # World/intro flows: profile selection, startup notices, preflight-lite
 # --------------------------------------------------------------------------------------
 
-def choose_profile(ctx, world) -> dict:
-    """Prompt for a profile. 'T' opens the README tutorial, then re-prompts.
-    Returns a dict: {"name", "ctx_sigma", "ctx_jump", "winners_k"}.
-
-    Default to Mountain Goat unless a profile is implemented.
-    For unimplemented profiles, print a narrative and fall back to goat defaults.
-    Returns a dict: {"name", "ctx_sigma", "ctx_jump", "winners_k"}.
-
-    Behavior:
-      - 1..7 → select profile (unimplemented ones print a narrative, then fall back to goat defaults).
-      - 'T' or 't' → open README.md (tutorial) and re-prompt.
-      - any other input → default to Mountain Goat (as before).
-    """
-    GOAT = ("Mountain Goat", 0.015, 0.2, 2)
-
-    while True:
-        try:
-            choice = input("Please make a choice [1–7 or T | Enter = Mountain Goat]: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nCancelled selection.... will exit program....")
-            sys.exit(0)
-
-        # Fast path: Enter accepts default
-        if choice == "":
-            name, sigma, jump, k = GOAT
-            break
-
-        # Tutorial: open README, then re-prompt
-        if choice.lower() == "t":
-            _open_readme_tutorial()
-            continue  # re-show prompt
-
-        # Numeric choices
-        if choice == "1":
-            name, sigma, jump, k = GOAT
-            break
-        if choice == "2":
-            name, sigma, jump, k = profile_chimpanzee(ctx)
-            break
-        if choice == "3":
-            name, sigma, jump, k = profile_human(ctx)
-            break
-        if choice == "4":
-            name, sigma, jump, k = profile_human_multi_brains(ctx, world)
-            break
-        if choice == "5":
-            name, sigma, jump, k = profile_society_multi_agents(ctx)
-            break
-        if choice == "6":
-            name, sigma, jump, k = profile_multi_brains_adv_planning(ctx)
-            break
-        if choice == "7":
-            name, sigma, jump, k = profile_superhuman(ctx)
-            break
-
-        # Anything else: prompt again (no silent default)
-        print(f"The selection {choice!r} is not valid. Please enter 1–7, 'T', or press Enter for Mountain Goat.\n")
-
-    ctx.profile = name
-    return {"name": name, "ctx_sigma": sigma, "ctx_jump": jump, "winners_k": k}
+# choose_profile moved to cca8_profiles.py or cca8_guidance.py.
 
 
 def versions_dict() -> dict:
@@ -6218,6 +5531,8 @@ def versions_dict() -> dict:
         "cca8_experiments",
         "cca8_openai",
         "cca8_working_memory",
+        "cca8_profiles",
+        "cca8_guidance",
         "cca8_navpatch",
         "cca8_rcos",
         "cca8_rcos_experiments",
@@ -6261,6 +5576,8 @@ def versions_text() -> str:
         "experiments",
         "openai",
         "working_memory",
+        "profiles",
+        "guidance",
         "navpatch",
         "rcos",
         "rcos_experiments",
@@ -17634,6 +16951,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             "cca8_column",
             "cca8_features",
             "cca8_env",
+            "cca8_profiles",
+            "cca8_guidance",
             "cca8_navpatch",
             "cca8_rcos",
             "cca8_rcos_experiments",
