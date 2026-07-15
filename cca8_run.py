@@ -5519,73 +5519,68 @@ def boot_prime_stand(world, ctx) -> None:
 # choose_profile moved to cca8_profiles.py or cca8_guidance.py.
 
 
-def versions_dict() -> dict:
-    """Collect versions/paths for CCA8 runner components and environment modules."""
-    mods = [
-        "cca8_world_graph",
-        "cca8_controller",
-        "cca8_temporal",
-        "cca8_column",
-        "cca8_features",
-        "cca8_env",
-        "cca8_experiments",
-        "cca8_openai",
-        "cca8_working_memory",
-        "cca8_profiles",
-        "cca8_guidance",
-        "cca8_navpatch",
-        "cca8_rcos",
-        "cca8_rcos_experiments",
-        "cca8_state_integrity",
-        "cca8_teaching",
-        "cca8_predictive",
-        "cca8_test_fixtures",
-    ]
+_CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
+    ("world_graph", "cca8_world_graph"),
+    ("controller", "cca8_controller"),
+    ("temporal", "cca8_temporal"),
+    ("column", "cca8_column"),
+    ("features", "cca8_features"),
+    ("env", "cca8_env"),
+    ("context", "cca8_context"),
+    ("cli", "cca8_cli"),
+    ("preflight", "cca8_preflight"),
+    ("experiments", "cca8_experiments"),
+    ("openai", "cca8_openai"),
+    ("working_memory", "cca8_working_memory"),
+    ("profiles", "cca8_profiles"),
+    ("guidance", "cca8_guidance"),
+    ("navmap", "cca8_navmap"),
+    ("navpatch", "cca8_navpatch"),
+    ("rcos", "cca8_rcos"),
+    ("rcos_experiments", "cca8_rcos_experiments"),
+    ("state_integrity", "cca8_state_integrity"),
+    ("teaching", "cca8_teaching"),
+    ("predictive", "cca8_predictive"),
+    ("test_fixtures", "cca8_test_fixtures"),
+)
 
+
+def _cca8_component_rows() -> list[tuple[str, str, str]]:
+    """Return canonical ``(label, version, path)`` rows for CCA8 diagnostics.
+
+    The registry above is the single source of truth for ``versions_dict()``,
+    ``versions_text()``, and the ``--about`` command. New production modules
+    should be added there once so every component report stays synchronized.
+    """
+    rows = [("cca8_run.py", __version__, os.path.abspath(__file__))]
+    for _key, module_name in _CCA8_COMPONENT_REGISTRY:
+        version, path = _module_version_and_path(module_name)
+        rows.append((module_name, version, path))
+    return rows
+
+
+def versions_dict() -> dict:
+    """Collect versions and paths for the canonical CCA8 component registry."""
     info = {
         "runner": __version__,
         "platform": platform.platform(),
         "python": sys.version.split()[0],
     }
 
-    for m in mods:
-        ver, path = _module_version_and_path(m)
-        key = m.replace("cca8_", "")
-        info[key] = ver
+    for key, module_name in _CCA8_COMPONENT_REGISTRY:
+        version, path = _module_version_and_path(module_name)
+        info[key] = version
         info[key + "_path"] = path
 
     return info
 
 
 def versions_text() -> str:
-    """
-    Return a human-readable summary of CCA8 component versions.
-
-    Includes the runner plus the main non-debug CCA8 modules used by the
-    interactive runner, environment, memory, experiments, and test fixtures.
-    """
-    d = versions_dict()
-    keys = (
-        "runner",
-        "world_graph",
-        "controller",
-        "temporal",
-        "column",
-        "features",
-        "env",
-        "experiments",
-        "openai",
-        "working_memory",
-        "profiles",
-        "guidance",
-        "navpatch",
-        "rcos",
-        "rcos_experiments",
-        "state_integrity",
-        "teaching",
-        "test_fixtures",
-    )
-    lines = [f"{k}: {d.get(k, 'n/a')}" for k in keys]
+    """Return a human-readable summary of every registered CCA8 component."""
+    versions = versions_dict()
+    lines = [f"runner: {versions.get('runner', 'n/a')}"]
+    for key, _module_name in _CCA8_COMPONENT_REGISTRY:
+        lines.append(f"{key}: {versions.get(key, 'n/a')}")
     return "\n".join(lines)
 
 
@@ -16941,32 +16936,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     # process about flag and return
     if args.about:
-        comps = [  # (label, version, path)
-            ("cca8_run.py", __version__, os.path.abspath(__file__)),
-        ]
-        for name in [
-            "cca8_world_graph",
-            "cca8_controller",
-            "cca8_temporal",
-            "cca8_column",
-            "cca8_features",
-            "cca8_env",
-            "cca8_profiles",
-            "cca8_guidance",
-            "cca8_navpatch",
-            "cca8_rcos",
-            "cca8_rcos_experiments",
-            "cca8_state_integrity",
-            "cca8_teaching",
-            "cca8_predictive",
-            "cca8_test_fixtures",
-        ]:
-            ver, path = _module_version_and_path(name)
-            comps.append((name, ver, path))
-
         print("CCA8 Components:")
-        for label, ver, path in comps:
-            print(f"  - {label} v{ver} ({path})")
+        for label, version, path in _cca8_component_rows():
+            print(f"  - {label} v{version} ({path})")
 
         # additionally show primitive count if the controller is importable
         try:
