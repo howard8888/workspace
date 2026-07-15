@@ -19,10 +19,13 @@ Please contact hschneidermd [at] alum [dot] mit [dot] edu for inquiries about ad
 
 Requirements:
 - Python 3.11
-- All CCA8 Python modules in the same repo directory
-- Optional: all unit test Python files in a \test directory (runs with '--preflight' flag)
+- All root-level `cca8_*.py` production modules in the same repository directory
+- Optional: unit-test files in the `tests/` directory (used by `--preflight`)
 - Python standard-library modules are included with a normal Python installation
-- Optional/dev dependencies are listed in `requirements.txt`
+- Optional/development dependencies are listed in `requirements.txt`
+- OpenAI access is optional; core CCA8 execution and preflight do not require an API account
+
+Use `python cca8_run.py --about` to display the canonical component registry, module versions, and source paths for the exact checkout being run.
 
 Recommended fresh Windows setup (in terminal):
 
@@ -97,24 +100,27 @@ all of the above
 → visible through the NavMap Oscilloscope
 
 
-**The important current design rule is:**
--expected maps are priors
+**The important current design rules are:**
 
--observed/evidence maps remain authoritative
+- Expected maps are priors.
+- Observed/evidence maps remain authoritative.
+- The accepted-current map is currently the observed evidence payload plus diagnostic labels.
+- If the prior expects one map but the observation supports another, CCA8 records the mismatch instead of overwriting evidence with the prior.
 
--accepted-current map is currently the observed evidence payload plus diagnostic labels
+**Current implementation versus target authority**
 
--So if the prior expected one map but the observation supports another, CCA8 records the mismatch instead of hallucinating the prior over the evidence.
+- **Current implementation:** the evidence, expected, residual, accepted, transition, and outcome NavMap surfaces are read-only diagnostics. They do not yet select policies, replace WorkingMap truth, or write NavMap payloads to WorldGraph or Columns.
+- **Target architecture:** the accepted-current **Working Navigation Map (WNM)** becomes the authoritative current map, with BodyMap, MapSurface, SurfaceGrid, and policy-facing summaries derived from or synchronized with it under explicit authority contracts. This is a development target, not a claim about current runtime behavior.
 
--The current unit-test checkpoint after this integration is:
-		-391/391 unit tests passed
-		-pytest green
-		-pylint green
-		-mypy green
-		-preflight green
-		
--The new oscilloscope marker in terminal output is: (~~) [navmap-scope] ...
--This marker indicates a read-only diagnostic probe over the current NavMap signal path.
+**July 2026 modularization checkpoint**
+
+- 461/461 unit tests passed at this checkpoint.
+- Pytest, Pylint, Mypy, and full preflight were green.
+- The exact test count will change as regression and compatibility tests are added; the current test suite and `python cca8_run.py --preflight` output are authoritative.
+
+The NavMap Oscilloscope marker in terminal output is: `(~~) [navmap-scope] ...`
+
+This marker indicates a read-only diagnostic probe over the current NavMap signal path.
 
 
 
@@ -221,7 +227,7 @@ of birth, and by one week can climb most places its mother can)*
 - [CCA8 as a Robotic Cognitive Operating System (RCOS)](#cca8-as-a-robotic-cognitive-operating-system-rcos)
 - [RCOS implementation status and roadmap](#rcos-implementation-status-and-roadmap)
 - [Hardware Abstraction Layer (HAL)](#hardware-abstraction-layer-hal)
-- [Hardware preflight lane (status stub)](#hardware-preflight-lane-status-stub)
+- [Hardware preflight lane (host-readiness checks; device I/O pending)](#hardware-preflight-lane-host-readiness-checks-device-io-pending)
 - [FAQ / Pitfalls](#faq--pitfalls)
 - [Intro Glossary](#intro-glossary)
 
@@ -663,7 +669,7 @@ Once you’ve seen one closed-loop episode run successfully, take a look at othe
 **Opening screen (current runner example):**
 
 A Warm Welcome to the CCA8 Mammalian Brain Simulation
-(cca8_run.py v0.8.x; the exact patch version will match the build you launched)
+(cca8_run.py v0.9.x; the exact patch version will match the build you launched)
 
 Entry point program being run: C:\Users\howar\workspace\cca8_run.py
 OS: win32 (see system-dependent utilities for more detailed system/simulation info)
@@ -721,7 +727,7 @@ A: It means the simulation is currently running headless: policies and WorldGrap
 
 # Profiles (1–7): overview and implementation notes
 
-This section documents what each profile intends to represent and how the current runner implements it. Items 2–7 are demonstration stubs that explain the idea, print a short trace, and then fall back to the Mountain Goat profile so today’s simulation continues unchanged.
+This section documents what each profile intends to represent and how the current profile subsystem implements it. `cca8_profiles.py` owns profile selection, narratives, and bounded dry-run demonstrations; `cca8_run.py` retains startup orchestration and compatibility wrappers. Longer explanatory help and the new-user tour live in `cca8_guidance.py`. Items 2–7 remain demonstration scaffolds that print a short trace and then fall back to the Mountain Goat profile so today’s simulation continues unchanged.
 
 1. Mountain Goat-like brain simulation  
    Baseline profile focused on a neonate mountain goat. Defaults: sigma=0.015, jump=0.2, winners_k=2. A boot step ensures a stand intent early in the episode. Use this profile for all current demos and for reading the code.
@@ -733,10 +739,10 @@ This section documents what each profile intends to represent and how the curren
    Narrative only. Prints an explanation of further-enhanced feedback pathways, causal and analogical reasoning, then falls back to the Mountain Goat defaults.
 
 4. Human-like one-agent multiple-brains simulation  
-   Implements a dry-run “multi-brains” scaffold inside one agent. The runner forks five sandbox WorldGraphs (deep copies of the live world for now), each proposes a next action with a confidence and rationale, and a voting rule selects the winner (most popular, ties broken by average and maximum confidence). No changes are committed to the live world, it is a read-only demonstration of the mechanism. Future work would merge only new nodes/edges from the winning sandbox and re-id them to avoid collisions.
+   Implements a dry-run “multi-brains” scaffold inside one agent. `cca8_profiles.py` forks five sandbox WorldGraphs (deep copies of the live world for now), each proposes a next action with a confidence and rationale, and a voting rule selects the winner (most popular, ties broken by average and maximum confidence). No changes are committed to the live world, it is a read-only demonstration of the mechanism. Future work would merge only new nodes/edges from the winning sandbox and re-id them to avoid collisions.
 
 5. Human-like one-brain × multiple-agents society  
-   Implements a dry-run “society” scaffold. The runner creates three independent agents, each with its own WorldGraph and Drives, runs one action-center tick per agent, and demonstrates a simple inter-agent message as a cue (e.g., A1 bleats, A2 receives a sound cue). No snapshots are written, this is a safe, print-only demo. In a full build, you would iterate over agents each tick and exchange messages via a queue or shared mailbox.
+   Implements a dry-run “society” scaffold. `cca8_profiles.py` creates three independent agents, each with its own WorldGraph and Drives, runs one action-center tick per agent, and demonstrates a simple inter-agent message as a cue (e.g., A1 bleats, A2 receives a sound cue). No snapshots are written, this is a safe, print-only demo. In a full build, you would iterate over agents each tick and exchange messages via a queue or shared mailbox.
 
 6. Human-like one-agent multiple-brains with combinatorial planning  
    Implements a dry-run combinatorial planner. Five “brains” each run many von Neumann processors (configurable, the current stub uses 256 per brain) to explore short candidate plans, score them with a simple utility (sum of action rewards minus a per-step cost), report the per-brain best and average score, and then select a champion brain. In a real system only the first action of the winning plan would be committed to the live world after a safety check, the stub prints the commit rule but does not modify state.
@@ -756,7 +762,7 @@ Q: What is the practical difference between “human-like” and “super-human-
 A: At the time of writing, the difference is mainly in the story and trace they print: the “super-human-like” profile demonstrates a dry-run meta-controller that arbitrates between heterogeneous proposal sources. Neither profile currently runs a distinct, fully human-level cognitive architecture; they are scaffolds for future work.
 
 Q: How do profiles interact with the rest of the code?
-A: Each profile sets initial parameters in Ctx (sigma, jump, profile label), may run a stub/demo, and then hands control back to the same runner loop. The WorldGraph, controller, and environment interfaces remain the same; only initial configuration and demonstration traces change.
+A: `cca8_profiles.py` selects the profile, sets initial parameters in Ctx (sigma, jump, profile label), and may run a bounded stub/demo. It then returns configuration to the same high-level runner loop. The WorldGraph, controller, and environment interfaces remain the same; only initial configuration and demonstration traces change.
 
 
 
@@ -778,6 +784,12 @@ CCA8 is built around a clean boundary:
 - **Inside the agent:** CCA8 updates several specialized memories before choosing a policy.
 
 CCA8 never reads `EnvState` directly. Each tick, it receives an `EnvObservation` and updates memory in a fixed order before action selection.
+
+## Current implementation versus target map authority
+
+**Current implementation:** `cca8_run.py` owns high-level cognitive-cycle ordering. `cca8_working_memory.py` owns WorkingMap construction, live observation projection, MapSurface updates, NavPatch matching, SurfaceGrid composition, contextual retrieval, and related WorkingMap operations. The NavMap evidence/expected/residual/accepted path is still diagnostic; BodyMap and the observation-driven WorkingMap remain the immediate policy-facing state.
+
+**Target architecture:** incoming modality evidence should form evidence NavMaps; current context and selected primitives should form expected maps; comparison should produce residuals; and one accepted-current **Working Navigation Map** should become the authoritative current map. BodyMap, MapSurface, SurfaceGrid, and compact policy-facing summaries should then be derived from or synchronized with that accepted map. The target flow is a roadmap and must not be confused with the current read-only NavMap diagnostics.
 
 ## Architectural basis: generalized navigation maps
 
@@ -837,6 +849,18 @@ EnvObservation
  
 
 The ordering discipline is what makes the system debuggable and later learnable. If policy selection runs before belief-now updates, the controller acts on stale memory. If retrieval runs after policy execution, the retrieved prior cannot influence the current decision. If predictions overwrite committed truth, prediction error becomes impossible to interpret.
+
+## Working Memory implementation ownership (July 2026)
+
+The three-part Working Memory extraction is structurally complete in `cca8_working_memory.py` v0.3.0:
+
+| Extraction phase | Current module ownership |
+|---|---|
+| Phase 1 | WorkingMap construction/reset; MapSurface serialization; Column storage; candidate ranking; merge/replace loading; map-switch records |
+| Phase 2 | NavPatch matching; priors/precision; Scratch ambiguity records; zoom/probe bookkeeping; salience; SurfaceGrid; grid-derived predicates; NavSummary |
+| Phase 3 | Live `EnvObservation` → WorkingMap projection; stateful MapSurface updates; pruning; retrieval gating; contextual map switching; short-lived retrieved-state hints |
+
+`cca8_working_memory.py` does not import `cca8_run.py`. The runner retains the overall cognitive-cycle order, terminal presentation, and narrow compatibility wrappers that resolve runner-owned callbacks at call time. “Extraction complete” means the subsystem now has a clear implementation owner; it does not mean Working Memory research or feature development is finished.
 
 ## Memory design contracts
 
@@ -1863,51 +1887,37 @@ By adhering to this contract in both sim and real deployments, you can reuse cog
 
 
 
-# Hardware preflight lane (status stub)
+# Hardware preflight lane (host-readiness checks; device I/O pending)
 
-When you run `--preflight`, CCA8 reports HAL/body flags in a dedicated lane.
-This is a **status stub**—no hardware I/O yet.
+When you run `--preflight`, Part 3 reports the configured HAL/body flags and performs five host-readiness checks that are useful for simulation and future robotics work:
 
-Example:
-`[preflight hardware] PASS  - NO-TEST: HAL=ON (...); body=0.1.1 hapty — pending integration`
+1. CPU enumeration (`os.cpu_count()`)
+2. monotonic high-resolution timer behavior (`perf_counter`)
+3. temporary-file write capability
+4. installed RAM against `CCA8_MIN_RAM_GB` (default 4 GiB)
+5. free disk space against `CCA8_MIN_DISK_GB` (default 1 GiB)
 
-Enable it via CLI:
-`> python cca8_run.py --hal --body hapty`
+A typical footer reports `hardware_robotics_checks = 5/5`. These are real host checks, but they are **not yet robot-device transport checks**. USB/serial/network handshakes, sensor enumeration, actuator enablement, estop/limit verification, and command round trips remain future HAL-adapter work.
 
-Future checks will cover: transport handshake (USB/serial/network), sensor
-enumeration, actuator enable/disable, estop/limits, and simple round-trip
-commands (with timestamps and unit checks).
+The runner still prints the selected HAL/body configuration. You can supply future-facing configuration with:
+
+`python cca8_run.py --hal --body hapty`
 
 <img title="Goat Embodiment" src="docs/images/robot_goat.jpg"  alt="robot_goat" style="zoom:25%;" data-align="center">
 
 ### Q&A to help you learn this section
 
-Q: What does it mean when hardware preflight prints “NO-TEST: HAL=OFF … pending integration”?
-A: It means the hardware lane ran, but there were no active hardware checks to perform:
+Q: Does `hardware_robotics_checks = 5/5` mean a physical robot was tested?
+A: No. It means the host computer passed the CPU, timer, temporary-file, RAM, and disk checks. Physical transport, sensors, actuators, and estop paths are not yet exercised by this lane.
 
-HAL is off, or
+Q: How do I enable the hardware configuration fields for a future robot?
+A: Start the runner with `--hal --body <name>`, for example `python cca8_run.py --hal --body hapty`. Until a matching HAL adapter is implemented, this identifies the intended embodiment but does not create a device connection.
 
-no body profile is configured.
-It’s a reminder that the HAL lane is wired but not yet doing real transport/sensor tests.
+Q: Will a failed host-readiness check make `--preflight` return a non-zero exit code?
+A: Yes. Part 3 failures count as preflight failures. Future serious transport or safety failures should follow the same rule once device checks are implemented.
 
-Q: How do I enable the hardware lane for future robots?
-A: Start the runner with --hal --body <name>, e.g.:
-python cca8_run.py --hal --body hapty.
-Once real HAL implementations exist, preflight will use that configuration to check connectivity, sensors, estops, etc.
-
-Q: Will hardware failures make --preflight return non-zero exit codes?
-A: Yes, once implemented. The intention is that:
-
-any serious hardware connectivity/safety issue
-
-should cause the hardware preflight lane to FAIL
-and thus make the overall --preflight exit code non-zero so CI or scripts can react.
-
-Q: Does HAL preflight change anything in the cognitive state?
-A: No. It should only probe transport, sensors, actuators and log health. WorldGraph, drives, and policies should remain unaffected by hardware preflight.
-
-Q: How should I read the “hardware_checks=0” field in the preflight footer today?
-A: Literally: there are currently zero implemented hardware checks. It’s a placeholder count that will increase as real HAL checks (sensor enumeration, estop status, etc.) are added.
+Q: Does the hardware lane change cognitive state?
+A: No. It performs read-only host checks and reports configuration. WorldGraph, drives, WorkingMap, and policies should remain unaffected.
 
 
 
@@ -1960,7 +1970,7 @@ This glossary is intentionally **runner-facing**: terms are defined in the way y
 - **BodyMap**: fast belief registers for gating/safety (posture, distances, nipple state, zone classification, staleness flags).
 - **WorkingMap (WM)**: live workspace memory; contains **MapSurface** + **Scratch/Creative** subregions; *(Phase X)* also contains **SurfaceGrid**.
 - **MapSurface**: WM’s semantic entity/slot table (“what I believe now” in discrete slots); updated in-place each cycle.
-- **SurfaceGrid** *(Phase X / WIP)*: WM’s policy-facing **topology** view (a composed local map) built from NavPatch instances; used for “where can I move / what is risky?” queries.
+- **SurfaceGrid**: WM’s implemented policy-facing **topology** view (a composed local map) built from NavPatch instances; used for “where can I move / what is risky?” queries.
 - **Scratch / Creative**: WM’s hypothesis and counterfactual workspace (predicted postconditions, ambiguity bookkeeping, candidate outcomes) — the natural home for “world-model-ish” predictions.
 - **NavPatch**: patch-level recognizer on top of MapSurface: matches local patterns against stored prototypes; supports SurfaceGrid composition and context-based retrieval.
 - **ColumnMemory / Columns**: heavy long-term memory store for **engrams** (e.g., MapSurface snapshots, NavPatch prototypes).
@@ -2155,7 +2165,7 @@ NOTE: If this README is redistributed in an anonymized or restricted-review sett
 
 *Current focus: BodyMap, WorkingMap, WorldGraph, Columns / Engrams, NavPatch, keyframes, and the closed-loop cognitive cycle.*
 
-> **Purpose.** This tutorial is a code-grounded guide to the memory architecture in the current CCA8 runner (v0.8.2). It is written to help a developer read the system as a set of cooperating representations rather than as one undifferentiated “memory.”
+> **Purpose.** This tutorial is a code-grounded guide to the memory architecture in the current CCA8 runner (v0.9.x). It is written to help a developer read the system as a set of cooperating representations rather than as one undifferentiated “memory.”
 
 
 
@@ -5003,33 +5013,56 @@ A: (1) Emit a `cue:*` that captures the gist (e.g., `cue:vision:silhouette:mom`)
 
 # Architecture
 
-## Modules (lean overview)
+## Modules and current ownership
 
-- **`cca8_run.py`** — CLI & interactive runner: banner/profile, menu actions (inspect, plan, add predicate, instincts), autosave/load, `--plan` flag, `[D] Show drives`.
-- **`cca8_world_graph.py`** — Directed episode graph (bindings, edges, anchors), plus a BFS planner. Serialization via `to_dict()` / `from_dict()`.
-- **`cca8_controller.py`** — Drives (hunger, fatigue, warmth), primitive policies (e.g., `StandUp`), Action Center loop, and a small skill ledger (n, succ, q, last_reward).
-- **`cca8_column.py`** — Engram provider (stubs now): bindings may reference column content via small pointers.
-- **`cca8_features.py`** — Feature helpers for engrams (schemas/utilities).
-- **`cca8_temporal.py`** — Timestamps and simple period/year tagging (used in binding meta).
-- **`cca8_navpatch.py`** — Navpatch map abilities
-- **`cca8_env.py`** — Generate the environment
-- **`cca8_test_fixtures.py`** — Deterministic graph fixtures for tests and demo-world inspection.
-- **`cca8_teaching.py`** — Terminal teaching-note helpers used by verbose cognitive-cycle mode.
-- **`requirements.txt`** — Optional/dev dependency list for fresh Python environments.
-  
-  
+`cca8_run.py` remains the executable composition root and compatibility facade. It owns startup, high-level cognitive-cycle ordering, menu dispatch, persistence wiring, and the narrow wrappers that preserve historical imports. Major subsystems now have dedicated module owners.
+
+The canonical component list used by `versions_dict()`, `versions_text()`, and `python cca8_run.py --about` is `_CCA8_COMPONENT_REGISTRY` in `cca8_run.py`. Add a new production component there once so every version report stays synchronized.
+
+| Module | Current responsibility |
+|---|---|
+| `cca8_run.py` | Entry point, high-level cycle orchestration, menu dispatch, persistence, composition/wiring, and compatibility facade |
+| `cca8_world_graph.py` | Bindings, edges, anchors, planner selection (BFS/Dijkstra), graph persistence, invariants, and engram pointers |
+| `cca8_controller.py` | Drives, primitive policies, Action Center selection/execution, BodyMap query helpers, and skill telemetry |
+| `cca8_temporal.py` | Soft temporal context, drift/boundary operations, similarity, and time fingerprints |
+| `cca8_column.py` | Heavy immutable engram/payload store addressed by engram id |
+| `cca8_features.py` | Payload protocols, feature helpers, fact metadata, and time linkage |
+| `cca8_env.py` | HybridEnvironment, EnvState, EnvObservation, storyboard evolution, and observation production |
+| `cca8_context.py` | Runtime `Ctx`, experiment protocol configuration, counters, caches, and cross-cycle state |
+| `cca8_cli.py` | CLI constants, banner/logo presentation, grouped main-menu text, and menu aliases |
+| `cca8_preflight.py` | Four-part preflight: pytest/coverage, architecture probes, host/hardware readiness, and system-fitness checks |
+| `cca8_experiments.py` | Experiment definitions, stressors, sandbox execution, scoring, statistics, JSON/JSONL output, and Menu 49 |
+| `cca8_openai.py` | Optional OpenAI configuration, request options, state summaries, smoke tests, structured evaluation, and Menu 48 |
+| `cca8_working_memory.py` | WorkingMap, MapSurface, NavPatch matching/orchestration, SurfaceGrid, retrieval, contextual switching, and live observation projection |
+| `cca8_profiles.py` | Profile selection, narratives, defaults, and bounded profile demonstrations |
+| `cca8_guidance.py` | Explanatory help and the interactive new-user tutorial |
+| `cca8_navmap.py` | NavMap payload, observation update, residual, transition, and policy-outcome primitives |
+| `cca8_navpatch.py` | Low-level NavPatch/SurfaceGrid data structures and composition helpers |
+| `cca8_predictive.py` | Prediction records, observed-versus-expected comparison, and legacy error-vector helpers |
+| `cca8_rcos.py` | SimRobotGoat environment, bounded command vocabulary, and HAL-like sandbox interface |
+| `cca8_rcos_experiments.py` | RCOS long-horizon simulation experiments, perturbations, repeats, and ablations |
+| `cca8_state_integrity.py` | Read-only long-horizon state-integrity metrics and event-detail rendering |
+| `cca8_teaching.py` | Verbose cognitive-cycle teaching annotations used by Menu 35 |
+| `cca8_test_fixtures.py` | Deterministic graph fixtures shared by tests and demo inspection |
+| `requirements.txt` | Optional/runtime and development dependencies for a fresh environment |
 
 ***Q&A to help you learn this section***
 
-Q: Which module stores nodes/edges?  A: cca8_world_graph.py.
+Q: Which module stores and plans over bindings and edges?  A: `cca8_world_graph.py`.
 
-Q: Which runs instincts?  A: cca8_controller.py (policies + Action Center).
+Q: Which module selects and executes primitive policies?  A: `cca8_controller.py`; `cca8_run.py` supplies the high-level runtime wiring.
 
-Q: Which shows the menu & autosave/load?  A: cca8_run.py.
+Q: Which module owns the WorkingMap pipeline?  A: `cca8_working_memory.py`.
 
-Q: Where do engrams live?  A: cca8_column.py, referenced by bindings’ engrams.
+Q: Which module owns experiments and Menu 49?  A: `cca8_experiments.py`; the runner exposes compatibility wrappers and supplies runtime callbacks.
 
+Q: Which module owns OpenAI integration and Menu 48?  A: `cca8_openai.py`; OpenAI remains optional.
 
+Q: Which modules own profile and tutorial text?  A: `cca8_profiles.py` and `cca8_guidance.py`.
+
+Q: Where do engram payloads live?  A: `cca8_column.py`; WorldGraph bindings carry lightweight pointers.
+
+Q: How do I verify the exact modules, versions, and files in the checkout I launched?  A: Run `python cca8_run.py --about`.
 
 
 
@@ -5274,7 +5307,7 @@ Notes:
 These are the most useful flags while learning / debugging:
 
 - `--about`  
-  Prints version + component info (helpful when sharing bug reports).
+  Prints the runner plus every component in the canonical registry, including each module version and source path. This is the preferred component report for bug reports and checkout verification.
 
 - `--version`  
   Prints just the runner version.
@@ -5426,7 +5459,8 @@ The current Menu 48 screen presents:
 3. Run OpenAI SDK / API smoke test
 4. Show install/help text
 5. Run first CCA8 -> LLM state-summary demo
-6. Advanced request settings (future tuning knobs)
+6. Advanced request settings
+7. Run the evaluation harness (batch comparison + JSONL logging)
 
 This keeps all of the current LLM-facing setup in one place rather than scattering it across multiple menus.
 
@@ -5445,7 +5479,15 @@ It checks:
 
 If everything is configured correctly, CCA8 sends a tiny request and expects a tiny fixed reply. This is intentionally minimal: it is not a cognitive demo, only a “plumbing works” test.
 
+### Optional integration and preflight policy
 
+OpenAI access is not required to run the core CCA8 simulation, deterministic tests, WorkingMap pipeline, RCOS sandbox, or ordinary cognitive cycles. During full preflight, the live LLM smoke test is visible in Part 4:
+
+- a successful configured call is reported as `PASS`;
+- a missing SDK, missing key, rejected key, unavailable model, connection problem, or unexpected reply is reported as `WARN`;
+- an OpenAI warning does not make the overall core preflight fail.
+
+The low-level LLM probe still preserves precise `pass` / `skip` / `fail` diagnostics for focused tests and callers. The non-blocking policy applies only when the result is aggregated into the full CCA8 preflight.
 
 ### First CCA8 -> LLM state-summary demo
 
@@ -5871,17 +5913,18 @@ A practical way to run this workflow from Menu 49 is:
 This protocol can be used to compare ordinary partial observability against structured route-loss stress. The route-loss profile is expected to be more memory-critical than the baseline profile, but numerical results should always be regenerated from saved JSONL/statistics artifacts rather than treated as hard-coded behavior.
 
 
-## Source-file map for the experiment additions
+## Source-file map for the experiment subsystem
 
-### `cca8_run.py`
+### `cca8_experiments.py`
 
-The runner now contains the experiment protocol definitions, Menu 49, A–E condition catalog, benchmark catalog, stress-profile logic, sandbox episode execution, batch execution, repeated random-seed runs, JSONL writing helpers, repeat-level statistics, and integration with state-integrity post-processing.
+This module owns the complete experiment subsystem: frozen condition and benchmark definitions, newborn observation stressors, protocol normalization, JSON/JSONL preparation, isolated sandbox execution, optional LLM-adviser support, benchmark scoring, repeated-run statistics, result rendering, and the interactive Menu 49 flow.
 
-Important concepts in this file include:
+Important concepts include:
 
 * `ExperimentConditionDef`
 * `ExperimentBenchmarkDef`
-* `ExperimentProtocolConfig`
+* `ExperimentRuntime`
+* `ExperimentMenuOperations`
 * `experiment_condition_catalog_v1`
 * `experiment_benchmark_catalog_v1`
 * `NEWBORN_STRESS_PROFILES_V1`
@@ -5891,25 +5934,37 @@ Important concepts in this file include:
 * `experiment_run_repeated_random_abc_v1`
 * `_experiment_write_repeated_result_bundle_v1`
 
+### `cca8_context.py`
+
+Owns `ExperimentProtocolConfig` and the runtime fields used to carry protocol choices, logging state, experiment labels, and cross-cycle configuration.
+
+### `cca8_run.py`
+
+The runner no longer owns experiment algorithms. It preserves historical experiment names through aliases and narrow wrappers, constructs the current `ExperimentRuntime` / `ExperimentMenuOperations` callback bridges, and connects Menu 49 to the live runner environment.
+
+### `cca8_openai.py`
+
+Owns the optional OpenAI request, response, state-summary, error-normalization, and usage helpers supplied to the experiment runtime for bounded adviser conditions. Native A/B/C benchmark runs do not require OpenAI.
+
+### `cca8_working_memory.py`
+
+Owns the MapSurface storage/retrieval, contextual switching, and retrieved-state hint operations exercised by memory-governance experiment conditions.
+
 ### `cca8_state_integrity.py`
 
-Read-only post-processing for newborn long-horizon state-integrity metrics. This module analyzes saved cycle records and returns JSON-safe summaries. It is deliberately separated from the main runner so the analysis metrics remain inspectable and do not alter runtime behavior.
+Read-only post-processing for newborn long-horizon state-integrity metrics. This module analyzes saved cycle records and returns JSON-safe summaries without altering runtime behavior.
 
 ### `cca8_rcos_experiments.py`
 
-Preliminary RCOS robotic long-horizon experiment helpers. These use the SimRobotGoat HAL seam and bounded command vocabulary to test robot-shaped task sequencing, perturbations, and RCOS/no-RCOS ablations in simulation. This module is useful for later RCOS robotics work, but it is separate from the native newborn A/B/C memory-governance benchmark.
+Preliminary RCOS robotic long-horizon experiment helpers. These use the SimRobotGoat HAL seam and bounded command vocabulary to test robot-shaped task sequencing, perturbations, repeats, and RCOS/no-RCOS ablations in simulation.
 
 ### `cca8_teaching.py`
 
-Teaching text helpers used to keep longer tutorial explanations out of `cca8_run.py`. The first use case is the verbose Menu 35 cognitive-cycle teaching mode.
+Teaching text helpers used by the verbose Menu 35 cognitive-cycle mode. They are separate from experiment execution but help explain the same closed-loop runtime.
 
-### `cca8_world_graph.py`
+### `cca8_world_graph.py` and `cca8_column.py`
 
-The WorldGraph remains the thin symbolic episode index. Recent supporting features include configurable memory mode, semantic consolidation support, prominence bookkeeping, planner selection, and safer NOW-anchor movement. These features support longer experimental runs by reducing clutter, improving traceability, and keeping graph orientation explicit.
-
-### `cca8_column.py`
-
-Column memory remains the heavy engram store. WorldGraph bindings point to ColumnMemory records rather than inlining large payloads. This remains central to the MapSurface snapshot/retrieval pipeline used by the long-horizon benchmark.
+WorldGraph remains the thin symbolic episode index and pointer scaffold. Column memory remains the heavy immutable payload store used by MapSurface snapshot/retrieval and other engram-backed experiment paths.
 
 ## Current limitations
 
@@ -5952,6 +6007,16 @@ These limitations are useful boundaries. They keep the README honest and prevent
 **Lifecycle:** WorkingMap persists across env steps; individual layers are refreshed/cleared on different schedules (below).
 
 **Invariant:** WorkingMap is the only place where rich moment-to-moment state lives; WorldGraph stores sparse episode structure and thin pointers; heavy payloads live in Columns/Engrams.
+
+### Implementation ownership checkpoint (July 2026)
+
+The Working Memory refactor is complete through `cca8_working_memory.py` v0.3.0:
+
+- **Phase 1:** MapSurface storage, indexing, ranking, retrieval, merge, and replace.
+- **Phase 2:** NavPatch matching, ambiguity/Scratch, zoom/probe, salience, SurfaceGrid, grid-derived predicates, and NavSummary.
+- **Phase 3:** live observation injection, stateful MapSurface projection, pruning, retrieval gating, contextual map switching, and retrieved-state hints.
+
+The runner still owns the overall cognitive-cycle sequence and terminal presentation. Historical runner-visible function names remain available through aliases or narrow wrappers, but the implementation owner is `cca8_working_memory.py`, which does not import `cca8_run.py`.
 
 ---
 
@@ -6980,15 +7045,11 @@ seed_eff is the derived per-step seed used for that specific step in seeded mode
 # Tutorial on WorkingMap
 
 
-### Future Phase — WorkingMap-first map workspace + WorldGraph as a repository of WorkingMap instances (design-stage)
+### Current implementation and target direction — WorkingMap-first workspace + WorldGraph as a repository of stored map instances
 
-This section documents a high-level design hypothesis that has emerged during Phase VI–VII development.
+The WorkingMap-first storage, retrieval, NavPatch/SurfaceGrid, live observation-projection, and contextual-switching foundations are now implemented in `cca8_working_memory.py`. The long-term WorldGraph acts as a compact episode index and pointer scaffold, while Columns hold heavy stored map and patch payloads.
 
-Goal: move CCA8 toward a “maps-first” cognitive architecture where the agent operates primarily on an active, updatable WorkingMap
-(“map workspace”), while the long-term WorldGraph acts as a compact episode index and a searchable repository of prior WorkingMap
-instances (“stored maps”).
-
-This is a conceptual design note: it will evolve as the implementation evolves.
+The remaining design-stage migration is authority: the read-only accepted-current NavMap path must eventually become the authoritative Working Navigation Map that drives derived working views and policy selection. This section therefore mixes implemented contracts with clearly labeled future architecture. It will continue to evolve as the accepted-WNM migration proceeds.
 
 ---
 
@@ -7026,7 +7087,7 @@ Once EnvObservation crosses the boundary into CCA8, the pipeline splits into a f
 
 Once EnvObservation crosses into CCA8, it fans out into several internal stores that each have a job.
 
-**Implemented today (Phase VII):**
+**Implemented WorkingMap foundations:**
 
 **1) BodyMap = the dashboard**  
 BodyMap is tiny and safety-critical: posture, mom distance, nipple state, shelter/cliff distances, zone classification, etc.  
@@ -7044,7 +7105,7 @@ It stays small on purpose. It stores *what happened* (predicates, actions, cues,
 Column memory holds the heavy payloads (right now: MapSurface snapshots).  
 WorldGraph bindings can point to those payloads using engram pointers.
 
-**Phase X (vNext) adds an explicit topology workspace and a patch library:**
+**The implemented NavPatch/SurfaceGrid extension adds an explicit topology workspace and patch library:**
 
 - **WorkingMap.SurfaceGrid** — a single composed topological grid per tick that policies can read directly (“where can I move?”).
 - **NavPatches** — modular submaps that feed SurfaceGrid:
@@ -7078,7 +7139,7 @@ Each closed-loop env step looks like:
 
 ---
 
-### Phase X (vNext): where SurfaceGrid + NavPatches fit into the loop
+### Implemented NavPatch/SurfaceGrid path: where SurfaceGrid + NavPatches fit into the loop
 
 The “normal flow” above is the Phase VII memory pipeline (MapSurface + snapshots). Phase X extends the *per-tick* loop so the agent has an explicit, printable topology map that policies can operate on directly.
 
@@ -11765,6 +11826,8 @@ Why is this tutorial after the one on WorldGraph, i.e., rather than being the fi
 
 ***Note: Code changes will occur over time, but the main ideas below should remain stable with the project***
 
+> **July 2026 modularization note:** `cca8_run.py` remains the composition root and compatibility facade, so many historical names are still importable from it. Their implementations may now live in `cca8_context.py`, `cca8_cli.py`, `cca8_preflight.py`, `cca8_experiments.py`, `cca8_openai.py`, `cca8_working_memory.py`, `cca8_profiles.py`, or `cca8_guidance.py`. Use the Architecture module-ownership table and `python cca8_run.py --about` when physical source ownership matters.
+
 ## Public surface (importables)
 Exports (see `__all__`):  
 `main`, `interactive_loop`, `run_preflight_full`, `snapshot_text`, `export_snapshot`, `world_delete_edge`, `boot_prime_stand`, `save_session`, `versions_dict`, `versions_text`, `choose_contextual_base`, `compute_foa`, `candidate_anchors`, `Ctx`, `HAL`, `PolicyRuntime`, `__version__`.
@@ -14870,93 +14933,78 @@ It’s a minimal “world ↔ brain” loop for inspection and debugging.
 
 Run all checks and exit:
 
- bash
+```bash
 python cca8_run.py --preflight
- 
+```
 
-Preflight is the fast way to answer: “Is the core loop wired up, and did I break anything obvious?”
+Preflight is the fast way to answer: “Is this checkout internally consistent, are the deterministic tests green, and is the host ready to run the current CCA8 software?”
 
 ---
 
 ## What runs
 
-1) **Unit tests (pytest + coverage).**  
-   Prints a normal pytest summary. Coverage is percent of **executable** lines (comments/docstrings ignored). Ordinary code—including `print(...)` / `input(...)`—counts toward coverage. Target ≥30%.  
-   *Note: console vs footer may differ by ~1% due to reporter rounding.*
+1. **Unit tests and coverage.**
+   Preflight runs the repository’s `tests/` directory with pytest. If `pytest-cov` is available, it also writes coverage artifacts and reports executable-line coverage. The July 2026 modularization checkpoint contains 461 tests; the exact count is expected to grow.
 
-2) **Scenario checks (whole-flow probes).**  
-   Deterministic probes that catch issues unit tests miss, such as:
-   - core imports & symbols present; version printouts
-   - fresh-world invariants and NOW anchor validity
-   - `set_now` tag housekeeping (old NOW tag removed, new NOW tagged)
-   - accessory files exist (README, images, etc.)
-   - optional PyVis availability
-   - planner probes (BFS/Dijkstra toggle), attach semantics (NOW/LATEST)
-   - cue normalization, action metrics aggregation
-   - lexicon strictness (neonate stage rejects off-vocab), engram bridge presence
-   - action helpers summary is printable
+2. **Scenario and architecture probes.**
+   Deterministic whole-flow checks cover imports and key symbols, version reporting, WorldGraph invariants, NOW/LATEST behavior, attach semantics, planner behavior, lexicon enforcement, engram round trips, environment/controller integration, WorkingMap/MapSurface paths, and other contracts that can be missed by isolated unit tests.
 
-3) **Robotics hardware preflight (stub).**  
-   Reports HAL/body flag status. Example line:  
-   `[preflight hardware] PASS  - NO-TEST: HAL=OFF (no embodiment); body=0.0.0 : none specified — pending integration`
+3. **Hardware/robotics host-readiness checks.**
+   Part 3 reports HAL/body configuration and checks CPU enumeration, monotonic high-resolution timing, temporary-file writing, installed RAM, and free disk space. These are real host checks; physical USB/serial/network transport, sensors, actuators, and estop paths remain future HAL-adapter checks.
 
-4) **System-functionality fitness (stub).**  
-   Placeholder for end-to-end task demos (will exercise cognitive + HAL paths).
+4. **System-fitness assessment.**
+   Part 4 currently runs a tiny live OpenAI/LLM smoke test when the optional integration is available. A successful call is reported as `PASS`. Missing or unusable OpenAI configuration is reported as `WARN` and does **not** fail the core CCA8 preflight.
 
 ---
 
-## Unit tests (pytest)
+## Running pytest directly
 
-Preflight runs pytest first (so failures stop you early). If you’re iterating quickly, you can run tests directly:
+For a fast deterministic run without coverage:
 
- bash
-# Quiet mode, but show print() output (useful for debugging tests)
-pytest -q -s
- 
+```bash
+python -m pytest -q --no-cov
+```
 
-Notes:
-- Stdout from tests is captured by default; `-s` shows prints live.
-- Preflight also runs coverage and writes artifacts (below).
+For a focused file:
 
-Included starter tests (typical; evolves over time):
-- `tests/test_smoke.py` — basic reasonableness (asserts True).
-- `tests/test_boot_prime_stand.py` — seeds stand near NOW and asserts a path NOW → `pred:posture:standing` exists.
-- `tests/test_inspect_binding_details.py` — uses a small demo world and asserts the inspect-binding report is consistent with the “Inspect binding details” menu contract.
-- `tests/test_phase_vi_c_spatial.py` — checks that the newborn-goat environment’s **spatial movement and safety gating** behave as described (e.g., `follow_mom` moves the kid off the cliff into shelter; rest gating respects BodyMap safety zones).
-- `tests/test_seqerr_stub.py` — SeqErr stub: validates raw_delta + slot_stability across consecutive observations.
+```bash
+python -m pytest -q --no-cov tests\test_runner_component_registry.py
+```
 
-Tip: the same demo world used in tests is usually available interactively via `--demo-world`, so interactive experiments and unit tests share the same baseline graph shape.
+The repository-root working directory matters because tests import root-level CCA8 modules and read project configuration such as `pytest.ini` and `mypy.ini`.
 
 ---
 
-## Footer format & exit code
+## Footer format and exit code
 
-The last line gives a compact verdict and returns a process exit code. Example:
+The current footer uses explicit Part 1–4 denominators:
 
- 
-[preflight] RESULT: PASS | tests=118/118 | coverage=33% (≥30) | probes=41/41 | hardware_checks=0 | system_fitness_assessments=0 | elapsed=00:02
- 
+```text
+[preflight] RESULT: PASS | PART 1: unit_tests=<passed>/<total> | coverage=<pct>% (≥30) | PART 2: probes=<passed>/<total> |
+[preflight] PART 3: hardware_robotics_checks = <passed>/<total> | PART 4: system_fitness_assessments = <pass> pass, <warning> warning(s), <fail> fail, <skip> skipped, <total> total |
+[preflight] elapsed_time (mm:ss) =<mm:ss>
+```
 
-- `PASS/FAIL` reflects both pytest and probe results.
-- `probes` counts scenario checks (part 2).
-- `hardware_checks` / `system_fitness_assessments` are **0** until those lanes are implemented.
+The process returns zero only when all required unit-test, architecture-probe, and host/hardware checks pass and Part 4 has no blocking failures. Optional OpenAI warnings are visible but non-blocking.
 
 ---
 
 ## Artifacts
 
-- JUnit XML: `.coverage/junit.xml`  
-- Coverage XML: `.coverage/coverage.xml` (console prints a human summary)
+- JUnit XML: `.coverage/junit.xml`
+- Coverage XML: `.coverage/coverage.xml`
+- Coverage data: `.coverage/.coverage.preflight` when coverage is enabled
 
-**Tip:** a lightweight *startup* check can be toggled with `CCA8_PREFLIGHT=off` (disables the “lite” banner probe at launch).
+A lightweight startup check can be disabled with `CCA8_PREFLIGHT=off`; this affects only the startup-lite notice, not an explicit `--preflight` run.
 
 ---
 
 ## Troubleshooting
 
-- If **pytest is green but a probe fails**, suspect a broken behavioral contract (NOW tagging drift, attach semantics changed, lexicon enforcement drifted, cue normalization changed). Probes are intentionally “whole-flow” and are meant to flag pipeline regressions.
-- If you want the smallest repro for a preflight failure, run with `--no-intro` and attach the relevant snapshot/log artifacts when sharing the bug.
-
+- If pytest is green but a Part 2 probe fails, suspect an architectural contract regression: import ownership, NOW tagging, attach semantics, public WorldGraph boundaries, compatibility aliases, or a whole-flow behavior that unit tests did not isolate.
+- If Part 3 fails, inspect the reported CPU/timer/temp-file/RAM/disk item and the configurable thresholds `CCA8_MIN_RAM_GB` and `CCA8_MIN_DISK_GB`.
+- If Part 4 reports an OpenAI warning, core CCA8 remains usable. Configure Menu 48 only when you intend to use live OpenAI features.
+- Run preflight from the repository root so it can find `tests/`, project configuration, README assets, and all root-level modules.
 
 
 # Logging
