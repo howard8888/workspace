@@ -62,7 +62,7 @@ from cca8_env import HybridEnvironment
 from cca8_features import FactMeta
 from cca8_temporal import TemporalContext
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "PreflightRuntime",
     "run_llm_operational_preflight_check",
@@ -172,8 +172,9 @@ def run_llm_operational_preflight_check(
 
     Design choice
     -------------
-    Missing local configuration returns "skip" rather than "fail". That keeps normal developer preflight usable on
-    machines that are not configured for LLM work. A configured-but-broken live call returns "fail".
+    Missing local configuration returns "skip" rather than "fail". A configured-but-broken live call returns
+    "fail" at the probe level so callers can still distinguish the diagnostic outcome. The full CCA8 preflight treats
+    all non-passing OpenAI outcomes as non-blocking warnings because OpenAI access is an optional integration.
     """
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     #api_key = ""   #for testing, to force the preflight helper to behave as if no API key exists
@@ -232,11 +233,11 @@ def run_llm_operational_preflight_check(
         )
         text = response_text(response)
 
-    except openai.AuthenticationError as e:
+    except openai.AuthenticationError:
         return {
             "status": "fail",
             "summary": "LLM smoke test failed",
-            "detail": f"authentication error: {e}",
+            "detail": "authentication error: OPENAI_API_KEY was rejected; configure it through Menu 48",
             "model": model_name,
         }
 
@@ -295,6 +296,30 @@ def run_llm_operational_preflight_check(
         "detail": f"unexpected reply text: {text!r}",
         "model": model_name,
     }
+
+
+def _classify_llm_preflight_assessment(result: dict[str, Any]) -> tuple[str, str]:
+    """Classify an OpenAI probe result for the aggregate CCA8 preflight.
+
+    OpenAI access is useful for Menu 48 and LLM-backed experiment conditions, but it is not required for the core
+    CCA8 architecture, deterministic tests, robotics checks, or ordinary cognitive-cycle execution. A missing SDK,
+    absent key, invalid key, unavailable model, connection problem, or unexpected reply is therefore reported as a
+    visible warning rather than making the full preflight fail.
+
+    The lower-level :func:`run_llm_operational_preflight_check` retains its precise ``pass``/``skip``/``fail`` status
+    contract. This helper defines only the aggregation policy used by :func:`run_preflight_full`.
+    """
+    status = str(result.get("status", "fail")).strip().lower()
+    summary = str(result.get("summary", "LLM smoke test"))
+    detail = str(result.get("detail", "") or "")
+    model = result.get("model")
+    model_text = f" model={model}" if isinstance(model, str) and model else ""
+    message = f"{summary}{model_text} -- {detail}"
+
+    if status == "pass":
+        return "pass", message
+
+    return "warning", f"{message} -- optional OpenAI integration unavailable; core CCA8 preflight continues"
 
 
 def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
@@ -1530,38 +1555,32 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
 
     assessment_checks = 0
     assessment_failures = 0
+    assessment_warnings = 0
     assessment_skips = 0
 
-    def ok_sys(msg: str) -> None:
-        nonlocal assessment_checks
+    def report_sys(severity: str, msg: str) -> None:
+        """Record and print one Part-4 system-fitness assessment."""
+        nonlocal assessment_checks, assessment_failures, assessment_warnings, assessment_skips
         assessment_checks += 1
-        print(f"[preflight system functionality] PASS  - {msg}")
 
-    def bad_sys(msg: str) -> None:
-        nonlocal assessment_checks, assessment_failures
-        assessment_checks += 1
-        assessment_failures += 1
-        print(f"[preflight system functionality] FAIL  - {msg}")
+        level = str(severity or "fail").strip().lower()
+        if level == "pass":
+            label = "PASS "
+        elif level == "warning":
+            assessment_warnings += 1
+            label = "WARN "
+        elif level == "skip":
+            assessment_skips += 1
+            label = "SKIP "
+        else:
+            assessment_failures += 1
+            label = "FAIL "
 
-    def skip_sys(msg: str) -> None:
-        nonlocal assessment_checks, assessment_skips
-        assessment_checks += 1
-        assessment_skips += 1
-        print(f"[preflight system functionality] SKIP  - {msg}")
+        print(f"[preflight system functionality] {label} - {msg}")
 
     _llm_probe = runtime.llm_operational_check(20.0)
-    _llm_status = str(_llm_probe.get("status", "fail")).strip().lower()
-    _llm_summary = str(_llm_probe.get("summary", "LLM smoke test"))
-    _llm_detail = str(_llm_probe.get("detail", "") or "")
-    _llm_model = _llm_probe.get("model")
-    _llm_model_txt = f" model={_llm_model}" if isinstance(_llm_model, str) and _llm_model else ""
-
-    if _llm_status == "pass":
-        ok_sys(f"{_llm_summary}{_llm_model_txt} -- {_llm_detail}")
-    elif _llm_status == "skip":
-        skip_sys(f"{_llm_summary}{_llm_model_txt} -- {_llm_detail}")
-    else:
-        bad_sys(f"{_llm_summary}{_llm_model_txt} -- {_llm_detail}")
+    _llm_severity, _llm_message = _classify_llm_preflight_assessment(_llm_probe)
+    report_sys(_llm_severity, _llm_message)
 
     # Compute Summary Results
     # ---- Summary footer (with denominators) ----
@@ -1591,9 +1610,10 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
     # Hardware (Part 3) — show pass/total
     hardware_pass = max(0, hal_checks - hal_failures)
 
-    # System fitness (Part 4) — show pass/fail/skip/total
+    # System fitness (Part 4) — show pass/warning/fail/skip/total
+    assessment_warnings = locals().get("assessment_warnings", 0)
     assessment_skips = locals().get("assessment_skips", 0)
-    assessment_pass = max(0, assessment_checks - assessment_failures - assessment_skips)
+    assessment_pass = max(0, assessment_checks - assessment_failures - assessment_warnings - assessment_skips)
 
     # Overall status (fail if any part failed)
     status_ok = (
@@ -1606,7 +1626,8 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
     line1 = f"\n[preflight] RESULT: {'PASS' if status_ok else 'FAIL'} | PART 1: {tests_txt} | {cov_txt} | PART 2: {probes_txt} |"
     line2 = (f"[preflight] PART 3: hardware_robotics_checks = {hardware_pass}/{hal_checks} | "
              f"PART 4: system_fitness_assessments = "
-             f"{assessment_pass} pass, {assessment_failures} fail, {assessment_skips} skipped, {assessment_checks} total |")
+             f"{assessment_pass} pass, {assessment_warnings} warning(s), {assessment_failures} fail, "
+             f"{assessment_skips} skipped, {assessment_checks} total |")
     line3 = f"[preflight] elapsed_time (mm:ss) ={elapsed_mmss}"
 
     print(_paint_fail(line1) if not status_ok else line1)
