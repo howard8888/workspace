@@ -4,20 +4,22 @@
 
 Purpose
 -------
-This module owns Phases 1 and 2 of the CCA8 working-memory extraction. Phase 1
-contains WorkingMap construction/reset, MapSurface serialization, Column
-storage, candidate ranking, and conservative merge/replace loading. Phase 2
-contains NavPatch signatures and prototype matching, ambiguity Scratch records,
-zoom/probe bookkeeping, salience focus, SurfaceGrid composition/rendering,
-grid-derived predicates, and NavSummary calculation.
+This module owns Phases 1 through 3 of the CCA8 working-memory extraction.
+Phase 1 contains WorkingMap construction/reset, MapSurface serialization,
+Column storage, candidate ranking, and conservative merge/replace loading.
+Phase 2 contains NavPatch matching, ambiguity Scratch records, zoom/probe
+bookkeeping, salience focus, SurfaceGrid composition, grid-derived predicates,
+and NavSummary calculation. Phase 3 contains live observation injection,
+stateful MapSurface updates, pruning, retrieval gating, contextual map switching,
+and short-lived retrieved-state hints.
 
 Dependency boundary
 -------------------
 The module never imports :mod:`cca8_run`. It depends only on stable CCA8 modules
 and data structures. ``cca8_run`` retains historical names through aliases and
 small wrappers where call-time dependency replacement must remain possible. The
-large live observation-injection function remains runner-owned until Phase 3,
-but delegates its NavPatch and SurfaceGrid sub-pipelines here.
+runner retains compatibility names and supplies replaceable dependencies through
+small callback wrappers; the implementation remains one-way and import-safe.
 
 WorldGraph boundary
 -------------------
@@ -48,6 +50,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from math import log as _math_log, sqrt as _math_sqrt
 import time
 from typing import Any, Callable, Optional, cast
 
@@ -77,11 +80,20 @@ from cca8_navpatch import (
     grid_overlap_fraction_v1,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "init_working_world",
     "reset_working_world",
+    "init_map_surface_world",
+    "update_surface_grid_from_obs",
+    "update_map_surface_from_obs",
+    "predcode_update_from_obs",
+    "should_autoretrieve_mapsurface",
+    "maybe_autoretrieve_mapsurface_on_keyframe",
+    "maybe_goat04_context_mapswitch_on_keyframe_v1",
+    "maybe_newborn_b2_mapswitch_on_keyframe_v1",
+    "inject_obs_into_working_world",
     "serialize_mapsurface_v1",
     "mapsurface_payload_sig_v1",
     "mapsurface_salience_v1",
@@ -113,6 +125,7 @@ __all__ = [
     "update_working_salience_surfacegrid_v1",
     "__version__",
 ]
+
 
 def init_working_world() -> cca8_world_graph.WorldGraph:
     """Initialize a short-term WorkingMap (working memory) as a separate WorldGraph.
@@ -4970,3 +4983,1938 @@ def update_working_salience_surfacegrid_v1(
         "grid_pred_tags": list(getattr(ctx, "wm_grid_pred_tags", []) or []),
         "navsummary": dict(getattr(ctx, "wm_navsummary", {}) or {}),
     }
+
+# -----------------------------------------------------------------------------
+# Working Memory refactor Phase 3: live observation injection and retrieval
+# -----------------------------------------------------------------------------
+
+
+
+def init_map_surface_world() -> tuple[cca8_world_graph.WorldGraph, dict[str, str]]:
+    """Initialize a stateful MapSurface as a separate WorldGraph instance.
+
+    Concept
+    -------
+    - WorkingMap (ctx.working_world) is episodic: we append bindings each tick to preserve a
+      high-bandwidth trace.
+    - MapSurface (ctx.map_surface_world) is stateful: it holds a small set of entity nodes
+      (starting with SELF) whose pred:* tags are overwritten each tick by slot-family.
+
+    Implementation detail
+    ---------------------
+    We treat the "NOW" anchor binding as the SELF node for MapSurface.
+    """
+    ms = cca8_world_graph.WorldGraph(memory_mode="semantic")
+    ms.set_tag_policy("allow")
+    ms.set_stage("neonate")
+    self_bid = ms.ensure_anchor("NOW")
+    ms.ensure_anchor("NOW_ORIGIN")
+    ids = {"SELF": self_bid, "NOW": self_bid}
+    return ms, ids
+
+
+def _slot_key_from_token(tok: str) -> str:
+    """Return a stable slot-family key for a token."""
+    tok = str(tok)
+    return tok.rsplit(":", 1)[0] if ":" in tok else tok
+
+
+def update_surface_grid_from_obs(ctx: Ctx, env_obs: EnvObservation) -> None:
+    """Update ctx.surface_grid from EnvObservation."""
+    if ctx is None or env_obs is None:
+        return
+    sg = getattr(env_obs, "surface_grid", None)
+    if isinstance(sg, dict):
+        ctx.surface_grid = sg
+
+
+def update_map_surface_from_obs(ctx: Ctx, env_obs: EnvObservation) -> None:
+    """Update the stateful MapSurface SELF node from EnvObservation (overwrite-by-slot)."""
+    if ctx is None or env_obs is None:
+        return
+
+    if getattr(ctx, "map_surface_world", None) is None:
+        try:
+            ctx.map_surface_world, ctx.map_surface_ids = init_map_surface_world()
+        except Exception:
+            return
+
+    ms = ctx.map_surface_world
+    if ms is None:
+        return
+
+    self_bid = (getattr(ctx, "map_surface_ids", {}) or {}).get("SELF")
+    if not isinstance(self_bid, str):
+        try:
+            self_bid = ms.ensure_anchor("NOW")
+            ctx.map_surface_ids = {"SELF": self_bid, "NOW": self_bid}
+        except Exception:
+            return
+
+    b = ms._bindings.get(self_bid)
+    if b is None:
+        return
+
+    pred_tokens = [
+        str(p).replace("pred:", "")
+        for p in (getattr(env_obs, "predicates", []) or [])
+        if p is not None
+    ]
+
+    keep: list[str] = []
+    for tok in pred_tokens:
+        if tok.startswith("proximity:") or tok.startswith("hazard:"):
+            keep.append(tok)
+
+    hazard_tok: str | None = None
+    if any(t.startswith("hazard:") and t.endswith(":near") for t in keep):
+        hazard_tok = "hazard:near"
+    elif any(t.startswith("hazard:") and t.endswith(":far") for t in keep):
+        hazard_tok = "hazard:far"
+    if hazard_tok is not None:
+        keep.append(hazard_tok)
+
+    slots_to_write = {_slot_key_from_token(t) for t in keep}
+
+    tags = set(getattr(b, "tags", []) or [])
+    cleaned: set[str] = set()
+    for t in tags:
+        if not isinstance(t, str) or not t.startswith("pred:"):
+            cleaned.add(t)
+            continue
+        tok = t.replace("pred:", "", 1)
+        if _slot_key_from_token(tok) in slots_to_write:
+            continue
+        cleaned.add(t)
+
+    for tok in keep:
+        cleaned.add(f"pred:{tok}")
+
+    b.tags = cleaned
+
+
+def predcode_update_from_obs(ctx: Ctx, env_obs: EnvObservation) -> None:
+    """Predictive coding v1: predict "no change" and compute which slots changed."""
+    if ctx is None or env_obs is None:
+        return
+    if not bool(getattr(ctx, "predcode_enabled", True)):
+        return
+
+    pred_tokens = [
+        str(p).replace("pred:", "")
+        for p in (getattr(env_obs, "predicates", []) or [])
+        if p is not None
+    ]
+
+    observed_slots: dict[str, str] = {}
+    for tok in pred_tokens:
+        observed_slots[_slot_key_from_token(tok)] = tok
+
+    predicted_slots = dict(getattr(ctx, "predcode_prev_slots", {}) or {})
+
+    mismatches: list[dict[str, str]] = []
+    for slot, pred_tok in predicted_slots.items():
+        obs_tok = observed_slots.get(slot)
+        if obs_tok is None:
+            continue
+        if obs_tok != pred_tok:
+            mismatches.append({"slot": slot, "pred": str(pred_tok), "obs": str(obs_tok)})
+
+    ctx.predcode_last_error = {
+        "mismatch_count": len(mismatches),
+        "mismatches": mismatches,
+        "predicted_slots": len(predicted_slots),
+        "observed_slots": len(observed_slots),
+    }
+    ctx.predcode_prev_slots = observed_slots
+
+    if mismatches and getattr(ctx, "percept_focus", None) is None:
+        slot0 = mismatches[0].get("slot")
+        ctx.percept_focus = "proximity:mom" if isinstance(slot0, str) and slot0.startswith("proximity:mom") else slot0
+
+
+def _wm_display_id(bid: str) -> str:
+    """
+    Display-only: show WorkingMap ids as wN while keeping real ids as bN.
+    """
+    try:
+        if isinstance(bid, str) and bid.startswith("b") and bid[1:].isdigit():
+            return "w" + bid[1:]
+    except Exception:
+        pass
+    return f"w({bid})"
+
+
+def _prune_working_world(ctx) -> None:
+    """Keep the WorkingMap bounded so long runs do not explode memory.
+
+    This only applies to ctx.working_world. It never touches the long-term `world`.
+    """
+    ww = getattr(ctx, "working_world", None)
+    if ww is None:
+        return
+
+    max_b = int(getattr(ctx, "working_max_bindings", 0) or 0)
+    if max_b <= 0:
+        return
+
+    # Protect anchors + latest (so pruning doesn't sever the current frame completely)
+    protected = set(getattr(ww, "_anchors", {}).values())  # pylint: disable=protected-access
+    latest = getattr(ww, "_latest_binding_id", None)        # pylint: disable=protected-access
+    if latest:
+        protected.add(latest)
+
+    def _bid_key(bid: str) -> int:
+        try:
+            return int(bid[1:]) if bid.startswith("b") else 10**9
+        except Exception:
+            return 10**9
+
+    # Delete oldest non-protected bindings until within cap
+    all_ids = sorted(list(getattr(ww, "_bindings", {}).keys()), key=_bid_key)  # pylint: disable=protected-access
+    while len(getattr(ww, "_bindings", {})) > max_b:  # pylint: disable=protected-access
+        binding_to_delete = None
+        for bid in all_ids:
+            if bid not in protected:
+                binding_to_delete = bid
+                break
+        if binding_to_delete is None:
+            break
+        ww.delete_binding(binding_to_delete)
+        all_ids.remove(binding_to_delete)
+
+
+def _newborn_controller_step_int_v1(ctx: Ctx | None) -> int:
+    """Return the current controller step as an int for newborn instrumentation."""
+    if ctx is None:
+        return 0
+    try:
+        return int(getattr(ctx, "controller_steps", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _append_newborn_retrieved_hint_event_v1(ctx: Ctx | None, event: dict[str, Any]) -> None:
+    """Append one bounded retrieved-hint instrumentation event."""
+    if ctx is None or not isinstance(event, dict):
+        return
+
+    try:
+        events = getattr(ctx, "experiment_newborn_retrieved_hint_events", None)
+        if not isinstance(events, list):
+            events = []
+        events.append(dict(event))
+
+        if len(events) > 64:
+            del events[:-64]
+
+        ctx.experiment_newborn_retrieved_hint_events = events
+    except Exception:
+        pass
+
+
+def _note_newborn_retrieved_hint_returned_v1(ctx: Ctx | None, hint: dict[str, Any]) -> None:
+    """Record that a retrieved hint was active and returned to control this cycle.
+
+    This is a control-use proxy. The helper counts each controller step at most
+    once, even if several gate helpers consult the hint during the same cycle.
+    """
+    if ctx is None or not isinstance(hint, dict) or not hint:
+        return
+
+    step_now = _newborn_controller_step_int_v1(ctx)
+
+    try:
+        last_active = int(getattr(ctx, "experiment_newborn_retrieved_hint_last_active_step_counted", -1) or -1)
+    except Exception:
+        last_active = -1
+
+    if last_active != step_now:
+        try:
+            ctx.experiment_newborn_retrieved_hint_active_step_count += 1
+            ctx.experiment_newborn_retrieved_hint_last_active_step_counted = step_now
+        except Exception:
+            pass
+
+    try:
+        last_used = int(getattr(ctx, "experiment_newborn_retrieved_hint_last_used_step_counted", -1) or -1)
+    except Exception:
+        last_used = -1
+
+    if last_used != step_now:
+        try:
+            ctx.experiment_newborn_retrieved_hint_used_step_count += 1
+            ctx.experiment_newborn_retrieved_hint_last_used_step_counted = step_now
+        except Exception:
+            pass
+
+        _append_newborn_retrieved_hint_event_v1(
+            ctx,
+            {
+                "kind": "returned_to_control",
+                "step": int(step_now),
+                "source": getattr(ctx, "experiment_newborn_retrieved_hint_source", None),
+                "until_step": getattr(ctx, "experiment_newborn_retrieved_hint_until_step", None),
+                "hint_keys": sorted(k for k in hint.keys() if isinstance(k, str)),
+            },
+        )
+
+
+def _newborn_retrieved_hint_debug_from_ctx_v1(ctx: Ctx | None) -> dict[str, Any]:
+    """Return episode-level retrieved-hint instrumentation counters."""
+    if ctx is None:
+        return {
+            "newborn_retrieved_hint_set_count": 0,
+            "newborn_retrieved_hint_active_step_count": 0,
+            "newborn_retrieved_hint_used_step_count": 0,
+            "newborn_retrieved_hint_events": [],
+        }
+
+    def int_attr(name: str) -> int:
+        try:
+            return int(getattr(ctx, name, 0) or 0)
+        except Exception:
+            return 0
+
+    events = getattr(ctx, "experiment_newborn_retrieved_hint_events", [])
+    events = [dict(item) for item in events if isinstance(item, dict)] if isinstance(events, list) else []
+
+    return {
+        "newborn_retrieved_hint_set_count": int_attr("experiment_newborn_retrieved_hint_set_count"),
+        "newborn_retrieved_hint_active_step_count": int_attr("experiment_newborn_retrieved_hint_active_step_count"),
+        "newborn_retrieved_hint_used_step_count": int_attr("experiment_newborn_retrieved_hint_used_step_count"),
+        "newborn_retrieved_hint_events": events[:24],
+    }
+
+
+def _clear_newborn_retrieved_hint_v1(ctx: Ctx | None) -> None:
+    """Clear the short-lived newborn B2 retrieved-state hint."""
+    if ctx is None:
+        return
+    try:
+        ctx.experiment_newborn_retrieved_hint = {}
+        ctx.experiment_newborn_retrieved_hint_until_step = -1
+        ctx.experiment_newborn_retrieved_hint_source = None
+    except Exception:
+        pass
+
+
+def _newborn_active_retrieved_hint_v1(ctx: Ctx | None) -> dict[str, Any]:
+    """Return the active retrieved-state hint for newborn B2, or {} when absent/expired."""
+    if ctx is None:
+        return {}
+
+    hint = getattr(ctx, "experiment_newborn_retrieved_hint", None)
+    if not isinstance(hint, dict) or not hint:
+        return {}
+
+    try:
+        raw_step = getattr(ctx, "controller_steps", 0)
+        raw_until = getattr(ctx, "experiment_newborn_retrieved_hint_until_step", -1)
+
+        step_now = int(raw_step) if raw_step is not None else 0
+        until_step = int(raw_until) if raw_until is not None else -1
+    except Exception:
+        return {}
+
+    if step_now > until_step:
+        _clear_newborn_retrieved_hint_v1(ctx)
+        return {}
+
+    _note_newborn_retrieved_hint_returned_v1(ctx, hint)
+    return dict(hint)
+
+
+def _decode_newborn_hint_from_mapsurface_record_v1(rec: dict[str, Any]) -> dict[str, Any]:
+    """Decode a tiny control-relevant state hint from a wm_mapsurface Column record.
+
+    The benchmark does not need the full retrieved map to influence control.
+    It needs only a few values that matter at the newborn decision seam:
+
+      - posture
+      - mom_distance
+      - nipple_state
+      - zone
+
+    We first prefer the payload header's BodyMap summary if present. If that is
+    missing or incomplete, we fall back to parsing entity preds.
+    """
+    if not isinstance(rec, dict):
+        return {}
+
+    payload = rec.get("payload")
+    if not isinstance(payload, dict):
+        return {}
+
+    hint: dict[str, Any] = {}
+
+    header = payload.get("header")
+    header = header if isinstance(header, dict) else {}
+    body = header.get("body")
+    body = body if isinstance(body, dict) else {}
+
+    for key in ("posture", "mom_distance", "nipple_state", "zone"):
+        val = body.get(key)
+        if isinstance(val, str) and val:
+            hint[key] = val
+
+    ents = payload.get("entities")
+    ents = ents if isinstance(ents, list) else []
+
+    shelter_near = False
+    cliff_near = False
+
+    for ent in ents:
+        if not isinstance(ent, dict):
+            continue
+
+        preds = ent.get("preds")
+        preds = preds if isinstance(preds, list) else []
+
+        for tok in preds:
+            if not isinstance(tok, str) or not tok:
+                continue
+
+            if "posture" not in hint:
+                if tok == "resting":
+                    hint["posture"] = "resting"
+                elif tok == "posture:standing":
+                    hint["posture"] = "standing"
+                elif tok == "posture:fallen":
+                    hint["posture"] = "fallen"
+
+            if "mom_distance" not in hint:
+                if tok == "proximity:mom:close":
+                    hint["mom_distance"] = "near"
+                elif tok == "proximity:mom:far":
+                    hint["mom_distance"] = "far"
+
+            if tok == "milk:drinking":
+                hint["milk_drinking"] = True
+
+            if "nipple_state" not in hint:
+                if tok in ("nipple:latched", "milk:drinking"):
+                    hint["nipple_state"] = "latched"
+                elif tok == "nipple:found":
+                    hint["nipple_state"] = "reachable"
+                elif tok == "nipple:hidden":
+                    hint["nipple_state"] = "hidden"
+
+            if tok == "proximity:shelter:near":
+                shelter_near = True
+            elif tok == "hazard:cliff:near":
+                cliff_near = True
+
+    if "zone" not in hint:
+        if cliff_near and not shelter_near:
+            hint["zone"] = "unsafe_cliff_near"
+        elif shelter_near and not cliff_near:
+            hint["zone"] = "safe"
+
+    return hint
+
+
+def _set_newborn_retrieved_hint_from_engram_v1(
+    ctx: Ctx | None,
+    engram_id: str,
+    *,
+    ttl_steps: int = 3,
+    column_memory: Any | None = None,
+) -> dict[str, Any]:
+    """Decode and store a short-lived retrieved-state hint from a wm_mapsurface engram.
+
+    This is benchmark-only glue. It does not replace BodyMap. It simply lets a
+    successful newborn retrieval restore a few decision-relevant values for a
+    short time when current evidence is sparse.
+    """
+    active_column = column_memory if column_memory is not None else column_mem
+
+    if ctx is None:
+        return {}
+    if not isinstance(engram_id, str) or not engram_id:
+        return {}
+
+    rec = active_column.try_get(engram_id)
+    if not isinstance(rec, dict):
+        _clear_newborn_retrieved_hint_v1(ctx)
+        return {}
+
+    hint = _decode_newborn_hint_from_mapsurface_record_v1(rec)
+    if not hint:
+        _clear_newborn_retrieved_hint_v1(ctx)
+        return {}
+
+    try:
+        raw_step = getattr(ctx, "controller_steps", 0)
+        step_now = int(raw_step) if raw_step is not None else 0
+    except Exception:
+        step_now = 0
+
+    ttl_i = max(1, int(ttl_steps))
+
+    try:
+        until_step = step_now + ttl_i
+        ctx.experiment_newborn_retrieved_hint = dict(hint)
+        ctx.experiment_newborn_retrieved_hint_until_step = until_step
+        ctx.experiment_newborn_retrieved_hint_source = engram_id
+        ctx.experiment_newborn_retrieved_hint_set_count += 1
+
+        _append_newborn_retrieved_hint_event_v1(
+            ctx,
+            {
+                "kind": "set",
+                "step": int(step_now),
+                "until_step": int(until_step),
+                "source": engram_id,
+                "hint": dict(hint),
+            },
+        )
+    except Exception:
+        pass
+
+    return dict(hint)
+
+
+def should_autoretrieve_mapsurface(
+    ctx: Ctx,
+    env_obs: EnvObservation | None,
+    *,
+    stage: str | None,
+    zone: str | None,
+    stage_changed: bool,
+    zone_changed: bool,
+    forced_keyframe: bool = False,
+    boundary_reason: str | None = None,
+    bodymap_is_stale_fn: Callable[[Any], bool] = bodymap_is_stale,
+) -> dict[str, Any]:
+    """Guard hook: decide whether CCA8 should attempt MapSurface auto-retrieval *right now*.
+
+    What this is (plain English)
+    ----------------------------
+    Auto-retrieve is the read-path side of the memory pipeline:
+
+        Column engram (wm_mapsurface payload)  →  WorkingMap.MapSurface (as a prior)
+
+    We consider it at keyframes so the system can "snap into" a previously seen scene configuration
+    without bloating the long-term WorldGraph. WorldGraph stores only a thin pointer; the heavy
+    MapSurface payload lives in Column memory.
+
+    Minimal gating (Phase VIII)
+    ---------------------------
+    Historically this hook was a simple baseline: if enabled + boundary → attempt.
+    We now add a conservative gating rule so *prediction error and partial observability matter*:
+
+      Attempt auto-retrieve only when ALL are true:
+        1) enabled, and
+        2) this call is occurring on a keyframe boundary (stage/zone boundary), and
+        3) we have evidence priors may help, i.e. at least one of:
+             - missingness: this observation dropped tokens due to obs-mask (or obs packet is very sparse / None)
+             - pred_err:   ctx.pred_err_v0_last has any non-zero component (v0 currently tracks posture mismatch)
+             - stale:      BodyMap is stale (priors can stabilize belief when fast registers are unreliable)
+
+    This is intentionally conservative: in rich-observation demos, retrieval often becomes a no-op anyway.
+    The gating keeps the logs meaningful and prevents "always retrieve" behavior from dominating experiments.
+
+    Returns
+    -------
+    dict with stable keys:
+      ok:
+        True if we should attempt auto-retrieval now.
+      why:
+        Short reason string for logs/tests.
+      mode:
+        Normalized retrieval mode to use ("merge" or "replace").
+      top_k:
+        Candidate budget (int, clamped to 2..10).
+      verbose:
+        Whether the caller should print diagnostic lines.
+      diag:
+        Small diagnostic dictionary (counts, flags, stage/zone) for optional logging.
+    """
+    enabled = bool(getattr(ctx, "wm_mapsurface_autoretrieve_enabled", False))
+    verbose = bool(getattr(ctx, "wm_mapsurface_autoretrieve_verbose", False))
+
+    # Normalize mode (keep conservative by default)
+    mode_raw = (getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge")
+    mode_eff = str(mode_raw).strip().lower()
+    if mode_eff not in ("merge", "replace", "r"):
+        mode_eff = "merge"
+    if mode_eff == "r":
+        mode_eff = "replace"
+
+    # Clamp top_k so exclusion has room to choose a second candidate.
+    try:
+        top_raw = int(getattr(ctx, "wm_mapsurface_autoretrieve_top_k", 5) or 5)
+    except Exception:
+        top_raw = 5
+    top_k = max(2, min(10, int(top_raw)))
+
+    # Cheap diagnostic counts (do not depend on exact schema)
+    pred_n = 0
+    cue_n = 0
+    try:
+        preds = getattr(env_obs, "predicates", None) if env_obs is not None else None
+        cues = getattr(env_obs, "cues", None) if env_obs is not None else None
+        pred_n = len(preds) if isinstance(preds, list) else 0
+        cue_n = len(cues) if isinstance(cues, list) else 0
+    except Exception:
+        pred_n = 0
+        cue_n = 0
+
+    boundary = bool(stage_changed) or bool(zone_changed) or bool(forced_keyframe)
+
+    diag: dict[str, Any] = {
+        "stage": stage,
+        "zone": zone,
+        "stage_changed": bool(stage_changed),
+        "zone_changed": bool(zone_changed),
+        "boundary_reason": boundary_reason,
+        "pred_n": pred_n,
+        "cue_n": cue_n,
+    }
+
+    if not enabled:
+        diag["need_priors"] = False
+        return {"ok": False, "why": "disabled", "mode": mode_eff, "top_k": top_k, "verbose": verbose, "diag": diag}
+
+    if not boundary:
+        diag["need_priors"] = False
+        return {"ok": False, "why": "not_boundary", "mode": mode_eff, "top_k": top_k, "verbose": verbose, "diag": diag}
+
+    # ---- Minimal gating signals (missingness + pred_err + BodyMap staleness) ----
+    body_stale = True
+    try:
+        body_stale = bool(bodymap_is_stale_fn(ctx))
+    except Exception:
+        body_stale = True
+
+    pred_err_any = False
+    pred_err_posture = 0
+    try:
+        pe = getattr(ctx, "pred_err_v0_last", None)
+        if isinstance(pe, dict) and pe:
+            try:
+                pred_err_posture = int(pe.get("posture", 0) or 0)
+            except Exception:
+                pred_err_posture = 0
+            try:
+                pred_err_any = any(int(v or 0) != 0 for v in pe.values())
+            except Exception:
+                pred_err_any = pred_err_posture != 0
+    except Exception:
+        pred_err_any = False
+        pred_err_posture = 0
+
+    mask_dropped_preds = 0
+    mask_dropped_cues = 0
+    try:
+        meta = getattr(env_obs, "env_meta", None) if env_obs is not None else None
+        if isinstance(meta, dict):
+            mask_dropped_preds = int(meta.get("obs_mask_dropped_preds", 0) or 0)
+            mask_dropped_cues = int(meta.get("obs_mask_dropped_cues", 0) or 0)
+    except Exception:
+        mask_dropped_preds = 0
+        mask_dropped_cues = 0
+
+    # Treat a missing/very-sparse obs packet as missingness (priors likely helpful).
+    sparse_obs = (env_obs is None) or (pred_n <= 1 and cue_n <= 0)
+    missingness = sparse_obs or ((mask_dropped_preds + mask_dropped_cues) > 0)
+
+    need_priors = bool(pred_err_any) or bool(missingness) or bool(body_stale)
+
+    diag.update(
+        {
+            "pred_err_any": bool(pred_err_any),
+            "pred_err_posture": int(pred_err_posture),
+            "mask_dropped_preds": int(mask_dropped_preds),
+            "mask_dropped_cues": int(mask_dropped_cues),
+            "bodymap_stale": bool(body_stale),
+            "sparse_obs": bool(sparse_obs),
+            "missingness": bool(missingness),
+            "need_priors": bool(need_priors),
+        }
+    )
+
+    if not need_priors:
+        return {"ok": False, "why": "enabled_boundary_confident", "mode": mode_eff, "top_k": top_k, "verbose": verbose, "diag": diag}
+
+    if pred_err_any:
+        why = "enabled_boundary_pred_err"
+    elif missingness:
+        why = "enabled_boundary_missing"
+    else:
+        why = "enabled_boundary_bodymap_stale"
+
+    return {"ok": True, "why": why, "mode": mode_eff, "top_k": top_k, "verbose": verbose, "diag": diag}
+
+
+def maybe_autoretrieve_mapsurface_on_keyframe(
+    world,
+    ctx: Ctx,
+    *,
+    stage: str | None,
+    zone: str | None,
+    exclude_engram_id: str | None = None,
+    reason: str = "auto_keyframe",
+    mode: str | None = None,
+    top_k: int | None = None,
+    max_scan: int = 500,
+    log: bool | None = None,
+    pick_best_fn: Callable[..., dict[str, Any]] = pick_best_wm_mapsurface_rec,
+    load_engram_fn: Callable[..., dict[str, Any]] = load_wm_mapsurface_engram_into_workingmap_mode,
+    log_event_fn: Callable[..., dict[str, Any]] = _wm_log_mapswitch_event_v1,
+    format_event_fn: Callable[[dict[str, Any]], str] = format_mapswitch_event_line_v1,
+) -> dict[str, Any]:
+    """Try to seed WorkingMap from a prior wm_mapsurface engram on a keyframe boundary.
+
+    This is the *read-path* complement to store_mapsurface_snapshot_v1(...).
+
+    In addition to returning the load result, this function now records a structured
+    map-switch event containing:
+      - candidates considered,
+      - chosen seed,
+      - drop/no-op reason,
+      - and cue-leakage guardrail outcome for merge mode.
+    """
+    if ctx is None or world is None:
+        return {"ok": False, "why": "missing_ctx_or_world"}
+
+    if not bool(getattr(ctx, "wm_mapsurface_autoretrieve_enabled", False)):
+        return {"ok": False, "why": "disabled"}
+
+    mode_eff = (mode or getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge").strip().lower()
+    top_eff = top_k if isinstance(top_k, int) else int(getattr(ctx, "wm_mapsurface_autoretrieve_top_k", 5) or 5)
+    top_eff = max(2, min(10, int(top_eff)))
+
+    pick = pick_best_fn(
+        stage=stage,
+        zone=zone,
+        ctx=ctx,
+        long_world=world,
+        allow_fallback=True,
+        max_scan=max(1, int(max_scan)),
+        top_k=top_eff,
+    )
+
+    source = pick.get("source") if isinstance(pick, dict) and isinstance(pick.get("source"), str) else None
+    match = pick.get("match") if isinstance(pick, dict) and isinstance(pick.get("match"), str) else None
+    ranked = pick.get("ranked") if isinstance(pick, dict) and isinstance(pick.get("ranked"), list) else []
+
+    if not ranked:
+        event = log_event_fn(
+            ctx,
+            ok=False,
+            why="no_candidates",
+            reason=reason,
+            stage=stage,
+            zone=zone,
+            mode=mode_eff,
+            source=source,
+            match=match,
+            top_k=top_eff,
+            exclude_engram_id=exclude_engram_id,
+            ranked=ranked,
+            chosen=None,
+            load=None,
+        )
+        return {"ok": False, "why": "no_candidates", "pick": pick, "event": event}
+
+    chosen: dict[str, Any] | None = None
+    for cand in ranked:
+        if not isinstance(cand, dict):
+            continue
+        eid = cand.get("engram_id")
+        if not isinstance(eid, str) or not eid:
+            continue
+        if isinstance(exclude_engram_id, str) and exclude_engram_id and eid == exclude_engram_id:
+            continue
+        chosen = cand
+        break
+
+    if chosen is None:
+        event = log_event_fn(
+            ctx,
+            ok=False,
+            why="only_excluded_candidate",
+            reason=reason,
+            stage=stage,
+            zone=zone,
+            mode=mode_eff,
+            source=source,
+            match=match,
+            top_k=top_eff,
+            exclude_engram_id=exclude_engram_id,
+            ranked=ranked,
+            chosen=None,
+            load=None,
+        )
+        return {"ok": False, "why": "only_excluded_candidate", "pick": pick, "event": event}
+
+    eid = chosen.get("engram_id")
+    if not isinstance(eid, str) or not eid:
+        event = log_event_fn(
+            ctx,
+            ok=False,
+            why="bad_engram_id",
+            reason=reason,
+            stage=stage,
+            zone=zone,
+            mode=mode_eff,
+            source=source,
+            match=match,
+            top_k=top_eff,
+            exclude_engram_id=exclude_engram_id,
+            ranked=ranked,
+            chosen=chosen,
+            load=None,
+        )
+        return {"ok": False, "why": "bad_engram_id", "pick": pick, "event": event}
+
+    if mode_eff in ("replace", "r"):
+        load = load_engram_fn(ctx, eid, mode="replace")
+    else:
+        load = load_engram_fn(ctx, eid, mode="merge")
+
+    try:
+        ctx.wm_mapsurface_last_autoretrieve_engram_id = eid
+        ctx.wm_mapsurface_last_autoretrieve_reason = reason
+    except Exception:
+        pass
+
+    event = log_event_fn(
+        ctx,
+        ok=True,
+        why="ok",
+        reason=reason,
+        stage=stage,
+        zone=zone,
+        mode=mode_eff,
+        source=source,
+        match=match,
+        top_k=top_eff,
+        exclude_engram_id=exclude_engram_id,
+        ranked=ranked,
+        chosen=chosen,
+        load=load if isinstance(load, dict) else None,
+    )
+
+    log_enabled = bool(getattr(ctx, "wm_mapsurface_autoretrieve_verbose", False))
+    if log is not None:
+        log_enabled = bool(log)
+
+    if log_enabled:
+        try:
+            print("[wm-mapswitch] " + format_event_fn(event))
+        except Exception:
+            pass
+
+    return {
+        "ok": True,
+        "engram_id": eid,
+        "chosen": chosen,
+        "pick": pick,
+        "load": load,
+        "event": event,
+    }
+
+
+def _goat04_context_milestone_label_v1(env_obs: EnvObservation) -> str | None:
+    """Return 'fox' or 'hawk' when this observation carries a goat_foraging_04 context milestone."""
+    meta = getattr(env_obs, "env_meta", None)
+    meta = meta if isinstance(meta, dict) else {}
+
+    stage = meta.get("scenario_stage")
+    if stage != "goat_foraging_04_scan":
+        return None
+
+    raw = meta.get("milestones") or meta.get("milestone")
+    items: list[str] = []
+    if isinstance(raw, str) and raw:
+        items = [raw]
+    elif isinstance(raw, list):
+        items = [m for m in raw if isinstance(m, str) and m]
+
+    for m in items:
+        if m == "context:fox":
+            return "fox"
+        if m == "context:hawk":
+            return "hawk"
+    return None
+
+
+def maybe_goat04_context_mapswitch_on_keyframe_v1(
+    world: Any,
+    ctx: Ctx,
+    env_obs: EnvObservation,
+    *,
+    body_space_zone_fn: Callable[[Any], Any] = body_space_zone,
+    store_snapshot_fn: Callable[..., dict[str, Any]] = store_mapsurface_snapshot_v1,
+    autoretrieve_fn: Callable[..., dict[str, Any]] = maybe_autoretrieve_mapsurface_on_keyframe,
+) -> dict[str, Any]:
+    """goat_foraging_04 evaluation harness:
+
+    - first fox milestone  -> store a fox wm_mapsurface
+    - first hawk milestone -> store a hawk wm_mapsurface
+    - later alternating milestones -> attempt auto-retrieve/apply
+
+    Returns a small dict for the cycle footer:
+      {
+        "handled": bool,
+        "store": str|None,
+        "retrieve": str|None,
+        "apply": str|None,
+      }
+    """
+    out: dict[str, Any] = {"handled": False, "store": None, "retrieve": None, "apply": None}
+
+    if ctx is None or world is None or env_obs is None:
+        return out
+
+    label = _goat04_context_milestone_label_v1(env_obs)
+    if label not in ("fox", "hawk"):
+        return out
+
+    out["handled"] = True
+
+    seeded = getattr(ctx, "wm_goat04_seeded_contexts", None)
+    if not isinstance(seeded, set):
+        seeded = set()
+        ctx.wm_goat04_seeded_contexts = seeded
+
+    seed_map = getattr(ctx, "wm_goat04_seed_engram_by_context", None)
+    if not isinstance(seed_map, dict):
+        seed_map = {}
+        ctx.wm_goat04_seed_engram_by_context = seed_map
+
+    # Stage/zone for retrieval filtering
+    meta = getattr(env_obs, "env_meta", None)
+    meta = meta if isinstance(meta, dict) else {}
+    stage = meta.get("scenario_stage")
+    stage = stage if isinstance(stage, str) and stage else None
+
+    try:
+        zone = body_space_zone_fn(ctx)
+    except Exception:
+        zone = None
+    zone = zone if isinstance(zone, str) and zone else None
+
+    # ------------------------------------------------------------------
+    # First time we see a context milestone: STORE a seed snapshot.
+    # ------------------------------------------------------------------
+    if label not in seeded:
+        info = store_snapshot_fn(
+            world,
+            ctx,
+            reason=f"goat04_seed:{label}",
+            attach="now",
+            force=True,
+            quiet=True,
+        )
+
+        sig16 = str(info.get("sig") or "")[:16]
+        eid = info.get("engram_id")
+        eid_txt = (eid[:8] + "…") if isinstance(eid, str) and eid else "(n/a)"
+
+        if bool(info.get("stored")):
+            seeded.add(label)
+            if isinstance(eid, str) and eid:
+                seed_map[label] = eid
+
+            print(f"[wm<->col] store: goat04 seed context={label} sig={sig16} eid={eid_txt}")
+            out["store"] = f"store goat04:{label} sig={sig16} eid={eid_txt}"
+        else:
+            why = info.get("why")
+            if isinstance(eid, str) and eid:
+                seeded.add(label)
+                seed_map[label] = eid
+            print(f"[wm<->col] store: goat04 seed context={label} skip={why} sig={sig16}")
+            out["store"] = f"store goat04:{label} skip={why} sig={sig16}"
+
+        return out
+
+    # ------------------------------------------------------------------
+    # Later alternating milestones: RETRIEVE/APPLY only after both seeds exist.
+    # ------------------------------------------------------------------
+    if not ("fox" in seed_map and "hawk" in seed_map):
+        return out
+
+    mode_txt = "merge"
+    top_k = 5
+    ret = autoretrieve_fn(
+        world,
+        ctx,
+        stage=stage,
+        zone=zone,
+        exclude_engram_id=None,
+        reason=f"goat04_context:{label}",
+        mode=mode_txt,
+        top_k=top_k,
+        log=False,   # footer owns the compact standardized log line
+    )
+
+    # Build a compact event payload so [cycle] MS can show it even if the generic path was bypassed.
+    pick_raw = ret.get("pick")
+    pick: dict[str, Any] = pick_raw if isinstance(pick_raw, dict) else {}
+    ranked_raw = pick.get("ranked")
+    ranked: list[Any] = ranked_raw if isinstance(ranked_raw, list) else []
+    chosen_raw = ret.get("chosen")
+    chosen: dict[str, Any] = chosen_raw if isinstance(chosen_raw, dict) else {}
+    load_raw = ret.get("load")
+    load: dict[str, Any] = load_raw if isinstance(load_raw, dict) else {}
+
+    chosen_rank = None
+    chosen_eid = chosen.get("engram_id") if isinstance(chosen, dict) else None
+    if isinstance(chosen_eid, str) and isinstance(ranked, list):
+        for idx, cand in enumerate(ranked, start=1):
+            if isinstance(cand, dict) and cand.get("engram_id") == chosen_eid:
+                chosen_rank = idx
+                break
+
+    event = {
+        "schema": "wm_mapswitch_event_v1",
+        "ok": bool(isinstance(ret, dict) and ret.get("ok")),
+        "why": str(ret.get("why") or ("ok" if ret.get("ok") else "no-op")) if isinstance(ret, dict) else "error",
+        "mode": mode_txt,
+        "reason": f"goat04_context:{label}",
+        "stage": stage,
+        "zone": zone,
+        "match": pick.get("match") if isinstance(pick, dict) else None,
+        "candidate_count": len(ranked) if isinstance(ranked, list) else 0,
+        "chosen_seed": chosen if isinstance(chosen, dict) and chosen else None,
+        "chosen_rank": chosen_rank,
+        "drop_reason": None if bool(isinstance(ret, dict) and ret.get("ok")) else (ret.get("why") if isinstance(ret, dict) else "error"),
+        "load": load if isinstance(load, dict) else {},
+    }
+
+    try:
+        ctx.wm_mapswitch_last_events = [event]
+    except Exception:
+        pass
+    try:
+        hist = getattr(ctx, "wm_mapswitch_history", None)
+        if not isinstance(hist, list):
+            hist = []
+        hist.append(event)
+        lim = int(getattr(ctx, "wm_mapswitch_history_limit", 50) or 50)
+        lim = max(1, min(500, lim))
+        if len(hist) > lim:
+            del hist[:-lim]
+        ctx.wm_mapswitch_history = hist
+    except Exception:
+        pass
+
+    if bool(ret.get("ok")):
+        rid = ret.get("engram_id")
+        rid_txt = (rid[:8] + "…") if isinstance(rid, str) and rid else "(n/a)"
+        match = pick.get("match") if isinstance(pick, dict) else None
+        cand_n = len(ranked) if isinstance(ranked, list) else 0
+
+        print(f"[wm<->col] retrieve: goat04 context={label} ok mode={mode_txt} eid={rid_txt} match={match} cand_n={cand_n}")
+        out["retrieve"] = f"retrieve goat04:{label} ok eid={rid_txt} match={match} cand_n={cand_n}"
+
+        if load.get("mode") == "replace":
+            ent_n = load.get("entities")
+            rel_n = load.get("relations")
+            print(f"[wm<->col] apply: replace entities={ent_n} relations={rel_n}")
+            out["apply"] = f"apply replace ent={ent_n} rel={rel_n}"
+        else:
+            ae = load.get("added_entities")
+            fs = load.get("filled_slots")
+            ed = load.get("added_edges")
+            pc = load.get("stored_prior_cues")
+
+            guard_ok = load.get("merge_guardrail_ok")
+            cue_delta = load.get("cue_tag_delta")
+            if guard_ok is True:
+                guard_txt = " cue_guard=ok"
+            elif guard_ok is False:
+                try:
+                    d_i = int(cue_delta) if cue_delta is not None else None
+                except Exception:
+                    d_i = None
+                if isinstance(d_i, int):
+                    guard_txt = f" cue_guard=leak(+{d_i})"
+                else:
+                    guard_txt = " cue_guard=leak"
+            else:
+                guard_txt = ""
+
+            print(
+                f"[wm<->col] apply: merge added_entities={ae} filled_slots={fs} "
+                f"added_edges={ed} prior_cues={pc}{guard_txt}"
+            )
+            out["apply"] = f"apply merge ent+{ae} slots+{fs} edges+{ed} prior_cues={pc}{guard_txt}"
+    else:
+        why = ret.get("why") if isinstance(ret, dict) else "error"
+        print(f"[wm<->col] retrieve: goat04 context={label} skip why={why}")
+        print(f"[wm<->col] apply: no-op ({why})")
+        out["retrieve"] = f"retrieve goat04:{label} skip why={why}"
+        out["apply"] = f"apply no-op ({why})"
+
+    return out
+
+
+def _newborn_b2_seed_label_v1(env_obs: EnvObservation) -> str | None:
+    """Return the newborn B2 milestone label that should create a reusable seed snapshot.
+
+    I keep this narrow and explicit. We only seed a few meaningful control states:
+      - stood_up
+      - reached_mom
+      - latched_nipple
+      - milk drinking
+      - rested
+
+    That gives the benchmark a small reusable memory library inside one episode
+    without turning the newborn task into a generic snapshot dump.
+    """
+    meta = getattr(env_obs, "env_meta", None)
+    meta = meta if isinstance(meta, dict) else {}
+
+    raw = meta.get("milestones") or meta.get("milestone")
+    items: list[str] = []
+
+    if isinstance(raw, str) and raw:
+        items = [raw]
+    elif isinstance(raw, list):
+        items = [m for m in raw if isinstance(m, str) and m]
+
+    for label in ("stood_up", "reached_mom", "latched_nipple", "milk_drinking", "rested"):
+        if label in items:
+            return label
+    return None
+
+
+def maybe_newborn_b2_mapswitch_on_keyframe_v1(
+    world: Any,
+    ctx: Ctx,
+    env_obs: EnvObservation,
+    *,
+    body_space_zone_fn: Callable[[Any], Any] = body_space_zone,
+    store_snapshot_fn: Callable[..., dict[str, Any]] = store_mapsurface_snapshot_v1,
+    autoretrieve_fn: Callable[..., dict[str, Any]] = maybe_autoretrieve_mapsurface_on_keyframe,
+    set_retrieved_hint_fn: Callable[..., dict[str, Any]] = _set_newborn_retrieved_hint_from_engram_v1,
+    clear_retrieved_hint_fn: Callable[[Ctx | None], None] = _clear_newborn_retrieved_hint_v1,
+) -> dict[str, Any]:
+    """newborn_long_horizon evaluation harness.
+
+    What this does
+    --------------
+    - first meaningful newborn milestones store compact wm_mapsurface seeds
+    - later newborn keyframes may retrieve/apply those seeds when auto-retrieve is enabled
+
+    Why this exists
+    ---------------
+    goat04 already has an explicit benchmark-side store/retrieve seam.
+    newborn_long_horizon did not. That meant A vs B differed in flags, but not in
+    whether any real episodic readback event actually occurred.
+
+    This helper gives B2 a real within-episode readback loop without changing
+    ordinary interactive runs.
+    """
+    out: dict[str, Any] = {"handled": False, "store": None, "retrieve": None, "apply": None}
+
+    if ctx is None or world is None or env_obs is None:
+        return out
+    if not bool(getattr(ctx, "experiment_newborn_require_resume_memory", False)):
+        return out
+
+    meta = getattr(env_obs, "env_meta", None)
+    meta = meta if isinstance(meta, dict) else {}
+    stage = meta.get("scenario_stage")
+    stage = stage if isinstance(stage, str) and stage else None
+
+    if stage not in ("struggle", "first_stand", "first_latch", "rest"):
+        return out
+
+    out["handled"] = True
+
+    seeded = getattr(ctx, "wm_newborn_b2_seeded_labels", None)
+    if not isinstance(seeded, set):
+        seeded = set()
+        ctx.wm_newborn_b2_seeded_labels = seeded
+
+    seed_map = getattr(ctx, "wm_newborn_b2_seed_engram_by_label", None)
+    if not isinstance(seed_map, dict):
+        seed_map = {}
+        ctx.wm_newborn_b2_seed_engram_by_label = seed_map
+
+    label = _newborn_b2_seed_label_v1(env_obs)
+
+    # First time we hit a meaningful milestone, store a reusable seed.
+    if label and label not in seeded:
+        info = store_snapshot_fn(
+            world,
+            ctx,
+            reason=f"newborn_b2_seed:{label}",
+            attach="now",
+            force=True,
+            quiet=True,
+        )
+
+        sig16 = str(info.get("sig") or "")[:16]
+        eid = info.get("engram_id")
+        eid_txt = (eid[:8] + "…") if isinstance(eid, str) and eid else "(n/a)"
+
+        if bool(info.get("stored")):
+            seeded.add(label)
+            if isinstance(eid, str) and eid:
+                seed_map[label] = eid
+
+            print(f"[wm<->col] store: newborn_b2 seed={label} sig={sig16} eid={eid_txt}")
+            out["store"] = f"store newborn_b2:{label} sig={sig16} eid={eid_txt}"
+        else:
+            why = info.get("why")
+            if isinstance(eid, str) and eid:
+                seeded.add(label)
+                seed_map[label] = eid
+
+            print(f"[wm<->col] store: newborn_b2 seed={label} skip={why} sig={sig16}")
+            out["store"] = f"store newborn_b2:{label} skip={why} sig={sig16}"
+
+        return out
+
+    # No stored seeds yet -> nothing to retrieve.
+    if not seed_map:
+        return out
+
+    try:
+        zone = body_space_zone_fn(ctx)
+    except Exception:
+        zone = None
+    zone = zone if isinstance(zone, str) and zone else None
+
+    mode_txt = str(getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge").strip().lower()
+    try:
+        top_k = int(getattr(ctx, "wm_mapsurface_autoretrieve_top_k", 5) or 5)
+    except Exception:
+        top_k = 5
+    top_k = max(2, min(10, top_k))
+
+    ret = autoretrieve_fn(
+        world,
+        ctx,
+        stage=stage,
+        zone=zone,
+        exclude_engram_id=None,
+        reason=f"newborn_b2:{stage}:{label or 'boundary'}",
+        mode=mode_txt,
+        top_k=top_k,
+        log=False,
+    )
+
+    if bool(ret.get("ok")):
+        rid = ret.get("engram_id")
+        rid_txt = (rid[:8] + "…") if isinstance(rid, str) and rid else "(n/a)"
+
+        try:
+            if isinstance(rid, str) and rid:
+                set_retrieved_hint_fn(ctx, rid, ttl_steps=3)
+        except Exception:
+            pass
+
+        pick_raw = ret.get("pick")
+        pick: dict[str, Any] = pick_raw if isinstance(pick_raw, dict) else {}
+        match = pick.get("match")
+        ranked_raw = pick.get("ranked")
+        ranked: list[Any] = ranked_raw if isinstance(ranked_raw, list) else []
+        cand_n = len(ranked)
+
+        print(
+            f"[wm<->col] retrieve: newborn_b2 stage={stage} ok mode={mode_txt} "
+            f"eid={rid_txt} match={match} cand_n={cand_n}"
+        )
+        out["retrieve"] = f"retrieve newborn_b2:{stage} ok eid={rid_txt} match={match} cand_n={cand_n}"
+
+        load_raw = ret.get("load")
+        load: dict[str, Any] = load_raw if isinstance(load_raw, dict) else {}
+        if load.get("mode") == "replace":
+            ent_n = load.get("entities")
+            rel_n = load.get("relations")
+            print(f"[wm<->col] apply: replace entities={ent_n} relations={rel_n}")
+            out["apply"] = f"apply replace ent={ent_n} rel={rel_n}"
+        else:
+            ae = load.get("added_entities")
+            fs = load.get("filled_slots")
+            ed = load.get("added_edges")
+            pc = load.get("stored_prior_cues")
+
+            guard_ok = load.get("merge_guardrail_ok")
+            cue_delta = load.get("cue_tag_delta")
+            if guard_ok is True:
+                guard_txt = " cue_guard=ok"
+            elif guard_ok is False:
+                try:
+                    delta_i = int(cue_delta) if cue_delta is not None else None
+                except Exception:
+                    delta_i = None
+                if isinstance(delta_i, int):
+                    guard_txt = f" cue_guard=leak(+{delta_i})"
+                else:
+                    guard_txt = " cue_guard=leak"
+            else:
+                guard_txt = ""
+
+            print(
+                f"[wm<->col] apply: merge added_entities={ae} filled_slots={fs} "
+                f"added_edges={ed} prior_cues={pc}{guard_txt}"
+            )
+            out["apply"] = f"apply merge ent+{ae} slots+{fs} edges+{ed} prior_cues={pc}{guard_txt}"
+    else:
+        try:
+            clear_retrieved_hint_fn(ctx)
+        except Exception:
+            pass
+
+        why = ret.get("why") if isinstance(ret, dict) else "error"
+        print(f"[wm<->col] retrieve: newborn_b2 stage={stage} skip why={why}")
+        print(f"[wm<->col] apply: no-op ({why})")
+        out["retrieve"] = f"retrieve newborn_b2:{stage} skip why={why}"
+        out["apply"] = f"apply no-op ({why})"
+
+    return out
+
+
+def inject_obs_into_working_world(
+    ctx: Ctx,
+    env_obs: EnvObservation,
+    *,
+    init_working_world_fn: Callable[[], cca8_world_graph.WorldGraph] = init_working_world,
+    display_id_fn: Callable[[str], str] = _wm_display_id,
+    store_navpatch_fn: Callable[..., dict[str, Any]] = store_navpatch_engram_v1,
+    salience_tick_fn: Callable[..., dict[str, Any]] = wm_salience_tick_v1,
+    body_cliff_distance_fn: Callable[[Any], Any] = body_cliff_distance,
+    prune_working_world_fn: Callable[[Any], None] = _prune_working_world,
+) -> dict[str, Any]:
+    """
+    Mirror EnvObservation into WorkingMap.
+
+    Phase VII default: MapSurface (stable map)
+    -----------------------------------------
+    - We maintain *stable* entity bindings (SELF, MOM, SHELTER, CLIFF, ...).
+    - We update pred:* and cue:* tags IN PLACE (so step 2 does NOT create new posture/mom/etc. nodes).
+    - We store a 2D "schematic" coordinate frame in binding.meta["wm"]["pos"] (distorted, subway-map style).
+
+    Optional debug: if ctx.working_trace=True, we also append a per-tick trace using add_predicate/add_cue
+    (old behaviour) after updating the map.
+    """
+    ww = getattr(ctx, "working_world", None)
+    if ww is None:
+        try:
+            ctx.working_world = init_working_world_fn()
+            ww = ctx.working_world
+        except Exception:
+            return {"predicates": [], "cues": []}
+
+    if ww is None:
+        return {"predicates": [], "cues": []}
+
+    changed_entities: set[str] = set()
+    new_cue_entities: set[str] = set()
+    prev_cues_by_ent: dict[str, set[str]] = {}
+    try:
+        prev = getattr(ctx, "wm_last_env_cues", None)
+        if isinstance(prev, dict):
+            for k, v in prev.items():
+                if isinstance(k, str) and isinstance(v, set):
+                    prev_cues_by_ent[k] = set(v)
+    except Exception:
+        prev_cues_by_ent = {}
+
+    meta = {"source": "HybridEnvironment", "controller_steps": getattr(ctx, "controller_steps", None)}
+    created_preds: list[str] = []
+    created_cues: list[str] = []
+
+    # -------------------- small helpers (robust to tags=list vs tags=set) --------------------
+    def _tagset_of(bid: str) -> set[str]:
+        b = ww._bindings.get(bid)
+        if b is None:
+            return set()
+        ts = getattr(b, "tags", None)
+        if ts is None:
+            b.tags = set()
+            return b.tags
+        if isinstance(ts, set):
+            return ts
+        if isinstance(ts, list):
+            s = set(ts)
+            b.tags = s
+            return s
+        try:
+            s = set(ts)  # last resort
+            b.tags = s
+            return s
+        except Exception:
+            b.tags = set()
+            return b.tags
+
+    def _sanitize_entity_anchor(entity_id: str) -> str:
+        s = (entity_id or "unknown").strip().upper()
+        out: list[str] = []
+        for ch in s:
+            out.append(ch if ch.isalnum() else "_")
+        s = "".join(out)
+        while "__" in s:
+            s = s.replace("__", "_")
+        s = s.strip("_") or "UNKNOWN"
+        return f"WM_ENT_{s}"
+
+    def _upsert_edge(src: str, dst: str, label: str, meta2: dict | None = None) -> None:
+        b = ww._bindings.get(src)
+        if b is None:
+            return
+        edges = getattr(b, "edges", None)
+        if edges is None or not isinstance(edges, list):
+            b.edges = []
+            edges = b.edges
+        # update if exists
+        for e in edges:
+            try:
+                to_ = e.get("to") or e.get("dst") or e.get("dst_id") or e.get("id")
+                lab = e.get("label") or e.get("rel") or e.get("relation")
+                # Treat wm_has as a legacy alias of wm_entity (cosmetic rename)
+                if label == "wm_entity" and to_ == dst and lab in ("wm_entity", "wm_has"):
+                    # migrate label in-place (prevents duplicate edges)
+                    if lab != "wm_entity":
+                        e["label"] = "wm_entity"
+                    if isinstance(meta2, dict) and meta2:
+                        em = e.get("meta")
+                        if isinstance(em, dict):
+                            em.update(meta2)
+                        else:
+                            e["meta"] = dict(meta2)
+                    return
+
+                if to_ == dst and lab == label:
+                    if isinstance(meta2, dict) and meta2:
+                        em = e.get("meta")
+                        if isinstance(em, dict):
+                            em.update(meta2)
+                        else:
+                            e["meta"] = dict(meta2)
+                    return
+            except Exception:
+                continue
+        edges.append({"to": dst, "label": label, "meta": dict(meta2 or {})})
+
+    def _ensure_entity(entity_id: str, *, kind_hint: str | None = None) -> str:
+        eid = (entity_id or "unknown").strip().lower()
+        # cached?
+        bid = (getattr(ctx, "wm_entities", {}) or {}).get(eid)
+        if isinstance(bid, str) and bid in ww._bindings:
+            # If we later learn a better kind hint, annotate the existing entity in-place.
+            if isinstance(kind_hint, str) and kind_hint:
+                try:
+                    tags = _tagset_of(bid)
+                    tags.add(f"wm:kind:{kind_hint}")
+                except Exception:
+                    pass
+            return bid
+
+        anchor_name = "WM_SELF" if eid == "self" else _sanitize_entity_anchor(eid)
+        try:
+            bid = ww.ensure_anchor(anchor_name)
+        except Exception:
+            # fallback: a plain node if anchors fail for any reason
+            bid = ww.add_predicate(f"wm_entity:{eid}", attach="none", meta={"created_by": "wm_mapsurface"})
+
+        # mark + cache
+        try:
+            ctx.wm_entities[eid] = bid
+        except Exception:
+            pass
+
+        tags = _tagset_of(bid)
+        tags.add("wm:entity")
+        tags.add(f"wm:eid:{eid}")
+        if isinstance(kind_hint, str) and kind_hint:
+            tags.add(f"wm:kind:{kind_hint}")
+
+        # attach under WM_ROOT so predicates are reachable from NOW (we pin NOW to WM_ROOT each tick)
+        try:
+            _upsert_edge(root_bid, bid, "wm_entity", {"created_by": "wm_mapsurface"})
+        except Exception:
+            pass
+
+        # init wm meta
+        try:
+            b = ww._bindings.get(bid)
+            if b is not None and isinstance(getattr(b, "meta", None), dict):
+                wmm = b.meta.setdefault("wm", {})
+                if isinstance(wmm, dict):
+                    wmm.setdefault("entity_id", eid)
+        except Exception:
+            pass
+
+        return bid
+
+    def _replace_pred_slot_on_entity(bid: str, slot_prefix: str, new_full_tag: str) -> bool:
+        """
+        Ensure entity has exactly one pred tag for this slot family, e.g.:
+          slot_prefix='posture'         → pred:posture:*
+          slot_prefix='proximity:mom'   → pred:proximity:mom:*
+        Returns True if the stored tag actually changed.
+        """
+        tags = _tagset_of(bid)
+        pref = f"pred:{slot_prefix}:"
+        old = None
+        for t in list(tags):
+            if isinstance(t, str) and t.startswith(pref):
+                old = t
+                break
+        if old == new_full_tag:
+            return False
+        # remove all in that family, then add the new one
+        for t in list(tags):
+            if isinstance(t, str) and t.startswith(pref):
+                tags.discard(t)
+        tags.add(new_full_tag)
+        return True
+
+    def _entity_from_pred(tok: str) -> tuple[str, str]:
+        """
+        Return (entity_id, slot_prefix) from a predicate token (no 'pred:' prefix).
+        """
+        parts = (tok or "").split(":")
+        if not parts:
+            return ("self", "unknown")
+
+        head = parts[0]
+        if head == "grid" and len(parts) >= 2:
+            return ("self", f"grid:{parts[1]}")
+        if head == "posture":
+            return ("self", "posture")
+        if head in ("nipple", "milk"):
+            return ("self", head)
+        if head == "proximity" and len(parts) >= 3:
+            ent = parts[1]
+            return (ent, f"proximity:{ent}")
+        if head == "hazard" and len(parts) >= 3:
+            ent = parts[1]
+            return (ent, f"hazard:{ent}")
+
+        # fallback: treat as SELF attribute family
+        return ("self", head)
+
+    def _entity_from_cue(tok: str) -> str:
+        """
+        Heuristic: for cues like 'vision:silhouette:mom', assume the last segment is an entity id.
+        """
+        parts = (tok or "").split(":")
+        if len(parts) >= 2:
+            tail = parts[-1].strip().lower()
+            if tail:
+                return tail
+        return "self"
+
+    def _set_pos(bid: str, x: float, y: float, dist_m: float | None, dist_class: str | None) -> None:
+        b = ww._bindings.get(bid)
+        if b is None:
+            return
+        if not isinstance(getattr(b, "meta", None), dict):
+            b.meta = {}
+        wmm = b.meta.setdefault("wm", {})
+        if not isinstance(wmm, dict):
+            wmm = {}
+            b.meta["wm"] = wmm
+        wmm["pos"] = {"x": float(x), "y": float(y), "frame": "wm_schematic_v1"}
+        if dist_m is not None:
+            wmm["dist_m"] = float(dist_m)
+        if isinstance(dist_class, str) and dist_class:
+            wmm["dist_class"] = dist_class
+        wmm["last_seen_step"] = int(getattr(ctx, "controller_steps", 0) or 0)
+
+    def _dist_value_from_class(dist_class: str | None) -> float:
+        m = {
+            "touching": 0.2,
+            "close": 1.0,
+            "near": 1.2,
+            "reachable": 0.8,
+            "far": 5.0,
+        }
+        if dist_class is None:
+            return 3.0
+        return float(m.get(dist_class, 3.0))
+
+    def _raw_distance_guess(raw: dict, ent: str) -> float | None:
+        if not isinstance(raw, dict):
+            return None
+
+        # common keys
+        for k in (
+            f"distance_to_{ent}",
+            f"{ent}_distance",
+            f"{ent}_distance_m",
+            f"dist_{ent}",
+        ):
+            v = raw.get(k)
+            if isinstance(v, (int, float)):
+                return float(v)
+
+        # positions: (kid_position, mom_position, shelter_position, cliff_position, ...)
+        kp = raw.get("kid_position") or raw.get("self_position")
+        op = raw.get(f"{ent}_position")
+        if isinstance(kp, (tuple, list)) and isinstance(op, (tuple, list)) and len(kp) == 2 and len(op) == 2:
+            try:
+                dx = float(op[0]) - float(kp[0])
+                dy = float(op[1]) - float(kp[1])
+                return _math_sqrt(dx * dx + dy * dy)
+            except Exception:
+                return None
+
+        return None
+
+
+    def _lane_y(ent: str, *, kind: str | None) -> float:
+        ent_l = (ent or "").lower()
+        if kind == "hazard" or ent_l in ("cliff", "drop", "danger"):
+            return 1.0
+        if ent_l in ("shelter", "den", "nest"):
+            return -1.0
+        if kind == "agent" or ent_l in ("mom", "mother"):
+            return 0.0
+        # deterministic lane based on characters (avoid python hash randomization)
+        s = sum(ord(c) for c in ent_l)
+        lane = (s % 5) - 2  # -2..+2
+        return float(lane) * 0.5
+
+
+    def _project(dist_m: float, ent: str, *, kind: str | None) -> tuple[float, float]:
+        # subway-map distortion: compress far distances but keep ordering monotonic
+        d = max(0.0, float(dist_m))
+        x = 3.0 * _math_log(1.0 + d)
+        y = _lane_y(ent, kind=kind)
+        return (x, y)
+
+    # -------------------- MapSurface path (default) --------------------
+    if getattr(ctx, "working_mapsurface", True):
+        # Ensure WM_ROOT exists, and pin NOW to it so has_pred_near_now(...) works against the map.
+        try:
+            root_bid = ww.ensure_anchor("WM_ROOT")
+        except Exception:
+            # fallback: keep whatever NOW is if WM_ROOT cannot be created
+            root_bid = ww.ensure_anchor("NOW")
+
+        try:
+            ww.set_now(root_bid, tag=True, clean_previous=True)
+        except Exception:
+            try:
+                ww._anchors["NOW"] = root_bid
+                _tagset_of(root_bid).add("anchor:NOW")
+            except Exception:
+                pass
+
+        # Optional: keep NOW_ORIGIN aligned with WM_ROOT in WorkingMap
+        try:
+            ww._anchors["NOW_ORIGIN"] = root_bid
+            _tagset_of(root_bid).add("anchor:NOW_ORIGIN")
+        except Exception:
+            pass
+
+        # Ensure WM_SCRATCH exists and is reachable from WM_ROOT.
+        # This is where policy scratch chains will attach, so WM_ROOT stays a clean "map surface".
+        try:
+            scratch_bid = ww.ensure_anchor("WM_SCRATCH")
+            try:
+                _tagset_of(scratch_bid).add("wm:scratch")
+            except Exception:
+                pass
+            try:
+                _upsert_edge(root_bid, scratch_bid, "wm_scratch", {"created_by": "wm_mapsurface"})
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Ensure WM_CREATIVE exists and is reachable from WM_ROOT.
+        # This is the "imagination" workspace: counterfactual rollouts should not contaminate MapSurface.
+        try:
+            creative_bid = ww.ensure_anchor("WM_CREATIVE")
+            try:
+                _tagset_of(creative_bid).add("wm:creative")
+            except Exception:
+                pass
+            try:
+                _upsert_edge(root_bid, creative_bid, "wm_creative", {"created_by": "wm_mapsurface"})
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Ensure SELF entity exists and sits under WM_ROOT
+        self_bid = _ensure_entity("self", kind_hint="agent")
+        _upsert_edge(root_bid, self_bid, "wm_entity", {"created_by": "wm_mapsurface"})
+        _set_pos(self_bid, 0.0, 0.0, dist_m=0.0, dist_class="self")
+
+        # NOTE (Phase X):
+        # SurfaceGrid composition + grid→predicate derivation happens later in this function:
+        #   - Step 12: WM.SurfaceGrid compose + dirty-cache (ctx.wm_surfacegrid_*)
+        #   - Step 13: Grid → slot-family predicates written onto MapSurface SELF
+        # The older inline prototype block was removed to avoid double-compose and misleading cache-hit reporting.
+        #
+        # --- DELETED PREVIOUSLY: WM.SurfaceGrid (Phase X): compose once-per-tick and derive grid predicates ---
+        # deleted this block of code
+
+        # --- Predicates: update entity tags in place ---
+        pred_tokens = [
+            str(p).replace("pred:", "", 1)
+            for p in (getattr(env_obs, "predicates", []) or [])
+            if p is not None
+        ]
+
+        for tok in pred_tokens:
+            ent, slot_prefix = _entity_from_pred(tok)
+            kind = "hazard" if slot_prefix.startswith("hazard:") else None
+            if ent == "self":
+                kind = "agent"
+            if ent in ("mom", "mother"):
+                kind = "agent"
+            if ent == "shelter":
+                kind = "shelter"
+            bid = _ensure_entity(ent, kind_hint=kind)
+            full_tag = f"pred:{tok}"
+            changed = _replace_pred_slot_on_entity(bid, slot_prefix, full_tag)
+
+            # bump prominence (exposure signal) even if unchanged
+            try:
+                ww.bump_prominence(bid, tag=full_tag, meta=meta, reason="observe")
+            except Exception:
+                pass
+            created_preds.append(tok)
+
+            if changed:
+                changed_entities.add(ent)
+
+            if getattr(ctx, "working_verbose", False) or changed:
+                try:
+                    disp = f"{display_id_fn(bid)} ({bid})"
+                    print(
+                        f"[env→working] MAP pred:{tok} → {disp} (entity={ent}, slot={slot_prefix})"
+                        + (" [changed]" if changed else ""))
+                except Exception:
+                    pass
+
+        # --- Cues: attach to an entity and dedup/remove old env cues per entity ---
+        cue_tokens = [
+            str(c).replace("cue:", "", 1)
+            for c in (getattr(env_obs, "cues", []) or [])
+            if c is not None
+        ]
+
+        cues_by_ent: dict[str, set[str]] = {}
+        for tok in cue_tokens:
+            ent = _entity_from_cue(tok)
+            cues_by_ent.setdefault(ent, set()).add(f"cue:{tok}")
+            created_cues.append(tok)
+
+        # update each entity that has cues this tick
+        for ent, new_cue_tags in cues_by_ent.items():
+            kind = "agent" if ent in ("mom", "mother") else None
+            bid = _ensure_entity(ent, kind_hint=kind)
+            tags = _tagset_of(bid)
+
+            prev = (getattr(ctx, "wm_last_env_cues", {}) or {}).get(ent, set())
+            # remove old env cues not present now
+            for t in list(prev - new_cue_tags):
+                try:
+                    tags.discard(t)
+                except Exception:
+                    pass
+            # add new env cues
+            for t in list(new_cue_tags - prev):
+                try:
+                    tags.add(t)
+                except Exception:
+                    pass
+
+            try:
+                ctx.wm_last_env_cues[ent] = set(new_cue_tags)
+            except Exception:
+                pass
+
+            for t in new_cue_tags:
+                try:
+                    ww.bump_prominence(bid, tag=t, meta=meta, reason="observe")
+                except Exception:
+                    pass
+
+            if getattr(ctx, "working_verbose", False):
+                try:
+                    for t in sorted(new_cue_tags):
+                        disp = f"{display_id_fn(bid)} ({bid})"
+                        print(f"[env→working] MAP {t} → {disp} (entity={ent})")
+                except Exception:
+                    pass
+
+        # Also clear env cues for entities that had cues last tick but none now
+        try:
+            for ent in list(ctx.wm_last_env_cues.keys()):
+                if ent in cues_by_ent:
+                    continue
+                cue_bid = (ctx.wm_entities or {}).get(ent)
+                if not (isinstance(cue_bid, str) and cue_bid in ww._bindings):
+                    ctx.wm_last_env_cues.pop(ent, None)
+                    continue
+                tags = _tagset_of(cue_bid)
+                for t in list(ctx.wm_last_env_cues.get(ent, set())):
+                    tags.discard(t)
+                ctx.wm_last_env_cues.pop(ent, None)
+        except Exception:
+            pass
+
+        try:
+            now_map = getattr(ctx, "wm_last_env_cues", None)
+            if isinstance(now_map, dict):
+                for ent, now_set in now_map.items():
+                    if not isinstance(ent, str) or not isinstance(now_set, set):
+                        continue
+                    prev_set = prev_cues_by_ent.get(ent, set())
+                    if now_set - prev_set:
+                        new_cue_entities.add(ent)
+        except Exception:
+            pass
+
+        # --- NavPatch / SurfaceGrid Phase-2 sub-pipeline -------------------------------
+        # The live entity/predicate/cue injection and its Phase-2 helpers now share this module.
+        # NavPatch references, ambiguity Scratch/zoom, salience, SurfaceGrid, grid-derived
+        # predicates, and NavSummary are delegated to the focused helpers below.
+        if bool(getattr(ctx, "navpatch_enabled", False)):
+            try:
+                update_working_navpatch_refs_v1(
+                    ctx,
+                    env_obs,
+                    ww,
+                    ensure_entity_fn=_ensure_entity,
+                    display_id_fn=display_id_fn,
+                    store_navpatch_fn=store_navpatch_fn,
+                )
+            except Exception:
+                pass
+
+            try:
+                update_working_navpatch_scratch_zoom_v1(
+                    ctx,
+                    env_obs,
+                    ww,
+                    tagset_fn=_tagset_of,
+                    upsert_edge_fn=_upsert_edge,
+                    body_cliff_distance_fn=body_cliff_distance_fn,
+                )
+            except Exception:
+                pass
+
+        try:
+            update_working_salience_surfacegrid_v1(
+                ctx,
+                env_obs,
+                ww,
+                changed_entities=changed_entities,
+                new_cue_entities=new_cue_entities,
+                salience_tick_fn=salience_tick_fn,
+            )
+        except Exception:
+            pass
+
+        # --- Coordinates + distance edges (schematic map) ---
+        raw = getattr(env_obs, "raw_sensors", {}) or {}
+        for ent, bid in (getattr(ctx, "wm_entities", {}) or {}).items():
+            if ent in ("self",):
+                continue
+            if not isinstance(bid, str) or bid not in ww._bindings:
+                continue
+
+            tags = _tagset_of(bid)
+            # infer a distance class from the current pred tags on this entity
+            dist_class = None
+            kind = None
+            for t in tags:
+                if not isinstance(t, str) or not t.startswith("pred:"):
+                    continue
+                if t.startswith(f"pred:proximity:{ent}:"):
+                    dist_class = t.split(":")[-1]
+                    break
+                if t.startswith(f"pred:hazard:{ent}:"):
+                    dist_class = t.split(":")[-1]
+                    kind = "hazard"
+                    break
+            if ent == "shelter":
+                kind = "shelter"
+            if dist_class is None:
+                dist_class = "unknown"
+
+            dist_m = _raw_distance_guess(raw, ent)
+            if dist_m is None:
+                dist_m = _dist_value_from_class(dist_class)
+            if kind is None:
+                if any(isinstance(t, str) and t == "wm:kind:agent" for t in tags):
+                    kind = "agent"
+            x, y = _project(dist_m, ent, kind=kind)
+            _set_pos(bid, x, y, dist_m=dist_m, dist_class=dist_class)
+
+            # self -> entity distance edge (upsert)
+            try:
+                _upsert_edge(self_bid, bid, "distance_to", {"meters": float(dist_m), "class": dist_class, "frame": "wm_schematic_v1"})
+            except Exception:
+                pass
+
+        # Keep working map bounded (mostly relevant if policies also write into WorkingMap)
+        try:
+            prune_working_world_fn(ctx)
+        except Exception:
+            pass
+
+        # Optional: append raw trace nodes (debug only)
+        if getattr(ctx, "working_trace", False):
+            try:
+                attach = "now"
+                for tok in pred_tokens:
+                    ww.add_predicate(tok, attach=attach, meta=meta)
+                    attach = "latest"
+                cue_attach = "latest" if pred_tokens else "now"
+                for tok in cue_tokens:
+                    ww.add_cue(tok, attach=cue_attach, meta=meta)
+                prune_working_world_fn(ctx)
+            except Exception:
+                pass
+
+        return {"predicates": created_preds, "cues": created_cues}
+
+    # -------------------- Fallback: old episodic “tick log” behaviour --------------------
+    # (kept so you can revert quickly if desired)
+    pred_tokens = [
+        str(p).replace("pred:", "", 1)
+        for p in (getattr(env_obs, "predicates", []) or [])
+        if p is not None
+    ]
+    cue_tokens = [
+        str(c).replace("cue:", "", 1)
+        for c in (getattr(env_obs, "cues", []) or [])
+        if c is not None
+    ]
+
+    attach = "now"
+    for tok in pred_tokens:
+        try:
+            ww.add_predicate(tok, attach=attach, meta=meta)
+            created_preds.append(tok)
+            if getattr(ctx, "working_verbose", False):
+                print(f"[env→working] pred:{tok} (attach={attach})")
+        except Exception:
+            pass
+        attach = "latest"
+
+    cue_attach = "latest" if created_preds else "now"
+    for tok in cue_tokens:
+        try:
+            ww.add_cue(tok, attach=cue_attach, meta=meta)
+            created_cues.append(tok)
+            if getattr(ctx, "working_verbose", False):
+                print(f"[env→working] cue:{tok} (attach={cue_attach})")
+        except Exception:
+            pass
+
+    # Keep working map bounded
+    try:
+        prune_working_world_fn(ctx)
+    except Exception:
+        pass
+    return {"predicates": created_preds, "cues": created_cues}

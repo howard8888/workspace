@@ -548,6 +548,8 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
                     "serialize_mapsurface_v1",
                     "navpatch_predictive_match_loop_v1",
                     "compute_navsummary_v1",
+                    "inject_obs_into_working_world",
+                    "maybe_autoretrieve_mapsurface_on_keyframe",
                     "__version__",
                 ],
             ),
