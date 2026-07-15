@@ -515,6 +515,7 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
             ("cca8_column",      ["__version__"]),
             ("cca8_features",    ["__version__"]),
             ("cca8_temporal",    ["__version__"]),
+            ("cca8_openai",      ["OpenAIRuntime", "__version__"]),
         ]
 
         for _name, _symbols in _mods:

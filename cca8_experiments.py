@@ -74,10 +74,12 @@ class ExperimentRuntime:  # pylint: disable=too-few-public-methods,too-many-inst
     """Runner-owned operations required by experiment execution.
 
     The experiment module imports stable CCA8 data types directly, but the main
-    closed-loop engine, policy-gate runtime, WorkingMap constructors, and OpenAI
-    helpers remain owned by ``cca8_run``. The runner creates this immutable bridge
-    immediately before each runtime-dependent call. Resolving callbacks at call
-    time preserves tests and tools that monkeypatch runner-visible functions.
+    closed-loop engine, policy-gate runtime, and WorkingMap constructors remain
+    runner-owned. OpenAI implementations live in ``cca8_openai`` but are supplied
+    through runner-visible callbacks to preserve compatibility seams. The runner
+    creates this immutable bridge immediately before each runtime-dependent call.
+    Resolving callbacks at call time preserves tests and tools that monkeypatch
+    runner-visible functions.
     """
 
     world_factory: Callable[[], Any]
