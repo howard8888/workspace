@@ -541,7 +541,16 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
             ("cca8_features",    ["__version__"]),
             ("cca8_temporal",    ["__version__"]),
             ("cca8_openai",      ["OpenAIRuntime", "__version__"]),
-            ("cca8_working_memory", ["init_working_world", "serialize_mapsurface_v1", "__version__"]),
+            (
+                "cca8_working_memory",
+                [
+                    "init_working_world",
+                    "serialize_mapsurface_v1",
+                    "navpatch_predictive_match_loop_v1",
+                    "compute_navsummary_v1",
+                    "__version__",
+                ],
+            ),
         ]
 
         for _name, _symbols in _mods:

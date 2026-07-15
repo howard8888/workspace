@@ -1,29 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CCA8 WorkingMap MapSurface storage and retrieval subsystem.
+"""CCA8 WorkingMap, NavPatch, SurfaceGrid, and MapSurface subsystem.
 
 Purpose
 -------
-This module owns Phase 1 of the CCA8 working-memory extraction: WorkingMap
-construction/reset, MapSurface serialization, content signatures and salience,
-Column storage plus WorldGraph pointer indexing, candidate ranking, conservative
-merge/replace loading, and map-switch event records.
+This module owns Phases 1 and 2 of the CCA8 working-memory extraction. Phase 1
+contains WorkingMap construction/reset, MapSurface serialization, Column
+storage, candidate ranking, and conservative merge/replace loading. Phase 2
+contains NavPatch signatures and prototype matching, ambiguity Scratch records,
+zoom/probe bookkeeping, salience focus, SurfaceGrid composition/rendering,
+grid-derived predicates, and NavSummary calculation.
 
 Dependency boundary
 -------------------
 The module never imports :mod:`cca8_run`. It depends only on stable CCA8 modules
-and data structures. ``cca8_run`` retains its historical function names as
-compatibility aliases, while live per-cycle observation injection, NavPatch and
-SurfaceGrid orchestration, and contextual auto-retrieval policy remain runner-
-owned for later extraction phases.
+and data structures. ``cca8_run`` retains historical names through aliases and
+small wrappers where call-time dependency replacement must remain possible. The
+large live observation-injection function remains runner-owned until Phase 3,
+but delegates its NavPatch and SurfaceGrid sub-pipelines here.
 
 WorldGraph boundary
 -------------------
 WorkingMap is implemented with ``WorldGraph`` objects, and this module is the
-narrow owner of the internal mutations needed to reconstruct and merge those
-short-lived graphs. Long-term WorldGraph writes continue to use its public
-methods. Future WorldGraph APIs can replace these localized internal accesses
-without touching the runner or experiment subsystem.
+narrow owner of the internal mutations needed for short-lived working-memory
+graphs. Long-term WorldGraph writes continue to use public methods. Future
+WorldGraph APIs can replace these localized internal accesses without touching
+the runner or experiment subsystem.
 """
 
 from __future__ import annotations
@@ -38,27 +40,44 @@ from __future__ import annotations
 # pylint: disable=too-many-lines
 # pylint: disable=too-many-locals
 # pylint: disable=too-many-nested-blocks
+# pylint: disable=too-many-positional-arguments
+# pylint: disable=too-many-boolean-expressions
 # pylint: disable=too-many-return-statements
 # pylint: disable=too-many-statements
 # pylint: disable=multiple-statements
 
 import hashlib
 import json
-from typing import Any, Optional, cast
+import time
+from typing import Any, Callable, Optional, cast
 
+import cca8_navpatch
 import cca8_world_graph
 from cca8_column import mem as column_mem
 from cca8_context import Ctx
+from cca8_env import EnvObservation
 from cca8_controller import (
+    body_cliff_distance,
     body_mom_distance,
     body_nipple_state,
     body_posture,
+    body_shelter_distance,
     body_space_zone,
     bodymap_is_stale,
 )
 from cca8_features import FactMeta
+from cca8_navpatch import (
+    CELL_GOAL,
+    CELL_HAZARD,
+    CELL_TRAVERSABLE,
+    CELL_UNKNOWN,
+    SurfaceGridV1,
+    compose_surfacegrid_v1,
+    derive_grid_slot_families_v1,
+    grid_overlap_fraction_v1,
+)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "init_working_world",
@@ -74,6 +93,24 @@ __all__ = [
     "format_mapswitch_event_line_v1",
     "load_wm_mapsurface_engram_into_workingmap_mode",
     "load_wm_mapsurface_engram_into_workingmap",
+    "navpatch_payload_sig_v1",
+    "store_navpatch_engram_v1",
+    "navpatch_similarity_v1",
+    "navpatch_priors_bundle_v1",
+    "navpatch_candidate_prior_bias_v1",
+    "navpatch_predictive_match_loop_v1",
+    "wm_apply_grid_slot_families_to_mapsurface_v1",
+    "compute_navsummary_v1",
+    "format_navsummary_line_v1",
+    "render_surfacegrid_ascii_with_salience_v1",
+    "format_surfacegrid_ascii_map_v1",
+    "format_surfacegrid_snapshot_v1",
+    "wm_salience_force_focus_entity_v1",
+    "wm_salience_force_focus_token_v1",
+    "wm_salience_tick_v1",
+    "update_working_navpatch_refs_v1",
+    "update_working_navpatch_scratch_zoom_v1",
+    "update_working_salience_surfacegrid_v1",
     "__version__",
 ]
 
@@ -1640,3 +1677,3296 @@ def load_wm_mapsurface_engram_into_workingmap(ctx: Ctx, engram_id: str, *, repla
     out = load_mapsurface_payload_v1_into_workingmap(ctx, payload, replace=replace, reason=f"engram:{engram_id[:8]}")
     out["engram_id"] = engram_id
     return out
+
+
+# -----------------------------------------------------------------------------
+# Working Memory refactor Phase 2: NavPatch, salience, SurfaceGrid, NavSummary
+# -----------------------------------------------------------------------------
+
+def _navpatch_core_v1(patch: dict[str, Any]) -> dict[str, Any]:
+    """Return the stable core of a NavPatch payload for signatures/dedup.
+
+    A NavPatch is a compact, local navigation map fragment intended to be:
+      - JSON-safe (dict/list/str/int/float/bool/None only)
+      - stable under repeated observation of the same structure
+      - composable (map-of-maps) via links/transforms in later phases
+
+    This helper strips volatile fields (timestamps, match traces, etc.) so the
+    same structural patch yields the same signature across cycles.
+
+    Parameters
+    ----------
+    patch:
+        JSON-safe dict produced by PerceptionAdapter (env-side) or by later
+        agent-side processing.
+
+    Returns
+    -------
+    dict
+        Canonicalized core dict used for hashing.
+    """
+    if not isinstance(patch, dict):
+        return {"schema": "navpatch_v1", "error": "not_dict"}
+
+    schema = patch.get("schema") if isinstance(patch.get("schema"), str) else "navpatch_v1"
+
+    core: dict[str, Any] = {
+        "schema": schema,
+        "local_id": patch.get("local_id") if isinstance(patch.get("local_id"), str) else None,
+        "entity_id": patch.get("entity_id") if isinstance(patch.get("entity_id"), str) else None,
+        "role": patch.get("role") if isinstance(patch.get("role"), str) else None,
+        "frame": patch.get("frame") if isinstance(patch.get("frame"), str) else None,
+    }
+
+    # Grid payload (Phase X v5.9): include topology core in the signature.
+    # Signature rules: include grid_encoding_v, grid_w, grid_h, and grid_cells (or a stable digest).
+    ge = patch.get("grid_encoding_v")
+    if isinstance(ge, str) and ge:
+        core["grid_encoding_v"] = ge
+
+    gw = patch.get("grid_w")
+    gh = patch.get("grid_h")
+    if isinstance(gw, int) and isinstance(gh, int) and gw > 0 and gh > 0:
+        core["grid_w"] = int(gw)
+        core["grid_h"] = int(gh)
+
+        cells = patch.get("grid_cells")
+        if isinstance(cells, list) and len(cells) == int(gw) * int(gh):
+            norm: list[int] = []
+            ok = True
+            for c in cells:
+                if isinstance(c, int):
+                    norm.append(int(c))
+                else:
+                    ok = False
+                    break
+            if ok:
+                core["grid_cells"] = norm
+            else:
+                # Fallback: keep a stable digest so the signature still changes with topology.
+                try:
+                    blob = json.dumps(cells, separators=(",", ":"), ensure_ascii=False)
+                    core["grid_cells_digest"] = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+                except Exception:
+                    pass
+        elif isinstance(cells, list) and cells:
+            try:
+                blob = json.dumps(cells, separators=(",", ":"), ensure_ascii=False)
+                core["grid_cells_digest"] = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+            except Exception:
+                pass
+
+    # Optional (v1): origin/resolution are stable geometry parameters.
+    go = patch.get("grid_origin")
+    if isinstance(go, list) and len(go) == 2 and all(isinstance(v, (int, float)) for v in go):
+        core["grid_origin"] = [float(go[0]), float(go[1])]
+    gr = patch.get("grid_resolution")
+    if isinstance(gr, (int, float)):
+        core["grid_resolution"] = float(gr)
+
+    extent = patch.get("extent")
+    if isinstance(extent, dict):
+        core["extent"] = {
+            k: extent.get(k)
+            for k in sorted(extent)
+            if isinstance(k, str) and isinstance(extent.get(k), (str, int, float, bool, type(None)))
+        }
+
+    tags = patch.get("tags")
+    if isinstance(tags, list):
+        core["tags"] = sorted({t for t in tags if isinstance(t, str) and t})
+
+    # --- Grid payload core (Phase X Step 11) ---
+    ge = patch.get("grid_encoding_v")
+    if isinstance(ge, str) and ge:
+        core["grid_encoding_v"] = ge
+
+    gw = patch.get("grid_w")
+    gh = patch.get("grid_h")
+    if isinstance(gw, int) and isinstance(gh, int) and gw > 0 and gh > 0:
+        core["grid_w"] = int(gw)
+        core["grid_h"] = int(gh)
+
+        cells = patch.get("grid_cells")
+        if isinstance(cells, list) and len(cells) == int(gw) * int(gh) and all(isinstance(c, int) for c in cells):
+            # Keep explicit cells for small grids so 1-cell changes affect sig directly.
+            if len(cells) <= 1024:
+                core["grid_cells"] = [int(c) for c in cells]
+            else:
+                blob = json.dumps(cells, separators=(",", ":"), ensure_ascii=False)
+                core["grid_cells_digest"] = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+        elif isinstance(cells, list) and cells:
+            blob = json.dumps(cells, separators=(",", ":"), ensure_ascii=False)
+            core["grid_cells_digest"] = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    go = patch.get("grid_origin")
+    if isinstance(go, list) and len(go) == 2 and all(isinstance(v, (int, float)) for v in go):
+        core["grid_origin"] = [float(go[0]), float(go[1])]
+
+    gr = patch.get("grid_resolution")
+    if isinstance(gr, (int, float)):
+        core["grid_resolution"] = float(gr)
+
+    layers = patch.get("layers")
+    if isinstance(layers, dict):
+        core["layers"] = {
+            k: layers.get(k)
+            for k in sorted(layers)
+            if isinstance(k, str) and isinstance(layers.get(k), (str, int, float, bool, type(None)))
+        }
+
+    links = patch.get("links")
+    if isinstance(links, list):
+        core["links"] = [x for x in links if isinstance(x, (str, int, float, bool, type(None), dict, list))]
+
+    return core
+
+
+def navpatch_payload_sig_v1(patch: dict[str, Any]) -> str:
+    """Stable content signature for a NavPatch payload."""
+    core = _navpatch_core_v1(patch)
+    blob = json.dumps(core, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def store_navpatch_engram_v1(
+    ctx: Ctx,
+    patch: dict[str, Any],
+    *,
+    reason: str,
+    column_memory: Any | None = None,
+) -> dict[str, Any]:
+    """Store a NavPatch payload into Column memory, with per-run dedup by content signature.
+
+    Dedup strategy (v0):
+      - Deduplicate within a single run using ctx.navpatch_sig_to_eid.
+      - Later we can replace this with a Column-side signature index if/when Column is persisted.
+    """
+    active_column = column_memory if column_memory is not None else column_mem
+
+    sig = navpatch_payload_sig_v1(patch)
+    sig16 = sig[:16]
+
+    cache = getattr(ctx, "navpatch_sig_to_eid", None)
+    if isinstance(cache, dict):
+        existing = cache.get(sig)
+        if isinstance(existing, str) and existing:
+            return {"stored": False, "sig": sig, "sig16": sig16, "engram_id": existing, "reason": "dedup_cache"}
+
+    attrs: dict[str, Any] = {
+        "schema": patch.get("schema") if isinstance(patch.get("schema"), str) else "navpatch_v1",
+        "sig": sig,
+        "sig16": sig16,
+        "reason": reason,
+    }
+
+    for k in ("entity_id", "role", "frame", "local_id"):
+        v = patch.get(k)
+        if isinstance(v, str) and v:
+            attrs[k] = v
+
+    tags = patch.get("tags")
+    if isinstance(tags, list):
+        attrs["tags"] = [t for t in tags if isinstance(t, str) and t][:12]
+
+    fm = FactMeta(name="navpatch", links=[], attrs=attrs).with_time(ctx)
+    engram_id = active_column.assert_fact("navpatch", cast(Any, patch), fm)
+
+    if isinstance(cache, dict):
+        cache[sig] = engram_id
+    else:
+        try:
+            ctx.navpatch_sig_to_eid = {sig: engram_id}
+        except Exception:
+            pass
+
+    return {"stored": True, "sig": sig, "sig16": sig16, "engram_id": engram_id, "reason": reason}
+
+
+def _wm_surfacegrid_priority_v1(token: str) -> int:
+    """Return a stable display priority for salience tokens.
+
+    Higher numbers are displayed first when we need to trim the salience set.
+    The ordering intentionally favors direct hazards, then goals/attachment cues,
+    then lower-risk landmarks. This keeps the overlay conservative and easy to
+    read in the terminal while the full MapSurface entity system is still under
+    construction.
+    """
+    tok = str(token or "").strip().lower()
+    if tok == "cliff":
+        return 100
+    if tok == "shelter":
+        return 80
+    if tok == "mom":
+        return 70
+    if tok == "nipple":
+        return 60
+    if tok == "self":
+        return 50
+    return 10
+
+
+def _wm_focus_token_from_obs_token_v1(token: str) -> Optional[str]:
+    """Map a predicate/cue token to a small focus-token vocabulary.
+
+    We intentionally keep the salience vocabulary tiny in v1 because the current
+    environment exposes only a few stable scene entities. A future MapSurface
+    layer can replace this with entity ids and richer focus semantics.
+    """
+    tok = str(token or "").strip().lower()
+    if not tok:
+        return None
+    if tok.startswith("vision:silhouette:mom") or tok.startswith("proximity:mom:"):
+        return "mom"
+    if tok.startswith("proximity:shelter:"):
+        return "shelter"
+    if tok.startswith("hazard:cliff:"):
+        return "cliff"
+    if tok.startswith("nipple:") or tok.startswith("milk:"):
+        return "nipple"
+    return None
+
+
+def wm_salience_force_focus_token_v1(ctx: Ctx, token: str, *, ttl: Optional[int] = None, reason: str = "manual") -> None:
+    """Force a focus token into the salience set for a short time.
+
+    This is the token-level counterpart of a later entity-level focus API. It is
+    intentionally simple so probe/inspect policies can request a focus target
+    without depending on a full MapSurface entity layer yet.
+    """
+    if ctx is None:
+        return
+
+    tok = str(token or "").strip().lower()
+    if not tok:
+        return
+
+    ttl_steps = int(ttl if ttl is not None else getattr(ctx, "wm_salience_promote_ttl", 5) or 5)
+    ttl_steps = max(1, ttl_steps)
+
+    try:
+        ctx.wm_salience_forced_focus[tok] = ttl_steps
+        ctx.wm_salience_forced_reason[tok] = str(reason or "manual")
+    except Exception:
+        pass
+
+
+def _wm_salience_candidate_tokens_v1(env_obs: EnvObservation) -> list[tuple[str, str]]:
+    """Extract focus candidates from a single observation.
+
+    Returns a list of ``(focus_token, reason)`` pairs in deterministic order. The
+    reason strings are small trace labels, useful for debugging promotion/decay.
+    """
+    preds = [str(x) for x in (getattr(env_obs, "predicates", None) or []) if x is not None]
+    cues = [str(x) for x in (getattr(env_obs, "cues", None) or []) if x is not None]
+
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add_token(tok: Optional[str], reason: str) -> None:
+        if tok is None or tok in seen:
+            return
+        seen.add(tok)
+        out.append((tok, reason))
+
+    for tok in preds:
+        focus = _wm_focus_token_from_obs_token_v1(tok)
+        if focus == "cliff" and tok.endswith(":near"):
+            add_token(focus, "hazard")
+    for tok in cues:
+        focus = _wm_focus_token_from_obs_token_v1(tok)
+        if focus is not None:
+            add_token(focus, "cue")
+    for tok in preds:
+        focus = _wm_focus_token_from_obs_token_v1(tok)
+        if focus is not None:
+            add_token(focus, "present")
+
+    return out
+
+
+def _wm_blank_grid_cells_v1(grid_w: int, grid_h: int, fill: int = cca8_navpatch.CELL_UNKNOWN) -> list[int]:
+    """Return a flat grid cell list with a uniform fill value."""
+    return [int(fill)] * (int(grid_w) * int(grid_h))
+
+
+def _wm_set_grid_cell_v1(cells: list[int], grid_w: int, grid_h: int, x: int, y: int, value: int) -> None:
+    """Safely set one flat-grid cell if the coordinates are in bounds."""
+    if not (0 <= x < grid_w and 0 <= y < grid_h):
+        return
+    cells[(y * grid_w) + x] = int(value)
+
+
+def _wm_paint_diamond_v1(cells: list[int], grid_w: int, grid_h: int, cx: int, cy: int, radius: int, value: int) -> None:
+    """Paint a tiny Manhattan-diamond into a flat grid list."""
+    radius = max(0, int(radius))
+    for y in range(max(0, cy - radius), min(grid_h, cy + radius + 1)):
+        for x in range(max(0, cx - radius), min(grid_w, cx + radius + 1)):
+            if abs(x - cx) + abs(y - cy) <= radius:
+                _wm_set_grid_cell_v1(cells, grid_w, grid_h, x, y, value)
+
+
+def _wm_env_position_v1(env_obs: EnvObservation, key: str) -> Optional[tuple[float, float]]:
+    """Read a numeric 2D position from ``env_obs.env_meta`` if available."""
+    meta = getattr(env_obs, "env_meta", None) or {}
+    pos = meta.get(key)
+    if not (isinstance(pos, (tuple, list)) and len(pos) == 2):
+        return None
+    try:
+        return float(pos[0]), float(pos[1])
+    except Exception:
+        return None
+
+
+def _wm_relative_direction_cell_v1(env_obs: EnvObservation, grid_w: int, grid_h: int, *, default_xy: tuple[int, int]) -> tuple[int, int]:
+    """Project mom_position relative to kid_position into a coarse SELF-local cell.
+
+    The current environment only needs a tiny directional hint, not metric map
+    accuracy. If positions are unavailable, we fall back to a deterministic
+    canonical cell.
+    """
+    kid_pos = _wm_env_position_v1(env_obs, "kid_position")
+    mom_pos = _wm_env_position_v1(env_obs, "mom_position")
+    if kid_pos is None or mom_pos is None:
+        return default_xy
+
+    dx = mom_pos[0] - kid_pos[0]
+    dy = mom_pos[1] - kid_pos[1]
+    cx = grid_w // 2
+    cy = grid_h // 2
+
+    step_x = 0
+    step_y = 0
+    if dx > 0.15:
+        step_x = 1
+    elif dx < -0.15:
+        step_x = -1
+    if dy > 0.15:
+        step_y = 1
+    elif dy < -0.15:
+        step_y = -1
+
+    x = max(0, min(grid_w - 1, cx + (2 * step_x)))
+    y = max(0, min(grid_h - 1, cy + (2 * step_y)))
+    return x, y
+
+
+def _wm_default_navpatches_from_obs_v1(env_obs: EnvObservation, *, grid_w: int, grid_h: int, zoom_level: int = 0) -> list[dict[str, Any]]:
+    """Synthesize a tiny deterministic patch set from a basic EnvObservation.
+
+    Why this exists
+    ---------------
+    The current repo version already has a general ``cca8_navpatch`` module, but
+    the environment does not yet emit full patch payloads. This helper provides a
+    small bridge so the WorkingMap can still maintain one current SurfaceGrid per
+    cycle and the terminal can display salience-aware topology diagnostics.
+    """
+    preds = {str(x) for x in (getattr(env_obs, "predicates", None) or []) if x is not None}
+    patches: list[dict[str, Any]] = []
+    cx = int(grid_w) // 2
+    cy = int(grid_h) // 2
+
+    terrain_cells = _wm_blank_grid_cells_v1(grid_w, grid_h)
+    terrain_radius = 2 if int(zoom_level) <= 0 else 1
+    _wm_paint_diamond_v1(terrain_cells, grid_w, grid_h, cx, cy, terrain_radius, cca8_navpatch.CELL_TRAVERSABLE)
+    patches.append({
+        "schema": "navpatch_v1",
+        "role": "terrain",
+        "frame": "self_local",
+        "entity_id": "self",
+        "extent": {"center_xy": [cx, cy], "radius": terrain_radius},
+        "grid_encoding_v": cca8_navpatch.GRID_ENCODING_V1,
+        "grid_w": int(grid_w),
+        "grid_h": int(grid_h),
+        "grid_cells": terrain_cells,
+    })
+
+    cliff_cells = _wm_blank_grid_cells_v1(grid_w, grid_h)
+    if "hazard:cliff:near" in preds:
+        cliff_y = max(0, cy - 2)
+    else:
+        cliff_y = 0
+    for x in range(max(0, cx - 1), min(grid_w, cx + 2)):
+        _wm_set_grid_cell_v1(cliff_cells, grid_w, grid_h, x, cliff_y, cca8_navpatch.CELL_HAZARD)
+    patches.append({
+        "schema": "navpatch_v1",
+        "role": "hazard",
+        "frame": "self_local",
+        "entity_id": "cliff",
+        "extent": {"center_xy": [cx, cliff_y]},
+        "grid_encoding_v": cca8_navpatch.GRID_ENCODING_V1,
+        "grid_w": int(grid_w),
+        "grid_h": int(grid_h),
+        "grid_cells": cliff_cells,
+    })
+
+    if "proximity:shelter:near" in preds or "proximity:shelter:close" in preds or "proximity:shelter:touching" in preds:
+        shelter_x = min(grid_w - 1, cx + 2)
+    else:
+        shelter_x = min(grid_w - 1, cx + 3)
+    shelter_cells = _wm_blank_grid_cells_v1(grid_w, grid_h)
+    _wm_set_grid_cell_v1(shelter_cells, grid_w, grid_h, shelter_x, cy, cca8_navpatch.CELL_GOAL)
+    patches.append({
+        "schema": "navpatch_v1",
+        "role": "goal",
+        "frame": "self_local",
+        "entity_id": "shelter",
+        "extent": {"center_xy": [shelter_x, cy]},
+        "grid_encoding_v": cca8_navpatch.GRID_ENCODING_V1,
+        "grid_w": int(grid_w),
+        "grid_h": int(grid_h),
+        "grid_cells": shelter_cells,
+    })
+
+    mom_x, mom_y = _wm_relative_direction_cell_v1(
+        env_obs,
+        grid_w,
+        grid_h,
+        default_xy=(max(0, cx - 2), cy),
+    )
+    mom_cells = _wm_blank_grid_cells_v1(grid_w, grid_h)
+    patches.append({
+        "schema": "navpatch_v1",
+        "role": "landmark",
+        "frame": "self_local",
+        "entity_id": "mom",
+        "extent": {"center_xy": [mom_x, mom_y]},
+        "grid_encoding_v": cca8_navpatch.GRID_ENCODING_V1,
+        "grid_w": int(grid_w),
+        "grid_h": int(grid_h),
+        "grid_cells": mom_cells,
+        "tags": ["mom"],
+    })
+
+    return patches
+
+
+def _wm_patch_center_xy_v1(patch: dict[str, Any], *, grid_w: int, grid_h: int) -> Optional[tuple[int, int]]:
+    """Return a coarse display center for one navpatch payload."""
+    extent = patch.get("extent")
+    if isinstance(extent, dict):
+        center_xy = extent.get("center_xy")
+        if isinstance(center_xy, (tuple, list)) and len(center_xy) == 2:
+            try:
+                x = max(0, min(grid_w - 1, int(center_xy[0])))
+                y = max(0, min(grid_h - 1, int(center_xy[1])))
+                return x, y
+            except Exception:
+                return None
+    return None
+
+
+def _wm_patch_index_v1(patches: list[dict[str, Any]], *, grid_w: int, grid_h: int) -> dict[str, tuple[int, int]]:
+    """Index navpatch display centers by entity id / role."""
+    out: dict[str, tuple[int, int]] = {}
+    for patch in patches:
+        if not isinstance(patch, dict):
+            continue
+        center = _wm_patch_center_xy_v1(patch, grid_w=grid_w, grid_h=grid_h)
+        if center is None:
+            continue
+        raw_key = patch.get("entity_id") or patch.get("role")
+        if not isinstance(raw_key, str) or not raw_key.strip():
+            continue
+        out[raw_key.strip().lower()] = center
+    return out
+
+
+def _wm_surfacegrid_mark_char_v1(token: str) -> str:
+    """Return the ASCII overlay glyph for one focus token."""
+    tok = str(token or "").strip().lower()
+    if tok == "mom":
+        return "M"
+    if tok == "shelter":
+        return "S"
+    if tok == "cliff":
+        return "C"
+    if tok == "nipple":
+        return "N"
+    return "*"
+
+
+def _wm_place_overlay_char_v1(grid: list[list[str]], char: str, *, preferred_xy: tuple[int, int], center_xy: tuple[int, int]) -> None:
+    """Place one overlay character while avoiding obvious collisions.
+
+    Hazard/goal-aligned markers (``C`` and ``S``) may overwrite the underlying
+    semantic cell because they are effectively a relabeling of that terrain.
+    Other markers prefer nearby blank cells so they do not erase more important
+    topology cues already present on the map.
+    """
+    grid_h = len(grid)
+    grid_w = len(grid[0]) if grid else 0
+    if grid_w <= 0 or grid_h <= 0:
+        return
+
+    px, py = preferred_xy
+    cx, cy = center_xy
+    candidates: list[tuple[int, int]] = [(px, py)]
+    for radius in (1, 2):
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                if dx == 0 and dy == 0:
+                    continue
+                if max(abs(dx), abs(dy)) != radius:
+                    continue
+                candidates.append((px + dx, py + dy))
+
+    for x, y in candidates:
+        if not (0 <= x < grid_w and 0 <= y < grid_h):
+            continue
+        if x == cx and y == cy:
+            continue
+        existing = grid[y][x]
+        if existing in "@MSCN*":
+            continue
+        if char in ("C", "S"):
+            grid[y][x] = char
+            return
+        if existing == " ":
+            grid[y][x] = char
+            return
+
+
+def _navpatch_tag_jaccard(tags_a: Any, tags_b: Any) -> float:
+    a: set[str] = set()
+    b: set[str] = set()
+
+    if isinstance(tags_a, list):
+        for t in tags_a:
+            if isinstance(t, str) and t:
+                a.add(t)
+
+    if isinstance(tags_b, list):
+        for t in tags_b:
+            if isinstance(t, str) and t:
+                b.add(t)
+
+    u = a | b
+    return (len(a & b) / float(len(u))) if u else 1.0
+
+
+def _navpatch_extent_sim(ext_a: Any, ext_b: Any) -> float:
+    # If we don't have numeric extents on both sides, do not penalize.
+    if not (isinstance(ext_a, dict) and isinstance(ext_b, dict)):
+        return 1.0
+
+    keys = ("x0", "y0", "x1", "y1")
+    a_vals: dict[str, float] = {}
+    b_vals: dict[str, float] = {}
+
+    for k in keys:
+        av = ext_a.get(k)
+        bv = ext_b.get(k)
+        if not isinstance(av, (int, float)) or not isinstance(bv, (int, float)):
+            return 1.0
+        a_vals[k] = float(av)
+        b_vals[k] = float(bv)
+
+    # Normalize by the larger span so the score is scale-insensitive.
+    span_a = max(abs(a_vals["x1"] - a_vals["x0"]), abs(a_vals["y1"] - a_vals["y0"]), 1.0)
+    span_b = max(abs(b_vals["x1"] - b_vals["x0"]), abs(b_vals["y1"] - b_vals["y0"]), 1.0)
+    denom = max(span_a, span_b, 1.0)
+
+    diff_sum = 0.0
+    for k in keys:
+        diff_sum += abs(a_vals[k] - b_vals[k]) / denom
+
+    # diff_sum in [0..~4]; convert to similarity in [0..1]
+    sim = 1.0 - min(1.0, diff_sum / 4.0)
+    return float(max(0.0, min(1.0, sim)))
+
+
+def navpatch_similarity_v1(patch_a: dict[str, Any], patch_b: dict[str, Any]) -> float:
+    """Similarity score in [0,1] based on tag overlap + (optional) extent overlap.
+
+    This is intentionally simple (priors OFF baseline). It is only for debugging/top-K traces now.
+    """
+    a = _navpatch_core_v1(patch_a)
+    b = _navpatch_core_v1(patch_b)
+
+    role_a = a.get("role")
+    role_b = b.get("role")
+    if isinstance(role_a, str) and isinstance(role_b, str) and role_a and role_b and role_a != role_b:
+        return 0.0
+
+    tag_sim = _navpatch_tag_jaccard(a.get("tags"), b.get("tags"))
+    ext_sim = _navpatch_extent_sim(a.get("extent"), b.get("extent"))
+
+    score = 0.75 * tag_sim + 0.25 * ext_sim
+    return float(max(0.0, min(1.0, score)))
+
+
+def navpatch_priors_bundle_v1(
+    ctx: Ctx,
+    env_obs: EnvObservation,
+    *,
+    body_space_zone_fn: Callable[[Ctx], Any] = body_space_zone,
+) -> dict[str, Any]:
+    """Compute a lightweight top-down priors bundle for NavPatch matching (v1.1).
+
+    Purpose
+    -------
+    This bundle is the “top-down context” for the patch matching loop. It is:
+      - JSON-safe (so we can store it in cycle_log.jsonl),
+      - traceable (sig16 stable fingerprint),
+      - intentionally small (no heavy payload).
+
+    v1.1 additions
+    -------------
+    Adds a minimal precision vector so we can weight evidence vs priors in a stable way.
+
+    Precision is not “Friston math” here; it is simply a tunable reliability weight:
+      - tags precision  : how much we trust symbolic tag overlap (salience/texture-like channel)
+      - extent precision: how much we trust geometric overlap (schematic geometry channel)
+      - grid precision
+      code:
+        tags_prec = max(0.0, min(1.0, float(tags_prec)))
+        ext_prec = max(0.0, min(1.0, float(ext_prec)))
+        grid_prec = max(0.0, min(1.0, float(grid_prec)))
+        precision = {"tags": tags_prec, "extent": ext_prec, "grid": grid_prec}
+
+    We make tags precision stage-sensitive:
+      - birth/struggle → lower tags precision (more ambiguity)
+      - later stages   → default tags precision
+
+    Fields (v1.1)
+    ------------
+    v:
+        Schema label: "navpatch_priors_v1".
+    enabled:
+        True when priors were requested by ctx.navpatch_priors_enabled.
+    sig16:
+        Stable 16-hex signature of the bundle contents (for traceability).
+    stage:
+        Env meta stage string when present (e.g., "birth", "struggle").
+    zone:
+        BodyMap coarse zone label when available (e.g., "unsafe_cliff_near", "safe", "unknown").
+    hazard_bias:
+        Positive bias applied to hazard-like candidates when the zone is unsafe.
+    err_guard:
+        Evidence-first guardrail: if evidence error > err_guard, priors must not force a confident match.
+    precision:
+        Per-layer evidence reliability weights (v1.1: {"tags": f, "extent": f}).
+    """
+    stage: str | None = None
+    try:
+        meta = getattr(env_obs, "env_meta", None)
+        if isinstance(meta, dict):
+            s = meta.get("scenario_stage")
+            stage = s if isinstance(s, str) and s else None
+    except Exception:
+        stage = None
+
+    zone: str | None = None
+    try:
+        z = body_space_zone_fn(ctx)
+        zone = z if isinstance(z, str) and z else None
+    except Exception:
+        zone = None
+
+    # ---- hazard prior (v1) ----
+    hazard_bias = 0.0
+    try:
+        hb = float(getattr(ctx, "navpatch_priors_hazard_bias", 0.0) or 0.0)
+    except Exception:
+        hb = 0.0
+    if zone == "unsafe_cliff_near":
+        hazard_bias = hb
+
+    # ---- evidence-first guard (v1) ----
+    try:
+        guard = float(getattr(ctx, "navpatch_priors_error_guard", 0.45) or 0.45)
+    except Exception:
+        guard = 0.45
+    guard = max(0.0, min(1.0, float(guard)))
+
+    # ---- precision vector (v1.1) ----
+    try:
+        tags_prec = float(getattr(ctx, "navpatch_precision_tags", 0.75) or 0.75)
+    except Exception:
+        tags_prec = 0.75
+    try:
+        ext_prec = float(getattr(ctx, "navpatch_precision_extent", 0.25) or 0.25)
+    except Exception:
+        ext_prec = 0.25
+
+    if stage == "birth":
+        try:
+            tags_prec = min(tags_prec, float(getattr(ctx, "navpatch_precision_tags_birth", tags_prec) or tags_prec))
+        except Exception:
+            pass
+    elif stage == "struggle":
+        try:
+            tags_prec = min(tags_prec, float(getattr(ctx, "navpatch_precision_tags_struggle", tags_prec) or tags_prec))
+        except Exception:
+            pass
+
+    try:
+        grid_prec = float(getattr(ctx, "navpatch_precision_grid", 0.0) or 0.0)
+    except Exception:
+        grid_prec = 0.0
+
+    tags_prec = max(0.0, min(1.0, float(tags_prec)))
+    ext_prec = max(0.0, min(1.0, float(ext_prec)))
+    grid_prec = max(0.0, min(1.0, float(grid_prec)))
+    precision = {"tags": tags_prec, "extent": ext_prec, "grid": grid_prec}
+
+    core = {
+        "v": "navpatch_priors_v1",
+        "enabled": True,
+        "stage": stage,
+        "zone": zone,
+        "hazard_bias": float(hazard_bias),
+        "err_guard": float(guard),
+        "precision": precision,
+    }
+    blob = json.dumps(core, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    sig16 = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+    out = dict(core)
+    out["sig16"] = sig16
+    return out
+
+
+def navpatch_candidate_prior_bias_v1(priors: dict[str, Any], cand_payload: dict[str, Any], cand_attrs: dict[str, Any]) -> float:
+    """Return the additive prior bias term for a candidate NavPatch prototype (v1).
+
+    v1 semantics:
+      - If priors carries a positive hazard_bias and the candidate looks "hazard-like"
+        (role == "hazard" OR any tag starts with "hazard:"), return hazard_bias.
+      - Otherwise return 0.0.
+    """
+    if not isinstance(priors, dict) or not priors.get("enabled", False):
+        return 0.0
+
+    try:
+        hazard_bias = float(priors.get("hazard_bias", 0.0) or 0.0)
+    except Exception:
+        hazard_bias = 0.0
+    if hazard_bias == 0.0:
+        return 0.0
+
+    role = None
+    try:
+        r = cand_attrs.get("role") if isinstance(cand_attrs, dict) else None
+        if isinstance(r, str) and r:
+            role = r
+        else:
+            r2 = cand_payload.get("role") if isinstance(cand_payload, dict) else None
+            role = r2 if isinstance(r2, str) and r2 else None
+    except Exception:
+        role = None
+
+    tags: list[str] = []
+    try:
+        t = cand_payload.get("tags") if isinstance(cand_payload, dict) else None
+        if isinstance(t, list):
+            tags = [x for x in t if isinstance(x, str) and x]
+        else:
+            t2 = cand_attrs.get("tags") if isinstance(cand_attrs, dict) else None
+            if isinstance(t2, list):
+                tags = [x for x in t2 if isinstance(x, str) and x]
+    except Exception:
+        tags = []
+
+    hazard_like = (role == "hazard") or any(isinstance(t, str) and t.startswith("hazard:") for t in tags)
+    return float(hazard_bias) if hazard_like else 0.0
+
+
+def navpatch_predictive_match_loop_v1(
+    ctx: Ctx,
+    env_obs: EnvObservation,
+    *,
+    column_memory: Any | None = None,
+    store_navpatch_fn: Callable[..., dict[str, Any]] | None = None,
+    body_space_zone_fn: Callable[[Ctx], Any] = body_space_zone,
+) -> list[dict[str, Any]]:
+    """Compute a top-K candidate match trace for EnvObservation.nav_patches.
+
+    This implements Phase X “predictive matching” (v1.1):
+      - store observed patches as navpatch engrams (deduped by signature),
+      - rank other stored prototypes as candidate interpretations (top-K),
+      - apply priors as a *small bias term* (hazard_bias),
+      - weight evidence by a tiny precision vector (tags vs extent),
+      - classify match confidence as commit vs ambiguous vs unknown.
+
+    Self-exclusion
+    --------------
+    If we stored (or dedup-reused) the current patch engram this tick, the Column scan will contain it.
+    We must exclude that engram_id from candidate ranking so we do not trivially match the patch to itself.
+    """
+    if ctx is None:
+        return []
+
+    active_column = column_memory if column_memory is not None else column_mem
+
+    if store_navpatch_fn is None:
+        def active_store_navpatch(
+            active_ctx: Ctx,
+            active_patch: dict[str, Any],
+            *,
+            reason: str,
+        ) -> dict[str, Any]:
+            return store_navpatch_engram_v1(
+                active_ctx,
+                active_patch,
+                reason=reason,
+                column_memory=active_column,
+            )
+    else:
+        active_store_navpatch = store_navpatch_fn
+
+    # --- Step 15C support: auto-restore probe precision boosts ----------------------------
+    # The probe policy can temporarily raise ctx.navpatch_precision_grid to help disambiguate
+    # competing prototypes. We restore the previous value once the probe window expires so
+    # the system returns to its default evidence weighting.
+    try:
+        step_now = int(getattr(ctx, "controller_steps", 0) or 0)
+    except Exception:
+        step_now = 0
+
+    try:
+        restore_step = getattr(ctx, "wm_probe_restore_step", None)
+        if isinstance(restore_step, int) and step_now >= int(restore_step):
+            prev = getattr(ctx, "wm_probe_prev_navpatch_precision_grid", None)
+            if isinstance(prev, (int, float)):
+                ctx.navpatch_precision_grid = float(prev)
+
+            # Clear probe restore bookkeeping (best-effort).
+            ctx.wm_probe_restore_step = None
+            ctx.wm_probe_prev_navpatch_precision_grid = None
+    except Exception:
+        pass
+
+    if ctx is None or not bool(getattr(ctx, "navpatch_enabled", False)):
+        return []
+
+    patches = getattr(env_obs, "nav_patches", None) or []
+    if not isinstance(patches, list) or not patches:
+        try:
+            ctx.navpatch_last_matches = []
+        except Exception:
+            pass
+        return []
+
+    # Config (keep terminal readable; clamp)
+    try:
+        top_k = int(getattr(ctx, "navpatch_match_top_k", 3) or 3)
+    except Exception:
+        top_k = 3
+    top_k = max(1, min(10, top_k))
+
+    try:
+        accept = float(getattr(ctx, "navpatch_match_accept_score", 0.85) or 0.85)
+    except Exception:
+        accept = 0.85
+    accept = max(0.0, min(1.0, accept))
+
+    try:
+        amb_margin = float(getattr(ctx, "navpatch_match_ambiguous_margin", 0.05) or 0.05)
+    except Exception:
+        amb_margin = 0.05
+    amb_margin = max(0.0, min(1.0, amb_margin))
+
+    # --- Demo knob: forced ambiguity (temporary) ---------------------------------------
+    # This exists purely to demo Step 15B (zoom) + Step 15C (probe) in short runs.
+    # Default is OFF (steps==0).
+    try:
+        demo_steps_left = int(getattr(ctx, "wm_demo_force_ambiguity_steps", 0) or 0)
+    except Exception:
+        demo_steps_left = 0
+
+    demo_entity = str(getattr(ctx, "wm_demo_force_ambiguity_entity", "cliff") or "cliff").strip().lower()
+    try:
+        demo_margin = float(getattr(ctx, "wm_demo_force_ambiguity_margin", 0.0) or 0.0)
+    except Exception:
+        demo_margin = 0.0
+    demo_margin = max(0.0, min(1.0, demo_margin))
+
+    # Priors bundle (Phase X 2.2a): OFF by default.
+    priors_enabled = bool(getattr(ctx, "navpatch_priors_enabled", False))
+    priors: dict[str, Any] = {"v": "navpatch_priors_v1", "enabled": False, "sig16": None}
+
+    if priors_enabled:
+        priors = navpatch_priors_bundle_v1(ctx, env_obs, body_space_zone_fn=body_space_zone_fn)
+
+    try:
+        ctx.navpatch_last_priors = dict(priors)
+    except Exception:
+        pass
+
+    # Precision weights (Phase X 2.2b): used even when priors are off (as stable knobs).
+    prec_tags = None
+    prec_ext = None
+    prec_grid = None
+
+    if isinstance(priors, dict) and isinstance(priors.get("precision"), dict):
+        p = priors.get("precision")  # type: ignore[assignment]
+        try:
+            prec_tags = float(p.get("tags"))  # type: ignore[union-attr]
+        except Exception:
+            prec_tags = None
+        try:
+            prec_ext = float(p.get("extent"))  # type: ignore[union-attr]
+        except Exception:
+            prec_ext = None
+        try:
+            prec_grid = float(p.get("grid"))  # type: ignore[union-attr]
+        except Exception:
+            prec_grid = None
+
+    if prec_tags is None:
+        try:
+            prec_tags = float(getattr(ctx, "navpatch_precision_tags", 0.75) or 0.75)
+        except Exception:
+            prec_tags = 0.75
+    if prec_ext is None:
+        try:
+            prec_ext = float(getattr(ctx, "navpatch_precision_extent", 0.25) or 0.25)
+        except Exception:
+            prec_ext = 0.25
+    if prec_grid is None:
+        try:
+            prec_grid = float(getattr(ctx, "navpatch_precision_grid", 0.0) or 0.0)
+        except Exception:
+            prec_grid = 0.0
+
+    prec_tags = max(0.0, min(1.0, float(prec_tags)))
+    prec_ext = max(0.0, min(1.0, float(prec_ext)))
+    prec_grid = max(0.0, min(1.0, float(prec_grid)))
+
+    # Candidate prototype records (best-effort; Column is RAM-local)
+    try:
+        proto_recs = active_column.find(name_contains="navpatch", has_attr="sig", limit=500)
+    except Exception:
+        proto_recs = []
+
+    out: list[dict[str, Any]] = []
+
+    for p in patches:
+        if not isinstance(p, dict):
+            continue
+
+        sig = navpatch_payload_sig_v1(p)
+        sig16 = sig[:16]
+
+        # Ensure an engram exists (or reuse cached) if storage is enabled.
+        stored_flag: bool | None = None
+        engram_id: str | None = None
+        if bool(getattr(ctx, "navpatch_store_to_column", False)):
+            try:
+                st = active_store_navpatch(ctx, p, reason="env_obs")
+                if isinstance(st, dict):
+                    stored_flag = bool(st.get("stored")) if "stored" in st else None
+                    eid = st.get("engram_id")
+                    if isinstance(eid, str) and eid:
+                        engram_id = eid
+            except Exception:
+                pass
+
+        # Precompute observed patch core once (stable keys only).
+        obs_core = _navpatch_core_v1(p)
+
+        # Score top-K prototypes.
+        # Tuple: (score_post, score_evidence, score_unweighted, prior_bias, tag_sim, ext_sim, grid_sim, engram_id)
+        scored: list[tuple[float, float, float, float, float, float, float | None, str]] = []
+        role_p = p.get("role")
+
+        for rec in proto_recs:
+            if not isinstance(rec, dict):
+                continue
+            eid = rec.get("id")
+            if not isinstance(eid, str) or not eid:
+                continue
+            # Self-exclusion
+            if isinstance(engram_id, str) and engram_id and eid == engram_id:
+                continue
+            payload = rec.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            meta_raw = rec.get("meta")
+            meta: dict[str, Any] = meta_raw if isinstance(meta_raw, dict) else {}
+            attrs_raw = meta.get("attrs")
+            attrs: dict[str, Any] = attrs_raw if isinstance(attrs_raw, dict) else {}
+            role_r = attrs.get("role")
+            if (
+                isinstance(role_p, str) and role_p
+                and isinstance(role_r, str) and role_r
+                and role_p != role_r
+            ):
+                continue
+
+            proto_core = _navpatch_core_v1(payload)
+            # Evidence channels (v1.1): tags vs extent vs grid
+            tag_sim = float(_navpatch_tag_jaccard(obs_core.get("tags"), proto_core.get("tags")))
+            ext_sim = float(_navpatch_extent_sim(obs_core.get("extent"), proto_core.get("extent")))
+            tag_sim = max(0.0, min(1.0, tag_sim))
+            ext_sim = max(0.0, min(1.0, ext_sim))
+            grid_sim: float | None = None
+            try:
+                obs_cells = p.get("grid_cells")
+                cand_cells = payload.get("grid_cells")
+                if (
+                    isinstance(obs_cells, list)
+                    and isinstance(cand_cells, list)
+                    and len(obs_cells) == len(cand_cells)
+                    and bool(obs_cells)
+                ):
+                    grid_sim = float(grid_overlap_fraction_v1(obs_cells, cand_cells))
+            except Exception:
+                grid_sim = None
+            if grid_sim is not None:
+                grid_sim = max(0.0, min(1.0, float(grid_sim)))
+            # Unweighted evidence score (diagnostic only)
+            if grid_sim is None:
+                score_unw = 0.5 * tag_sim + 0.5 * ext_sim
+            else:
+                score_unw = (tag_sim + ext_sim + float(grid_sim)) / 3.0
+            # Precision-weighted evidence score
+            err_tags = 1.0 - tag_sim
+            err_ext = 1.0 - ext_sim
+            err_grid = (1.0 - float(grid_sim)) if grid_sim is not None else 0.0
+            w_tags = float(prec_tags)
+            w_ext = float(prec_ext)
+            w_grid = float(prec_grid) if grid_sim is not None else 0.0
+            denom = float(w_tags + w_ext + w_grid)
+            if denom > 0.0:
+                err_weighted = (w_tags * err_tags + w_ext * err_ext + w_grid * err_grid) / denom
+            else:
+                # Fallback: average over available channels
+                if grid_sim is None:
+                    err_weighted = 0.5 * (err_tags + err_ext)
+                else:
+                    err_weighted = (err_tags + err_ext + err_grid) / 3.0
+            score_evidence = 1.0 - err_weighted
+            score_evidence = max(0.0, min(1.0, float(score_evidence)))
+            prior_bias = float(navpatch_candidate_prior_bias_v1(priors, payload, attrs)) if priors_enabled else 0.0
+            score_post = max(0.0, min(1.0, float(score_evidence + prior_bias)))
+            scored.append((score_post, score_evidence, score_unw, float(prior_bias), tag_sim, ext_sim, grid_sim, eid))
+
+        scored.sort(key=lambda t: (-t[0], t[-1]))
+        top_list: list[dict[str, Any]] = [
+            {
+                "engram_id": eid,
+                "score": float(score_post),
+                "score_raw": float(score_evidence),
+                "score_unweighted": float(score_unw),
+                "prior_bias": float(prior_bias),
+                "err": float(1.0 - score_post),
+                "err_raw": float(1.0 - score_evidence),
+                "err_unweighted": float(1.0 - score_unw),
+                "tag_sim": float(tag_sim),
+                "ext_sim": float(ext_sim),
+                "grid_sim": float(grid_sim) if isinstance(grid_sim, (int, float)) else None,
+            }
+            for (score_post, score_evidence, score_unw, prior_bias, tag_sim, ext_sim, grid_sim, eid) in scored[:top_k]
+        ]
+
+        # Add normalized weights (posterior proxy) for future graded belief work.
+        if top_list:
+            s_post = 0.0
+            s_raw = 0.0
+            for c in top_list:
+                try:
+                    s_post += float(c.get("score", 0.0) or 0.0)
+                except Exception:
+                    pass
+                try:
+                    s_raw += float(c.get("score_raw", 0.0) or 0.0)
+                except Exception:
+                    pass
+
+            n = float(len(top_list))
+            for c in top_list:
+                try:
+                    v = float(c.get("score", 0.0) or 0.0)
+                except Exception:
+                    v = 0.0
+                c["w"] = (v / s_post) if s_post > 0.0 else (1.0 / n)
+
+                try:
+                    v = float(c.get("score_raw", 0.0) or 0.0)
+                except Exception:
+                    v = 0.0
+                c["w_raw"] = (v / s_raw) if s_raw > 0.0 else (1.0 / n)
+
+        def _candidate_float(candidate: dict[str, Any] | None, key: str) -> float:
+            """Return one numeric candidate field without leaking broad JSON types to Mypy."""
+            if not isinstance(candidate, dict):
+                return 0.0
+            value = candidate.get(key, 0.0)
+            return float(value) if isinstance(value, (int, float, str)) else 0.0
+
+        best = top_list[0] if top_list else None
+        best_score = _candidate_float(best, "score")
+        best_score_raw = _candidate_float(best, "score_raw")
+        best_err_raw = float(1.0 - best_score_raw)
+
+        second = top_list[1] if len(top_list) > 1 else None
+        margin = (best_score - _candidate_float(second, "score")) if isinstance(second, dict) else None
+        margin_raw = (best_score_raw - _candidate_float(second, "score_raw")) if isinstance(second, dict) else None
+
+        # Decision labels are for logs/JSON traces, not control logic yet.
+        decision: str | None = None
+        decision_note: str | None = None
+
+        if stored_flag is False:
+            decision = "reuse_exact"
+        else:
+            if best is None:
+                decision = "new_no_candidates"
+            else:
+                if priors_enabled:
+                    try:
+                        guard = float(priors.get("err_guard", 0.45) or 0.45)
+                    except Exception:
+                        guard = 0.45
+                    guard = max(0.0, min(1.0, float(guard)))
+
+                    if best_err_raw > guard:
+                        decision = "new_novel"
+                        decision_note = "guard_high_err"
+                    else:
+                        decision = "new_near_match" if best_score >= accept else "new_novel"
+                else:
+                    decision = "new_near_match" if best_score >= accept else "new_novel"
+
+        # Commit classification (Phase X 2.2c-style semantics, without changing control yet).
+        commit = "unknown"
+        if decision == "reuse_exact":
+            commit = "commit"
+        elif decision_note == "guard_high_err":
+            commit = "unknown"
+        elif best is None:
+            commit = "unknown"
+        else:
+            if best_score >= accept:
+                if isinstance(margin, float) and margin < amb_margin:
+                    commit = "ambiguous"
+                    if decision_note is None:
+                        decision_note = "ambiguous_low_margin"
+                else:
+                    commit = "commit"
+            else:
+                commit = "unknown"
+
+        # --- Demo: force an ambiguous commit for a chosen entity for N steps -------------
+        if demo_steps_left > 0 and demo_entity:
+            ent0 = p.get("entity_id")
+            ent = ent0.strip().lower() if isinstance(ent0, str) else ""
+            if ent == demo_entity:
+                commit = "ambiguous"
+                if decision_note is None:
+                    decision_note = "demo_force_ambiguity"
+                margin = float(demo_margin)
+                margin_raw = float(demo_margin)
+
+        rec_out = {
+            "sig": sig,
+            "sig16": sig16,
+            "priors_sig16": (priors.get("sig16") if isinstance(priors, dict) else None),
+            "local_id": p.get("local_id"),
+            "entity_id": p.get("entity_id"),
+            "role": p.get("role"),
+            "stored": stored_flag,
+            "engram_id": engram_id,
+            "decision": decision,
+            "decision_note": decision_note,
+            "commit": commit,
+            "margin": float(margin) if isinstance(margin, float) else None,
+            "margin_raw": float(margin_raw) if isinstance(margin_raw, float) else None,
+            "best": best,
+            "top_k": top_list,
+        }
+        out.append(rec_out)
+
+        # Attach trace back onto the patch itself (JSON-safe).
+        try:
+            p["sig"] = sig
+            p["sig16"] = sig16
+            p["match"] = {
+                "decision": decision,
+                "decision_note": decision_note,
+                "commit": commit,
+                "margin": rec_out.get("margin"),
+                "priors_sig16": rec_out.get("priors_sig16"),
+                "best": best,
+                "top_k": top_list,
+            }
+        except Exception:
+            pass
+
+    try:
+        ctx.navpatch_last_matches = out
+    except Exception:
+        pass
+
+    # Decrement demo knob once per navpatch loop call (one per env step).
+    if demo_steps_left > 0:
+        try:
+            ctx.wm_demo_force_ambiguity_steps = max(0, int(demo_steps_left) - 1)
+        except Exception:
+            pass
+    return out
+
+
+def wm_apply_grid_slot_families_to_mapsurface_v1(working_world, self_bid: str, slots: dict[str, Any]) -> list[str]:
+    """Apply Step-13 grid-derived slot-families onto WM.MapSurface (SELF), deterministically.
+
+    Intent
+    ------
+    SurfaceGrid is the topological substrate; MapSurface is the action-ready sketch.
+    This helper writes a *very small*, stable set of pred:* tags onto the existing
+    MapSurface SELF binding using overwrite-by-slot-family semantics.
+
+    Design constraints
+    ------------------
+    - Must NOT create new bindings or edges (no uncontrolled growth).
+    - Must NOT emit cue:* (no cue leakage).
+    - Must be deterministic: same `slots` -> same written tags.
+    - Overwrite-by-family: each derived family replaces its previous value each tick.
+
+    Slot mapping (v1)
+    -----------------
+    - slots["hazard:near"] == True        -> "pred:hazard:near"     (otherwise absent)
+    - slots["terrain:traversable_near"]   -> "pred:terrain:traversable_near" (otherwise absent)
+    - slots["goal:dir"] == "NE"/"E"/...   -> "pred:goal:dir:<dir8>" (otherwise absent)
+
+    Parameters
+    ----------
+    working_world
+        The WorkingMap WorldGraph instance (ctx.working_world).
+    self_bid
+        Binding id of the MapSurface SELF node in the working_world.
+    slots
+        Dict produced by derive_grid_slot_families_v1(...).
+
+    Returns
+    -------
+    list[str]
+        The pred:* tags written this tick (for logging / JSON traces / debugging).
+    """
+    if working_world is None or not isinstance(self_bid, str) or not self_bid:
+        return []
+
+    bindings = getattr(working_world, "_bindings", None)
+    if not isinstance(bindings, dict) or self_bid not in bindings:
+        return []
+
+    b = bindings.get(self_bid)
+    if b is None:
+        return []
+    raw = getattr(b, "tags", None)
+
+    # Normalize to a set for editing (keep other tags intact).
+    if isinstance(raw, set):
+        tset = set(t for t in raw if isinstance(t, str))
+        out_kind = "set"
+    elif isinstance(raw, list):
+        tset = set(t for t in raw if isinstance(t, str))
+        out_kind = "list"
+    else:
+        tset = set()
+        out_kind = "list"
+
+    # Overwrite-by-family: remove prior derived tags (only our tiny namespace).
+    def _drop_prefix(prefix: str) -> None:
+        nonlocal tset
+        tset = set(t for t in tset if not (isinstance(t, str) and t.startswith(prefix)))
+
+    _drop_prefix("pred:goal:dir:")
+    if "pred:hazard:near" in tset:
+        tset.discard("pred:hazard:near")
+    if "pred:terrain:traversable_near" in tset:
+        tset.discard("pred:terrain:traversable_near")
+
+    written: list[str] = []
+
+    if bool(slots.get("hazard:near", False)):
+        tset.add("pred:hazard:near")
+        written.append("pred:hazard:near")
+
+    if bool(slots.get("terrain:traversable_near", False)):
+        tset.add("pred:terrain:traversable_near")
+        written.append("pred:terrain:traversable_near")
+
+    gd = slots.get("goal:dir")
+    if isinstance(gd, str) and gd:
+        tag = f"pred:goal:dir:{gd}"
+        tset.add(tag)
+        written.append(tag)
+
+    # Write back, preserving the original container kind where possible.
+    if out_kind == "set":
+        b.tags = set(tset)
+    else:
+        b.tags = sorted(tset)
+
+    return written
+
+
+def _wm_dir8_v1(dx: int, dy: int) -> str:
+    """Return a compact 8-way direction code from an integer delta.
+
+    The goal here is readability, not geometry perfection. This matches the spirit
+    of the simple directional summaries already used elsewhere in the CCA8 codebase.
+    """
+    sx = 0 if dx == 0 else (1 if dx > 0 else -1)
+    sy = 0 if dy == 0 else (1 if dy > 0 else -1)
+
+    if sx == 0 and sy == 0:
+        return "C"
+    if sx == 0 and sy < 0:
+        return "N"
+    if sx == 0 and sy > 0:
+        return "S"
+    if sx > 0 and sy == 0:
+        return "E"
+    if sx < 0 and sy == 0:
+        return "W"
+    if sx > 0 and sy < 0:  #pylint: disable=chained-comparison
+        return "NE"
+    if sx > 0 and sy > 0:
+        return "SE"
+    if sx < 0 and sy < 0:
+        return "NW"
+    return "SW"
+
+
+def _wm_surfacegrid_local_points_v1(grid_w: int, grid_h: int, cx: int, cy: int, radius: int) -> list[tuple[int, int]]:
+    """Return Euclidean-disk local points around SELF for NavSummary v1.
+
+    This intentionally mirrors the "near-self local neighborhood" idea already
+    used for small grid-derived slot families. The result is small, deterministic,
+    and cheap to scan every cycle.
+    """
+    w = max(1, int(grid_w))
+    h = max(1, int(grid_h))
+    r = max(0, int(radius))
+
+    pts: list[tuple[int, int]] = []
+    r2 = r * r
+    for y in range(max(0, cy - r), min(h, cy + r + 1)):
+        dy = y - cy
+        for x in range(max(0, cx - r), min(w, cx + r + 1)):
+            dx = x - cx
+            if (dx * dx + dy * dy) <= r2:
+                pts.append((x, y))
+    return pts
+
+
+def _wm_surfacegrid_corridor_count_v1(sg: SurfaceGridV1, *, self_xy: tuple[int, int], local_radius: int) -> int:
+    """Count connected traversable components near SELF.
+
+    v1 definition:
+      - local neighborhood = Euclidean disk around SELF
+      - safe/traversable cells = CELL_TRAVERSABLE or CELL_GOAL
+      - connectivity = 4-neighbor
+
+    This is a deliberately simple proxy for "how many local traversable branches
+    or corridors do I have right now?"
+    """
+    w = int(getattr(sg, "grid_w", 0) or 0)
+    h = int(getattr(sg, "grid_h", 0) or 0)
+    cells = getattr(sg, "grid_cells", None)
+    if not isinstance(cells, list) or len(cells) != (w * h) or w <= 0 or h <= 0:
+        return 0
+
+    cx, cy = int(self_xy[0]), int(self_xy[1])
+    pts = _wm_surfacegrid_local_points_v1(w, h, cx, cy, local_radius)
+    local = set(pts)
+    safe_codes = {CELL_TRAVERSABLE, CELL_GOAL}
+
+    walkable: set[tuple[int, int]] = set()
+    for x, y in pts:
+        try:
+            c = int(cells[y * w + x])
+        except Exception:
+            continue
+        if c in safe_codes:
+            walkable.add((x, y))
+
+    if not walkable:
+        return 0
+
+    seen: set[tuple[int, int]] = set()
+    comps = 0
+
+    for pt in sorted(walkable):
+        if pt in seen:
+            continue
+        comps += 1
+        stack = [pt]
+        seen.add(pt)
+
+        while stack:
+            x, y = stack.pop()
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                np = (nx, ny)
+                if np not in local or np not in walkable or np in seen:
+                    continue
+                seen.add(np)
+                stack.append(np)
+
+    return comps
+
+
+def _wm_surfacegrid_shortest_safe_path_cost_v1(sg: SurfaceGridV1, *, self_xy: tuple[int, int]) -> int | None:
+    """Return the shortest safe path length from SELF to any goal cell.
+
+    v1 safety rule:
+      - passable = CELL_TRAVERSABLE or CELL_GOAL
+      - impassable = unknown / hazard / blocked
+      - connectivity = 4-neighbor
+
+    This is intentionally conservative. Unknown cells are not treated as safe.
+    """
+    w = int(getattr(sg, "grid_w", 0) or 0)
+    h = int(getattr(sg, "grid_h", 0) or 0)
+    cells = getattr(sg, "grid_cells", None)
+    if not isinstance(cells, list) or len(cells) != (w * h) or w <= 0 or h <= 0:
+        return None
+
+    cx, cy = int(self_xy[0]), int(self_xy[1])
+    if not (0 <= cx < w and 0 <= cy < h):
+        return None
+
+    safe_codes = {CELL_TRAVERSABLE, CELL_GOAL}
+    goals: set[tuple[int, int]] = set()
+
+    for y in range(h):
+        base = y * w
+        for x in range(w):
+            try:
+                c = int(cells[base + x])
+            except Exception:
+                continue
+            if c == CELL_GOAL:
+                goals.add((x, y))
+
+    if not goals:
+        return None
+
+    try:
+        start_cell = int(cells[cy * w + cx])
+    except Exception:
+        return None
+
+    if start_cell == CELL_GOAL:
+        return 0
+    if start_cell not in safe_codes:
+        return None
+
+    queue: list[tuple[int, int, int]] = [(cx, cy, 0)]
+    seen: set[tuple[int, int]] = {(cx, cy)}
+    head = 0
+
+    while head < len(queue):
+        x, y, dist = queue[head]
+        head += 1
+
+        if (x, y) in goals:
+            return int(dist)
+
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if not (0 <= nx < w and 0 <= ny < h):
+                continue
+            if (nx, ny) in seen:
+                continue
+            try:
+                c = int(cells[ny * w + nx])
+            except Exception:
+                continue
+            if c not in safe_codes:
+                continue
+            seen.add((nx, ny))
+            queue.append((nx, ny, dist + 1))
+
+    return None
+
+
+def compute_navsummary_v1(
+    sg: SurfaceGridV1,
+    *,
+    slots: dict[str, Any] | None = None,
+    self_xy: tuple[int, int] | None = None,
+    local_radius: int = 2,
+) -> dict[str, Any]:
+    """Compute a compact numeric summary from the current SurfaceGrid.
+
+    Purpose
+    -------
+    NavSummary is the "cheap scan once" layer that sits between raw topology and
+    later policy logic. It is intentionally small and JSON-safe, and it avoids
+    exploding the number of derived pred:* tags on MapSurface.
+
+    v1 outputs
+    ----------
+    - hazard_near / hazard_density
+    - traversable_near / traversable_density
+    - corridor_count
+    - goal_present / goal_dir / goal_distance_l1
+    - shortest_safe_path_cost
+
+    Notes
+    -----
+    - Densities are LOCAL to a small SELF-centered disk (radius=local_radius),
+      not whole-grid fractions.
+    - goal_dir is first taken from `slots["goal:dir"]` if already computed by
+      the grid→slot-family path; otherwise we derive it from the nearest goal.
+    - shortest_safe_path_cost is conservative and may be None when no safe route
+      is visible from the current grid.
+    """
+    w = int(getattr(sg, "grid_w", 0) or 0)
+    h = int(getattr(sg, "grid_h", 0) or 0)
+    cells = getattr(sg, "grid_cells", None)
+    if not isinstance(cells, list) or len(cells) != (w * h) or w <= 0 or h <= 0:
+        return {}
+
+    if self_xy is None:
+        cx = w // 2
+        cy = h // 2
+    else:
+        cx = max(0, min(w - 1, int(self_xy[0])))
+        cy = max(0, min(h - 1, int(self_xy[1])))
+
+    r = max(1, int(local_radius))
+    pts = _wm_surfacegrid_local_points_v1(w, h, cx, cy, r)
+
+    blocked_code = int(getattr(cca8_navpatch, "CELL_BLOCKED", 4) or 4)
+
+    total_local_n = len(pts)
+    unknown_n = 0
+    traversable_n = 0
+    hazard_n = 0
+    goal_n = 0
+    blocked_n = 0
+
+    for x, y in pts:
+        try:
+            c = int(cells[y * w + x])
+        except Exception:
+            continue
+
+        if c == CELL_UNKNOWN:
+            unknown_n += 1
+        elif c == CELL_TRAVERSABLE:
+            traversable_n += 1
+        elif c == CELL_HAZARD:
+            hazard_n += 1
+        elif c == CELL_GOAL:
+            goal_n += 1
+        elif c == blocked_code:
+            blocked_n += 1
+
+    known_n = max(0, total_local_n - unknown_n)
+    safe_local_n = traversable_n + goal_n
+
+    if isinstance(slots, dict):
+        hazard_near = bool(slots.get("hazard:near", False))
+        traversable_near = bool(slots.get("terrain:traversable_near", False))
+        slot_goal_dir = slots.get("goal:dir")
+        goal_dir = slot_goal_dir if isinstance(slot_goal_dir, str) and slot_goal_dir else None
+    else:
+        hazard_near = (hazard_n + blocked_n) > 0
+        traversable_near = safe_local_n > 0
+        goal_dir = None
+
+    hazard_density = float(hazard_n + blocked_n) / float(known_n) if known_n > 0 else 0.0
+    traversable_density = float(safe_local_n) / float(known_n) if known_n > 0 else 0.0
+
+    goal_pts: list[tuple[int, int]] = []
+    for y in range(h):
+        base = y * w
+        for x in range(w):
+            try:
+                if int(cells[base + x]) == CELL_GOAL:
+                    goal_pts.append((x, y))
+            except Exception:
+                continue
+
+    goal_present = bool(goal_pts)
+    goal_distance_l1: int | None = None
+
+    if goal_pts:
+        nearest = min(goal_pts, key=lambda p: (abs(p[0] - cx) + abs(p[1] - cy), p[1], p[0]))
+        goal_distance_l1 = int(abs(nearest[0] - cx) + abs(nearest[1] - cy))
+        if goal_dir is None:
+            goal_dir = _wm_dir8_v1(nearest[0] - cx, nearest[1] - cy)
+
+    shortest_safe_path_cost = _wm_surfacegrid_shortest_safe_path_cost_v1(sg, self_xy=(cx, cy))
+    corridor_count = _wm_surfacegrid_corridor_count_v1(sg, self_xy=(cx, cy), local_radius=r)
+
+    try:
+        grid_sig16 = sg.sig16_v1()
+    except Exception:
+        grid_sig16 = None
+
+    return {
+        "schema": "wm_navsummary_v1",
+        "grid_sig16": grid_sig16 if isinstance(grid_sig16, str) and grid_sig16 else None,
+        "grid_w": int(w),
+        "grid_h": int(h),
+        "self_xy": [int(cx), int(cy)],
+        "local_radius": int(r),
+        "hazard_near": bool(hazard_near),
+        "hazard_density": float(hazard_density),
+        "traversable_near": bool(traversable_near),
+        "traversable_density": float(traversable_density),
+        "corridor_count": int(corridor_count),
+        "goal_present": bool(goal_present),
+        "goal_dir": goal_dir if isinstance(goal_dir, str) and goal_dir else None,
+        "goal_distance_l1": int(goal_distance_l1) if isinstance(goal_distance_l1, int) else None,
+        "shortest_safe_path_cost": (
+            int(shortest_safe_path_cost) if isinstance(shortest_safe_path_cost, int) else None
+        ),
+        "local_counts": {
+            "total": int(total_local_n),
+            "known": int(known_n),
+            "unknown": int(unknown_n),
+            "traversable": int(traversable_n),
+            "goal": int(goal_n),
+            "hazard": int(hazard_n),
+            "blocked": int(blocked_n),
+        },
+    }
+
+
+def format_navsummary_line_v1(summary: dict[str, Any]) -> str:
+    """Render a compact one-line NavSummary for terminal logs."""
+    if not isinstance(summary, dict) or not summary:
+        return "(none)"
+
+    hazard_near = 1 if bool(summary.get("hazard_near", False)) else 0
+    traversable_near = 1 if bool(summary.get("traversable_near", False)) else 0
+
+    try:
+        hazard_density = float(summary.get("hazard_density", 0.0) or 0.0)
+    except Exception:
+        hazard_density = 0.0
+
+    try:
+        traversable_density = float(summary.get("traversable_density", 0.0) or 0.0)
+    except Exception:
+        traversable_density = 0.0
+
+    try:
+        corridors = int(summary.get("corridor_count", 0) or 0)
+    except Exception:
+        corridors = 0
+
+    goal_dir = summary.get("goal_dir")
+    goal_dir_txt = goal_dir if isinstance(goal_dir, str) and goal_dir else "(none)"
+
+    goal_l1 = summary.get("goal_distance_l1")
+    goal_l1_txt = str(int(goal_l1)) if isinstance(goal_l1, int) else "n/a"
+
+    safe_cost = summary.get("shortest_safe_path_cost")
+    safe_cost_txt = str(int(safe_cost)) if isinstance(safe_cost, int) else "n/a"
+
+    return (
+        f"hazard_near={hazard_near} hazard_density={hazard_density:.2f} "
+        f"traversable_near={traversable_near} traversable_density={traversable_density:.2f} "
+        f"corridors={corridors} goal_dir={goal_dir_txt} goal_l1={goal_l1_txt} safe_cost={safe_cost_txt}"
+    )
+
+
+def _wm_entity_pos_xy_v1(ww, bid: str) -> tuple[float, float] | None:
+    """Best-effort read of WM schematic position from binding.meta['wm']['pos'].
+
+    Returns:
+        (x, y) floats in the WM schematic frame, or None if missing.
+    """
+    try:
+        b = getattr(ww, "_bindings", {}).get(bid)
+        if b is None:
+            return None
+        meta = getattr(b, "meta", None)
+        if not isinstance(meta, dict):
+            return None
+        wmm = meta.get("wm")
+        if not isinstance(wmm, dict):
+            return None
+        pos = wmm.get("pos")
+        if not isinstance(pos, dict):
+            return None
+        x = pos.get("x")
+        y = pos.get("y")
+        if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            return (float(x), float(y))
+    except Exception:
+        return None
+    return None
+
+
+def _wm_entity_kind_v1(ww, bid: str) -> str | None:
+    """Return WM kind tag value (e.g., 'hazard', 'shelter', 'agent') if present."""
+    try:
+        b = getattr(ww, "_bindings", {}).get(bid)
+        if b is None:
+            return None
+        tags = getattr(b, "tags", []) or []
+        for t in tags:
+            if isinstance(t, str) and t.startswith("wm:kind:"):
+                return t.split(":", 2)[2]
+    except Exception:
+        return None
+    return None
+
+
+def _wm_entity_dist_class_v1(ww, bid: str) -> str | None:
+    """Return the WM distance-class metadata (e.g., touching / near / far) when present.
+
+    We use this only for terminal presentation. In particular, if mom is marked
+    as "touching", the SurfaceGrid can render a combined SELF+MOM symbol even if
+    the schematic coordinate projection would otherwise place mom in a nearby cell.
+    """
+    try:
+        b = getattr(ww, "_bindings", {}).get(bid)
+        if b is None:
+            return None
+        meta = getattr(b, "meta", None)
+        if not isinstance(meta, dict):
+            return None
+        wmm = meta.get("wm")
+        if not isinstance(wmm, dict):
+            return None
+        dc = wmm.get("dist_class")
+        if isinstance(dc, str) and dc:
+            return dc
+    except Exception:
+        return None
+    return None
+
+
+def _wm_pos_to_grid_cell_v1(x: float, y: float, grid_w: int, grid_h: int) -> tuple[int, int] | None:
+    """Map WM schematic (x,y) to a SurfaceGrid cell, assuming SELF is centered."""
+    try:
+        w = int(grid_w)
+        h = int(grid_h)
+        if w <= 0 or h <= 0:
+            return None
+        cx = w // 2
+        cy = h // 2
+        gx = cx + int(round(float(x)))
+        gy = cy + int(round(float(y)))
+        if 0 <= gx < w and 0 <= gy < h:
+            return (gx, gy)
+    except Exception:
+        return None
+    return None
+
+
+def _wm_surfacegrid_window_anchor_v2(env_obs: EnvObservation, *, zoom_level: int = 0) -> tuple[int, int]:
+    """Compute a coarse SELF-local window anchor for dirty-cache v2.
+
+    We do not yet have a fully explicit scrolling local-window object, so we use
+    env_meta['kid_position'] as a pragmatic proxy for whether the current local
+    view should be considered shifted enough to warrant recomposition.
+
+    The bucket size is zoom-sensitive: higher zoom means the effective local
+    footprint is smaller, so smaller motion should trigger a window shift.
+    """
+    env_meta = getattr(env_obs, "env_meta", None) or {}
+    kid_pos = env_meta.get("kid_position")
+    if not (isinstance(kid_pos, (tuple, list)) and len(kid_pos) == 2):
+        return (0, 0)
+
+    try:
+        x = float(kid_pos[0])
+        y = float(kid_pos[1])
+    except Exception:
+        return (0, 0)
+
+    bucket = 1.0 / max(1, int(zoom_level) + 1)
+    return (int(round(x / bucket)), int(round(y / bucket)))
+
+
+def _wm_surfacegrid_scene_fingerprint_v2(
+    env_obs: EnvObservation,
+    patches: list[dict[str, Any]],
+    *,
+    grid_w: int,
+    grid_h: int,
+    zoom_level: int,
+    focus_entities: list[str],
+) -> dict[str, Any]:
+    """Build the v2 dirty-cache fingerprint for the current SurfaceGrid scene.
+
+    This fingerprints the *incoming evidence* (patch payload sigs) plus a few
+    semantically important display/context fields. That lets us distinguish a
+    true cache hit from cases where the underlying scene changed even if the old
+    v1 patch-sig cache would have missed it.
+    """
+    sig16s: list[str] = []
+    for patch in patches:
+        if not isinstance(patch, dict):
+            continue
+        try:
+            sig16s.append(navpatch_payload_sig_v1(patch)[:16])
+        except Exception:
+            continue
+    sig16s.sort()
+
+    preds = {str(x) for x in (getattr(env_obs, "predicates", None) or []) if x is not None}
+    hazard_sig = sorted(tok for tok in preds if tok.startswith("hazard:"))
+
+    focus = [str(x).strip().lower() for x in (focus_entities or []) if isinstance(x, str) and x.strip()]
+
+    return {
+        "input_sig16": sig16s,
+        "grid_wh": [int(grid_w), int(grid_h)],
+        "window_anchor": list(_wm_surfacegrid_window_anchor_v2(env_obs, zoom_level=zoom_level)),
+        "zoom_level": int(zoom_level),
+        "focus_entities": focus,
+        "hazard_sig": hazard_sig,
+    }
+
+
+def _wm_surfacegrid_dirty_reasons_v2(ctx: Ctx, fingerprint: dict[str, Any]) -> list[str]:
+    """Compare the current scene fingerprint to the previous one.
+
+    Cleanup intent
+    --------------
+    We want the dirty reasons to describe *why the scene changed*, not to over-report
+    grid-shape changes when the composed map dimensions are actually stable.
+
+    v2 rule:
+      - grid_shape_changed is based on previous vs current fingerprinted grid_wh
+      - the current SurfaceGrid object's grid_w/grid_h are used only as a sanity check
+      - semantic reasons (patches/focus/window/hazard/zoom) still come from the fingerprint
+    """
+    reasons: list[str] = []
+
+    prev = getattr(ctx, "wm_surfacegrid_last_scene_fingerprint", None)
+    if not isinstance(prev, dict):
+        prev = {}
+
+    sg = getattr(ctx, "wm_surfacegrid", None)
+
+    def _fp_grid_wh(fp: dict[str, Any]) -> tuple[int, int] | None:
+        raw = fp.get("grid_wh")
+        if not (isinstance(raw, (list, tuple)) and len(raw) == 2):
+            return None
+        try:
+            return (int(raw[0]), int(raw[1]))
+        except Exception:
+            return None
+    prev_wh = _fp_grid_wh(prev)
+    cur_wh = _fp_grid_wh(fingerprint)
+    has_prev_fingerprint = bool(prev)
+
+    # Bootstrap / structural checks first.
+    if sg is None:
+        reasons.append("grid_missing")
+    else:
+        # Shape change is an explanation about the requested scene fingerprint changing
+        # across ticks, not about the already-composed previous grid object merely existing.
+        if prev_wh is not None and cur_wh is not None and prev_wh != cur_wh:
+            reasons.append("grid_shape_changed")
+        else:
+            # Keep a light sanity check on the existing SurfaceGrid object.
+            try:
+                sg_w = int(getattr(sg, "grid_w", 0) or 0)
+                sg_h = int(getattr(sg, "grid_h", 0) or 0)
+                if sg_w <= 0 or sg_h <= 0:
+                    reasons.append("grid_check_error")
+            except Exception:
+                reasons.append("grid_check_error")
+
+    # Fingerprint-driven semantic reasons.
+    #
+    # Bootstrap policy:
+    # - On the very first compose, report scene-content reasons such as patches_changed
+    #   and hazard_changed.
+    # - Do NOT report transition-style reasons like self_window_shift / zoom_changed /
+    #   focus_changed until there is an actual previous fingerprint to compare against.
+    if list(prev.get("input_sig16", [])) != list(fingerprint.get("input_sig16", [])):
+        reasons.append("patches_changed")
+    if has_prev_fingerprint and list(prev.get("window_anchor", [])) != list(fingerprint.get("window_anchor", [])):
+        reasons.append("self_window_shift")
+    if has_prev_fingerprint and int(prev.get("zoom_level", 0) or 0) != int(fingerprint.get("zoom_level", 0) or 0):
+        reasons.append("zoom_changed")
+    if has_prev_fingerprint and list(prev.get("focus_entities", [])) != list(fingerprint.get("focus_entities", [])):
+        reasons.append("focus_changed")
+    if list(prev.get("hazard_sig", [])) != list(fingerprint.get("hazard_sig", [])):
+        reasons.append("hazard_changed")
+    return reasons or ["cache_hit"]
+
+
+def _surfacegrid_ascii_lines_v1(grid_w: int, grid_h: int, cells: list[int], *, sparse: bool) -> list[str]:
+    """Render grid cells to ASCII lines (v1). Display-only: does not mutate the grid.
+
+    Mapping (v1):
+        unknown -> ' '
+        traversable -> '.' (or ' ' if sparse=True)
+        hazard -> '#'
+        goal -> 'G'
+        4 (blocked/reserved) -> 'X'
+        other -> '?'
+    """
+    w = int(grid_w); h = int(grid_h)
+    if w <= 0 or h <= 0 or len(cells) != w * h:
+        return ["(surfacegrid: invalid dims/cells)"]
+
+    def _ch(v: int) -> str:
+        if v == CELL_UNKNOWN:
+            return " "
+        if v == CELL_TRAVERSABLE:
+            return " " if sparse else "."
+        if v == CELL_HAZARD:
+            return "#"
+        if v == CELL_GOAL:
+            return "G"
+        if v == 4:
+            return "X"
+        return "?"
+
+    out: list[str] = []
+    for y in range(h):
+        base = y * w
+        out.append("".join(_ch(int(cells[base + x])) for x in range(w)))
+    return out
+
+
+def _wm_entity_mark_char_v1(entity_id: str, kind: str | None) -> str:
+    """Choose a single-character mark for an entity in SurfaceGrid ASCII."""
+    eid = (entity_id or "").strip().lower()
+    if eid == "self":
+        return "@"
+    if eid in ("mom", "mother"):
+        return "M"
+    if eid == "shelter":
+        return "S"
+    if eid in ("cliff", "drop", "danger") or (kind == "hazard"):
+        return "C"
+    return "*"
+
+
+def _wm_display_focus_entities_v1(focus_entities: list[str]) -> list[str]:
+    """Normalize the salience focus list for terminal display.
+
+    Why this helper exists
+    ----------------------
+    The internal salience machinery can occasionally include meta-entities such as
+    "scene" that are useful for bookkeeping but are not meaningful landmarks for a
+    human reading the SurfaceGrid printout.
+
+    This helper keeps the printed focus list stable and readable by:
+      - dropping known non-spatial/meta ids,
+      - de-duplicating entries,
+      - presenting common landmarks in a fixed user-facing order.
+    """
+    raw: list[str] = []
+    for item in (focus_entities or []):
+        if isinstance(item, str) and item.strip():
+            raw.append(item.strip().lower())
+
+    skip = {"scene", "wm_root", "root", "now"}
+
+    seen: set[str] = set()
+    kept: list[str] = []
+    for ent in raw:
+        if ent in skip:
+            continue
+        if ent in seen:
+            continue
+        seen.add(ent)
+        kept.append(ent)
+
+    ordered: list[str] = []
+    preferred = ("self", "cliff", "shelter", "mom", "nipple")
+    for ent in preferred:
+        if ent in seen:
+            ordered.append(ent)
+
+    for ent in sorted(kept):
+        if ent not in preferred:
+            ordered.append(ent)
+
+    return ordered
+
+
+def render_surfacegrid_ascii_with_salience_v1(ctx: Ctx, ww, sg: SurfaceGridV1, *, focus_entities: list[str]) -> str:
+    """Render a sparse SurfaceGrid ASCII string and overlay salient entity marks.
+
+    This is display-only: it never changes sg.cells, so Step 13 grid->predicates remains unchanged.
+
+    Overlay rules
+    -------------
+      - SELF is normally rendered as '@' at the center cell.
+      - If mom is effectively co-located with SELF (same grid cell, or dist_class='touching'),
+        render '&' at the center cell to mean SELF+MOM.
+      - Other focus entities are rendered in their own cells using one-letter marks.
+    """
+    w = int(getattr(sg, "grid_w", 0) or 0)
+    h = int(getattr(sg, "grid_h", 0) or 0)
+
+    cells = getattr(sg, "grid_cells", None)
+    if not isinstance(cells, list):
+        # Back-compat: some earlier drafts used sg.cells
+        cells = getattr(sg, "cells", None)
+    if not isinstance(cells, list):
+        cells = []
+
+    sparse = bool(getattr(ctx, "wm_surfacegrid_ascii_sparse", True))
+
+    try:
+        cells_i = [int(x) for x in cells]
+    except Exception:
+        cells_i = []
+
+    lines = _surfacegrid_ascii_lines_v1(w, h, cells_i, sparse=sparse)
+
+    if w <= 0 or h <= 0 or len(lines) != h:
+        return "\n".join(lines)
+
+    grid: list[list[str]] = []
+    for row in lines:
+        rr = list(row)
+        if len(rr) < w:
+            rr.extend([" "] * (w - len(rr)))
+        grid.append(rr[:w])
+
+    cx = w // 2
+    cy = h // 2
+
+    # Start with SELF at center; we may later upgrade this to '&' if mom is touching/co-located.
+    try:
+        grid[cy][cx] = "@"
+    except Exception:
+        pass
+
+    show_entities = bool(getattr(ctx, "wm_surfacegrid_ascii_show_entities", True))
+    if not show_entities:
+        return "\n".join("".join(r) for r in grid)
+
+    for eid in _wm_display_focus_entities_v1(focus_entities):
+        if not isinstance(eid, str):
+            continue
+
+        ent = eid.strip().lower()
+        if not ent or ent == "self":
+            continue
+
+        bid = (getattr(ctx, "wm_entities", {}) or {}).get(ent)
+        if not isinstance(bid, str):
+            continue
+
+        pos = _wm_entity_pos_xy_v1(ww, bid)
+        if pos is None:
+            continue
+        x, y = pos
+
+        cell = _wm_pos_to_grid_cell_v1(x, y, w, h)
+        if cell is None:
+            continue
+        gx, gy = cell
+
+        kind = _wm_entity_kind_v1(ww, bid)
+        dist_class = _wm_entity_dist_class_v1(ww, bid)
+        mark = _wm_entity_mark_char_v1(ent, kind)
+
+        try:
+            # Presentation rule: when mom is physically with SELF, show a combined symbol.
+            if ent in ("mom", "mother") and (dist_class == "touching" or (gx == cx and gy == cy)):
+                grid[cy][cx] = "&"
+            else:
+                grid[gy][gx] = mark
+        except Exception:
+            pass
+
+    # Re-assert SELF only when we are NOT intentionally showing the combined SELF+MOM symbol.
+    try:
+        if grid[cy][cx] != "&":
+            grid[cy][cx] = "@"
+    except Exception:
+        pass
+
+    return "\n".join("".join(r) for r in grid)
+
+
+def format_surfacegrid_ascii_map_v1(
+    ascii_txt: str,
+    *,
+    title: str | None = None,
+    legend: str | None = None,
+    show_axes: bool = True,
+) -> str:
+    """
+    Wrap a raw ASCII SurfaceGrid dump in a terminal-friendly "map frame".
+
+    Intent
+    ------
+    The SurfaceGrid renderer (render_surfacegrid_ascii_with_salience_v1) returns a raw block of rows,
+    where each character is a cell symbol (optionally with entity overlays like '@', 'M', 'C', 'S').
+    This helper adds:
+
+      - a border (top/bottom),
+      - optional x-axis labels (0..w-1, with tens row when w >= 10),
+      - optional y-axis labels (0..h-1),
+      - optional title and legend lines.
+
+    This is deliberately pure string formatting:
+      - No third-party libraries.
+      - No assumptions about semantic meanings of characters beyond what the renderer already decided.
+
+    Parameters
+    ----------
+    ascii_txt:
+        The raw ASCII grid text. May contain uneven line lengths; we pad rows to the max width
+        so the frame aligns cleanly.
+    title:
+        Optional header line shown above the axes/border. Use to include sig16, etc.
+    legend:
+        Optional legend line shown below the framed map.
+    show_axes:
+        If True, show x-axis (top) and y-axis (left). If False, draws only a border with no indices.
+
+    Returns
+    -------
+    str
+        Framed map text with no trailing newline.
+    """
+    s = (ascii_txt or "").rstrip("\n")
+    if not s:
+        return "(surfacegrid ascii: empty)"
+
+    rows = s.splitlines()
+    # Preserve intentional leading/trailing spaces in rows; only pad to a uniform width.
+    w = max((len(r) for r in rows), default=0)
+    h = len(rows)
+    padded = [r.ljust(w) for r in rows]
+
+    if show_axes:
+        y_w = max(2, len(str(max(0, h - 1))))
+        indent_border = " " * (y_w + 1)   # spaces before the '+-----+' border
+        indent_cells = " " * (y_w + 2)    # spaces before the first cell (after '|')
+    else:
+        y_w = 0
+        indent_border = ""
+        indent_cells = ""
+
+    out: list[str] = []
+    if title:
+        out.append(str(title))
+
+    if show_axes and w > 0:
+        tens = "".join(str((i // 10) % 10) if i >= 10 else " " for i in range(w))
+        ones = "".join(str(i % 10) for i in range(w))
+        if any(ch != " " for ch in tens):
+            out.append(indent_cells + tens)
+        out.append(indent_cells + ones)
+
+    border = indent_border + "+" + ("-" * w) + "+"
+    out.append(border)
+
+    for y, row in enumerate(padded):
+        if show_axes:
+            out.append(f"{y:>{y_w}d} |{row}|")
+        else:
+            out.append(f"|{row}|")
+
+    out.append(border)
+
+    if legend:
+        out.append(str(legend))
+
+    return "\n".join(out)
+
+
+def _surfacegrid_ascii_text_v1(ctx: Ctx, sg) -> Optional[str]:
+    """Return the best available raw ASCII SurfaceGrid text for the current tick.
+
+    Preference order
+    ----------------
+    1. Reuse ctx.wm_surfacegrid_last_ascii when it is already available.
+    2. Fall back to the renderer helper if the current code path has a SurfaceGrid
+       object but the cached ASCII text has not yet been populated.
+
+    This helper is read-mostly. It may refresh ctx.wm_surfacegrid_last_ascii when
+    the fallback renderer succeeds.
+    """
+    ascii_txt = getattr(ctx, "wm_surfacegrid_last_ascii", None)
+    if isinstance(ascii_txt, str) and ascii_txt:
+        return ascii_txt
+
+    render_fn = globals().get("render_surfacegrid_ascii_with_salience_v1")
+    if not callable(render_fn) or sg is None:
+        return None
+
+    ww = getattr(ctx, "working_world", None)
+    focus_entities = getattr(ctx, "wm_salience_focus_entities", None)
+    if not isinstance(focus_entities, list):
+        focus_entities = []
+    try:
+        focus_entities = _wm_display_focus_entities_v1(focus_entities)
+    except Exception:
+        focus_entities = list(focus_entities)
+
+    try:
+        ascii_txt = render_fn(ctx, ww, sg, focus_entities=focus_entities)
+    except Exception:
+        return None
+
+    if isinstance(ascii_txt, str) and ascii_txt:
+        try:
+            ctx.wm_surfacegrid_last_ascii = ascii_txt
+        except Exception:
+            pass
+        return ascii_txt
+
+    return None
+
+
+def _surfacegrid_terminal_block_key_v1(map_txt: str) -> str:
+    """Return a normalized comparison key for the framed SurfaceGrid terminal block.
+
+    Why this helper exists
+    ----------------------
+    The terminal UX should suppress repeat prints when the *visible* SurfaceGrid
+    block is unchanged. Comparing the raw cached ascii snapshot alone can be too
+    strict, because upstream recomposition may produce harmless whitespace-only
+    differences while the framed terminal block the user sees is identical.
+
+    Normalization
+    -------------
+    - split into lines
+    - strip trailing whitespace per line
+    - drop only blank lines at the very start/end
+    - preserve internal spaces and line order
+    """
+    if not isinstance(map_txt, str) or not map_txt:
+        return ""
+
+    lines = [line.rstrip() for line in map_txt.splitlines()]
+
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+
+    return "\n".join(lines)
+
+
+def _surfacegrid_ascii_terminal_block_v1(
+    ctx: Ctx,
+    sg,
+    *,
+    sig16: str,
+    line_prefix: str = "",
+    title: Optional[str] = None,
+    legend: Optional[str] = None,
+    ascii_text_fn: Callable[[Ctx, Any], str | None] | None = None,
+    format_map_fn: Callable[..., str] | None = None,
+) -> str:
+    """Return the terminal block for a SurfaceGrid map using change detection.
+
+    Behavior
+    --------
+    - First time a map is printed in this run: print the full framed map.
+    - If the visible framed map changes later: print the full framed map again.
+    - If the visible framed map is unchanged: print a short unchanged marker instead.
+
+    Why the comparison uses the framed block
+    ----------------------------------------
+    The raw cached ascii snapshot can differ across ticks for non-visual reasons,
+    while the formatted terminal block the user sees is identical. For terminal UX,
+    I therefore compare a normalized key derived from the formatted map block.
+    """
+    _ = sig16  # kept for call-site compatibility; helper no longer needs sig16 directly
+
+    active_ascii_text = ascii_text_fn or _surfacegrid_ascii_text_v1
+    active_format_map = format_map_fn or format_surfacegrid_ascii_map_v1
+
+    ascii_txt = active_ascii_text(ctx, sg)
+    if not isinstance(ascii_txt, str) or not ascii_txt:
+        try:
+            ctx.wm_surfacegrid_last_printed_ascii = None
+            ctx.wm_surfacegrid_last_printed_block = None
+        except Exception:
+            pass
+        return f"{line_prefix}map: (no ascii available)"
+
+    map_txt = active_format_map(
+        ascii_txt,
+        title=title,
+        legend=legend,
+        show_axes=True,
+    )
+    block_key = _surfacegrid_terminal_block_key_v1(map_txt)
+
+    show_each = bool(getattr(ctx, "wm_surfacegrid_ascii_each_tick", False))
+    last_block = getattr(ctx, "wm_surfacegrid_last_printed_block", None)
+    changed = bool(show_each or block_key != last_block)
+
+    if not changed:
+        try:
+            ctx.wm_surfacegrid_last_printed_ascii = ascii_txt
+        except Exception:
+            pass
+
+        if str(line_prefix).startswith("[cycle] SG"):
+            return f"{line_prefix}ASCII map already printed above; no second dump needed"
+
+        return f"{line_prefix}++SurfaceGrid ASCII Map is unchanged++"
+
+    try:
+        ctx.wm_surfacegrid_last_printed_ascii = ascii_txt
+        ctx.wm_surfacegrid_last_printed_block = block_key
+    except Exception:
+        pass
+
+    return f"{line_prefix}map:\n{map_txt}"
+
+
+def format_surfacegrid_snapshot_v1(ctx: Ctx) -> str:
+    """Format the current WM.SurfaceGrid stored on ctx using shared change detection.
+
+    Why this helper exists
+    ----------------------
+    Older call sites still want a single "give me the current SurfaceGrid as a
+    printable string" API. We now route those call sites through the same
+    changed-vs-unchanged logic used by the cycle footer, so the full ASCII map
+    is printed only when it actually changes.
+    """
+    sg = getattr(ctx, "wm_surfacegrid", None)
+    if sg is None:
+        return "[surfacegrid] (none)"
+
+    sig16 = getattr(ctx, "wm_surfacegrid_sig16", None)
+    if not isinstance(sig16, str) or not sig16:
+        try:
+            sig16 = sg.sig16_v1()
+        except Exception:
+            sig16 = "unknown"
+
+    try:
+        compose_ms = float(getattr(ctx, "wm_surfacegrid_compose_ms", 0.0) or 0.0)
+    except Exception:
+        compose_ms = 0.0
+
+    reasons = getattr(ctx, "wm_surfacegrid_dirty_reasons", None)
+    if not isinstance(reasons, list):
+        reasons = []
+
+    reason_items = [str(r) for r in reasons if isinstance(r, str) and r]
+    if reason_items == ["cache_hit"]:
+        reason_txt = ""
+    else:
+        reason_txt = ", ".join(reason_items)
+
+    focus_entities = getattr(ctx, "wm_salience_focus_entities", None)
+    if not isinstance(focus_entities, list):
+        focus_entities = []
+    try:
+        focus_entities = _wm_display_focus_entities_v1(focus_entities)
+    except Exception:
+        focus_entities = list(focus_entities)
+
+    focus_txt = ", ".join(focus_entities) or "(none)"
+
+    header = f"[surfacegrid] sig16={sig16} compose_ms={compose_ms:.2f} focus={focus_txt}"
+    if reason_txt:
+        header += f" reasons={reason_txt}"
+
+    legend_txt = (
+        "@=self &=self+mom M=mom S=shelter C=cliff G=goal "
+        "#=hazard X=blocked *=other  (dense: .=traversable; sparse: space=unknown/trav)"
+    )
+
+    block = _surfacegrid_ascii_terminal_block_v1(
+        ctx,
+        sg,
+        sig16=sig16,
+        line_prefix="",
+        title=f"WM.SurfaceGrid (sig16={sig16})",
+        legend=legend_txt,
+    )
+
+    return header + "\n" + block
+
+
+def wm_salience_force_focus_entity_v1(ctx: Ctx, entity_id: str, *, ttl: int | None = None, reason: str = "inspect") -> None:
+    """Force an entity into the Step-14 salience focus set for a few ticks.
+
+    This is *attention/display* only:
+      - It affects ctx.wm_salience_focus_entities (what we render as landmarks),
+      - It does NOT change MapSurface beliefs or WorldGraph state.
+
+    The TTL is decremented once per call to wm_salience_tick_v1(...).
+    """
+    if ctx is None or not isinstance(entity_id, str) or not entity_id.strip():
+        return
+
+    eid = entity_id.strip().lower()
+    try:
+        t = int(ttl) if ttl is not None else int(getattr(ctx, "wm_salience_inspect_focus_ttl", 4) or 4)
+    except Exception:
+        t = 4
+    t = max(1, min(50, int(t)))  # keep bounded
+
+    m = getattr(ctx, "wm_salience_forced_focus", None)
+    if not isinstance(m, dict):
+        ctx.wm_salience_forced_focus = {}
+        m = ctx.wm_salience_forced_focus
+
+    try:
+        prev = int(m.get(eid, 0) or 0)
+    except Exception:
+        prev = 0
+    if t > prev:
+        m[eid] = int(t)
+
+    rmap = getattr(ctx, "wm_salience_forced_reason", None)
+    if not isinstance(rmap, dict):
+        ctx.wm_salience_forced_reason = {}
+        rmap = ctx.wm_salience_forced_reason
+    if isinstance(reason, str) and reason:
+        rmap[eid] = reason
+
+
+def _wm_guess_inspected_entity_v1(
+    ctx: Ctx,
+    *,
+    body_cliff_distance_fn: Callable[[Ctx], Any] = body_cliff_distance,
+    body_mom_distance_fn: Callable[[Ctx], Any] = body_mom_distance,
+) -> str | None:
+    """Best-effort guess of a probe/inspect target when a policy doesn't specify one.
+
+    Priority order:
+      1) Any NavPatch matches whose commit != 'commit' (ambiguous/unknown). Prefer cliff if present.
+      2) If BodyMap says cliff is near, use cliff.
+      3) If BodyMap has mom distance info, use mom.
+      4) Otherwise None.
+    """
+    # 1) Ambiguous/unknown NavPatch entities (from ctx.navpatch_last_matches)
+    ent_ids: list[str] = []
+    try:
+        matches = getattr(ctx, "navpatch_last_matches", None)
+        if isinstance(matches, list):
+            for rec in matches:
+                if not isinstance(rec, dict):
+                    continue
+                commit = rec.get("commit")
+                if not isinstance(commit, str) or not commit or commit == "commit":
+                    continue
+                eid = rec.get("entity_id")
+                if isinstance(eid, str) and eid.strip():
+                    ent_ids.append(eid.strip().lower())
+    except Exception:
+        ent_ids = []
+
+    if ent_ids:
+        # Prefer high-safety relevance if present.
+        for pref in ("cliff", "shelter", "mom"):
+            if pref in ent_ids:
+                return pref
+        return sorted(set(ent_ids))[0]
+
+    # 2) BodyMap hazard
+    try:
+        if body_cliff_distance_fn(ctx) == "near":
+            return "cliff"
+    except Exception:
+        pass
+
+    # 3) BodyMap mom proximity
+    try:
+        md = body_mom_distance_fn(ctx)
+        if isinstance(md, str) and md:
+            return "mom"
+    except Exception:
+        pass
+
+    return None
+
+
+def _wm_salience_ambiguous_entities_v1(env_obs: EnvObservation) -> set[str]:
+    """Extract entities with ambiguous patch matches (commit != 'commit') from env_obs.nav_patches."""
+    out: set[str] = set()
+    patches = getattr(env_obs, "nav_patches", None) or []
+    if not isinstance(patches, list):
+        return out
+    for p in patches:
+        if not isinstance(p, dict):
+            continue
+        m = p.get("match")
+        if not isinstance(m, dict):
+            continue
+        commit = m.get("commit")
+        if isinstance(commit, str) and commit and commit != "commit":
+            eid = p.get("entity_id")
+            if isinstance(eid, str) and eid.strip():
+                out.add(eid.strip().lower())
+    return out
+
+
+def wm_salience_tick_v1(
+    ctx: Ctx,
+    ww,
+    *,
+    changed_entities: set[str],
+    new_cue_entities: set[str],
+    ambiguous_entities: set[str],
+    body_cliff_distance_fn: Callable[[Ctx], Any] = body_cliff_distance,
+    body_mom_distance_fn: Callable[[Ctx], Any] = body_mom_distance,
+    body_shelter_distance_fn: Callable[[Ctx], Any] = body_shelter_distance,
+) -> dict[str, Any]:
+    """One-tick salience update (Phase X Step 14, minimal v1).
+
+    Signals:
+      - changed_entities: any entity whose MapSurface slot-family was overwritten this tick.
+      - new_cue_entities: any entity that gained a new cue this tick.
+      - ambiguous_entities: any entity whose NavPatch match is not committed (commit != 'commit').
+
+    Storage:
+      - Writes per-entity fields under binding.meta['wm']:
+          salience_ttl: int
+          salience_reason: short string (best-effort)
+      - Returns a small dict for traces/printing:
+          {"focus_entities": [...], "events": [...]}  (JSON-safe)
+
+    TTL rules (v1):
+      - Novelty burst: changed or new cue → ttl=max(ttl, novelty_ttl)
+      - Promotion: hazard-relevant or ambiguous → ttl=max(ttl, promote_ttl)
+      - Decay: any entity not refreshed this tick decrements ttl by 1 down to 0
+    """
+    novelty_ttl = max(0, int(getattr(ctx, "wm_salience_novelty_ttl", 3) or 3))
+    promote_ttl = max(novelty_ttl, int(getattr(ctx, "wm_salience_promote_ttl", 8) or 8))
+    k_max = max(0, int(getattr(ctx, "wm_salience_max_items", 3) or 3))
+
+    changed = {e.strip().lower() for e in (changed_entities or set()) if isinstance(e, str) and e.strip()}
+    newc = {e.strip().lower() for e in (new_cue_entities or set()) if isinstance(e, str) and e.strip()}
+    amb = {e.strip().lower() for e in (ambiguous_entities or set()) if isinstance(e, str) and e.strip()}
+
+    # Mandatory baseline: SELF always.
+    focus: list[str] = ["self"]
+
+    # Hazard/goal relevance from BodyMap-first signals (cheap and robust).
+    try:
+        if body_cliff_distance_fn(ctx) == "near":
+            focus.append("cliff")
+    except Exception:
+        pass
+    try:
+        if body_shelter_distance_fn(ctx) in ("near", "touching"):
+            focus.append("shelter")
+    except Exception:
+        pass
+    try:
+        if body_mom_distance_fn(ctx) == "near":
+            focus.append("mom")
+    except Exception:
+        pass
+
+    # Novelty/focus candidates (excluding already forced ones).
+    forced = set(focus)
+
+    # Forced focus (inspect/probe): keep these entities in focus for a few ticks even if they stop being "top-K" now.
+    forced_map = getattr(ctx, "wm_salience_forced_focus", None)
+    forced_list: list[tuple[int, str]] = []
+    if isinstance(forced_map, dict) and forced_map:
+        for k, v in forced_map.items():
+            if not isinstance(k, str) or not k.strip():
+                continue
+            try:
+                ttl = int(v)
+            except Exception:
+                continue
+            if ttl > 0:
+                forced_list.append((ttl, k.strip().lower()))
+    # Deterministic order: higher TTL first, then lexical.
+    forced_list.sort(key=lambda t: (-t[0], t[1]))
+    # Keep bounded so focus doesn't explode.
+    for _ttl, e in forced_list[:8]:
+        if e and e not in forced:
+            focus.append(e)
+            forced.add(e)
+
+    cand: list[tuple[int, str, str]] = []
+    for e in amb:
+        if e not in forced and e != "self":
+            cand.append((3, e, "ambiguous"))
+    for e in changed:
+        if e not in forced and e != "self":
+            cand.append((2, e, "changed"))
+    for e in newc:
+        if e not in forced and e != "self":
+            cand.append((1, e, "new_cue"))
+
+    # Deterministic pick: higher priority first, then lexicographic.
+    cand.sort(key=lambda t: (-t[0], t[1], t[2]))
+    for _prio, e, _why in cand[:k_max]:
+        if e not in forced:
+            focus.append(e)
+            forced.add(e)
+
+    # Apply TTL updates into WM entity meta
+    events: list[dict[str, Any]] = []
+    ent_map = getattr(ctx, "wm_entities", {}) or {}
+    for eid, bid in ent_map.items():
+        if not isinstance(eid, str) or not isinstance(bid, str):
+            continue
+        e = eid.strip().lower()
+        if not e:
+            continue
+
+        b = getattr(ww, "_bindings", {}).get(bid)
+        if b is None:
+            continue
+        if not isinstance(getattr(b, "meta", None), dict):
+            b.meta = {}
+        wmm = b.meta.setdefault("wm", {})
+        if not isinstance(wmm, dict):
+            continue
+
+        prev_ttl = int(wmm.get("salience_ttl", 0) or 0)
+        prev_reason = wmm.get("salience_reason")
+        if not isinstance(prev_reason, str):
+            prev_reason = ""
+
+        refreshed = e in forced
+        reason = ""
+
+        # Choose the strongest reason we have (best-effort)
+        if e in amb:
+            reason = "ambiguous"
+        elif e in changed:
+            reason = "changed"
+        elif e in newc:
+            reason = "new_cue"
+        elif e in ("cliff", "shelter", "mom"):
+            # forced-by-goal/hazard, but no novelty signal this tick
+            reason = "goal/hazard"
+
+        if refreshed:
+            ttl_target = promote_ttl if (e in amb or e == "cliff") else novelty_ttl
+            ttl_new = max(prev_ttl, ttl_target)
+        else:
+            ttl_new = max(0, prev_ttl - 1)
+
+        if ttl_new != prev_ttl or (refreshed and reason and reason != prev_reason):
+            events.append(
+                {
+                    "entity": e,
+                    "ttl_prev": int(prev_ttl),
+                    "ttl_new": int(ttl_new),
+                    "refreshed": bool(refreshed),
+                    "reason": reason,
+                }
+            )
+
+        wmm["salience_ttl"] = int(ttl_new)
+        if reason:
+            wmm["salience_reason"] = reason
+        else:
+            # keep old reason if we are only decaying; drop when ttl hits 0
+            if ttl_new <= 0:
+                wmm.pop("salience_reason", None)
+
+    # Decrement forced-focus TTL counters once per tick.
+    try:
+        ff = getattr(ctx, "wm_salience_forced_focus", None)
+        if isinstance(ff, dict) and ff:
+            new_ff: dict[str, int] = {}
+            for e, ttl in ff.items():
+                if not isinstance(e, str) or not e.strip():
+                    continue
+                try:
+                    t = int(ttl)
+                except Exception:
+                    continue
+                t2 = t - 1
+                if t2 > 0:
+                    new_ff[e.strip().lower()] = int(t2)
+            ctx.wm_salience_forced_focus = new_ff
+
+            fr = getattr(ctx, "wm_salience_forced_reason", None)
+            if isinstance(fr, dict) and fr:
+                ctx.wm_salience_forced_reason = {e: str(fr.get(e, "")) for e in new_ff if e in fr}
+    except Exception:
+        pass
+
+    return {"focus_entities": list(focus), "events": events}
+
+
+
+
+# -----------------------------------------------------------------------------
+# Phase-2 orchestration helpers called by the still-runner-owned observation path
+# -----------------------------------------------------------------------------
+
+def update_working_navpatch_refs_v1(
+    ctx: Ctx,
+    env_obs: EnvObservation,
+    working_world: Any,
+    *,
+    ensure_entity_fn: Callable[..., str],
+    display_id_fn: Callable[[str], str] | None = None,
+    store_navpatch_fn: Callable[..., dict[str, Any]] | None = None,
+) -> None:
+    """Attach this observation's NavPatch references to WorkingMap entities.
+
+    The helper preserves the historical per-tick replacement semantics: active
+    entities receive the current reference list, while entities whose patches
+    disappeared have their ``patch_refs`` metadata removed. Heavy payloads may
+    be stored in Column memory through the supplied callback.
+    """
+    if ctx is None or env_obs is None or working_world is None:
+        return
+    if not bool(getattr(ctx, "navpatch_enabled", False)):
+        return
+
+    active_store = store_navpatch_fn or store_navpatch_engram_v1
+    active_display: Callable[[str], str] = display_id_fn or str
+    ww = working_world
+
+    patches_in = getattr(env_obs, "nav_patches", None) or []
+    refs_by_ent: dict[str, list[dict[str, Any]]] = {}
+    sigs_by_ent: dict[str, set[str]] = {}
+
+    if isinstance(patches_in, list):
+        for patch in patches_in:
+            if not isinstance(patch, dict):
+                continue
+
+            ent_raw = patch.get("entity_id") or patch.get("entity") or "self"
+            try:
+                ent = str(ent_raw).strip().lower() or "self"
+            except Exception:
+                ent = "self"
+
+            sig = navpatch_payload_sig_v1(patch)
+            sig16 = sig[:16]
+
+            engram_id: str | None = None
+            if bool(getattr(ctx, "navpatch_store_to_column", False)):
+                try:
+                    stored = active_store(ctx, patch, reason="env_obs")
+                    engram_id = stored.get("engram_id") if isinstance(stored, dict) else None
+                except Exception:
+                    engram_id = None
+
+            ref: dict[str, Any] = {
+                "sig16": sig16,
+                "sig": sig,
+                "engram_id": engram_id,
+                "local_id": patch.get("local_id"),
+                "role": patch.get("role"),
+                "frame": patch.get("frame"),
+            }
+
+            tags = patch.get("tags")
+            if isinstance(tags, list):
+                ref["tags"] = [tag for tag in tags if isinstance(tag, str) and tag][:8]
+
+            refs_by_ent.setdefault(ent, []).append(ref)
+            sigs_by_ent.setdefault(ent, set()).add(sig16)
+
+    bindings = getattr(ww, "_bindings", {})
+
+    for ent, refs in refs_by_ent.items():
+        kind = None
+        try:
+            roles = {ref.get("role") for ref in refs if isinstance(ref, dict)}
+            if "hazard" in roles or ent in ("cliff", "drop", "danger"):
+                kind = "hazard"
+            elif "shelter" in roles or ent == "shelter":
+                kind = "shelter"
+            elif ent in ("mom", "mother", "self"):
+                kind = "agent"
+        except Exception:
+            kind = None
+
+        bid = ensure_entity_fn(ent, kind_hint=kind)
+        binding = bindings.get(bid) if isinstance(bindings, dict) else None
+        if binding is not None:
+            if not isinstance(getattr(binding, "meta", None), dict):
+                binding.meta = {}
+            wm_meta = binding.meta.setdefault("wm", {})
+            if isinstance(wm_meta, dict):
+                wm_meta["patch_refs"] = list(refs)
+                try:
+                    first_ref = refs[0] if refs else None
+                    frame = first_ref.get("frame") if isinstance(first_ref, dict) else None
+                    if isinstance(frame, str) and frame:
+                        wm_meta["patch_frame"] = frame
+                except Exception:
+                    pass
+
+        try:
+            ctx.wm_last_navpatch_sigs[ent] = set(sigs_by_ent.get(ent, set()))
+        except Exception:
+            pass
+
+        if bool(getattr(ctx, "navpatch_verbose", False)):
+            try:
+                display = f"{active_display(bid)} ({bid})"
+                print(f"[env→working] PATCH x{len(refs)} → {display} (entity={ent})")
+            except Exception:
+                pass
+
+    try:
+        last_sig_map = getattr(ctx, "wm_last_navpatch_sigs", {}) or {}
+        for ent in list(last_sig_map.keys()):
+            if ent in refs_by_ent:
+                continue
+            existing_bid = (getattr(ctx, "wm_entities", {}) or {}).get(ent)
+            if isinstance(existing_bid, str) and isinstance(bindings, dict) and existing_bid in bindings:
+                binding = bindings.get(existing_bid)
+                if binding is not None and isinstance(getattr(binding, "meta", None), dict):
+                    wm_meta = binding.meta.get("wm")
+                    if isinstance(wm_meta, dict):
+                        wm_meta.pop("patch_refs", None)
+            ctx.wm_last_navpatch_sigs.pop(ent, None)
+    except Exception:
+        pass
+
+
+def update_working_navpatch_scratch_zoom_v1(
+    ctx: Ctx,
+    env_obs: EnvObservation,
+    working_world: Any,
+    *,
+    tagset_fn: Callable[[str], set[str]] | None = None,
+    upsert_edge_fn: Callable[[str, str, str, dict[str, Any] | None], None] | None = None,
+    body_cliff_distance_fn: Callable[[Ctx], Any] = body_cliff_distance,
+) -> None:
+    """Update ambiguity Scratch records and emit zoom transition events.
+
+    Ambiguous NavPatch commits are represented by stable WM_SCRATCH items so
+    later probe logic can inspect them without unbounded graph growth. A change
+    between an empty and non-empty ambiguity set emits one ``zoom_down`` or
+    ``zoom_up`` event, preserving the historical diagnostic behavior.
+    """
+    if ctx is None or env_obs is None or working_world is None:
+        return
+    if not bool(getattr(ctx, "navpatch_enabled", False)):
+        return
+    if not bool(getattr(ctx, "wm_scratch_navpatch_enabled", True)):
+        return
+
+    ww = working_world
+    def default_tagset(binding_id: str) -> set[str]:
+        """Return a mutable tag set from the active WorkingMap."""
+        return _wm_tagset_of(ww, binding_id)
+
+    def default_upsert(
+        src: str,
+        dst: str,
+        label: str,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        """Upsert one structural edge in the active WorkingMap."""
+        _wm_upsert_edge(ww, src, dst, label, meta)
+
+    active_tagset: Callable[[str], set[str]] = tagset_fn or default_tagset
+    active_upsert: Callable[[str, str, str, dict[str, Any] | None], None] = upsert_edge_fn or default_upsert
+
+    try:
+        scratch_bid = ww.ensure_anchor("WM_SCRATCH")
+
+        key_to_bid = getattr(ctx, "wm_scratch_navpatch_key_to_bid", None)
+        if not isinstance(key_to_bid, dict):
+            key_to_bid = {}
+            ctx.wm_scratch_navpatch_key_to_bid = key_to_bid
+
+        prev_keys = getattr(ctx, "wm_scratch_navpatch_last_keys", None)
+        if not isinstance(prev_keys, set):
+            prev_keys = set()
+            ctx.wm_scratch_navpatch_last_keys = prev_keys
+
+        def sanitize_anchor_token(text: str) -> str:
+            normalized = (text or "").strip().upper()
+            chars = [char if char.isalnum() else "_" for char in normalized]
+            normalized = "".join(chars)
+            while "__" in normalized:
+                normalized = normalized.replace("__", "_")
+            return normalized.strip("_") or "X"
+
+        def scratch_key(entity_id: str, local_id: str) -> str:
+            return f"{(entity_id or '').strip().lower()}|{(local_id or '').strip().lower()}"
+
+        nav_patches = getattr(env_obs, "nav_patches", None)
+        cur_keys: set[str] = set()
+        bindings = getattr(ww, "_bindings", {})
+
+        if isinstance(nav_patches, list):
+            for patch in nav_patches:
+                if not isinstance(patch, dict):
+                    continue
+
+                match = patch.get("match")
+                if not isinstance(match, dict) or (match.get("commit") or "") != "ambiguous":
+                    continue
+
+                entity_raw = patch.get("entity_id")
+                local_raw = patch.get("local_id")
+                entity_id = (
+                    entity_raw.strip().lower()
+                    if isinstance(entity_raw, str) and entity_raw.strip()
+                    else "unknown"
+                )
+                local_id = (
+                    local_raw.strip().lower()
+                    if isinstance(local_raw, str) and local_raw.strip()
+                    else "p"
+                )
+
+                key = scratch_key(entity_id, local_id)
+                cur_keys.add(key)
+
+                anchor_name = (
+                    f"WM_SCRATCH_NVP_{sanitize_anchor_token(entity_id)}_"
+                    f"{sanitize_anchor_token(local_id)}"
+                )
+                scratch_item_bid = ww.ensure_anchor(anchor_name)
+                key_to_bid[key] = scratch_item_bid
+
+                active_upsert(
+                    scratch_bid,
+                    scratch_item_bid,
+                    "wm_scratch_item",
+                    {"created_by": "wm_scratch", "kind": "navpatch_ambiguous"},
+                )
+
+                tags = active_tagset(scratch_item_bid)
+                tags.add("wm:scratch_item")
+                tags.add("wm:scratch:navpatch_match")
+                tags.add(f"wm:eid:{entity_id}")
+                tags.add(f"wm:patch_local:{local_id}")
+
+                binding = bindings.get(scratch_item_bid) if isinstance(bindings, dict) else None
+                if binding is not None:
+                    if not isinstance(getattr(binding, "meta", None), dict):
+                        binding.meta = {}
+                    wm_meta = binding.meta.setdefault("wm", {})
+                    if isinstance(wm_meta, dict):
+                        wm_meta["kind"] = "navpatch_match_ambiguous"
+                        wm_meta["schema"] = "wm_scratch_navpatch_match_v1"
+                        wm_meta["controller_steps"] = int(getattr(ctx, "controller_steps", 0) or 0)
+                        wm_meta["entity_id"] = entity_id
+                        wm_meta["local_id"] = local_id
+                        wm_meta["patch_sig16"] = (
+                            patch.get("sig16") if isinstance(patch.get("sig16"), str) else None
+                        )
+                        wm_meta["commit"] = "ambiguous"
+                        wm_meta["decision"] = match.get("decision")
+                        wm_meta["decision_note"] = match.get("decision_note")
+                        wm_meta["margin"] = match.get("margin")
+                        wm_meta["best"] = match.get("best") if isinstance(match.get("best"), dict) else None
+                        wm_meta["top_k"] = match.get("top_k") if isinstance(match.get("top_k"), list) else []
+
+        stale_keys = set(prev_keys) - set(cur_keys)
+        if stale_keys and isinstance(bindings, dict):
+            scratch_root = bindings.get(scratch_bid)
+            edges = getattr(scratch_root, "edges", None) if scratch_root is not None else None
+            if isinstance(edges, list):
+                for key in stale_keys:
+                    scratch_item_bid = key_to_bid.get(key)
+                    if not isinstance(scratch_item_bid, str):
+                        continue
+                    edges[:] = [
+                        edge
+                        for edge in edges
+                        if not (
+                            isinstance(edge, dict)
+                            and (edge.get("label") or edge.get("rel") or edge.get("relation"))
+                            == "wm_scratch_item"
+                            and (edge.get("to") or edge.get("dst") or edge.get("dst_id") or edge.get("id"))
+                            == scratch_item_bid
+                        )
+                    ]
+                    key_to_bid.pop(key, None)
+
+        ctx.wm_scratch_navpatch_last_keys = set(cur_keys)
+
+        if bool(getattr(ctx, "wm_zoom_enabled", True)):
+            now_down = bool(cur_keys)
+            prev_down = bool(prev_keys)
+
+            def entities_from_keys(keys: set[str]) -> set[str]:
+                entities: set[str] = set()
+                for key in keys:
+                    if not isinstance(key, str) or "|" not in key:
+                        continue
+                    entities.add(key.split("|", 1)[0].strip().lower())
+                return entities
+
+            events: list[dict[str, Any]] = []
+            if now_down != prev_down:
+                kind = "zoom_down" if now_down else "zoom_up"
+                keys_for_event = set(cur_keys) if now_down else set(prev_keys)
+                entities = entities_from_keys(keys_for_event)
+
+                try:
+                    hazard_near = body_cliff_distance_fn(ctx) == "near"
+                except Exception:
+                    hazard_near = False
+
+                hazard_ambiguous = "cliff" in entities
+                if now_down:
+                    reason = "hazard+ambiguity" if (hazard_near or hazard_ambiguous) else "ambiguity"
+                else:
+                    reason = "resolved"
+
+                event = {
+                    "kind": kind,
+                    "reason": reason,
+                    "controller_steps": int(getattr(ctx, "controller_steps", 0) or 0),
+                    "ambiguous_n": int(len(keys_for_event)),
+                    "ambiguous_keys": sorted(keys_for_event),
+                    "ambiguous_entities": sorted(entities),
+                    "hazard_near": bool(hazard_near),
+                    "hazard_ambiguous": bool(hazard_ambiguous),
+                }
+                events.append(event)
+
+                if bool(getattr(ctx, "wm_zoom_verbose", False)):
+                    try:
+                        entity_text = ",".join(sorted(entities)[:4])
+                        more = "..." if len(entities) > 4 else ""
+                        print(
+                            f"[wm-zoom] {kind} reason={reason} "
+                            f"amb={len(keys_for_event)} ents={entity_text}{more}"
+                        )
+                    except Exception:
+                        pass
+
+                try:
+                    ctx.wm_zoom_last_reason = reason
+                    ctx.wm_zoom_last_event_step = int(getattr(ctx, "controller_steps", 0) or 0)
+                except Exception:
+                    pass
+
+            try:
+                ctx.wm_zoom_state = "down" if now_down else "up"
+                ctx.wm_zoom_last_events = list(events)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def update_working_salience_surfacegrid_v1(
+    ctx: Ctx,
+    env_obs: EnvObservation,
+    working_world: Any,
+    *,
+    changed_entities: set[str],
+    new_cue_entities: set[str],
+    salience_tick_fn: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Update salience, SurfaceGrid cache, grid predicates, and NavSummary.
+
+    This is the Phase-2 sub-pipeline extracted from the live WorkingMap
+    observation injector. It deliberately mutates only the current ``Ctx`` and
+    short-lived WorkingMap graph and returns a compact diagnostic summary.
+    """
+    if ctx is None or env_obs is None or working_world is None:
+        return {}
+
+    ww = working_world
+    active_salience_tick = salience_tick_fn or wm_salience_tick_v1
+
+    ambiguous_entities: set[str] = set()
+    if bool(getattr(ctx, "wm_salience_enabled", False)):
+        try:
+            ambiguous_entities = _wm_salience_ambiguous_entities_v1(env_obs)
+        except Exception:
+            ambiguous_entities = set()
+
+        salience = active_salience_tick(
+            ctx,
+            ww,
+            changed_entities=changed_entities,
+            new_cue_entities=new_cue_entities,
+            ambiguous_entities=ambiguous_entities,
+        )
+        try:
+            ctx.wm_salience_focus_entities = list(salience.get("focus_entities", []) or [])
+            ctx.wm_salience_last_events = list(salience.get("events", []) or [])
+        except Exception:
+            pass
+    else:
+        try:
+            ctx.wm_salience_focus_entities = []
+            ctx.wm_salience_last_events = []
+        except Exception:
+            pass
+
+    if bool(getattr(ctx, "wm_surfacegrid_enabled", False)):
+        try:
+            grid_w = int(getattr(ctx, "wm_surfacegrid_w", 16) or 16)
+        except Exception:
+            grid_w = 16
+        try:
+            grid_h = int(getattr(ctx, "wm_surfacegrid_h", 16) or 16)
+        except Exception:
+            grid_h = 16
+        if grid_w <= 0:
+            grid_w = 16
+        if grid_h <= 0:
+            grid_h = 16
+
+        patches_raw = getattr(env_obs, "nav_patches", None) or []
+        patches_in = (
+            [patch for patch in patches_raw if isinstance(patch, dict)]
+            if isinstance(patches_raw, list)
+            else []
+        )
+
+        try:
+            zoom_level = int(getattr(ctx, "wm_zoom_level", 0) or 0)
+        except Exception:
+            zoom_level = 0
+        focus_entities = [
+            str(entity).strip().lower()
+            for entity in (getattr(ctx, "wm_salience_focus_entities", []) or [])
+            if isinstance(entity, str) and entity.strip()
+        ]
+        fingerprint = _wm_surfacegrid_scene_fingerprint_v2(
+            env_obs,
+            patches_in,
+            grid_w=grid_w,
+            grid_h=grid_h,
+            zoom_level=zoom_level,
+            focus_entities=focus_entities,
+        )
+        reasons = _wm_surfacegrid_dirty_reasons_v2(ctx, fingerprint)
+        dirty = any(reason != "cache_hit" for reason in reasons)
+
+        previous_sig16 = getattr(ctx, "wm_surfacegrid_sig16", None)
+        if not isinstance(previous_sig16, str) or not previous_sig16:
+            previous_sig16 = None
+
+        if dirty:
+            started = time.perf_counter()
+            try:
+                surfacegrid = compose_surfacegrid_v1(patches_in, grid_w=grid_w, grid_h=grid_h)
+            except Exception:
+                surfacegrid = compose_surfacegrid_v1([], grid_w=grid_w, grid_h=grid_h)
+                reasons = list(reasons) + ["compose_error"]
+
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            ctx.wm_surfacegrid = surfacegrid
+            try:
+                ctx.wm_surfacegrid_sig16 = surfacegrid.sig16_v1()
+            except Exception:
+                ctx.wm_surfacegrid_sig16 = None
+
+            new_sig16 = ctx.wm_surfacegrid_sig16 if isinstance(ctx.wm_surfacegrid_sig16, str) else None
+            if (
+                "patches_changed" in reasons
+                and previous_sig16 is not None
+                and new_sig16 is not None
+                and new_sig16 == previous_sig16
+                and "grid_missing" not in reasons
+                and "grid_shape_changed" not in reasons
+                and "self_window_shift" not in reasons
+                and "zoom_changed" not in reasons
+                and "focus_changed" not in reasons
+                and "hazard_changed" not in reasons
+                and "compose_error" not in reasons
+            ):
+                reasons = ["patch_payload_changed"] + [
+                    reason for reason in reasons if reason != "patches_changed"
+                ]
+
+            ctx.wm_surfacegrid_last_input_sig16 = list(fingerprint.get("input_sig16", []) or [])
+            ctx.wm_surfacegrid_compose_ms = float(elapsed_ms)
+            ctx.wm_surfacegrid_dirty = False
+            ctx.wm_surfacegrid_dirty_reasons = list(reasons) if reasons else ["dirty"]
+            ctx.wm_surfacegrid_last_scene_fingerprint = dict(fingerprint)
+
+            if bool(getattr(ctx, "wm_surfacegrid_verbose", False)):
+                try:
+                    ctx.wm_surfacegrid_last_ascii = surfacegrid.ascii_v1()
+                except Exception:
+                    ctx.wm_surfacegrid_last_ascii = None
+            else:
+                ctx.wm_surfacegrid_last_ascii = None
+        else:
+            ctx.wm_surfacegrid_last_input_sig16 = list(fingerprint.get("input_sig16", []) or [])
+            ctx.wm_surfacegrid_compose_ms = 0.0
+            ctx.wm_surfacegrid_dirty = False
+            ctx.wm_surfacegrid_dirty_reasons = ["cache_hit"]
+            ctx.wm_surfacegrid_last_scene_fingerprint = dict(fingerprint)
+
+    try:
+        current_surfacegrid = getattr(ctx, "wm_surfacegrid", None)
+        if current_surfacegrid is not None:
+            ctx.wm_surfacegrid_last_ascii = render_surfacegrid_ascii_with_salience_v1(
+                ctx,
+                ww,
+                current_surfacegrid,
+                focus_entities=list(getattr(ctx, "wm_salience_focus_entities", []) or []),
+            )
+    except Exception:
+        pass
+
+    if bool(getattr(ctx, "wm_grid_to_preds_enabled", False)):
+        current_surfacegrid = getattr(ctx, "wm_surfacegrid", None)
+        if current_surfacegrid is not None:
+            try:
+                slots = derive_grid_slot_families_v1(
+                    current_surfacegrid,
+                    self_xy=None,
+                    r=2,
+                    include_goal_dir=True,
+                )
+            except Exception:
+                slots = {}
+            ctx.wm_grid_slot_families = dict(slots) if isinstance(slots, dict) else {}
+
+            try:
+                entities = getattr(ctx, "wm_entities", {}) or {}
+                self_bid = entities.get("self") if isinstance(entities, dict) else None
+                if isinstance(self_bid, str) and self_bid:
+                    ctx.wm_grid_pred_tags = wm_apply_grid_slot_families_to_mapsurface_v1(
+                        ww,
+                        self_bid,
+                        ctx.wm_grid_slot_families,
+                    )
+                else:
+                    ctx.wm_grid_pred_tags = []
+            except Exception:
+                ctx.wm_grid_pred_tags = []
+        else:
+            ctx.wm_grid_slot_families = {}
+            ctx.wm_grid_pred_tags = []
+    else:
+        ctx.wm_grid_slot_families = {}
+        ctx.wm_grid_pred_tags = []
+
+    if bool(getattr(ctx, "wm_navsummary_enabled", True)):
+        current_surfacegrid = getattr(ctx, "wm_surfacegrid", None)
+        if current_surfacegrid is not None:
+            try:
+                local_radius = int(getattr(ctx, "wm_navsummary_local_radius", 2) or 2)
+            except Exception:
+                local_radius = 2
+            local_radius = max(1, min(6, local_radius))
+
+            try:
+                ctx.wm_navsummary = compute_navsummary_v1(
+                    current_surfacegrid,
+                    slots=getattr(ctx, "wm_grid_slot_families", {}) or {},
+                    self_xy=None,
+                    local_radius=local_radius,
+                )
+            except Exception:
+                ctx.wm_navsummary = {}
+        else:
+            ctx.wm_navsummary = {}
+    else:
+        ctx.wm_navsummary = {}
+
+    return {
+        "focus_entities": list(getattr(ctx, "wm_salience_focus_entities", []) or []),
+        "surfacegrid_sig16": getattr(ctx, "wm_surfacegrid_sig16", None),
+        "dirty_reasons": list(getattr(ctx, "wm_surfacegrid_dirty_reasons", []) or []),
+        "grid_pred_tags": list(getattr(ctx, "wm_grid_pred_tags", []) or []),
+        "navsummary": dict(getattr(ctx, "wm_navsummary", {}) or {}),
+    }
