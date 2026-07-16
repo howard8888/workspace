@@ -80,11 +80,12 @@ from cca8_navpatch import (
     grid_overlap_fraction_v1,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__ = [
     "init_working_world",
     "reset_working_world",
+    "register_policy_scratch_chain_v1",
     "init_map_surface_world",
     "update_surface_grid_from_obs",
     "update_map_surface_from_obs",
@@ -683,6 +684,230 @@ def _wm_upsert_edge(world, src: str, dst: str, label: str, meta: dict | None = N
             return
 
     edges.append({"to": dst, "label": label, "meta": dict(meta or {})})
+
+
+def register_policy_scratch_chain_v1(
+    ctx: Ctx,
+    working_world: cca8_world_graph.WorldGraph | None,
+    *,
+    before_binding_ids: set[str],
+    policy_name: str,
+    policy_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Register one policy-created chain as explicitly owned WorkingMap Scratch content.
+
+    Cognitive role
+    --------------
+    Policy classes still create their historical ``WM_ROOT -> action -> ...`` chain through normal
+    ``attach="now"`` / ``attach="latest"`` writes. This helper adds the missing ownership view:
+
+    ``WM_SCRATCH --wm_scratch_item--> chain_head``
+
+    The historical root-to-chain edge is deliberately retained for compatibility. No policy is
+    selected here, no policy code is rerun, and no existing edge is removed or redirected.
+
+    Authority contract
+    ------------------
+    A policy-created terminal predicate is an expected, low-authority, unconfirmed postcondition.
+    The predicate tag remains unchanged so existing displays and planning tests continue to work,
+    while explicit metadata and ``wm:expected`` / ``wm:unconfirmed`` tags prevent machine readers
+    from treating it as observed evidence. Action-only chains are owned by Scratch but do not gain a
+    fabricated expected terminal state.
+
+    Mutation and side effects
+    -------------------------
+    Only ``ctx.working_world`` may be mutated. The helper adds or updates one idempotent ownership
+    edge and annotates bindings that were created after ``before_binding_ids`` by ``policy_name``.
+    It does not write the long-term WorldGraph, Columns, BodyMap, MapSurface slots, policy-selection
+    state, or autosave schema. Scratch cleanup remains explicit and deferred; Phase 1A records the
+    cleanup policy as ``retain_until_explicit_cleanup``.
+
+    Failure behavior
+    ----------------
+    Invalid or incomplete inputs return a small JSON-safe report with ``registered=False``. The
+    helper is intentionally defensive because it runs after policy execution and must never turn a
+    successful primitive into a controller failure.
+    """
+    report: dict[str, Any] = {
+        "schema": "wm_policy_scratch_registration_v1",
+        "registered": False,
+        "policy": policy_name if isinstance(policy_name, str) else None,
+        "reason": "invalid_input",
+    }
+
+    if ctx is None or working_world is None:
+        return report
+    if getattr(ctx, "working_world", None) is not working_world:
+        report["reason"] = "not_active_working_world"
+        return report
+
+    bindings = getattr(working_world, "_bindings", None)
+    if not isinstance(bindings, dict):
+        report["reason"] = "missing_bindings"
+        return report
+
+    policy = policy_name.strip() if isinstance(policy_name, str) else ""
+    if not policy:
+        report["reason"] = "missing_policy"
+        return report
+
+    try:
+        before_ids = {bid for bid in before_binding_ids if isinstance(bid, str)}
+    except Exception:
+        report["reason"] = "invalid_before_binding_ids"
+        return report
+
+    chain_bids: list[str] = []
+    for bid, binding in bindings.items():
+        if not isinstance(bid, str) or bid in before_ids:
+            continue
+        meta = getattr(binding, "meta", None)
+        if isinstance(meta, dict) and meta.get("policy") == policy:
+            chain_bids.append(bid)
+
+    if not chain_bids:
+        report["reason"] = "no_new_policy_bindings"
+        return report
+
+    result = policy_result if isinstance(policy_result, dict) else {}
+    result_binding = result.get("binding")
+    chain_head = chain_bids[0]
+    chain_tail = result_binding if isinstance(result_binding, str) and result_binding in chain_bids else chain_bids[-1]
+
+    tail_tags = _wm_tagset_of(working_world, chain_tail)
+    tail_has_action = any(tag.startswith("action:") for tag in tail_tags)
+    tail_has_predicate = any(tag.startswith("pred:") and not tag.startswith("pred:action:") for tag in tail_tags)
+    expected_terminal = chain_tail if tail_has_predicate and not tail_has_action else None
+
+    ensure_anchor = getattr(working_world, "ensure_anchor", None)
+    if not callable(ensure_anchor):
+        report["reason"] = "missing_workspace_anchors"
+        return report
+    try:
+        root_bid = ensure_anchor("WM_ROOT")
+        scratch_bid = ensure_anchor("WM_SCRATCH")
+    except Exception:
+        report["reason"] = "missing_workspace_anchors"
+        return report
+
+    _wm_tagset_of(working_world, scratch_bid).add("wm:scratch")
+    _wm_upsert_edge(working_world, root_bid, scratch_bid, "wm_scratch")
+
+    try:
+        created_cycle = int(getattr(ctx, "cog_cycles", 0) or 0)
+    except Exception:
+        created_cycle = 0
+    try:
+        created_controller_step = int(getattr(ctx, "controller_steps", 0) or 0)
+    except Exception:
+        created_controller_step = 0
+
+    execution_status_raw = result.get("status")
+    execution_status = execution_status_raw if isinstance(execution_status_raw, str) and execution_status_raw else "recorded"
+    scratch_id = f"scratch:{chain_head}"
+    cleanup_policy = "retain_until_explicit_cleanup"
+    chain_status = "unconfirmed" if expected_terminal is not None else execution_status
+
+    ownership_meta = {
+        "schema": "wm_policy_scratch_owner_v1",
+        "created_by": "wm_policy_scratch",
+        "scratch_id": scratch_id,
+        "owner": "WM_SCRATCH",
+        "kind": "policy_chain",
+        "created_cycle": created_cycle,
+        "created_controller_step": created_controller_step,
+        "status": chain_status,
+        "chain_head": chain_head,
+        "chain_tail": chain_tail,
+        "cleanup_policy": cleanup_policy,
+        "source_primitive": policy,
+        "execution_status": execution_status,
+    }
+    if expected_terminal is not None:
+        ownership_meta.update(
+            {
+                "source": "expected",
+                "source_authority": "low",
+                "safety_weight": "normal",
+            }
+        )
+    _wm_upsert_edge(working_world, scratch_bid, chain_head, "wm_scratch_item", ownership_meta)
+
+    head_tags = _wm_tagset_of(working_world, chain_head)
+    head_tags.add("wm:scratch_item")
+    head_tags.add("wm:scratch:policy_chain")
+
+    for bid in chain_bids:
+        binding = bindings.get(bid)
+        if binding is None:
+            continue
+        if not isinstance(getattr(binding, "meta", None), dict):
+            binding.meta = {}
+        meta = binding.meta
+        tags = _wm_tagset_of(working_world, bid)
+        is_action = any(tag.startswith("action:") for tag in tags)
+        is_expected_terminal = bid == expected_terminal
+
+        if is_expected_terminal:
+            kind = "expected_terminal"
+            status = "unconfirmed"
+        elif is_action:
+            kind = "policy_action"
+            status = "executed" if execution_status == "ok" else execution_status
+        else:
+            kind = "policy_trace"
+            status = execution_status
+
+        binding_meta = {
+            "scratch_id": scratch_id,
+            "owner": "WM_SCRATCH",
+            "workspace_layer": "scratch",
+            "kind": kind,
+            "created_cycle": created_cycle,
+            "created_controller_step": created_controller_step,
+            "status": status,
+            "chain_head": chain_head,
+            "chain_tail": chain_tail,
+            "cleanup_policy": cleanup_policy,
+            "source_primitive": policy,
+        }
+        meta.update(binding_meta)
+
+        wm_meta = meta.setdefault("wm", {})
+        if isinstance(wm_meta, dict):
+            wm_meta.update(binding_meta)
+            wm_meta["schema"] = "wm_policy_scratch_binding_v1"
+
+        if is_expected_terminal:
+            tags.add("wm:expected")
+            tags.add("wm:unconfirmed")
+            authority_meta = {
+                "layer": "expected",
+                "source": "expected",
+                "source_authority": "low",
+                "authority": "expected",
+                "confirmation": "unconfirmed",
+                "safety_weight": "normal",
+            }
+            meta.update(authority_meta)
+            if isinstance(wm_meta, dict):
+                wm_meta.update(authority_meta)
+
+    report.update(
+        {
+            "registered": True,
+            "reason": "registered",
+            "policy": policy,
+            "scratch_id": scratch_id,
+            "owner": "WM_SCRATCH",
+            "chain_head": chain_head,
+            "chain_tail": chain_tail,
+            "binding_ids": list(chain_bids),
+            "expected_terminal": expected_terminal,
+            "status": chain_status,
+        }
+    )
+    return report
 
 
 def _rec_stage_zone(rec: dict) -> tuple[str | None, str | None]:

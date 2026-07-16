@@ -26,7 +26,7 @@ def test_runner_phase2_pure_aliases_resolve_to_working_memory_module() -> None:
 def test_working_memory_module_owns_phase2_without_runner_import() -> None:
     """Phase-2 implementations should remain one-way after later extraction phases."""
     assert "cca8_run" not in cca8_working_memory.__dict__
-    assert cca8_working_memory.__version__ == "0.3.0"
+    assert cca8_working_memory.__version__ == "0.3.1"
     assert cca8_working_memory.navpatch_predictive_match_loop_v1.__module__ == "cca8_working_memory"
     assert cca8_working_memory.update_working_navpatch_scratch_zoom_v1.__module__ == "cca8_working_memory"
     assert cca8_working_memory.update_working_salience_surfacegrid_v1.__module__ == "cca8_working_memory"

@@ -32,7 +32,7 @@ def test_runner_phase3_aliases_and_implementation_ownership() -> None:
 def test_working_memory_phase3_remains_one_way_and_reports_version() -> None:
     """The completed working-memory extraction should not import the interactive runner."""
     assert "cca8_run" not in cca8_working_memory.__dict__
-    assert cca8_working_memory.__version__ == "0.3.0"
+    assert cca8_working_memory.__version__ == "0.3.1"
 
 
 def test_direct_phase3_observation_injection_updates_mapsurface_and_navsummary() -> None:

@@ -175,7 +175,7 @@ import cca8_preflight  # pylint: disable=wrong-import-order
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 __all__ = [
     "main",
     "interactive_loop",
@@ -183,6 +183,7 @@ __all__ = [
     "snapshot_text",
     "prediction_feedback_summary_v1",
     "prediction_next_record_from_policy_posture_v1",
+    "prediction_source_for_execution_target_v1",
     "prediction_pending_record_from_ctx_v1",
     "prediction_compare_pending_to_observed_v1",
     "prediction_feedback_step_from_ctx_obs_v1",
@@ -201,6 +202,7 @@ __all__ = [
     "choose_contextual_base",
     "compute_foa",
     "candidate_anchors",
+    "register_policy_scratch_chain_v1",
     "__version__",
     "Ctx",
     "navmap_observation_update_summary_v1",
@@ -509,6 +511,7 @@ def openai_menu_48_interactive(world: Any, drives: Any, ctx: Any) -> None:
 # experiments, and downstream tools continue to work unchanged.
 init_working_world = cca8_working_memory.init_working_world
 reset_working_world = cca8_working_memory.reset_working_world
+register_policy_scratch_chain_v1 = cca8_working_memory.register_policy_scratch_chain_v1
 serialize_mapsurface_v1 = cca8_working_memory.serialize_mapsurface_v1
 mapsurface_payload_sig_v1 = cca8_working_memory.mapsurface_payload_sig_v1
 _SALIENT_PRED_PREFIXES = cca8_working_memory._SALIENT_PRED_PREFIXES
@@ -5232,7 +5235,8 @@ class PolicyRuntime:
 
         try:
             exec_target = exec_world if exec_world is not None else world
-            before_n = len(exec_target._bindings)
+            before_binding_ids = set(exec_target._bindings)
+            before_n = len(before_binding_ids)
 
             has_real_probe = False
             if chosen.name == "policy:probe":
@@ -5254,6 +5258,20 @@ class PolicyRuntime:
                 raw_label = result.get("policy")
                 if isinstance(raw_label, str) and raw_label:
                     label = raw_label
+
+            try:
+                if exec_target is getattr(ctx, "working_world", None):
+                    cca8_working_memory.register_policy_scratch_chain_v1(
+                        ctx,
+                        exec_target,
+                        before_binding_ids=before_binding_ids,
+                        policy_name=label,
+                        policy_result=result if isinstance(result, dict) else None,
+                    )
+            except Exception:
+                # Scratch registration is post-execution provenance. It must not convert a
+                # successful primitive into a controller error.
+                pass
         except Exception as e:
             return f"{chosen.name} (error: {e})"
 
@@ -5896,6 +5914,26 @@ def prediction_error_record_apply_to_ctx_v1(ctx: Any, error_record: Any, *, limi
         pass
 
     return dict(err_vec)
+
+
+def prediction_source_for_execution_target_v1(
+    ctx: Any,
+    selection_world: Any,
+    *,
+    exec_world: Any = None,
+) -> str:
+    """Return the prediction-source label for the world that actually executed a policy.
+
+    ``exec_world=None`` means execution occurred on ``selection_world``. This explicit
+    resolution avoids labeling legacy WorldGraph execution as WorkingMap Scratch merely
+    because ``None is not selection_world``. The helper is read-only and does not change
+    prediction records, policy behavior, or either world.
+    """
+    actual_target = exec_world if exec_world is not None else selection_world
+    active_working_world = getattr(ctx, "working_world", None) if ctx is not None else None
+    if active_working_world is not None and actual_target is active_working_world:
+        return "WorkingMap.Scratch"
+    return "WorldGraph.policy_trace"
 
 
 def prediction_next_record_from_policy_posture_v1(
@@ -11920,7 +11958,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     w_scan,
                     ctx.pred_next_policy,
                     env_step=step_idx if isinstance(step_idx, int) else None,
-                    source="WorkingMap.Scratch" if exec_world is not world else "WorldGraph.policy_trace",
+                    source=prediction_source_for_execution_target_v1(ctx, world, exec_world=exec_world),
                 )
                 if pred_record:
                     expected_slots = pred_record.get("expected")
