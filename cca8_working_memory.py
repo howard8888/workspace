@@ -80,7 +80,7 @@ from cca8_navpatch import (
     grid_overlap_fraction_v1,
 )
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 __all__ = [
     "init_working_world",
@@ -94,6 +94,7 @@ __all__ = [
     "maybe_autoretrieve_mapsurface_on_keyframe",
     "maybe_goat04_context_mapswitch_on_keyframe_v1",
     "maybe_newborn_b2_mapswitch_on_keyframe_v1",
+    "invalidate_masked_mapsurface_state_v1",
     "inject_obs_into_working_world",
     "serialize_mapsurface_v1",
     "mapsurface_payload_sig_v1",
@@ -1389,14 +1390,22 @@ def merge_mapsurface_payload_v1_into_workingmap(ctx: Ctx, payload: dict[str, Any
       - Do NOT delete or overwrite existing observed slot families.
       - Do NOT add cue:* tags (cues mean 'present now'); store cues in meta as 'prior_cues' instead.
 
-    Returns:
-      {"ok": bool, "added_entities": int, "filled_slots": int, "added_edges": int, "stored_prior_cues": int}
+    Returns a compact count summary plus bounded lists of the fields repaired.
     """
     if getattr(ctx, "working_world", None) is None:
         ctx.working_world = init_working_world()
     ww = ctx.working_world
     if ww is None:
-        return {"ok": False, "added_entities": 0, "filled_slots": 0, "added_edges": 0, "stored_prior_cues": 0}
+        return {
+            "ok": False,
+            "added_entities": 0,
+            "filled_slots": 0,
+            "added_edges": 0,
+            "filled_metadata": 0,
+            "stored_prior_cues": 0,
+            "repaired_families": [],
+            "repaired_metadata": [],
+        }
 
     # Ensure MapSurface roots exist (do not clear anything)
     root_bid = ww.ensure_anchor("WM_ROOT")
@@ -1476,7 +1485,11 @@ def merge_mapsurface_payload_v1_into_workingmap(ctx: Ctx, payload: dict[str, Any
 
     added_entities = 0
     filled_slots = 0
+    filled_metadata = 0
     stored_prior_cues = 0
+    repaired_families: list[str] = []
+    repaired_metadata: list[str] = []
+    added_entity_ids: list[str] = []
 
     # Entities: create if missing; else fill missing slot families only.
     for ent in ents:
@@ -1496,6 +1509,7 @@ def merge_mapsurface_payload_v1_into_workingmap(ctx: Ctx, payload: dict[str, Any
             bid = ww.ensure_anchor(_wm_entity_anchor_name(eid))
             ctx.wm_entities[eid] = bid
             added_entities += 1
+            added_entity_ids.append(eid)
 
         tags = _wm_tagset_of(ww, bid)
         tags.add("wm:entity")
@@ -1520,16 +1534,22 @@ def merge_mapsurface_payload_v1_into_workingmap(ctx: Ctx, payload: dict[str, Any
                     x = pos.get("x"); y = pos.get("y"); frame = pos.get("frame")
                     if isinstance(x, (int, float)) and isinstance(y, (int, float)):
                         wmm["pos"] = {"x": float(x), "y": float(y), "frame": frame if isinstance(frame, str) and frame else "wm_schematic_v1"}
+                        filled_metadata += 1
+                        repaired_metadata.append(f"{eid}:pos")
 
                 if "dist_m" not in wmm:
                     dist_m = ent.get("dist_m")
                     if isinstance(dist_m, (int, float)):
                         wmm["dist_m"] = float(dist_m)
+                        filled_metadata += 1
+                        repaired_metadata.append(f"{eid}:dist_m")
 
                 if "dist_class" not in wmm:
                     dist_class = ent.get("dist_class")
                     if isinstance(dist_class, str) and dist_class:
                         wmm["dist_class"] = dist_class
+                        filled_metadata += 1
+                        repaired_metadata.append(f"{eid}:dist_class")
 
                 # recency marker always refreshed
                 wmm["last_seen_step"] = int(getattr(ctx, "controller_steps", 0) or 0)
@@ -1557,6 +1577,26 @@ def merge_mapsurface_payload_v1_into_workingmap(ctx: Ctx, payload: dict[str, Any
                     continue
                 tags.add(f"pred:{p}")
                 filled_slots += 1
+                repaired_families.append(f"{eid}:{fam}")
+                try:
+                    b = ww._bindings.get(bid)  # pylint: disable=protected-access
+                    if b is not None:
+                        if not isinstance(getattr(b, "meta", None), dict):
+                            b.meta = {}
+                        wmm = b.meta.setdefault("wm", {})
+                        if isinstance(wmm, dict):
+                            source_by_family = wmm.setdefault("source_by_family", {})
+                            if isinstance(source_by_family, dict):
+                                source_by_family[fam] = {
+                                    "source": "retrieved_guarded",
+                                    "step": int(getattr(ctx, "controller_steps", 0) or 0),
+                                    "reason": reason,
+                                }
+                            masked = wmm.get("masked_families")
+                            if isinstance(masked, dict):
+                                masked.pop(fam, None)
+                except Exception:
+                    pass
 
     # Relations: add missing distance_to edges only
     rels = payload.get("relations", [])
@@ -1564,6 +1604,7 @@ def merge_mapsurface_payload_v1_into_workingmap(ctx: Ctx, payload: dict[str, Any
         rels = []
 
     added_edges = 0
+    added_edge_targets: list[str] = []
     self_bid = (getattr(ctx, "wm_entities", {}) or {}).get("self")
     for r in rels:
         if not isinstance(r, dict):
@@ -1594,13 +1635,19 @@ def merge_mapsurface_payload_v1_into_workingmap(ctx: Ctx, payload: dict[str, Any
 
         _wm_upsert_edge(ww, self_bid, dst_bid, "distance_to", em)
         added_edges += 1
+        added_edge_targets.append(dst_eid)
 
     return {
         "ok": True,
         "added_entities": added_entities,
+        "added_entity_ids": added_entity_ids[:32],
         "filled_slots": filled_slots,
         "added_edges": added_edges,
+        "added_edge_targets": added_edge_targets[:32],
+        "filled_metadata": filled_metadata,
         "stored_prior_cues": stored_prior_cues,
+        "repaired_families": repaired_families[:64],
+        "repaired_metadata": repaired_metadata[:64],
     }
 
 
@@ -1734,9 +1781,14 @@ def _wm_log_mapswitch_event_v1(
         for key in (
             "mode",
             "added_entities",
+            "added_entity_ids",
             "filled_slots",
             "added_edges",
+            "added_edge_targets",
+            "filled_metadata",
             "stored_prior_cues",
+            "repaired_families",
+            "repaired_metadata",
             "entities",
             "relations",
             "cue_tags_before",
@@ -5528,6 +5580,8 @@ def _newborn_active_retrieved_hint_v1(ctx: Ctx | None) -> dict[str, Any]:
     """Return the active retrieved-state hint for newborn B2, or {} when absent/expired."""
     if ctx is None:
         return {}
+    if not bool(getattr(ctx, "experiment_newborn_direct_hint_enabled", False)):
+        return {}
 
     hint = getattr(ctx, "experiment_newborn_retrieved_hint", None)
     if not isinstance(hint, dict) or not hint:
@@ -5655,6 +5709,9 @@ def _set_newborn_retrieved_hint_from_engram_v1(
     active_column = column_memory if column_memory is not None else column_mem
 
     if ctx is None:
+        return {}
+    if not bool(getattr(ctx, "experiment_newborn_direct_hint_enabled", False)):
+        _clear_newborn_retrieved_hint_v1(ctx)
         return {}
     if not isinstance(engram_id, str) or not engram_id:
         return {}
@@ -6499,6 +6556,249 @@ def maybe_newborn_b2_mapswitch_on_keyframe_v1(
     return out
 
 
+def invalidate_masked_mapsurface_state_v1(
+    ctx: Ctx,
+    env_obs: EnvObservation,
+    world: Any | None = None,
+) -> dict[str, Any]:
+    """Turn explicitly masked observation fields into WorkingMap gaps.
+
+    The original newborn benchmark dropped tokens from the incoming observation,
+    but ``inject_obs_into_working_world`` only updated fields that were present.
+    A masked field therefore left its preceding MapSurface value latched in place.
+    Guarded merge saw a populated slot and correctly refused to overwrite it, so
+    the supposed repair mechanism was almost always a no-op.
+
+    This helper fixes the representation boundary rather than forcing retrievals.
+    It removes only families that the synthetic mask explicitly reports as dropped.
+    A visible token from the same family always wins and prevents invalidation.
+    For spatial families, stale distance metadata and ``distance_to`` edges are also
+    removed so an episodic merge can restore them with explicit provenance.
+
+    The helper is benchmark-gated through
+    ``ctx.experiment_newborn_explicit_missingness`` and is otherwise inert.
+    """
+    empty = {
+        "enabled": False,
+        "requested_family_count": 0,
+        "invalidated_family_count": 0,
+        "removed_tag_count": 0,
+        "removed_edge_count": 0,
+        "removed_metadata_count": 0,
+        "families": [],
+        "entities": [],
+        "sources": [],
+    }
+    def _publish(result: dict[str, Any], *, append_event: bool = False) -> dict[str, Any]:
+        """Publish the current-cycle invalidation result and optionally accumulate it."""
+        if ctx is None:
+            return dict(result)
+        out_result = dict(result)
+        try:
+            ctx.wm_mask_invalidation_last = dict(out_result)
+            if append_event:
+                events = getattr(ctx, "wm_mask_invalidation_events", None)
+                if not isinstance(events, list):
+                    events = []
+                event = dict(out_result)
+                event["step"] = int(getattr(ctx, "controller_steps", 0) or 0)
+                events.append(event)
+                if len(events) > 256:
+                    del events[:-256]
+                ctx.wm_mask_invalidation_events = events
+                ctx.wm_mask_invalidated_family_count += int(out_result.get("invalidated_family_count", 0) or 0)
+                ctx.wm_mask_removed_tag_count += int(out_result.get("removed_tag_count", 0) or 0)
+                ctx.wm_mask_removed_edge_count += int(out_result.get("removed_edge_count", 0) or 0)
+                ctx.wm_mask_removed_metadata_count += int(out_result.get("removed_metadata_count", 0) or 0)
+        except Exception:
+            pass
+        return out_result
+
+    if ctx is None:
+        return dict(empty)
+    if env_obs is None:
+        return _publish(empty)
+    if not bool(getattr(ctx, "experiment_newborn_explicit_missingness", False)):
+        return _publish(empty)
+
+    ww = world if world is not None else getattr(ctx, "working_world", None)
+    if ww is None:
+        return _publish(empty)
+
+    meta = getattr(env_obs, "env_meta", None)
+    meta = meta if isinstance(meta, dict) else {}
+
+    def _tokens(name: str) -> list[str]:
+        raw = meta.get(name)
+        if not isinstance(raw, list):
+            return []
+        out: list[str] = []
+        for item in raw:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip().replace("pred:", "", 1))
+        return out
+
+    source_tokens = {
+        "ordinary_mask": _tokens("obs_mask_dropped_pred_tokens"),
+        "newborn_stress": _tokens("newborn_blackout_dropped_pred_tokens"),
+    }
+    dropped: list[tuple[str, str]] = []
+    for source, items in source_tokens.items():
+        dropped.extend((source, tok) for tok in items)
+    if not dropped:
+        out = dict(empty)
+        out["enabled"] = True
+        return _publish(out)
+
+    def _family(tok: str) -> str:
+        return tok.rsplit(":", 1)[0] if ":" in tok else tok
+
+    def _entity_and_family(tok: str) -> tuple[str, str]:
+        parts = (tok or "").split(":")
+        if not parts:
+            return ("self", "unknown")
+        head = parts[0]
+        if head == "grid" and len(parts) >= 2:
+            return ("self", f"grid:{parts[1]}")
+        if head == "posture":
+            return ("self", "posture")
+        if head in ("nipple", "milk"):
+            return ("self", head)
+        if head == "proximity" and len(parts) >= 3:
+            ent = parts[1].strip().lower() or "self"
+            return (ent, f"proximity:{ent}")
+        if head == "hazard" and len(parts) >= 3:
+            ent = parts[1].strip().lower() or "self"
+            return (ent, f"hazard:{ent}")
+        return ("self", _family(tok))
+
+    visible_pairs: set[tuple[str, str]] = set()
+    for item in list(getattr(env_obs, "predicates", []) or []):
+        if not isinstance(item, str) or not item:
+            continue
+        visible_pairs.add(_entity_and_family(item.replace("pred:", "", 1)))
+
+    requested: dict[tuple[str, str], set[str]] = {}
+    requested_sources: dict[tuple[str, str], set[str]] = {}
+    sources_used: set[str] = set()
+    for source, tok in dropped:
+        pair = _entity_and_family(tok)
+        if pair in visible_pairs:
+            continue
+        requested.setdefault(pair, set()).add(tok)
+        requested_sources.setdefault(pair, set()).add(source)
+        sources_used.add(source)
+
+    if not requested:
+        out = dict(empty)
+        out["enabled"] = True
+        return _publish(out)
+
+    ent_map = getattr(ctx, "wm_entities", None)
+    ent_map = ent_map if isinstance(ent_map, dict) else {}
+    bindings = getattr(ww, "_bindings", {})
+    bindings = bindings if isinstance(bindings, dict) else {}
+
+    removed_tags = 0
+    removed_edges = 0
+    removed_meta = 0
+    invalidated: list[str] = []
+    entities: set[str] = set()
+    step_now = int(getattr(ctx, "controller_steps", 0) or 0)
+
+    self_bid = ent_map.get("self")
+
+    for (eid, family), toks in sorted(requested.items()):
+        bid = ent_map.get(eid)
+        if not (isinstance(bid, str) and bid in bindings):
+            # The absent entity is already an explicit gap. Record the requested
+            # family so a later merge can create it.
+            invalidated.append(f"{eid}:{family}")
+            entities.add(eid)
+            continue
+
+        binding = bindings.get(bid)
+        tags_raw = getattr(binding, "tags", None)
+        if isinstance(tags_raw, set):
+            tags = tags_raw
+        elif isinstance(tags_raw, list):
+            tags = set(tags_raw)
+            binding.tags = tags
+        else:
+            try:
+                tags = set(tags_raw or [])
+            except Exception:
+                tags = set()
+            binding.tags = tags
+
+        exact = f"pred:{family}"
+        prefix = f"pred:{family}:"
+        family_tags = [
+            t for t in list(tags)
+            if isinstance(t, str) and (t == exact or t.startswith(prefix))
+        ]
+        for tag in family_tags:
+            tags.discard(tag)
+            removed_tags += 1
+
+        # Mark the gap and clear source metadata for this family.
+        if not isinstance(getattr(binding, "meta", None), dict):
+            binding.meta = {}
+        wmm = binding.meta.setdefault("wm", {})
+        if isinstance(wmm, dict):
+            masked = wmm.setdefault("masked_families", {})
+            if isinstance(masked, dict):
+                masked[family] = {
+                    "step": step_now,
+                    "tokens": sorted(toks),
+                    "sources": sorted(requested_sources.get((eid, family), set())),
+                }
+            source_by_family = wmm.get("source_by_family")
+            if isinstance(source_by_family, dict):
+                source_by_family.pop(family, None)
+
+        spatial = family.startswith("proximity:") or family.startswith("hazard:")
+        if spatial and isinstance(wmm, dict):
+            for key in ("pos", "dist_m", "dist_class"):
+                if key in wmm:
+                    wmm.pop(key, None)
+                    removed_meta += 1
+
+        if spatial and isinstance(self_bid, str) and self_bid in bindings:
+            self_binding = bindings.get(self_bid)
+            edges = getattr(self_binding, "edges", None)
+            if isinstance(edges, list):
+                kept_edges: list[Any] = []
+                for edge in edges:
+                    if not isinstance(edge, dict):
+                        kept_edges.append(edge)
+                        continue
+                    dst = edge.get("to") or edge.get("dst") or edge.get("dst_id") or edge.get("id")
+                    label = edge.get("label") or edge.get("rel") or edge.get("relation")
+                    if dst == bid and label == "distance_to":
+                        removed_edges += 1
+                        continue
+                    kept_edges.append(edge)
+                self_binding.edges = kept_edges
+
+        invalidated.append(f"{eid}:{family}")
+        entities.add(eid)
+
+    out = {
+        "enabled": True,
+        "requested_family_count": int(len(requested)),
+        "invalidated_family_count": int(len(invalidated)),
+        "removed_tag_count": int(removed_tags),
+        "removed_edge_count": int(removed_edges),
+        "removed_metadata_count": int(removed_meta),
+        "families": invalidated[:32],
+        "entities": sorted(entities),
+        "sources": sorted(sources_used),
+    }
+
+    return _publish(out, append_event=bool(out.get("requested_family_count", 0) or out.get("invalidated_family_count", 0)))
+
+
 def inject_obs_into_working_world(
     ctx: Ctx,
     env_obs: EnvObservation,
@@ -6535,6 +6835,17 @@ def inject_obs_into_working_world(
 
     changed_entities: set[str] = set()
     new_cue_entities: set[str] = set()
+    mask_invalidation: dict[str, Any] = {
+        "enabled": False,
+        "requested_family_count": 0,
+        "invalidated_family_count": 0,
+        "removed_tag_count": 0,
+        "removed_edge_count": 0,
+        "removed_metadata_count": 0,
+        "families": [],
+        "entities": [],
+        "sources": [],
+    }
     prev_cues_by_ent: dict[str, set[str]] = {}
     try:
         prev = getattr(ctx, "wm_last_env_cues", None)
@@ -6870,6 +7181,29 @@ def inject_obs_into_working_world(
         _upsert_edge(root_bid, self_bid, "wm_entity", {"created_by": "wm_mapsurface"})
         _set_pos(self_bid, 0.0, 0.0, dist_m=0.0, dist_class="self")
 
+        # Synthetic observation masking must create an explicit unknown at the
+        # WorkingMap seam. Otherwise the preceding value remains latched and the
+        # guarded merge operator has nothing to repair.
+        try:
+            mask_invalidation = invalidate_masked_mapsurface_state_v1(ctx, env_obs, ww)
+        except Exception as exc:
+            mask_invalidation = {
+                "enabled": bool(getattr(ctx, "experiment_newborn_explicit_missingness", False)),
+                "requested_family_count": 0,
+                "invalidated_family_count": 0,
+                "removed_tag_count": 0,
+                "removed_edge_count": 0,
+                "removed_metadata_count": 0,
+                "families": [],
+                "entities": [],
+                "sources": [],
+                "error": f"{type(exc).__name__}:{exc}",
+            }
+            try:
+                ctx.wm_mask_invalidation_last = dict(mask_invalidation)
+            except Exception:
+                pass
+
         # NOTE (Phase X):
         # SurfaceGrid composition + grid→predicate derivation happens later in this function:
         #   - Step 12: WM.SurfaceGrid compose + dirty-cache (ctx.wm_surfacegrid_*)
@@ -6898,6 +7232,27 @@ def inject_obs_into_working_world(
             bid = _ensure_entity(ent, kind_hint=kind)
             full_tag = f"pred:{tok}"
             changed = _replace_pred_slot_on_entity(bid, slot_prefix, full_tag)
+
+            # Record that this family was populated by current observation. This
+            # lets later audits distinguish observed state from guarded repair.
+            try:
+                binding = ww._bindings.get(bid)  # pylint: disable=protected-access
+                if binding is not None:
+                    if not isinstance(getattr(binding, "meta", None), dict):
+                        binding.meta = {}
+                    wmm = binding.meta.setdefault("wm", {})
+                    if isinstance(wmm, dict):
+                        source_by_family = wmm.setdefault("source_by_family", {})
+                        if isinstance(source_by_family, dict):
+                            source_by_family[slot_prefix] = {
+                                "source": "current_observation",
+                                "step": int(getattr(ctx, "controller_steps", 0) or 0),
+                            }
+                        masked = wmm.get("masked_families")
+                        if isinstance(masked, dict):
+                            masked.pop(slot_prefix, None)
+            except Exception:
+                pass
 
             # bump prominence (exposure signal) even if unchanged
             try:
@@ -7041,6 +7396,11 @@ def inject_obs_into_working_world(
 
         # --- Coordinates + distance edges (schematic map) ---
         raw = getattr(env_obs, "raw_sensors", {}) or {}
+        masked_entities = {
+            str(item).strip().lower()
+            for item in list(mask_invalidation.get("entities", []) or [])
+            if isinstance(item, str) and item.strip()
+        }
         for ent, bid in (getattr(ctx, "wm_entities", {}) or {}).items():
             if ent in ("self",):
                 continue
@@ -7061,6 +7421,12 @@ def inject_obs_into_working_world(
                     dist_class = t.split(":")[-1]
                     kind = "hazard"
                     break
+
+            # Do not manufacture a fresh-looking distance estimate for an entity
+            # whose observation family was explicitly masked. Leave the geometry
+            # absent so guarded merge may restore a prior relation and metadata.
+            if ent in masked_entities and dist_class is None:
+                continue
             if ent == "shelter":
                 kind = "shelter"
             if dist_class is None:
@@ -7101,7 +7467,11 @@ def inject_obs_into_working_world(
             except Exception:
                 pass
 
-        return {"predicates": created_preds, "cues": created_cues}
+        return {
+            "predicates": created_preds,
+            "cues": created_cues,
+            "mask_invalidation": dict(mask_invalidation),
+        }
 
     # -------------------- Fallback: old episodic “tick log” behaviour --------------------
     # (kept so you can revert quickly if desired)

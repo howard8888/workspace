@@ -2818,8 +2818,22 @@ def _gate_stand_up_trigger_body_first(world, _drives: Drives, ctx) -> bool:
         fallen = (bp == "fallen")
         standing = (bp == "standing")
     else:
-        fallen = has_pred_near_now(world, "posture:fallen")
-        standing = has_pred_near_now(world, "posture:standing")
+        strict_current = bool(getattr(ctx, "experiment_newborn_require_current_state", False)) if ctx is not None else False
+        governed_workingmap = strict_current and bool(
+            getattr(ctx, "experiment_newborn_explicit_missingness", False)
+        )
+        if governed_workingmap:
+            wm_state = _newborn_workingmap_state_v1(ctx)
+            wm_posture = wm_state.get("posture")
+            wm_sources = wm_state.get("source_by_field")
+            wm_sources = wm_sources if isinstance(wm_sources, dict) else {}
+            if wm_posture is not None:
+                _record_newborn_guarded_field_use_v1(ctx, consumer="stand_up_gate", field="posture", value=wm_posture, source=wm_sources.get("posture"))
+            fallen = wm_posture == "fallen"
+            standing = wm_posture == "standing"
+        else:
+            fallen = has_pred_near_now(world, "posture:fallen")
+            standing = has_pred_near_now(world, "posture:standing")
 
     stand_intent = has_pred_near_now(world, "stand")
     return fallen or (stand_intent and not standing)
@@ -2899,6 +2913,10 @@ def _gate_seek_nipple_trigger_body_first(world, drives: Drives, ctx) -> bool:
 
     strict_current = bool(getattr(ctx, "experiment_newborn_require_current_state", False)) if ctx is not None else False
     hint = _newborn_active_retrieved_hint_v1(ctx) if strict_current else {}
+    governed_workingmap = strict_current and bool(
+        getattr(ctx, "experiment_newborn_explicit_missingness", False)
+    )
+    wm_state = _newborn_workingmap_state_v1(ctx) if governed_workingmap else {}
 
     # Mom-distance check: use BodyMap first. In strict newborn experiment mode,
     # use the retrieved hint next. Only non-strict mode falls back to old graph history.
@@ -2910,6 +2928,15 @@ def _gate_seek_nipple_trigger_body_first(world, drives: Drives, ctx) -> bool:
         if md is not None:
             have_distance = True
             mom_near = md in ("near", "touching")
+
+    if not have_distance and governed_workingmap:
+        wm_md = wm_state.get("mom_distance")
+        if isinstance(wm_md, str) and wm_md:
+            have_distance = True
+            mom_near = wm_md in ("near", "touching")
+            wm_sources = wm_state.get("source_by_field")
+            wm_sources = wm_sources if isinstance(wm_sources, dict) else {}
+            _record_newborn_guarded_field_use_v1(ctx, consumer="seek_nipple_gate", field="mom_distance", value=wm_md, source=wm_sources.get("mom_distance"))
 
     if not have_distance and strict_current:
         hm = hint.get("mom_distance")
@@ -2935,6 +2962,13 @@ def _gate_seek_nipple_trigger_body_first(world, drives: Drives, ctx) -> bool:
 
     # If current state or retrieved hint says we are already latched/drinking, do not seek again.
     ns = body_nipple_state(ctx) if ctx is not None and not stale else None
+    if ns is None and governed_workingmap:
+        wm_ns = wm_state.get("nipple_state")
+        if isinstance(wm_ns, str) and wm_ns:
+            ns = wm_ns
+            wm_sources = wm_state.get("source_by_field")
+            wm_sources = wm_sources if isinstance(wm_sources, dict) else {}
+            _record_newborn_guarded_field_use_v1(ctx, consumer="seek_nipple_gate", field="nipple_state", value=wm_ns, source=wm_sources.get("nipple_state"))
     if ns is None and strict_current:
         hn = hint.get("nipple_state")
         if isinstance(hn, str) and hn:
@@ -3085,6 +3119,181 @@ def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
     )
 
 
+def _record_newborn_guarded_field_use_v1(
+    ctx,
+    *,
+    consumer: str,
+    field: str,
+    value: Any,
+    source: Any,
+) -> None:
+    """Record a strict-gate consultation of a guarded-repaired WorkingMap field.
+
+    The event is diagnostic only. A field is counted at most once per controller
+    step so repeated gate evaluation cannot inflate the use count.
+    """
+    if ctx is None or source != "retrieved_guarded":
+        return
+    try:
+        step_now = int(getattr(ctx, "controller_steps", 0) or 0)
+        key = f"{step_now}|{field}"
+        seen = getattr(ctx, "experiment_newborn_guarded_use_seen", None)
+        if not isinstance(seen, set):
+            seen = set()
+        if key in seen:
+            return
+        seen.add(key)
+        ctx.experiment_newborn_guarded_use_seen = seen
+
+        event = {
+            "step": step_now,
+            "consumer": str(consumer or "gate"),
+            "field": str(field),
+            "value": value,
+            "source": "retrieved_guarded",
+        }
+        events = getattr(ctx, "experiment_newborn_guarded_use_events", None)
+        if not isinstance(events, list):
+            events = []
+        events.append(event)
+        if len(events) > 256:
+            del events[:-256]
+        ctx.experiment_newborn_guarded_use_events = events
+        ctx.experiment_newborn_guarded_use_count = len(events)
+    except Exception:
+        pass
+
+
+def _newborn_workingmap_state_v1(ctx) -> dict[str, Any]:
+    """Read current/repaired newborn fields from WorkingMap.MapSurface only.
+
+    This helper deliberately ignores long-term WorldGraph history and policy
+    scratch nodes. It reads the stable ``wm:entity`` bindings that receive the
+    visible observation and the condition-specific governance operation. In the
+    publication benchmark this is the causal seam through which guarded merge or
+    replacement readback can support policy selection after BodyMap information
+    is missing.
+    """
+    out: dict[str, Any] = {
+        "posture": None,
+        "mom_distance": None,
+        "nipple_state": None,
+        "milk_drinking": None,
+        "zone": "unknown",
+        "route_state": None,
+        "source_by_field": {
+            "posture": None,
+            "mom_distance": None,
+            "nipple_state": None,
+            "milk_drinking": None,
+            "zone": None,
+            "route_state": None,
+        },
+    }
+    if ctx is None:
+        return out
+
+    try:
+        ww = getattr(ctx, "working_world", None)
+        ent_map = getattr(ctx, "wm_entities", None)
+        if ww is None or not isinstance(ent_map, dict):
+            return out
+        bindings = getattr(ww, "_bindings", {})
+        if not isinstance(bindings, dict):
+            return out
+
+        def tags_for(eid: str) -> set[str]:
+            bid = ent_map.get(eid)
+            if not (isinstance(bid, str) and bid in bindings):
+                return set()
+            binding = bindings.get(bid)
+            tags = getattr(binding, "tags", None)
+            try:
+                return set(tags or [])
+            except Exception:
+                return set()
+
+        def source_for(eid: str, family: str) -> str | None:
+            bid = ent_map.get(eid)
+            if not (isinstance(bid, str) and bid in bindings):
+                return None
+            binding = bindings.get(bid)
+            meta = getattr(binding, "meta", None)
+            meta = meta if isinstance(meta, dict) else {}
+            wmm = meta.get("wm")
+            wmm = wmm if isinstance(wmm, dict) else {}
+            source_map = wmm.get("source_by_family")
+            source_map = source_map if isinstance(source_map, dict) else {}
+            item = source_map.get(family)
+            if isinstance(item, dict):
+                source = item.get("source")
+                return source if isinstance(source, str) and source else None
+            if isinstance(item, str) and item:
+                return item
+            return None
+
+        self_tags = tags_for("self")
+        mom_tags = tags_for("mom") | tags_for("mother")
+        shelter_tags = tags_for("shelter")
+        cliff_tags = tags_for("cliff")
+
+        source_by_field = out["source_by_field"]
+        if "pred:resting" in self_tags:
+            out["posture"] = "resting"
+            source_by_field["posture"] = source_for("self", "resting")
+        elif "pred:posture:standing" in self_tags:
+            out["posture"] = "standing"
+            source_by_field["posture"] = source_for("self", "posture")
+        elif "pred:posture:fallen" in self_tags:
+            out["posture"] = "fallen"
+            source_by_field["posture"] = source_for("self", "posture")
+
+        mom_source = source_for("mom", "proximity:mom") or source_for("mother", "proximity:mom")
+        if "pred:proximity:mom:close" in mom_tags:
+            out["mom_distance"] = "near"
+            source_by_field["mom_distance"] = mom_source
+        elif "pred:proximity:mom:far" in mom_tags:
+            out["mom_distance"] = "far"
+            source_by_field["mom_distance"] = mom_source
+
+        if "pred:milk:drinking" in self_tags:
+            out["milk_drinking"] = True
+            out["nipple_state"] = "latched"
+            source_by_field["milk_drinking"] = source_for("self", "milk")
+            source_by_field["nipple_state"] = source_for("self", "milk")
+        elif "pred:nipple:latched" in self_tags:
+            out["nipple_state"] = "latched"
+            source_by_field["nipple_state"] = source_for("self", "nipple")
+        elif "pred:nipple:found" in self_tags:
+            out["nipple_state"] = "reachable"
+            source_by_field["nipple_state"] = source_for("self", "nipple")
+        elif "pred:nipple:hidden" in self_tags:
+            out["nipple_state"] = "hidden"
+            source_by_field["nipple_state"] = source_for("self", "nipple")
+
+        if "pred:route:blocked" in self_tags:
+            out["route_state"] = "blocked"
+            source_by_field["route_state"] = source_for("self", "route")
+        elif "pred:route:clear" in self_tags:
+            out["route_state"] = "clear"
+            source_by_field["route_state"] = source_for("self", "route")
+
+        shelter_near = "pred:proximity:shelter:near" in shelter_tags
+        cliff_near = "pred:hazard:cliff:near" in cliff_tags
+        shelter_source = source_for("shelter", "proximity:shelter")
+        cliff_source = source_for("cliff", "hazard:cliff")
+        if cliff_near and not shelter_near:
+            out["zone"] = "unsafe_cliff_near"
+            source_by_field["zone"] = cliff_source
+        elif shelter_near and not cliff_near:
+            out["zone"] = "safe"
+            source_by_field["zone"] = shelter_source
+    except Exception:
+        return out
+
+    return out
+
+
 def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
     """Return the compact body/world state used by follow_mom gating and no-match fallback.
 
@@ -3107,8 +3316,9 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
     When ctx.experiment_newborn_require_current_state is True, this helper does NOT
     reconstruct current-state values from older long-term graph predicates. It uses:
 
-      1) fresh BodyMap/current-state values first, then
-      2) the short-lived newborn retrieved hint (if active).
+      1) fresh BodyMap/current-state values first,
+      2) the governed WorkingMap MapSurface, then
+      3) the optional legacy retrieved hint (disabled in the publication protocol).
 
     That gives episodic readback a real causal role during blackout windows without
     letting older long-term graph history silently masquerade as "truth now".
@@ -3119,6 +3329,7 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
     nipple_state = None
     milk_drinking = None
     zone = "unknown"
+    route_state = None
 
     try:
         if ctx is not None:
@@ -3139,7 +3350,45 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
         zone = "unknown"
 
     strict_current = bool(getattr(ctx, "experiment_newborn_require_current_state", False)) if ctx is not None else False
+    governed_workingmap = strict_current and bool(
+        getattr(ctx, "experiment_newborn_explicit_missingness", False)
+    )
     if strict_current:
+        wm_state = _newborn_workingmap_state_v1(ctx) if governed_workingmap else {}
+
+        wm_sources = wm_state.get("source_by_field")
+        wm_sources = wm_sources if isinstance(wm_sources, dict) else {}
+        if governed_workingmap and posture is None:
+            posture = wm_state.get("posture")
+            if posture is not None:
+                _record_newborn_guarded_field_use_v1(ctx, consumer="bridge_state", field="posture", value=posture, source=wm_sources.get("posture"))
+        if governed_workingmap and mom_distance is None:
+            mom_distance = wm_state.get("mom_distance")
+            if mom_distance is not None:
+                _record_newborn_guarded_field_use_v1(ctx, consumer="bridge_state", field="mom_distance", value=mom_distance, source=wm_sources.get("mom_distance"))
+        if governed_workingmap and nipple_state is None:
+            nipple_state = wm_state.get("nipple_state")
+            if nipple_state is not None:
+                _record_newborn_guarded_field_use_v1(ctx, consumer="bridge_state", field="nipple_state", value=nipple_state, source=wm_sources.get("nipple_state"))
+        if governed_workingmap and milk_drinking is None and isinstance(wm_state.get("milk_drinking"), bool):
+            milk_drinking = wm_state.get("milk_drinking")
+            _record_newborn_guarded_field_use_v1(ctx, consumer="bridge_state", field="milk_drinking", value=milk_drinking, source=wm_sources.get("milk_drinking"))
+        if governed_workingmap and zone in (None, "", "unknown"):
+            wm_zone = wm_state.get("zone")
+            if isinstance(wm_zone, str) and wm_zone:
+                zone = wm_zone
+                _record_newborn_guarded_field_use_v1(ctx, consumer="bridge_state", field="zone", value=zone, source=wm_sources.get("zone"))
+        if governed_workingmap and route_state is None:
+            route_state = wm_state.get("route_state")
+            if route_state is not None:
+                _record_newborn_guarded_field_use_v1(
+                    ctx,
+                    consumer="bridge_state",
+                    field="route_state",
+                    value=route_state,
+                    source=wm_sources.get("route_state"),
+                )
+
         hint = _newborn_active_retrieved_hint_v1(ctx)
 
         if posture is None:
@@ -3173,6 +3422,7 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
             "nipple_state": nipple_state,
             "milk_drinking": milk_drinking,
             "zone": zone,
+            "route_state": route_state,
         }
 
     if posture is None:
@@ -3202,6 +3452,15 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
     except Exception:
         milk_drinking = None
 
+    if route_state is None:
+        try:
+            if has_pred_near_now(world, "route:blocked"):
+                route_state = "blocked"
+            elif has_pred_near_now(world, "route:clear"):
+                route_state = "clear"
+        except Exception:
+            route_state = None
+
     return {
         "bodymap_stale": bool(stale),
         "posture": posture,
@@ -3209,11 +3468,48 @@ def _follow_mom_bridge_state_v1(world, ctx) -> dict[str, Any]:
         "nipple_state": nipple_state,
         "milk_drinking": milk_drinking,
         "zone": zone,
+        "route_state": route_state,
     }
 
 
+def _newborn_conflicted_repair_status_v1(ctx) -> str:
+    """Return the integrated repair challenge status used by policy gates."""
+    if ctx is None:
+        return "waiting"
+    try:
+        profile = _newborn_stress_profile_from_ctx_v1(ctx)
+    except Exception:
+        profile = "baseline"
+    if profile != "conflicted_repair":
+        return "inactive"
+    raw = getattr(ctx, "experiment_conflicted_repair_status", "waiting")
+    status = str(raw or "waiting").strip().lower()
+    if status not in {"waiting", "armed", "active", "passed", "failed"}:
+        return "waiting"
+    return status
+
+
+def _newborn_conflicted_repair_gate_state_v1(world, ctx) -> dict[str, Any]:
+    """Return the governed state used by the integrated challenge gates."""
+    state = _follow_mom_bridge_state_v1(world, ctx)
+    wm_state = _newborn_workingmap_state_v1(ctx)
+    sources = wm_state.get("source_by_field")
+    sources = sources if isinstance(sources, dict) else {}
+    route_state = wm_state.get("route_state")
+    if route_state is not None:
+        state["route_state"] = route_state
+        _record_newborn_guarded_field_use_v1(
+            ctx,
+            consumer="conflicted_repair_gate",
+            field="route_state",
+            value=route_state,
+            source=sources.get("route_state"),
+        )
+    return state
+
+
 def _newborn_recent_retrieval_ok_v1(ctx, *, max_age_steps: int = 3) -> bool:
-    """Return True when a recent wm_mapsurface retrieval/apply event succeeded.
+    """Return True when a recent wm_mapsurface retrieval changed governed state.
 
     Why this exists
     ---------------
@@ -3228,6 +3524,7 @@ def _newborn_recent_retrieval_ok_v1(ctx, *, max_age_steps: int = 3) -> bool:
 
       - the event exists,
       - the event reports ok=True,
+      - the condition-specific load was structurally non-noop,
       - and it occurred within ``max_age_steps`` controller steps.
 
     This is not a general memory-quality score. It is only a narrow bridge gate
@@ -3244,6 +3541,19 @@ def _newborn_recent_retrieval_ok_v1(ctx, *, max_age_steps: int = 3) -> bool:
     if not isinstance(event, dict):
         return False
     if not bool(event.get("ok")):
+        return False
+
+    load = event.get("load")
+    load = load if isinstance(load, dict) else {}
+    mode = str(load.get("mode") or "merge").strip().lower()
+    if mode == "replace":
+        changed = int(load.get("entities", 0) or 0) > 0 or int(load.get("relations", 0) or 0) > 0
+    else:
+        changed = any(
+            int(load.get(name, 0) or 0) > 0
+            for name in ("added_entities", "filled_slots", "added_edges", "filled_metadata")
+        )
+    if not changed:
         return False
 
     try:
@@ -3335,6 +3645,13 @@ def _should_force_follow_mom_bridge_v1(world, ctx) -> bool:
     This gives episodic readback a real causal role without changing ordinary
     interactive runs.
     """
+    # The integrated conflicted-repair benchmark supplies its own explicit
+    # follow gate. The generic bridge must remain disabled while the challenge
+    # is armed or active, otherwise it can force follow_mom despite a visible
+    # blocked route and bypass both the probe requirement and the repair test.
+    if _newborn_conflicted_repair_status_v1(ctx) in {"armed", "active", "failed"}:
+        return False
+
     st = _follow_mom_bridge_state_v1(world, ctx)
 
     if st.get("posture") != "standing":
@@ -3872,6 +4189,22 @@ def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool:  # 
     if hint == "fox":
         return True
 
+    challenge_status = _newborn_conflicted_repair_status_v1(ctx)
+    if challenge_status in ("armed", "failed"):
+        return False
+    if challenge_status == "active":
+        st = _newborn_conflicted_repair_gate_state_v1(world, ctx)
+        if st.get("posture") != "standing":
+            return False
+        if st.get("nipple_state") == "latched":
+            return False
+        # The challenge deliberately requires both pieces of state. Condition A
+        # can repair mom_distance while preserving current route:blocked. After
+        # probe, route becomes clear and follow is permitted. Condition B lacks
+        # mom_distance. Condition C reconstructs stale route:clear and follows
+        # before probing, which the environment records as an unsafe failure.
+        return st.get("mom_distance") == "far" and st.get("route_state") == "clear"
+
     st = _follow_mom_bridge_state_v1(world, ctx)
     posture = st.get("posture")
 
@@ -3976,6 +4309,13 @@ def _gate_probe_ambiguity_trigger_body_first(world, _drives: Drives, ctx) -> boo
         return False
     if not bool(getattr(ctx, "wm_probe_enabled", True)):
         return False
+
+    challenge_status = _newborn_conflicted_repair_status_v1(ctx)
+    if challenge_status in ("armed", "failed"):
+        return False
+    if challenge_status == "active":
+        st = _newborn_conflicted_repair_gate_state_v1(world, ctx)
+        return st.get("route_state") == "blocked"
 
     keys = getattr(ctx, "wm_scratch_navpatch_last_keys", None)
     if not isinstance(keys, set) or not keys:
@@ -4759,6 +5099,19 @@ class PolicyRuntime:
         # If follow_mom already matched because its own gate fired under the newborn bridge,
         # remember that now so the later topology suppression step does not remove it.
         if bridge_follow_mom and any(p.name == "policy:follow_mom" for p in matches):
+            forced_follow_mom = True
+
+        # In the conflicted-repair benchmark, a successful probe explicitly
+        # clears the hidden route hazard. Once the challenge gate admits
+        # follow_mom on route:clear, the ordinary cliff-topology suppressor must
+        # not veto that action using pre-challenge terrain state. Condition C is
+        # deliberately treated the same way here. Its stale replacement makes
+        # route appear clear before any probe, so the environment can record the
+        # intended unsafe-follow failure on the next transition.
+        if (
+            _newborn_conflicted_repair_status_v1(ctx) == "active"
+            and any(p.name == "policy:follow_mom" for p in matches)
+        ):
             forced_follow_mom = True
 
         if not matches:
@@ -8153,9 +8506,15 @@ def update_body_world_from_obs(ctx, env_obs) -> None:
                 tags.add("pred:milk:drinking")
         elif "nipple:found" in preds:
             tags.add("pred:nipple:found")
-        else:
-            # Fallback: hidden if nothing else observed
+        elif "nipple:hidden" in preds or not bool(
+            getattr(ctx, "experiment_newborn_explicit_missingness", False)
+        ):
+            # Preserve legacy non-publication behavior. Only the corrected
+            # publication benchmark treats an absent nipple token as an
+            # explicit unknown state rather than the positive state ``hidden``.
             tags.add("pred:nipple:hidden")
+        # In explicit-missingness mode, absence of a nipple token leaves the
+        # slot empty/unknown so Guarded Merge can perform a genuine repair.
 
         b.tags = tags
 
@@ -9382,6 +9741,36 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
         mask_p = max(0.0, min(1.0, mask_p))
         protect_pred_prefixes = ("posture:", "hazard:cliff:", "proximity:shelter:")
 
+        # The integrated conflicted-repair challenge depends on two declared
+        # information boundaries. The clean seed must store mom-distance and
+        # route:clear. During the active challenge, the fresh route safety field
+        # must remain visible while mom-distance is removed deliberately by the
+        # stressor. Protect only those challenge-critical families from the
+        # unrelated ordinary random mask. Other eligible observations continue
+        # to use the configured partial-observability probability.
+        try:
+            challenge_profile = _newborn_stress_profile_from_ctx_v1(ctx) == "conflicted_repair"
+            challenge_status = _newborn_conflicted_repair_status_v1(ctx)
+        except Exception:
+            challenge_profile = False
+            challenge_status = "inactive"
+        if challenge_profile and challenge_status in {"armed", "active"}:
+            protect_pred_prefixes = protect_pred_prefixes + ("route:",)
+            if (
+                (
+                    challenge_status == "armed"
+                    and bool(
+                        getattr(
+                            ctx,
+                            "experiment_conflicted_repair_memory_available",
+                            True,
+                        )
+                    )
+                )
+                or bool(getattr(ctx, "experiment_conflicted_repair_reacquired", False))
+            ):
+                protect_pred_prefixes = protect_pred_prefixes + ("proximity:mom:",)
+
         preds_in = getattr(env_obs, "predicates", None)
         cues_in = getattr(env_obs, "cues", None)
 
@@ -9431,8 +9820,8 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
                 f"p={mask_p:.2f} protected={len(protect_pred_prefixes)}"
             )
 
-        dropped_preds = 0
-        dropped_cues = 0
+        dropped_pred_tokens: list[str] = []
+        dropped_cue_tokens: list[str] = []
 
         preds_out: list[str] = []
         for tok in preds:
@@ -9441,26 +9830,90 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
                 preds_out.append(tok)
                 continue
             if rng.random() < mask_p:
-                dropped_preds += 1
+                dropped_pred_tokens.append(tok)
                 continue
             preds_out.append(tok)
 
         # Defensive: keep at least one predicate if we had any (avoid “empty observation block” surprises).
         if (not preds_out) and preds:
             preds_out = [preds[0]]
-            dropped_preds = max(0, len(preds) - 1)
+            dropped_pred_tokens = list(preds[1:])
 
         cues_out: list[str] = []
         for tok in cues:
             if rng.random() < mask_p:
-                dropped_cues += 1
+                dropped_cue_tokens.append(tok)
                 continue
             cues_out.append(tok)
+
+        dropped_preds = len(dropped_pred_tokens)
+        dropped_cues = len(dropped_cue_tokens)
 
         # Apply the masked lists back onto the observation packet.
         try:
             setattr(env_obs, "predicates", preds_out)
             setattr(env_obs, "cues", cues_out)
+        except Exception:
+            pass
+
+        # In the stochastic conflicted-repair benchmark, an exogenous
+        # mother-distance opportunity is only a true current-state reacquisition
+        # when the token survives the ordinary observation mask. Once observed,
+        # the cue remains trackable for the rest of the short challenge.
+        try:
+            exposed = bool(
+                challenge_profile
+                and challenge_status == "active"
+                and getattr(
+                    ctx,
+                    "experiment_conflicted_repair_reacquisition_exposed_this_step",
+                    False,
+                )
+            )
+            if exposed:
+                observed = any(
+                    _strip_pred_prefix(token).startswith("proximity:mom:")
+                    for token in preds_out
+                    if isinstance(token, str)
+                )
+                if observed:
+                    already = bool(
+                        getattr(ctx, "experiment_conflicted_repair_reacquired", False)
+                    )
+                    ctx.experiment_conflicted_repair_reacquired = True
+                    ctx.experiment_conflicted_repair_reacquisition_available = True
+                    if not already:
+                        try:
+                            ctx.experiment_conflicted_repair_reacquire_step = int(step_ref)
+                        except Exception:
+                            ctx.experiment_conflicted_repair_reacquire_step = None
+                        ctx.experiment_conflicted_repair_reacquisition_observed_count = int(
+                            getattr(
+                                ctx,
+                                "experiment_conflicted_repair_reacquisition_observed_count",
+                                0,
+                            )
+                            or 0
+                        ) + 1
+                    if isinstance(env_meta, dict):
+                        env_meta["newborn_conflicted_repair_reacquired"] = True
+                        env_meta["newborn_conflicted_repair_reacquisition_available"] = True
+                        env_meta["newborn_conflicted_repair_reacquire_step"] = getattr(
+                            ctx,
+                            "experiment_conflicted_repair_reacquire_step",
+                            None,
+                        )
+                        env_meta[
+                            "newborn_conflicted_repair_reacquisition_observed_count"
+                        ] = int(
+                            getattr(
+                                ctx,
+                                "experiment_conflicted_repair_reacquisition_observed_count",
+                                0,
+                            )
+                            or 0
+                        )
+            ctx.experiment_conflicted_repair_reacquisition_exposed_this_step = False
         except Exception:
             pass
 
@@ -9470,6 +9923,11 @@ def inject_obs_into_world(world, ctx: Ctx, env_obs: EnvObservation) -> dict[str,
             if isinstance(env_meta, dict):
                 env_meta["obs_mask_dropped_preds"] = int(dropped_preds)
                 env_meta["obs_mask_dropped_cues"] = int(dropped_cues)
+                # Preserve the exact removed tokens so WorkingMap can represent
+                # synthetic missingness explicitly instead of silently retaining
+                # the preceding value as current state.
+                env_meta["obs_mask_dropped_pred_tokens"] = list(dropped_pred_tokens[:32])
+                env_meta["obs_mask_dropped_cue_tokens"] = list(dropped_cue_tokens[:32])
                 env_meta["obs_mask_mode"] = str(rng_mode)
                 env_meta["obs_mask_prob"] = float(mask_p)
         except Exception:
@@ -12210,6 +12668,14 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     }
 
                     wm["navsummary"] = dict(getattr(ctx, "wm_navsummary", {}) or {})
+
+                    working_info = (inj or {}).get("working") if isinstance(inj, dict) else None
+                    working_info = working_info if isinstance(working_info, dict) else {}
+                    invalidation = working_info.get("mask_invalidation")
+                    if not isinstance(invalidation, dict):
+                        invalidation = dict(getattr(ctx, "wm_mask_invalidation_last", {}) or {})
+                    wm["mask_invalidation"] = dict(invalidation)
+                    wm["newborn_governed_state"] = _newborn_workingmap_state_v1(ctx)
 
                     # --- Step 15B: include WM zoom state/events (trace hook) ---
                     try:

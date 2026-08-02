@@ -541,9 +541,9 @@ def _retrieval_summary_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
                 added_entities = _int_or_none_v1(load.get("added_entities")) or 0
                 filled_slots = _int_or_none_v1(load.get("filled_slots")) or 0
                 added_edges = _int_or_none_v1(load.get("added_edges")) or 0
-                stored_prior_cues = _int_or_none_v1(load.get("stored_prior_cues")) or 0
+                filled_metadata = _int_or_none_v1(load.get("filled_metadata")) or 0
 
-                if added_entities > 0 or filled_slots > 0 or added_edges > 0 or stored_prior_cues > 0:
+                if added_entities > 0 or filled_slots > 0 or added_edges > 0 or filled_metadata > 0:
                     non_noop = True
                 else:
                     retrieval_merge_noop_count += 1

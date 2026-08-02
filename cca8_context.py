@@ -68,8 +68,21 @@ class ExperimentProtocolConfig:
     # blackout_short : milestone-locked local-state blackout, usually 2-3 cycles
     # blackout_long  : longer local-state blackout, usually 5+ cycles
     # route_loss     : memory-critical external route/task-state loss, usually 8+ cycles
+    # conflicted_repair:
+    #     one diagnostic challenge that simultaneously requires repair of a
+    #     missing mom-distance field and protection of a newer route-safety field.
+    #     The default protocol uses matched seeded stochastic variation in:
+    #       - critical-field encoding,
+    #       - post-encoding route change, and
+    #       - current-state reacquisition timing.
+    #     The same realized schedule is presented to Conditions A, B, and C.
     newborn_stress_profile: str = "baseline"
     newborn_blackout_length: int = 3
+    conflicted_repair_variant_mode: str = "stochastic_v3"
+    conflicted_repair_conflict_probability: float = 0.50
+    conflicted_repair_encoding_opportunities: int = 4
+    conflicted_repair_reacquire_probability: float = 0.25
+    conflicted_repair_reacquire_start_delay: int = 1
     action_vocab_version: str = "cca8_action_vocab_v1"
     scratch_clear_policy: str = "per_episode_reset"
     jsonl_write_cycle_records: bool = True
@@ -651,6 +664,16 @@ class Ctx:
     # This makes "resume the long-horizon task after missing current evidence"
     # depend on episodic readback rather than on stage-local bridge logic alone.
     experiment_newborn_require_resume_memory: bool = False
+    # When True, observation tokens removed by the benchmark mask create explicit
+    # gaps in WorkingMap rather than leaving the preceding value latched as if it
+    # were still current. This is the experiment-facing seam that allows guarded
+    # merge to perform genuine structural state repair.
+    experiment_newborn_explicit_missingness: bool = False
+    # Legacy direct engram->gate hint. Keep the ordinary-run default compatible
+    # with the pre-audit code. The publication benchmark explicitly turns this
+    # OFF so A/B/C test the declared WorkingMap governance operators rather than
+    # a hidden parallel control channel.
+    experiment_newborn_direct_hint_enabled: bool = True
     # Short-lived retrieved-state bridge for newborn B2.
     # -------------------------------------------------
     # A newborn retrieval can succeed at the WorkingMap/Column seam but still fail
@@ -671,11 +694,66 @@ class Ctx:
     experiment_newborn_retrieved_hint_last_used_step_counted: int = -1
     experiment_newborn_retrieved_hint_events: list[dict[str, Any]] = field(default_factory=list)
 
+    # WorkingMap mask/repair instrumentation. These are diagnostic only and do not
+    # participate in policy selection.
+    wm_mask_invalidation_last: dict[str, Any] = field(default_factory=dict)
+    wm_mask_invalidation_events: list[dict[str, Any]] = field(default_factory=list)
+    wm_mask_invalidated_family_count: int = 0
+    wm_mask_removed_tag_count: int = 0
+    wm_mask_removed_edge_count: int = 0
+    wm_mask_removed_metadata_count: int = 0
+
+    # Guarded-repair control-use instrumentation. A use event is recorded only
+    # when a strict newborn gate consults a WorkingMap field whose current
+    # provenance is ``retrieved_guarded``. These fields are diagnostic only.
+    experiment_newborn_guarded_use_count: int = 0
+    experiment_newborn_guarded_use_events: list[dict[str, Any]] = field(default_factory=list)
+    experiment_newborn_guarded_use_seen: set[str] = field(default_factory=set)
+
     # Newborn benchmark stressor runtime state.
     # These fields are episode-local and are reset by experiment_configure_benchmark_runtime_v1.
     experiment_newborn_blackout_start_step: int = -1
     experiment_newborn_blackout_until_step: int = -1
     experiment_newborn_blackout_reason: Optional[str] = None
+
+    # Integrated conflicted state-repair benchmark runtime state.
+    # ------------------------------------------------------------
+    # The benchmark stores a clean episodic state, then creates one missing
+    # decision-critical field together with one fresh safety conflict.
+    # Condition A must repair the missing field while preserving the fresh
+    # safety field. Condition B cannot repair the gap. Condition C restores
+    # the useful field but also imports stale safety state.
+    experiment_conflicted_repair_status: str = "waiting"
+    experiment_episode_index: int = 0
+    experiment_conflicted_repair_arm_step: Optional[int] = None
+    experiment_conflicted_repair_start_step: Optional[int] = None
+    experiment_conflicted_repair_deadline_step: Optional[int] = None
+    experiment_conflicted_repair_variant: Optional[str] = None
+    experiment_conflicted_repair_schedule_mode: str = "stochastic_v3"
+    experiment_conflicted_repair_variant_mode: str = "stochastic_v3"
+    experiment_conflicted_repair_conflict_present: bool = True
+    experiment_conflicted_repair_conflict_draw: Optional[float] = None
+    experiment_conflicted_repair_memory_available: bool = True
+    experiment_conflicted_repair_memory_critical_available: bool = True
+    experiment_conflicted_repair_encoding_opportunities: int = 0
+    experiment_conflicted_repair_encoding_successes: int = 0
+    experiment_conflicted_repair_encoding_draws: list[float] = field(default_factory=list)
+    experiment_conflicted_repair_reacquisition_available: bool = False
+    experiment_conflicted_repair_reacquire_step: Optional[int] = None
+    experiment_conflicted_repair_reacquire_offsets: list[int] = field(default_factory=list)
+    experiment_conflicted_repair_reacquire_draws: list[float] = field(default_factory=list)
+    experiment_conflicted_repair_reacquire_first_offset: Optional[int] = None
+    experiment_conflicted_repair_reacquisition_exposed_this_step: bool = False
+    experiment_conflicted_repair_reacquisition_exposure_count: int = 0
+    experiment_conflicted_repair_reacquisition_observed_count: int = 0
+    experiment_conflicted_repair_reacquired: bool = False
+    experiment_conflicted_repair_route_blocked: bool = False
+    experiment_conflicted_repair_probe_step: Optional[int] = None
+    experiment_conflicted_repair_pass_step: Optional[int] = None
+    experiment_conflicted_repair_fail_step: Optional[int] = None
+    experiment_conflicted_repair_failure_reason: Optional[str] = None
+    experiment_conflicted_repair_unsafe_follow_count: int = 0
+    experiment_conflicted_repair_probe_count: int = 0
 
     def reset_controller_steps(self) -> None:
         """quick reset of Ctx.controller_steps counter

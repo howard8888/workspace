@@ -21,13 +21,33 @@ from __future__ import annotations
 
 from contextlib import redirect_stdout
 from io import StringIO
+import random
 from typing import Any
 
+import pytest
+
+import cca8_column
+import cca8_controller
 from cca8_run import (
     experiment_configure_benchmark_runtime_v1,
     experiment_make_sandbox_runtime_v1,
     run_env_closed_loop_steps,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_newborn_global_state() -> Any:
+    """Prevent singleton memory or skill state from leaking into this regression test."""
+    random_state = random.getstate()
+    cca8_column.mem._store.clear()
+    cca8_controller.reset_skills()
+    random.seed(123)
+    try:
+        yield
+    finally:
+        random.setstate(random_state)
+        cca8_column.mem._store.clear()
+        cca8_controller.reset_skills()
 
 
 REQUIRED_NEWBORN_MILESTONES = (
@@ -152,6 +172,10 @@ def _run_autonomous_newborn_episode(max_cycles: int = 60) -> dict[str, Any]:
     ctx.cycle_json_enabled = True
     ctx.cycle_json_path = None
     ctx.cycle_json_records = []
+    # This regression checks the deterministic autonomous policy ladder, not
+    # epsilon-greedy exploration. Exploration is tested separately.
+    ctx.rl_epsilon = 0.0
+    ctx.jump = 0.0
     ctx.experiment_newborn_require_resume_memory = False
     ctx.experiment_newborn_blackout_start_step = -1
     ctx.experiment_newborn_blackout_until_step = -1

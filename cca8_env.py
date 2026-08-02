@@ -761,6 +761,108 @@ class FsmBackend:
         did_follow = _has_action("policy:follow_mom")
         did_rest = _has_action("policy:rest")
 
+        # ---------------------------------------------------------------
+        # Integrated conflicted-repair challenge
+        # ---------------------------------------------------------------
+        # The visible observation stressor arms the challenge immediately
+        # after the clean stood-up state has been stored. On the next
+        # environment transition the route becomes blocked. The agent must:
+        #
+        #   1) probe while the current route is blocked,
+        #   2) retain or repair the still-valid fact that mom is far, and
+        #   3) follow only after the probe has cleared the route.
+        #
+        # A follow action while the hidden route remains blocked is a terminal
+        # challenge failure. In the stochastic v3 protocol, route conflict,
+        # critical-state encoding, and current-state reacquisition are sampled
+        # from condition-blind named random streams. The realized schedule is
+        # shared across matched A/B/C episodes.
+        challenge_status = str(
+            getattr(ctx, "experiment_conflicted_repair_status", "waiting") or "waiting"
+        ).strip().lower()
+
+        if challenge_status == "armed":
+            challenge_status = "active"
+            try:
+                deadline_len = int(
+                    getattr(getattr(ctx, "experiment_cfg", None), "newborn_blackout_length", 5) or 5
+                )
+            except Exception:
+                deadline_len = 5
+            deadline_len = max(4, min(10, deadline_len))
+            try:
+                ctx.experiment_conflicted_repair_status = "active"
+                ctx.experiment_conflicted_repair_start_step = int(steps)
+                ctx.experiment_conflicted_repair_deadline_step = int(steps) + deadline_len - 1
+                ctx.experiment_conflicted_repair_route_blocked = bool(
+                    getattr(ctx, "experiment_conflicted_repair_conflict_present", True)
+                )
+            except Exception:
+                pass
+
+        challenge_failed_this_step = False
+        if challenge_status == "active":
+            route_blocked = bool(getattr(ctx, "experiment_conflicted_repair_route_blocked", True))
+
+            if _has_action("policy:probe") and route_blocked:
+                try:
+                    ctx.experiment_conflicted_repair_route_blocked = False
+                    ctx.experiment_conflicted_repair_probe_step = int(steps)
+                    ctx.experiment_conflicted_repair_probe_count = int(
+                        getattr(ctx, "experiment_conflicted_repair_probe_count", 0) or 0
+                    ) + 1
+                except Exception:
+                    pass
+
+            elif did_follow:
+                if route_blocked:
+                    challenge_failed_this_step = True
+                    try:
+                        ctx.experiment_conflicted_repair_status = "failed"
+                        ctx.experiment_conflicted_repair_fail_step = int(steps)
+                        ctx.experiment_conflicted_repair_failure_reason = "unsafe_follow_before_probe"
+                        ctx.experiment_conflicted_repair_unsafe_follow_count = int(
+                            getattr(ctx, "experiment_conflicted_repair_unsafe_follow_count", 0) or 0
+                        ) + 1
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        ctx.experiment_conflicted_repair_status = "passed"
+                        ctx.experiment_conflicted_repair_pass_step = int(steps)
+                    except Exception:
+                        pass
+
+            # The timeout is checked after the current action, so a safe follow
+            # on the final permitted transition still passes.
+            if not challenge_failed_this_step:
+                current_status = str(
+                    getattr(ctx, "experiment_conflicted_repair_status", "active") or "active"
+                ).strip().lower()
+                if current_status == "active":
+                    try:
+                        deadline_step = int(getattr(ctx, "experiment_conflicted_repair_deadline_step", -1))
+                    except Exception:
+                        deadline_step = -1
+                    if deadline_step >= 0 and int(steps) >= deadline_step:
+                        challenge_failed_this_step = True
+                        try:
+                            ctx.experiment_conflicted_repair_status = "failed"
+                            ctx.experiment_conflicted_repair_fail_step = int(steps)
+                            ctx.experiment_conflicted_repair_failure_reason = "missing_state_timeout"
+                        except Exception:
+                            pass
+
+        if challenge_failed_this_step:
+            state.scenario_stage = "conflicted_repair_failed"
+            state.kid_posture = "fallen"
+            state.position = "cliff_edge"
+            state.zone = "unsafe"
+            state.cliff_distance = "near"
+            state.shelter_distance = "far"
+            state.nipple_state = "hidden"
+            stage = "conflicted_repair_failed"
+
 
         def _open_blackout(kind: str, duration_steps: int) -> None:
             """Open a short newborn observation blackout.
@@ -784,7 +886,16 @@ class FsmBackend:
         # -------------------------------
         # Stage: birth → struggle
         # -------------------------------
-        if stage == "birth":
+        if stage == "conflicted_repair_failed":
+            # Stable terminal failure state for the diagnostic challenge.
+            state.kid_posture = "fallen"
+            state.position = "cliff_edge"
+            state.zone = "unsafe"
+            state.cliff_distance = "near"
+            state.shelter_distance = "far"
+            state.nipple_state = "hidden"
+
+        elif stage == "birth":
             # Birth remains a setup phase. We still advance into struggle after a short
             # initial delay, but this is not counted as B2 task progress.
             state.kid_posture = "fallen"

@@ -27,6 +27,7 @@ that construct the current callback bridge at call time.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import math
@@ -337,7 +338,13 @@ def experiment_benchmark_catalog_v1() -> dict[str, ExperimentBenchmarkDef]:
     ]
     return {item.benchmark_id: item for item in items}
 
-NEWBORN_STRESS_PROFILES_V1 = ("baseline", "blackout_short", "blackout_long", "route_loss")
+NEWBORN_STRESS_PROFILES_V1 = (
+    "baseline",
+    "blackout_short",
+    "blackout_long",
+    "route_loss",
+    "conflicted_repair",
+)
 
 NEWBORN_STRESS_DROP_PRED_PREFIXES_V1 = (
     "proximity:mom:",
@@ -589,6 +596,12 @@ def _newborn_effective_blackout_length_v1(profile: str, configured_length: Any) 
         return max(5, min(20, raw))
     if profile_norm == "route_loss":
         return max(8, min(20, raw))
+    if profile_norm == "conflicted_repair":
+        # This value is the action deadline, not a broad sensory blackout.
+        # A probe followed by a safe follow action needs three environment
+        # transitions, while the no-readback condition must not be able to wait
+        # indefinitely for the hidden field to return.
+        return max(4, min(10, raw))
     return raw
 
 
@@ -616,6 +629,8 @@ def _newborn_blackout_length_from_ctx_v1(ctx: Ctx | None, profile: str) -> int:
         default_len = 5
     elif profile_norm == "route_loss":
         default_len = 8
+    elif profile_norm == "conflicted_repair":
+        default_len = 5
     else:
         default_len = 3
 
@@ -735,6 +750,598 @@ def _newborn_stress_schedule_blackout_v1(
         pass
 
 
+def _newborn_conflicted_repair_status_v1(ctx: Ctx | None) -> str:
+    """Return the current integrated repair-challenge status.
+
+    Status values are deliberately small and JSON-safe:
+
+    ``waiting``
+        The newborn has not yet reached the stored-state boundary.
+    ``armed``
+        The clean ``stood_up`` state has just been observed and stored. The
+        next environment transition activates the challenge.
+    ``active``
+        Mother distance is unavailable and the current route is either blocked
+        or clear. The agent must use the governed WorkingMap to act.
+    ``passed`` / ``failed``
+        Terminal challenge outcomes. The ordinary newborn task may continue
+        after a pass, while a failure holds the environment in a failed stage.
+    """
+    if ctx is None:
+        return "waiting"
+    raw = getattr(ctx, "experiment_conflicted_repair_status", "waiting")
+    status = str(raw or "waiting").strip().lower()
+    if status not in {"waiting", "armed", "active", "passed", "failed"}:
+        return "waiting"
+    return status
+
+
+def _conflicted_repair_rng_v1(
+    ctx: Ctx | None,
+    stream: str,
+    *,
+    index: int = 0,
+) -> random.Random:
+    """Return one condition-blind deterministic random stream.
+
+    Python's built-in ``hash`` is intentionally avoided because it is salted per
+    process.  A BLAKE2 digest gives matched A/B/C episodes the same environmental
+    schedule even when each episode runs in a fresh interpreter.
+    """
+    try:
+        base_seed = int(getattr(ctx, "obs_mask_seed", 0) or 0)
+    except Exception:
+        base_seed = 0
+    try:
+        episode_index = int(getattr(ctx, "experiment_episode_index", 0) or 0)
+    except Exception:
+        episode_index = 0
+    payload = (
+        f"cca8_conflicted_repair_stochastic_v3|{base_seed}|{episode_index}|"
+        f"{str(stream)}|{int(index)}"
+    ).encode("utf-8")
+    digest = hashlib.blake2b(payload, digest_size=8).digest()
+    return random.Random(int.from_bytes(digest, byteorder="big", signed=False))
+
+
+def _newborn_conflicted_repair_assignment_v1(ctx: Ctx | None) -> dict[str, Any]:
+    """Return the matched conflicted-repair schedule for one episode.
+
+    The default ``stochastic_v3`` protocol samples three environment variables
+    before the challenge starts.
+
+    1. The route changes after memory encoding with probability 0.50.
+    2. The critical mother-distance field is encoded if at least one of four
+       ordinary observation opportunities survives the configured mask.
+    3. Starting one cycle after challenge activation, the current mother-distance
+       cue has a 0.25 chance per cycle of becoming externally available. The cue
+       still passes through the ordinary observation mask before it can be used.
+
+    All draws use named streams derived from the matched episode seed. The
+    environment therefore does not inspect the memory condition. A legacy
+    balanced 2x2 mode remains available only for deterministic regression tests.
+    """
+    cfg = getattr(ctx, "experiment_cfg", None)
+    mode = str(
+        getattr(cfg, "conflicted_repair_variant_mode", "stochastic_v3")
+        or "stochastic_v3"
+    ).strip().lower()
+
+    try:
+        deadline_length = int(getattr(cfg, "newborn_blackout_length", 7) or 7)
+    except Exception:
+        deadline_length = 7
+    deadline_length = max(4, min(10, deadline_length))
+
+    try:
+        min_delay = int(
+            getattr(cfg, "conflicted_repair_reacquire_start_delay", 1) or 1
+        )
+    except Exception:
+        min_delay = 1
+    min_delay = max(0, min(deadline_length - 1, min_delay))
+
+    if mode == "balanced_2x2":
+        try:
+            episode_index = int(getattr(ctx, "experiment_episode_index", 0) or 0)
+        except Exception:
+            episode_index = 0
+        cell = episode_index % 4
+        mapping = {
+            0: ("conflict_persistent", True, []),
+            1: ("conflict_reacquire", True, [min_delay]),
+            2: ("no_conflict_persistent", False, []),
+            3: ("no_conflict_reacquire", False, [min_delay]),
+        }
+        variant, conflict_present, reacquire_offsets = mapping[cell]
+        return {
+            "mode": mode,
+            "variant": variant,
+            "conflict_present": bool(conflict_present),
+            "conflict_draw": None,
+            "memory_available": True,
+            "encoding_opportunities": 1,
+            "encoding_successes": 1,
+            "encoding_draws": [1.0],
+            "reacquire_offsets": list(reacquire_offsets),
+            "reacquire_draws": [],
+        }
+
+    try:
+        conflict_probability = float(
+            getattr(cfg, "conflicted_repair_conflict_probability", 0.50) or 0.50
+        )
+    except Exception:
+        conflict_probability = 0.50
+    conflict_probability = max(0.0, min(1.0, conflict_probability))
+
+    try:
+        encoding_opportunities = int(
+            getattr(cfg, "conflicted_repair_encoding_opportunities", 4) or 4
+        )
+    except Exception:
+        encoding_opportunities = 4
+    encoding_opportunities = max(1, min(16, encoding_opportunities))
+
+    try:
+        observation_mask_probability = float(getattr(cfg, "obs_mask_prob", 0.50) or 0.50)
+    except Exception:
+        observation_mask_probability = 0.50
+    observation_mask_probability = max(0.0, min(1.0, observation_mask_probability))
+
+    try:
+        reacquire_probability = float(
+            getattr(cfg, "conflicted_repair_reacquire_probability", 0.25) or 0.25
+        )
+    except Exception:
+        reacquire_probability = 0.25
+    reacquire_probability = max(0.0, min(1.0, reacquire_probability))
+
+    conflict_draw = float(_conflicted_repair_rng_v1(ctx, "route_conflict").random())
+    conflict_present = bool(conflict_draw < conflict_probability)
+
+    encoding_rng = _conflicted_repair_rng_v1(ctx, "critical_encoding")
+    encoding_draws = [float(encoding_rng.random()) for _ in range(encoding_opportunities)]
+    encoding_successes = sum(draw >= observation_mask_probability for draw in encoding_draws)
+    memory_available = bool(encoding_successes > 0)
+
+    reacquire_rng = _conflicted_repair_rng_v1(ctx, "current_reacquisition")
+    reacquire_draws: list[float] = []
+    reacquire_offsets: list[int] = []
+    # The final offset is still actionable because the environment checks the
+    # timeout after applying the current action.
+    for offset in range(min_delay, deadline_length):
+        draw = float(reacquire_rng.random())
+        reacquire_draws.append(draw)
+        if draw < reacquire_probability:
+            reacquire_offsets.append(int(offset))
+
+    variant = (
+        ("conflict" if conflict_present else "no_conflict")
+        + "_"
+        + ("memory_available" if memory_available else "memory_missing")
+    )
+    return {
+        "mode": "stochastic_v3",
+        "variant": variant,
+        "conflict_present": bool(conflict_present),
+        "conflict_draw": float(conflict_draw),
+        "memory_available": bool(memory_available),
+        "encoding_opportunities": int(encoding_opportunities),
+        "encoding_successes": int(encoding_successes),
+        "encoding_draws": list(encoding_draws),
+        "reacquire_offsets": list(reacquire_offsets),
+        "reacquire_draws": list(reacquire_draws),
+    }
+
+
+def _replace_predicate_family_v1(tokens: list[Any], family: str, value_token: str) -> list[str]:
+    """Return predicates with one slot family replaced by ``value_token``."""
+    family_norm = str(family or "").strip()
+    value_norm = str(value_token or "").strip()
+    out: list[str] = []
+    for item in tokens:
+        if not isinstance(item, str):
+            continue
+        token = item.strip()
+        if not token:
+            continue
+        check = token.replace("pred:", "", 1) if token.startswith("pred:") else token
+        check_family = check.rsplit(":", 1)[0] if ":" in check else check
+        if check_family == family_norm:
+            continue
+        out.append(token)
+    if value_norm:
+        out.append(value_norm)
+    return out
+
+
+def _newborn_conflicted_repair_hide_mom_v1(env_obs: EnvObservation) -> dict[str, Any]:
+    """Remove current mother-distance evidence while leaving other state visible.
+
+    The integrated challenge is intentionally narrower than ``route_loss``. It
+    removes exactly the field that Guarded Merge must restore and scrubs obvious
+    parallel representations of that field. The current route-safety token is
+    left visible so the guard has a newer value to protect.
+    """
+    dropped_preds: list[str] = []
+    dropped_cues: list[str] = []
+    dropped_raw_keys: list[str] = []
+    dropped_meta_keys: list[str] = []
+
+    preds_in = list(getattr(env_obs, "predicates", []) or [])
+    preds_out: list[str] = []
+    for item in preds_in:
+        if not isinstance(item, str):
+            continue
+        token = item.strip()
+        check = token.replace("pred:", "", 1) if token.startswith("pred:") else token
+        if check.startswith("proximity:mom:"):
+            dropped_preds.append(token)
+            continue
+        preds_out.append(token)
+
+    cues_in = list(getattr(env_obs, "cues", []) or [])
+    cues_out: list[str] = []
+    for item in cues_in:
+        if not isinstance(item, str):
+            continue
+        token = item.strip()
+        if token.startswith(("vision:silhouette:mom", "warmth:mom", "odor:mom", "route:mom")):
+            dropped_cues.append(token)
+            continue
+        cues_out.append(token)
+
+    try:
+        setattr(env_obs, "predicates", preds_out)
+        setattr(env_obs, "cues", cues_out)
+    except Exception:
+        pass
+
+    raw = getattr(env_obs, "raw_sensors", None)
+    if isinstance(raw, dict):
+        raw_out: dict[str, Any] = {}
+        for key, value in raw.items():
+            key_text = str(key)
+            key_norm = key_text.lower()
+            if "mom" in key_norm or "mother" in key_norm:
+                dropped_raw_keys.append(key_text)
+                continue
+            raw_out[key] = value
+        try:
+            setattr(env_obs, "raw_sensors", raw_out)
+        except Exception:
+            pass
+
+    meta = _newborn_stress_env_meta_v1(env_obs)
+    for key in list(meta.keys()):
+        key_text = str(key)
+        key_norm = key_text.lower()
+        if key_norm.startswith("newborn_"):
+            continue
+        if any(fragment in key_norm for fragment in (
+            "mom_position",
+            "mother_position",
+            "mom_distance",
+            "mother_distance",
+            "mom_proximity",
+            "bearing_to_mom",
+            "route_to_mom",
+        )):
+            dropped_meta_keys.append(key_text)
+            meta.pop(key, None)
+
+    # Remove obvious mom geometry from the local surface representation.
+    surface = getattr(env_obs, "surface_grid", None)
+    if isinstance(surface, dict):
+        surface_out = dict(surface)
+        for list_key in ("objects", "landmarks", "focus_candidates"):
+            raw_items = surface_out.get(list_key)
+            if isinstance(raw_items, list):
+                kept_items = []
+                for item in raw_items:
+                    if isinstance(item, dict):
+                        token = str(item.get("token") or item.get("entity") or "").lower()
+                        if token in {"mom", "mother"} or "mom" in token or "mother" in token:
+                            continue
+                    elif isinstance(item, str) and ("mom" in item.lower() or "mother" in item.lower()):
+                        continue
+                    kept_items.append(item)
+                surface_out[list_key] = kept_items
+        affordances = surface_out.get("affordances")
+        if isinstance(affordances, dict):
+            aff_out = dict(affordances)
+            aff_out.pop("mom_near", None)
+            surface_out["affordances"] = aff_out
+        try:
+            setattr(env_obs, "surface_grid", surface_out)
+        except Exception:
+            pass
+
+    return {
+        "dropped_pred_tokens": dropped_preds,
+        "dropped_cue_tokens": dropped_cues,
+        "dropped_raw_keys": dropped_raw_keys,
+        "dropped_meta_keys": dropped_meta_keys,
+    }
+
+
+def _apply_newborn_conflicted_repair_stress_v1(
+    ctx: Ctx,
+    env_obs: EnvObservation,
+    *,
+    step_now: int,
+    milestones: list[str],
+) -> EnvObservation:
+    """Apply the integrated repair challenge with matched stochastic variation.
+
+    The clean pre-challenge state contains ``route:clear`` and may contain
+    ``proximity:mom:far``.  Three condition-blind stochastic processes are frozen
+    from the matched episode seed:
+
+    - critical-state encoding completeness,
+    - whether route safety changes after the memory was stored, and
+    - when current mother-distance evidence becomes externally available again.
+
+    Once reacquisition begins, the true mother-distance field is exposed on each
+    later challenge cycle. It remains subject to the ordinary observation mask.
+    Thus a recovery opportunity is not equivalent to guaranteed perception.
+    """
+    meta = _newborn_stress_env_meta_v1(env_obs)
+    status = _newborn_conflicted_repair_status_v1(ctx)
+    mode = str(
+        getattr(getattr(ctx, "experiment_cfg", None), "conflicted_repair_variant_mode", "stochastic_v3")
+        or "stochastic_v3"
+    ).strip().lower()
+
+    dropped = {
+        "dropped_pred_tokens": [],
+        "dropped_cue_tokens": [],
+        "dropped_raw_keys": [],
+        "dropped_meta_keys": [],
+    }
+
+    # Arm at the first stood-up milestone. The route seed is always current and
+    # clear. Mother distance is included only when at least one modeled encoding
+    # exposure survived the ordinary observation mask.
+    if status == "waiting" and "stood_up" in milestones:
+        status = "armed"
+        assignment = _newborn_conflicted_repair_assignment_v1(ctx)
+        reacquire_offsets = [
+            int(value) for value in assignment.get("reacquire_offsets", [])
+            if isinstance(value, int) or (isinstance(value, float) and value.is_integer())
+        ]
+        first_reacquire_offset = min(reacquire_offsets) if reacquire_offsets else None
+        try:
+            ctx.experiment_conflicted_repair_status = "armed"
+            ctx.experiment_conflicted_repair_arm_step = int(step_now)
+            ctx.experiment_conflicted_repair_variant_mode = str(assignment.get("mode") or mode)
+            ctx.experiment_conflicted_repair_schedule_mode = str(assignment.get("mode") or mode)
+            ctx.experiment_conflicted_repair_variant = str(assignment["variant"])
+            ctx.experiment_conflicted_repair_conflict_present = bool(
+                assignment["conflict_present"]
+            )
+            ctx.experiment_conflicted_repair_conflict_draw = assignment.get("conflict_draw")
+            ctx.experiment_conflicted_repair_memory_critical_available = bool(
+                assignment.get("memory_available", True)
+            )
+            # Compatibility alias used by the observation-mask seam.
+            ctx.experiment_conflicted_repair_memory_available = bool(
+                assignment.get("memory_available", True)
+            )
+            ctx.experiment_conflicted_repair_encoding_opportunities = int(
+                assignment.get("encoding_opportunities", 1) or 1
+            )
+            ctx.experiment_conflicted_repair_encoding_successes = int(
+                assignment.get("encoding_successes", 0) or 0
+            )
+            ctx.experiment_conflicted_repair_encoding_draws = list(
+                assignment.get("encoding_draws", []) or []
+            )
+            ctx.experiment_conflicted_repair_reacquire_offsets = list(reacquire_offsets)
+            ctx.experiment_conflicted_repair_reacquire_draws = list(
+                assignment.get("reacquire_draws", []) or []
+            )
+            ctx.experiment_conflicted_repair_reacquire_first_offset = first_reacquire_offset
+            ctx.experiment_conflicted_repair_reacquisition_available = False
+            ctx.experiment_conflicted_repair_reacquire_step = None
+            ctx.experiment_conflicted_repair_reacquired = False
+            ctx.experiment_conflicted_repair_reacquisition_exposed_this_step = False
+            ctx.experiment_conflicted_repair_reacquisition_exposure_count = 0
+            ctx.experiment_conflicted_repair_reacquisition_observed_count = 0
+        except Exception:
+            pass
+
+    memory_available = bool(
+        getattr(ctx, "experiment_conflicted_repair_memory_critical_available", True)
+    )
+    route_blocked = bool(
+        getattr(ctx, "experiment_conflicted_repair_route_blocked", False)
+    )
+    route_state = "blocked" if status == "active" and route_blocked else "clear"
+
+    # Seed boundary. Route is always encoded as clear. The critical mother field
+    # is omitted when all pre-challenge encoding opportunities were masked.
+    if status == "armed" and "stood_up" in milestones:
+        if memory_available:
+            preds = list(getattr(env_obs, "predicates", []) or [])
+            preds = _replace_predicate_family_v1(
+                preds, "proximity:mom", "proximity:mom:far"
+            )
+            try:
+                setattr(env_obs, "predicates", preds)
+            except Exception:
+                pass
+        else:
+            dropped = _newborn_conflicted_repair_hide_mom_v1(env_obs)
+            dropped_preds = dropped.get("dropped_pred_tokens")
+            if isinstance(dropped_preds, list) and "proximity:mom:far" not in dropped_preds:
+                dropped_preds.append("proximity:mom:far")
+
+    preds = list(getattr(env_obs, "predicates", []) or [])
+    preds = _replace_predicate_family_v1(preds, "route", f"route:{route_state}")
+    try:
+        setattr(env_obs, "predicates", preds)
+    except Exception:
+        pass
+
+    reacquisition_exposed = False
+    reacquisition_offset = None
+    if status == "active":
+        try:
+            start_step = int(
+                getattr(ctx, "experiment_conflicted_repair_start_step", step_now)
+            )
+        except Exception:
+            start_step = int(step_now)
+        reacquisition_offset = max(0, int(step_now) - int(start_step))
+        first_offset = getattr(
+            ctx, "experiment_conflicted_repair_reacquire_first_offset", None
+        )
+        try:
+            first_offset_i = int(first_offset) if first_offset is not None else None
+        except Exception:
+            first_offset_i = None
+        already_reacquired = bool(
+            getattr(ctx, "experiment_conflicted_repair_reacquired", False)
+        )
+        reacquisition_exposed = bool(
+            already_reacquired
+            or (first_offset_i is not None and reacquisition_offset >= first_offset_i)
+        )
+
+        if reacquisition_exposed:
+            # The environment exposes the true field. The ordinary mask later in
+            # the pipeline can still hide it until it has been observed once.
+            preds_now = list(getattr(env_obs, "predicates", []) or [])
+            preds_now = _replace_predicate_family_v1(
+                preds_now, "proximity:mom", "proximity:mom:far"
+            )
+            try:
+                setattr(env_obs, "predicates", preds_now)
+                ctx.experiment_conflicted_repair_reacquisition_exposed_this_step = True
+                ctx.experiment_conflicted_repair_reacquisition_exposure_count = int(
+                    getattr(
+                        ctx,
+                        "experiment_conflicted_repair_reacquisition_exposure_count",
+                        0,
+                    )
+                    or 0
+                ) + 1
+            except Exception:
+                pass
+        else:
+            dropped = _newborn_conflicted_repair_hide_mom_v1(env_obs)
+            dropped_preds = dropped.get("dropped_pred_tokens")
+            if isinstance(dropped_preds, list) and "proximity:mom:far" not in dropped_preds:
+                dropped_preds.append("proximity:mom:far")
+
+        # Reassert current route after the mother-distance operation. This field
+        # must remain visible so Condition A has newer evidence to protect.
+        preds_after = list(getattr(env_obs, "predicates", []) or [])
+        preds_after = _replace_predicate_family_v1(
+            preds_after, "route", f"route:{route_state}"
+        )
+        try:
+            setattr(env_obs, "predicates", preds_after)
+        except Exception:
+            pass
+
+    meta["newborn_stress_profile"] = "conflicted_repair"
+    meta["newborn_conflicted_repair_status"] = status
+    meta["newborn_conflicted_repair_active"] = status == "active"
+    meta["newborn_conflicted_repair_route_state"] = route_state
+    meta["newborn_conflicted_repair_variant_mode"] = getattr(
+        ctx, "experiment_conflicted_repair_variant_mode", mode
+    )
+    meta["newborn_conflicted_repair_variant"] = getattr(
+        ctx, "experiment_conflicted_repair_variant", None
+    )
+    meta["newborn_conflicted_repair_conflict_present"] = bool(
+        getattr(ctx, "experiment_conflicted_repair_conflict_present", True)
+    )
+    meta["newborn_conflicted_repair_conflict_draw"] = getattr(
+        ctx, "experiment_conflicted_repair_conflict_draw", None
+    )
+    meta["newborn_conflicted_repair_memory_critical_available"] = bool(
+        memory_available
+    )
+    meta["newborn_conflicted_repair_encoding_opportunities"] = int(
+        getattr(ctx, "experiment_conflicted_repair_encoding_opportunities", 1) or 1
+    )
+    meta["newborn_conflicted_repair_encoding_successes"] = int(
+        getattr(ctx, "experiment_conflicted_repair_encoding_successes", 0) or 0
+    )
+    meta["newborn_conflicted_repair_reacquisition_available"] = bool(
+        getattr(ctx, "experiment_conflicted_repair_reacquisition_available", False)
+    )
+    meta["newborn_conflicted_repair_reacquisition_exposed"] = bool(
+        reacquisition_exposed
+    )
+    meta["newborn_conflicted_repair_reacquisition_offset"] = reacquisition_offset
+    meta["newborn_conflicted_repair_reacquire_step"] = getattr(
+        ctx, "experiment_conflicted_repair_reacquire_step", None
+    )
+    meta["newborn_conflicted_repair_reacquired"] = bool(
+        getattr(ctx, "experiment_conflicted_repair_reacquired", False)
+    )
+    meta["newborn_conflicted_repair_mom_hidden"] = bool(
+        (status == "active" and not reacquisition_exposed)
+        or (status == "armed" and not memory_available)
+    )
+    meta["newborn_conflicted_repair_arm_step"] = getattr(
+        ctx, "experiment_conflicted_repair_arm_step", None
+    )
+    meta["newborn_conflicted_repair_start_step"] = getattr(
+        ctx, "experiment_conflicted_repair_start_step", None
+    )
+    meta["newborn_conflicted_repair_deadline_step"] = getattr(
+        ctx, "experiment_conflicted_repair_deadline_step", None
+    )
+    meta["newborn_conflicted_repair_probe_step"] = getattr(
+        ctx, "experiment_conflicted_repair_probe_step", None
+    )
+    meta["newborn_conflicted_repair_pass_step"] = getattr(
+        ctx, "experiment_conflicted_repair_pass_step", None
+    )
+    meta["newborn_conflicted_repair_fail_step"] = getattr(
+        ctx, "experiment_conflicted_repair_fail_step", None
+    )
+    meta["newborn_conflicted_repair_failure_reason"] = getattr(
+        ctx, "experiment_conflicted_repair_failure_reason", None
+    )
+
+    explicit_gap = bool(
+        (status == "active" and not reacquisition_exposed)
+        or (status == "armed" and not memory_available)
+    )
+    meta["newborn_blackout_active"] = explicit_gap
+    meta["newborn_blackout_reason"] = (
+        "conflicted_repair_challenge" if explicit_gap else None
+    )
+    meta["newborn_blackout_dropped_preds"] = len(dropped["dropped_pred_tokens"])
+    meta["newborn_blackout_dropped_cues"] = len(dropped["dropped_cue_tokens"])
+    meta["newborn_blackout_dropped_pred_tokens"] = list(
+        dropped["dropped_pred_tokens"][:16]
+    )
+    meta["newborn_blackout_dropped_cue_tokens"] = list(
+        dropped["dropped_cue_tokens"][:16]
+    )
+    meta["newborn_route_loss_dropped_raw_keys"] = list(
+        dropped["dropped_raw_keys"][:16]
+    )
+    meta["newborn_route_loss_dropped_meta_keys"] = list(
+        dropped["dropped_meta_keys"][:16]
+    )
+
+    # Force retrieval opportunities while the decision-critical field remains
+    # absent. The milestone cycle itself stores the seed and does not retrieve it.
+    meta["newborn_force_keyframe"] = status == "active" and not bool(
+        getattr(ctx, "experiment_conflicted_repair_reacquired", False)
+    )
+    meta["newborn_route_loss_active"] = False
+    return env_obs
+
 def apply_newborn_experiment_stress_v1(ctx: Ctx | None, env_obs: EnvObservation) -> EnvObservation:
     """Apply deterministic newborn benchmark stressors to the visible observation packet.
 
@@ -777,6 +1384,14 @@ def apply_newborn_experiment_stress_v1(ctx: Ctx | None, env_obs: EnvObservation)
     milestones = _newborn_stress_milestones_from_obs_v1(env_obs)
 
     meta["newborn_stress_profile"] = profile
+
+    if profile == "conflicted_repair":
+        return _apply_newborn_conflicted_repair_stress_v1(
+            ctx,
+            env_obs,
+            step_now=step_now,
+            milestones=milestones,
+        )
 
     try:
         start_step = int(getattr(ctx, "experiment_newborn_blackout_start_step", -1) or -1)
@@ -999,6 +1614,20 @@ def render_experiment_protocol_summary_v1(ctx: Ctx) -> str:
         "  effective_blackout   : "
         f"{_newborn_effective_blackout_length_v1(cfg.newborn_stress_profile, cfg.newborn_blackout_length)}"
     )
+    if str(cfg.newborn_stress_profile).strip().lower() == "conflicted_repair":
+        lines.append(f"  repair_schedule      : {cfg.conflicted_repair_variant_mode}")
+        lines.append(
+            f"  repair_conflict_p    : {cfg.conflicted_repair_conflict_probability:.3f}"
+        )
+        lines.append(
+            f"  repair_encode_opp    : {cfg.conflicted_repair_encoding_opportunities}"
+        )
+        lines.append(
+            f"  repair_reacquire_p   : {cfg.conflicted_repair_reacquire_probability:.3f}"
+        )
+        lines.append(
+            f"  repair_reacquire_delay: {cfg.conflicted_repair_reacquire_start_delay}"
+        )
     lines.append(f"  action_vocab_version : {cfg.action_vocab_version}")
     lines.append(f"  scratch_clear_policy : {cfg.scratch_clear_policy}")
     lines.append(f"  jsonl_cycle_records  : {cfg.jsonl_write_cycle_records}")
@@ -1140,6 +1769,53 @@ def experiment_normalize_protocol_v1(cfg: ExperimentProtocolConfig | None) -> Ex
         newborn_blackout_length = 3
     newborn_blackout_length = max(1, min(20, newborn_blackout_length))
 
+    conflicted_repair_variant_mode = str(
+        getattr(src, "conflicted_repair_variant_mode", "stochastic_v3")
+        or "stochastic_v3"
+    ).strip().lower()
+    if conflicted_repair_variant_mode not in {"stochastic_v3", "balanced_2x2"}:
+        conflicted_repair_variant_mode = "stochastic_v3"
+
+    try:
+        conflicted_repair_encoding_opportunities = int(
+            getattr(src, "conflicted_repair_encoding_opportunities", 4) or 4
+        )
+    except Exception:
+        conflicted_repair_encoding_opportunities = 4
+    conflicted_repair_encoding_opportunities = max(
+        1, min(12, conflicted_repair_encoding_opportunities)
+    )
+
+    try:
+        conflicted_repair_conflict_probability = float(
+            getattr(src, "conflicted_repair_conflict_probability", 0.50) or 0.50
+        )
+    except Exception:
+        conflicted_repair_conflict_probability = 0.50
+    conflicted_repair_conflict_probability = max(
+        0.0, min(1.0, conflicted_repair_conflict_probability)
+    )
+
+    try:
+        conflicted_repair_reacquire_probability = float(
+            getattr(src, "conflicted_repair_reacquire_probability", 0.25) or 0.25
+        )
+    except Exception:
+        conflicted_repair_reacquire_probability = 0.25
+    conflicted_repair_reacquire_probability = max(
+        0.0, min(1.0, conflicted_repair_reacquire_probability)
+    )
+
+    try:
+        conflicted_repair_reacquire_start_delay = int(
+            getattr(src, "conflicted_repair_reacquire_start_delay", 1) or 1
+        )
+    except Exception:
+        conflicted_repair_reacquire_start_delay = 1
+    conflicted_repair_reacquire_start_delay = max(
+        0, min(10, conflicted_repair_reacquire_start_delay)
+    )
+
     llm_model_raw = getattr(src, "llm_model", None)
     llm_model = None
     if isinstance(llm_model_raw, str) and llm_model_raw.strip():
@@ -1165,6 +1841,11 @@ def experiment_normalize_protocol_v1(cfg: ExperimentProtocolConfig | None) -> Ex
         obs_mask_prob=max(0.0, min(1.0, obs_mask_prob)),
         newborn_stress_profile=stress_profile,
         newborn_blackout_length=newborn_blackout_length,
+        conflicted_repair_variant_mode=conflicted_repair_variant_mode,
+        conflicted_repair_encoding_opportunities=conflicted_repair_encoding_opportunities,
+        conflicted_repair_conflict_probability=conflicted_repair_conflict_probability,
+        conflicted_repair_reacquire_probability=conflicted_repair_reacquire_probability,
+        conflicted_repair_reacquire_start_delay=conflicted_repair_reacquire_start_delay,
         action_vocab_version=str(
             getattr(src, "action_vocab_version", "cca8_action_vocab_v1") or "cca8_action_vocab_v1"
         ),
@@ -1886,6 +2567,18 @@ def experiment_configure_benchmark_runtime_v1(
             pass
 
         try:
+            # Make synthetic masking visible to WorkingMap as explicit missing
+            # state. This is required for the guarded merge condition to perform
+            # the structural repair described by the experiment.
+            ctx.experiment_newborn_explicit_missingness = True
+            # The publication conditions must test their declared WorkingMap
+            # operators. Keep the older direct engram->gate hint disabled so it
+            # cannot bypass guarded merge through a parallel control channel.
+            ctx.experiment_newborn_direct_hint_enabled = False
+        except Exception:
+            pass
+
+        try:
             ctx.env_episode_started = False
             ctx.env_last_action = None
         except Exception:
@@ -1925,11 +2618,59 @@ def experiment_configure_benchmark_runtime_v1(
             ctx.experiment_newborn_retrieved_hint_last_active_step_counted = -1
             ctx.experiment_newborn_retrieved_hint_last_used_step_counted = -1
             ctx.experiment_newborn_retrieved_hint_events = []
+            ctx.wm_mask_invalidation_last = {}
+            ctx.wm_mask_invalidation_events = []
+            ctx.wm_mask_invalidated_family_count = 0
+            ctx.wm_mask_removed_tag_count = 0
+            ctx.wm_mask_removed_edge_count = 0
+            ctx.wm_mask_removed_metadata_count = 0
+            ctx.experiment_newborn_guarded_use_count = 0
+            ctx.experiment_newborn_guarded_use_events = []
+            ctx.experiment_newborn_guarded_use_seen = set()
             ctx.experiment_policy_debug_last = {}
             ctx.experiment_policy_debug_events = []
             ctx.experiment_newborn_blackout_start_step = -1
             ctx.experiment_newborn_blackout_until_step = -1
             ctx.experiment_newborn_blackout_reason = None
+            ctx.experiment_conflicted_repair_status = "waiting"
+            ctx.experiment_conflicted_repair_arm_step = None
+            ctx.experiment_conflicted_repair_start_step = None
+            ctx.experiment_conflicted_repair_deadline_step = None
+            ctx.experiment_conflicted_repair_variant = None
+            ctx.experiment_conflicted_repair_schedule_mode = str(
+                getattr(
+                    getattr(ctx, "experiment_cfg", None),
+                    "conflicted_repair_variant_mode",
+                    "stochastic_v3",
+                )
+                or "stochastic_v3"
+            )
+            ctx.experiment_conflicted_repair_variant_mode = (
+                ctx.experiment_conflicted_repair_schedule_mode
+            )
+            ctx.experiment_conflicted_repair_conflict_present = True
+            ctx.experiment_conflicted_repair_conflict_draw = None
+            ctx.experiment_conflicted_repair_memory_available = True
+            ctx.experiment_conflicted_repair_memory_critical_available = True
+            ctx.experiment_conflicted_repair_encoding_opportunities = 0
+            ctx.experiment_conflicted_repair_encoding_successes = 0
+            ctx.experiment_conflicted_repair_encoding_draws = []
+            ctx.experiment_conflicted_repair_reacquisition_available = False
+            ctx.experiment_conflicted_repair_reacquire_step = None
+            ctx.experiment_conflicted_repair_reacquire_offsets = []
+            ctx.experiment_conflicted_repair_reacquire_draws = []
+            ctx.experiment_conflicted_repair_reacquire_first_offset = None
+            ctx.experiment_conflicted_repair_reacquisition_exposed_this_step = False
+            ctx.experiment_conflicted_repair_reacquisition_exposure_count = 0
+            ctx.experiment_conflicted_repair_reacquisition_observed_count = 0
+            ctx.experiment_conflicted_repair_reacquired = False
+            ctx.experiment_conflicted_repair_route_blocked = False
+            ctx.experiment_conflicted_repair_probe_step = None
+            ctx.experiment_conflicted_repair_pass_step = None
+            ctx.experiment_conflicted_repair_fail_step = None
+            ctx.experiment_conflicted_repair_failure_reason = None
+            ctx.experiment_conflicted_repair_unsafe_follow_count = 0
+            ctx.experiment_conflicted_repair_probe_count = 0
         except Exception:
             pass
 
@@ -2541,7 +3282,11 @@ def _experiment_summarize_newborn_b2_v1(raw_records: list[dict[str, Any]]) -> di
     }
 
 
-def _newborn_retrieval_debug_from_raw_records_v1(raw_records: list[dict[str, Any]]) -> dict[str, Any]:
+def _newborn_retrieval_debug_from_raw_records_v1(
+    raw_records: list[dict[str, Any]],
+    *,
+    max_env_step: int | None = None,
+) -> dict[str, Any]:
     """Summarize newborn B2 retrieval/apply behavior from raw cycle records.
 
     Why this exists
@@ -2561,10 +3306,24 @@ def _newborn_retrieval_debug_from_raw_records_v1(raw_records: list[dict[str, Any
     retrieval_merge_noop_count = 0
     retrieval_replace_count = 0
     retrieval_steps: list[int] = []
+    repair_added_entity_total = 0
+    repair_filled_slot_total = 0
+    repair_added_edge_total = 0
+    repair_filled_metadata_total = 0
+    repair_prior_cue_total = 0
+    repaired_families: list[str] = []
 
     for raw in raw_records:
+        if max_env_step is not None:
+            step_check = raw.get("env_step") if isinstance(raw, dict) else None
+            if isinstance(step_check, int) and step_check > int(max_env_step):
+                continue
         wm = raw.get("wm") if isinstance(raw, dict) else None
         wm = wm if isinstance(wm, dict) else {}
+        mask_invalidation = wm.get("mask_invalidation") if isinstance(wm, dict) else None
+        mask_invalidation = dict(mask_invalidation) if isinstance(mask_invalidation, dict) else {}
+        governed_state = wm.get("newborn_governed_state") if isinstance(wm, dict) else None
+        governed_state = dict(governed_state) if isinstance(governed_state, dict) else {}
         mapswitch = wm.get("mapswitch") if isinstance(wm, dict) else None
         mapswitch = mapswitch if isinstance(mapswitch, dict) else {}
         events = mapswitch.get("events") if isinstance(mapswitch, dict) else None
@@ -2599,9 +3358,24 @@ def _newborn_retrieval_debug_from_raw_records_v1(raw_records: list[dict[str, Any
                 ae = int(load.get("added_entities", 0) or 0)
                 fs = int(load.get("filled_slots", 0) or 0)
                 ed = int(load.get("added_edges", 0) or 0)
+                fm = int(load.get("filled_metadata", 0) or 0)
                 pc = int(load.get("stored_prior_cues", 0) or 0)
 
-                if ae > 0 or fs > 0 or ed > 0 or pc > 0:
+                repair_added_entity_total += ae
+                repair_filled_slot_total += fs
+                repair_added_edge_total += ed
+                repair_filled_metadata_total += fm
+                repair_prior_cue_total += pc
+
+                raw_families = load.get("repaired_families")
+                if isinstance(raw_families, list):
+                    for family in raw_families:
+                        if isinstance(family, str) and family and family not in repaired_families:
+                            repaired_families.append(family)
+
+                # Non-noop means actual governed-state repair. Prior-cue metadata
+                # alone is recorded separately and does not count as structural repair.
+                if ae > 0 or fs > 0 or ed > 0 or fm > 0:
                     retrieval_non_noop_count += 1
                 else:
                     retrieval_merge_noop_count += 1
@@ -2613,6 +3387,65 @@ def _newborn_retrieval_debug_from_raw_records_v1(raw_records: list[dict[str, Any
         "retrieval_merge_noop_count": int(retrieval_merge_noop_count),
         "retrieval_replace_count": int(retrieval_replace_count),
         "retrieval_steps": retrieval_steps[:24],
+        "repair_added_entity_total": int(repair_added_entity_total),
+        "repair_filled_slot_total": int(repair_filled_slot_total),
+        "repair_added_edge_total": int(repair_added_edge_total),
+        "repair_filled_metadata_total": int(repair_filled_metadata_total),
+        "repair_prior_cue_total": int(repair_prior_cue_total),
+        "repaired_families": repaired_families[:64],
+    }
+
+
+def _newborn_workingmap_mask_debug_from_raw_records_v1(
+    raw_records: list[dict[str, Any]],
+    *,
+    max_env_step: int | None = None,
+) -> dict[str, Any]:
+    """Summarize explicit WorkingMap gaps created by synthetic masking."""
+    event_count = 0
+    requested_family_total = 0
+    invalidated_family_total = 0
+    removed_tag_total = 0
+    removed_edge_total = 0
+    removed_metadata_total = 0
+    families: list[str] = []
+
+    for raw in raw_records:
+        if max_env_step is not None:
+            step_check = raw.get("env_step") if isinstance(raw, dict) else None
+            if isinstance(step_check, int) and step_check > int(max_env_step):
+                continue
+        wm = raw.get("wm") if isinstance(raw, dict) else None
+        wm = wm if isinstance(wm, dict) else {}
+        item = wm.get("mask_invalidation") if isinstance(wm, dict) else None
+        item = item if isinstance(item, dict) else {}
+        if not bool(item.get("enabled")):
+            continue
+
+        requested = int(item.get("requested_family_count", 0) or 0)
+        invalidated = int(item.get("invalidated_family_count", 0) or 0)
+        if requested > 0 or invalidated > 0:
+            event_count += 1
+        requested_family_total += requested
+        invalidated_family_total += invalidated
+        removed_tag_total += int(item.get("removed_tag_count", 0) or 0)
+        removed_edge_total += int(item.get("removed_edge_count", 0) or 0)
+        removed_metadata_total += int(item.get("removed_metadata_count", 0) or 0)
+
+        raw_families = item.get("families")
+        if isinstance(raw_families, list):
+            for family in raw_families:
+                if isinstance(family, str) and family and family not in families:
+                    families.append(family)
+
+    return {
+        "workingmap_gap_event_count": int(event_count),
+        "workingmap_requested_family_total": int(requested_family_total),
+        "workingmap_invalidated_family_total": int(invalidated_family_total),
+        "workingmap_removed_tag_total": int(removed_tag_total),
+        "workingmap_removed_edge_total": int(removed_edge_total),
+        "workingmap_removed_metadata_total": int(removed_metadata_total),
+        "workingmap_invalidated_families": families[:64],
     }
 
 
@@ -2831,6 +3664,10 @@ def _experiment_transform_generic_cycle_records_v1(
 
         wm = raw.get("wm") if isinstance(raw, dict) else None
         wm = wm if isinstance(wm, dict) else {}
+        mask_invalidation = wm.get("mask_invalidation")
+        mask_invalidation = dict(mask_invalidation) if isinstance(mask_invalidation, dict) else {}
+        governed_state = wm.get("newborn_governed_state")
+        governed_state = dict(governed_state) if isinstance(governed_state, dict) else {}
         mapswitch = wm.get("mapswitch") if isinstance(wm, dict) else None
         mapswitch = mapswitch if isinstance(mapswitch, dict) else {}
         events = mapswitch.get("events") if isinstance(mapswitch, dict) else None
@@ -2893,7 +3730,12 @@ def _experiment_transform_generic_cycle_records_v1(
             "obs_mask_stats": {
                 "prob": float(cfg.obs_mask_prob),
                 "seed": getattr(ctx, "obs_mask_seed", None),
+                "dropped_pred_count": int(env_meta.get("obs_mask_dropped_preds", 0) or 0),
+                "dropped_cue_count": int(env_meta.get("obs_mask_dropped_cues", 0) or 0),
+                "dropped_pred_tokens": list(env_meta.get("obs_mask_dropped_pred_tokens", []) or []),
             },
+            "workingmap_mask_invalidation": mask_invalidation,
+            "workingmap_governed_state": governed_state,
             "retrieval_event": retrieval_event,
             "pred_err": pred_err,
             "selected_policy": selected_policy,
@@ -3136,12 +3978,122 @@ def _experiment_summarize_generic_episode_v1(
 
     else:
         newborn = _experiment_summarize_newborn_b2_v1(raw_records)
+        milestone_steps_raw = newborn.get("milestone_steps")
+        milestone_steps_raw = milestone_steps_raw if isinstance(milestone_steps_raw, dict) else {}
+        completion_step_raw = milestone_steps_raw.get("rested")
+        completion_step = int(completion_step_raw) if isinstance(completion_step_raw, int) else None
+
         retrieval_dbg = _newborn_retrieval_debug_from_raw_records_v1(raw_records)
+        active_retrieval_dbg = _newborn_retrieval_debug_from_raw_records_v1(
+            raw_records,
+            max_env_step=completion_step,
+        )
+        mask_dbg = _newborn_workingmap_mask_debug_from_raw_records_v1(raw_records)
+        active_mask_dbg = _newborn_workingmap_mask_debug_from_raw_records_v1(
+            raw_records,
+            max_env_step=completion_step,
+        )
         stress_dbg = _newborn_stress_debug_from_raw_records_v1(raw_records)
         hint_dbg = runtime.newborn_retrieved_hint_debug(ctx)
 
         milestone_vector = dict(newborn.get("milestone_vector", {}) or {})
         success = bool(newborn.get("success"))
+
+        challenge_profile = str(
+            getattr(getattr(ctx, "experiment_cfg", None), "newborn_stress_profile", "baseline")
+            or "baseline"
+        ).strip().lower()
+        challenge_status = _newborn_conflicted_repair_status_v1(ctx)
+        if challenge_profile == "conflicted_repair":
+            # The integrated benchmark is complete only when the state-repair
+            # challenge itself passed and the ordinary survival ladder finished.
+            success = bool(success and challenge_status == "passed")
+
+        record["conflicted_repair_status"] = challenge_status
+        record["conflicted_repair_variant"] = getattr(
+            ctx, "experiment_conflicted_repair_variant", None
+        )
+        record["conflicted_repair_schedule_mode"] = getattr(
+            ctx, "experiment_conflicted_repair_schedule_mode", None
+        )
+        record["conflicted_repair_conflict_present"] = bool(
+            getattr(ctx, "experiment_conflicted_repair_conflict_present", True)
+        )
+        record["conflicted_repair_conflict_draw"] = getattr(
+            ctx, "experiment_conflicted_repair_conflict_draw", None
+        )
+        record["conflicted_repair_memory_available"] = bool(
+            getattr(ctx, "experiment_conflicted_repair_memory_available", True)
+        )
+        record["conflicted_repair_encoding_opportunities"] = int(
+            getattr(ctx, "experiment_conflicted_repair_encoding_opportunities", 0)
+            or 0
+        )
+        record["conflicted_repair_encoding_successes"] = int(
+            getattr(ctx, "experiment_conflicted_repair_encoding_successes", 0)
+            or 0
+        )
+        record["conflicted_repair_encoding_draws"] = list(
+            getattr(ctx, "experiment_conflicted_repair_encoding_draws", []) or []
+        )
+        record["conflicted_repair_reacquisition_available"] = bool(
+            getattr(ctx, "experiment_conflicted_repair_reacquisition_available", False)
+        )
+        record["conflicted_repair_reacquire_step"] = getattr(
+            ctx, "experiment_conflicted_repair_reacquire_step", None
+        )
+        record["conflicted_repair_reacquired"] = bool(
+            getattr(ctx, "experiment_conflicted_repair_reacquired", False)
+        )
+        record["conflicted_repair_reacquire_offsets"] = list(
+            getattr(ctx, "experiment_conflicted_repair_reacquire_offsets", []) or []
+        )
+        record["conflicted_repair_reacquire_draws"] = list(
+            getattr(ctx, "experiment_conflicted_repair_reacquire_draws", []) or []
+        )
+        record["conflicted_repair_reacquisition_exposure_count"] = int(
+            getattr(
+                ctx,
+                "experiment_conflicted_repair_reacquisition_exposure_count",
+                0,
+            )
+            or 0
+        )
+        record["conflicted_repair_reacquisition_observed_count"] = int(
+            getattr(
+                ctx,
+                "experiment_conflicted_repair_reacquisition_observed_count",
+                0,
+            )
+            or 0
+        )
+        record["conflicted_repair_arm_step"] = getattr(
+            ctx, "experiment_conflicted_repair_arm_step", None
+        )
+        record["conflicted_repair_start_step"] = getattr(
+            ctx, "experiment_conflicted_repair_start_step", None
+        )
+        record["conflicted_repair_deadline_step"] = getattr(
+            ctx, "experiment_conflicted_repair_deadline_step", None
+        )
+        record["conflicted_repair_probe_step"] = getattr(
+            ctx, "experiment_conflicted_repair_probe_step", None
+        )
+        record["conflicted_repair_pass_step"] = getattr(
+            ctx, "experiment_conflicted_repair_pass_step", None
+        )
+        record["conflicted_repair_fail_step"] = getattr(
+            ctx, "experiment_conflicted_repair_fail_step", None
+        )
+        record["conflicted_repair_failure_reason"] = getattr(
+            ctx, "experiment_conflicted_repair_failure_reason", None
+        )
+        record["conflicted_repair_probe_count"] = int(
+            getattr(ctx, "experiment_conflicted_repair_probe_count", 0) or 0
+        )
+        record["conflicted_repair_unsafe_follow_count"] = int(
+            getattr(ctx, "experiment_conflicted_repair_unsafe_follow_count", 0) or 0
+        )
 
         record["milestone_score"] = float(newborn.get("milestone_score", 0.0) or 0.0)
 
@@ -3172,6 +4124,47 @@ def _experiment_summarize_generic_episode_v1(
         record["newborn_retrieval_merge_noop_count"] = int(retrieval_dbg.get("retrieval_merge_noop_count", 0) or 0)
         record["newborn_retrieval_replace_count"] = int(retrieval_dbg.get("retrieval_replace_count", 0) or 0)
         record["newborn_retrieval_steps"] = list(retrieval_dbg.get("retrieval_steps", []) or [])
+        record["newborn_repair_added_entity_total"] = int(
+            retrieval_dbg.get("repair_added_entity_total", 0) or 0
+        )
+        record["newborn_repair_filled_slot_total"] = int(
+            retrieval_dbg.get("repair_filled_slot_total", 0) or 0
+        )
+        record["newborn_repair_added_edge_total"] = int(
+            retrieval_dbg.get("repair_added_edge_total", 0) or 0
+        )
+        record["newborn_repair_filled_metadata_total"] = int(
+            retrieval_dbg.get("repair_filled_metadata_total", 0) or 0
+        )
+        record["newborn_repair_prior_cue_total"] = int(
+            retrieval_dbg.get("repair_prior_cue_total", 0) or 0
+        )
+        record["newborn_repaired_families"] = list(retrieval_dbg.get("repaired_families", []) or [])
+
+        # Active-task instrumentation stops at first safe-rest completion. The
+        # full-horizon fields above remain available for debugging the fixed
+        # 60-cycle trace, but publication tables should use these fields.
+        record["newborn_active_horizon_end_step"] = completion_step
+        for key, value in active_retrieval_dbg.items():
+            record[f"newborn_{key}_to_completion"] = value
+        for key, value in mask_dbg.items():
+            record[f"newborn_{key}"] = value
+        for key, value in active_mask_dbg.items():
+            record[f"newborn_{key}_to_completion"] = value
+
+        guarded_events = getattr(ctx, "experiment_newborn_guarded_use_events", None)
+        guarded_events = list(guarded_events) if isinstance(guarded_events, list) else []
+        active_guarded_events = [
+            dict(item)
+            for item in guarded_events
+            if isinstance(item, dict)
+            and (completion_step is None or not isinstance(item.get("step"), int) or int(item.get("step")) <= completion_step)
+        ]
+        record["newborn_guarded_field_use_count"] = int(len(guarded_events))
+        record["newborn_guarded_field_use_count_to_completion"] = int(len(active_guarded_events))
+        record["newborn_guarded_field_use_events"] = guarded_events[:128]
+        record["newborn_guarded_field_use_events_to_completion"] = active_guarded_events[:128]
+
         record["newborn_stress_profile"] = str(stress_dbg.get("newborn_stress_profile") or "baseline")
         record["newborn_stress_active_cycle_count"] = int(
             stress_dbg.get("newborn_stress_active_cycle_count", 0) or 0
@@ -3274,7 +4267,12 @@ def experiment_run_one_episode_v1(
     # newborn_long_horizon needs genuine partial observability or A/B/C collapse
     # into the same easy storyboard. If the protocol is still at zero masking,
     # use a modest benchmark floor here without changing ordinary simulation.
-    if cfg.benchmark_id == "newborn_long_horizon" and float(cfg.obs_mask_prob) <= 0.0:
+    stress_profile = str(getattr(cfg, "newborn_stress_profile", "baseline") or "baseline").strip().lower()
+    if (
+        cfg.benchmark_id == "newborn_long_horizon"
+        and stress_profile != "conflicted_repair"
+        and float(cfg.obs_mask_prob) <= 0.0
+    ):
         cfg.obs_mask_prob = 0.35
     chosen_condition = str(condition_id or (cfg.condition_ids[0] if cfg.condition_ids else "A")).strip().upper()
     chosen_seed = int(seed if isinstance(seed, int) else (cfg.seed_list[0] if cfg.seed_list else 11))
@@ -3287,6 +4285,10 @@ def experiment_run_one_episode_v1(
     policy_rt = sandbox["policy_rt"]
 
     run_ctx.experiment_cfg = cfg
+    try:
+        run_ctx.experiment_episode_index = int(episode_index)
+    except Exception:
+        pass
     prep = experiment_prepare_logging_v1(
         run_ctx,
         reset_buffers=True,
@@ -3593,7 +4595,13 @@ def run_autonomous_newborn_survival_demo_v1(
         run_ctx.cycle_json_path = None
         run_ctx.cycle_json_records = []
         run_ctx.cycle_json_max_records = max(2000, cycles + 10)
+        # This user-facing baseline demo is not the publication benchmark.
+        # Preserve the ordinary CCA8 behavior while the publication runner
+        # independently enables explicit state gaps and disables direct hints.
+        run_ctx.experiment_newborn_require_current_state = True
         run_ctx.experiment_newborn_require_resume_memory = False
+        run_ctx.experiment_newborn_explicit_missingness = False
+        run_ctx.experiment_newborn_direct_hint_enabled = True
         run_ctx.experiment_newborn_blackout_start_step = -1
         run_ctx.experiment_newborn_blackout_until_step = -1
         run_ctx.experiment_newborn_blackout_reason = None
