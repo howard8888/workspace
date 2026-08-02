@@ -28,6 +28,8 @@ from __future__ import annotations
 # pylint: disable=no-member
 # pylint: disable=too-many-locals
 # pylint: disable=too-many-statements
+# pylint: disable=too-many-lines
+#   This module intentionally stores long, user-visible future-profile narratives.
 
 import copy
 import os
@@ -41,7 +43,7 @@ from typing import Any, Callable, DefaultDict
 import cca8_world_graph
 from cca8_controller import Drives, action_center_step
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 ProfileTuple = tuple[str, float, float, int]
 
@@ -56,6 +58,8 @@ __all__ = [
     "profile_society_multi_agents",
     "profile_multi_brains_adv_planning",
     "profile_superhuman",
+    "profile_cca11_governed_cognitive_plurality",
+    "profile_cca12_governed_pod",
     "open_readme_tutorial",
     "__version__",
 ]
@@ -87,6 +91,10 @@ class ProfileOperations:  # pylint: disable=too-few-public-methods,too-many-inst
     society_multi_agents: Callable[[Any], ProfileTuple]
     multi_brains_adv_planning: Callable[[Any], ProfileTuple]
     superhuman: Callable[[Any], ProfileTuple]
+    # Optional defaults preserve compatibility with callers that construct the
+    # pre-CCA11 ProfileOperations bundle directly.  The runner supplies both.
+    cca11: Callable[[Any], ProfileTuple] | None = None
+    cca12: Callable[[Any], ProfileTuple] | None = None
 
 
 def default_profile_runtime() -> ProfileRuntime:
@@ -102,10 +110,17 @@ def _goat_defaults():
     """Return the Mountain Goat default profile tuple: (name, sigma, jump, winners_k)."""
     return ("Mountain Goat", 0.015, 0.2, 2)
 
+
 def _print_goat_fallback():
-    """Explain that the chosen profile is not implemented and we fall back to Mountain Goat."""
-    print("\n\n======================\n\nAlthough scaffolding is in place, currently this evolutionary-like configuration is not available. "
-          "\nProfile will be set to mountain goat-like brain simulation.\n\n======================\n\n")
+    """Explain that a research profile is not operational and use the safe baseline."""
+    print(
+        "\n\n======================\n\n"
+        "Although narrative or dry-run scaffolding is in place, this research profile is not yet "
+        "an operational cognitive architecture.\n"
+        "Profile will be set to mountain goat-like brain simulation.\n\n"
+        "======================\n\n"
+    )
+
 
 def profile_rcos_api(_ctx) -> tuple[str, float, float, int]:
     """Explain the planned RCOS API configuration; fall back to Mountain Goat defaults."""
@@ -474,6 +489,797 @@ def profile_superhuman(_ctx) -> ProfileTuple:
     _print_goat_fallback()
     return _goat_defaults()
 
+
+CCA11_PROFILE_NARRATIVE = r"""
+Selection: CCA11 — One Coherent Superhuman Mind with Governed Cognitive Plurality
+=================================================================================
+
+Research status
+---------------
+CCA11 is a future architectural research profile.  This selection records the
+intended design direction.  It does not claim that the present CCA8 software
+already implements CCA11.
+
+CCA11 should be built only after the goat-level CCA8, primate-like CCA9, and
+human-like CCA10 mechanisms are sufficiently explicit and testable.  The
+present runner therefore prints the research design and then returns safely to
+the operational Mountain Goat baseline.
+
+
+Core idea
+---------
+CCA11 is one coherent cognitive agent containing several heterogeneous ways of
+thinking.
+
+It is not merely a faster CCA10.
+
+It is not simply a larger language model.
+
+It is not a committee of identical programs that votes until one answer wins.
+
+It is not several independent selves competing for control of one body.
+
+CCA11 combines plural thought with governed commitment:
+
+    CCA11
+        = one persistent self
+        + many cognitive methods
+        + several branch-local workspaces
+        + explicit provenance
+        + one governed commitment structure
+        + one controlled external-action path
+
+The superhuman feature is not merely that many voices exist.  It is that the
+architecture knows when to recruit them, how to keep their reasoning paths
+meaningfully independent, how to preserve disagreement, how to test claims,
+and which conclusion is permitted to alter current state or control action.
+
+
+What remains unified
+--------------------
+CCA11 preserves:
+
+  - one persistent identity and autobiographical continuity
+  - one human-authorized mission and protected goal hierarchy
+  - one protected observation/evidence layer
+  - one committed Accepted Working Navigation Map for present external control
+  - one governed persistent-memory system
+  - one provenance and audit system
+  - one controlled pathway for consequential external action
+
+CCA11 may operate several active, imagined, or counterfactual Working Navigation
+Maps in parallel.  Each branch can be locally authoritative inside its own
+simulation or reasoning process.
+
+Branch-local authority is not present-state authority.
+
+A simulated branch may say, "Within this hypothesis, the bridge is unsafe."
+That does not make the real bridge unsafe.  Only an explicit acceptance and
+commitment operation may revise the map that governs the embodied agent.
+
+
+Candidate cognitive processes
+-----------------------------
+A future CCA11 may recruit processes such as:
+
+  - NavMap predictive processing
+      Compare expected and observed maps, preserve residuals, and propose
+      revisions to the accepted map.
+
+  - causal intervention reasoning
+      Ask what would follow if a variable, relation, or action were deliberately
+      changed rather than merely observed.
+
+  - analogical reasoning
+      Align relational structures across maps and transfer a candidate
+      transformation while preserving the differences between the cases.
+
+  - symbolic planning
+      Search explicit task, constraint, route, and action structures.
+
+  - probabilistic forecasting
+      Estimate bounded and calibrated outcome probabilities when the event
+      space, model, and calibration are meaningful.
+
+  - episodic and autobiographical retrieval
+      Locate relevant prior maps and trajectories without treating remembered
+      content as present truth.
+
+  - semantic or language-based reasoning
+      Use an optional LLM or other language system to interpret, summarize,
+      explain, or suggest high-level possibilities.
+
+  - scientific hypothesis generation
+      Construct competing explanations and propose observations or experiments
+      that could distinguish them.
+
+  - skeptical or red-team processing
+      Search for counterexamples, hidden assumptions, correlated errors,
+      failure modes, and alternative interpretations.
+
+  - authority and safety checking
+      Determine whether a proposed state revision or action is permitted,
+      adequately supported, reversible, and within delegated human authority.
+
+  - metacognitive allocation
+      Decide which processes should be recruited, how much computation they
+      receive, whether independent first-pass reasoning is required, and when
+      deliberation should stop.
+
+These are not necessarily equal modules.  Some may be congenital safety
+mechanisms, some learned NavMap operations, some external tools, and some large
+model-based advisers.  Their outputs must use a common proposal contract even
+when their internal computations differ.
+
+
+When the cognitive council is recruited
+---------------------------------------
+The complete council should not run on every cognitive cycle.  Routine behavior
+should remain fast and comparatively inexpensive.
+
+Possible recruitment triggers include:
+
+  - a large or safety-relevant predictive residual
+  - disagreement among candidate NavMaps or reasoning processes
+  - an explicit UNKNOWN or none-of-the-above result
+  - substantial uncertainty or an inadequate candidate set
+  - repeated policy failure
+  - evidence of long-horizon task drift
+  - an unfamiliar situation
+  - a high-consequence or poorly reversible decision
+  - possible corruption of current state
+  - conflict among goals, permissions, or sources of authority
+  - a request for independent verification or explanation
+
+This extends the early CCA System-2 direction:
+
+    large surprise or consequential uncertainty
+        -> recruit additional processing
+        -> preserve alternatives
+        -> test assumptions and predictions
+        -> repair or revise the accepted map
+        -> act only after governed commitment
+
+
+The proposal interface
+----------------------
+A cognitive process must not directly rewrite the Accepted Working Navigation
+Map merely because it produced a fluent or confident answer.
+
+Instead, it submits a structured proposal to a protected Scratch, Creative,
+ProposalMap, or counterfactual workspace.
+
+A proposal should record at least:
+
+  - proposal identifier
+  - proposing process and process version
+  - question or problem being addressed
+  - input map revision and evidence references
+  - claim, hypothesis, plan, or proposed map transformation
+  - provenance
+  - assumptions
+  - predicted observations or outcomes
+  - counterevidence and known failure conditions
+  - support or confidence type
+  - calibration information when a numerical probability is claimed
+  - recommended action, probe, or abstention
+  - reversibility and estimated cost
+  - safety and authority implications
+  - unresolved objections
+  - time and computational resources used
+
+This interface lets a symbolic planner, NavMap process, causal simulator, LLM,
+and statistical forecaster communicate without pretending that their internal
+representations or numeric scores are identical.
+
+
+Protected architectural surfaces
+--------------------------------
+Individual cognitive processes may propose changes, but they must not silently
+modify:
+
+  - observed evidence
+  - the committed Accepted Working Navigation Map
+  - persistent episodic or semantic memory
+  - the mission charter
+  - protected goals
+  - safety constraints
+  - human authority
+  - external actuators
+
+A separate acceptance and commitment mechanism decides whether a proposal is:
+
+  - rejected
+  - retained as an unresolved alternative
+  - sent back for revision
+  - tested through a probe or experiment
+  - escalated for human review
+  - committed provisionally
+  - accepted as the new authoritative current state
+  - authorized for external action
+
+The key CCA11 principle is:
+
+    plurality of thought does not imply plurality of executive authority
+
+
+Agreement is not the objective
+------------------------------
+The council should not merely argue until it agrees.
+
+Agreement can be useful, but agreement is not evidence.
+
+Several processes may agree because they:
+
+  - received the same misleading evidence
+  - depend on the same underlying model
+  - copied one another's conclusion
+  - inherited the same hidden assumption
+  - were trained on correlated data
+  - converged prematurely
+  - mistook fluency or confidence for support
+
+Adjudication should therefore consider:
+
+  - quality and provenance of evidence
+  - independence or correlation of the reasoning paths
+  - compatibility with the observed current state
+  - prior predictive performance
+  - calibration where defined
+  - causal and counterfactual tests
+  - safety constraints
+  - reversibility
+  - expected value of obtaining more information
+  - an explicit UNKNOWN, abstention, or reject-all alternative
+
+CCA11 should preserve unresolved disagreement when the evidence does not justify
+a single conclusion.  A deliberately dissenting process may be required to
+construct the strongest alternative explanation before a high-consequence
+commitment is made.
+
+
+Relationship to Minsky's Society of Mind
+----------------------------------------
+Marvin Minsky's Society of Mind proposed that intelligence arises from the
+organization of many specialized, individually limited agents rather than from
+one universal reasoning mechanism.
+
+CCA11 accepts that central pluralist insight:
+
+    no single cognitive method is adequate for every problem
+
+Minsky's technical "agents" are generally subpersonal mechanisms.  They are
+closer to specialized processes, critics, selectors, resources, or small program
+components than to complete autonomous persons.
+
+CCA11's participating processes may be much larger cognitive systems in their
+own right.  A causal reasoner, analogical mapper, NavMap simulator,
+probabilistic forecaster, or language model may each perform substantial
+internal computation.
+
+CCA11 also makes several executable engineering commitments explicit:
+
+  - proposals use inspectable map and record interfaces
+  - observed, expected, inferred, retrieved, imagined, and accepted content
+    remain distinguishable
+  - provenance is retained
+  - no cognitive process receives automatic write access to accepted state
+  - external action requires an explicit commitment
+  - unresolved dissent may remain active
+  - human authority and protected safety constraints remain outside ordinary
+    cognitive bargaining
+
+CCA11 can therefore be described as:
+
+    a constitutional society of cognitive processes inside one coherent mind
+
+"Constitutional" means that the processes operate under explicit rules about
+state, memory, goals, authority, and action.  It does not mean that every
+process is equal or that decisions are made by simple voting.
+
+Minsky supplied a powerful theory of cognitive plurality.  CCA11 would attempt
+to turn part of that insight into an inspectable NavMap-centered architecture
+with explicit state authority and commitment rules.
+
+
+Relationship to Goertzel's cognitive synergy, OpenCog, and Hyperon
+-------------------------------------------------------------------
+Ben Goertzel's cognitive-synergy approach emphasizes that heterogeneous
+cognitive processes should help one another overcome the limitations and
+processing bottlenecks of any single process.  OpenCog and Hyperon pursue a
+shared representational environment in which different forms of reasoning can
+cooperate.
+
+CCA11 accepts cognitive synergy as a useful design principle.
+
+A symbolic process may rescue a statistical process that cannot express a
+constraint.  A perceptual or statistical process may provide evidence that a
+symbolic process lacks.  Episodic memory may provide a prior case.  A causal
+reasoner may expose why a pattern-matching answer is fragile.
+
+The proposed CCA11 emphasis is different, although complementary.
+
+Cognitive synergy asks:
+
+    Can another process help when this process is stuck?
+
+CCA11 additionally asks:
+
+    What authority does the resulting proposal possess?
+
+OpenCog/Hyperon-style interoperability, and orchestration proposals such as
+HyperClaw, may help route work among heterogeneous processes.  CCA11 requires a
+further state-governance contract:
+
+  - Which information is observed evidence?
+  - Which content is only expected, inferred, retrieved, or imagined?
+  - Which current map is committed?
+  - Which process may propose a change?
+  - Which proposal may alter accepted state?
+  - Which conclusion may control an external action?
+
+The shared substrate in CCA11 is therefore not merely a communication room.  It
+includes NavMaps, proposal records, provenance, acceptance rules, commitment
+rules, and protected action authority.
+
+
+Relationship to existing runner profiles
+----------------------------------------
+Several existing profile demonstrations are precursors:
+
+  - Profile 4 demonstrates several sandbox brains proposing actions.
+  - Profile 6 demonstrates parallel combinatorial search.
+  - Profile 7 demonstrates arbitration among heterogeneous proposal sources.
+
+CCA11 would integrate and greatly extend these ideas.  It would replace simple
+fork-and-vote behavior with specialized reasoning roles, protected map layers,
+explicit disagreement, metacognitive allocation, evidence-based adjudication,
+governed state commitment, and controlled external action.
+
+
+Design summary
+--------------
+CCA11 is a coherent agent whose thoughts may be plural but whose present state,
+goals, memory, and authority are governed.
+
+The intended achievement is not a louder committee.  It is disciplined
+cognitive diversity inside one inspectable and accountable mind.
+"""
+
+
+CCA12_PROFILE_NARRATIVE = r"""
+Selection: CCA12 — Governed Pod of Complete CCA11 Cognitive Architectures
+=========================================================================
+
+Research status
+---------------
+CCA12 is a future federated cognitive-architecture research profile.  It does
+not claim that the present CCA8 software already implements a CCA12 pod.
+
+The present runner records the design direction and then returns safely to the
+operational Mountain Goat baseline.
+
+
+Core idea
+---------
+CCA11 contains several cognitive methods within one coherent self.
+
+CCA12 connects several complete CCA11 cognitive architectures.
+
+    CCA11
+        = one self with many cognitive methods
+
+    CCA12
+        = many CCA11 selves operating under one governed mission
+
+CCA11 provides cognitive-method plurality.
+
+CCA12 provides agent plurality.
+
+Each CCA11 pod member may have its own:
+
+  - identity and self-model
+  - Accepted Working Navigation Map
+  - observations and embodiment
+  - episodic and autobiographical history
+  - learned map-policy transformations
+  - active goals within delegated limits
+  - attention
+  - uncertainty
+  - internal cognitive council
+  - local action capabilities
+
+CCA12 is therefore not merely a larger internal council.  It is a governed
+federation of complete cognitive agents.
+
+
+Why build a pod?
+----------------
+A pod of CCA11 systems may provide:
+
+  - parallel exploration of different hypotheses
+  - independent replication
+  - greater planning breadth and depth
+  - different temporal horizons
+  - distinct areas of expertise
+  - distributed perception
+  - multiple physical embodiments
+  - adversarial checking
+  - fault tolerance
+  - graceful degradation
+  - continuous operation while some members deliberate, learn, or recover
+  - independent confirmation before consequential action
+
+The pod becomes genuinely useful only when its members provide meaningful
+diversity or independence.
+
+Ten identical copies using the same model, memories, prompts, assumptions, and
+evidence may reproduce the same error ten times.
+
+Useful diversity may come from different reasoning algorithms, model families,
+training histories, sensory viewpoints, map histories, assigned roles, temporal
+horizons, or deliberately different assumptions.  Some members should produce
+an initial analysis before seeing the other members' conclusions.
+
+
+The Mission Charter
+-------------------
+CCA12 requires an explicit Mission Charter or pod constitution.
+
+The charter should define:
+
+  - the pod's legitimate mission
+  - human authorities
+  - protected goals
+  - prohibited actions
+  - delegation boundaries
+  - resource limits
+  - privacy and information-sharing rules
+  - permitted embodiments and tools
+  - conditions requiring independent verification
+  - conditions requiring human authorization
+  - conditions requiring abstention or shutdown
+  - emergency-stop authority
+  - rules for adding, suspending, isolating, or retiring a pod member
+  - rules governing modification of the charter itself
+
+No ordinary pod member should be able to rewrite the Mission Charter
+unilaterally.
+
+The charter is not merely another belief to be outvoted.  It defines the
+authority under which the pod exists and acts.
+
+
+Local minds and shared pod state
+--------------------------------
+CCA12 should not be implemented as one unstructured, globally mutable memory
+that every member can overwrite.
+
+Each member retains its own local cognitive state.
+
+Shared pod information should be published through provenance-preserving
+records such as:
+
+  - observations
+  - map fragments
+  - hypotheses
+  - plans
+  - predicted outcomes
+  - confidence or support claims
+  - counterarguments
+  - experimental results
+  - requests for assistance
+  - resource commitments
+  - action proposals
+  - authority decisions
+
+The pod may maintain a shared Mission Map, Pod Blackboard, or Assertion Ledger
+for joint commitments, resources, task allocation, and externally relevant
+conclusions.
+
+A statement appearing on the blackboard is not automatically accepted as true.
+
+The record should identify:
+
+  - which member asserted it
+  - which evidence supports it
+  - which local map revision produced it
+  - which assumptions were used
+  - whether another member independently confirmed it
+  - whether objections remain
+  - what authority level it currently possesses
+  - when it expires or requires revalidation
+
+Shared state should distinguish at least:
+
+  - published assertion
+  - independently confirmed assertion
+  - pod-level provisional commitment
+  - pod-level accepted mission state
+  - authorized external action
+
+
+Controlled independence
+-----------------------
+Members should often produce their initial analyses independently before seeing
+the conclusions of other members.
+
+This helps reduce:
+
+  - copying
+  - anchoring
+  - conformity
+  - groupthink
+  - premature convergence
+  - accidental dependence among supposedly independent confirmations
+
+After the initial independent phase, members may exchange critiques, request
+evidence, reproduce calculations, or construct competing plans.
+
+The system should record when two conclusions are genuinely independent and
+when they share models, data, code, memories, or assumptions.
+
+Independence is not all-or-nothing.  The pod should record dependency structure
+rather than simply counting agreeing agents.
+
+
+Possible pod roles
+------------------
+A future pod might assign complete CCA11 systems to roles such as:
+
+  - Observer
+      Construct the best grounded description of current state.
+
+  - Planner
+      Propose routes from accepted state to mission goals.
+
+  - Forecaster
+      Estimate outcome distributions, risks, and time horizons.
+
+  - Historian
+      Retrieve relevant prior episodes and identify differences from now.
+
+  - Scientist
+      Develop causal hypotheses and discriminating experiments.
+
+  - Specialist
+      Contribute domain-specific knowledge, tools, or sensor access.
+
+  - Skeptic
+      Search for hidden assumptions, counterexamples, and failure modes.
+
+  - Guardian
+      Evaluate safety, authority, reversibility, and charter compliance.
+
+  - Integrator
+      Construct a traceable synthesis without erasing unresolved dissent.
+
+These are operating roles rather than permanent castes.  A member may change
+roles when the Mission Charter and resource allocator permit it.
+
+A pod should avoid making the Integrator a hidden dictator.  Integration is a
+recorded operation with evidence and objections, not an uninspectable final
+answer generator.
+
+
+Pod-level adjudication
+----------------------
+CCA12 should not rely on simple majority vote as its general decision rule.
+
+Different questions require different forms of adjudication:
+
+  - direct observation may be weighted by sensor reliability and provenance
+  - specialized questions may use demonstrated domain competence
+  - important factual claims may require independent replication
+  - uncertain explanations may require adversarial comparison
+  - plans may be tested in separate simulations
+  - safety-critical proposals may require explicit Guardian authorization
+  - high-consequence actions may require two independently produced approvals
+  - unresolved or out-of-charter questions may require human escalation
+
+The pod should be able to conclude:
+
+  - one proposal is provisionally best supported
+  - several alternatives remain viable
+  - the evidence is insufficient
+  - another observation or experiment is needed
+  - no represented hypothesis is adequate
+  - the pod should abstain
+  - the decision must be escalated to a human authority
+
+Consensus may be reported, but consensus alone does not establish truth.
+
+
+External-action authority
+-------------------------
+For a single shared embodiment, CCA12 should normally expose one controlled
+external-action gateway.
+
+A member may recommend an action, but recommendation is not execution.
+
+The gateway should verify:
+
+  - current accepted mission state
+  - authority and delegation
+  - safety constraints
+  - resource ownership
+  - conflicting active commitments
+  - required confirmations
+  - reversibility
+  - emergency-stop state
+
+For safety-critical actions, the pod may use a two-key or multi-key rule in
+which independently authorized components must agree before execution.
+
+For a pod controlling several embodiments, authority may be divided through
+explicit action leases.
+
+An action lease should state:
+
+  - which member may control which embodiment or resource
+  - what actions are permitted
+  - the geographic, temporal, and mission boundaries
+  - expiration conditions
+  - revocation authority
+  - collision and conflict rules
+  - emergency-stop behavior
+
+This permits useful local autonomy without allowing several agents to issue
+incompatible commands to the same actuator or resource.
+
+
+Failure isolation and trust
+---------------------------
+A CCA12 pod must assume that a member can be mistaken, stale, compromised,
+unavailable, or internally inconsistent.
+
+The architecture should support:
+
+  - health and liveness checks
+  - capability and calibration records
+  - message authentication and provenance
+  - bounded permissions
+  - quarantine of a malfunctioning member
+  - replay of the member's assertions and actions
+  - revocation of action leases
+  - replacement without silently inheriting the failed member's authority
+
+Trust should be scoped.  A member may be trusted for a sensor stream or a domain
+without being trusted to alter the mission charter or authorize physical action.
+
+
+Failure modes requiring explicit study
+--------------------------------------
+CCA12 introduces problems that do not exist, or are smaller, inside one CCA11
+mind:
+
+  - correlated reasoning errors
+  - groupthink and herding
+  - stale shared context
+  - misleading or poisoned messages
+  - authority capture
+  - conflicting goals
+  - race conditions
+  - duplicated actions
+  - resource contention
+  - deadlock
+  - communication loss
+  - member failure
+  - compromised or deceptive members
+  - divergence between local maps and shared mission state
+  - gradual drift in the pod's interpretation of its charter
+
+CCA12 is therefore a distributed-systems architecture as well as a cognitive
+architecture.
+
+Scaling the number of agents without solving these governance problems may
+amplify error rather than intelligence.
+
+
+Relationship to Minsky's Society of Mind
+----------------------------------------
+CCA12 is closer than CCA11 to the ordinary-language meaning of a society of
+minds, but it is less like Minsky's technical Society of Mind.
+
+Minsky's agents are generally specialized subpersonal mechanisms whose
+interaction produces one mind.
+
+A CCA12 member is a complete CCA11 cognitive architecture with its own accepted
+state, memory, identity, reasoning, and delegated goals.
+
+CCA12 is therefore a society of complete minds rather than a mind composed of
+small agents.
+
+Minsky's central lesson still applies: intelligence depends on organization,
+not merely on the number of components.  CCA12 adds explicit distributed
+mission, provenance, delegation, and action-authority contracts.
+
+
+Relationship to Goertzel's cognitive synergy
+---------------------------------------------
+Cognitive synergy may occur inside each CCA11 member and also across the CCA12
+pod.
+
+One member may supply evidence or a representation that allows another member
+to overcome a reasoning bottleneck.  A specialist may transform a problem into
+a form another member can solve.  A skeptical member may expose an assumption
+that every planner shared.
+
+The CCA12 extension is that inter-agent communication does not erase agent
+boundaries.
+
+Each assertion retains:
+
+  - source identity
+  - local-map provenance
+  - evidence
+  - assumptions
+  - authority
+  - confidence type
+  - objections
+  - independent confirmations
+
+A shared OpenCog/Hyperon-like substrate or HyperClaw-like orchestration layer
+could support communication and task routing.  CCA12 additionally requires
+federated state governance, a Mission Charter, explicit delegation, and
+controlled external-action rights.
+
+The shared substrate enables cooperation.  It does not automatically merge
+every member's state into one undifferentiated global consciousness.
+
+
+Relationship to existing runner profiles
+----------------------------------------
+Profile 5 is an early society demonstration in which several agents have
+separate worlds and exchange a simple message.
+
+CCA12 would extend that idea with:
+
+  - complete CCA11 members
+  - a Mission Charter
+  - a pod-level assertion ledger
+  - explicit task and resource delegation
+  - independent first-pass reasoning
+  - provenance-preserving communication
+  - evidence-based adjudication
+  - action leases
+  - safety authorization
+  - human escalation
+  - fault and compromise handling
+
+
+Design summary
+--------------
+    CCA12
+        = many complete CCA11 selves
+        + one governed mission
+        + one Mission Charter
+        + one provenance-preserving pod ledger
+        + controlled delegation
+        + governed external-action rights
+
+The superhuman property does not come merely from multiplying agents.
+
+It comes from combining genuine cognitive diversity, useful independence,
+parallel computation, disciplined information exchange, explicit mission and
+authority governance, traceable adjudication, and controlled action.
+"""
+
+
+def profile_cca11_governed_cognitive_plurality(_ctx: Any) -> ProfileTuple:
+    """Describe the future CCA11 architecture, then return the operational baseline."""
+    print(CCA11_PROFILE_NARRATIVE)
+    _print_goat_fallback()
+    return _goat_defaults()
+
+
+def profile_cca12_governed_pod(_ctx: Any) -> ProfileTuple:
+    """Describe the future CCA12 pod architecture, then return the operational baseline."""
+    print(CCA12_PROFILE_NARRATIVE)
+    _print_goat_fallback()
+    return _goat_defaults()
+
+
 def open_readme_tutorial() -> None:
     """Open README.md in the default viewer, then return.
     This may or may not have the same behavior as main-menu 'T'
@@ -505,6 +1311,8 @@ def default_profile_operations() -> ProfileOperations:
         society_multi_agents=lambda ctx: profile_society_multi_agents(ctx, runtime=runtime),
         multi_brains_adv_planning=profile_multi_brains_adv_planning,
         superhuman=profile_superhuman,
+        cca11=profile_cca11_governed_cognitive_plurality,
+        cca12=profile_cca12_governed_pod,
     )
 
 def choose_profile(
@@ -521,7 +1329,7 @@ def choose_profile(
     Returns a dict: {"name", "ctx_sigma", "ctx_jump", "winners_k"}.
 
     Behavior:
-      - 1..7 → select profile (unimplemented ones print a narrative, then fall back to goat defaults).
+      - 1..9 → select profile (future profiles print a narrative or dry run, then fall back to goat defaults).
       - 'T' or 't' → open README.md (tutorial) and re-prompt.
       - any other input → default to Mountain Goat (as before).
     """
@@ -530,7 +1338,7 @@ def choose_profile(
 
     while True:
         try:
-            choice = input("Please make a choice [1–7 or T | Enter = Mountain Goat]: ").strip()
+            choice = input("Please make a choice [1–9 or T | Enter = Mountain Goat]: ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nCancelled selection.... will exit program....")
             sys.exit(0)
@@ -567,9 +1375,17 @@ def choose_profile(
         if choice == "7":
             name, sigma, jump, k = operations.superhuman(ctx)
             break
+        if choice == "8":
+            callback = operations.cca11 or profile_cca11_governed_cognitive_plurality
+            name, sigma, jump, k = callback(ctx)
+            break
+        if choice == "9":
+            callback = operations.cca12 or profile_cca12_governed_pod
+            name, sigma, jump, k = callback(ctx)
+            break
 
         # Anything else: prompt again (no silent default)
-        print(f"The selection {choice!r} is not valid. Please enter 1–7, 'T', or press Enter for Mountain Goat.\n")
+        print(f"The selection {choice!r} is not valid. Please enter 1–9, 'T', or press Enter for Mountain Goat.\n")
 
     ctx.profile = name
     return {"name": name, "ctx_sigma": sigma, "ctx_jump": jump, "winners_k": k}

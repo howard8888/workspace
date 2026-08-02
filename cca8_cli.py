@@ -27,7 +27,7 @@ import os
 import sys
 from collections.abc import Callable
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "ASCII_LOGOS",
     "MAIN_MENU_HEADER",
@@ -458,6 +458,8 @@ def print_header(
     print("  5. Human-like one-brain simulation × multiple-agents society")
     print("  6. Human-like one-agent multiple-brains simulation with combinatorial planning")
     print("  7. Super-Human-like machine simulation")
+    print("  8. CCA11: one coherent superhuman mind with governed cognitive plurality")
+    print("  9. CCA12: governed pod of complete CCA11 cognitive architectures")
     print("  T. Tutorial (more information) on using and maintaining this program, references\n")
 
 

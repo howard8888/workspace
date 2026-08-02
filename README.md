@@ -135,7 +135,7 @@ This marker indicates a read-only diagnostic probe over the current NavMap signa
 - iii. The evolution of human psychotic and autistic disorders based on the mechanisms of this model, and potential means of mitigation (in-model; no clinical claims made).
 
 
-*(This theory holds that the basic features of pre-vertebrate and earlier vertebrate navigation evolved into the anatomy and features of the cerebral cortex of the mammalian brain. It is postulated that in primate evolution (see papers listed in the Reference section) specific mechanisms emerged which allowed these navigation maps to support full causal reasoning, full analogical reasoning and partial but real compositional language seen in the human brain. Scaffolding is in place (partially operational) in the CCA8 project for the simulation of a chimpanzee-like brain, a human-like brain, a human-like brain composed of five sub-brains operating in parallel in the same agent, and a human-like brain composed of five sub-brains operating in parallel in the same agent with additional combinatorial and compositional planning ability.)*
+*(This theory holds that the basic features of pre-vertebrate and earlier vertebrate navigation evolved into the anatomy and features of the cerebral cortex of the mammalian brain. It is postulated that in primate evolution (see papers listed in the Reference section) specific mechanisms emerged which allowed these navigation maps to support full causal reasoning, full analogical reasoning and partial but real compositional language seen in the human brain. Scaffolding is in place (partially operational) in the CCA8 project for the simulation of a chimpanzee-like brain, a human-like brain, a human-like brain composed of five sub-brains operating in parallel in the same agent, and a human-like brain composed of five sub-brains operating in parallel in the same agent with additional combinatorial and compositional planning ability. The startup profile menu also records two longer-range research directions: CCA11, one coherent superhuman mind with governed cognitive plurality, and CCA12, a governed pod of complete CCA11 cognitive architectures. These two profiles are architectural roadmaps, not implemented intelligence.)*
 
 
 
@@ -196,6 +196,8 @@ of birth, and by one week can climb most places its mother can)*
 - CCA8d Simulation of a mountain goat-like brain with 5 brains within the same agent with combinatorial planning
 - CCA9 Simulation of a chimpanzee through the lifecycle
 - CCA10 Simulation of a human through the lifecycle
+- CCA11 One coherent superhuman mind with governed cognitive plurality
+- CCA12 Governed pod of complete CCA11 cognitive architectures
 - CCAx_Bringup  Robotic Cognitive Operating System with CCAx version controlling supported hardware
 
 
@@ -222,7 +224,7 @@ of birth, and by one week can climb most places its mother can)*
 - [Executive Overview](#executive-overview)
 - [TL;DR == 15-minute summary](#tldr--15-minute-summary)
 - [Opening screen (banner) explained](#opening-screen-banner-explained)
-- [Profiles (1–7): overview and implementation notes](#profiles-17-overview-and-implementation-notes)
+- [Profiles (1–9): overview and implementation notes](#profiles-19-overview-and-implementation-notes)
 - [Introduction to the Memory Pipeline](#introduction-to-the-memory-pipeline)
 - [CCA8 as a Robotic Cognitive Operating System (RCOS)](#cca8-as-a-robotic-cognitive-operating-system-rcos)
 - [RCOS implementation status and roadmap](#rcos-implementation-status-and-roadmap)
@@ -341,7 +343,7 @@ checks for supported hardware embodiments if you are using this project for a ro
 
      
 **You will now see a welcome screen, and a small menu allowing you to choose simulation of**
-**agents ranging from a Mountain Goat-like brain to a Super-Human-like machine simulation.**
+**agents ranging from a Mountain Goat-like brain through CCA11 and CCA12 superhuman research profiles.**
 
 
 **Choose Profile 1: Mountain Goat**
@@ -688,9 +690,11 @@ various features, allowing exploration of different evolutionary-like configurat
 5. Human-like one-brain simulation × multiple-agents society
 6. Human-like one-agent multiple-brains simulation with combinatorial planning
 7. Super-Human-like machine simulation
+8. CCA11: one coherent superhuman mind with governed cognitive plurality
+9. CCA12: governed pod of complete CCA11 cognitive architectures
 T. Tutorial (more information) on using and maintaining this program, references
 
-Please make a choice [1–7 or T | Enter = Mountain Goat]:*
+Please make a choice [1–9 or T | Enter = Mountain Goat]:*
 
 
 
@@ -702,7 +706,7 @@ Please make a choice [1–7 or T | Enter = Mountain Goat]:*
 
 * Embodiment (HAL/body): shows whether the hardware abstraction layer is enabled and which body profile (if any) was provided. The current build runs fine with HAL off.
 
-* Profile menu: seven presets that configure or demonstrate different cognitive configurations (documented below). Selection is handled by `choose_profile`, which records your choice in the runtime context and proceeds with the session.
+* Profile menu: nine presets that configure, demonstrate, or document different cognitive configurations (described below). Selection is handled by `choose_profile`, which records the resulting operational profile in the runtime context and proceeds with the session. Profiles 8 and 9 print future architectural research designs and then return to the Mountain Goat runtime.
   
   
 
@@ -725,9 +729,9 @@ A: It means the simulation is currently running headless: policies and WorldGrap
 
 
 
-# Profiles (1–7): overview and implementation notes
+# Profiles (1–9): overview and implementation notes
 
-This section documents what each profile intends to represent and how the current profile subsystem implements it. `cca8_profiles.py` owns profile selection, narratives, and bounded dry-run demonstrations; `cca8_run.py` retains startup orchestration and compatibility wrappers. Longer explanatory help and the new-user tour live in `cca8_guidance.py`. Items 2–7 remain demonstration scaffolds that print a short trace and then fall back to the Mountain Goat profile so today’s simulation continues unchanged.
+This section documents what each profile intends to represent and how the current profile subsystem implements it. `cca8_profiles.py` owns profile selection, narratives, and bounded dry-run demonstrations; `cca8_run.py` retains startup orchestration and compatibility wrappers. Longer explanatory help and the new-user tour live in `cca8_guidance.py`. Items 2–9 remain narrative or bounded dry-run research scaffolds. After their explanation or demonstration, they return to the Mountain Goat profile so today’s executable simulation continues unchanged.
 
 1. Mountain Goat-like brain simulation  
    Baseline profile focused on a neonate mountain goat. Defaults: sigma=0.015, jump=0.2, winners_k=2. A boot step ensures a stand intent early in the episode. Use this profile for all current demos and for reading the code.
@@ -748,7 +752,70 @@ This section documents what each profile intends to represent and how the curren
    Implements a dry-run combinatorial planner. Five “brains” each run many von Neumann processors (configurable, the current stub uses 256 per brain) to explore short candidate plans, score them with a simple utility (sum of action rewards minus a per-step cost), report the per-brain best and average score, and then select a champion brain. In a real system only the first action of the winning plan would be committed to the live world after a safety check, the stub prints the commit rule but does not modify state.
 
 7. Super-Human-like machine simulation  
-   Implements a dry-run meta-controller. Three proposal sources (symbolic search, neural value, program synthesis) each provide an action and a utility, the meta-controller picks the winner by score with a fixed tie-break preference. The printout illustrates how a higher-level controller could arbitrate between heterogeneous planners. No state is modified.
+   Implements an early dry-run meta-controller. Three proposal sources (symbolic search, neural value, program synthesis) each provide an action and a utility, the meta-controller picks the winner by score with a fixed tie-break preference. The printout illustrates how a higher-level controller could arbitrate between heterogeneous planners. No state is modified. This remains a small mechanism demonstration rather than the complete architecture proposed for CCA11.
+
+8. CCA11: one coherent superhuman mind with governed cognitive plurality
+
+   Prints a detailed future-architecture narrative and then returns to Profile 1. CCA11 is intended to be one persistent self with one human-authorized mission, one committed Accepted Working Navigation Map for present external control, one governed memory system, and one controlled action path. Within that coherent agent, several heterogeneous cognitive processes may work in parallel or on separate branch-local maps.
+
+   Candidate processes include NavMap prediction, causal intervention reasoning, analogical reasoning, symbolic planning, probabilistic forecasting, episodic retrieval, semantic or LLM-based reasoning, scientific hypothesis generation, skeptical/red-team analysis, safety checking, and metacognitive resource allocation. These processes submit structured proposals rather than directly rewriting accepted state.
+
+   A future proposal record should preserve the proposing process, input-map revision, evidence and provenance, assumptions, predicted outcomes, counterevidence, support type, calibration information when probability is claimed, recommended action or probe, reversibility, safety implications, authority implications, and unresolved objections.
+
+   **Plural thought does not imply plural executive authority.** Observed evidence, the committed current map, persistent memory, protected goals, human authority, and actuators remain protected surfaces. A separate acceptance/commitment mechanism may reject a proposal, preserve it as an unresolved alternative, request a probe, escalate it for human review, provisionally commit it, revise accepted state, or authorize external action.
+
+   **Agreement is not the stopping rule.** Several processes may agree because they share evidence, models, training data, assumptions, or copied conclusions. CCA11 should evaluate evidence quality, provenance, reasoning-path dependence, predictive performance, calibration, causal tests, reversibility, safety, and the expected value of more information. It must retain `UNKNOWN`, abstention, and reject-all outcomes when the available proposals are inadequate.
+
+   **Relationship to Minsky's Society of Mind.** CCA11 accepts Minsky's core pluralist insight that no single cognitive method is adequate for every problem. Minsky's technical agents are generally subpersonal mechanisms whose organization produces one mind. CCA11 may contain much larger cognitive processes, but it adds explicit executable contracts for proposal provenance, protected current-state authority, governed memory commitment, unresolved dissent, and controlled external action. A useful description is **a constitutional society of cognitive processes inside one coherent mind**. “Constitutional” means that explicit rules govern state, memory, goals, authority, and action; it does not imply equal voting rights among modules.
+
+   **Relationship to Goertzel's cognitive synergy, OpenCog, and Hyperon.** Cognitive synergy asks how heterogeneous processes can help one another when one process becomes stuck. CCA11 accepts that principle. It adds a second question: **what authority does the resulting proposal possess?** A shared substrate or orchestration mechanism may enable processes to exchange work, but CCA11 additionally distinguishes observed, expected, inferred, retrieved, imagined, and accepted content and governs which proposal may alter the committed map or control action. HyperClaw-like orchestration could be one routing layer, but it would not by itself supply the complete CCA11 state-authority contract.
+
+   Several current runner profiles are precursors. Profile 4 demonstrates parallel sandbox brains. Profile 6 demonstrates parallel combinatorial search. Profile 7 demonstrates heterogeneous proposal arbitration. CCA11 would integrate these ideas while replacing simple fork-and-vote behavior with specialized reasoning roles, explicit disagreement, metacognitive recruitment, evidence-based adjudication, governed commitment, and one controlled external-action path.
+
+   The concise architectural statement is:
+
+       CCA11
+           = one coherent self
+           + many cognitive methods
+           + several branch-local workspaces
+           + explicit provenance
+           + one governed commitment structure
+           + one controlled external-action path
+
+9. CCA12: governed pod of complete CCA11 cognitive architectures
+
+   Prints a detailed federated-architecture narrative and then returns to Profile 1. CCA12 groups several complete CCA11 minds. Each pod member may have its own identity, Accepted Working Navigation Map, sensory viewpoint or embodiment, episodic history, learned transformations, attention, uncertainty, internal cognitive council, and delegated local goals.
+
+   The central distinction is:
+
+       CCA11 = one self with many cognitive methods
+       CCA12 = many CCA11 selves operating under one governed mission
+
+   The purpose of a pod is not merely to multiply copies. A useful pod can perform parallel hypothesis search, independent replication, multi-horizon planning, distributed perception, domain specialization, adversarial checking, fault tolerance, and independent confirmation before consequential action. Ten identical agents using the same model, prompts, memories, data, and assumptions may simply reproduce one correlated error ten times.
+
+   **Mission Charter.** A CCA12 pod requires an explicit charter defining the legitimate mission, human authorities, protected goals, prohibited actions, delegation boundaries, resource and privacy limits, required confirmations, escalation conditions, emergency-stop authority, membership rules, and the procedure for changing the charter. No ordinary pod member may rewrite it unilaterally.
+
+   **Local minds and shared pod state.** Each member retains its local cognitive state. Shared information is published through provenance-preserving observations, map fragments, hypotheses, plans, predictions, counterarguments, experimental results, resource commitments, action proposals, and authority decisions. A Pod Blackboard or Assertion Ledger should distinguish a published assertion, independent confirmation, provisional pod commitment, accepted mission state, and authorized external action. A statement on the blackboard is not automatically true.
+
+   **Controlled independence.** Members should often produce an initial analysis before seeing other conclusions. The ledger should record shared models, data, code, memories, and assumptions so that apparent agreement is not mistaken for independent confirmation. After the first pass, members may critique, replicate, test, or synthesize one another's work.
+
+   **Adjudication.** CCA12 should not use simple majority vote as its universal rule. Sensor claims may be weighted by provenance and reliability. Specialized questions may use demonstrated competence. Important factual claims may require replication. Uncertain explanations may require adversarial comparison. Safety-critical actions may require an explicit Guardian authorization or two independent keys. Out-of-charter decisions require human escalation. The pod must be able to preserve several viable alternatives, declare insufficient evidence, request another observation, abstain, or reject all represented hypotheses.
+
+   **Action authority.** A pod sharing one embodiment should normally have one governed action gateway. For multiple embodiments, explicit action leases define which member may control which body or resource, the permitted actions, mission/geographic/time limits, expiration, revocation, collision rules, and emergency-stop behavior.
+
+   **Distributed-system risks.** CCA12 must address correlated error, groupthink, stale shared context, poisoned messages, authority capture, race conditions, duplicated actions, resource contention, deadlock, communication loss, member failure, compromised members, and drift between local maps and shared mission state. Scaling unresolved architecture problems can amplify error rather than intelligence.
+
+   **Relationship to Minsky and Goertzel.** CCA12 is a society of complete minds, unlike Minsky's usual society of subpersonal agents. Cognitive synergy may occur both within each CCA11 and across the pod, but inter-agent communication should not erase agent boundaries. A shared OpenCog/Hyperon-like substrate may support cooperation, while CCA12 adds a Mission Charter, provenance-preserving federation, explicit delegation, fault isolation, and governed external-action rights.
+
+   The concise architectural statement is:
+
+       CCA12
+           = many complete CCA11 selves
+           + one governed mission
+           + one Mission Charter
+           + one provenance-preserving pod ledger
+           + controlled delegation
+           + governed external-action rights
 
 ### Q&A to help you learn this section
 
@@ -759,7 +826,16 @@ Q: Do the multi-brain / multi-agent profiles modify the live WorldGraph today?
 A: No. At present, they typically operate on sandbox copies of the world (or separate worlds) and print results, but they do not commit changes back to the live WorldGraph. That keeps the core goat simulation deterministic and easy to reason about.
 
 Q: What is the practical difference between “human-like” and “super-human-like” profiles today?
-A: At the time of writing, the difference is mainly in the story and trace they print: the “super-human-like” profile demonstrates a dry-run meta-controller that arbitrates between heterogeneous proposal sources. Neither profile currently runs a distinct, fully human-level cognitive architecture; they are scaffolds for future work.
+A: At the time of writing, the difference is mainly in the story and trace they print. Profile 7 demonstrates a small dry-run meta-controller. Profiles 8 and 9 preserve more complete architectural roadmaps for later CCA11 and CCA12 development. None of these choices currently runs a distinct human-level or superhuman cognitive architecture; all return to the Mountain Goat runtime after the explanation or dry run.
+
+Q: Why keep both CCA11 and CCA12?
+A: They address different scaling problems. CCA11 asks how one coherent mind can recruit many cognitive methods without losing current-state, goal, or action authority. CCA12 asks how several complete CCA11 minds can cooperate without losing mission coherence, provenance, delegation boundaries, or safe action control. Internal governance should be solved before federation amplifies the architecture.
+
+Q: Is CCA11 just Minsky's Society of Mind?
+A: It shares Minsky's insight that intelligence can emerge from organized specialists rather than one universal procedure. CCA11 adds a NavMap-centered software contract: typed proposals, protected evidence, a committed accepted map, explicit provenance, unresolved dissent, and governed memory/action commitment. The intended implementation is therefore a particular constitutional and auditable society of processes, not merely a restatement of the general theory.
+
+Q: Is CCA11 just Goertzel-style cognitive synergy or HyperClaw?
+A: It overlaps strongly with cognitive synergy because heterogeneous processes should help one another overcome bottlenecks. The additional CCA question is which result is allowed to become accepted present state or control action. Orchestration can route work; CCA11 also requires source authority, map authority, commitment rules, and a protected action gateway.
 
 Q: How do profiles interact with the rest of the code?
 A: `cca8_profiles.py` selects the profile, sets initial parameters in Ctx (sigma, jump, profile label), and may run a bounded stub/demo. It then returns configuration to the same high-level runner loop. The WorldGraph, controller, and environment interfaces remain the same; only initial configuration and demonstration traces change.
@@ -15422,6 +15498,9 @@ Schneider, H., Navigation Map-Based Artificial Intelligence -- [Navigation Map-B
 
 Schneider, H., The Emergence of Enhanced Intelligence in a Brain-Inspired Cognitive Architecture -- [Frontiers | The emergence of enhanced intelligence in a brain-inspired cognitive architecture](https://www.frontiersin.org/journals/computational-neuroscience/articles/10.3389/fncom.2024.1367712/full)
 
+Minsky, M. (1986), *The Society of Mind*. Simon & Schuster.
+
+Goertzel, B. (2017), Cognitive Synergy between General Intelligence Components -- [[1703.04361] Cognitive Synergy between General Intelligence Components](https://arxiv.org/abs/1703.04361)
 
 
 Tresp, V. et al., Tensor Brain -- [[2109.13392] The Tensor Brain: A Unified Theory of Perception, Memory and Semantic Decoding](https://arxiv.org/abs/2109.13392)

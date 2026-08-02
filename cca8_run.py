@@ -175,7 +175,7 @@ import cca8_preflight  # pylint: disable=wrong-import-order
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.9.1"
+__version__ = "0.9.2"
 __all__ = [
     "main",
     "interactive_loop",
@@ -292,6 +292,8 @@ profile_chimpanzee = cca8_profiles.profile_chimpanzee
 profile_human = cca8_profiles.profile_human
 profile_multi_brains_adv_planning = cca8_profiles.profile_multi_brains_adv_planning
 profile_superhuman = cca8_profiles.profile_superhuman
+profile_cca11_governed_cognitive_plurality = cca8_profiles.profile_cca11_governed_cognitive_plurality
+profile_cca12_governed_pod = cca8_profiles.profile_cca12_governed_pod
 _open_readme_tutorial = cca8_profiles.open_readme_tutorial
 print_tagging_and_policies_help = cca8_guidance.print_tagging_and_policies_help
 
@@ -326,6 +328,8 @@ def _profile_operations_v1() -> ProfileOperations:
         society_multi_agents=profile_society_multi_agents,
         multi_brains_adv_planning=profile_multi_brains_adv_planning,
         superhuman=profile_superhuman,
+        cca11=profile_cca11_governed_cognitive_plurality,
+        cca12=profile_cca12_governed_pod,
     )
 
 
@@ -5522,6 +5526,12 @@ def boot_prime_stand(world, ctx) -> None:
 
 
 # profile_superhuman moved to cca8_profiles.py or cca8_guidance.py.
+
+
+# profile_cca11_governed_cognitive_plurality moved to cca8_profiles.py.
+
+
+# profile_cca12_governed_pod moved to cca8_profiles.py.
 
 
 # _open_readme_tutorial moved to cca8_profiles.py or cca8_guidance.py.
