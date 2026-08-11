@@ -1,6 +1,59 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Single-episode worker used by the fresh-process publication batch runner."""
+"""Single-episode worker used by the fresh-process publication batch runner.
+
+Execute one publication trial inside one fresh Python interpreter.
+
+Publication pipeline
+--------------------
+1. ``cca8_publication_protocol.py`` defines the frozen parameters and creates
+   or validates development and reserved final-evaluation seed manifests.
+2. ``cca8_publication_integrity.py`` hashes the source tree and protocol and
+   verifies checksums for generated output trees.
+3. ``cca8_publication_release_check.py`` validates the installed publication
+   code before a final manifest or final evaluation is generated.
+4. ``cca8_publication_environment.py`` records Python, packages, platform,
+   Git state, and the source and protocol hashes.
+5. ``cca8_publication_run.py`` expands a manifest into jobs and launches one
+   fresh Python subprocess for every experimental trial.
+6. ``cca8_publication_worker.py`` executes one isolated trial and writes its
+   normalized trial, cycle, mechanism, and process records.
+7. ``cca8_publication_analysis.py`` produces the primary aggregate, paired,
+   and mechanism-level statistical analyses.
+8. ``cca8_publication_lhsi_sensitivity.py`` recalculates the legacy LHSI,
+   termed TIC in the manuscript, under the 17 post hoc robustness
+   specifications.
+
+Purpose of this module
+----------------------
+This module is the isolated execution unit called by the publication batch
+runner. One invocation receives one immutable job specification containing a
+profile, condition, matched seed, stochastic schedule, expected source hash,
+and expected protocol hash. The worker is normally launched as a subprocess
+rather than called repeatedly inside the batch runner's interpreter.
+
+Before importing the CCA8 runtime, the worker confirms the protocol version,
+required Python version, source-tree hash, and protocol hash. Delaying runtime
+imports until after these checks helps ensure that a trial cannot begin after
+the frozen source or protocol has changed. The worker then clears shared
+in-process memory stores, creates a fresh ``Ctx``, configures exactly one
+newborn long-horizon trial, disables LLM use, and calls the existing CCA8
+single-trial experiment entry point.
+
+After execution, the worker preserves the cycle-level and raw trial JSONL
+records, normalizes the trial summary into publication fields, and extracts
+mechanism details such as WorkingMap invalidations, guarded structural repairs,
+repaired families and relations, replacement operations, unsafe following,
+reacquisition, probes, and timeouts. It verifies that the runtime reproduced
+the condition-blind schedule assigned by the manifest. It also fails closed if
+an LLM/API call or direct retrieved-hint use is detected.
+
+The final worker record includes the normalized trial, source/protocol and
+manifest hashes, process identifiers, a random process nonce, Python/platform
+information, record counts, and a hash of the normalized trial record. This
+record allows the batch runner to verify process isolation and consolidate the
+trial without depending on mutable in-memory state from another run.
+"""
 
 from __future__ import annotations
 
@@ -257,6 +310,7 @@ def _verify_schedule_record(job: dict[str, Any], episode: dict[str, Any]) -> lis
 
 
 def run_worker_v1(job_path: Path, source_root: Path) -> dict[str, Any]:
+    '''docstring to do'''
     source_root = source_root.resolve()
     if str(source_root) not in sys.path:
         sys.path.insert(0, str(source_root))

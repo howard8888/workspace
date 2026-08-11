@@ -12,7 +12,77 @@ bounded command vocabulary to create a robot-shaped long-horizon benchmark:
 These helpers do not claim physical robot control and do not yet route through
 the full CCA8 Action Center. They provide a deterministic software benchmark and
 smoke-test suite for the RCOS/HAL contract, with JSONL provenance records.
+
+
+UPDATE DOCSTRING
+
+BICA 2026 RCOS long-horizon simulation experiments and ablations.
+
+Research context
+----------------
+This module contains the experimental layer developed for the BICA 2026 paper
+*Biologically Inspired Cognitive Architectures as Robotic Cognitive Operating
+Systems*. It evaluates a robot-shaped long-horizon mission in the simulated
+``SimRobotGoat`` embodiment supplied by ``cca8_rcos.py``.
+
+The shared task is:
+
+    recover posture -> inspect target -> return to dock -> recharge -> rest
+
+Relationship to other modules
+-----------------------------
+``cca8_rcos.py`` owns the command vocabulary, simulated world, state transitions,
+observations, HAL interface, and episode summaries. This module supplies the
+controllers, perturbation schedules, repeated-run logic, comparison conditions,
+statistics, JSONL provenance records, and terminal renderers.
+
+``cca8_experiments.py`` imports these functions so the RCOS studies are available
+through the broader experiment subsystem and Menu 49. ``cca8_run.py`` supplies
+the interactive runner but does not duplicate the RCOS experiment algorithms.
+
+Experiment families
+-------------------
+Clean protocol and controls
+    Runs a bounded feedback controller, a known-good script, a deliberate hazard
+    negative control, and an incomplete no-return control. These runs verify the
+    command/HAL contract, milestone definitions, safety accounting, and expected
+    success or failure patterns.
+
+Repeated clean runs
+    Repeats the feedback controller with recorded seeds and aggregates task
+    success, milestone completion, safety events, resource use, and latency.
+
+Perturbation benchmark
+    Adds seeded action no-ops, temporary sensor blackouts, target occlusion,
+    recoverable falls, battery and fatigue pressure, and extra obstacles that
+    preserve a nominal route. Mild, moderate, and severe settings provide
+    explicit perturbation probabilities and resource multipliers.
+
+Paired RCOS/no-RCOS ablation
+    Runs the same seed and perturbation intensity under two conditions. The RCOS
+    supervisory task manager reads status, tracks unfinished milestones, retries,
+    recovers from falls, returns to dock, and stops only after verified completion.
+    The no-RCOS condition plays a fixed command sequence without feedback-based
+    repair. Paired summaries report success, milestone score, completion stage,
+    failure reasons, safety events, and RCOS-versus-playback advantages.
+
+Outputs
+-------
+Single trials can write cycle and episode JSONL records. Repeated studies return
+JSON-safe rows, success proportions with Wilson 95% intervals, milestone rates,
+perturbation counts, failure categories, and compact terminal reports.
+
+Scientific boundary
+-------------------
+The BICA 2026 comparison supports a deliberately narrow claim: feedback-based
+mission-state supervision can be more robust than fixed clean-world command
+playback under the tested simulation perturbations. It does not establish unique
+superiority of full CCA8 over finite-state machines, behavior trees, task
+executives, replanning systems, ROS supervisors, other cognitive architectures,
+or physical-robot control systems. The controllers in this file do not yet route
+through the complete CCA8 Action Center.
 """
+
 
 from __future__ import annotations
 

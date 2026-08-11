@@ -1003,9 +1003,6 @@ class Primitive:
     -this is informally an abstract base-like class that provides the shared interface (contract) and
        shared helpers while concrete subclasses are shown below (e.g., class StandUp(Primitive), etc )
        actually provide the concrete behavior
-    -note: I have decided to avoid the full richness of Python (e.g., import ABC and use the abstractmethod decorator)
-            here and similar analogous coding/concpets in other places of the codebase, to keep the programming level
-            and concepts reasonable (i.e., pragmatic) for future maintainers (hs -- oct '25)
     -shared interface/contract: trigger(...) and execute(...) effectively enforce that the subclass must have its own specific trigger() and execute()
             and if not, trigger() running in the base will return False or execute running in the base ill return self._fail()
             -thus enforcement occurs here which is intentionally forgiving and test-friendly

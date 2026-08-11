@@ -1,6 +1,55 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Frozen protocol and seed-manifest utilities for the publication benchmark."""
+"""Frozen protocol and seed-manifest utilities for the publication benchmark.
+
+Publication pipeline
+--------------------
+1. ``cca8_publication_protocol.py`` defines the frozen parameters and creates
+   or validates development and reserved final-evaluation seed manifests.
+2. ``cca8_publication_integrity.py`` hashes the source tree and protocol and
+   verifies checksums for generated output trees.
+3. ``cca8_publication_release_check.py`` validates the installed publication
+   code before a final manifest or final evaluation is generated.
+4. ``cca8_publication_environment.py`` records Python, packages, platform,
+   Git state, and the source and protocol hashes.
+5. ``cca8_publication_run.py`` expands a manifest into jobs and launches one
+   fresh Python subprocess for every experimental trial.
+6. ``cca8_publication_worker.py`` executes one isolated trial and writes its
+   normalized trial, cycle, mechanism, and process records.
+7. ``cca8_publication_analysis.py`` produces the primary aggregate, paired,
+   and mechanism-level statistical analyses.
+8. ``cca8_publication_lhsi_sensitivity.py`` recalculates the legacy LHSI,
+   termed TIC in the manuscript, under the 17 post hoc robustness
+   specifications.
+
+Purpose of this module
+----------------------
+This module is the machine-readable authority for the experimental protocol.
+It defines the publication profiles, Conditions A/B/C, Python-version rule,
+observation masking, route-change process, memory-encoding opportunities,
+current-state reacquisition process, challenge deadline, trial-cycle limit,
+and the requirement for one fresh process per trial. It also records the
+primary hypotheses fixed before the final evaluation.
+
+For each matched index, the module derives a unique seed from a master nonce
+and creates a condition-blind stochastic schedule. The same schedule is later
+used under A, B, and C so that differences among methods are not caused by
+unequal random events. Named random streams separately generate route change,
+memory completeness, and reacquisition onset. Canonical JSON serialization and
+SHA-256 hashes make schedules and manifests independently checkable.
+
+The module can build either a small development manifest or the reserved final
+``holdout`` manifest used by the publication workflow. Final manifests must
+contain exactly 100 matched schedules and must be generated under Python 3.11.
+Validation reconstructs every schedule from its saved seed, checks ordering and
+uniqueness, verifies profiles and conditions, and confirms the manifest hash.
+Exclusive file creation prevents accidental overwriting of an existing
+manifest.
+
+This module does not execute CCA8 trials and does not calculate outcomes. Its
+responsibility ends after defining, generating, loading, and validating the
+protocol and matched schedules consumed by the batch runner.
+"""
 
 from __future__ import annotations
 
@@ -21,8 +70,10 @@ PROFILES = ("baseline", "conflicted_repair")
 CONDITIONS = ("A", "B", "C")
 
 
+#pylint:disable=missing-function-docstring
 @dataclass(frozen=True, slots=True)
 class FrozenProtocol:
+    '''class docstring todo'''
     python_major: int = 3
     python_minor: int = 11
     ordinary_observation_mask_probability: float = 0.50

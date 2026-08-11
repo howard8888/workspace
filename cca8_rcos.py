@@ -48,7 +48,81 @@ The simulated robot starts fallen at the dock and must:
 
 A direct path to the target is blocked by a small hazard band so the episode is
 not a trivial straight-line walk.
+
+UPDATED DOCSTRING
+
+Stage-1 RCOS embodiment sandbox and simulated hardware-abstraction layer.
+
+Research context
+----------------
+This module provides the software substrate for the BICA 2026 paper
+*Biologically Inspired Cognitive Architectures as Robotic Cognitive Operating
+Systems*. The RCOS proposal places a cognitive supervisory layer above ROS 2,
+vendor middleware, or a custom hardware-abstraction layer rather than replacing
+those lower-level systems.
+
+The implementation here is a simulated Stage-1 embodiment. It establishes a
+small, inspectable body/world contract before the full CCA8 Action Center or a
+physical robot is connected.
+
+Purpose
+-------
+The module defines a bounded embodied command vocabulary and a deterministic
+``SimRobotGoat`` mission:
+
+    recover posture -> inspect target -> return to dock -> recharge -> rest
+
+A small grid world contains a dock, a target, hazards, and optional obstacles.
+The environment tracks position, heading, posture, battery, fatigue, mission
+milestones, falls, safety violations, repeated-action loops, and terminal state.
+The default geometry blocks a trivial straight-line route so successful behavior
+requires navigation around danger.
+
+Main objects
+------------
+``SimRobotGoatConfig``
+    Holds map geometry, resource costs, rewards, thresholds, and episode limits.
+
+``SimRobotGoatState``
+    Stores the environment's complete mutable state in a compact JSON-safe form.
+
+``SimRobotGoatActionAck``
+    Describes whether one bounded command was accepted, what changed, and which
+    milestones were newly reached.
+
+``SimRobotGoatEpisodeSummary``
+    Reports mission completion, milestone score, safety events, looping,
+    resource use, and final state.
+
+``SimRobotGoatEnv``
+    Owns command validation, state transitions, hazard handling, milestone
+    updates, observations, local navigation patches, summaries, and ASCII
+    rendering.
+
+``SimRobotGoatHAL``
+    Wraps the environment with the small interface expected from a future robot
+    adapter: ``reset()``, ``sense()``, ``act()``, ``status()``, and
+    ``emergency_stop()``.
+
+Relationship to the rest of CCA8
+--------------------------------
+Observations use ``EnvObservation`` and include raw sensor fields, predicates,
+cues, metadata, and a local NavPatch/SurfaceGrid-compatible payload. This keeps
+the embodiment seam compatible with the wider CCA8 observation vocabulary.
+
+``cca8_rcos_experiments.py`` builds clean, perturbed, repeated, and paired
+ablation experiments on top of this module. ``cca8_run.py`` exposes a thin
+interactive Menu 50 wrapper, while ``tests/test_cca8_rcos.py`` checks the
+sandbox and HAL contract. Robot/world transition logic remains centralized here.
+
+Scope boundary
+--------------
+This module does not demonstrate physical robot control, ROS 2 integration, or
+full CCA8 Action Center control. It is a deterministic simulated embodiment and
+HAL seam. Stochastic perturbations and supervisory comparisons belong in
+``cca8_rcos_experiments.py`` rather than in the baseline environment.
 """
+
 
 from __future__ import annotations
 

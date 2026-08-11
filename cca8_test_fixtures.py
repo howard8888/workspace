@@ -16,6 +16,42 @@ Naming note
 This module is called ``cca8_test_fixtures`` because it holds deterministic
 fixtures rather than full simulation environments. Simulated embodiment worlds
 such as SimRobotGoat live in RCOS/environment modules instead.
+
+UPDATED DOCSTRING
+
+Deterministic WorldGraph fixtures for tests, preflight, and demonstrations.
+
+Purpose
+-------
+This small support module builds fixed CCA8 graph structures whose binding ids,
+tags, edges, metadata, and engram pointers are predictable. Tests can therefore
+assert exact graph properties without running the full environment, controller,
+WorkingMap pipeline, or an RCOS simulation.
+
+Current fixture
+---------------
+``build_demo_world_for_inspect()`` creates a compact WorldGraph containing NOW
+and HERE anchors, stand and fallen predicates, a maternal-vision binding, a rest
+binding with provenance metadata, several labeled edges, and a demonstration
+Column-pointer record. It returns both the populated graph and a dictionary of
+human-readable names mapped to binding ids.
+
+How the fixture is used
+-----------------------
+``tests/test_inspect_binding_details.py`` uses the graph to verify the structure
+that the Inspect Binding Details menu is expected to display, including anchor
+tags, incoming and outgoing edges, provenance fields, and engram attachments.
+The full preflight imports the same builder as a smoke check that the fixture and
+WorldGraph APIs remain compatible. The graph is also convenient for REPL work or
+small interactive demonstrations.
+
+Scope boundary
+--------------
+This module is general testing infrastructure and is not tied to the
+Superintelligence, AGI 2026, or BICA 2026 experiments. It does not model an
+environment, execute policies, generate publication data, or simulate an
+embodiment. Larger task worlds belong in environment or RCOS modules; fixtures
+here should remain small, deterministic, and easy to inspect in one screen.
 """
 
 from __future__ import annotations

@@ -177,7 +177,7 @@ def run_llm_operational_preflight_check(
     all non-passing OpenAI outcomes as non-blocking warnings because OpenAI access is an optional integration.
     """
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    #api_key = ""   #for testing, to force the preflight helper to behave as if no API key exists
+    #api_key = ""   #for testing purposes we can force the preflight helper to behave as if no API key exists
     if not api_key:
         return {
             "status": "skip",

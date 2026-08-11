@@ -6717,7 +6717,8 @@ def invalidate_masked_mapsurface_state_v1(
             entities.add(eid)
             continue
 
-        binding = bindings.get(bid)
+        #binding = bindings.get(bid)
+        binding = bindings[bid]
         tags_raw = getattr(binding, "tags", None)
         if isinstance(tags_raw, set):
             tags = tags_raw
@@ -6765,7 +6766,8 @@ def invalidate_masked_mapsurface_state_v1(
                     removed_meta += 1
 
         if spatial and isinstance(self_bid, str) and self_bid in bindings:
-            self_binding = bindings.get(self_bid)
+            #self_binding = bindings.get(self_bid)
+            self_binding = bindings[self_bid]
             edges = getattr(self_binding, "edges", None)
             if isinstance(edges, list):
                 kept_edges: list[Any] = []

@@ -90,3 +90,10 @@ hello.js
 hello.ts
 cycle_log.jsonl
 terminal.txt
+
+# Superintelligence publication local control and generated outputs
+.ruff_cache/
+superintelligence-publication-control/
+publication_results/
+publication_analysis/
+lhsi_sensitivity/

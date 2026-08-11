@@ -1,6 +1,59 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Validate the consolidated CCA8 Superintelligence publication installation."""
+"""Validate the consolidated CCA8 Superintelligence publication installation.
+
+Validate a publication installation without generating the final manifest.
+
+Publication pipeline
+--------------------
+1. ``cca8_publication_protocol.py`` defines the frozen parameters and creates
+   or validates development and reserved final-evaluation seed manifests.
+2. ``cca8_publication_integrity.py`` hashes the source tree and protocol and
+   verifies checksums for generated output trees.
+3. ``cca8_publication_release_check.py`` validates the installed publication
+   code before a final manifest or final evaluation is generated.
+4. ``cca8_publication_environment.py`` records Python, packages, platform,
+   Git state, and the source and protocol hashes.
+5. ``cca8_publication_run.py`` expands a manifest into jobs and launches one
+   fresh Python subprocess for every experimental trial.
+6. ``cca8_publication_worker.py`` executes one isolated trial and writes its
+   normalized trial, cycle, mechanism, and process records.
+7. ``cca8_publication_analysis.py`` produces the primary aggregate, paired,
+   and mechanism-level statistical analyses.
+8. ``cca8_publication_lhsi_sensitivity.py`` recalculates the legacy LHSI,
+   termed TIC in the manuscript, under the 17 post hoc robustness
+   specifications.
+
+Purpose of this module
+----------------------
+This module is the pre-evaluation installation gate for the consolidated
+publication code. It is intentionally designed not to generate the reserved
+final-evaluation manifest. Its report explicitly records that no final
+``holdout`` manifest was generated, preserving the separation between software
+validation and the later reserved evaluation.
+
+The basic checks confirm Python 3.11, verify that no final-evaluation manifest
+has been placed inside the source tree, compare the installed source against
+``publication_source_manifest.json``, compile the source, and run focused tests
+for the conflicted state-repair benchmark, guarded repair mechanism, and
+publication workflow. A development-Python override is available for local
+maintenance but is recorded in the report.
+
+With ``--with-smoke``, the module creates a one-seed development manifest in a
+temporary directory and exercises the complete pipeline without touching the
+reserved final evaluation. It runs both profiles and Conditions A/B/C through
+fresh subprocesses, checks opposite condition orders for invariant scientific
+outcomes, runs the primary analysis, and runs the TIC/LHSI robustness analysis.
+All temporary data are discarded when the check finishes.
+
+The module writes one JSON report containing every check, command output,
+elapsed time, optional smoke summary, Python version, and overall pass/fail
+status. It returns a nonzero exit code when any required check fails. This is a
+focused publication installation check, not a substitute for the complete CCA8
+preflight or the final 600-trial evaluation.
+"""
+
+
 
 from __future__ import annotations
 
@@ -8,7 +61,7 @@ import argparse
 import compileall
 import json
 import platform
-import shutil
+# import shutil  #unused-import
 import subprocess
 import sys
 import tempfile
@@ -49,6 +102,7 @@ def run_release_check_v1(
     with_smoke: bool,
     allow_development_python: bool,
 ) -> dict[str, Any]:
+    '''docstring to do'''
     source_root = Path(root).resolve()
     started = time.perf_counter()
     checks: list[dict[str, Any]] = []

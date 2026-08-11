@@ -1,6 +1,60 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Fresh-process batch runner and validation utilities for the publication benchmark."""
+"""Fresh-process batch runner and validation utilities for the publication benchmark.
+
+Run, consolidate, and validate fresh-process publication batches.
+
+Publication pipeline
+--------------------
+1. ``cca8_publication_protocol.py`` defines the frozen parameters and creates
+   or validates development and reserved final-evaluation seed manifests.
+2. ``cca8_publication_integrity.py`` hashes the source tree and protocol and
+   verifies checksums for generated output trees.
+3. ``cca8_publication_release_check.py`` validates the installed publication
+   code before a final manifest or final evaluation is generated.
+4. ``cca8_publication_environment.py`` records Python, packages, platform,
+   Git state, and the source and protocol hashes.
+5. ``cca8_publication_run.py`` expands a manifest into jobs and launches one
+   fresh Python subprocess for every experimental trial.
+6. ``cca8_publication_worker.py`` executes one isolated trial and writes its
+   normalized trial, cycle, mechanism, and process records.
+7. ``cca8_publication_analysis.py`` produces the primary aggregate, paired,
+   and mechanism-level statistical analyses.
+8. ``cca8_publication_lhsi_sensitivity.py`` recalculates the legacy LHSI,
+   termed TIC in the manuscript, under the 17 post hoc robustness
+   specifications.
+
+Purpose of this module
+----------------------
+This module is the publication execution orchestrator. It loads a validated
+manifest, combines each matched schedule with the selected profiles and
+Conditions A/B/C, and creates one job specification for every required trial.
+For the reserved final evaluation it enforces Python 3.11, exactly both
+profiles, all three conditions, no trial limit, and an explicit confirmation
+phrase before execution can begin.
+
+The runner records the seed manifest, source-tree manifest, protocol metadata,
+initial batch metadata, job files, and process logs in a new output directory.
+It then launches ``cca8_publication_worker.py`` once per job using a fresh
+subprocess, a seed-specific ``PYTHONHASHSEED``, and disabled user-site package
+loading. Worker results are appended to consolidated ``workers.jsonl`` and
+``episodes.jsonl`` files while per-trial records remain available in their own
+job directories.
+
+After all subprocesses finish, batch validation checks job count, unique
+process nonces, worker process separation, manifest/source/protocol hashes,
+zero LLM calls, zero direct retrieved-hint use, and identical schedule hashes
+and seeds across matched A/B/C trials. A failed worker or failed invariant
+produces a dedicated failure record and stops the batch. A successful run
+writes final metadata and a checksum file covering the completed output tree.
+
+The module also validates an already completed batch and provides a development
+order-invariance test. The latter reruns the same matched schedules in A-B-C
+and C-B-A order and compares deterministic scientific fields, helping detect
+condition-order contamination. The command-line interface exposes ``run``,
+``validate-results``, and ``verify-order`` operations.
+"""
+
 
 from __future__ import annotations
 
@@ -30,7 +84,7 @@ from cca8_publication_protocol import (
     load_manifest_v1,
     protocol_metadata_v1,
     sha256_hex,
-    validate_manifest_v1,
+    #validate_manifest_v1,   #pylint showing unused import
 )
 
 __version__ = "1.0.0"
@@ -408,6 +462,7 @@ def _read_worker_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def verify_existing_batch_v1(batch_dir: Path) -> dict[str, Any]:
+    '''docstring to do'''
     workers = _read_worker_jsonl(batch_dir / "workers.jsonl")
     metadata = _load_json(batch_dir / "batch_metadata_final.json")
     result = validate_batch_records_v1(
@@ -428,6 +483,7 @@ def verify_order_invariance_v1(
     episode_count: int,
     allow_development_python: bool,
 ) -> dict[str, Any]:
+    '''docstring to do'''
     manifest = load_manifest_v1(manifest_path, require_kind="development")
     if episode_count < 1:
         raise ValueError("episode_count must be positive")

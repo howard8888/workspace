@@ -14,7 +14,80 @@ For each matched episode, named deterministic random streams decide:
 The same sampled schedule is presented to Conditions A, B, and C.  Randomness is
 therefore environmental, reproducible, and matched rather than condition-specific.
 Every publication-style episode runs in a fresh worker process by default.
+
+
+UPDATED DOCSTRING
+
+Development validator for the stochastic conflicted state-repair benchmark.
+
+Research context
+----------------
+This module was created during development of the revised empirical study for
+*Superintelligence as an Emerging Systems Discipline: The Long-Horizon Problem
+as a Foundational Challenge*. It tests the stochastic conflicted state-repair
+challenge before a frozen final publication run is attempted.
+
+This is a development-validation program, not the authoritative final-evaluation
+pipeline. The later ``cca8_publication_*`` modules own the frozen protocol,
+reserved seed manifest, separate-process execution, integrity checks, primary
+analysis, and TIC robustness analysis used for the final Journal of
+Superintelligence evaluation.
+
+Benchmark design
+----------------
+The validator compares three state-repair methods under matched random seeds:
+
+- Condition A: Guarded Merge;
+- Condition B: target episodic readback disabled; and
+- Condition C: replacement-style readback.
+
+It can run both the ordinary partially observable baseline and the stochastic
+conflicted-repair challenge. In the challenge, named deterministic random streams
+decide whether route safety changes after memory encoding, whether usable
+mother-distance information was encoded, and when current mother-distance
+information can become available again. The same sampled schedule is presented
+to A, B, and C, so environmental randomness is matched rather than
+condition-specific.
+
+How the module fits into CCA8
+-----------------------------
+The program reads a seed manifest, constructs one task for every selected
+profile, condition, and seed, and configures the experiment fields stored in
+``Ctx``. Each task calls ``cca8_run.experiment_run_one_episode_v1()``, whose
+runtime behavior is implemented through ``cca8_experiments.py`` and the normal
+CCA8 controller, environment, WorkingMap, and Column-memory modules.
+
+Before each trial, the worker clears RAM-local Column records and the global
+skill ledger. By default, the multiprocessing pool uses one task per child
+process so state cannot carry from one trial into the next. A small set of
+representative schedules can also be rerun with full cycle logging for manual
+mechanism inspection.
+
+Validation and outputs
+----------------------
+The module checks that matched A/B/C trials received the same stochastic
+schedule, that the stochastic factors vary across seeds, and that the observed
+mechanisms follow the intended benchmark logic. Examples include verifying that
+Condition A does not use the disabled direct-hint path, Condition B has no target
+readback, successful B trials depend on current-state reacquisition, and unsafe
+Condition C failures occur only when stored route state conflicts with newer
+route evidence.
+
+The output directory contains trial-level JSONL data, descriptive summaries,
+paired success comparisons, stochastic schedule summaries, mechanism strata,
+selected trace records, a run manifest, source hashes, and file checksums. CSV
+and JSON versions are written where tabular inspection is useful.
+
+Scientific boundary
+-------------------
+The validator is intended to reveal software defects, state leakage, schedule
+mismatches, or implausible mechanism behavior during development. Its results
+must not be substituted silently for a later frozen publication evaluation.
+Changing parameters or seeds because an outcome is unattractive would violate
+the purpose of the benchmark.
 """
+
+
 from __future__ import annotations
 
 import argparse
@@ -30,7 +103,7 @@ import statistics
 import sys
 import time
 from typing import Any, Iterable
-
+#pylint: disable=import-outside-toplevel
 
 CONDITIONS = ("A", "B", "C")
 PROFILE_SPECS: tuple[tuple[str, float], ...] = (
@@ -521,6 +594,7 @@ def _select_trace_keys(rows: list[dict[str, Any]]) -> list[tuple[int, int, str]]
 
 
 def main() -> int:
+    '''docstring to do'''
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed-manifest", default="conflicted_repair_seed_manifest.json")
     parser.add_argument("--output-dir", default="conflicted_repair_stochastic_validation_results")

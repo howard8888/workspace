@@ -1,17 +1,68 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Source and output integrity helpers for the CCA8 publication workflow."""
+"""Source and output integrity helpers for the CCA8 publication workflow.
+
+Create and verify source manifests and publication-output checksums.
+
+Publication pipeline
+--------------------
+1. ``cca8_publication_protocol.py`` defines the frozen parameters and creates
+   or validates development and reserved final-evaluation seed manifests.
+2. ``cca8_publication_integrity.py`` hashes the source tree and protocol and
+   verifies checksums for generated output trees.
+3. ``cca8_publication_release_check.py`` validates the installed publication
+   code before a final manifest or final evaluation is generated.
+4. ``cca8_publication_environment.py`` records Python, packages, platform,
+   Git state, and the source and protocol hashes.
+5. ``cca8_publication_run.py`` expands a manifest into jobs and launches one
+   fresh Python subprocess for every experimental trial.
+6. ``cca8_publication_worker.py`` executes one isolated trial and writes its
+   normalized trial, cycle, mechanism, and process records.
+7. ``cca8_publication_analysis.py`` produces the primary aggregate, paired,
+   and mechanism-level statistical analyses.
+8. ``cca8_publication_lhsi_sensitivity.py`` recalculates the legacy LHSI,
+   termed TIC in the manuscript, under the 17 post hoc robustness
+   specifications.
+
+Purpose of this module
+----------------------
+This module provides the cross-cutting integrity layer used before, during,
+and after publication execution. It computes SHA-256 hashes for individual
+files, creates a deterministic manifest of the publication source tree, derives
+a hash of the frozen protocol metadata, and writes or verifies checksum files
+for result and analysis directories.
+
+Source-tree manifests include each publication-relevant file's relative path,
+size, and SHA-256 digest, plus one hash over the ordered manifest entries. The
+exclusion policy omits Git metadata, virtual environments, caches, compiled or
+temporary files, generated publication output directories, and existing
+checksum/manifest files. Verification reports missing, unexpected, or changed
+files and confirms the overall tree hash.
+
+Output-tree checksums cover every non-cache file beneath a completed result or
+analysis directory. Verification detects missing, added, malformed, or changed
+files. JSON and manifest writers use exclusive creation by default so that a
+previous artifact cannot be silently overwritten during the frozen workflow.
+
+The command-line interface can create or verify a source manifest and create
+or verify output checksums. These operations establish byte-level provenance
+and detect change; they do not by themselves establish that an experiment is
+scientifically valid. Scientific design validation remains the responsibility
+of the protocol, batch runner, worker, and analysis modules.
+"""
+
+#pylint: disable=missing-function-docstring
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-import os
+#import os  #unused-import
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any    #unused-import -- Iterable
 
 from cca8_publication_protocol import protocol_metadata_v1, sha256_hex
 

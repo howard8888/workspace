@@ -198,6 +198,9 @@ def test_wilson_interval_is_bounded_and_contains_observed_proportion() -> None:
     assert 0.0 <= low <= 0.74 <= high <= 1.0
 
 
+# Historical function name retained for continuity with the frozen publication
+# snapshot. Only DEFAULT_SPEC was specified before the final evaluation; the
+# broader 17-specification robustness family was evaluated post hoc.
 def test_default_lhsi_reproduction_and_prespecified_sensitivity_family() -> None:
     row = {
         "milestone_score": 1.0,

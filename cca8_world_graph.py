@@ -1149,9 +1149,9 @@ class WorldGraph:
 
         # 2) assert a lightweight engram in column memory
         # pylint: disable=import-outside-toplevel
-        from cca8_column import mem as _mem                    # :contentReference
+        from cca8_column import mem as _mem
         try:
-            from cca8_features import FactMeta                 # :contentReference
+            from cca8_features import FactMeta
             _fm = FactMeta(name=(name or cue_token), links=links, attrs=attrs)
         except Exception:
             _fm = None
@@ -1188,7 +1188,7 @@ class WorldGraph:
         """
         # pylint: disable=import-outside-toplevel
         try:
-            from cca8_features import TensorPayload           # :contentReference
+            from cca8_features import TensorPayload
         except Exception:
             TensorPayload = None  # type: ignore[assignment, misc]
 

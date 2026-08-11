@@ -853,7 +853,8 @@ def _newborn_conflicted_repair_assignment_v1(ctx: Ctx | None) -> dict[str, Any]:
             2: ("no_conflict_persistent", False, []),
             3: ("no_conflict_reacquire", False, [min_delay]),
         }
-        variant, conflict_present, reacquire_offsets = mapping[cell]
+        #variant, conflict_present, reacquire_offsets = mapping[cell]
+        variant, conflict_present, balanced_reacquire_offsets = mapping[cell]
         return {
             "mode": mode,
             "variant": variant,
@@ -863,7 +864,8 @@ def _newborn_conflicted_repair_assignment_v1(ctx: Ctx | None) -> dict[str, Any]:
             "encoding_opportunities": 1,
             "encoding_successes": 1,
             "encoding_draws": [1.0],
-            "reacquire_offsets": list(reacquire_offsets),
+            #"reacquire_offsets": list(reacquire_offsets),
+            "reacquire_offsets": list(balanced_reacquire_offsets),
             "reacquire_draws": [],
         }
 
@@ -1094,7 +1096,8 @@ def _apply_newborn_conflicted_repair_stress_v1(
         or "stochastic_v3"
     ).strip().lower()
 
-    dropped = {
+    #dropped = {
+    dropped: dict[str, Any] = {
         "dropped_pred_tokens": [],
         "dropped_cue_tokens": [],
         "dropped_raw_keys": [],
@@ -4154,12 +4157,22 @@ def _experiment_summarize_generic_episode_v1(
 
         guarded_events = getattr(ctx, "experiment_newborn_guarded_use_events", None)
         guarded_events = list(guarded_events) if isinstance(guarded_events, list) else []
-        active_guarded_events = [
-            dict(item)
-            for item in guarded_events
-            if isinstance(item, dict)
-            and (completion_step is None or not isinstance(item.get("step"), int) or int(item.get("step")) <= completion_step)
-        ]
+        #active_guarded_events = [ #replace comprehension due to mypy error
+        active_guarded_events: list[dict[str, Any]] = []
+
+        for item in guarded_events:
+            if not isinstance(item, dict):
+                continue
+
+            item_step = item.get("step")
+            if (
+                completion_step is not None
+                and isinstance(item_step, int)
+                and item_step > completion_step
+            ):
+                continue
+            active_guarded_events.append(dict(item))
+
         record["newborn_guarded_field_use_count"] = int(len(guarded_events))
         record["newborn_guarded_field_use_count_to_completion"] = int(len(active_guarded_events))
         record["newborn_guarded_field_use_events"] = guarded_events[:128]

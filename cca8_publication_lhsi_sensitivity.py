@@ -1,13 +1,92 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Weight-and-cap sensitivity analysis for the secondary CCA8 LHSI metric.
+"""original docstring below as part of the original frozen code, but
+since we did not fit any data and since we have since changed the name of
+LHSI an updated docstring is below this one:
+
+Weight-and-cap sensitivity analysis for the secondary CCA8 LHSI metric.
 
 The Long-Horizon State-Integrity score (LHSI) is a heuristic secondary
 composite.  This tool recomputes it under prespecified global scaling,
 leave-one-component-out, uniform-weight, and cap variants.  It does not alter
 any behavioral result and must be interpreted after success, milestones,
 completion time, and mechanism-specific event counts.
+
+--updated docstring:
+
+Post hoc robustness analysis for the secondary CCA8 TIC metric.
+
+The implementation retains the legacy name LHSI for compatibility with the
+frozen publication workflow, APIs, and archived outputs. The default
+Trajectory Integrity Composite (TIC) coefficients and caps were specified
+before the final evaluation and were not fitted to its results. The broader
+17-specification family is used as a post hoc robustness analysis, with the
+default specification included among the 17.
+
+The alternative specifications vary global weights and caps, remove individual
+components, apply uniform or minimal penalties, use effectively uncapped
+penalties, and include a milestone-only calculation. These recalculations do
+not alter any behavioral result and should be interpreted after success,
+milestones, completion time, and mechanism-specific event counts.
+
+
+UPDATED ADDITIONAL INFORMATION:
+
+Run the post hoc 17-specification robustness analysis of TIC/LHSI.
+
+Publication pipeline
+--------------------
+1. ``cca8_publication_protocol.py`` defines the frozen parameters and creates
+   or validates development and reserved final-evaluation seed manifests.
+2. ``cca8_publication_integrity.py`` hashes the source tree and protocol and
+   verifies checksums for generated output trees.
+3. ``cca8_publication_release_check.py`` validates the installed publication
+   code before a final manifest or final evaluation is generated.
+4. ``cca8_publication_environment.py`` records Python, packages, platform,
+   Git state, and the source and protocol hashes.
+5. ``cca8_publication_run.py`` expands a manifest into jobs and launches one
+   fresh Python subprocess for every experimental trial.
+6. ``cca8_publication_worker.py`` executes one isolated trial and writes its
+   normalized trial, cycle, mechanism, and process records.
+7. ``cca8_publication_analysis.py`` produces the primary aggregate, paired,
+   and mechanism-level statistical analyses.
+8. ``cca8_publication_lhsi_sensitivity.py`` recalculates the legacy LHSI,
+   termed TIC in the manuscript, under the 17 post hoc robustness
+   specifications.
+
+Purpose of this module
+----------------------
+The implementation retains the historical name LHSI for compatibility with
+frozen source, schemas, tests, and archived outputs. The revised manuscript
+calls the same secondary composite the Trajectory Integrity Composite (TIC).
+The default TIC coefficients and caps were specified before the final
+evaluation and were not fitted to its results. The broader 17-specification
+family is a post hoc robustness analysis performed after the primary
+evaluation, with the original default calculation included among the 17.
+
+The module reads the same completed trial records used by the primary analysis
+and first validates their matched design. It then recomputes trial-level TIC
+from ordered milestone score and transparent penalties for wrong-stage
+activity, current-state overwrite proxies, stale-memory intrusion proxies,
+repeated loops, and cycle-record provenance completeness. It confirms that the
+recomputed default values reproduce the stored default composite.
+
+Alternative specifications vary all weights, vary all caps, remove one
+component at a time, apply uniform low or high penalties, use minimal caps,
+use effectively uncapped penalties, or reduce the calculation to milestone
+score alone. For every profile, condition, and specification, the module writes
+trial-level scores and group summaries. It also calculates A-minus-B and
+A-minus-C mean contrasts, direction counts and ranges, and Pearson/Spearman
+agreement with the default trial-level scores.
+
+This module does not rerun trials, choose a favorable specification, replace
+the default calculation, or alter any behavioral result. Its purpose is to ask
+whether the observed TIC ordering depends narrowly on the default heuristic
+weights and caps. Outputs include specification JSON, trial-level and summary
+CSVs, contrast and correlation tables, metadata, a Markdown report, and
+checksums. TIC remains secondary to direct behavioral and mechanism outcomes.
 """
+
 
 from __future__ import annotations
 
@@ -31,6 +110,7 @@ SENSITIVITY_SCHEMA = "cca8_publication_lhsi_sensitivity_v1"
 
 @dataclass(frozen=True, slots=True)
 class LHSISpec:
+    '''class docstring to do'''
     name: str
     description: str
     wrong_stage_weight: float = 0.03
@@ -44,7 +124,6 @@ class LHSISpec:
     provenance_weight: float = 0.10
     provenance_cap: float = 0.10
     missing_provenance_penalty: float = 0.05
-
 
 DEFAULT_SPEC = LHSISpec(
     name="default",
@@ -71,7 +150,18 @@ def _scaled_spec(base: LHSISpec, *, name: str, description: str, weight_scale: f
 
 
 def sensitivity_specs_v1() -> list[LHSISpec]:
-    """Return the frozen prespecified LHSI sensitivity family."""
+    """original:
+       Return the frozen prespecified LHSI sensitivity family.
+       
+       updated docstring:
+       
+       Return the post hoc TIC robustness family.
+
+       The 17 specifications include the default calculation specified before
+       the final evaluation.
+           
+    
+    """
     specs: list[LHSISpec] = [DEFAULT_SPEC]
     for weight_scale in (0.5, 1.5, 2.0):
         specs.append(
@@ -286,6 +376,7 @@ def run_lhsi_sensitivity_v1(
     output_dir: str | Path,
     require_frozen_holdout: bool = False,
 ) -> dict[str, Any]:
+    '''docstring to do'''
     batch = Path(batch_dir).resolve()
     output = Path(output_dir).resolve()
     output.mkdir(parents=True, exist_ok=False)

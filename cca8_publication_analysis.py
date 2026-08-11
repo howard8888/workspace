@@ -15,6 +15,68 @@ Statistical conventions
 * Non-binary paired outcomes use a deterministic paired sign-randomization test
   (exact when <=20 non-zero pairs, otherwise Monte Carlo).
 * LHSI remains a secondary outcome and is never substituted for component data.
+
+
+
+UPDATED DOCSTRING:
+Produce the primary statistics and mechanism analyses for the benchmark.
+
+Publication pipeline
+--------------------
+1. ``cca8_publication_protocol.py`` defines the frozen parameters and creates
+   or validates development and reserved final-evaluation seed manifests.
+2. ``cca8_publication_integrity.py`` hashes the source tree and protocol and
+   verifies checksums for generated output trees.
+3. ``cca8_publication_release_check.py`` validates the installed publication
+   code before a final manifest or final evaluation is generated.
+4. ``cca8_publication_environment.py`` records Python, packages, platform,
+   Git state, and the source and protocol hashes.
+5. ``cca8_publication_run.py`` expands a manifest into jobs and launches one
+   fresh Python subprocess for every experimental trial.
+6. ``cca8_publication_worker.py`` executes one isolated trial and writes its
+   normalized trial, cycle, mechanism, and process records.
+7. ``cca8_publication_analysis.py`` produces the primary aggregate, paired,
+   and mechanism-level statistical analyses.
+8. ``cca8_publication_lhsi_sensitivity.py`` recalculates the legacy LHSI,
+   termed TIC in the manuscript, under the 17 post hoc robustness
+   specifications.
+
+Purpose of this module
+----------------------
+This module is deliberately separated from the CCA8 runtime. It reads the
+completed batch's normalized trial-level JSONL records and cannot influence
+agent state, action selection, or trial outcomes. Before calculating results,
+it validates required scientific fields, unique trial identities, matched
+seeds and schedules, process isolation, source/protocol consistency, and, when
+requested, the complete 600-trial reserved final-evaluation design.
+
+The aggregate analysis reports group size, success proportion with Wilson 95%
+confidence intervals, ordered milestone score, completion time with failed
+trials assigned the cycle maximum, the legacy LHSI/current TIC secondary
+summary, and mechanism counts such as guarded repairs, later use of repaired
+values, replacement operations, unsafe follows, missing-state timeouts,
+probes, and invalidations.
+
+Paired comparisons use the matched seed as the unit of inference. Binary
+success is tested with the exact two-sided McNemar/binomial test. Mean paired
+effects receive deterministic matched-seed percentile-bootstrap confidence
+intervals. Non-binary paired outcomes use an exact paired sign-randomization
+test when there are at most 20 nonzero differences and deterministic Monte
+Carlo sign randomization otherwise. The module also reports discordant pairs,
+standardized paired effects where appropriate, and explicit A-minus-comparator
+contrasts.
+
+Mechanism-level strata summarize how memory availability, route change,
+current-state reacquisition, repaired-value use, and unsafe following relate to
+observed success and failure patterns. These are descriptive intermediate-event
+analyses, not randomized mediation analyses.
+
+Outputs are written as CSV and JSON tables, a reader-friendly Markdown table,
+analysis metadata, and checksums. Success, milestones, completion time, and
+mechanism findings receive interpretive priority over the heuristic TIC/LHSI
+composite.
+
+
 """
 
 from __future__ import annotations
@@ -29,10 +91,13 @@ import statistics
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Sequence #Iterable gave unused-import
 
 from cca8_publication_integrity import write_checksum_text_v1, write_json_exclusive_v1
 from cca8_publication_protocol import CONDITIONS, FROZEN_PROTOCOL, PROFILES, PROTOCOL_VERSION
+
+#pylint: disable=missing-function-docstring
+#pylint: disable=consider-using-f-string
 
 __version__ = "1.0.0"
 ANALYSIS_SCHEMA = "cca8_publication_analysis_v1"

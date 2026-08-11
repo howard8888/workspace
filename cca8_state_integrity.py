@@ -21,7 +21,74 @@ Design goals
 
 The functions in this module are intended to be called later from ``cca8_run.py``
 after each episode summary is produced.
+
+UPDATED DOCSTRING
+
+Read-only trajectory-integrity analysis for CCA8 newborn experiments.
+
+Research context
+----------------
+This module supports the Long-Horizon State-Integrity Benchmark used in the
+Journal of Superintelligence manuscript *Superintelligence as an Emerging
+Systems Discipline: The Long-Horizon Problem as a Foundational Challenge*.
+The scientific question is continuous with the CCA8 long-horizon work presented
+at AGI 2026, while the final stochastic challenge and publication terminology
+were developed for the later Superintelligence revision.
+
+The source retains the historical implementation term ``LHSI``. In the revised
+manuscript, the same secondary composite is called the Trajectory Integrity
+Composite (TIC) so it is not confused with the complete Long-Horizon
+State-Integrity Benchmark. The default coefficients and caps implemented here
+were specified before the final evaluation. The broader 17-specification post
+hoc robustness analysis is implemented separately in
+``cca8_publication_lhsi_sensitivity.py``.
+
+Purpose
+-------
+The module analyzes cycle records that have already been produced by a CCA8
+newborn trial. It does not alter the environment, controller, WorkingMap,
+retrieval process, policy selection, or saved trial data. Its outputs are
+JSON-safe summaries that can be inspected, rendered in the terminal, or passed
+to later publication analyses.
+
+Analysis steps
+--------------
+The analysis:
+
+1. reconstructs the ordered newborn milestone ladder;
+2. defines the active task horizon, ending at the first complete safe-rest state;
+3. detects conservative wrong-stage actions;
+4. counts repeated policy loops that do not advance a milestone;
+5. distinguishes retrieval attempts, successful retrievals, structural repairs,
+   merge no-ops, and replacement operations;
+6. derives conservative overwrite, stale-memory, and retrieval/action
+   dissociation proxies from the available cycle records;
+7. sums recorded prediction-error burden; and
+8. measures whether required provenance fields are present on each active cycle.
+
+The secondary TIC/LHSI value begins with ordered milestone completion and applies
+bounded penalties for wrong-stage actions, overwrite proxies, stale-memory
+proxies, repeated loops, and incomplete provenance. Component measures remain
+more informative than the composite and should be reported alongside it.
+
+Relationship to the publication pipeline
+----------------------------------------
+``cca8_experiments.py`` calls ``summarize_newborn_state_integrity_v1()`` while it
+builds each newborn trial summary and stores the returned values under legacy
+``lhsi_*`` field names. The ``cca8_publication_*`` execution and analysis modules
+then preserve and analyze those fields together with success, milestone,
+completion-time, and mechanism records. The final publication treats task
+success and mechanism findings as primary; TIC is a secondary heuristic summary.
+
+Interpretive boundary
+---------------------
+Fields containing ``_proxy`` are trace-derived indicators, not complete
+field-level pre/post audits and not formal mediation estimates. A proxy event can
+identify a pattern worth inspection without proving that retrieval caused the
+later action. The module is intentionally deterministic, conservative, and
+read-only so the metric layer cannot influence the behavior it evaluates.
 """
+
 
 from __future__ import annotations
 
