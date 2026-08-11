@@ -760,3 +760,32 @@ def test_prediction_feedback_summary_reports_active_error_record() -> None:
     assert any("mismatch_count=1" in line for line in lines)
     assert "status=active" in mini
     assert "history_count=1" in mini
+
+
+def test_prediction_runtime_helpers_live_in_predictive_module_and_remain_runner_compatible() -> None:
+    """The refactor should move implementation ownership without breaking historical imports."""
+    import cca8_predictive
+    import cca8_run
+
+    public_names = (
+        "prediction_observed_slots_from_env_obs_v1",
+        "prediction_error_history_append_v1",
+        "prediction_error_record_apply_to_ctx_v1",
+        "prediction_source_for_execution_target_v1",
+        "prediction_next_record_from_policy_posture_v1",
+        "prediction_pending_record_from_ctx_v1",
+        "prediction_policy_expected_slots_v1",
+        "prediction_record_with_expected_slots_v1",
+        "prediction_compare_pending_to_observed_v1",
+        "prediction_feedback_step_from_ctx_obs_v1",
+        "prediction_feedback_summary_v1",
+        "render_prediction_feedback_lines_v1",
+        "prediction_feedback_mini_line_v1",
+    )
+
+    for name in public_names:
+        assert name in cca8_predictive.__all__
+        assert getattr(cca8_run, name) is getattr(cca8_predictive, name)
+
+    assert cca8_run._prediction_compact_map_text_v1 is cca8_predictive.compact_slot_map_text_v1
+    assert cca8_run._latest_posture_binding is cca8_predictive.latest_posture_binding_v1
