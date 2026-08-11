@@ -13,6 +13,7 @@ ALLOW_FILES = {
     "cca8_controller.py",  # TEMPORARY
     "cca8_run.py",         # TEMPORARY
     "cca8_reporting.py",   # TEMPORARY: extracted trusted inspection/reporting layer
+    "cca8_observation_runtime.py",  # TEMPORARY: extracted trusted observation-ingestion layer
 }
 
 
