@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Phase 1B-A and Phase 1B-B1 tests for pure revision-linked NavMap geometry queries."""
+"""Phase 1B-A through Phase 1B-B2 tests for pure revision-linked NavMap geometry queries."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import pytest
 from cca8_navmap_kernel import (
     NavActivationV1,
     NavContactQueryResultV1,
+    NavLateralContactQueryResultV1,
     NavElementV1,
     NavFrameV1,
     NavGeometryKindV1,
@@ -31,6 +32,7 @@ from cca8_navmap_kernel import (
     geometry_orientation_degrees,
     get_element,
     minimum_distance_between,
+    lateral_contact_fraction,
 )
 
 
@@ -238,6 +240,35 @@ def _distance_map() -> NavMapV2:
         ),
     )
     return NavMapV2("distance_cases", 1, "distance_test", _frame(), provenance, elements=elements)
+
+
+def _fraction_map(
+    *,
+    map_id: str,
+    source_points: tuple[tuple[float, float], tuple[float, float]],
+    target_points: tuple[tuple[float, float], tuple[float, float]],
+) -> NavMapV2:
+    """Return a two-segment map for bounded lateral-contact fraction tests."""
+    provenance = _provenance()
+    elements = (
+        NavElementV1(
+            "source_axis",
+            "source_axis",
+            _geometry(NavGeometryKindV1.SEGMENT, *source_points),
+            (),
+            None,
+            provenance,
+        ),
+        NavElementV1(
+            "target_surface",
+            "target_surface",
+            _geometry(NavGeometryKindV1.SEGMENT, *target_points),
+            (),
+            None,
+            provenance,
+        ),
+    )
+    return NavMapV2(map_id, 1, "fraction_test", _frame(), provenance, elements=elements)
 
 
 def _semantic_skeleton(navmap: NavMapV2) -> tuple[object, ...]:
@@ -572,6 +603,118 @@ def test_contact_result_is_immutable_json_safe_and_self_consistent() -> None:
         )
 
 
+def test_lateral_contact_fraction_distinguishes_broad_from_local_ground_proximity() -> None:
+    """Equal minimum distance should not hide a large difference in how much body axis lies near ground."""
+    vertical = _self_ground_map(body_horizontal=False, map_id="self_ground_case_a")
+    horizontal = _self_ground_map(body_horizontal=True, map_id="self_ground_case_b")
+
+    vertical_minimum = minimum_distance_between(vertical, "self_body", "ground_surface")
+    horizontal_minimum = minimum_distance_between(horizontal, "self_body", "ground_surface")
+    vertical_fraction = lateral_contact_fraction(
+        vertical,
+        "self_body",
+        "ground_surface",
+        threshold=0.25,
+    )
+    horizontal_fraction = lateral_contact_fraction(
+        horizontal,
+        "self_body",
+        "ground_surface",
+        threshold=0.25,
+    )
+
+    assert vertical_minimum.value == pytest.approx(0.2)
+    assert horizontal_minimum.value == pytest.approx(0.2)
+    assert vertical_fraction.fraction == pytest.approx(1.0 / 36.0)
+    assert vertical_fraction.near_length == pytest.approx(0.05)
+    assert vertical_fraction.source_length == pytest.approx(1.8)
+    assert horizontal_fraction.fraction == pytest.approx(1.0)
+    assert horizontal_fraction.near_length == pytest.approx(2.0)
+    assert horizontal_fraction.source_length == pytest.approx(2.0)
+    assert horizontal_fraction.threshold == pytest.approx(0.25)
+    assert horizontal_fraction.method == "segment_capsule_length_fraction"
+
+
+def test_lateral_contact_fraction_uses_threshold_to_absorb_small_coordinate_noise() -> None:
+    """Small harmless offsets inside the same declared band should preserve broad proximity evidence."""
+    baseline = _fraction_map(
+        map_id="fraction_baseline",
+        source_points=((-1.0, 0.20), (1.0, 0.20)),
+        target_points=((-2.0, 0.0), (2.0, 0.0)),
+    )
+    perturbed = _fraction_map(
+        map_id="fraction_perturbed",
+        source_points=((-1.0, 0.21), (1.0, 0.21)),
+        target_points=((-2.0, 0.0), (2.0, 0.0)),
+    )
+
+    assert lateral_contact_fraction(baseline, "source_axis", "target_surface", threshold=0.25).fraction == pytest.approx(1.0)
+    assert lateral_contact_fraction(perturbed, "source_axis", "target_surface", threshold=0.25).fraction == pytest.approx(1.0)
+    assert lateral_contact_fraction(baseline, "source_axis", "target_surface", threshold=0.19).fraction == pytest.approx(0.0)
+
+
+def test_lateral_contact_fraction_respects_finite_target_endpoints() -> None:
+    """The near fraction should use distance to the finite target segment, including its endpoint caps."""
+    navmap = _fraction_map(
+        map_id="fraction_endpoint",
+        source_points=((2.10, 0.0), (2.30, 0.0)),
+        target_points=((0.0, 0.0), (2.0, 0.0)),
+    )
+
+    result = lateral_contact_fraction(navmap, "source_axis", "target_surface", threshold=0.15)
+
+    assert result.fraction == pytest.approx(0.25)
+    assert result.near_length == pytest.approx(0.05)
+    assert result.source_length == pytest.approx(0.20)
+
+
+def test_lateral_contact_fraction_requires_explicit_valid_threshold_and_segments() -> None:
+    """The directional fraction contract should reject hidden thresholds and unsupported geometry."""
+    navmap = _self_ground_map(body_horizontal=False, map_id="self_ground_case_a")
+
+    with pytest.raises(TypeError, match="threshold"):
+        lateral_contact_fraction(navmap, "self_body", "ground_surface")  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="non-negative"):
+        lateral_contact_fraction(navmap, "self_body", "ground_surface", threshold=-0.01)
+    with pytest.raises(ValueError, match="finite"):
+        lateral_contact_fraction(navmap, "self_body", "ground_surface", threshold=float("inf"))
+    with pytest.raises(TypeError, match="real number"):
+        lateral_contact_fraction(navmap, "self_body", "ground_surface", threshold=True)
+    with pytest.raises(ValueError, match="SEGMENT geometry"):
+        lateral_contact_fraction(navmap, "self_head", "ground_surface", threshold=0.25)
+
+
+def test_lateral_contact_result_is_immutable_json_safe_and_self_consistent() -> None:
+    """Fraction evidence should expose its threshold and lengths and reject inconsistent reconstruction."""
+    navmap = _self_ground_map(body_horizontal=True, map_id="self_ground_case_b")
+    result = lateral_contact_fraction(navmap, "self_body", "ground_surface", threshold=0.25)
+
+    assert isinstance(result, NavLateralContactQueryResultV1)
+    assert result.source_map_ref == NavMapRefV1("self_ground_case_b", 1)
+    assert result.frame_id == "self_sagittal_v1"
+    assert result.operator == "lateral_contact_fraction"
+    assert result.element_ids == ("self_body", "ground_surface")
+    decoded = json.loads(json.dumps(result.as_dict()))
+    assert decoded["fraction"] == 1.0
+    assert decoded["threshold"] == 0.25
+    assert decoded["units"] == "normalized"
+    with pytest.raises(FrozenInstanceError):
+        result.fraction = 0.5  # type: ignore[misc]
+    with pytest.raises(ValueError, match="near_length / source_length"):
+        NavLateralContactQueryResultV1(
+            source_map_ref=result.source_map_ref,
+            frame_id=result.frame_id,
+            operator=result.operator,
+            element_ids=result.element_ids,
+            fraction=0.5,
+            near_length=2.0,
+            source_length=2.0,
+            threshold=result.threshold,
+            units=result.units,
+            method=result.method,
+        )
+
+
 def test_query_results_are_immutable_and_json_safe() -> None:
     """Derived measurements should be inspectable records rather than contextless mutable numbers."""
     navmap = _self_ground_map(body_horizontal=False, map_id="self_ground_case_a")
@@ -599,6 +742,7 @@ def test_geometry_queries_do_not_mutate_maps_or_signatures() -> None:
     geometry_orientation_degrees(navmap, "self_body")
     minimum_distance_between(navmap, "self_body", "ground_surface")
     geometries_contact(navmap, "self_foot", "ground_surface", tolerance=0.0)
+    lateral_contact_fraction(navmap, "self_body", "ground_surface", threshold=0.25)
 
     assert navmap.to_bytes() == before_bytes
     assert navmap.content_signature() == before_content_signature

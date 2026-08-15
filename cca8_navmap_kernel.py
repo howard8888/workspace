@@ -15,13 +15,14 @@ that assumed distributed representation so that CCA8 can test map operations
 without first choosing a neuronal, ANN-like, attractor-like, or hippocampal-like
 microimplementation.
 
-Phase 1A through Phase 1B-B1 scope
+Phase 1A through Phase 1B-B2 scope
 -----------------------------------
 Phase 1A provides records, validation, canonical ordering, deterministic JSON
 serialization, and content/record signatures.  Phase 1B-A adds the first pure,
 revision-linked geometry queries: element lookup, centroid, centroid distance,
 bearing, and orientation.  Phase 1B-B1 adds minimum point/segment distance and
-explicit-tolerance contact evidence.  The module still does not:
+explicit-tolerance contact evidence.  Phase 1B-B2 adds a directional
+body-axis proximity/contact fraction under an explicit threshold.  The module still does not:
 
 - grant Working Navigation Map authority;
 - integrate with ``Ctx``, WorkingMap, PolicyRuntime, BodyMap, or the runner;
@@ -42,9 +43,10 @@ Design invariants
 - Records are frozen, slot-based dataclasses.
 - Collections are immutable tuples and are normalized to deterministic order.
 - Geometry uses explicit continuous reference frames and finite coordinates.
-- Distances, bearings, orientations, and contact are pure revision-linked
-  geometry queries.  Support and posture-like readouts will build on those
-  measurements rather than stored independent world-state shortcuts.
+- Distances, bearings, orientations, contact, and lateral contact fraction are
+  pure revision-linked geometry queries.  Support and posture-like readouts will
+  build on those measurements rather than stored independent world-state
+  shortcuts.
 - Source provenance describes how content arose; current-world authority is a
   separate future WorkingMap relationship.
 - Canonical bytes exclude runtime timestamps, generated UUIDs, absolute paths,
@@ -64,7 +66,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 import re
 from typing import Any, Mapping, Optional, TypeVar
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 NAVMAP_SCHEMA_V2 = "navmap_v2"
 NAVMAP_KIND_V2 = "navmap"
@@ -81,6 +83,7 @@ __all__ = [
     "NavPointQueryResultV1",
     "NavScalarQueryResultV1",
     "NavContactQueryResultV1",
+    "NavLateralContactQueryResultV1",
     "NavFrameV1",
     "NavActivationV1",
     "NavGeometryKindV1",
@@ -96,6 +99,7 @@ __all__ = [
     "geometry_orientation_degrees",
     "minimum_distance_between",
     "geometries_contact",
+    "lateral_contact_fraction",
     "__version__",
 ]
 
@@ -501,6 +505,70 @@ class NavContactQueryResultV1:
             "tolerance": self.tolerance,
             "units": self.units,
             "distance_method": self.distance_method,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class NavLateralContactQueryResultV1:
+    """Revision-linked fraction of one segment lying near another segment.
+
+    The first element is the measured source axis and the second is the
+    reference segment.  ``fraction`` is the proportion of source-axis length
+    whose Euclidean distance to the reference segment is less than or equal to
+    ``threshold``.  The threshold and component lengths remain visible so this
+    result cannot become an unexplained posture or contact-state shortcut.
+    """
+
+    source_map_ref: NavMapRefV1
+    frame_id: str
+    operator: str
+    element_ids: tuple[str, ...]
+    fraction: float
+    near_length: float
+    source_length: float
+    threshold: float
+    units: str
+    method: str
+
+    def __post_init__(self) -> None:
+        _require_instance(self.source_map_ref, NavMapRefV1, field_name="source_map_ref")
+        element_ids = _normalize_query_element_ids(self.element_ids)
+        if len(element_ids) != 2:
+            raise ValueError("lateral contact evidence requires exactly two element ids")
+        fraction = _unit_interval(self.fraction, field_name="fraction")
+        near_length = _non_negative_float(self.near_length, field_name="near_length")
+        source_length = _non_negative_float(self.source_length, field_name="source_length")
+        if source_length <= 0.0:
+            raise ValueError("source_length must be positive")
+        if near_length > source_length + _GEOMETRY_NUMERICAL_EPSILON:
+            raise ValueError("near_length must not exceed source_length")
+        threshold = _non_negative_float(self.threshold, field_name="threshold")
+        expected_fraction = min(1.0, max(0.0, near_length / source_length))
+        if not math.isclose(fraction, expected_fraction, rel_tol=1.0e-12, abs_tol=1.0e-12):
+            raise ValueError("fraction must equal near_length / source_length")
+        object.__setattr__(self, "frame_id", _normalize_identifier(self.frame_id, field_name="frame_id"))
+        object.__setattr__(self, "operator", _normalize_identifier(self.operator, field_name="operator"))
+        object.__setattr__(self, "element_ids", element_ids)
+        object.__setattr__(self, "fraction", fraction)
+        object.__setattr__(self, "near_length", min(source_length, near_length))
+        object.__setattr__(self, "source_length", source_length)
+        object.__setattr__(self, "threshold", threshold)
+        object.__setattr__(self, "units", _normalize_identifier(self.units, field_name="units"))
+        object.__setattr__(self, "method", _normalize_identifier(self.method, field_name="method"))
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a compact JSON-safe description for tests and traces."""
+        return {
+            "source_map_ref": self.source_map_ref.as_dict(),
+            "frame_id": self.frame_id,
+            "operator": self.operator,
+            "element_ids": list(self.element_ids),
+            "fraction": self.fraction,
+            "near_length": self.near_length,
+            "source_length": self.source_length,
+            "threshold": self.threshold,
+            "units": self.units,
+            "method": self.method,
         }
 
 
@@ -1429,4 +1497,202 @@ def geometries_contact(
         tolerance=normalized_tolerance,
         units=distance.units,
         distance_method=distance.method,
+    )
+
+def _linear_value_interval(
+    start_value: float,
+    delta_value: float,
+    lower: float,
+    upper: float,
+) -> Optional[tuple[float, float]]:
+    """Return the parameter interval where one linear value lies inside bounds."""
+    epsilon = _GEOMETRY_NUMERICAL_EPSILON
+    if abs(delta_value) <= epsilon:
+        if lower - epsilon <= start_value <= upper + epsilon:
+            return (0.0, 1.0)
+        return None
+    first = (lower - start_value) / delta_value
+    second = (upper - start_value) / delta_value
+    interval_start = max(0.0, min(first, second))
+    interval_end = min(1.0, max(first, second))
+    if interval_start > interval_end + epsilon:
+        return None
+    return (max(0.0, interval_start), min(1.0, interval_end))
+
+
+def _intersect_parameter_intervals(
+    first: Optional[tuple[float, float]],
+    second: Optional[tuple[float, float]],
+) -> Optional[tuple[float, float]]:
+    """Return the overlap of two parameter intervals, if any."""
+    if first is None or second is None:
+        return None
+    start = max(first[0], second[0])
+    end = min(first[1], second[1])
+    if start > end + _GEOMETRY_NUMERICAL_EPSILON:
+        return None
+    return (max(0.0, start), min(1.0, end))
+
+
+def _segment_circle_parameter_interval(
+    source_start: NavPointV1,
+    source_end: NavPointV1,
+    center: NavPointV1,
+    radius: float,
+) -> Optional[tuple[float, float]]:
+    """Return source-segment parameters lying inside or on one circle."""
+    delta_x = source_end.x - source_start.x
+    delta_y = source_end.y - source_start.y
+    offset_x = source_start.x - center.x
+    offset_y = source_start.y - center.y
+    coefficient_a = delta_x * delta_x + delta_y * delta_y
+    coefficient_b = 2.0 * (offset_x * delta_x + offset_y * delta_y)
+    coefficient_c = offset_x * offset_x + offset_y * offset_y - radius * radius
+    discriminant = coefficient_b * coefficient_b - 4.0 * coefficient_a * coefficient_c
+    epsilon = _GEOMETRY_NUMERICAL_EPSILON
+    if discriminant < -epsilon:
+        return None
+    discriminant = max(0.0, discriminant)
+    root = math.sqrt(discriminant)
+    first = (-coefficient_b - root) / (2.0 * coefficient_a)
+    second = (-coefficient_b + root) / (2.0 * coefficient_a)
+    start = max(0.0, min(first, second))
+    end = min(1.0, max(first, second))
+    if start > end + epsilon:
+        return None
+    return (max(0.0, start), min(1.0, end))
+
+
+def _segment_rectangle_parameter_interval(
+    source_start: NavPointV1,
+    source_end: NavPointV1,
+    target_start: NavPointV1,
+    target_end: NavPointV1,
+    threshold: float,
+) -> Optional[tuple[float, float]]:
+    """Return source parameters inside the rectangular body of a target capsule."""
+    target_dx = target_end.x - target_start.x
+    target_dy = target_end.y - target_start.y
+    target_length = math.hypot(target_dx, target_dy)
+    unit_x = target_dx / target_length
+    unit_y = target_dy / target_length
+    perpendicular_x = -unit_y
+    perpendicular_y = unit_x
+
+    source_relative_x = source_start.x - target_start.x
+    source_relative_y = source_start.y - target_start.y
+    source_delta_x = source_end.x - source_start.x
+    source_delta_y = source_end.y - source_start.y
+
+    along_start = source_relative_x * unit_x + source_relative_y * unit_y
+    along_delta = source_delta_x * unit_x + source_delta_y * unit_y
+    perpendicular_start = source_relative_x * perpendicular_x + source_relative_y * perpendicular_y
+    perpendicular_delta = source_delta_x * perpendicular_x + source_delta_y * perpendicular_y
+
+    along_interval = _linear_value_interval(along_start, along_delta, 0.0, target_length)
+    perpendicular_interval = _linear_value_interval(
+        perpendicular_start,
+        perpendicular_delta,
+        -threshold,
+        threshold,
+    )
+    return _intersect_parameter_intervals(along_interval, perpendicular_interval)
+
+
+def _merge_parameter_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Return sorted merged intervals in the source-segment parameter domain."""
+    if not intervals:
+        return []
+    epsilon = _GEOMETRY_NUMERICAL_EPSILON
+    ordered = sorted(intervals)
+    merged: list[tuple[float, float]] = [ordered[0]]
+    for start, end in ordered[1:]:
+        previous_start, previous_end = merged[-1]
+        if start <= previous_end + epsilon:
+            merged[-1] = (previous_start, max(previous_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _segment_capsule_fraction(
+    source_start: NavPointV1,
+    source_end: NavPointV1,
+    target_start: NavPointV1,
+    target_end: NavPointV1,
+    threshold: float,
+) -> tuple[float, float, float]:
+    """Return fraction, near length, and source length within threshold of a target segment.
+
+    The region within ``threshold`` of a finite target segment is a capsule: a
+    rectangle around the segment plus one circular cap at each endpoint.  The
+    source segment is clipped against those three convex pieces, their parameter
+    intervals are merged, and the resulting fraction is independent of raster
+    resolution or arbitrary sampling density.
+    """
+    source_length = _point_distance(source_start, source_end)
+    intervals: list[tuple[float, float]] = []
+    rectangle = _segment_rectangle_parameter_interval(
+        source_start, source_end, target_start, target_end, threshold
+    )
+    if rectangle is not None:
+        intervals.append(rectangle)
+    for center in (target_start, target_end):
+        circle = _segment_circle_parameter_interval(source_start, source_end, center, threshold)
+        if circle is not None:
+            intervals.append(circle)
+
+    merged = _merge_parameter_intervals(intervals)
+    parameter_fraction = sum(max(0.0, end - start) for start, end in merged)
+    fraction = min(1.0, max(0.0, parameter_fraction))
+    near_length = min(source_length, source_length * fraction)
+    return fraction, near_length, source_length
+
+
+def lateral_contact_fraction(
+    navmap: NavMapV2,
+    source_element_id: str,
+    target_element_id: str,
+    *,
+    threshold: float,
+) -> NavLateralContactQueryResultV1:
+    """Return the fraction of one segment lying within threshold of another.
+
+    The operator is directional: the first element is the measured source axis
+    and the second is the reference segment.  In the SELF-ground demonstrator,
+    this means the fraction of ``self_body`` lying within a declared distance
+    band of ``ground_surface``.  It therefore distinguishes a body whose single
+    closest point is near ground from a body whose broad lateral extent is near
+    ground.
+
+    Both geometries must be ``SEGMENT`` in this bounded Phase 1B-B2 contract.
+    ``threshold`` is required and keyword-only.  It is an engineering/sensor
+    tolerance, not a hidden biological constant and not an authoritative
+    posture label.
+    """
+    normalized_threshold = _non_negative_float(threshold, field_name="threshold")
+    source = get_element(navmap, source_element_id)
+    target = get_element(navmap, target_element_id)
+    if source.geometry.kind is not NavGeometryKindV1.SEGMENT or target.geometry.kind is not NavGeometryKindV1.SEGMENT:
+        raise ValueError("lateral contact fraction currently requires SEGMENT geometry for both elements")
+    source_start, source_end = source.geometry.points
+    target_start, target_end = target.geometry.points
+    fraction, near_length, source_length = _segment_capsule_fraction(
+        source_start,
+        source_end,
+        target_start,
+        target_end,
+        normalized_threshold,
+    )
+    return NavLateralContactQueryResultV1(
+        source_map_ref=_source_map_ref(navmap),
+        frame_id=navmap.frame.frame_id,
+        operator="lateral_contact_fraction",
+        element_ids=(source.element_id, target.element_id),
+        fraction=fraction,
+        near_length=near_length,
+        source_length=source_length,
+        threshold=normalized_threshold,
+        units=navmap.frame.units,
+        method="segment_capsule_length_fraction",
     )
