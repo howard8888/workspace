@@ -15,20 +15,22 @@ that assumed distributed representation so that CCA8 can test map operations
 without first choosing a neuronal, ANN-like, attractor-like, or hippocampal-like
 microimplementation.
 
-Phase 1A through Phase 1B-B2 scope
+Phase 1A through Phase 1B-B3 scope
 -----------------------------------
 Phase 1A provides records, validation, canonical ordering, deterministic JSON
 serialization, and content/record signatures.  Phase 1B-A adds the first pure,
 revision-linked geometry queries: element lookup, centroid, centroid distance,
 bearing, and orientation.  Phase 1B-B1 adds minimum point/segment distance and
 explicit-tolerance contact evidence.  Phase 1B-B2 adds a directional
-body-axis proximity/contact fraction under an explicit threshold.  The module still does not:
+body-axis proximity/contact fraction under an explicit threshold.  Phase 1B-B3
+adds structured support evidence and an open-world body-state readout derived
+only from geometry.  The module still does not:
 
 - grant Working Navigation Map authority;
 - integrate with ``Ctx``, WorkingMap, PolicyRuntime, BodyMap, or the runner;
 - select or execute a policy;
 - write WorldGraph or Column memory;
-- derive support, posture, or policy-facing state;
+- store posture or any other derived readout as independent map truth;
 - perform rendering, alignment, matching, transformation, or revision;
 - use raster cells as the fundamental map representation.
 
@@ -43,10 +45,10 @@ Design invariants
 - Records are frozen, slot-based dataclasses.
 - Collections are immutable tuples and are normalized to deterministic order.
 - Geometry uses explicit continuous reference frames and finite coordinates.
-- Distances, bearings, orientations, contact, and lateral contact fraction are
-  pure revision-linked geometry queries.  Support and posture-like readouts will
-  build on those measurements rather than stored independent world-state
-  shortcuts.
+- Distances, bearings, orientations, contact, lateral contact fraction, support,
+  and body-state evidence are pure revision-linked geometry queries.  Compact
+  interpretations remain derived readouts rather than stored independent
+  world-state shortcuts.
 - Source provenance describes how content arose; current-world authority is a
   separate future WorkingMap relationship.
 - Canonical bytes exclude runtime timestamps, generated UUIDs, absolute paths,
@@ -66,7 +68,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 import re
 from typing import Any, Mapping, Optional, TypeVar
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 NAVMAP_SCHEMA_V2 = "navmap_v2"
 NAVMAP_KIND_V2 = "navmap"
@@ -84,6 +86,10 @@ __all__ = [
     "NavScalarQueryResultV1",
     "NavContactQueryResultV1",
     "NavLateralContactQueryResultV1",
+    "NavBodyStateInterpretationV1",
+    "NavBodyStateThresholdsV1",
+    "NavSupportEvidenceV1",
+    "NavBodyStateEvidenceV1",
     "NavFrameV1",
     "NavActivationV1",
     "NavGeometryKindV1",
@@ -100,6 +106,8 @@ __all__ = [
     "minimum_distance_between",
     "geometries_contact",
     "lateral_contact_fraction",
+    "support_evidence",
+    "body_state_evidence",
     "__version__",
 ]
 
@@ -286,6 +294,15 @@ class NavGeometryKindV1(str, Enum):
     SEGMENT = "segment"
     POLYLINE = "polyline"
     POLYGON = "polygon"
+
+
+class NavBodyStateInterpretationV1(str, Enum):
+    """Open-world body-state interpretations derived from NavMap geometry."""
+
+    STANDING_LIKE = "standing_like"
+    FALLEN_LIKE = "fallen_like"
+    AMBIGUOUS = "ambiguous"
+    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -569,6 +586,337 @@ class NavLateralContactQueryResultV1:
             "threshold": self.threshold,
             "units": self.units,
             "method": self.method,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class NavBodyStateThresholdsV1:
+    """Explicit engineering thresholds for SELF-ground support interpretation.
+
+    These values are inspectable test parameters.  They are not claimed as
+    universal biological constants and they are never stored inside ``NavMapV2``.
+    Callers must supply one complete threshold record explicitly.
+    """
+
+    contact_tolerance: float
+    lateral_distance_threshold: float
+    upright_angle_tolerance_degrees: float
+    parallel_angle_tolerance_degrees: float
+    minimum_standing_head_elevation: float
+    maximum_fallen_head_elevation: float
+    maximum_standing_lateral_fraction: float
+    minimum_fallen_lateral_fraction: float
+
+    def __post_init__(self) -> None:
+        contact_tolerance = _non_negative_float(self.contact_tolerance, field_name="contact_tolerance")
+        lateral_distance_threshold = _non_negative_float(
+            self.lateral_distance_threshold,
+            field_name="lateral_distance_threshold",
+        )
+        upright_tolerance = _non_negative_float(
+            self.upright_angle_tolerance_degrees,
+            field_name="upright_angle_tolerance_degrees",
+        )
+        parallel_tolerance = _non_negative_float(
+            self.parallel_angle_tolerance_degrees,
+            field_name="parallel_angle_tolerance_degrees",
+        )
+        if upright_tolerance > 90.0:
+            raise ValueError("upright_angle_tolerance_degrees must not exceed 90 degrees")
+        if parallel_tolerance > 90.0:
+            raise ValueError("parallel_angle_tolerance_degrees must not exceed 90 degrees")
+        object.__setattr__(self, "contact_tolerance", contact_tolerance)
+        object.__setattr__(self, "lateral_distance_threshold", lateral_distance_threshold)
+        object.__setattr__(self, "upright_angle_tolerance_degrees", upright_tolerance)
+        object.__setattr__(self, "parallel_angle_tolerance_degrees", parallel_tolerance)
+        object.__setattr__(
+            self,
+            "minimum_standing_head_elevation",
+            _non_negative_float(
+                self.minimum_standing_head_elevation,
+                field_name="minimum_standing_head_elevation",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "maximum_fallen_head_elevation",
+            _non_negative_float(
+                self.maximum_fallen_head_elevation,
+                field_name="maximum_fallen_head_elevation",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "maximum_standing_lateral_fraction",
+            _unit_interval(
+                self.maximum_standing_lateral_fraction,
+                field_name="maximum_standing_lateral_fraction",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "minimum_fallen_lateral_fraction",
+            _unit_interval(
+                self.minimum_fallen_lateral_fraction,
+                field_name="minimum_fallen_lateral_fraction",
+            ),
+        )
+
+    def as_dict(self) -> dict[str, float]:
+        """Return all explicit thresholds as a JSON-safe mapping."""
+        return {
+            "contact_tolerance": self.contact_tolerance,
+            "lateral_distance_threshold": self.lateral_distance_threshold,
+            "upright_angle_tolerance_degrees": self.upright_angle_tolerance_degrees,
+            "parallel_angle_tolerance_degrees": self.parallel_angle_tolerance_degrees,
+            "minimum_standing_head_elevation": self.minimum_standing_head_elevation,
+            "maximum_fallen_head_elevation": self.maximum_fallen_head_elevation,
+            "maximum_standing_lateral_fraction": self.maximum_standing_lateral_fraction,
+            "minimum_fallen_lateral_fraction": self.minimum_fallen_lateral_fraction,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class NavSupportEvidenceV1:
+    """Structured SELF-ground support evidence derived from lower operators.
+
+    The record exposes every component used by the body-state interpretation:
+    body and ground orientation, their acute relative angle, foot contact, head
+    distance from ground, and the fraction of the body axis near ground.  The
+    boolean component flags are validated against those measurements and the
+    caller-supplied threshold record.
+    """
+
+    source_map_ref: NavMapRefV1
+    frame_id: str
+    operator: str
+    element_ids: tuple[str, ...]
+    thresholds: NavBodyStateThresholdsV1
+    body_orientation: NavScalarQueryResultV1
+    ground_orientation: NavScalarQueryResultV1
+    body_ground_angle: NavScalarQueryResultV1
+    foot_ground_contact: NavContactQueryResultV1
+    head_ground_distance: NavScalarQueryResultV1
+    lateral_contact: NavLateralContactQueryResultV1
+    body_perpendicular_to_ground: bool
+    body_parallel_to_ground: bool
+    head_elevated: bool
+    head_low: bool
+    lateral_contact_low: bool
+    lateral_contact_high: bool
+    upright_support_pattern: bool
+    lateral_ground_pattern: bool
+
+    def __post_init__(self) -> None:
+        _require_instance(self.source_map_ref, NavMapRefV1, field_name="source_map_ref")
+        _require_instance(self.thresholds, NavBodyStateThresholdsV1, field_name="thresholds")
+        _require_instance(self.body_orientation, NavScalarQueryResultV1, field_name="body_orientation")
+        _require_instance(self.ground_orientation, NavScalarQueryResultV1, field_name="ground_orientation")
+        _require_instance(self.body_ground_angle, NavScalarQueryResultV1, field_name="body_ground_angle")
+        _require_instance(self.foot_ground_contact, NavContactQueryResultV1, field_name="foot_ground_contact")
+        _require_instance(self.head_ground_distance, NavScalarQueryResultV1, field_name="head_ground_distance")
+        _require_instance(self.lateral_contact, NavLateralContactQueryResultV1, field_name="lateral_contact")
+        element_ids = _normalize_query_element_ids(self.element_ids)
+        if len(element_ids) != 4:
+            raise ValueError("support evidence requires body, head, foot, and ground element ids")
+        body_id, head_id, foot_id, ground_id = element_ids
+        frame_id = _normalize_identifier(self.frame_id, field_name="frame_id")
+        nested_records = (
+            self.body_orientation,
+            self.ground_orientation,
+            self.body_ground_angle,
+            self.foot_ground_contact,
+            self.head_ground_distance,
+            self.lateral_contact,
+        )
+        if any(record.source_map_ref != self.source_map_ref for record in nested_records):
+            raise ValueError("support component source map references must match")
+        if any(record.frame_id != frame_id for record in nested_records):
+            raise ValueError("support component frame ids must match")
+        if self.body_orientation.element_ids != (body_id,):
+            raise ValueError("body_orientation must reference the body element")
+        if self.ground_orientation.element_ids != (ground_id,):
+            raise ValueError("ground_orientation must reference the ground element")
+        if self.body_ground_angle.element_ids != (body_id, ground_id):
+            raise ValueError("body_ground_angle must reference body and ground")
+        if self.foot_ground_contact.element_ids != (foot_id, ground_id):
+            raise ValueError("foot_ground_contact must reference foot and ground")
+        if self.head_ground_distance.element_ids != (head_id, ground_id):
+            raise ValueError("head_ground_distance must reference head and ground")
+        if self.lateral_contact.element_ids != (body_id, ground_id):
+            raise ValueError("lateral_contact must reference body and ground")
+        if not math.isclose(
+            self.foot_ground_contact.tolerance,
+            self.thresholds.contact_tolerance,
+            rel_tol=0.0,
+            abs_tol=_GEOMETRY_NUMERICAL_EPSILON,
+        ):
+            raise ValueError("foot contact tolerance must match the threshold record")
+        if not math.isclose(
+            self.lateral_contact.threshold,
+            self.thresholds.lateral_distance_threshold,
+            rel_tol=0.0,
+            abs_tol=_GEOMETRY_NUMERICAL_EPSILON,
+        ):
+            raise ValueError("lateral distance threshold must match the threshold record")
+
+        relative_angle = self.body_ground_angle.value
+        if not 0.0 <= relative_angle <= 90.0:
+            raise ValueError("body_ground_angle must lie between 0 and 90 degrees")
+        orientation_difference = abs(self.body_orientation.value - self.ground_orientation.value) % 180.0
+        expected_relative_angle = min(orientation_difference, 180.0 - orientation_difference)
+        if not math.isclose(
+            relative_angle,
+            expected_relative_angle,
+            rel_tol=0.0,
+            abs_tol=_GEOMETRY_NUMERICAL_EPSILON,
+        ):
+            raise ValueError("body_ground_angle must match the two orientation measurements")
+        expected_perpendicular = relative_angle >= 90.0 - self.thresholds.upright_angle_tolerance_degrees
+        expected_parallel = relative_angle <= self.thresholds.parallel_angle_tolerance_degrees
+        expected_head_elevated = (
+            self.head_ground_distance.value >= self.thresholds.minimum_standing_head_elevation
+        )
+        expected_head_low = self.head_ground_distance.value <= self.thresholds.maximum_fallen_head_elevation
+        expected_lateral_low = (
+            self.lateral_contact.fraction <= self.thresholds.maximum_standing_lateral_fraction
+        )
+        expected_lateral_high = (
+            self.lateral_contact.fraction >= self.thresholds.minimum_fallen_lateral_fraction
+        )
+        expected_upright = (
+            self.foot_ground_contact.contact
+            and expected_perpendicular
+            and expected_head_elevated
+            and expected_lateral_low
+        )
+        expected_lateral_ground = expected_parallel and expected_head_low and expected_lateral_high
+        expected_flags = {
+            "body_perpendicular_to_ground": expected_perpendicular,
+            "body_parallel_to_ground": expected_parallel,
+            "head_elevated": expected_head_elevated,
+            "head_low": expected_head_low,
+            "lateral_contact_low": expected_lateral_low,
+            "lateral_contact_high": expected_lateral_high,
+            "upright_support_pattern": expected_upright,
+            "lateral_ground_pattern": expected_lateral_ground,
+        }
+        for field_name, expected in expected_flags.items():
+            actual = getattr(self, field_name)
+            if not isinstance(actual, bool):
+                raise TypeError(f"{field_name} must be a bool")
+            if actual is not expected:
+                raise ValueError(f"{field_name} is inconsistent with support measurements and thresholds")
+
+        object.__setattr__(self, "frame_id", frame_id)
+        object.__setattr__(self, "operator", _normalize_identifier(self.operator, field_name="operator"))
+        object.__setattr__(self, "element_ids", element_ids)
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return complete JSON-safe component evidence."""
+        return {
+            "source_map_ref": self.source_map_ref.as_dict(),
+            "frame_id": self.frame_id,
+            "operator": self.operator,
+            "element_ids": list(self.element_ids),
+            "thresholds": self.thresholds.as_dict(),
+            "body_orientation": self.body_orientation.as_dict(),
+            "ground_orientation": self.ground_orientation.as_dict(),
+            "body_ground_angle": self.body_ground_angle.as_dict(),
+            "foot_ground_contact": self.foot_ground_contact.as_dict(),
+            "head_ground_distance": self.head_ground_distance.as_dict(),
+            "lateral_contact": self.lateral_contact.as_dict(),
+            "body_perpendicular_to_ground": self.body_perpendicular_to_ground,
+            "body_parallel_to_ground": self.body_parallel_to_ground,
+            "head_elevated": self.head_elevated,
+            "head_low": self.head_low,
+            "lateral_contact_low": self.lateral_contact_low,
+            "lateral_contact_high": self.lateral_contact_high,
+            "upright_support_pattern": self.upright_support_pattern,
+            "lateral_ground_pattern": self.lateral_ground_pattern,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class NavBodyStateEvidenceV1:
+    """Open-world body-state readout linked to one NavMap revision.
+
+    ``STANDING_LIKE`` and ``FALLEN_LIKE`` are derived interpretations only.
+    ``UNKNOWN`` preserves missing or unsupported geometry, while ``AMBIGUOUS``
+    preserves complete but conflicting or non-diagnostic evidence.
+    """
+
+    source_map_ref: NavMapRefV1
+    frame_id: str
+    operator: str
+    element_ids: tuple[str, ...]
+    thresholds: NavBodyStateThresholdsV1
+    interpretation: NavBodyStateInterpretationV1
+    support: Optional[NavSupportEvidenceV1]
+    missing_element_ids: tuple[str, ...]
+    reason: str
+
+    def __post_init__(self) -> None:
+        _require_instance(self.source_map_ref, NavMapRefV1, field_name="source_map_ref")
+        _require_instance(self.thresholds, NavBodyStateThresholdsV1, field_name="thresholds")
+        interpretation = _enum_member(
+            NavBodyStateInterpretationV1,
+            self.interpretation,
+            field_name="interpretation",
+        )
+        element_ids = _normalize_query_element_ids(self.element_ids)
+        if len(element_ids) != 4:
+            raise ValueError("body-state evidence requires body, head, foot, and ground element ids")
+        missing_ids = tuple(sorted(_normalize_query_element_ids(self.missing_element_ids))) if self.missing_element_ids else ()
+        reason = _normalize_identifier(self.reason, field_name="reason")
+        frame_id = _normalize_identifier(self.frame_id, field_name="frame_id")
+
+        if interpretation is NavBodyStateInterpretationV1.UNKNOWN:
+            if self.support is not None:
+                raise ValueError("UNKNOWN body-state evidence must not contain complete support evidence")
+        else:
+            support = self.support
+            if support is None:
+                raise TypeError("support must be NavSupportEvidenceV1")
+            _require_instance(support, NavSupportEvidenceV1, field_name="support")
+            if missing_ids:
+                raise ValueError("complete body-state evidence must not list missing elements")
+            if support.source_map_ref != self.source_map_ref:
+                raise ValueError("body-state and support source map references must match")
+            if support.frame_id != frame_id:
+                raise ValueError("body-state and support frame ids must match")
+            if support.element_ids != element_ids:
+                raise ValueError("body-state and support element ids must match")
+            if support.thresholds != self.thresholds:
+                raise ValueError("body-state and support thresholds must match")
+            upright = support.upright_support_pattern
+            lateral = support.lateral_ground_pattern
+            if interpretation is NavBodyStateInterpretationV1.STANDING_LIKE and not (upright and not lateral):
+                raise ValueError("STANDING_LIKE requires only the upright support pattern")
+            if interpretation is NavBodyStateInterpretationV1.FALLEN_LIKE and not (lateral and not upright):
+                raise ValueError("FALLEN_LIKE requires only the lateral ground pattern")
+            if interpretation is NavBodyStateInterpretationV1.AMBIGUOUS and upright is not lateral:
+                raise ValueError("AMBIGUOUS requires both support patterns or neither support pattern")
+
+        object.__setattr__(self, "frame_id", frame_id)
+        object.__setattr__(self, "operator", _normalize_identifier(self.operator, field_name="operator"))
+        object.__setattr__(self, "element_ids", element_ids)
+        object.__setattr__(self, "interpretation", interpretation)
+        object.__setattr__(self, "missing_element_ids", missing_ids)
+        object.__setattr__(self, "reason", reason)
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return the interpretation, thresholds, and complete supporting evidence."""
+        return {
+            "source_map_ref": self.source_map_ref.as_dict(),
+            "frame_id": self.frame_id,
+            "operator": self.operator,
+            "element_ids": list(self.element_ids),
+            "thresholds": self.thresholds.as_dict(),
+            "interpretation": self.interpretation.value,
+            "support": self.support.as_dict() if self.support is not None else None,
+            "missing_element_ids": list(self.missing_element_ids),
+            "reason": self.reason,
         }
 
 
@@ -1695,4 +2043,196 @@ def lateral_contact_fraction(
         threshold=normalized_threshold,
         units=navmap.frame.units,
         method="segment_capsule_length_fraction",
+    )
+
+
+# --- Phase 1B-B3 support and open-world body-state evidence -------------------------
+
+
+def _acute_axis_angle_difference(first_degrees: float, second_degrees: float) -> float:
+    """Return the acute difference between two undirected axes in degrees."""
+    difference = abs(first_degrees - second_degrees) % 180.0
+    return min(difference, 180.0 - difference)
+
+
+def support_evidence(
+    navmap: NavMapV2,
+    *,
+    body_element_id: str,
+    head_element_id: str,
+    foot_element_id: str,
+    ground_element_id: str,
+    thresholds: NavBodyStateThresholdsV1,
+) -> NavSupportEvidenceV1:
+    """Return structured SELF-ground support evidence from pure geometry queries.
+
+    Support is not equated with touch.  The operator combines foot-ground
+    contact, body orientation relative to ground, head distance from ground, and
+    the fraction of the body axis near ground.  Every threshold is supplied in
+    one explicit immutable record and remains visible in the result.
+
+    Missing elements raise ``KeyError`` and unsupported geometry raises
+    ``ValueError``.  :func:`body_state_evidence` converts those open-world cases
+    into ``UNKNOWN`` rather than forcing a poor interpretation.
+    """
+    _require_instance(navmap, NavMapV2, field_name="navmap")
+    _require_instance(thresholds, NavBodyStateThresholdsV1, field_name="thresholds")
+    body = get_element(navmap, body_element_id)
+    head = get_element(navmap, head_element_id)
+    foot = get_element(navmap, foot_element_id)
+    ground = get_element(navmap, ground_element_id)
+
+    body_orientation = geometry_orientation_degrees(navmap, body.element_id)
+    ground_orientation = geometry_orientation_degrees(navmap, ground.element_id)
+    relative_angle_value = _acute_axis_angle_difference(body_orientation.value, ground_orientation.value)
+    body_ground_angle = NavScalarQueryResultV1(
+        source_map_ref=_source_map_ref(navmap),
+        frame_id=navmap.frame.frame_id,
+        operator="body_ground_angle_degrees",
+        element_ids=(body.element_id, ground.element_id),
+        value=relative_angle_value,
+        units="degrees",
+        method="acute_undirected_axis_difference",
+    )
+    foot_contact = geometries_contact(
+        navmap,
+        foot.element_id,
+        ground.element_id,
+        tolerance=thresholds.contact_tolerance,
+    )
+    head_distance = minimum_distance_between(navmap, head.element_id, ground.element_id)
+    lateral_contact = lateral_contact_fraction(
+        navmap,
+        body.element_id,
+        ground.element_id,
+        threshold=thresholds.lateral_distance_threshold,
+    )
+
+    perpendicular = relative_angle_value >= 90.0 - thresholds.upright_angle_tolerance_degrees
+    parallel = relative_angle_value <= thresholds.parallel_angle_tolerance_degrees
+    head_elevated = head_distance.value >= thresholds.minimum_standing_head_elevation
+    head_low = head_distance.value <= thresholds.maximum_fallen_head_elevation
+    lateral_low = lateral_contact.fraction <= thresholds.maximum_standing_lateral_fraction
+    lateral_high = lateral_contact.fraction >= thresholds.minimum_fallen_lateral_fraction
+    upright_pattern = foot_contact.contact and perpendicular and head_elevated and lateral_low
+    lateral_ground_pattern = parallel and head_low and lateral_high
+
+    return NavSupportEvidenceV1(
+        source_map_ref=_source_map_ref(navmap),
+        frame_id=navmap.frame.frame_id,
+        operator="support_evidence",
+        element_ids=(body.element_id, head.element_id, foot.element_id, ground.element_id),
+        thresholds=thresholds,
+        body_orientation=body_orientation,
+        ground_orientation=ground_orientation,
+        body_ground_angle=body_ground_angle,
+        foot_ground_contact=foot_contact,
+        head_ground_distance=head_distance,
+        lateral_contact=lateral_contact,
+        body_perpendicular_to_ground=perpendicular,
+        body_parallel_to_ground=parallel,
+        head_elevated=head_elevated,
+        head_low=head_low,
+        lateral_contact_low=lateral_low,
+        lateral_contact_high=lateral_high,
+        upright_support_pattern=upright_pattern,
+        lateral_ground_pattern=lateral_ground_pattern,
+    )
+
+
+def body_state_evidence(
+    navmap: NavMapV2,
+    *,
+    body_element_id: str,
+    head_element_id: str,
+    foot_element_id: str,
+    ground_element_id: str,
+    thresholds: NavBodyStateThresholdsV1,
+) -> NavBodyStateEvidenceV1:
+    """Derive an open-world body-state interpretation from SELF-ground geometry.
+
+    ``STANDING_LIKE`` requires a coherent upright support pattern.
+    ``FALLEN_LIKE`` requires a coherent lateral-ground pattern.  Complete but
+    mixed evidence returns ``AMBIGUOUS``.  Missing elements or unsupported
+    geometry return ``UNKNOWN``.  No result is written back into ``NavMapV2``.
+    """
+    _require_instance(navmap, NavMapV2, field_name="navmap")
+    _require_instance(thresholds, NavBodyStateThresholdsV1, field_name="thresholds")
+    element_ids = (
+        _normalize_identifier(body_element_id, field_name="body_element_id"),
+        _normalize_identifier(head_element_id, field_name="head_element_id"),
+        _normalize_identifier(foot_element_id, field_name="foot_element_id"),
+        _normalize_identifier(ground_element_id, field_name="ground_element_id"),
+    )
+    available_ids = {element.element_id for element in navmap.elements}
+    missing_ids = tuple(element_id for element_id in element_ids if element_id not in available_ids)
+    if missing_ids:
+        return NavBodyStateEvidenceV1(
+            source_map_ref=_source_map_ref(navmap),
+            frame_id=navmap.frame.frame_id,
+            operator="body_state_evidence",
+            element_ids=element_ids,
+            thresholds=thresholds,
+            interpretation=NavBodyStateInterpretationV1.UNKNOWN,
+            support=None,
+            missing_element_ids=missing_ids,
+            reason="missing_required_elements",
+        )
+
+    body = get_element(navmap, element_ids[0])
+    head = get_element(navmap, element_ids[1])
+    foot = get_element(navmap, element_ids[2])
+    ground = get_element(navmap, element_ids[3])
+    expected_kinds = (
+        (body.geometry.kind, NavGeometryKindV1.SEGMENT),
+        (head.geometry.kind, NavGeometryKindV1.POINT),
+        (foot.geometry.kind, NavGeometryKindV1.POINT),
+        (ground.geometry.kind, NavGeometryKindV1.SEGMENT),
+    )
+    if any(actual is not expected for actual, expected in expected_kinds):
+        return NavBodyStateEvidenceV1(
+            source_map_ref=_source_map_ref(navmap),
+            frame_id=navmap.frame.frame_id,
+            operator="body_state_evidence",
+            element_ids=element_ids,
+            thresholds=thresholds,
+            interpretation=NavBodyStateInterpretationV1.UNKNOWN,
+            support=None,
+            missing_element_ids=(),
+            reason="unsupported_geometry",
+        )
+
+    support = support_evidence(
+        navmap,
+        body_element_id=element_ids[0],
+        head_element_id=element_ids[1],
+        foot_element_id=element_ids[2],
+        ground_element_id=element_ids[3],
+        thresholds=thresholds,
+    )
+    upright = support.upright_support_pattern
+    lateral = support.lateral_ground_pattern
+    if upright and not lateral:
+        interpretation = NavBodyStateInterpretationV1.STANDING_LIKE
+        reason = "upright_support_pattern"
+    elif lateral and not upright:
+        interpretation = NavBodyStateInterpretationV1.FALLEN_LIKE
+        reason = "lateral_ground_pattern"
+    elif upright and lateral:
+        interpretation = NavBodyStateInterpretationV1.AMBIGUOUS
+        reason = "conflicting_support_patterns"
+    else:
+        interpretation = NavBodyStateInterpretationV1.AMBIGUOUS
+        reason = "mixed_or_non_diagnostic_evidence"
+
+    return NavBodyStateEvidenceV1(
+        source_map_ref=_source_map_ref(navmap),
+        frame_id=navmap.frame.frame_id,
+        operator="body_state_evidence",
+        element_ids=element_ids,
+        thresholds=thresholds,
+        interpretation=interpretation,
+        support=support,
+        missing_element_ids=(),
+        reason=reason,
     )

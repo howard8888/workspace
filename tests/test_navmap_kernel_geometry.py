@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 import json
 import math
 
@@ -12,6 +12,9 @@ import pytest
 from cca8_navmap_kernel import (
     NavActivationV1,
     NavContactQueryResultV1,
+    NavBodyStateEvidenceV1,
+    NavBodyStateInterpretationV1,
+    NavBodyStateThresholdsV1,
     NavLateralContactQueryResultV1,
     NavElementV1,
     NavFrameV1,
@@ -25,13 +28,16 @@ from cca8_navmap_kernel import (
     NavRelationV1,
     NavScalarQueryResultV1,
     NavSourceClassV1,
+    NavSupportEvidenceV1,
     bearing_between_centroids,
+    body_state_evidence,
     centroid_distance_between,
     element_centroid,
     geometries_contact,
     geometry_orientation_degrees,
     get_element,
     minimum_distance_between,
+    support_evidence,
     lateral_contact_fraction,
 )
 
@@ -56,6 +62,20 @@ def _frame() -> NavFrameV1:
         max_x=3.0,
         min_y=-0.5,
         max_y=3.0,
+    )
+
+
+def _body_state_thresholds() -> NavBodyStateThresholdsV1:
+    """Return explicit reviewable thresholds for the SELF-ground demonstrator."""
+    return NavBodyStateThresholdsV1(
+        contact_tolerance=0.05,
+        lateral_distance_threshold=0.25,
+        upright_angle_tolerance_degrees=20.0,
+        parallel_angle_tolerance_degrees=20.0,
+        minimum_standing_head_elevation=1.0,
+        maximum_fallen_head_elevation=0.35,
+        maximum_standing_lateral_fraction=0.25,
+        minimum_fallen_lateral_fraction=0.75,
     )
 
 
@@ -269,6 +289,22 @@ def _fraction_map(
         ),
     )
     return NavMapV2(map_id, 1, "fraction_test", _frame(), provenance, elements=elements)
+
+
+def _map_with_geometry_overrides(
+    navmap: NavMapV2,
+    *,
+    map_id: str,
+    geometry_by_element_id: dict[str, NavGeometryV1],
+) -> NavMapV2:
+    """Return a new fixture map with only the named element geometries changed."""
+    elements = tuple(
+        replace(element, geometry=geometry_by_element_id[element.element_id])
+        if element.element_id in geometry_by_element_id
+        else element
+        for element in navmap.elements
+    )
+    return replace(navmap, map_id=map_id, elements=elements)
 
 
 def _semantic_skeleton(navmap: NavMapV2) -> tuple[object, ...]:
@@ -715,6 +751,202 @@ def test_lateral_contact_result_is_immutable_json_safe_and_self_consistent() -> 
         )
 
 
+def test_support_and_body_state_evidence_distinguish_vertical_and_horizontal_geometry() -> None:
+    """Lower-level geometry should compose into transparent support and body-state evidence."""
+    thresholds = _body_state_thresholds()
+    vertical = _self_ground_map(body_horizontal=False, map_id="self_ground_case_a")
+    horizontal = _self_ground_map(body_horizontal=True, map_id="self_ground_case_b")
+
+    vertical_support = support_evidence(
+        vertical,
+        body_element_id="self_body",
+        head_element_id="self_head",
+        foot_element_id="self_foot",
+        ground_element_id="ground_surface",
+        thresholds=thresholds,
+    )
+    horizontal_support = support_evidence(
+        horizontal,
+        body_element_id="self_body",
+        head_element_id="self_head",
+        foot_element_id="self_foot",
+        ground_element_id="ground_surface",
+        thresholds=thresholds,
+    )
+    vertical_state = body_state_evidence(
+        vertical,
+        body_element_id="self_body",
+        head_element_id="self_head",
+        foot_element_id="self_foot",
+        ground_element_id="ground_surface",
+        thresholds=thresholds,
+    )
+    horizontal_state = body_state_evidence(
+        horizontal,
+        body_element_id="self_body",
+        head_element_id="self_head",
+        foot_element_id="self_foot",
+        ground_element_id="ground_surface",
+        thresholds=thresholds,
+    )
+
+    assert vertical_support.body_ground_angle.value == pytest.approx(90.0)
+    assert vertical_support.foot_ground_contact.contact is True
+    assert vertical_support.head_ground_distance.value == pytest.approx(2.2)
+    assert vertical_support.lateral_contact.fraction == pytest.approx(1.0 / 36.0)
+    assert vertical_support.upright_support_pattern is True
+    assert vertical_support.lateral_ground_pattern is False
+    assert vertical_state.interpretation is NavBodyStateInterpretationV1.STANDING_LIKE
+    assert vertical_state.reason == "upright_support_pattern"
+
+    assert horizontal_support.body_ground_angle.value == pytest.approx(0.0)
+    assert horizontal_support.foot_ground_contact.contact is True
+    assert horizontal_support.head_ground_distance.value == pytest.approx(0.2)
+    assert horizontal_support.lateral_contact.fraction == pytest.approx(1.0)
+    assert horizontal_support.upright_support_pattern is False
+    assert horizontal_support.lateral_ground_pattern is True
+    assert horizontal_state.interpretation is NavBodyStateInterpretationV1.FALLEN_LIKE
+    assert horizontal_state.reason == "lateral_ground_pattern"
+
+
+def test_body_state_evidence_preserves_complete_but_non_diagnostic_geometry_as_ambiguous() -> None:
+    """A diagonal mixed configuration should not be forced into standing-like or fallen-like."""
+    base = _self_ground_map(body_horizontal=False, map_id="self_ground_base")
+    ambiguous = _map_with_geometry_overrides(
+        base,
+        map_id="self_ground_ambiguous",
+        geometry_by_element_id={
+            "self_body": _geometry(NavGeometryKindV1.SEGMENT, (0.0, 0.2), (1.8, 2.0)),
+            "self_head": _geometry(NavGeometryKindV1.POINT, (1.9, 2.1)),
+        },
+    )
+
+    result = body_state_evidence(
+        ambiguous,
+        body_element_id="self_body",
+        head_element_id="self_head",
+        foot_element_id="self_foot",
+        ground_element_id="ground_surface",
+        thresholds=_body_state_thresholds(),
+    )
+
+    assert result.interpretation is NavBodyStateInterpretationV1.AMBIGUOUS
+    assert result.reason == "mixed_or_non_diagnostic_evidence"
+    assert result.support is not None
+    assert result.support.body_ground_angle.value == pytest.approx(45.0)
+    assert result.support.upright_support_pattern is False
+    assert result.support.lateral_ground_pattern is False
+
+
+def test_body_state_evidence_returns_unknown_for_missing_or_unsupported_geometry() -> None:
+    """Open-world interpretation should preserve missing content and unsupported geometry as UNKNOWN."""
+    base = _self_ground_map(body_horizontal=False, map_id="self_ground_base")
+    missing_head = replace(
+        base,
+        map_id="self_ground_missing_head",
+        elements=tuple(element for element in base.elements if element.element_id != "self_head"),
+        relations=tuple(
+            relation
+            for relation in base.relations
+            if relation.source_element_id != "self_head" and relation.target_element_id != "self_head"
+        ),
+    )
+    point_body = _map_with_geometry_overrides(
+        base,
+        map_id="self_ground_point_body",
+        geometry_by_element_id={
+            "self_body": _geometry(NavGeometryKindV1.POINT, (0.0, 1.0)),
+        },
+    )
+
+    missing_result = body_state_evidence(
+        missing_head,
+        body_element_id="self_body",
+        head_element_id="self_head",
+        foot_element_id="self_foot",
+        ground_element_id="ground_surface",
+        thresholds=_body_state_thresholds(),
+    )
+    unsupported_result = body_state_evidence(
+        point_body,
+        body_element_id="self_body",
+        head_element_id="self_head",
+        foot_element_id="self_foot",
+        ground_element_id="ground_surface",
+        thresholds=_body_state_thresholds(),
+    )
+
+    assert missing_result.interpretation is NavBodyStateInterpretationV1.UNKNOWN
+    assert missing_result.support is None
+    assert missing_result.missing_element_ids == ("self_head",)
+    assert missing_result.reason == "missing_required_elements"
+    assert unsupported_result.interpretation is NavBodyStateInterpretationV1.UNKNOWN
+    assert unsupported_result.support is None
+    assert unsupported_result.missing_element_ids == ()
+    assert unsupported_result.reason == "unsupported_geometry"
+
+
+def test_support_and_body_state_require_explicit_valid_thresholds() -> None:
+    """No hidden biological threshold set should enter the first body-state operator contract."""
+    navmap = _self_ground_map(body_horizontal=False, map_id="self_ground_case_a")
+
+    with pytest.raises(TypeError, match="thresholds"):
+        support_evidence(
+            navmap,
+            body_element_id="self_body",
+            head_element_id="self_head",
+            foot_element_id="self_foot",
+            ground_element_id="ground_surface",
+        )  # type: ignore[call-arg]
+    with pytest.raises(TypeError, match="thresholds"):
+        body_state_evidence(
+            navmap,
+            body_element_id="self_body",
+            head_element_id="self_head",
+            foot_element_id="self_foot",
+            ground_element_id="ground_surface",
+        )  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="must not exceed 90"):
+        replace(_body_state_thresholds(), upright_angle_tolerance_degrees=91.0)
+    with pytest.raises(ValueError, match="non-negative"):
+        replace(_body_state_thresholds(), contact_tolerance=-0.01)
+
+
+def test_support_and_body_state_results_are_immutable_json_safe_and_self_consistent() -> None:
+    """Composite evidence should remain inspectable and reject contradictory reconstruction."""
+    navmap = _self_ground_map(body_horizontal=False, map_id="self_ground_case_a")
+    thresholds = _body_state_thresholds()
+    support = support_evidence(
+        navmap,
+        body_element_id="self_body",
+        head_element_id="self_head",
+        foot_element_id="self_foot",
+        ground_element_id="ground_surface",
+        thresholds=thresholds,
+    )
+    state = body_state_evidence(
+        navmap,
+        body_element_id="self_body",
+        head_element_id="self_head",
+        foot_element_id="self_foot",
+        ground_element_id="ground_surface",
+        thresholds=thresholds,
+    )
+
+    assert isinstance(support, NavSupportEvidenceV1)
+    assert isinstance(state, NavBodyStateEvidenceV1)
+    decoded = json.loads(json.dumps(state.as_dict()))
+    assert decoded["interpretation"] == "standing_like"
+    assert decoded["support"]["body_ground_angle"]["value"] == 90.0
+    assert decoded["support"]["lateral_contact"]["fraction"] == pytest.approx(1.0 / 36.0)
+    with pytest.raises(FrozenInstanceError):
+        state.interpretation = NavBodyStateInterpretationV1.FALLEN_LIKE  # type: ignore[misc]
+    with pytest.raises(ValueError, match="upright_support_pattern"):
+        replace(support, upright_support_pattern=False)
+    with pytest.raises(ValueError, match="FALLEN_LIKE"):
+        replace(state, interpretation=NavBodyStateInterpretationV1.FALLEN_LIKE)
+
+
 def test_query_results_are_immutable_and_json_safe() -> None:
     """Derived measurements should be inspectable records rather than contextless mutable numbers."""
     navmap = _self_ground_map(body_horizontal=False, map_id="self_ground_case_a")
@@ -743,6 +975,23 @@ def test_geometry_queries_do_not_mutate_maps_or_signatures() -> None:
     minimum_distance_between(navmap, "self_body", "ground_surface")
     geometries_contact(navmap, "self_foot", "ground_surface", tolerance=0.0)
     lateral_contact_fraction(navmap, "self_body", "ground_surface", threshold=0.25)
+    thresholds = _body_state_thresholds()
+    support_evidence(
+        navmap,
+        body_element_id="self_body",
+        head_element_id="self_head",
+        foot_element_id="self_foot",
+        ground_element_id="ground_surface",
+        thresholds=thresholds,
+    )
+    body_state_evidence(
+        navmap,
+        body_element_id="self_body",
+        head_element_id="self_head",
+        foot_element_id="self_foot",
+        ground_element_id="ground_surface",
+        thresholds=thresholds,
+    )
 
     assert navmap.to_bytes() == before_bytes
     assert navmap.content_signature() == before_content_signature
