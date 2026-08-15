@@ -15,18 +15,19 @@ that assumed distributed representation so that CCA8 can test map operations
 without first choosing a neuronal, ANN-like, attractor-like, or hippocampal-like
 microimplementation.
 
-Phase 1A and Phase 1B-A scope
--------------------------------
+Phase 1A through Phase 1B-B1 scope
+-----------------------------------
 Phase 1A provides records, validation, canonical ordering, deterministic JSON
 serialization, and content/record signatures.  Phase 1B-A adds the first pure,
 revision-linked geometry queries: element lookup, centroid, centroid distance,
-bearing, and orientation.  The module still does not:
+bearing, and orientation.  Phase 1B-B1 adds minimum point/segment distance and
+explicit-tolerance contact evidence.  The module still does not:
 
 - grant Working Navigation Map authority;
 - integrate with ``Ctx``, WorkingMap, PolicyRuntime, BodyMap, or the runner;
 - select or execute a policy;
 - write WorldGraph or Column memory;
-- derive contact, support, posture, or policy-facing state;
+- derive support, posture, or policy-facing state;
 - perform rendering, alignment, matching, transformation, or revision;
 - use raster cells as the fundamental map representation.
 
@@ -41,8 +42,8 @@ Design invariants
 - Records are frozen, slot-based dataclasses.
 - Collections are immutable tuples and are normalized to deterministic order.
 - Geometry uses explicit continuous reference frames and finite coordinates.
-- Distances, bearings, and orientations are pure revision-linked geometry
-  queries.  Contact, support, and posture-like readouts will build on those
+- Distances, bearings, orientations, and contact are pure revision-linked
+  geometry queries.  Support and posture-like readouts will build on those
   measurements rather than stored independent world-state shortcuts.
 - Source provenance describes how content arose; current-world authority is a
   separate future WorkingMap relationship.
@@ -63,7 +64,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 import re
 from typing import Any, Mapping, Optional, TypeVar
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 NAVMAP_SCHEMA_V2 = "navmap_v2"
 NAVMAP_KIND_V2 = "navmap"
@@ -79,6 +80,7 @@ __all__ = [
     "NavPointV1",
     "NavPointQueryResultV1",
     "NavScalarQueryResultV1",
+    "NavContactQueryResultV1",
     "NavFrameV1",
     "NavActivationV1",
     "NavGeometryKindV1",
@@ -92,11 +94,14 @@ __all__ = [
     "centroid_distance_between",
     "bearing_between_centroids",
     "geometry_orientation_degrees",
+    "minimum_distance_between",
+    "geometries_contact",
     "__version__",
 ]
 
 _IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9_.:/-]*$")
 _POLYGON_AREA_EPSILON = 1.0e-12
+_GEOMETRY_NUMERICAL_EPSILON = 1.0e-12
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
 
@@ -161,6 +166,14 @@ def _unit_interval(value: float, *, field_name: str) -> float:
     normalized = _finite_float(value, field_name=field_name)
     if not 0.0 <= normalized <= 1.0:
         raise ValueError(f"{field_name} must be between 0.0 and 1.0")
+    return normalized
+
+
+def _non_negative_float(value: float, *, field_name: str) -> float:
+    """Return one finite non-negative float for distances and tolerances."""
+    normalized = _finite_float(value, field_name=field_name)
+    if normalized < 0.0:
+        raise ValueError(f"{field_name} must be non-negative")
     return normalized
 
 
@@ -431,6 +444,63 @@ class NavScalarQueryResultV1:
             "value": self.value,
             "units": self.units,
             "method": self.method,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class NavContactQueryResultV1:
+    """Revision-linked evidence that two geometries contact within tolerance.
+
+    Contact is defined exactly as ``minimum_distance <= tolerance``.  The
+    measured distance and caller-supplied tolerance remain visible so the
+    result never becomes an unexplained boolean or an independently updated
+    world-state field.
+    """
+
+    source_map_ref: NavMapRefV1
+    frame_id: str
+    operator: str
+    element_ids: tuple[str, ...]
+    contact: bool
+    minimum_distance: float
+    tolerance: float
+    units: str
+    distance_method: str
+
+    def __post_init__(self) -> None:
+        _require_instance(self.source_map_ref, NavMapRefV1, field_name="source_map_ref")
+        element_ids = _normalize_query_element_ids(self.element_ids)
+        if not isinstance(self.contact, bool):
+            raise TypeError("contact must be a bool")
+        minimum_distance = _non_negative_float(self.minimum_distance, field_name="minimum_distance")
+        tolerance = _non_negative_float(self.tolerance, field_name="tolerance")
+        expected_contact = minimum_distance <= tolerance
+        if self.contact is not expected_contact:
+            raise ValueError("contact must equal minimum_distance <= tolerance")
+        object.__setattr__(self, "frame_id", _normalize_identifier(self.frame_id, field_name="frame_id"))
+        object.__setattr__(self, "operator", _normalize_identifier(self.operator, field_name="operator"))
+        object.__setattr__(self, "element_ids", element_ids)
+        object.__setattr__(self, "minimum_distance", minimum_distance)
+        object.__setattr__(self, "tolerance", tolerance)
+        object.__setattr__(self, "units", _normalize_identifier(self.units, field_name="units"))
+        object.__setattr__(
+            self,
+            "distance_method",
+            _normalize_identifier(self.distance_method, field_name="distance_method"),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a compact JSON-safe description for tests and traces."""
+        return {
+            "source_map_ref": self.source_map_ref.as_dict(),
+            "frame_id": self.frame_id,
+            "operator": self.operator,
+            "element_ids": list(self.element_ids),
+            "contact": self.contact,
+            "minimum_distance": self.minimum_distance,
+            "tolerance": self.tolerance,
+            "units": self.units,
+            "distance_method": self.distance_method,
         }
 
 
@@ -1189,4 +1259,174 @@ def geometry_orientation_degrees(navmap: NavMapV2, element_id: str) -> NavScalar
         value=value,
         units="degrees",
         method=method,
+    )
+
+# --- Phase 1B-B1 minimum distance and contact ---------------------------------------
+
+
+def _point_distance(first: NavPointV1, second: NavPointV1) -> float:
+    """Return Euclidean distance between two points."""
+    return math.hypot(second.x - first.x, second.y - first.y)
+
+
+def _point_segment_distance(point: NavPointV1, start: NavPointV1, end: NavPointV1) -> float:
+    """Return minimum Euclidean distance from one point to one finite segment."""
+    delta_x = end.x - start.x
+    delta_y = end.y - start.y
+    length_squared = delta_x * delta_x + delta_y * delta_y
+    if length_squared == 0.0:
+        raise ValueError("segment distance is undefined for coincident endpoints")
+    projection = ((point.x - start.x) * delta_x + (point.y - start.y) * delta_y) / length_squared
+    projection = max(0.0, min(1.0, projection))
+    closest = NavPointV1(x=start.x + projection * delta_x, y=start.y + projection * delta_y)
+    return _point_distance(point, closest)
+
+
+def _cross_product(first: NavPointV1, second: NavPointV1, third: NavPointV1) -> float:
+    """Return the signed 2-D cross product for vectors first->second and first->third."""
+    return (second.x - first.x) * (third.y - first.y) - (second.y - first.y) * (third.x - first.x)
+
+
+def _point_on_segment(point: NavPointV1, start: NavPointV1, end: NavPointV1) -> bool:
+    """Return whether a nearly collinear point lies within a finite segment's bounds."""
+    epsilon = _GEOMETRY_NUMERICAL_EPSILON
+    if abs(_cross_product(start, end, point)) > epsilon:
+        return False
+    return (
+        min(start.x, end.x) - epsilon <= point.x <= max(start.x, end.x) + epsilon
+        and min(start.y, end.y) - epsilon <= point.y <= max(start.y, end.y) + epsilon
+    )
+
+
+def _segments_intersect(
+    first_start: NavPointV1,
+    first_end: NavPointV1,
+    second_start: NavPointV1,
+    second_end: NavPointV1,
+) -> bool:
+    """Return whether two finite segments intersect or overlap.
+
+    The tiny internal epsilon only stabilizes the line-intersection calculation;
+    it is not the caller-visible contact tolerance.  Near but non-intersecting
+    geometries remain separated and are handled by ``geometries_contact``.
+    """
+    epsilon = _GEOMETRY_NUMERICAL_EPSILON
+    cross_1 = _cross_product(first_start, first_end, second_start)
+    cross_2 = _cross_product(first_start, first_end, second_end)
+    cross_3 = _cross_product(second_start, second_end, first_start)
+    cross_4 = _cross_product(second_start, second_end, first_end)
+
+    opposite_first = (cross_1 > epsilon and cross_2 < -epsilon) or (cross_1 < -epsilon and cross_2 > epsilon)
+    opposite_second = (cross_3 > epsilon and cross_4 < -epsilon) or (cross_3 < -epsilon and cross_4 > epsilon)
+    if opposite_first and opposite_second:
+        return True
+
+    return (
+        (abs(cross_1) <= epsilon and _point_on_segment(second_start, first_start, first_end))
+        or (abs(cross_2) <= epsilon and _point_on_segment(second_end, first_start, first_end))
+        or (abs(cross_3) <= epsilon and _point_on_segment(first_start, second_start, second_end))
+        or (abs(cross_4) <= epsilon and _point_on_segment(first_end, second_start, second_end))
+    )
+
+
+def _segment_segment_distance(
+    first_start: NavPointV1,
+    first_end: NavPointV1,
+    second_start: NavPointV1,
+    second_end: NavPointV1,
+) -> float:
+    """Return minimum Euclidean distance between two finite segments."""
+    if _segments_intersect(first_start, first_end, second_start, second_end):
+        return 0.0
+    return min(
+        _point_segment_distance(first_start, second_start, second_end),
+        _point_segment_distance(first_end, second_start, second_end),
+        _point_segment_distance(second_start, first_start, first_end),
+        _point_segment_distance(second_end, first_start, first_end),
+    )
+
+
+def _minimum_geometry_distance(
+    first: NavGeometryV1,
+    second: NavGeometryV1,
+) -> tuple[float, str]:
+    """Return minimum distance and method for supported Phase 1B-B1 geometry pairs."""
+    if first.kind is NavGeometryKindV1.POINT and second.kind is NavGeometryKindV1.POINT:
+        return _point_distance(first.points[0], second.points[0]), "euclidean_point_point"
+
+    if first.kind is NavGeometryKindV1.POINT and second.kind is NavGeometryKindV1.SEGMENT:
+        start, end = second.points
+        return _point_segment_distance(first.points[0], start, end), "euclidean_point_segment"
+
+    if first.kind is NavGeometryKindV1.SEGMENT and second.kind is NavGeometryKindV1.POINT:
+        start, end = first.points
+        return _point_segment_distance(second.points[0], start, end), "euclidean_point_segment"
+
+    if first.kind is NavGeometryKindV1.SEGMENT and second.kind is NavGeometryKindV1.SEGMENT:
+        first_start, first_end = first.points
+        second_start, second_end = second.points
+        return (
+            _segment_segment_distance(first_start, first_end, second_start, second_end),
+            "euclidean_segment_segment",
+        )
+
+    raise ValueError("minimum distance currently supports POINT and SEGMENT geometry only")
+
+
+def minimum_distance_between(
+    navmap: NavMapV2,
+    source_element_id: str,
+    target_element_id: str,
+) -> NavScalarQueryResultV1:
+    """Return the minimum Euclidean distance between two element geometries.
+
+    This is a boundary/extent measurement, not a centroid measurement.  The
+    initial Phase 1B-B1 contract intentionally supports POINT/POINT,
+    POINT/SEGMENT, and SEGMENT/SEGMENT pairs required by the SELF-ground
+    demonstrator.  Polyline and polygon support is deferred until a concrete
+    task requires the additional computational-geometry surface.
+    """
+    source = get_element(navmap, source_element_id)
+    target = get_element(navmap, target_element_id)
+    value, method = _minimum_geometry_distance(source.geometry, target.geometry)
+    # Remove only machine-scale residue from projection/intersection arithmetic.
+    # The biologically/engineering-relevant contact tolerance remains explicit.
+    normalized_value = 0.0 if value <= _GEOMETRY_NUMERICAL_EPSILON else value
+    return NavScalarQueryResultV1(
+        source_map_ref=_source_map_ref(navmap),
+        frame_id=navmap.frame.frame_id,
+        operator="minimum_distance_between",
+        element_ids=(source.element_id, target.element_id),
+        value=normalized_value,
+        units=navmap.frame.units,
+        method=method,
+    )
+
+
+def geometries_contact(
+    navmap: NavMapV2,
+    source_element_id: str,
+    target_element_id: str,
+    *,
+    tolerance: float,
+) -> NavContactQueryResultV1:
+    """Return structured evidence that two geometries contact within tolerance.
+
+    ``tolerance`` is required and keyword-only so callers cannot accidentally
+    depend on exact floating-point equality or an invisible global threshold.
+    Contact is true exactly when the measured minimum distance is less than or
+    equal to that explicit non-negative tolerance.
+    """
+    normalized_tolerance = _non_negative_float(tolerance, field_name="tolerance")
+    distance = minimum_distance_between(navmap, source_element_id, target_element_id)
+    return NavContactQueryResultV1(
+        source_map_ref=distance.source_map_ref,
+        frame_id=distance.frame_id,
+        operator="geometries_contact",
+        element_ids=distance.element_ids,
+        contact=distance.value <= normalized_tolerance,
+        minimum_distance=distance.value,
+        tolerance=normalized_tolerance,
+        units=distance.units,
+        distance_method=distance.method,
     )
