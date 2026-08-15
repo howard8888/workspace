@@ -15,16 +15,19 @@ that assumed distributed representation so that CCA8 can test map operations
 without first choosing a neuronal, ANN-like, attractor-like, or hippocampal-like
 microimplementation.
 
-Phase 1A scope
---------------
-The module contains records, validation, canonical ordering, deterministic JSON
-serialization, and content/record signatures only.  It does not:
+Phase 1A and Phase 1B-A scope
+-------------------------------
+Phase 1A provides records, validation, canonical ordering, deterministic JSON
+serialization, and content/record signatures.  Phase 1B-A adds the first pure,
+revision-linked geometry queries: element lookup, centroid, centroid distance,
+bearing, and orientation.  The module still does not:
 
 - grant Working Navigation Map authority;
 - integrate with ``Ctx``, WorkingMap, PolicyRuntime, BodyMap, or the runner;
 - select or execute a policy;
 - write WorldGraph or Column memory;
-- perform geometry queries, rendering, alignment, matching, or revision;
+- derive contact, support, posture, or policy-facing state;
+- perform rendering, alignment, matching, transformation, or revision;
 - use raster cells as the fundamental map representation.
 
 A later 6x6 or 12x12 display is only a diagnostic rendering of continuous map
@@ -38,8 +41,9 @@ Design invariants
 - Records are frozen, slot-based dataclasses.
 - Collections are immutable tuples and are normalized to deterministic order.
 - Geometry uses explicit continuous reference frames and finite coordinates.
-- Distances, bearings, contact, support, and posture-like readouts are derived
-  later from geometry rather than stored as independent world-state shortcuts.
+- Distances, bearings, and orientations are pure revision-linked geometry
+  queries.  Contact, support, and posture-like readouts will build on those
+  measurements rather than stored independent world-state shortcuts.
 - Source provenance describes how content arose; current-world authority is a
   separate future WorkingMap relationship.
 - Canonical bytes exclude runtime timestamps, generated UUIDs, absolute paths,
@@ -59,7 +63,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 import re
 from typing import Any, Mapping, Optional, TypeVar
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 NAVMAP_SCHEMA_V2 = "navmap_v2"
 NAVMAP_KIND_V2 = "navmap"
@@ -73,6 +77,8 @@ __all__ = [
     "NavProvenanceV1",
     "NavMapRefV1",
     "NavPointV1",
+    "NavPointQueryResultV1",
+    "NavScalarQueryResultV1",
     "NavFrameV1",
     "NavActivationV1",
     "NavGeometryKindV1",
@@ -81,6 +87,11 @@ __all__ = [
     "NavRelationV1",
     "NavMapLinkV1",
     "NavMapV2",
+    "get_element",
+    "element_centroid",
+    "centroid_distance_between",
+    "bearing_between_centroids",
+    "geometry_orientation_degrees",
     "__version__",
 ]
 
@@ -166,6 +177,16 @@ def _require_instance(value: object, expected_type: type[Any], *, field_name: st
     """Raise TypeError when a nested record has the wrong runtime type."""
     if not isinstance(value, expected_type):
         raise TypeError(f"{field_name} must be {expected_type.__name__}")
+
+
+def _normalize_query_element_ids(values: tuple[str, ...]) -> tuple[str, ...]:
+    """Return a non-empty canonical tuple of element ids for a query result."""
+    if isinstance(values, str):
+        raise TypeError("element_ids must be a tuple or other iterable of strings")
+    normalized = tuple(_normalize_identifier(value, field_name="query element_id") for value in values)
+    if not normalized:
+        raise ValueError("element_ids must not be empty")
+    return normalized
 
 
 def _require_exact_keys(data: Mapping[str, Any], *, expected: set[str], record_name: str) -> None:
@@ -330,6 +351,87 @@ class NavPointV1:
         """Decode one exact point from a mapping."""
         _require_exact_keys(data, expected={"x", "y"}, record_name=cls.__name__)
         return cls(x=data["x"], y=data["y"])
+
+
+@dataclass(frozen=True, slots=True)
+class NavPointQueryResultV1:
+    """Revision-linked point produced by one pure NavMap geometry query.
+
+    The result keeps a derived coordinate attached to the exact map revision,
+    frame, participating element ids, units, operator, and geometric method that
+    produced it.  It is a read-only query product, not a new authoritative map
+    fact and not an independent world model.
+    """
+
+    source_map_ref: NavMapRefV1
+    frame_id: str
+    operator: str
+    element_ids: tuple[str, ...]
+    point: NavPointV1
+    units: str
+    method: str
+
+    def __post_init__(self) -> None:
+        _require_instance(self.source_map_ref, NavMapRefV1, field_name="source_map_ref")
+        _require_instance(self.point, NavPointV1, field_name="point")
+        element_ids = _normalize_query_element_ids(self.element_ids)
+        object.__setattr__(self, "frame_id", _normalize_identifier(self.frame_id, field_name="frame_id"))
+        object.__setattr__(self, "operator", _normalize_identifier(self.operator, field_name="operator"))
+        object.__setattr__(self, "element_ids", element_ids)
+        object.__setattr__(self, "units", _normalize_identifier(self.units, field_name="units"))
+        object.__setattr__(self, "method", _normalize_identifier(self.method, field_name="method"))
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a compact JSON-safe description for tests and traces."""
+        return {
+            "source_map_ref": self.source_map_ref.as_dict(),
+            "frame_id": self.frame_id,
+            "operator": self.operator,
+            "element_ids": list(self.element_ids),
+            "point": self.point.as_dict(),
+            "units": self.units,
+            "method": self.method,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class NavScalarQueryResultV1:
+    """Revision-linked scalar produced by one pure NavMap geometry query.
+
+    ``method`` makes the measurement convention explicit.  Examples in this
+    slice include Euclidean centroid distance, counter-clockwise bearing from
+    the positive x-axis, and undirected orientation from the positive x-axis.
+    """
+
+    source_map_ref: NavMapRefV1
+    frame_id: str
+    operator: str
+    element_ids: tuple[str, ...]
+    value: float
+    units: str
+    method: str
+
+    def __post_init__(self) -> None:
+        _require_instance(self.source_map_ref, NavMapRefV1, field_name="source_map_ref")
+        element_ids = _normalize_query_element_ids(self.element_ids)
+        object.__setattr__(self, "frame_id", _normalize_identifier(self.frame_id, field_name="frame_id"))
+        object.__setattr__(self, "operator", _normalize_identifier(self.operator, field_name="operator"))
+        object.__setattr__(self, "element_ids", element_ids)
+        object.__setattr__(self, "value", _finite_float(self.value, field_name="query value"))
+        object.__setattr__(self, "units", _normalize_identifier(self.units, field_name="units"))
+        object.__setattr__(self, "method", _normalize_identifier(self.method, field_name="method"))
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a compact JSON-safe description for tests and traces."""
+        return {
+            "source_map_ref": self.source_map_ref.as_dict(),
+            "frame_id": self.frame_id,
+            "operator": self.operator,
+            "element_ids": list(self.element_ids),
+            "value": self.value,
+            "units": self.units,
+            "method": self.method,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -901,3 +1003,190 @@ class NavMapV2:
             "relation_count": len(self.relations),
             "link_count": len(self.links),
         }
+
+# --- Phase 1B-A pure geometry queries -----------------------------------------------
+
+
+def _source_map_ref(navmap: NavMapV2) -> NavMapRefV1:
+    """Return the immutable identity of the map revision used by a query."""
+    return NavMapRefV1(map_id=navmap.map_id, revision=navmap.revision)
+
+
+def get_element(navmap: NavMapV2, element_id: str) -> NavElementV1:
+    """Return one local element by canonical id or fail explicitly.
+
+    Lookup is intentionally pure and linear for the small Phase 1 kernel.  A
+    future backend may add an index without changing this public contract.
+
+    Raises
+    ------
+    TypeError
+        If ``navmap`` is not a :class:`NavMapV2` or ``element_id`` is not a
+        string accepted by the identifier contract.
+    KeyError
+        If the normalized element id is not present in this map revision.
+    """
+    _require_instance(navmap, NavMapV2, field_name="navmap")
+    normalized_id = _normalize_identifier(element_id, field_name="element_id")
+    for element in navmap.elements:
+        if element.element_id == normalized_id:
+            return element
+    raise KeyError(f"element {normalized_id!r} does not exist in {navmap.map_id}@r{navmap.revision}")
+
+
+def _geometry_centroid(geometry: NavGeometryV1) -> tuple[NavPointV1, str]:
+    """Return a geometry centroid and the explicit method used to derive it."""
+    points = geometry.points
+    if geometry.kind is NavGeometryKindV1.POINT:
+        return points[0], "point_coordinate"
+
+    if geometry.kind is NavGeometryKindV1.SEGMENT:
+        start, end = points
+        return NavPointV1(x=(start.x + end.x) / 2.0, y=(start.y + end.y) / 2.0), "segment_midpoint"
+
+    if geometry.kind is NavGeometryKindV1.POLYLINE:
+        total_length = 0.0
+        weighted_x_terms: list[float] = []
+        weighted_y_terms: list[float] = []
+        for start, end in zip(points, points[1:]):
+            segment_length = math.hypot(end.x - start.x, end.y - start.y)
+            if segment_length == 0.0:
+                continue
+            total_length += segment_length
+            weighted_x_terms.append(((start.x + end.x) / 2.0) * segment_length)
+            weighted_y_terms.append(((start.y + end.y) / 2.0) * segment_length)
+        if total_length == 0.0:
+            raise ValueError("polyline centroid is undefined for zero total length")
+        return (
+            NavPointV1(
+                x=math.fsum(weighted_x_terms) / total_length,
+                y=math.fsum(weighted_y_terms) / total_length,
+            ),
+            "length_weighted_segment_midpoints",
+        )
+
+    twice_area = _polygon_twice_signed_area(points)
+    x_terms: list[float] = []
+    y_terms: list[float] = []
+    for index, point in enumerate(points):
+        next_point = points[(index + 1) % len(points)]
+        cross = point.x * next_point.y - next_point.x * point.y
+        x_terms.append((point.x + next_point.x) * cross)
+        y_terms.append((point.y + next_point.y) * cross)
+    denominator = 3.0 * twice_area
+    return (
+        NavPointV1(
+            x=math.fsum(x_terms) / denominator,
+            y=math.fsum(y_terms) / denominator,
+        ),
+        "area_centroid",
+    )
+
+
+def element_centroid(navmap: NavMapV2, element_id: str) -> NavPointQueryResultV1:
+    """Return the geometric centroid of one element in the map's declared frame.
+
+    Point geometry returns its coordinate, segment geometry returns its midpoint,
+    polyline geometry uses segment-length-weighted midpoints, and polygon
+    geometry uses the standard signed-area centroid.  The source map is not
+    mutated and the result remains linked to its exact revision and frame.
+    """
+    element = get_element(navmap, element_id)
+    point, method = _geometry_centroid(element.geometry)
+    return NavPointQueryResultV1(
+        source_map_ref=_source_map_ref(navmap),
+        frame_id=navmap.frame.frame_id,
+        operator="element_centroid",
+        element_ids=(element.element_id,),
+        point=point,
+        units=navmap.frame.units,
+        method=method,
+    )
+
+
+def centroid_distance_between(
+    navmap: NavMapV2,
+    source_element_id: str,
+    target_element_id: str,
+) -> NavScalarQueryResultV1:
+    """Return Euclidean distance between two element centroids.
+
+    This operator deliberately does not claim minimum geometric distance.  That
+    distinct contact-oriented operation belongs to the next Phase 1B slice.
+    """
+    source = element_centroid(navmap, source_element_id)
+    target = element_centroid(navmap, target_element_id)
+    value = math.hypot(target.point.x - source.point.x, target.point.y - source.point.y)
+    return NavScalarQueryResultV1(
+        source_map_ref=_source_map_ref(navmap),
+        frame_id=navmap.frame.frame_id,
+        operator="centroid_distance_between",
+        element_ids=(source.element_ids[0], target.element_ids[0]),
+        value=value,
+        units=navmap.frame.units,
+        method="euclidean",
+    )
+
+
+def bearing_between_centroids(
+    navmap: NavMapV2,
+    source_element_id: str,
+    target_element_id: str,
+) -> NavScalarQueryResultV1:
+    """Return directed bearing from source centroid to target centroid.
+
+    Bearing is measured counter-clockwise from the frame's positive x-axis and
+    normalized to ``[0, 360)`` degrees.  Coincident centroids have no defined
+    bearing and therefore fail explicitly rather than returning an arbitrary
+    value.
+    """
+    source = element_centroid(navmap, source_element_id)
+    target = element_centroid(navmap, target_element_id)
+    delta_x = target.point.x - source.point.x
+    delta_y = target.point.y - source.point.y
+    if delta_x == 0.0 and delta_y == 0.0:
+        raise ValueError("bearing is undefined for coincident element centroids")
+    value = math.degrees(math.atan2(delta_y, delta_x)) % 360.0
+    return NavScalarQueryResultV1(
+        source_map_ref=_source_map_ref(navmap),
+        frame_id=navmap.frame.frame_id,
+        operator="bearing_between_centroids",
+        element_ids=(source.element_ids[0], target.element_ids[0]),
+        value=value,
+        units="degrees",
+        method="counterclockwise_from_positive_x",
+    )
+
+
+def geometry_orientation_degrees(navmap: NavMapV2, element_id: str) -> NavScalarQueryResultV1:
+    """Return one undirected segment/polyline axis orientation in degrees.
+
+    Orientation is measured from the frame's positive x-axis and normalized to
+    ``[0, 180)`` because reversing an undirected body or ground axis does not
+    change its orientation.  A polyline uses its first-to-last endpoint chord;
+    the returned ``method`` records this convention.  Points and polygons do not
+    have one unambiguous axis in this initial operator and fail explicitly.
+    """
+    element = get_element(navmap, element_id)
+    geometry = element.geometry
+    if geometry.kind not in (NavGeometryKindV1.SEGMENT, NavGeometryKindV1.POLYLINE):
+        raise ValueError("orientation requires segment or polyline geometry")
+    start = geometry.points[0]
+    end = geometry.points[-1]
+    delta_x = end.x - start.x
+    delta_y = end.y - start.y
+    if delta_x == 0.0 and delta_y == 0.0:
+        raise ValueError("orientation is undefined when geometry endpoints coincide")
+    value = math.degrees(math.atan2(delta_y, delta_x)) % 180.0
+    method = "undirected_segment_axis_from_positive_x"
+    if geometry.kind is NavGeometryKindV1.POLYLINE:
+        method = "undirected_endpoint_chord_from_positive_x"
+    return NavScalarQueryResultV1(
+        source_map_ref=_source_map_ref(navmap),
+        frame_id=navmap.frame.frame_id,
+        operator="geometry_orientation_degrees",
+        element_ids=(element.element_id,),
+        value=value,
+        units="degrees",
+        method=method,
+    )
