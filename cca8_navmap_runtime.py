@@ -8,6 +8,7 @@ embedded in ``cca8_run.py``. It coordinates the existing pure NavMap schemas and
 operators with CCA8 runtime registers for:
 
 - observation-update candidate storage and bounded histories
+- the first NavMapV2 root/SELF-ground runtime shadow bridge
 - expected-current construction and residual comparison
 - conservative accepted-current selection
 - the diagnostic Working Navigation Map surface bridge
@@ -25,8 +26,9 @@ Authority boundary
 ------------------
 The extracted path remains diagnostic and behavior-preserving. Accepted-current
 continues to prefer direct observed evidence; the Working Navigation Map surface
-record does not write WorldGraph truth, Columns, BodyMap, or policy-selection
-state. Moving this code changes ownership, not cognitive authority.
+and NavMapV2 root/SELF-ground shadow do not write WorldGraph truth, Columns,
+BodyMap, or policy-selection state. Moving this code changes ownership, not
+cognitive authority.
 """
 
 from __future__ import annotations
@@ -52,13 +54,14 @@ from cca8_navmap import (
     navmap_policy_outcome_from_transition_v1,
     navmap_residual_v1,
 )
+from cca8_navmap_shadow import navmap_v2_shadow_observation_step_v1
 from cca8_predictive import (
     compact_slot_map_text_v1 as _prediction_compact_map_text_v1,
     prediction_policy_expected_slots_v1,
 )
 
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "NAVMAP_SCOPE_MARKER_V1",
     "NAVMAP_SCOPE_PROBES_V1",
@@ -95,6 +98,7 @@ __all__ = [
     "navmap_policy_outcome_index_update_v1",
     "navmap_ctx_observation_update_step_v1",
     "navmap_ctx_transition_from_payloads_v1",
+    "navmap_v2_shadow_observation_step_v1",
     "__version__",
 ]
 
@@ -1915,4 +1919,18 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
     ctx.navmap_last_payload_v1 = dict(current_payload_dict) if current_payload_dict else None
     ctx.navmap_pending_action_v1 = None
     ctx.navmap_pending_reward_v1 = 0.0
+
+    # Phase 2 NavMapV2 shadow bridge.  It stores only ctx-local diagnostic
+    # records; BodyMap and the existing V1 path retain all current authority.
+    try:
+        navmap_v2_shadow_observation_step_v1(ctx, env_obs)
+    except Exception as exc:  # defensive runtime diagnostic boundary
+        ctx.navmap_v2_shadow_last_update = {
+            "schema": "navmap_v2_shadow_update_v1",
+            "status": "error",
+            "authority": "shadow_only",
+            "legacy_authority": "bodymap",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
     return update_dict

@@ -20,6 +20,8 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "profiles": "cca8_profiles",
     "guidance": "cca8_guidance",
     "navmap": "cca8_navmap",
+    "navmap_kernel": "cca8_navmap_kernel",
+    "navmap_shadow": "cca8_navmap_shadow",
 }
 
 

@@ -14,13 +14,17 @@ tests, imports, and runtime code continue to behave as before.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import cca8_world_graph
 from cca8_navpatch import SurfaceGridV1
 from cca8_temporal import TemporalContext
 
-__version__ = "0.1.0"
+if TYPE_CHECKING:
+    from cca8_navmap_kernel import NavMapV2
+    from cca8_navmap_shadow import NavMapV2ShadowStateV1
+
+__version__ = "0.2.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -617,6 +621,16 @@ class Ctx:
     working_navmap_surface_v1: Optional[dict[str, Any]] = None
     working_navmap_surface_history_v1: list[dict[str, Any]] = field(default_factory=list)
     working_navmap_surface_history_limit_v1: int = 25
+
+    # NavMapV2 Phase 2 shadow bridge.  These records are diagnostic-only; the
+    # legacy BodyMap remains authoritative for safety and policy gating.
+    navmap_v2_shadow_enabled: bool = True
+    navmap_v2_shadow_body_ground: Optional[NavMapV2] = None
+    navmap_v2_shadow_root: Optional[NavMapV2] = None
+    navmap_v2_shadow_state: Optional[NavMapV2ShadowStateV1] = None
+    navmap_v2_shadow_last_update: Optional[dict[str, Any]] = None
+    navmap_v2_shadow_history: list[dict[str, Any]] = field(default_factory=list)
+    navmap_v2_shadow_history_limit: int = 25
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------
