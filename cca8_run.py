@@ -487,7 +487,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.9.8"
+__version__ = "0.9.9"
 __all__ = [
     "main",
     "interactive_loop",
@@ -8544,13 +8544,17 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     # process about flag and return
     if args.about:
+        component_rows = _cca8_component_rows()
+
         print("CCA8 Components:")
-        for label, version, path in _cca8_component_rows():
+        print(f"    [components listed: {len(component_rows)}]")
+        for label, version, path in component_rows:
             print(f"  - {label} v{version} ({path})")
 
-        # additionally show primitive count if the controller is importable
+        # Additionally show the number of behavioral primitives registered
+        # with the controller for action selection.
         try:
-            print(f"\n    [controller primitives: {len(PRIMITIVES)}]")
+            print(f"\n    [registered behavioral primitives: {len(PRIMITIVES)}]")
         except Exception:
             pass
 

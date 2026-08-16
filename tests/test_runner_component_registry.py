@@ -52,9 +52,12 @@ def test_about_reports_runner_and_every_registered_component(capsys: pytest.Capt
     assert cca8_run.main(["--about"]) == 0
 
     output = capsys.readouterr().out
+    component_rows = cca8_run._cca8_component_rows()
+
     assert "CCA8 Components:" in output
+    assert f"[components listed: {len(component_rows)}]" in output
     assert "  - cca8_run.py v" in output
-    assert "[controller primitives:" in output
+    assert f"[registered behavioral primitives: {len(cca8_run.PRIMITIVES)}]" in output
 
     for _key, module_name in cca8_run._CCA8_COMPONENT_REGISTRY:
         assert f"  - {module_name} v" in output

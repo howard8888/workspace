@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Phase 2A tests for the first live NavMapV2 root/SELF-ground shadow."""
+"""Phase 2A/2B tests for the NavMapV2 root/SELF-ground shadow."""
 
 from __future__ import annotations
 
@@ -241,3 +241,177 @@ def test_shadow_maps_have_no_runtime_authority_attributes() -> None:
     for navmap in (ctx.navmap_v2_shadow_root, ctx.navmap_v2_shadow_body_ground):
         for forbidden in ("candidate", "active", "focused", "accepted", "root_wnm", "authoritative"):
             assert not hasattr(navmap, forbidden)
+
+
+def test_missing_evidence_maintains_standing_and_ages_support_without_revision_churn() -> None:
+    """One posture-less packet should age support without erasing stable standing content."""
+    ctx = _ctx_with_bodymap()
+    created = _update_both(ctx, _observation("posture:standing"))
+    body_map = ctx.navmap_v2_shadow_body_ground
+    root_map = ctx.navmap_v2_shadow_root
+
+    assert body_map is not None
+    assert root_map is not None
+    body_bytes = body_map.to_bytes()
+    root_bytes = root_map.to_bytes()
+    row = _update_both(ctx, _observation("proximity:mom:far"))
+
+    assert created["body_ground_ref"] == {"map_id": body_map.map_id, "revision": body_map.revision}
+    assert row["status"] == "maintained"
+    assert row["body_state"]["interpretation"] == "unknown"
+    assert row["maintained_body_state"]["interpretation"] == "standing_like"
+    assert row["current_shadow_maintained"] is True
+    assert row["maintenance_action"] == "maintain_missing"
+    assert row["support_status"] == "aging"
+    assert row["support_age_observations"] == 1
+    assert row["changed"] is False
+    assert ctx.navmap_v2_shadow_body_ground is body_map
+    assert ctx.navmap_v2_shadow_root is root_map
+    assert body_map.to_bytes() == body_bytes
+    assert root_map.to_bytes() == root_bytes
+    assert ctx.navmap_v2_shadow_evidence_body_ground is not None
+    assert [element.element_id for element in ctx.navmap_v2_shadow_evidence_body_ground.elements] == ["ground_surface"]
+
+
+def test_repeated_missing_evidence_becomes_stale_then_invalidates_under_declared_bound() -> None:
+    """The default two-observation maintenance window should not persist unsupported content forever."""
+    ctx = _ctx_with_bodymap()
+    ctx.navmap_v2_shadow_max_missing_observations = 2
+    _update_both(ctx, _observation("posture:standing"))
+    body_map = ctx.navmap_v2_shadow_body_ground
+    root_map = ctx.navmap_v2_shadow_root
+
+    first_missing = _update_both(ctx, _observation("proximity:mom:far"))
+    second_missing = _update_both(ctx, _observation("proximity:mom:far"))
+    third_missing = _update_both(ctx, _observation("proximity:mom:far"))
+
+    assert body_map is not None
+    assert root_map is not None
+    assert first_missing["support_status"] == "aging"
+    assert first_missing["current_shadow_maintained"] is True
+    assert second_missing["support_status"] == "stale"
+    assert second_missing["support_age_observations"] == 2
+    assert second_missing["current_shadow_maintained"] is True
+    assert third_missing["status"] == "invalidated"
+    assert third_missing["support_status"] == "invalidated"
+    assert third_missing["support_age_observations"] == 3
+    assert third_missing["current_shadow_maintained"] is False
+    assert third_missing["body_ground_ref"] is None
+    assert third_missing["root_ref"] is None
+    assert third_missing["last_stable_body_ground_ref"] == {"map_id": body_map.map_id, "revision": 1}
+    assert third_missing["last_stable_root_ref"] == {"map_id": root_map.map_id, "revision": 1}
+    assert ctx.navmap_v2_shadow_body_ground is body_map
+    assert ctx.navmap_v2_shadow_root is root_map
+
+
+def test_compatible_evidence_after_gap_refreshes_support_and_reuses_revision() -> None:
+    """Equivalent standing evidence should refresh support without manufacturing r2."""
+    ctx = _ctx_with_bodymap()
+    _update_both(ctx, _observation("posture:standing"))
+    body_map = ctx.navmap_v2_shadow_body_ground
+    root_map = ctx.navmap_v2_shadow_root
+    _update_both(ctx, _observation("proximity:mom:far"))
+
+    row = _update_both(ctx, _observation("posture:standing"))
+
+    assert body_map is not None
+    assert root_map is not None
+    assert row["status"] == "reused"
+    assert row["maintenance_action"] == "refresh"
+    assert row["evidence_relation"] == "compatible"
+    assert row["support_status"] == "fresh"
+    assert row["support_age_observations"] == 0
+    assert row["last_supported_observation_no"] == 3
+    assert row["revision_proposal"]["decision"] == "keep"
+    assert row["changed"] is False
+    assert ctx.navmap_v2_shadow_body_ground is body_map
+    assert ctx.navmap_v2_shadow_root is root_map
+    assert body_map.revision == 1
+    assert root_map.revision == 1
+
+
+def test_compatible_evidence_after_invalidation_reinstates_same_stable_revision() -> None:
+    """A valid old map may re-enter the shadow current set without a content revision."""
+    ctx = _ctx_with_bodymap()
+    ctx.navmap_v2_shadow_max_missing_observations = 1
+    _update_both(ctx, _observation("posture:standing"))
+    body_map = ctx.navmap_v2_shadow_body_ground
+    root_map = ctx.navmap_v2_shadow_root
+    _update_both(ctx, _observation("proximity:mom:far"))
+    invalidated = _update_both(ctx, _observation("proximity:mom:far"))
+
+    row = _update_both(ctx, _observation("posture:standing"))
+
+    assert body_map is not None
+    assert root_map is not None
+    assert invalidated["current_shadow_maintained"] is False
+    assert row["status"] == "reinstated"
+    assert row["maintenance_action"] == "reinstate"
+    assert row["current_shadow_maintained"] is True
+    assert row["revision_proposal"]["decision"] == "keep"
+    assert row["changed"] is False
+    assert ctx.navmap_v2_shadow_body_ground is body_map
+    assert ctx.navmap_v2_shadow_root is root_map
+
+
+def test_reliable_fallen_evidence_produces_structured_residual_and_child_revisions() -> None:
+    """Reliable contradiction must defeat maintained standing and expose the local geometry change."""
+    ctx = _ctx_with_bodymap()
+    _update_both(ctx, _observation("posture:standing"))
+    previous_body = ctx.navmap_v2_shadow_body_ground
+    previous_root = ctx.navmap_v2_shadow_root
+    _update_both(ctx, _observation("proximity:mom:far"))
+
+    row = _update_both(ctx, _observation("posture:fallen"))
+
+    assert previous_body is not None
+    assert previous_root is not None
+    assert row["status"] == "revised"
+    assert row["maintenance_action"] == "revise"
+    assert row["evidence_relation"] == "contradictory"
+    assert row["structured_residual"]["has_content_difference"] is True
+    assert row["structured_residual"]["reason"] == "content_changed"
+    assert row["revision_proposal"]["decision"] == "revise"
+    assert row["revision_proposal"]["changed_element_ids"] == ["self_body", "self_foot", "self_head"]
+    assert row["maintained_body_state"]["interpretation"] == "fallen_like"
+    assert row["current_shadow_maintained"] is True
+    assert row["support_status"] == "fresh"
+    assert ctx.navmap_v2_shadow_body_ground is not None
+    assert ctx.navmap_v2_shadow_body_ground.revision == previous_body.revision + 1
+    assert ctx.navmap_v2_shadow_body_ground.parent_ref == NavMapRefV1(previous_body.map_id, previous_body.revision)
+    assert ctx.navmap_v2_shadow_root is not None
+    assert ctx.navmap_v2_shadow_root.revision == previous_root.revision + 1
+    assert ctx.navmap_v2_shadow_root.parent_ref == NavMapRefV1(previous_root.map_id, previous_root.revision)
+
+
+def test_conflicting_evidence_remains_unknown_and_uses_ambiguous_maintenance_path() -> None:
+    """Conflicting interpreted posture inputs must not force either stable body geometry."""
+    ctx = _ctx_with_bodymap()
+    _update_both(ctx, _observation("posture:standing"))
+    body_map = ctx.navmap_v2_shadow_body_ground
+
+    row = _update_both(ctx, _observation("posture:standing", "posture:fallen"))
+
+    assert body_map is not None
+    assert row["body_state"]["interpretation"] == "unknown"
+    assert row["evidence_relation"] == "ambiguous"
+    assert row["maintenance_action"] == "maintain_ambiguous"
+    assert row["current_shadow_maintained"] is True
+    assert row["maintained_body_state"]["interpretation"] == "standing_like"
+    assert row["revision_proposal"] is None
+    assert row["structured_residual"] is None
+    assert ctx.navmap_v2_shadow_body_ground is body_map
+
+
+def test_phase2b_renderer_separates_current_evidence_from_maintained_shadow() -> None:
+    """The manual trace should make UNKNOWN evidence and provisional standing visible together."""
+    ctx = _ctx_with_bodymap()
+    _update_both(ctx, _observation("posture:standing"))
+    _update_both(ctx, _observation("proximity:mom:far"))
+
+    text = "\n".join(render_navmap_v2_shadow_lines_v1(ctx))
+
+    assert "derived=unknown input=unknown_input" in text
+    assert "maintained=True action=maintain_missing support=aging age=1/2" in text
+    assert "body=goat_self_ground_v2@r1 derived=standing_like" in text
+    assert "authority=shadow_only legacy_authority=bodymap" in text

@@ -22,9 +22,9 @@ from cca8_temporal import TemporalContext
 
 if TYPE_CHECKING:
     from cca8_navmap_kernel import NavMapV2
-    from cca8_navmap_shadow import NavMapV2ShadowStateV1
+    from cca8_navmap_shadow import NavMapV2ShadowStateV2
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -625,9 +625,12 @@ class Ctx:
     # NavMapV2 Phase 2 shadow bridge.  These records are diagnostic-only; the
     # legacy BodyMap remains authoritative for safety and policy gating.
     navmap_v2_shadow_enabled: bool = True
+    navmap_v2_shadow_evidence_body_ground: Optional[NavMapV2] = None
     navmap_v2_shadow_body_ground: Optional[NavMapV2] = None
     navmap_v2_shadow_root: Optional[NavMapV2] = None
-    navmap_v2_shadow_state: Optional[NavMapV2ShadowStateV1] = None
+    navmap_v2_shadow_state: Optional[NavMapV2ShadowStateV2] = None
+    navmap_v2_shadow_observation_no: int = 0
+    navmap_v2_shadow_max_missing_observations: int = 2
     navmap_v2_shadow_last_update: Optional[dict[str, Any]] = None
     navmap_v2_shadow_history: list[dict[str, Any]] = field(default_factory=list)
     navmap_v2_shadow_history_limit: int = 25

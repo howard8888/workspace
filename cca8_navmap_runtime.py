@@ -61,7 +61,7 @@ from cca8_predictive import (
 )
 
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "NAVMAP_SCOPE_MARKER_V1",
     "NAVMAP_SCOPE_PROBES_V1",
@@ -1926,7 +1926,7 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
         navmap_v2_shadow_observation_step_v1(ctx, env_obs)
     except Exception as exc:  # defensive runtime diagnostic boundary
         ctx.navmap_v2_shadow_last_update = {
-            "schema": "navmap_v2_shadow_update_v1",
+            "schema": "navmap_v2_shadow_update_v2",
             "status": "error",
             "authority": "shadow_only",
             "legacy_authority": "bodymap",
