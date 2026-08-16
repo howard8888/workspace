@@ -13,7 +13,7 @@ Provide compact, typed helpers to build engram payloads/pointers:
 # --- Pragmas and Imports -------------------------------------------------------------
 # Standard Library Imports
 from __future__ import annotations
-from typing import Protocol, Any, ClassVar, Optional
+from typing import Protocol, Any, ClassVar, Optional, Self
 from dataclasses import dataclass
 import struct
 from array import array
@@ -37,46 +37,51 @@ __all__ = ["FeaturePayload", "TensorPayload", "FactMeta", "__version__"]
 
 # --- Module Code  -----------------------------------------------------------------------
 
-#pylint: disable=missing-function-docstring
+#pylint: disable=missing-function-docstring, unnecessary-ellipsis
 class FeaturePayload(Protocol):
-    """Typed payload interface for column engrams.
-    Implementations may be tensors, sparse graphs, contours, etc.
+    """Typed payload interface for Column engrams.
 
-    In the WorldGraph, bindings can hold embeddings/sensory features that are
-    stored in the columns rather than as tags in the graph itself. Instead of
-    coupling to one concrete class, we define a protocol (the *shape* a payload
-    must have): attributes **kind**, **fmt**, **shape**, and three methods.
+    Implementations may be mutable tensors, immutable NavMaps, sparse graphs,
+    contours, or other payload types.  Consumers require readable ``kind``,
+    ``fmt``, and ``shape`` attributes, but the protocol deliberately does not
+    require those attributes to be writable.
 
-    This keeps callers flexible so in the future **we can add** new payload
-    types (images, audio, sparse vectors, etc.) without changing APIs. In
-    ``cca8_column.ColumnMemory.assert_fact(...)`` the payload parameter is typed
-    as FeaturePayload; the Column stores ``{id, name, payload, meta}`` and
-    returns an engram_id, while the WorldGraph keeps a lightweight pointer in
-    ``binding.engrams``.
-
-    The methods define the **serialization contract**:
-      • ``to_bytes()/from_bytes()`` for portable **serialization** (storage/transport)
-      • ``meta()`` returns a JSON-safe descriptor (kind/fmt/shape/len) that UIs
-        can use without **decoding the** whole payload.
-
-    **Note (Nov 2025)** — This is a protocol (a static typing interface), not a
-    base class; protocols are not instantiable. The return annotation of
-    ``from_bytes`` indicates the **type of the result** (i.e., an object that
-    satisfies FeaturePayload), not recursion.
-
+    ``from_bytes()`` returns ``Self`` because each concrete payload reconstructs
+    its own concrete type.  This keeps the protocol structurally compatible
+    with immutable payloads such as ``NavMapV2`` while preserving the existing
+    ``TensorPayload`` contract.
     """
 
-    kind: str              # e.g., "scene", "edges", "embedding", "contours"
-    fmt: str               # e.g., "tensor/list-f32", "sparse/csr", "graph/adjlist"
-    shape: tuple[int, ...] # tensor-like
+    @property
+    def kind(self) -> str:
+        """Return the payload family, for example ``scene`` or ``navmap``."""
+        ...
 
-    def to_bytes(self) -> bytes: ...
+    @property
+    def fmt(self) -> str:
+        """Return the payload serialization/representation format."""
+        ...
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Return the logical payload shape; non-tensor payloads may use ``()``."""
+        ...
+
+    def to_bytes(self) -> bytes:
+        """Serialize this payload."""
+        ...
+
     @classmethod
-    def from_bytes(cls, data: bytes) -> "FeaturePayload": ...
-    def meta(self) -> dict[str, Any]: ...
+    def from_bytes(cls, data: bytes) -> Self:
+        """Reconstruct the concrete payload type from serialized bytes."""
+        ...
+
+    def meta(self) -> dict[str, Any]:
+        """Return a JSON-safe lightweight payload descriptor."""
+        ...
 
 
-#pylint: enable=missing-function-docstring
+#pylint: enable=missing-function-docstring, unnecessary-ellipsis
 @dataclass
 class TensorPayload:
     """Flexible container for dense numeric features (float32 semantics).
