@@ -15,8 +15,8 @@ that assumed distributed representation so that CCA8 can test map operations
 without first choosing a neuronal, ANN-like, attractor-like, or hippocampal-like
 microimplementation.
 
-Phase 1A through Phase 1B-B3 scope
------------------------------------
+Phase 1A through Phase 1B-C scope
+---------------------------------
 Phase 1A provides records, validation, canonical ordering, deterministic JSON
 serialization, and content/record signatures.  Phase 1B-A adds the first pure,
 revision-linked geometry queries: element lookup, centroid, centroid distance,
@@ -24,14 +24,16 @@ bearing, and orientation.  Phase 1B-B1 adds minimum point/segment distance and
 explicit-tolerance contact evidence.  Phase 1B-B2 adds a directional
 body-axis proximity/contact fraction under an explicit threshold.  Phase 1B-B3
 adds structured support evidence and an open-world body-state readout derived
-only from geometry.  The module still does not:
+only from geometry.  Phase 1B-C adds explicit stored-relation access, non-
+authoritative map-link following, and diagnostic ASCII rendering.  The module
+still does not:
 
 - grant Working Navigation Map authority;
 - integrate with ``Ctx``, WorkingMap, PolicyRuntime, BodyMap, or the runner;
 - select or execute a policy;
 - write WorldGraph or Column memory;
 - store posture or any other derived readout as independent map truth;
-- perform rendering, alignment, matching, transformation, or revision;
+- perform alignment, matching, transformation, revision, or runtime map activation;
 - use raster cells as the fundamental map representation.
 
 A later 6x6 or 12x12 display is only a diagnostic rendering of continuous map
@@ -68,7 +70,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 import re
 from typing import Any, Mapping, Optional, TypeVar
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 NAVMAP_SCHEMA_V2 = "navmap_v2"
 NAVMAP_KIND_V2 = "navmap"
@@ -108,6 +110,9 @@ __all__ = [
     "lateral_contact_fraction",
     "support_evidence",
     "body_state_evidence",
+    "stored_relation",
+    "follow_link",
+    "render_ascii",
     "__version__",
 ]
 
@@ -2236,3 +2241,199 @@ def body_state_evidence(
         missing_element_ids=(),
         reason=reason,
     )
+
+# --- Phase 1B-C stored relations, links, and diagnostic renderer -------------------
+
+
+def stored_relation(
+    navmap: NavMapV2,
+    relation_type: str,
+    source_element_id: str,
+    target_element_id: str,
+) -> NavRelationV1:
+    """Return one exact explicit relation stored in a NavMap revision.
+
+    This operator is intentionally distinct from geometry-derived relations.
+    It performs no spatial inference: callers must name the relation type and
+    its directed local endpoints, and the operator returns only a matching
+    ``NavRelationV1`` already present in ``navmap.relations``.  Absence is an
+    explicit ``KeyError`` rather than an inferred negative fact.
+    """
+    _require_instance(navmap, NavMapV2, field_name="navmap")
+    normalized_type = _normalize_identifier(relation_type, field_name="relation_type")
+    normalized_source = _normalize_identifier(source_element_id, field_name="source_element_id")
+    normalized_target = _normalize_identifier(target_element_id, field_name="target_element_id")
+    for relation in navmap.relations:
+        if relation.structural_key() == (normalized_type, normalized_source, normalized_target):
+            return relation
+    raise KeyError(
+        f"stored relation {(normalized_type, normalized_source, normalized_target)!r} "
+        f"does not exist in {navmap.map_id}@r{navmap.revision}"
+    )
+
+
+def follow_link(
+    navmap: NavMapV2,
+    *,
+    link_type: str,
+    source_element_id: Optional[str] = None,
+) -> NavMapRefV1:
+    """Return one addressable target reference without retrieving or activating it.
+
+    The selector is the normalized link type plus an optional local source
+    element.  Exactly one stored link must match.  Returning a ``NavMapRefV1``
+    does not reinstate the target map, focus it, accept it, or switch the WNM.
+
+    Raises
+    ------
+    KeyError
+        If no stored link matches the selector.
+    ValueError
+        If more than one target matches and the selector is therefore
+        insufficiently specific.
+    """
+    _require_instance(navmap, NavMapV2, field_name="navmap")
+    normalized_type = _normalize_identifier(link_type, field_name="link_type")
+    normalized_source = _normalize_optional_identifier(source_element_id, field_name="source_element_id")
+    if normalized_source is not None:
+        get_element(navmap, normalized_source)
+    matches = tuple(
+        link
+        for link in navmap.links
+        if link.link_type == normalized_type and link.source_element_id == normalized_source
+    )
+    if not matches:
+        raise KeyError(
+            f"link type {normalized_type!r} from source {normalized_source!r} "
+            f"does not exist in {navmap.map_id}@r{navmap.revision}"
+        )
+    if len(matches) > 1:
+        raise ValueError(
+            f"link selector type={normalized_type!r}, source={normalized_source!r} "
+            f"is ambiguous in {navmap.map_id}@r{navmap.revision}"
+        )
+    return matches[0].target_ref
+
+
+def _renderer_dimension(value: int, *, field_name: str) -> int:
+    """Return one usable diagnostic raster dimension."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{field_name} must be an integer")
+    if value < 2:
+        raise ValueError(f"{field_name} must be at least 2")
+    return value
+
+
+def _point_to_raster(
+    frame: NavFrameV1,
+    point: NavPointV1,
+    *,
+    width: int,
+    height: int,
+) -> tuple[int, int]:
+    """Map one continuous point to a deterministic diagnostic raster cell."""
+    x_fraction = (point.x - frame.min_x) / (frame.max_x - frame.min_x)
+    y_fraction = (point.y - frame.min_y) / (frame.max_y - frame.min_y)
+    column = int(math.floor(x_fraction * (width - 1) + 0.5))
+    row_from_bottom = int(math.floor(y_fraction * (height - 1) + 0.5))
+    column = max(0, min(width - 1, column))
+    row_from_bottom = max(0, min(height - 1, row_from_bottom))
+    return height - 1 - row_from_bottom, column
+
+
+def _raster_line_cells(start: tuple[int, int], end: tuple[int, int]) -> tuple[tuple[int, int], ...]:
+    """Return Bresenham cells joining two diagnostic raster coordinates."""
+    start_row, start_column = start
+    end_row, end_column = end
+    delta_column = abs(end_column - start_column)
+    step_column = 1 if start_column < end_column else -1
+    delta_row = -abs(end_row - start_row)
+    step_row = 1 if start_row < end_row else -1
+    error = delta_column + delta_row
+    row = start_row
+    column = start_column
+    cells: list[tuple[int, int]] = []
+    while True:
+        cells.append((row, column))
+        if row == end_row and column == end_column:
+            return tuple(cells)
+        doubled_error = 2 * error
+        if doubled_error >= delta_row:
+            error += delta_row
+            column += step_column
+        if doubled_error <= delta_column:
+            error += delta_column
+            row += step_row
+
+
+def _geometry_raster_cells(
+    frame: NavFrameV1,
+    geometry: NavGeometryV1,
+    *,
+    width: int,
+    height: int,
+) -> tuple[tuple[int, int], ...]:
+    """Return deterministic raster cells touched by one geometry boundary."""
+    raster_points = tuple(
+        _point_to_raster(frame, point, width=width, height=height)
+        for point in geometry.points
+    )
+    if geometry.kind is NavGeometryKindV1.POINT:
+        return raster_points
+
+    cells: set[tuple[int, int]] = set()
+    for start, end in zip(raster_points, raster_points[1:]):
+        cells.update(_raster_line_cells(start, end))
+    if geometry.kind is NavGeometryKindV1.POLYGON:
+        cells.update(_raster_line_cells(raster_points[-1], raster_points[0]))
+    return tuple(sorted(cells))
+
+
+def _renderer_symbol_and_priority(element: NavElementV1) -> tuple[str, int]:
+    """Return a deterministic diagnostic symbol and overlap priority."""
+    known = {
+        "ground_surface": ("G", 10),
+        "self_body": ("B", 30),
+        "self_head": ("H", 40),
+        "self_foot": ("F", 40),
+    }
+    if element.role in known:
+        return known[element.role]
+    geometry_priority = {
+        NavGeometryKindV1.POINT: 30,
+        NavGeometryKindV1.SEGMENT: 20,
+        NavGeometryKindV1.POLYLINE: 20,
+        NavGeometryKindV1.POLYGON: 10,
+    }
+    return element.role[0].upper(), geometry_priority[element.geometry.kind]
+
+
+def render_ascii(navmap: NavMapV2, *, width: int = 6, height: int = 6) -> str:
+    """Render continuous NavMap geometry as a diagnostic ASCII projection.
+
+    Rendering is downstream of the canonical map.  The function rasterizes
+    geometry only for human inspection and never alters coordinates, elements,
+    relations, links, signatures, or query results.  Higher-priority point/body
+    symbols overwrite lower-priority surface symbols when several geometries
+    land in the same display cell.
+    """
+    _require_instance(navmap, NavMapV2, field_name="navmap")
+    normalized_width = _renderer_dimension(width, field_name="width")
+    normalized_height = _renderer_dimension(height, field_name="height")
+    grid = [["." for _ in range(normalized_width)] for _ in range(normalized_height)]
+
+    render_items: list[tuple[int, str, str, tuple[tuple[int, int], ...]]] = []
+    for element in navmap.elements:
+        symbol, priority = _renderer_symbol_and_priority(element)
+        cells = _geometry_raster_cells(
+            navmap.frame,
+            element.geometry,
+            width=normalized_width,
+            height=normalized_height,
+        )
+        render_items.append((priority, element.element_id, symbol, cells))
+
+    for _priority, _element_id, symbol, cells in sorted(render_items):
+        for row, column in cells:
+            grid[row][column] = symbol
+    return "\n".join("".join(row) for row in grid)

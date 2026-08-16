@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Phase 1B-A through Phase 1B-B2 tests for pure revision-linked NavMap geometry queries."""
+"""Phase 1B-A through Phase 1B-C tests for pure revision-linked NavMap operators."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from cca8_navmap_kernel import (
     NavFrameV1,
     NavGeometryKindV1,
     NavGeometryV1,
+    NavMapLinkV1,
     NavMapRefV1,
     NavMapV2,
     NavPointQueryResultV1,
@@ -39,6 +40,9 @@ from cca8_navmap_kernel import (
     minimum_distance_between,
     support_evidence,
     lateral_contact_fraction,
+    follow_link,
+    render_ascii,
+    stored_relation,
 )
 
 
@@ -147,6 +151,52 @@ def _self_ground_map(*, body_horizontal: bool, map_id: str) -> NavMapV2:
         provenance=provenance,
         elements=elements,
         relations=relations,
+    )
+
+
+
+def _linked_maternal_map(*, ambiguous_detail: bool = False) -> NavMapV2:
+    """Return a small root scene with an addressable maternal-detail link."""
+    provenance = _provenance()
+    mom = NavElementV1(
+        element_id="mom",
+        role="maternal_entity",
+        geometry=_geometry(NavGeometryKindV1.POINT, (1.0, 0.5)),
+        activations=(NavActivationV1(name="maternal_cue", strength=0.95, provenance=provenance),),
+        parent_element_id=None,
+        provenance=provenance,
+    )
+    links = [
+        NavMapLinkV1(
+            link_type="detail",
+            target_ref=NavMapRefV1("maternal_body_map", 3),
+            source_element_id="mom",
+            provenance=provenance,
+        ),
+        NavMapLinkV1(
+            link_type="context",
+            target_ref=NavMapRefV1("maternal_context_map", 2),
+            source_element_id="mom",
+            provenance=provenance,
+        ),
+    ]
+    if ambiguous_detail:
+        links.append(
+            NavMapLinkV1(
+                link_type="detail",
+                target_ref=NavMapRefV1("maternal_alternate_detail", 1),
+                source_element_id="mom",
+                provenance=provenance,
+            )
+        )
+    return NavMapV2(
+        map_id="root_goat_scene",
+        revision=1,
+        role="root_goat_scene",
+        frame=_frame(),
+        provenance=provenance,
+        elements=(mom,),
+        links=tuple(links),
     )
 
 
@@ -945,6 +995,125 @@ def test_support_and_body_state_results_are_immutable_json_safe_and_self_consist
         replace(support, upright_support_pattern=False)
     with pytest.raises(ValueError, match="FALLEN_LIKE"):
         replace(state, interpretation=NavBodyStateInterpretationV1.FALLEN_LIKE)
+
+
+
+def test_stored_relation_returns_only_an_explicit_stored_relation() -> None:
+    """Stored-relation access must not manufacture a relation from geometry."""
+    vertical = _self_ground_map(body_horizontal=False, map_id="self_ground_case_a")
+    horizontal = _self_ground_map(body_horizontal=True, map_id="self_ground_case_b")
+
+    vertical_relation = stored_relation(vertical, "part_of", "self_head", "self_body")
+    horizontal_relation = stored_relation(horizontal, "part_of", "self_head", "self_body")
+
+    assert isinstance(vertical_relation, NavRelationV1)
+    assert vertical_relation.structural_key() == ("part_of", "self_head", "self_body")
+    assert vertical_relation == horizontal_relation
+    with pytest.raises(KeyError, match="stored relation"):
+        stored_relation(vertical, "supports", "self_foot", "ground_surface")
+
+
+def test_follow_link_returns_only_target_reference_without_authority_side_effects() -> None:
+    """Following an addressable link must return only the immutable target reference."""
+    navmap = _linked_maternal_map()
+    before_bytes = navmap.to_bytes()
+    before_content_signature = navmap.content_signature()
+    before_record_signature = navmap.record_signature()
+
+    target = follow_link(navmap, link_type="detail", source_element_id="mom")
+
+    assert target == NavMapRefV1("maternal_body_map", 3)
+    assert isinstance(target, NavMapRefV1)
+    assert navmap.to_bytes() == before_bytes
+    assert navmap.content_signature() == before_content_signature
+    assert navmap.record_signature() == before_record_signature
+    with pytest.raises(KeyError, match="does not exist"):
+        follow_link(navmap, link_type="prototype", source_element_id="mom")
+    with pytest.raises(KeyError, match="element"):
+        follow_link(navmap, link_type="detail", source_element_id="not_present")
+
+
+def test_follow_link_rejects_an_ambiguous_source_and_type_selector() -> None:
+    """A link selector that matches several targets must not choose one arbitrarily."""
+    navmap = _linked_maternal_map(ambiguous_detail=True)
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        follow_link(navmap, link_type="detail", source_element_id="mom")
+
+
+def test_render_ascii_draws_self_ground_geometry_at_requested_resolutions() -> None:
+    """The renderer should expose recognizable geometry without becoming the map substrate."""
+    vertical = _self_ground_map(body_horizontal=False, map_id="self_ground_case_a")
+    horizontal = _self_ground_map(body_horizontal=True, map_id="self_ground_case_b")
+
+    vertical_6 = render_ascii(vertical, width=6, height=6)
+    horizontal_6 = render_ascii(horizontal, width=6, height=6)
+    vertical_12 = render_ascii(vertical, width=12, height=12)
+
+    assert len(vertical_6.splitlines()) == 6
+    assert all(len(line) == 6 for line in vertical_6.splitlines())
+    assert len(vertical_12.splitlines()) == 12
+    assert all(len(line) == 12 for line in vertical_12.splitlines())
+    assert {"H", "B", "F", "G"} <= set(vertical_6)
+    assert vertical_6 != horizontal_6
+    assert vertical_6 != vertical_12
+
+
+def test_render_ascii_supports_all_geometry_kinds_and_validates_dimensions() -> None:
+    """All Phase 1 geometry kinds should render, while invalid display dimensions fail clearly."""
+    navmap = _geometry_kind_map()
+
+    rendered = render_ascii(navmap, width=20, height=10)
+
+    assert len(rendered.splitlines()) == 10
+    assert all(len(line) == 20 for line in rendered.splitlines())
+    with pytest.raises(ValueError, match="at least 2"):
+        render_ascii(navmap, width=1, height=6)
+    with pytest.raises(TypeError, match="integer"):
+        render_ascii(navmap, width=True, height=6)
+
+
+def test_renderer_resolution_preserves_signatures_and_all_phase1b_measurements() -> None:
+    """6x6 and 12x12 pictures may differ, but rendering must not affect any Phase 1B computation."""
+    navmap = _self_ground_map(body_horizontal=False, map_id="self_ground_case_a")
+    thresholds = _body_state_thresholds()
+
+    def measurement_snapshot() -> dict[str, object]:
+        return {
+            "content_signature": navmap.content_signature(),
+            "record_signature": navmap.record_signature(),
+            "centroid": element_centroid(navmap, "self_body").as_dict(),
+            "centroid_distance": centroid_distance_between(navmap, "self_body", "ground_surface").as_dict(),
+            "bearing": bearing_between_centroids(navmap, "self_foot", "self_head").as_dict(),
+            "orientation": geometry_orientation_degrees(navmap, "self_body").as_dict(),
+            "minimum_distance": minimum_distance_between(navmap, "self_body", "ground_surface").as_dict(),
+            "contact": geometries_contact(navmap, "self_foot", "ground_surface", tolerance=0.05).as_dict(),
+            "lateral": lateral_contact_fraction(navmap, "self_body", "ground_surface", threshold=0.25).as_dict(),
+            "support": support_evidence(
+                navmap,
+                body_element_id="self_body",
+                head_element_id="self_head",
+                foot_element_id="self_foot",
+                ground_element_id="ground_surface",
+                thresholds=thresholds,
+            ).as_dict(),
+            "body_state": body_state_evidence(
+                navmap,
+                body_element_id="self_body",
+                head_element_id="self_head",
+                foot_element_id="self_foot",
+                ground_element_id="ground_surface",
+                thresholds=thresholds,
+            ).as_dict(),
+        }
+
+    before = measurement_snapshot()
+    rendered_6 = render_ascii(navmap, width=6, height=6)
+    rendered_12 = render_ascii(navmap, width=12, height=12)
+    after = measurement_snapshot()
+
+    assert rendered_6 != rendered_12
+    assert after == before
 
 
 def test_query_results_are_immutable_and_json_safe() -> None:
