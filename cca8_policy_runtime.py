@@ -23,9 +23,12 @@ without creating a circular import.
 
 Behavior boundary
 -----------------
-This is a structural extraction. Gate order, newborn bridge rules, safety
-filters, EFE diagnostics, RL/LLM tie-breaking, controller execution, Scratch
-provenance registration, and Creative candidate scoring are preserved.
+Phase 3D changes only the bounded StandUp trigger authority supplied through
+``PolicyRuntimeHooks``: new contexts normally use actionable maintained WNM
+geometry, while unsupported maps use the complete legacy gate and fresh BodyMap
+fallen remains protected. Gate order, all other behavioral-primitive domains,
+newborn bridges, safety filtering, tie-breaking, controller execution, Scratch
+provenance, and Creative scoring remain unchanged.
 """
 
 from __future__ import annotations
@@ -51,7 +54,7 @@ from cca8_context import CreativeCandidate, Ctx
 from cca8_controller import Drives, FATIGUE_HIGH, HUNGER_HIGH
 
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,17 +158,17 @@ def body_space_zone(*args: Any, **kwargs: Any) -> Any:
 
 
 def standup_guarded_trigger_v1(*args: Any, **kwargs: Any) -> Any:
-    """Call the configured Phase 3C guarded StandUp trigger."""
+    """Call the configured Phase 3C/3D StandUp authority trigger."""
     return _policy_runtime_hooks().standup_guarded_trigger(*args, **kwargs)
 
 
 def standup_guarded_safety_active_v1(*args: Any, **kwargs: Any) -> Any:
-    """Call the configured Phase 3C guarded fallen-safety indicator."""
+    """Call the configured guarded/default map-fallen safety indicator."""
     return _policy_runtime_hooks().standup_guarded_safety_active(*args, **kwargs)
 
 
 def standup_guarded_explain_v1(*args: Any, **kwargs: Any) -> Any:
-    """Call the configured Phase 3C guarded gate explainer."""
+    """Call the configured Phase 3C/3D StandUp authority explainer."""
     return _policy_runtime_hooks().standup_guarded_explain(*args, **kwargs)
 
 
@@ -434,12 +437,12 @@ def _gate_stand_up_trigger_legacy_body_first(world, _drives: Drives, ctx) -> boo
 
 
 def _gate_stand_up_trigger_body_first(world, drives: Drives, ctx) -> bool:
-    """Return the active StandUp gate, including optional Phase 3C authority.
+    """Return the active StandUp gate under Phase 3C/3D authority.
 
-    With the Phase 3C flag off, this is an exact pass-through to the historical
-    BodyMap-first gate. With the flag on, actionable maintained WNM geometry can
-    supply the trigger. A fresh BodyMap fallen readout remains a protected safety
-    override, and unsupported map states fall back to the historical result.
+    Phase 3D makes actionable maintained WNM geometry the normal cognitive
+    source. Explicit legacy mode preserves the historical BodyMap-first gate.
+    Fresh BodyMap fallen remains a protected safety override, and unsupported
+    map states fall back to the complete historical result.
     """
     legacy_triggered = _gate_stand_up_trigger_legacy_body_first(world, drives, ctx)
     bodymap_fresh = bool(ctx is not None and not bodymap_is_stale(ctx))
@@ -454,7 +457,7 @@ def _gate_stand_up_trigger_body_first(world, drives: Drives, ctx) -> bool:
 
 
 def _gate_stand_up_explain(world, drives: Drives, ctx) -> str:
-    """Return a legacy-gate explanation plus the active Phase 3C source."""
+    """Return a legacy-gate explanation plus the active StandUp authority source."""
     hunger = float(getattr(drives, "hunger", 0.0))
     stale = bodymap_is_stale(ctx) if ctx is not None else True
     bp = body_posture(ctx) if ctx is not None and not stale else None
@@ -2669,9 +2672,9 @@ class PolicyRuntime:
             pass
 
         # Fallen posture forces safety-only policies. The historical near-NOW/
-        # BodyMap route remains active, and Phase 3C may additionally supply a
-        # guarded fallen-like WNM signal. Either route can require StandUp, but
-        # the map route cannot suppress the historical protected safety route.
+        # BodyMap route remains available, while Phase 3C/3D may supply a
+        # fallen-like WNM signal. Either route can require StandUp, but the map
+        # route cannot suppress the protected fresh-BodyMap safety route.
         legacy_fallen_safety_active = _fallen_near_now(world, ctx, max_hops=3)
         guarded_map_fallen_safety_active = bool(standup_guarded_safety_active_v1(ctx))
         fallen_safety_active = bool(legacy_fallen_safety_active or guarded_map_fallen_safety_active)

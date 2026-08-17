@@ -230,20 +230,23 @@ navmap_policy_outcome_index_update_v1 = cca8_navmap_runtime.navmap_policy_outcom
 navmap_ctx_observation_update_step_v1 = cca8_navmap_runtime.navmap_ctx_observation_update_step_v1
 navmap_ctx_transition_from_payloads_v1 = cca8_navmap_runtime.navmap_ctx_transition_from_payloads_v1
 
-# --- Phase 3A/3B/3C StandUp authority compatibility seam ----------------------
-# The map-native query, expected-successor, advisory, and guarded-authority
-# records live in their own module. Phase 3C remains feature-flagged and affects
-# only the StandUp trigger; PolicyRuntime/controller execution and protected
-# BodyMap safety remain intact.
+# --- Phase 3A/3B/3C/3D StandUp authority compatibility seam -------------------
+# The map-native query, expected-successor, advisory, and authority records live
+# in their own module. Phase 3D makes the validated WNM/NavMap query the default
+# StandUp cognitive source; explicit guarded/legacy modes remain available.
+# PolicyRuntime/controller execution and protected BodyMap safety remain intact.
 standup_compare_selection_step_v1 = cca8_standup_compare.standup_compare_selection_step_v1
 standup_compare_summary_v1 = cca8_standup_compare.standup_compare_summary_v1
 render_standup_compare_lines_v1 = cca8_standup_compare.render_standup_compare_lines_v1
 standup_advisory_selection_step_v1 = cca8_standup_compare.standup_advisory_selection_step_v1
 standup_advisory_summary_v1 = cca8_standup_compare.standup_advisory_summary_v1
 render_standup_advisory_lines_v1 = cca8_standup_compare.render_standup_advisory_lines_v1
+standup_authority_mode_v1 = cca8_standup_compare.standup_authority_mode_v1
 standup_guarded_selection_step_v1 = cca8_standup_compare.standup_guarded_selection_step_v1
 standup_guarded_summary_v1 = cca8_standup_compare.standup_guarded_summary_v1
+standup_authority_summary_v1 = cca8_standup_compare.standup_authority_summary_v1
 render_standup_guarded_lines_v1 = cca8_standup_compare.render_standup_guarded_lines_v1
+render_standup_authority_lines_v1 = cca8_standup_compare.render_standup_authority_lines_v1
 
 # Private aliases preserve existing maintainer/test access during the extraction.
 _navmap_safe_dict_v1 = cca8_navmap_runtime._navmap_safe_dict_v1
@@ -512,7 +515,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -582,9 +585,12 @@ __all__ = [
     "standup_advisory_selection_step_v1",
     "standup_advisory_summary_v1",
     "render_standup_advisory_lines_v1",
+    "standup_authority_mode_v1",
     "standup_guarded_selection_step_v1",
     "standup_guarded_summary_v1",
+    "standup_authority_summary_v1",
     "render_standup_guarded_lines_v1",
+    "render_standup_authority_lines_v1",
     "HAL",
     "PolicyRuntime",
     "run_autonomous_newborn_survival_demo_v1",
@@ -3930,11 +3936,11 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             _wm_creative_update(policy_rt, world, drives, ctx, exec_world=exec_world)
             fired = policy_rt.consider_and_maybe_fire(world, drives, ctx, exec_world=exec_world)
 
-            # PolicyRuntime records both the active trigger set and, when Phase
-            # 3C is enabled, the independent legacy trigger inside the guarded
-            # decision. Prefer the latter for the Phase 3A differential so the
-            # comparator remains truly legacy even after map authority is used.
-            guarded_summary = standup_guarded_summary_v1(ctx)
+            # PolicyRuntime records both the active trigger set and, in Phase
+            # 3C/3D map-authority modes, the independent legacy trigger inside
+            # the authority decision. Prefer the latter for the Phase 3A
+            # differential so comparison remains truly legacy after promotion.
+            guarded_summary = standup_authority_summary_v1(ctx)
             guarded_decision = guarded_summary.get("decision") if isinstance(guarded_summary, dict) else None
             legacy_from_guard = (
                 guarded_decision.get("legacy_gate_triggered")
@@ -3970,9 +3976,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             print(f"[env→controller] controller step error: {e}")
             ctx.env_last_action = None
 
-        # Phase 3A/3B/3C instrumentation. Phase 3A retains an independent
-        # legacy differential, Phase 3B emits non-binding advice, and Phase 3C
-        # records which guarded trigger source actually fed PolicyRuntime. None
+        # Phase 3A/3B/3C/3D instrumentation. Phase 3A retains an independent
+        # legacy differential, Phase 3B emits non-binding advice, and Phase 3C/3D
+        # records which trigger source actually fed PolicyRuntime. None
         # of these post-selection calls may alter the winner already executed.
         compare_selection_updated = False
         try:
@@ -4016,15 +4022,19 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 selected_policy=policy_name,
             )
         except Exception as exc:
+            authority_mode = standup_authority_mode_v1(ctx)
+            default_mode = authority_mode.value == "default"
             ctx.navmap_standup_guarded_last_update = {
                 "schema": "standup_guarded_summary_v1",
-                "phase": "3C",
+                "phase": "3D" if default_mode else "3C",
                 "status": "error",
-                "authority": "guarded_standup",
-                "feature_flag_enabled": bool(
-                    getattr(ctx, "navmap_standup_guarded_enabled", False)
-                ),
+                "authority": "default_standup" if default_mode else "guarded_standup",
+                "authority_level": "default" if default_mode else "guarded",
+                "authority_mode": authority_mode.value,
+                "default_authority_active": default_mode,
+                "feature_flag_enabled": authority_mode.value == "guarded",
                 "protected_safety_can_be_overridden": False,
+                "legacy_retired": False,
                 "error_type": type(exc).__name__,
                 "error": str(exc),
             }
@@ -4249,6 +4259,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "prediction_error": dict(getattr(ctx, "prediction_last_error_record", {}) or {}),
                     "prediction_feedback": prediction_feedback_summary_v1(ctx),
                     "standup_advisory": standup_advisory_summary_v1(ctx),
+                    "standup_authority": standup_authority_summary_v1(ctx),
                     "standup_guarded": standup_guarded_summary_v1(ctx),
                 }
                 try:

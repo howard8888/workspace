@@ -2542,6 +2542,22 @@ StandUp conceptually reads SELF posture/contact geometry, emits a `STAND` intent
 successor map in which SELF is upright and supported. The next evidence map confirms, revises, fails, or leaves the transformation
 UNKNOWN.
 
+### Current StandUp authority: Phase 3D
+
+New `Ctx` sessions now use `navmap_standup_authority_mode="default"`. Actionable maintained SELF-ground geometry is therefore the
+normal cognitive source for the StandUp trigger and expected successor. The migration remains bounded and reversible:
+
+- `default` uses the maintained NavMap/WNM when support is fresh or aging;
+- `guarded` preserves the Phase 3C feature-flagged experiment;
+- `legacy` restores the historical BodyMap/PolicyRuntime gate for comparison and rollback;
+- stale, invalidated, missing, ambiguous, or transform-incomplete map content falls back to the complete legacy gate;
+- fresh BodyMap `fallen` remains a protected rapid safety override;
+- PolicyRuntime and the existing Python behavioral primitive still execute StandUp;
+- BodyMap and legacy StandUp code are retained rather than retired.
+
+The compatibility field `navmap_standup_guarded_enabled` remains temporarily available: `None` uses the canonical mode, `True` forces
+`guarded`, and `False` forces `legacy`.
+
 FollowMom locates SELF and the maternal entity, checks relative motion and intervening terrain, chooses a safe reachable direction, emits
 a bounded intent, and predicts a modest change in the SELF–MOM relation.
 

@@ -22,14 +22,21 @@ unresolved StandUp outcomes. An advisory can recommend resampling, review, or
 continued BodyMap fallback, but it remains telemetry only: it cannot alter the
 legacy StandUp gate, selected policy, safety path, or applied action.
 
-Phase 3C adds one feature-flagged guarded-authority decision for the StandUp
+Phase 3C added one feature-flagged guarded-authority decision for the StandUp
 trigger. When enabled, fresh or aging maintained SELF-ground geometry can
 supply the cognitive trigger. Stale, invalidated, UNKNOWN, ambiguous, missing,
 or transform-incomplete map state falls back to the existing BodyMap/legacy
 gate. A fresh BodyMap fallen signal remains a protected rapid safety override.
-The existing Python behavioral primitive and lower controller still execute the
-action; the map gains authority only over this one bounded trigger/expectation
-domain.
+
+Phase 3D promotes that same bounded and validated path to default authority.
+New contexts therefore use the maintained WNM/NavMap as the normal cognitive
+source for StandUp without requiring an enabling flag. Explicit ``legacy`` and
+``guarded`` modes remain available for experiments, differential diagnosis,
+and rollback. BodyMap is not retired: fresh fallen evidence remains protected,
+and unsupported map content still invokes the complete legacy fallback chain.
+The existing Python behavioral primitive and lower controller continue to
+execute the action; map authority remains limited to this one trigger and its
+expected successor.
 
 Transaction timing
 ------------------
@@ -50,12 +57,12 @@ joint trajectories, balance corrections, or other lower motor details.
 
 Authority boundary
 ------------------
-Phase 3A is compare-only and Phase 3B is advisory-only. Phase 3C may override
-the legacy StandUp trigger only when its explicit feature flag is enabled and
-the maintained map is actionable. It cannot override a fresh BodyMap fallen
-safety signal, mutate BodyMap, alter other behavioral-primitive domains, or
-replace the PolicyRuntime/controller execution substrate. All public trace
-records state the active boundary explicitly.
+Phase 3A is compare-only and Phase 3B is advisory-only. Phase 3C remains an
+explicit guarded mode, while Phase 3D makes the same validated map query the
+default cognitive source. Neither mode can override a fresh BodyMap fallen
+safety signal, mutate BodyMap, alter other behavioral-primitive domains, retire
+the legacy fallback, or replace the PolicyRuntime/controller execution
+substrate. All public trace records state the active boundary explicitly.
 """
 
 from __future__ import annotations
@@ -89,12 +96,13 @@ from cca8_navmap_shadow import (
     navmap_v2_shadow_match_thresholds_v1,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "StandUpMapRecommendationV1",
     "StandUpAdvisoryKindV1",
     "StandUpAdvisorySeverityV1",
+    "StandUpAuthorityModeV1",
     "StandUpGuardedAuthoritySourceV1",
     "StandUpCompareTransactionV1",
     "StandUpExpectedPendingV1",
@@ -110,12 +118,15 @@ __all__ = [
     "standup_advisory_selection_step_v1",
     "standup_advisory_summary_v1",
     "render_standup_advisory_lines_v1",
+    "standup_authority_mode_v1",
     "standup_guarded_trigger_value_v1",
     "standup_guarded_safety_active_v1",
     "standup_guarded_explain_v1",
     "standup_guarded_selection_step_v1",
     "standup_guarded_summary_v1",
     "render_standup_guarded_lines_v1",
+    "standup_authority_summary_v1",
+    "render_standup_authority_lines_v1",
     "__version__",
 ]
 
@@ -132,6 +143,14 @@ class StandUpMapRecommendationV1(str, Enum):
     STAND_UP = "stand_up"
     DO_NOT_STAND = "do_not_stand"
     DEFER = "defer"
+
+
+class StandUpAuthorityModeV1(str, Enum):
+    """Configured StandUp authority mode across Phase 3C and Phase 3D."""
+
+    LEGACY = "legacy"
+    GUARDED = "guarded"
+    DEFAULT = "default"
 
 
 class StandUpAdvisoryKindV1(str, Enum):
@@ -1382,8 +1401,35 @@ def render_standup_advisory_lines_v1(ctx: Any) -> list[str]:
         )
     return lines
 
+def standup_authority_mode_v1(ctx: Any) -> StandUpAuthorityModeV1:
+    """Return the active StandUp authority mode with legacy compatibility.
+
+    New contexts use ``ctx.navmap_standup_authority_mode`` and therefore start
+    in Phase 3D ``default`` mode. The historical
+    ``ctx.navmap_standup_guarded_enabled`` flag remains a temporary compatibility
+    override: True selects Phase 3C guarded mode and False selects legacy mode.
+    Invalid values fail safely to legacy authority.
+    """
+    if ctx is None:
+        return StandUpAuthorityModeV1.LEGACY
+
+    compatibility_flag = getattr(ctx, "navmap_standup_guarded_enabled", None)
+    if isinstance(compatibility_flag, bool):
+        return (
+            StandUpAuthorityModeV1.GUARDED
+            if compatibility_flag
+            else StandUpAuthorityModeV1.LEGACY
+        )
+
+    raw_mode = getattr(ctx, "navmap_standup_authority_mode", StandUpAuthorityModeV1.DEFAULT.value)
+    try:
+        return StandUpAuthorityModeV1(str(raw_mode).strip().lower())
+    except ValueError:
+        return StandUpAuthorityModeV1.LEGACY
+
+
 class StandUpGuardedAuthoritySourceV1(str, Enum):
-    """Trigger-authority source for the bounded Phase 3C StandUp domain."""
+    """Trigger-authority source for the bounded Phase 3C/3D StandUp domain."""
 
     WNM_NAVMAP = "wnm_navmap"
     BODYMAP_FALLBACK = "bodymap_fallback"
@@ -1392,12 +1438,13 @@ class StandUpGuardedAuthoritySourceV1(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class StandUpGuardedDecisionV1:
-    """One feature-flagged guarded StandUp trigger and selection record.
+    """One bounded StandUp trigger and selection record.
 
-    The record grants map authority only over the StandUp trigger when the
-    maintained SELF-ground representation is actionable. The existing
-    PolicyRuntime/controller remains the executor, and a fresh BodyMap fallen
-    signal remains a protected safety override.
+    In guarded mode this record describes the feature-flagged Phase 3C path. In
+    default mode it describes the promoted Phase 3D path in which the maintained
+    WNM/NavMap is the normal cognitive source. The existing PolicyRuntime and
+    controller remain the executor, unsupported maps fall back to legacy logic,
+    and fresh BodyMap fallen evidence remains a protected safety override.
     """
 
     decision_no: int
@@ -1405,6 +1452,7 @@ class StandUpGuardedDecisionV1:
     observation_no: Optional[int]
     controller_step: int
     source_stage: str
+    authority_mode: StandUpAuthorityModeV1
     triggered: bool
     authority_source: StandUpGuardedAuthoritySourceV1
     reason: str
@@ -1431,6 +1479,11 @@ class StandUpGuardedDecisionV1:
         _require_non_negative_int(self.controller_step, field_name="controller_step")
         if self.source_stage not in {"gate", "selection"}:
             raise ValueError("source_stage must be 'gate' or 'selection'")
+        if self.authority_mode not in {
+            StandUpAuthorityModeV1.GUARDED,
+            StandUpAuthorityModeV1.DEFAULT,
+        }:
+            raise ValueError("decision authority_mode must be guarded or default")
         if not isinstance(self.triggered, bool):
             raise TypeError("triggered must be bool")
         if not isinstance(self.authority_source, StandUpGuardedAuthoritySourceV1):
@@ -1475,13 +1528,32 @@ class StandUpGuardedDecisionV1:
             }:
                 raise ValueError("WNM_NAVMAP authority requires an actionable recommendation")
         elif not self.fallback_used:
-            raise ValueError("non-WNM guarded source must be recorded as fallback/safety use")
+            raise ValueError("non-WNM source must be recorded as fallback/safety use")
 
         if self.protected_bodymap_fallen:
             if self.authority_source is not StandUpGuardedAuthoritySourceV1.PROTECTED_BODYMAP_SAFETY:
-                raise ValueError("protected BodyMap fallen must own the guarded decision")
+                raise ValueError("protected BodyMap fallen must own the decision")
             if not self.triggered:
                 raise ValueError("protected BodyMap fallen must trigger StandUp")
+
+    @property
+    def phase(self) -> str:
+        """Return the phase label corresponding to the configured authority mode."""
+        return "3D" if self.authority_mode is StandUpAuthorityModeV1.DEFAULT else "3C"
+
+    @property
+    def authority_level(self) -> str:
+        """Return ``default`` or ``guarded`` for trace output."""
+        return self.authority_mode.value
+
+    @property
+    def authority_label(self) -> str:
+        """Return the bounded authority label used in trace output."""
+        return (
+            "default_standup"
+            if self.authority_mode is StandUpAuthorityModeV1.DEFAULT
+            else "guarded_standup"
+        )
 
     @property
     def map_authority_used(self) -> bool:
@@ -1490,7 +1562,7 @@ class StandUpGuardedDecisionV1:
 
     @property
     def guarded_map_fallen_active(self) -> bool:
-        """Return True when guarded map authority actively requires StandUp."""
+        """Compatibility readout: True when active map authority requires StandUp."""
         return (
             self.map_authority_used
             and self.triggered
@@ -1499,15 +1571,27 @@ class StandUpGuardedDecisionV1:
         )
 
     def as_dict(self) -> dict[str, Any]:
-        """Return a JSON-safe authority-explicit Phase 3C trace."""
+        """Return a JSON-safe authority-explicit Phase 3C/3D trace."""
+        default_mode = self.authority_mode is StandUpAuthorityModeV1.DEFAULT
         return {
             "schema": "standup_guarded_decision_v1",
-            "phase": "3C",
-            "authority_level": "guarded",
-            "authority": "guarded_standup",
+            "phase": self.phase,
+            "authority_level": self.authority_level,
+            "authority": self.authority_label,
+            "authority_mode": self.authority_mode.value,
+            "default_authority_active": default_mode,
+            "normal_cognitive_source": "wnm_navmap" if default_mode else "feature_flagged_wnm_navmap",
             "bounded_domain": "stand_up_trigger_and_expectation",
-            "feature_flag": "ctx.navmap_standup_guarded_enabled",
-            "feature_flag_enabled": True,
+            "feature_flag": (
+                "ctx.navmap_standup_guarded_enabled"
+                if self.authority_mode is StandUpAuthorityModeV1.GUARDED
+                else None
+            ),
+            "feature_flag_enabled": self.authority_mode is StandUpAuthorityModeV1.GUARDED,
+            "canonical_mode_field": "ctx.navmap_standup_authority_mode",
+            "legacy_debug_mode_available": True,
+            "legacy_retired": False,
+            "bodymap_protected_safety_fallback": True,
             "controller_executor": "policy_runtime_action_center",
             "lower_controller_unchanged": True,
             "bodymap_mutation_allowed": False,
@@ -1527,9 +1611,7 @@ class StandUpGuardedDecisionV1:
             "reason": self.reason,
             "fallback_used": self.fallback_used,
             "fallback_reason": self.fallback_reason,
-            "fallback_source": (
-                "bodymap_policy_runtime" if self.fallback_used else None
-            ),
+            "fallback_source": "bodymap_policy_runtime" if self.fallback_used else None,
             "protected_bodymap_fallen": self.protected_bodymap_fallen,
             "legacy_gate_triggered": self.legacy_gate_triggered,
             "legacy_bodymap_posture": self.legacy_bodymap_posture,
@@ -1596,10 +1678,11 @@ def _guarded_transaction(ctx: Any) -> Optional[StandUpCompareTransactionV1]:
 def _guarded_decision_from_current_state(
     ctx: Any,
     *,
+    authority_mode: StandUpAuthorityModeV1,
     legacy_gate_triggered: bool,
     protected_bodymap_fallen: bool,
 ) -> StandUpGuardedDecisionV1:
-    """Build one bounded guarded trigger decision from current runtime state."""
+    """Build one bounded Phase 3C/3D trigger decision from current state."""
     transaction = _guarded_transaction(ctx)
     transaction_no = transaction.transaction_no if transaction is not None else None
     observation_no = transaction.observation_no if transaction is not None else None
@@ -1676,6 +1759,7 @@ def _guarded_decision_from_current_state(
         observation_no=observation_no,
         controller_step=_guarded_controller_step(ctx),
         source_stage="gate",
+        authority_mode=authority_mode,
         triggered=triggered,
         authority_source=source,
         reason=reason,
@@ -1698,18 +1782,21 @@ def standup_guarded_trigger_value_v1(
     legacy_gate_triggered: bool,
     protected_bodymap_fallen: bool,
 ) -> bool:
-    """Return the active StandUp trigger while storing guarded telemetry.
+    """Return the active StandUp trigger while storing authority telemetry.
 
-    When the feature flag is disabled, this is an exact legacy pass-through and
-    creates no Phase 3C state. When enabled, actionable WNM geometry may supply
-    the trigger; all unsupported cases fall back to the supplied legacy result.
+    Legacy mode is an exact pass-through. Explicit guarded mode preserves the
+    Phase 3C experiment. Promoted default mode makes actionable maintained WNM
+    geometry the normal cognitive source. Unsupported map content falls back to
+    the supplied legacy result and fresh BodyMap fallen remains protected.
     """
     legacy_value = bool(legacy_gate_triggered)
-    if ctx is None or not bool(getattr(ctx, "navmap_standup_guarded_enabled", False)):
+    authority_mode = standup_authority_mode_v1(ctx)
+    if authority_mode is StandUpAuthorityModeV1.LEGACY:
         return legacy_value
 
     decision = _guarded_decision_from_current_state(
         ctx,
+        authority_mode=authority_mode,
         legacy_gate_triggered=legacy_value,
         protected_bodymap_fallen=bool(protected_bodymap_fallen),
     )
@@ -1719,7 +1806,7 @@ def standup_guarded_trigger_value_v1(
 
 def standup_guarded_safety_active_v1(ctx: Any) -> bool:
     """Return True when guarded WNM authority currently requires StandUp."""
-    if ctx is None or not bool(getattr(ctx, "navmap_standup_guarded_enabled", False)):
+    if standup_authority_mode_v1(ctx) is StandUpAuthorityModeV1.LEGACY:
         return False
     decision = getattr(ctx, "navmap_standup_guarded_decision", None)
     return bool(
@@ -1731,13 +1818,15 @@ def standup_guarded_safety_active_v1(ctx: Any) -> bool:
 
 def standup_guarded_explain_v1(ctx: Any) -> str:
     """Return one concise gate explanation without recomputing the decision."""
-    if ctx is None or not bool(getattr(ctx, "navmap_standup_guarded_enabled", False)):
-        return "phase3c_guarded=off source=legacy_bodymap_policy_runtime"
+    authority_mode = standup_authority_mode_v1(ctx)
+    if authority_mode is StandUpAuthorityModeV1.LEGACY:
+        return "standup_authority=legacy source=legacy_bodymap_policy_runtime"
     decision = getattr(ctx, "navmap_standup_guarded_decision", None)
+    phase_label = "phase3d_default" if authority_mode is StandUpAuthorityModeV1.DEFAULT else "phase3c_guarded"
     if not isinstance(decision, StandUpGuardedDecisionV1):
-        return "phase3c_guarded=on source=bodymap_fallback reason=decision_unavailable"
+        return f"{phase_label}=on source=bodymap_fallback reason=decision_unavailable"
     return (
-        "phase3c_guarded=on "
+        f"{phase_label}=on "
         f"source={decision.authority_source.value} trigger={decision.triggered} "
         f"map={decision.map_body_interpretation.value}/{decision.support_status} "
         f"legacy={decision.legacy_gate_triggered} fallback={decision.fallback_used}"
@@ -1748,12 +1837,21 @@ def _guarded_selection_result(
     decision: StandUpGuardedDecisionV1,
     selected_policy: Optional[str],
 ) -> str:
-    """Return a deterministic selection outcome label for one guarded gate."""
+    """Return a deterministic selection label for guarded or default authority."""
     selected_standup = selected_policy == _STANDUP_POLICY
     if decision.authority_source is StandUpGuardedAuthoritySourceV1.WNM_NAVMAP:
+        prefix = (
+            "default"
+            if decision.authority_mode is StandUpAuthorityModeV1.DEFAULT
+            else "guarded"
+        )
         if decision.triggered:
-            return "guarded_standup_selected" if selected_standup else "guarded_standup_not_selected"
-        return "guarded_do_not_stand_overridden" if selected_standup else "guarded_do_not_stand_respected"
+            return f"{prefix}_standup_selected" if selected_standup else f"{prefix}_standup_not_selected"
+        return (
+            f"{prefix}_do_not_stand_overridden"
+            if selected_standup
+            else f"{prefix}_do_not_stand_respected"
+        )
     if decision.authority_source is StandUpGuardedAuthoritySourceV1.PROTECTED_BODYMAP_SAFETY:
         return "protected_safety_standup_selected" if selected_standup else "protected_safety_standup_not_selected"
     return "fallback_standup_selected" if selected_standup else "fallback_non_standup_selected"
@@ -1764,7 +1862,7 @@ def standup_guarded_selection_step_v1(
     *,
     selected_policy: Optional[str],
 ) -> dict[str, Any]:
-    """Finalize the current guarded record after PolicyRuntime has selected.
+    """Finalize the current Phase 3C/3D record after policy selection.
 
     This function only observes the already-completed selection. It does not
     change the selected behavioral primitive, action, BodyMap, or safety path.
@@ -1772,11 +1870,11 @@ def standup_guarded_selection_step_v1(
     if ctx is None:
         return {
             "schema": "standup_guarded_summary_v1",
-            "phase": "3C",
+            "phase": "3D",
             "status": "ctx_unavailable",
-            "authority": "guarded_standup",
+            "authority": "default_standup",
         }
-    if not bool(getattr(ctx, "navmap_standup_guarded_enabled", False)):
+    if standup_authority_mode_v1(ctx) is StandUpAuthorityModeV1.LEGACY:
         return standup_guarded_summary_v1(ctx)
 
     decision = getattr(ctx, "navmap_standup_guarded_decision", None)
@@ -1802,31 +1900,47 @@ def standup_guarded_selection_step_v1(
 
 
 def standup_guarded_summary_v1(ctx: Any) -> dict[str, Any]:
-    """Return a defensive JSON-safe summary of the Phase 3C authority state."""
+    """Return a defensive JSON-safe Phase 3C/3D authority summary."""
     if ctx is None:
         return {
             "schema": "standup_guarded_summary_v1",
-            "phase": "3C",
+            "phase": "3D",
             "status": "ctx_unavailable",
         }
+
     history_count = len(getattr(ctx, "navmap_standup_guarded_history", []) or [])
-    if not bool(getattr(ctx, "navmap_standup_guarded_enabled", False)):
+    mode = standup_authority_mode_v1(ctx)
+    if mode is StandUpAuthorityModeV1.LEGACY:
+        compatibility = getattr(ctx, "navmap_standup_guarded_enabled", None)
         return {
             "schema": "standup_guarded_summary_v1",
-            "phase": "3C",
-            "status": "disabled",
+            "phase": "3D",
+            "status": "disabled" if compatibility is False else "legacy_override",
             "authority": "legacy_bodymap_policy_runtime",
+            "authority_level": "legacy",
+            "authority_mode": "legacy",
+            "default_authority_active": False,
             "feature_flag_enabled": False,
+            "legacy_debug_mode_available": True,
+            "legacy_retired": False,
             "history_count": history_count,
         }
+
+    phase = "3D" if mode is StandUpAuthorityModeV1.DEFAULT else "3C"
+    authority = "default_standup" if mode is StandUpAuthorityModeV1.DEFAULT else "guarded_standup"
     row = getattr(ctx, "navmap_standup_guarded_last_update", None)
     if not isinstance(row, dict):
         return {
             "schema": "standup_guarded_summary_v1",
-            "phase": "3C",
+            "phase": phase,
             "status": "idle",
-            "authority": "guarded_standup",
-            "feature_flag_enabled": True,
+            "authority": authority,
+            "authority_level": mode.value,
+            "authority_mode": mode.value,
+            "default_authority_active": mode is StandUpAuthorityModeV1.DEFAULT,
+            "feature_flag_enabled": mode is StandUpAuthorityModeV1.GUARDED,
+            "legacy_debug_mode_available": True,
+            "legacy_retired": False,
             "history_count": history_count,
         }
     if row.get("status") == "error":
@@ -1836,32 +1950,82 @@ def standup_guarded_summary_v1(ctx: Any) -> dict[str, Any]:
 
     source = row.get("trigger_authority_source")
     if source == StandUpGuardedAuthoritySourceV1.WNM_NAVMAP.value:
-        status = "guarded_map_authority"
+        status = (
+            "default_map_authority"
+            if mode is StandUpAuthorityModeV1.DEFAULT
+            else "guarded_map_authority"
+        )
     elif source == StandUpGuardedAuthoritySourceV1.PROTECTED_BODYMAP_SAFETY.value:
         status = "protected_safety_fallback"
     else:
         status = "bodymap_fallback"
     return {
         "schema": "standup_guarded_summary_v1",
-        "phase": "3C",
+        "phase": phase,
         "status": status,
-        "authority": "guarded_standup",
-        "feature_flag_enabled": True,
+        "authority": authority,
+        "authority_level": mode.value,
+        "authority_mode": mode.value,
+        "default_authority_active": mode is StandUpAuthorityModeV1.DEFAULT,
+        "feature_flag_enabled": mode is StandUpAuthorityModeV1.GUARDED,
+        "legacy_debug_mode_available": True,
+        "legacy_retired": False,
         "decision": dict(row),
         "history_count": history_count,
     }
 
 
-def render_standup_guarded_lines_v1(ctx: Any) -> list[str]:
-    """Return concise human-readable Phase 3C guarded-authority lines."""
-    summary = standup_guarded_summary_v1(ctx)
-    lines = ["STANDUP PHASE 3C GUARDED AUTHORITY:"]
+def standup_authority_summary_v1(ctx: Any) -> dict[str, Any]:
+    """Return the canonical Phase 3C/3D StandUp authority summary.
+
+    The historical guarded-summary function preserves its Phase 3C schema and
+    disabled-status compatibility. This wrapper provides the mode-neutral Phase
+    3D public contract used by new traces and tests while retaining the complete
+    guarded/default decision payload.
+    """
+    summary = dict(standup_guarded_summary_v1(ctx))
+    mode = standup_authority_mode_v1(ctx)
+    summary["schema"] = "standup_authority_summary_v1"
+    summary["authority_mode"] = mode.value
+    summary["legacy_debug_mode_available"] = True
+    summary["legacy_retired"] = False
+    summary["bodymap_protected_safety_fallback"] = True
+
+    if mode is StandUpAuthorityModeV1.LEGACY:
+        summary["status"] = "legacy_mode"
+        summary["normal_cognitive_source"] = "legacy_bodymap_policy_runtime"
+        summary["default_authority_active"] = False
+        return summary
+
+    summary["normal_cognitive_source"] = (
+        "wnm_navmap"
+        if mode is StandUpAuthorityModeV1.DEFAULT
+        else "feature_flagged_wnm_navmap"
+    )
+    summary["default_authority_active"] = mode is StandUpAuthorityModeV1.DEFAULT
+    return summary
+
+
+def render_standup_authority_lines_v1(ctx: Any) -> list[str]:
+    """Return concise human-readable Phase 3C/3D authority lines."""
+    summary = standup_authority_summary_v1(ctx)
+    phase = summary.get("phase") or "3D"
+    mode = summary.get("authority_mode") or "legacy"
+    if phase == "3D" and mode == "default":
+        title = "STANDUP PHASE 3D DEFAULT AUTHORITY:"
+    elif mode == "guarded":
+        title = "STANDUP PHASE 3C GUARDED AUTHORITY:"
+    else:
+        title = "STANDUP AUTHORITY LEGACY MODE:"
+    lines = [title]
     status = summary.get("status")
-    if status in {"ctx_unavailable", "disabled", "idle", "error"}:
+    if status in {"ctx_unavailable", "disabled", "legacy_mode", "idle", "error"}:
         lines.append(
             "  "
-            f"status={status} feature_flag={summary.get('feature_flag_enabled')} "
-            f"authority={summary.get('authority')}"
+            f"status={status} mode={mode} feature_flag={summary.get('feature_flag_enabled')} "
+            f"authority={summary.get('authority')} "
+            f"normal_cognitive_source={summary.get('normal_cognitive_source')} "
+            f"legacy_retired={summary.get('legacy_retired')}"
         )
         if status == "error":
             lines.append(
@@ -1875,7 +2039,14 @@ def render_standup_guarded_lines_v1(ctx: Any) -> list[str]:
     lines.append(
         "  "
         f"decision={decision.get('decision_no')} tx={decision.get('transaction_no')} "
-        f"status={status} authority=guarded_standup bounded_domain=stand_up"
+        f"status={status} authority={decision.get('authority')} "
+        f"mode={decision.get('authority_mode')} bounded_domain=stand_up"
+    )
+    lines.append(
+        "  "
+        f"mode={summary.get('authority_mode')} "
+        f"normal_cognitive_source={summary.get('normal_cognitive_source')} "
+        f"legacy_retired={summary.get('legacy_retired')}"
     )
     lines.append(
         "  "
@@ -1900,7 +2071,7 @@ def render_standup_guarded_lines_v1(ctx: Any) -> list[str]:
         "  "
         f"fallback_used={decision.get('fallback_used')} "
         f"fallback_reason={decision.get('fallback_reason')} "
-        "protected_safety_can_be_overridden=False"
+        "protected_safety_can_be_overridden=False legacy_retired=False"
     )
     lines.append(
         "  "
@@ -1909,3 +2080,8 @@ def render_standup_guarded_lines_v1(ctx: Any) -> list[str]:
         f"expected_pending_armed={decision.get('expected_pending_armed')}"
     )
     return lines
+
+
+def render_standup_guarded_lines_v1(ctx: Any) -> list[str]:
+    """Compatibility wrapper for the canonical authority renderer."""
+    return render_standup_authority_lines_v1(ctx)

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
         StandUpObservedOutcomeV1,
     )
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -666,12 +666,19 @@ class Ctx:
     navmap_standup_advisory_history: list[dict[str, Any]] = field(default_factory=list)
     navmap_standup_advisory_history_limit: int = 25
 
-    # Phase 3C guarded StandUp authority. This feature is OFF by default.
-    # When enabled, a fresh/aging maintained SELF-ground NavMap may provide the
-    # StandUp trigger, while stale/invalid/UNKNOWN map state falls back to the
-    # legacy BodyMap/PolicyRuntime gate. A fresh BodyMap fallen signal remains a
-    # protected rapid safety override and can never be suppressed by the map.
-    navmap_standup_guarded_enabled: bool = False
+    # Phase 3D default StandUp NavMap authority. ``default`` is now the normal
+    # cognitive mode for new sessions: actionable maintained SELF-ground geometry
+    # supplies the StandUp trigger, while stale/invalid/UNKNOWN map state falls
+    # back to the legacy BodyMap/PolicyRuntime gate. A fresh BodyMap fallen signal
+    # remains a protected rapid safety override and can never be suppressed.
+    #
+    # Supported modes: ``legacy`` | ``guarded`` | ``default``. The older
+    # ``navmap_standup_guarded_enabled`` field remains as a temporary compatibility
+    # override: None uses the canonical mode, True forces Phase 3C guarded mode,
+    # and False forces legacy mode. Legacy code is retained for fallback/debugging;
+    # it is not retired in Phase 3D.
+    navmap_standup_authority_mode: str = "default"
+    navmap_standup_guarded_enabled: Optional[bool] = None
     navmap_standup_guarded_decision_no: int = 0
     navmap_standup_guarded_decision: Optional[StandUpGuardedDecisionV1] = None
     navmap_standup_guarded_last_update: Optional[dict[str, Any]] = None
