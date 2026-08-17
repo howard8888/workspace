@@ -21,6 +21,7 @@ from cca8_navpatch import SurfaceGridV1
 from cca8_temporal import TemporalContext
 
 if TYPE_CHECKING:
+    from cca8_maternal_geometry import MaternalGeometryShadowStateV1
     from cca8_navmap_kernel import NavMapV2
     from cca8_navmap_shadow import NavMapV2ShadowStateV2
     from cca8_standup_compare import (
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
         StandUpObservedOutcomeV1,
     )
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -684,6 +685,21 @@ class Ctx:
     navmap_standup_guarded_last_update: Optional[dict[str, Any]] = None
     navmap_standup_guarded_history: list[dict[str, Any]] = field(default_factory=list)
     navmap_standup_guarded_history_limit: int = 25
+
+    # Phase 4A SELF-maternal common-frame geometry shadow.  The evidence map
+    # is constructed from current simulated position metadata, not from the
+    # symbolic proximity:mom state.  The maintained maternal map and diagnostic
+    # root view remain shadow-only; FollowMom continues to use the legacy path.
+    navmap_maternal_shadow_enabled: bool = True
+    navmap_maternal_evidence_map: Optional[NavMapV2] = None
+    navmap_maternal_map: Optional[NavMapV2] = None
+    navmap_maternal_root_view: Optional[NavMapV2] = None
+    navmap_maternal_state: Optional[MaternalGeometryShadowStateV1] = None
+    navmap_maternal_observation_no: int = 0
+    navmap_maternal_max_missing_observations: int = 2
+    navmap_maternal_last_update: Optional[dict[str, Any]] = None
+    navmap_maternal_history: list[dict[str, Any]] = field(default_factory=list)
+    navmap_maternal_history_limit: int = 25
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------

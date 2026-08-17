@@ -10,6 +10,7 @@ operators with CCA8 runtime registers for:
 - observation-update candidate storage and bounded histories
 - the first NavMapV2 root/SELF-ground runtime shadow bridge
 - the Phase 3A/3B StandUp compare and advisory observation handoff
+- the Phase 4A SELF-maternal common-frame geometry shadow
 - expected-current construction and residual comparison
 - conservative accepted-current selection
 - the diagnostic Working Navigation Map surface bridge
@@ -47,6 +48,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from cca8_context import Ctx
+from cca8_maternal_geometry import maternal_geometry_shadow_observation_step_v1
 from cca8_env import EnvObservation
 from cca8_navmap import (
     make_navmap_payload_v1,
@@ -66,7 +68,7 @@ from cca8_standup_compare import (
 )
 
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "NAVMAP_SCOPE_MARKER_V1",
     "NAVMAP_SCOPE_PROBES_V1",
@@ -104,6 +106,7 @@ __all__ = [
     "navmap_ctx_observation_update_step_v1",
     "navmap_ctx_transition_from_payloads_v1",
     "navmap_v2_shadow_observation_step_v1",
+    "maternal_geometry_shadow_observation_step_v1",
     "standup_compare_observation_step_v1",
     "standup_advisory_observation_step_v1",
     "__version__",
@@ -1940,6 +1943,24 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
             "status": "error",
             "authority": "shadow_only",
             "legacy_authority": "bodymap",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+
+    # Phase 4A SELF-maternal geometry shadow.  It reads simulated observed
+    # positions, derives common-frame distance/bearing, and creates a diagnostic
+    # root view.  It cannot alter FollowMom, BodyMap, or the accepted Phase 2/3
+    # root reference.
+    try:
+        maternal_geometry_shadow_observation_step_v1(ctx, env_obs)
+    except Exception as exc:  # defensive runtime diagnostic boundary
+        ctx.navmap_maternal_last_update = {
+            "schema": "maternal_geometry_shadow_update_v1",
+            "phase": "4A",
+            "status": "error",
+            "authority": "shadow_only",
+            "legacy_authority": "bodymap_policy_runtime",
+            "map_can_trigger_follow_mom": False,
             "error_type": type(exc).__name__,
             "error": str(exc),
         }
