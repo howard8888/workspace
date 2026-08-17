@@ -9,7 +9,7 @@ operators with CCA8 runtime registers for:
 
 - observation-update candidate storage and bounded histories
 - the first NavMapV2 root/SELF-ground runtime shadow bridge
-- the Phase 3A StandUp compare-only observation handoff
+- the Phase 3A/3B StandUp compare and advisory observation handoff
 - expected-current construction and residual comparison
 - conservative accepted-current selection
 - the diagnostic Working Navigation Map surface bridge
@@ -60,10 +60,13 @@ from cca8_predictive import (
     compact_slot_map_text_v1 as _prediction_compact_map_text_v1,
     prediction_policy_expected_slots_v1,
 )
-from cca8_standup_compare import standup_compare_observation_step_v1
+from cca8_standup_compare import (
+    standup_advisory_observation_step_v1,
+    standup_compare_observation_step_v1,
+)
 
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "NAVMAP_SCOPE_MARKER_V1",
     "NAVMAP_SCOPE_PROBES_V1",
@@ -102,6 +105,7 @@ __all__ = [
     "navmap_ctx_transition_from_payloads_v1",
     "navmap_v2_shadow_observation_step_v1",
     "standup_compare_observation_step_v1",
+    "standup_advisory_observation_step_v1",
     "__version__",
 ]
 
@@ -1940,16 +1944,18 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
             "error": str(exc),
         }
 
-    # Phase 3A StandUp compare bridge.  This reads the just-updated shadow and
-    # the action already applied by the environment.  It records an independent
-    # map query and expected-versus-observed outcome but cannot alter policy
-    # selection, BodyMap, or lower-controller execution.
+    # Phase 3A/3B StandUp bridge. The compare path reads the just-updated
+    # shadow and action already applied by the environment. The advisory path
+    # then classifies bounded support/outcome concerns. Neither can alter policy
+    # selection, BodyMap, protected safety, or lower-controller execution.
     if shadow_updated:
+        compare_updated = False
         try:
             standup_compare_observation_step_v1(
                 ctx,
                 applied_policy=applied_policy if isinstance(applied_policy, str) else None,
             )
+            compare_updated = True
         except Exception as exc:  # defensive runtime diagnostic boundary
             ctx.navmap_standup_compare_last_update = {
                 "schema": "standup_compare_summary_v1",
@@ -1961,4 +1967,20 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
                 "error_type": type(exc).__name__,
                 "error": str(exc),
             }
+
+        if compare_updated:
+            try:
+                standup_advisory_observation_step_v1(ctx)
+            except Exception as exc:  # defensive runtime diagnostic boundary
+                ctx.navmap_standup_advisory_last_update = {
+                    "schema": "standup_advisory_summary_v1",
+                    "phase": "3B",
+                    "status": "error",
+                    "authority": "advisory_only",
+                    "legacy_executes": True,
+                    "map_can_override": False,
+                    "protected_safety_can_be_overridden": False,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
     return update_dict

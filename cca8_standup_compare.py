@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Phase 3A StandUp map-native compare transaction.
+"""Phase 3A/3B StandUp map-native compare and advisory transactions.
 
 Purpose
 -------
-Phase 3A moves the ``StandUp`` domain from authority level 2 (shadow) to
+Phase 3A moved the ``StandUp`` domain from authority level 2 (shadow) to
 level 3 (compare/dual-run). The maintained NavMapV2 SELF-ground shadow now
 independently answers a narrow task-level question:
 
@@ -15,18 +15,25 @@ performs all gating, selection, and execution. The two paths are compared and
 recorded, but the map path cannot change the selected behavioral primitive,
 BodyMap, WorldGraph, environment, or lower-controller behavior.
 
+Phase 3B adds the authority-level-4 advisory surface. It converts bounded
+compare results into explicit notices for unsupported/UNKNOWN posture, stale
+support, expected-transform failure, map/legacy disagreement, and failed or
+unresolved StandUp outcomes. An advisory can recommend resampling, review, or
+continued BodyMap fallback, but it remains telemetry only: it cannot alter the
+legacy StandUp gate, selected policy, safety path, or applied action.
+
 Transaction timing
 ------------------
-One closed-loop cycle has two Phase 3A moments:
+One closed-loop cycle has two compare/advisory moments:
 
 1. Observation step
    Finalize any expected successor armed by the previous StandUp selection,
-   then independently query the newly maintained SELF-ground shadow.
+   query the newly maintained SELF-ground shadow, and form a provisional
+   advisory from the current map support and prior outcome.
 2. Selection step
-   Record the actual legacy StandUp gate result and selected policy. If the
-   legacy controller selected StandUp and the map path independently produced
-   an expected successor, arm that expected map for comparison with the next
-   observation.
+   Record the actual legacy StandUp gate result and selected policy, arm any
+   expected successor, and finalize the current advisory with the legacy
+   differential.
 
 The expected successor represents the task-level result of the behavioral
 primitive: an upright SELF-ground configuration. It does not model hoof paths,
@@ -34,9 +41,9 @@ joint trajectories, balance corrections, or other lower motor details.
 
 Authority boundary
 ------------------
-This module is compare-only. ``legacy_executes`` is always true and
-``map_can_override`` is always false. All public trace records state that
-boundary explicitly.
+Phase 3A is compare-only and Phase 3B is advisory-only. ``legacy_executes`` is
+always true, ``map_can_override`` is always false, and protected safety cannot
+be overridden. All public trace records state that boundary explicitly.
 """
 
 from __future__ import annotations
@@ -70,18 +77,25 @@ from cca8_navmap_shadow import (
     navmap_v2_shadow_match_thresholds_v1,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "StandUpMapRecommendationV1",
+    "StandUpAdvisoryKindV1",
+    "StandUpAdvisorySeverityV1",
     "StandUpCompareTransactionV1",
     "StandUpExpectedPendingV1",
     "StandUpObservedOutcomeV1",
+    "StandUpAdvisoryV1",
     "standup_expected_successor_map_v1",
     "standup_compare_observation_step_v1",
     "standup_compare_selection_step_v1",
     "standup_compare_summary_v1",
     "render_standup_compare_lines_v1",
+    "standup_advisory_observation_step_v1",
+    "standup_advisory_selection_step_v1",
+    "standup_advisory_summary_v1",
+    "render_standup_advisory_lines_v1",
     "__version__",
 ]
 
@@ -98,6 +112,27 @@ class StandUpMapRecommendationV1(str, Enum):
     STAND_UP = "stand_up"
     DO_NOT_STAND = "do_not_stand"
     DEFER = "defer"
+
+
+class StandUpAdvisoryKindV1(str, Enum):
+    """Bounded Phase 3B advisory classifications."""
+
+    CLEAR = "clear"
+    SUPPORT_AGING = "support_aging"
+    POSTURE_UNSUPPORTED = "posture_unsupported"
+    EXPECTED_TRANSFORM_FAILURE = "expected_transform_failure"
+    MAP_LEGACY_DISAGREEMENT = "map_legacy_disagreement"
+    STANDUP_OUTCOME_FAILURE = "standup_outcome_failure"
+    STANDUP_OUTCOME_UNKNOWN = "standup_outcome_unknown"
+    ACTION_HANDOFF_MISMATCH = "action_handoff_mismatch"
+
+
+class StandUpAdvisorySeverityV1(str, Enum):
+    """Human-readable advisory severity without behavioral authority."""
+
+    INFO = "info"
+    CAUTION = "caution"
+    WARNING = "warning"
 
 
 def _require_positive_int(value: int, *, field_name: str) -> None:
@@ -427,6 +462,138 @@ class StandUpObservedOutcomeV1:
             "reason": self.reason,
         }
 
+
+
+@dataclass(frozen=True, slots=True)
+class StandUpAdvisoryV1:
+    """One bounded Phase 3B advisory derived from compare-only records.
+
+    The record can request review, resampling, or continued BodyMap fallback,
+    but it cannot change a gate, selected behavioral primitive, applied action,
+    BodyMap content, or protected safety behavior.
+    """
+
+    transaction_no: int
+    observation_no: int
+    source_stage: str
+    kind: StandUpAdvisoryKindV1
+    severity: StandUpAdvisorySeverityV1
+    active: bool
+    reason: str
+    recommended_response: str
+    map_recommendation: StandUpMapRecommendationV1
+    map_reason: str
+    map_body_interpretation: NavBodyStateInterpretationV1
+    support_status: str
+    legacy_bodymap_posture: Optional[str]
+    legacy_gate_triggered: Optional[bool]
+    selected_policy: Optional[str]
+    gate_comparison: str
+    selection_comparison: str
+    prior_outcome_transaction_no: Optional[int]
+    prior_outcome: Optional[str]
+    fallback_required: bool
+    resample_recommended: bool
+    transform_review_recommended: bool
+    disagreement_review_recommended: bool
+    outcome_review_recommended: bool
+
+    def __post_init__(self) -> None:
+        _require_positive_int(self.transaction_no, field_name="transaction_no")
+        _require_positive_int(self.observation_no, field_name="observation_no")
+        if self.source_stage not in {"observation", "selection"}:
+            raise ValueError("source_stage must be 'observation' or 'selection'")
+        if not isinstance(self.kind, StandUpAdvisoryKindV1):
+            raise TypeError("kind must be StandUpAdvisoryKindV1")
+        if not isinstance(self.severity, StandUpAdvisorySeverityV1):
+            raise TypeError("severity must be StandUpAdvisorySeverityV1")
+        if not isinstance(self.active, bool):
+            raise TypeError("active must be bool")
+        _require_nonempty_text(self.reason, field_name="reason")
+        _require_nonempty_text(self.recommended_response, field_name="recommended_response")
+        if not isinstance(self.map_recommendation, StandUpMapRecommendationV1):
+            raise TypeError("map_recommendation must be StandUpMapRecommendationV1")
+        _require_nonempty_text(self.map_reason, field_name="map_reason")
+        if not isinstance(self.map_body_interpretation, NavBodyStateInterpretationV1):
+            raise TypeError("map_body_interpretation must be NavBodyStateInterpretationV1")
+        _require_nonempty_text(self.support_status, field_name="support_status")
+        if self.legacy_bodymap_posture is not None and not isinstance(self.legacy_bodymap_posture, str):
+            raise TypeError("legacy_bodymap_posture must be str or None")
+        if self.legacy_gate_triggered is not None and not isinstance(self.legacy_gate_triggered, bool):
+            raise TypeError("legacy_gate_triggered must be bool or None")
+        if self.selected_policy is not None and not isinstance(self.selected_policy, str):
+            raise TypeError("selected_policy must be str or None")
+        _require_nonempty_text(self.gate_comparison, field_name="gate_comparison")
+        _require_nonempty_text(self.selection_comparison, field_name="selection_comparison")
+        if self.prior_outcome_transaction_no is not None:
+            _require_positive_int(
+                self.prior_outcome_transaction_no,
+                field_name="prior_outcome_transaction_no",
+            )
+        if self.prior_outcome is not None and not isinstance(self.prior_outcome, str):
+            raise TypeError("prior_outcome must be str or None")
+        for field_name in (
+            "fallback_required",
+            "resample_recommended",
+            "transform_review_recommended",
+            "disagreement_review_recommended",
+            "outcome_review_recommended",
+        ):
+            if not isinstance(getattr(self, field_name), bool):
+                raise TypeError(f"{field_name} must be bool")
+
+        if self.kind is StandUpAdvisoryKindV1.CLEAR:
+            if self.active:
+                raise ValueError("CLEAR advisory must not be active")
+            if self.severity is not StandUpAdvisorySeverityV1.INFO:
+                raise ValueError("CLEAR advisory must use INFO severity")
+        elif not self.active:
+            raise ValueError("non-CLEAR advisory must be active")
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a compact JSON-safe advisory and immutable authority contract."""
+        return {
+            "schema": "standup_advisory_v1",
+            "phase": "3B",
+            "authority_level": "advisory",
+            "authority": "advisory_only",
+            "legacy_authority": "bodymap_policy_runtime",
+            "legacy_executes": True,
+            "map_can_override": False,
+            "protected_safety_can_be_overridden": False,
+            "bodymap_mutation_allowed": False,
+            "policy_selection_mutation_allowed": False,
+            "requested_followup_is_behavioral_command": False,
+            "behavioral_primitive": "stand_up",
+            "transaction_no": self.transaction_no,
+            "observation_no": self.observation_no,
+            "source_stage": self.source_stage,
+            "active": self.active,
+            "kind": self.kind.value,
+            "severity": self.severity.value,
+            "reason": self.reason,
+            "recommended_response": self.recommended_response,
+            "map_recommendation": self.map_recommendation.value,
+            "map_reason": self.map_reason,
+            "map_body_interpretation": self.map_body_interpretation.value,
+            "support_status": self.support_status,
+            "legacy_bodymap_posture": self.legacy_bodymap_posture,
+            "legacy_gate_triggered": self.legacy_gate_triggered,
+            "selected_policy": self.selected_policy,
+            "selected_policy_before_advisory": self.selected_policy,
+            "selected_policy_after_advisory": self.selected_policy,
+            "legacy_action_unchanged": True,
+            "gate_comparison": self.gate_comparison,
+            "selection_comparison": self.selection_comparison,
+            "prior_outcome_transaction_no": self.prior_outcome_transaction_no,
+            "prior_outcome": self.prior_outcome,
+            "fallback_required": self.fallback_required,
+            "fallback_source": "bodymap_policy_runtime" if self.fallback_required else None,
+            "resample_recommended": self.resample_recommended,
+            "transform_review_recommended": self.transform_review_recommended,
+            "disagreement_review_recommended": self.disagreement_review_recommended,
+            "outcome_review_recommended": self.outcome_review_recommended,
+        }
 
 def _next_transaction_no(ctx: Any) -> int:
     """Advance and return the deterministic Phase 3A transaction counter."""
@@ -822,5 +989,375 @@ def render_standup_compare_lines_v1(ctx: Any) -> list[str]:
             f"evidence={_ref_text(outcome.get('evidence_map_ref'))} "
             f"derived={outcome.get('observed_interpretation')} "
             f"match={outcome.get('match_status')} residual={residual_reason}"
+        )
+    return lines
+
+
+def _relevant_prior_outcome(
+    ctx: Any,
+    transaction: StandUpCompareTransactionV1,
+) -> Optional[StandUpObservedOutcomeV1]:
+    """Return the outcome finalized immediately before the current transaction.
+
+    ``navmap_standup_compare_last_outcome`` is intentionally retained for
+    inspection. Restricting it to ``current transaction - 1`` prevents one old
+    failure from producing an advisory on every later cognitive cycle.
+    """
+    outcome = getattr(ctx, "navmap_standup_compare_last_outcome", None)
+    if not isinstance(outcome, StandUpObservedOutcomeV1):
+        return None
+    if outcome.transaction_no != transaction.transaction_no - 1:
+        return None
+    return outcome
+
+
+def _transaction_has_disagreement(transaction: StandUpCompareTransactionV1) -> bool:
+    """Return True when the actionable map and legacy StandUp paths diverge."""
+    if transaction.gate_comparison.startswith("disagree_"):
+        return True
+    return transaction.selection_comparison in {
+        "map_standup_not_selected",
+        "disagree_standup_selected",
+    }
+
+
+def _advisory_decision(
+    transaction: StandUpCompareTransactionV1,
+    prior_outcome: Optional[StandUpObservedOutcomeV1],
+) -> dict[str, Any]:
+    """Return the bounded Phase 3B advisory classification and follow-up flags."""
+    base: dict[str, Any] = {
+        "kind": StandUpAdvisoryKindV1.CLEAR,
+        "severity": StandUpAdvisorySeverityV1.INFO,
+        "active": False,
+        "reason": "no_advisory_condition_detected",
+        "recommended_response": "continue_legacy_execution",
+        "fallback_required": False,
+        "resample_recommended": False,
+        "transform_review_recommended": False,
+        "disagreement_review_recommended": False,
+        "outcome_review_recommended": False,
+    }
+
+    if prior_outcome is not None and prior_outcome.outcome == "failure":
+        base.update(
+            {
+                "kind": StandUpAdvisoryKindV1.STANDUP_OUTCOME_FAILURE,
+                "severity": StandUpAdvisorySeverityV1.WARNING,
+                "active": True,
+                "reason": prior_outcome.reason,
+                "recommended_response": "retain_legacy_recovery_and_review_standup_failure",
+                "fallback_required": True,
+                "outcome_review_recommended": True,
+            }
+        )
+        return base
+
+    if prior_outcome is not None and prior_outcome.outcome == "unknown":
+        base.update(
+            {
+                "kind": StandUpAdvisoryKindV1.STANDUP_OUTCOME_UNKNOWN,
+                "severity": StandUpAdvisorySeverityV1.CAUTION,
+                "active": True,
+                "reason": prior_outcome.reason,
+                "recommended_response": "retain_legacy_safety_and_resample_posture",
+                "fallback_required": True,
+                "resample_recommended": True,
+                "outcome_review_recommended": True,
+            }
+        )
+        return base
+
+    if prior_outcome is not None and prior_outcome.outcome == "not_applied":
+        base.update(
+            {
+                "kind": StandUpAdvisoryKindV1.ACTION_HANDOFF_MISMATCH,
+                "severity": StandUpAdvisorySeverityV1.WARNING,
+                "active": True,
+                "reason": prior_outcome.reason,
+                "recommended_response": "retain_legacy_action_and_review_action_handoff",
+                "fallback_required": True,
+                "outcome_review_recommended": True,
+            }
+        )
+        return base
+
+    if transaction.map_reason.startswith("expected_successor_unavailable:"):
+        base.update(
+            {
+                "kind": StandUpAdvisoryKindV1.EXPECTED_TRANSFORM_FAILURE,
+                "severity": StandUpAdvisorySeverityV1.WARNING,
+                "active": True,
+                "reason": transaction.map_reason,
+                "recommended_response": "use_bodymap_fallback_and_review_expected_transform",
+                "fallback_required": True,
+                "transform_review_recommended": True,
+            }
+        )
+        return base
+
+    if transaction.map_recommendation is StandUpMapRecommendationV1.DEFER:
+        base.update(
+            {
+                "kind": StandUpAdvisoryKindV1.POSTURE_UNSUPPORTED,
+                "severity": StandUpAdvisorySeverityV1.CAUTION,
+                "active": True,
+                "reason": transaction.map_reason,
+                "recommended_response": "use_bodymap_fallback_and_resample_posture",
+                "fallback_required": True,
+                "resample_recommended": True,
+            }
+        )
+        return base
+
+    if _transaction_has_disagreement(transaction):
+        base.update(
+            {
+                "kind": StandUpAdvisoryKindV1.MAP_LEGACY_DISAGREEMENT,
+                "severity": StandUpAdvisorySeverityV1.WARNING,
+                "active": True,
+                "reason": (
+                    f"gate={transaction.gate_comparison};"
+                    f"selection={transaction.selection_comparison}"
+                ),
+                "recommended_response": "retain_legacy_action_and_review_map_bodymap_disagreement",
+                "fallback_required": True,
+                "disagreement_review_recommended": True,
+            }
+        )
+        return base
+
+    if transaction.support_status == "aging":
+        base.update(
+            {
+                "kind": StandUpAdvisoryKindV1.SUPPORT_AGING,
+                "severity": StandUpAdvisorySeverityV1.CAUTION,
+                "active": True,
+                "reason": "maintained_posture_support_aging",
+                "recommended_response": "monitor_support_and_resample_if_missing_continues",
+                "resample_recommended": True,
+            }
+        )
+    return base
+
+
+def _build_advisory(
+    ctx: Any,
+    *,
+    source_stage: str,
+) -> Optional[StandUpAdvisoryV1]:
+    """Build one advisory from the latest compare transaction without side effects."""
+    transaction = getattr(ctx, "navmap_standup_compare_transaction", None)
+    if not isinstance(transaction, StandUpCompareTransactionV1):
+        return None
+
+    prior_outcome = _relevant_prior_outcome(ctx, transaction)
+    decision = _advisory_decision(transaction, prior_outcome)
+    return StandUpAdvisoryV1(
+        transaction_no=transaction.transaction_no,
+        observation_no=transaction.observation_no,
+        source_stage=source_stage,
+        kind=decision["kind"],
+        severity=decision["severity"],
+        active=decision["active"],
+        reason=decision["reason"],
+        recommended_response=decision["recommended_response"],
+        map_recommendation=transaction.map_recommendation,
+        map_reason=transaction.map_reason,
+        map_body_interpretation=transaction.map_body_interpretation,
+        support_status=transaction.support_status,
+        legacy_bodymap_posture=transaction.legacy_bodymap_posture,
+        legacy_gate_triggered=transaction.legacy_gate_triggered,
+        selected_policy=transaction.selected_policy,
+        gate_comparison=transaction.gate_comparison,
+        selection_comparison=transaction.selection_comparison,
+        prior_outcome_transaction_no=(prior_outcome.transaction_no if prior_outcome is not None else None),
+        prior_outcome=(prior_outcome.outcome if prior_outcome is not None else None),
+        fallback_required=decision["fallback_required"],
+        resample_recommended=decision["resample_recommended"],
+        transform_review_recommended=decision["transform_review_recommended"],
+        disagreement_review_recommended=decision["disagreement_review_recommended"],
+        outcome_review_recommended=decision["outcome_review_recommended"],
+    )
+
+
+def _store_advisory(ctx: Any, advisory: StandUpAdvisoryV1) -> dict[str, Any]:
+    """Store one ctx-local advisory and one bounded row per compare transaction."""
+    row = advisory.as_dict()
+    ctx.navmap_standup_advisory = advisory
+    ctx.navmap_standup_advisory_last_update = dict(row)
+
+    history = getattr(ctx, "navmap_standup_advisory_history", [])
+    if not isinstance(history, list):
+        history = []
+    clean = [dict(item) for item in history if isinstance(item, dict)]
+    if clean and clean[-1].get("transaction_no") == advisory.transaction_no:
+        clean[-1] = dict(row)
+    else:
+        clean.append(dict(row))
+    limit = _history_limit(ctx, "navmap_standup_advisory_history_limit")
+    ctx.navmap_standup_advisory_history = clean[-limit:]
+    return standup_advisory_summary_v1(ctx)
+
+
+def _advisory_step(ctx: Any, *, source_stage: str) -> dict[str, Any]:
+    """Run one Phase 3B advisory refresh after observation or legacy selection."""
+    if ctx is None:
+        return {
+            "schema": "standup_advisory_summary_v1",
+            "phase": "3B",
+            "status": "ctx_unavailable",
+            "authority": "advisory_only",
+        }
+    if not bool(getattr(ctx, "navmap_standup_advisory_enabled", True)):
+        return {
+            "schema": "standup_advisory_summary_v1",
+            "phase": "3B",
+            "status": "disabled",
+            "authority": "advisory_only",
+            "legacy_executes": True,
+            "map_can_override": False,
+            "protected_safety_can_be_overridden": False,
+        }
+    if not bool(getattr(ctx, "navmap_standup_compare_enabled", True)):
+        return {
+            "schema": "standup_advisory_summary_v1",
+            "phase": "3B",
+            "status": "compare_disabled",
+            "authority": "advisory_only",
+            "legacy_executes": True,
+            "map_can_override": False,
+            "protected_safety_can_be_overridden": False,
+        }
+
+    advisory = _build_advisory(ctx, source_stage=source_stage)
+    if advisory is None:
+        return {
+            "schema": "standup_advisory_summary_v1",
+            "phase": "3B",
+            "status": "idle",
+            "authority": "advisory_only",
+            "legacy_executes": True,
+            "map_can_override": False,
+            "protected_safety_can_be_overridden": False,
+            "history_count": len(getattr(ctx, "navmap_standup_advisory_history", []) or []),
+        }
+    return _store_advisory(ctx, advisory)
+
+
+def standup_advisory_observation_step_v1(ctx: Any) -> dict[str, Any]:
+    """Create the provisional Phase 3B advisory after map observation work."""
+    return _advisory_step(ctx, source_stage="observation")
+
+
+def standup_advisory_selection_step_v1(ctx: Any) -> dict[str, Any]:
+    """Finalize the Phase 3B advisory after the legacy gate and winner exist."""
+    return _advisory_step(ctx, source_stage="selection")
+
+
+def standup_advisory_summary_v1(ctx: Any) -> dict[str, Any]:
+    """Return a defensive JSON-safe summary of the latest Phase 3B advisory."""
+    if ctx is None:
+        return {
+            "schema": "standup_advisory_summary_v1",
+            "phase": "3B",
+            "status": "ctx_unavailable",
+        }
+
+    row = getattr(ctx, "navmap_standup_advisory_last_update", None)
+    history_count = len(getattr(ctx, "navmap_standup_advisory_history", []) or [])
+    if not isinstance(row, dict):
+        return {
+            "schema": "standup_advisory_summary_v1",
+            "phase": "3B",
+            "status": "idle",
+            "authority": "advisory_only",
+            "legacy_executes": True,
+            "map_can_override": False,
+            "protected_safety_can_be_overridden": False,
+            "history_count": history_count,
+        }
+    if row.get("status") == "error":
+        out = dict(row)
+        out["history_count"] = history_count
+        return out
+
+    return {
+        "schema": "standup_advisory_summary_v1",
+        "phase": "3B",
+        "status": "active" if row.get("active") is True else "clear",
+        "authority": "advisory_only",
+        "legacy_executes": True,
+        "map_can_override": False,
+        "protected_safety_can_be_overridden": False,
+        "advisory": dict(row),
+        "history_count": history_count,
+    }
+
+
+def render_standup_advisory_lines_v1(ctx: Any) -> list[str]:
+    """Return concise human-readable Phase 3B advisory lines."""
+    summary = standup_advisory_summary_v1(ctx)
+    lines = ["STANDUP PHASE 3B ADVISORY:"]
+    status = summary.get("status")
+    if status in {"ctx_unavailable", "idle", "disabled", "compare_disabled", "error"}:
+        lines.append(
+            "  "
+            f"status={status} authority=advisory_only legacy_executes=True "
+            "map_can_override=False protected_safety_can_be_overridden=False"
+        )
+        if status == "error":
+            lines.append(
+                "  "
+                f"error_type={summary.get('error_type')} error={summary.get('error')}"
+            )
+        return lines
+
+    advisory = summary.get("advisory")
+    advisory = advisory if isinstance(advisory, dict) else {}
+    lines.append(
+        "  "
+        f"tx={advisory.get('transaction_no')} status={status} "
+        "authority=advisory_only legacy_executes=True map_can_override=False "
+        "protected_safety_can_be_overridden=False"
+    )
+    lines.append(
+        "  "
+        f"advisory={advisory.get('kind')} severity={advisory.get('severity')} "
+        f"active={advisory.get('active')} reason={advisory.get('reason')}"
+    )
+    lines.append(
+        "  "
+        f"response={advisory.get('recommended_response')} "
+        f"fallback_required={advisory.get('fallback_required')} "
+        f"fallback_source={advisory.get('fallback_source')}"
+    )
+    lines.append(
+        "  "
+        f"map derived={advisory.get('map_body_interpretation')} "
+        f"support={advisory.get('support_status')} "
+        f"recommendation={advisory.get('map_recommendation')} "
+        f"reason={advisory.get('map_reason')}"
+    )
+    lines.append(
+        "  "
+        f"legacy posture={advisory.get('legacy_bodymap_posture')} "
+        f"gate={advisory.get('legacy_gate_triggered')} "
+        f"selected={advisory.get('selected_policy')} "
+        f"gate_comparison={advisory.get('gate_comparison')} "
+        f"selection_comparison={advisory.get('selection_comparison')}"
+    )
+    lines.append(
+        "  "
+        f"flags resample={advisory.get('resample_recommended')} "
+        f"transform_review={advisory.get('transform_review_recommended')} "
+        f"disagreement_review={advisory.get('disagreement_review_recommended')} "
+        f"outcome_review={advisory.get('outcome_review_recommended')}"
+    )
+    if advisory.get("prior_outcome") is not None:
+        lines.append(
+            "  "
+            f"prior_outcome tx={advisory.get('prior_outcome_transaction_no')} "
+            f"outcome={advisory.get('prior_outcome')}"
         )
     return lines

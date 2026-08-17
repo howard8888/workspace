@@ -230,13 +230,17 @@ navmap_policy_outcome_index_update_v1 = cca8_navmap_runtime.navmap_policy_outcom
 navmap_ctx_observation_update_step_v1 = cca8_navmap_runtime.navmap_ctx_observation_update_step_v1
 navmap_ctx_transition_from_payloads_v1 = cca8_navmap_runtime.navmap_ctx_transition_from_payloads_v1
 
-# --- Phase 3A StandUp compare compatibility seam -------------------------------
-# The map-native query and expected-successor records live in their own module.
-# The runner observes the already-completed legacy selection and records the
-# comparison; it never lets this path modify the selected behavioral primitive.
+# --- Phase 3A/3B StandUp compare/advisory compatibility seam --------------------
+# The map-native query, expected-successor, and advisory records live in their
+# own module. The runner observes the already-completed legacy selection and
+# records comparison/advisory telemetry; neither path may modify the selected
+# behavioral primitive or protected safety behavior.
 standup_compare_selection_step_v1 = cca8_standup_compare.standup_compare_selection_step_v1
 standup_compare_summary_v1 = cca8_standup_compare.standup_compare_summary_v1
 render_standup_compare_lines_v1 = cca8_standup_compare.render_standup_compare_lines_v1
+standup_advisory_selection_step_v1 = cca8_standup_compare.standup_advisory_selection_step_v1
+standup_advisory_summary_v1 = cca8_standup_compare.standup_advisory_summary_v1
+render_standup_advisory_lines_v1 = cca8_standup_compare.render_standup_advisory_lines_v1
 
 # Private aliases preserve existing maintainer/test access during the extraction.
 _navmap_safe_dict_v1 = cca8_navmap_runtime._navmap_safe_dict_v1
@@ -496,7 +500,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -563,6 +567,9 @@ __all__ = [
     "standup_compare_selection_step_v1",
     "standup_compare_summary_v1",
     "render_standup_compare_lines_v1",
+    "standup_advisory_selection_step_v1",
+    "standup_advisory_summary_v1",
+    "render_standup_advisory_lines_v1",
     "HAL",
     "PolicyRuntime",
     "run_autonomous_newborn_survival_demo_v1",
@@ -3938,14 +3945,17 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             print(f"[env→controller] controller step error: {e}")
             ctx.env_last_action = None
 
-        # Phase 3A compare-only instrumentation.  The map path observes the
-        # already-completed legacy gate and winner; it cannot alter either one.
+        # Phase 3A/3B comparison and advisory instrumentation. The map path
+        # observes the already-completed legacy gate and winner. The advisory
+        # may request review/resampling, but neither path can alter the winner.
+        compare_selection_updated = False
         try:
             standup_compare_selection_step_v1(
                 ctx,
                 legacy_gate_triggered=legacy_standup_gate_triggered,
                 selected_policy=policy_name,
             )
+            compare_selection_updated = True
         except Exception as exc:
             ctx.navmap_standup_compare_last_update = {
                 "schema": "standup_compare_summary_v1",
@@ -3957,6 +3967,22 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 "error_type": type(exc).__name__,
                 "error": str(exc),
             }
+
+        if compare_selection_updated:
+            try:
+                standup_advisory_selection_step_v1(ctx)
+            except Exception as exc:
+                ctx.navmap_standup_advisory_last_update = {
+                    "schema": "standup_advisory_summary_v1",
+                    "phase": "3B",
+                    "status": "error",
+                    "authority": "advisory_only",
+                    "legacy_executes": True,
+                    "map_can_override": False,
+                    "protected_safety_can_be_overridden": False,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
 
         if teaching_mode:
             print(menu37_teaching_after_controller_v1())
@@ -4177,6 +4203,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "prediction_next": dict(getattr(ctx, "prediction_next_record", {}) or {}),
                     "prediction_error": dict(getattr(ctx, "prediction_last_error_record", {}) or {}),
                     "prediction_feedback": prediction_feedback_summary_v1(ctx),
+                    "standup_advisory": standup_advisory_summary_v1(ctx),
                 }
                 try:
                     if getattr(st, "scenario_stage", None) == "goat_foraging_04_scan":

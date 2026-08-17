@@ -24,12 +24,13 @@ if TYPE_CHECKING:
     from cca8_navmap_kernel import NavMapV2
     from cca8_navmap_shadow import NavMapV2ShadowStateV2
     from cca8_standup_compare import (
+        StandUpAdvisoryV1,
         StandUpCompareTransactionV1,
         StandUpExpectedPendingV1,
         StandUpObservedOutcomeV1,
     )
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -654,6 +655,15 @@ class Ctx:
     navmap_standup_compare_history_limit: int = 25
     navmap_standup_compare_outcome_history: list[dict[str, Any]] = field(default_factory=list)
     navmap_standup_compare_outcome_history_limit: int = 25
+
+    # Phase 3B StandUp advisory. The advisory surface can flag unsupported
+    # posture, transform failure, disagreement, or an unresolved outcome, but
+    # it cannot change BodyMap, policy selection, protected safety, or actions.
+    navmap_standup_advisory_enabled: bool = True
+    navmap_standup_advisory: Optional[StandUpAdvisoryV1] = None
+    navmap_standup_advisory_last_update: Optional[dict[str, Any]] = None
+    navmap_standup_advisory_history: list[dict[str, Any]] = field(default_factory=list)
+    navmap_standup_advisory_history_limit: int = 25
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------
