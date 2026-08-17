@@ -9,6 +9,7 @@ operators with CCA8 runtime registers for:
 
 - observation-update candidate storage and bounded histories
 - the first NavMapV2 root/SELF-ground runtime shadow bridge
+- the Phase 3A StandUp compare-only observation handoff
 - expected-current construction and residual comparison
 - conservative accepted-current selection
 - the diagnostic Working Navigation Map surface bridge
@@ -59,9 +60,10 @@ from cca8_predictive import (
     compact_slot_map_text_v1 as _prediction_compact_map_text_v1,
     prediction_policy_expected_slots_v1,
 )
+from cca8_standup_compare import standup_compare_observation_step_v1
 
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "NAVMAP_SCOPE_MARKER_V1",
     "NAVMAP_SCOPE_PROBES_V1",
@@ -99,6 +101,7 @@ __all__ = [
     "navmap_ctx_observation_update_step_v1",
     "navmap_ctx_transition_from_payloads_v1",
     "navmap_v2_shadow_observation_step_v1",
+    "standup_compare_observation_step_v1",
     "__version__",
 ]
 
@@ -1917,13 +1920,16 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
         ctx.navmap_last_policy_outcome_index_row_v1 = None
 
     ctx.navmap_last_payload_v1 = dict(current_payload_dict) if current_payload_dict else None
+    applied_policy = getattr(ctx, "navmap_pending_action_v1", None)
     ctx.navmap_pending_action_v1 = None
     ctx.navmap_pending_reward_v1 = 0.0
 
     # Phase 2 NavMapV2 shadow bridge.  It stores only ctx-local diagnostic
     # records; BodyMap and the existing V1 path retain all current authority.
+    shadow_updated = False
     try:
         navmap_v2_shadow_observation_step_v1(ctx, env_obs)
+        shadow_updated = True
     except Exception as exc:  # defensive runtime diagnostic boundary
         ctx.navmap_v2_shadow_last_update = {
             "schema": "navmap_v2_shadow_update_v2",
@@ -1933,4 +1939,26 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
             "error_type": type(exc).__name__,
             "error": str(exc),
         }
+
+    # Phase 3A StandUp compare bridge.  This reads the just-updated shadow and
+    # the action already applied by the environment.  It records an independent
+    # map query and expected-versus-observed outcome but cannot alter policy
+    # selection, BodyMap, or lower-controller execution.
+    if shadow_updated:
+        try:
+            standup_compare_observation_step_v1(
+                ctx,
+                applied_policy=applied_policy if isinstance(applied_policy, str) else None,
+            )
+        except Exception as exc:  # defensive runtime diagnostic boundary
+            ctx.navmap_standup_compare_last_update = {
+                "schema": "standup_compare_summary_v1",
+                "phase": "3A",
+                "status": "error",
+                "authority": "compare_only",
+                "legacy_executes": True,
+                "map_can_override": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
     return update_dict

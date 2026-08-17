@@ -22,6 +22,7 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "navmap": "cca8_navmap",
     "navmap_kernel": "cca8_navmap_kernel",
     "navmap_shadow": "cca8_navmap_shadow",
+    "standup_compare": "cca8_standup_compare",
 }
 
 

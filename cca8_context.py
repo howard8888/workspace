@@ -23,8 +23,13 @@ from cca8_temporal import TemporalContext
 if TYPE_CHECKING:
     from cca8_navmap_kernel import NavMapV2
     from cca8_navmap_shadow import NavMapV2ShadowStateV2
+    from cca8_standup_compare import (
+        StandUpCompareTransactionV1,
+        StandUpExpectedPendingV1,
+        StandUpObservedOutcomeV1,
+    )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -634,6 +639,21 @@ class Ctx:
     navmap_v2_shadow_last_update: Optional[dict[str, Any]] = None
     navmap_v2_shadow_history: list[dict[str, Any]] = field(default_factory=list)
     navmap_v2_shadow_history_limit: int = 25
+
+    # Phase 3A StandUp compare/dual-run transaction.  The maintained NavMapV2
+    # shadow independently evaluates StandUp applicability and expected outcome,
+    # while the legacy BodyMap/PolicyRuntime path retains all execution authority.
+    navmap_standup_compare_enabled: bool = True
+    navmap_standup_compare_transaction_no: int = 0
+    navmap_standup_compare_transaction: Optional[StandUpCompareTransactionV1] = None
+    navmap_standup_compare_pending: Optional[StandUpExpectedPendingV1] = None
+    navmap_standup_compare_last_outcome: Optional[StandUpObservedOutcomeV1] = None
+    navmap_standup_compare_last_update: Optional[dict[str, Any]] = None
+    navmap_standup_compare_last_outcome_update: Optional[dict[str, Any]] = None
+    navmap_standup_compare_history: list[dict[str, Any]] = field(default_factory=list)
+    navmap_standup_compare_history_limit: int = 25
+    navmap_standup_compare_outcome_history: list[dict[str, Any]] = field(default_factory=list)
+    navmap_standup_compare_outcome_history_limit: int = 25
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------

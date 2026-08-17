@@ -119,6 +119,7 @@ import cca8_predictive
 import cca8_working_memory
 import cca8_navmap
 import cca8_navmap_runtime
+import cca8_standup_compare
 import cca8_reporting
 import cca8_observation_runtime
 import cca8_policy_runtime
@@ -228,6 +229,14 @@ navmap_transition_history_append_v1 = cca8_navmap_runtime.navmap_transition_hist
 navmap_policy_outcome_index_update_v1 = cca8_navmap_runtime.navmap_policy_outcome_index_update_v1
 navmap_ctx_observation_update_step_v1 = cca8_navmap_runtime.navmap_ctx_observation_update_step_v1
 navmap_ctx_transition_from_payloads_v1 = cca8_navmap_runtime.navmap_ctx_transition_from_payloads_v1
+
+# --- Phase 3A StandUp compare compatibility seam -------------------------------
+# The map-native query and expected-successor records live in their own module.
+# The runner observes the already-completed legacy selection and records the
+# comparison; it never lets this path modify the selected behavioral primitive.
+standup_compare_selection_step_v1 = cca8_standup_compare.standup_compare_selection_step_v1
+standup_compare_summary_v1 = cca8_standup_compare.standup_compare_summary_v1
+render_standup_compare_lines_v1 = cca8_standup_compare.render_standup_compare_lines_v1
 
 # Private aliases preserve existing maintainer/test access during the extraction.
 _navmap_safe_dict_v1 = cca8_navmap_runtime._navmap_safe_dict_v1
@@ -487,7 +496,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.9.9"
+__version__ = "0.10.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -551,6 +560,9 @@ __all__ = [
     "navmap_policy_outcome_index_update_v1",
     "navmap_ctx_observation_update_step_v1",
     "navmap_ctx_transition_from_payloads_v1",
+    "standup_compare_selection_step_v1",
+    "standup_compare_summary_v1",
+    "render_standup_compare_lines_v1",
     "HAL",
     "PolicyRuntime",
     "run_autonomous_newborn_survival_demo_v1",
@@ -2644,6 +2656,7 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("navmap_kernel", "cca8_navmap_kernel"),
     ("navmap_shadow", "cca8_navmap_shadow"),
     ("navmap_runtime", "cca8_navmap_runtime"),
+    ("standup_compare", "cca8_standup_compare"),
     ("reporting", "cca8_reporting"),
     ("observation_runtime", "cca8_observation_runtime"),
     ("policy_runtime", "cca8_policy_runtime"),
@@ -3883,6 +3896,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
         # 4) Controller response
         exec_world = None
         policy_name = None
+        legacy_standup_gate_triggered: Optional[bool] = None
 
         try:
             policy_rt.refresh_loaded(ctx)
@@ -3893,6 +3907,15 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 exec_world = ctx.working_world
             _wm_creative_update(policy_rt, world, drives, ctx, exec_world=exec_world)
             fired = policy_rt.consider_and_maybe_fire(world, drives, ctx, exec_world=exec_world)
+
+            # PolicyRuntime already records the exact initial trigger set used
+            # by the legacy selector.  Read that diagnostic rather than calling
+            # the StandUp gate a second time, which could duplicate benchmark
+            # telemetry or other gate-side diagnostics.
+            policy_debug = getattr(ctx, "experiment_policy_debug_last", None)
+            matches_initial = policy_debug.get("matches_initial") if isinstance(policy_debug, dict) else None
+            if isinstance(matches_initial, list):
+                legacy_standup_gate_triggered = "policy:stand_up" in matches_initial
 
             fired_txt = fired if isinstance(fired, str) else None
 
@@ -3914,6 +3937,26 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
         except Exception as e:
             print(f"[env→controller] controller step error: {e}")
             ctx.env_last_action = None
+
+        # Phase 3A compare-only instrumentation.  The map path observes the
+        # already-completed legacy gate and winner; it cannot alter either one.
+        try:
+            standup_compare_selection_step_v1(
+                ctx,
+                legacy_gate_triggered=legacy_standup_gate_triggered,
+                selected_policy=policy_name,
+            )
+        except Exception as exc:
+            ctx.navmap_standup_compare_last_update = {
+                "schema": "standup_compare_summary_v1",
+                "phase": "3A",
+                "status": "error",
+                "authority": "compare_only",
+                "legacy_executes": True,
+                "map_can_override": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
 
         if teaching_mode:
             print(menu37_teaching_after_controller_v1())
