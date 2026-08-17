@@ -230,17 +230,20 @@ navmap_policy_outcome_index_update_v1 = cca8_navmap_runtime.navmap_policy_outcom
 navmap_ctx_observation_update_step_v1 = cca8_navmap_runtime.navmap_ctx_observation_update_step_v1
 navmap_ctx_transition_from_payloads_v1 = cca8_navmap_runtime.navmap_ctx_transition_from_payloads_v1
 
-# --- Phase 3A/3B StandUp compare/advisory compatibility seam --------------------
-# The map-native query, expected-successor, and advisory records live in their
-# own module. The runner observes the already-completed legacy selection and
-# records comparison/advisory telemetry; neither path may modify the selected
-# behavioral primitive or protected safety behavior.
+# --- Phase 3A/3B/3C StandUp authority compatibility seam ----------------------
+# The map-native query, expected-successor, advisory, and guarded-authority
+# records live in their own module. Phase 3C remains feature-flagged and affects
+# only the StandUp trigger; PolicyRuntime/controller execution and protected
+# BodyMap safety remain intact.
 standup_compare_selection_step_v1 = cca8_standup_compare.standup_compare_selection_step_v1
 standup_compare_summary_v1 = cca8_standup_compare.standup_compare_summary_v1
 render_standup_compare_lines_v1 = cca8_standup_compare.render_standup_compare_lines_v1
 standup_advisory_selection_step_v1 = cca8_standup_compare.standup_advisory_selection_step_v1
 standup_advisory_summary_v1 = cca8_standup_compare.standup_advisory_summary_v1
 render_standup_advisory_lines_v1 = cca8_standup_compare.render_standup_advisory_lines_v1
+standup_guarded_selection_step_v1 = cca8_standup_compare.standup_guarded_selection_step_v1
+standup_guarded_summary_v1 = cca8_standup_compare.standup_guarded_summary_v1
+render_standup_guarded_lines_v1 = cca8_standup_compare.render_standup_guarded_lines_v1
 
 # Private aliases preserve existing maintainer/test access during the extraction.
 _navmap_safe_dict_v1 = cca8_navmap_runtime._navmap_safe_dict_v1
@@ -429,6 +432,15 @@ def _policy_runtime_hooks_v1() -> PolicyRuntimeHooks:
             cca8_working_memory.register_policy_scratch_chain_v1(*args, **kwargs)
         ),
         policy_primitives=lambda: PRIMITIVES,
+        standup_guarded_trigger=lambda *args, **kwargs: (
+            cca8_standup_compare.standup_guarded_trigger_value_v1(*args, **kwargs)
+        ),
+        standup_guarded_safety_active=lambda *args, **kwargs: (
+            cca8_standup_compare.standup_guarded_safety_active_v1(*args, **kwargs)
+        ),
+        standup_guarded_explain=lambda *args, **kwargs: (
+            cca8_standup_compare.standup_guarded_explain_v1(*args, **kwargs)
+        ),
     )
 
 
@@ -500,7 +512,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -570,6 +582,9 @@ __all__ = [
     "standup_advisory_selection_step_v1",
     "standup_advisory_summary_v1",
     "render_standup_advisory_lines_v1",
+    "standup_guarded_selection_step_v1",
+    "standup_guarded_summary_v1",
+    "render_standup_guarded_lines_v1",
     "HAL",
     "PolicyRuntime",
     "run_autonomous_newborn_survival_demo_v1",
@@ -3915,14 +3930,24 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             _wm_creative_update(policy_rt, world, drives, ctx, exec_world=exec_world)
             fired = policy_rt.consider_and_maybe_fire(world, drives, ctx, exec_world=exec_world)
 
-            # PolicyRuntime already records the exact initial trigger set used
-            # by the legacy selector.  Read that diagnostic rather than calling
-            # the StandUp gate a second time, which could duplicate benchmark
-            # telemetry or other gate-side diagnostics.
-            policy_debug = getattr(ctx, "experiment_policy_debug_last", None)
-            matches_initial = policy_debug.get("matches_initial") if isinstance(policy_debug, dict) else None
-            if isinstance(matches_initial, list):
-                legacy_standup_gate_triggered = "policy:stand_up" in matches_initial
+            # PolicyRuntime records both the active trigger set and, when Phase
+            # 3C is enabled, the independent legacy trigger inside the guarded
+            # decision. Prefer the latter for the Phase 3A differential so the
+            # comparator remains truly legacy even after map authority is used.
+            guarded_summary = standup_guarded_summary_v1(ctx)
+            guarded_decision = guarded_summary.get("decision") if isinstance(guarded_summary, dict) else None
+            legacy_from_guard = (
+                guarded_decision.get("legacy_gate_triggered")
+                if isinstance(guarded_decision, dict)
+                else None
+            )
+            if isinstance(legacy_from_guard, bool):
+                legacy_standup_gate_triggered = legacy_from_guard
+            else:
+                policy_debug = getattr(ctx, "experiment_policy_debug_last", None)
+                matches_initial = policy_debug.get("matches_initial") if isinstance(policy_debug, dict) else None
+                if isinstance(matches_initial, list):
+                    legacy_standup_gate_triggered = "policy:stand_up" in matches_initial
 
             fired_txt = fired if isinstance(fired, str) else None
 
@@ -3945,9 +3970,10 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             print(f"[env→controller] controller step error: {e}")
             ctx.env_last_action = None
 
-        # Phase 3A/3B comparison and advisory instrumentation. The map path
-        # observes the already-completed legacy gate and winner. The advisory
-        # may request review/resampling, but neither path can alter the winner.
+        # Phase 3A/3B/3C instrumentation. Phase 3A retains an independent
+        # legacy differential, Phase 3B emits non-binding advice, and Phase 3C
+        # records which guarded trigger source actually fed PolicyRuntime. None
+        # of these post-selection calls may alter the winner already executed.
         compare_selection_updated = False
         try:
             standup_compare_selection_step_v1(
@@ -3983,6 +4009,25 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "error_type": type(exc).__name__,
                     "error": str(exc),
                 }
+
+        try:
+            standup_guarded_selection_step_v1(
+                ctx,
+                selected_policy=policy_name,
+            )
+        except Exception as exc:
+            ctx.navmap_standup_guarded_last_update = {
+                "schema": "standup_guarded_summary_v1",
+                "phase": "3C",
+                "status": "error",
+                "authority": "guarded_standup",
+                "feature_flag_enabled": bool(
+                    getattr(ctx, "navmap_standup_guarded_enabled", False)
+                ),
+                "protected_safety_can_be_overridden": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
 
         if teaching_mode:
             print(menu37_teaching_after_controller_v1())
@@ -4204,6 +4249,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "prediction_error": dict(getattr(ctx, "prediction_last_error_record", {}) or {}),
                     "prediction_feedback": prediction_feedback_summary_v1(ctx),
                     "standup_advisory": standup_advisory_summary_v1(ctx),
+                    "standup_guarded": standup_guarded_summary_v1(ctx),
                 }
                 try:
                     if getattr(st, "scenario_stage", None) == "goat_foraging_04_scan":

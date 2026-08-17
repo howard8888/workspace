@@ -51,7 +51,7 @@ from cca8_context import CreativeCandidate, Ctx
 from cca8_controller import Drives, FATIGUE_HIGH, HUNGER_HIGH
 
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +89,9 @@ class PolicyRuntimeHooks:  # pylint: disable=too-few-public-methods
     update_skill: Callable[..., Any]
     register_policy_scratch_chain: Callable[..., Any]
     policy_primitives: Callable[..., Any]
+    standup_guarded_trigger: Callable[..., Any]
+    standup_guarded_safety_active: Callable[..., Any]
+    standup_guarded_explain: Callable[..., Any]
 
 
 _POLICY_RUNTIME_HOOKS: PolicyRuntimeHooks | None = None
@@ -149,6 +152,21 @@ def body_cliff_distance(*args: Any, **kwargs: Any) -> Any:
 def body_space_zone(*args: Any, **kwargs: Any) -> Any:
     """Call the configured BodyMap spatial-zone helper."""
     return _policy_runtime_hooks().body_space_zone(*args, **kwargs)
+
+
+def standup_guarded_trigger_v1(*args: Any, **kwargs: Any) -> Any:
+    """Call the configured Phase 3C guarded StandUp trigger."""
+    return _policy_runtime_hooks().standup_guarded_trigger(*args, **kwargs)
+
+
+def standup_guarded_safety_active_v1(*args: Any, **kwargs: Any) -> Any:
+    """Call the configured Phase 3C guarded fallen-safety indicator."""
+    return _policy_runtime_hooks().standup_guarded_safety_active(*args, **kwargs)
+
+
+def standup_guarded_explain_v1(*args: Any, **kwargs: Any) -> Any:
+    """Call the configured Phase 3C guarded gate explainer."""
+    return _policy_runtime_hooks().standup_guarded_explain(*args, **kwargs)
 
 
 def _fallen_near_now(*args: Any, **kwargs: Any) -> Any:
@@ -379,20 +397,8 @@ def _wm_probe_supported_by_topology_v1(ctx: Ctx | None) -> bool:
 
 
 #pylint: disable=superfluous-parens
-def _gate_stand_up_trigger_body_first(world, _drives: Drives, ctx) -> bool:
-    """
-    StandUp gate that prefers BodyMap for posture when available, falling back
-    to WorldGraph near-NOW predicates otherwise.
-
-    Trigger logic (neonate):
-      • If BodyMap is fresh and posture == 'fallen'  → fire.
-      • If BodyMap is fresh and posture == 'standing'→ do NOT fire.
-      • Otherwise, fall back to:
-            fallen  := pred:posture:fallen near NOW
-            standing:= pred:posture:standing near NOW
-        and fire if fallen or (stand_intent && not standing).
-    """
-    # BodyMap posture if available and not stale
+def _gate_stand_up_trigger_legacy_body_first(world, _drives: Drives, ctx) -> bool:
+    """Return the pre-Phase-3C BodyMap/WorkingMap/WorldGraph StandUp gate."""
     stale = bodymap_is_stale(ctx) if ctx is not None else True
     bp = body_posture(ctx) if ctx is not None and not stale else None
 
@@ -410,7 +416,13 @@ def _gate_stand_up_trigger_body_first(world, _drives: Drives, ctx) -> bool:
             wm_sources = wm_state.get("source_by_field")
             wm_sources = wm_sources if isinstance(wm_sources, dict) else {}
             if wm_posture is not None:
-                _record_newborn_guarded_field_use_v1(ctx, consumer="stand_up_gate", field="posture", value=wm_posture, source=wm_sources.get("posture"))
+                _record_newborn_guarded_field_use_v1(
+                    ctx,
+                    consumer="stand_up_gate",
+                    field="posture",
+                    value=wm_posture,
+                    source=wm_sources.get("posture"),
+                )
             fallen = wm_posture == "fallen"
             standing = wm_posture == "standing"
         else:
@@ -421,12 +433,31 @@ def _gate_stand_up_trigger_body_first(world, _drives: Drives, ctx) -> bool:
     return fallen or (stand_intent and not standing)
 
 
+def _gate_stand_up_trigger_body_first(world, drives: Drives, ctx) -> bool:
+    """Return the active StandUp gate, including optional Phase 3C authority.
+
+    With the Phase 3C flag off, this is an exact pass-through to the historical
+    BodyMap-first gate. With the flag on, actionable maintained WNM geometry can
+    supply the trigger. A fresh BodyMap fallen readout remains a protected safety
+    override, and unsupported map states fall back to the historical result.
+    """
+    legacy_triggered = _gate_stand_up_trigger_legacy_body_first(world, drives, ctx)
+    bodymap_fresh = bool(ctx is not None and not bodymap_is_stale(ctx))
+    protected_bodymap_fallen = bool(bodymap_fresh and body_posture(ctx) == "fallen")
+    return bool(
+        standup_guarded_trigger_v1(
+            ctx,
+            legacy_gate_triggered=legacy_triggered,
+            protected_bodymap_fallen=protected_bodymap_fallen,
+        )
+    )
+
+
 def _gate_stand_up_explain(world, drives: Drives, ctx) -> str:
-    """
-    Human-readable explanation matching _gate_stand_up_trigger_body_first.
-    """
+    """Return a legacy-gate explanation plus the active Phase 3C source."""
     hunger = float(getattr(drives, "hunger", 0.0))
-    bp = body_posture(ctx) if ctx is not None else None
+    stale = bodymap_is_stale(ctx) if ctx is not None else True
+    bp = body_posture(ctx) if ctx is not None and not stale else None
     if bp is not None:
         fallen = (bp == "fallen")
         standing = (bp == "standing")
@@ -435,10 +466,11 @@ def _gate_stand_up_explain(world, drives: Drives, ctx) -> str:
         standing = has_pred_near_now(world, "posture:standing")
 
     stand_intent = has_pred_near_now(world, "stand")
+    guarded = str(standup_guarded_explain_v1(ctx))
     return (
-        f"dev_gate: age_days={getattr(ctx, 'age_days', 0.0):.2f}<=3.0, trigger: "
+        f"dev_gate: age_days={getattr(ctx, 'age_days', 0.0):.2f}<=3.0, legacy_trigger: "
         f"fallen={fallen} or (stand_intent={stand_intent} and not standing={not standing}) "
-        f"(hunger={hunger:.2f})"
+        f"(hunger={hunger:.2f}); {guarded}"
     )
 
 
@@ -2506,6 +2538,8 @@ class PolicyRuntime:
             "suppress_follow_mom": None,
             "matches_after_topology": None,
             "fallen_safety_filter": None,
+            "legacy_fallen_safety_filter": None,
+            "guarded_map_fallen_safety_filter": None,
             "matches_after_safety": None,
             "matches_before_choice": None,
             "chosen": None,
@@ -2634,9 +2668,16 @@ class PolicyRuntime:
         except Exception:
             pass
 
-        # Fallen posture near NOW forces safety-only policies.
-        fallen_safety_active = _fallen_near_now(world, ctx, max_hops=3)
-        policy_debug["fallen_safety_filter"] = bool(fallen_safety_active)
+        # Fallen posture forces safety-only policies. The historical near-NOW/
+        # BodyMap route remains active, and Phase 3C may additionally supply a
+        # guarded fallen-like WNM signal. Either route can require StandUp, but
+        # the map route cannot suppress the historical protected safety route.
+        legacy_fallen_safety_active = _fallen_near_now(world, ctx, max_hops=3)
+        guarded_map_fallen_safety_active = bool(standup_guarded_safety_active_v1(ctx))
+        fallen_safety_active = bool(legacy_fallen_safety_active or guarded_map_fallen_safety_active)
+        policy_debug["fallen_safety_filter"] = fallen_safety_active
+        policy_debug["legacy_fallen_safety_filter"] = bool(legacy_fallen_safety_active)
+        policy_debug["guarded_map_fallen_safety_filter"] = guarded_map_fallen_safety_active
 
         if fallen_safety_active:
             safety_only = {"policy:recover_fall", "policy:stand_up"}
@@ -2704,6 +2745,8 @@ class PolicyRuntime:
             """
             if name == "policy:stand_up":
                 try:
+                    if bool(standup_guarded_safety_active_v1(ctx)):
+                        return 2.0
                     if ctx is not None and not bodymap_is_stale(ctx) and body_posture(ctx) == "fallen":
                         return 2.0
                 except Exception:
@@ -3497,6 +3540,7 @@ __all__ = [
     "compute_efe_scores_stub_v1",
     "_efe_render_summary_line",
     "_wm_creative_update",
+    "_gate_stand_up_trigger_legacy_body_first",
     "_gate_stand_up_trigger_body_first",
     "_gate_stand_up_explain",
     "_gate_seek_nipple_trigger_body_first",

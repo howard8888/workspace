@@ -27,10 +27,11 @@ if TYPE_CHECKING:
         StandUpAdvisoryV1,
         StandUpCompareTransactionV1,
         StandUpExpectedPendingV1,
+        StandUpGuardedDecisionV1,
         StandUpObservedOutcomeV1,
     )
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -664,6 +665,18 @@ class Ctx:
     navmap_standup_advisory_last_update: Optional[dict[str, Any]] = None
     navmap_standup_advisory_history: list[dict[str, Any]] = field(default_factory=list)
     navmap_standup_advisory_history_limit: int = 25
+
+    # Phase 3C guarded StandUp authority. This feature is OFF by default.
+    # When enabled, a fresh/aging maintained SELF-ground NavMap may provide the
+    # StandUp trigger, while stale/invalid/UNKNOWN map state falls back to the
+    # legacy BodyMap/PolicyRuntime gate. A fresh BodyMap fallen signal remains a
+    # protected rapid safety override and can never be suppressed by the map.
+    navmap_standup_guarded_enabled: bool = False
+    navmap_standup_guarded_decision_no: int = 0
+    navmap_standup_guarded_decision: Optional[StandUpGuardedDecisionV1] = None
+    navmap_standup_guarded_last_update: Optional[dict[str, Any]] = None
+    navmap_standup_guarded_history: list[dict[str, Any]] = field(default_factory=list)
+    navmap_standup_guarded_history_limit: int = 25
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------

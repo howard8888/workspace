@@ -22,6 +22,15 @@ unresolved StandUp outcomes. An advisory can recommend resampling, review, or
 continued BodyMap fallback, but it remains telemetry only: it cannot alter the
 legacy StandUp gate, selected policy, safety path, or applied action.
 
+Phase 3C adds one feature-flagged guarded-authority decision for the StandUp
+trigger. When enabled, fresh or aging maintained SELF-ground geometry can
+supply the cognitive trigger. Stale, invalidated, UNKNOWN, ambiguous, missing,
+or transform-incomplete map state falls back to the existing BodyMap/legacy
+gate. A fresh BodyMap fallen signal remains a protected rapid safety override.
+The existing Python behavioral primitive and lower controller still execute the
+action; the map gains authority only over this one bounded trigger/expectation
+domain.
+
 Transaction timing
 ------------------
 One closed-loop cycle has two compare/advisory moments:
@@ -41,9 +50,12 @@ joint trajectories, balance corrections, or other lower motor details.
 
 Authority boundary
 ------------------
-Phase 3A is compare-only and Phase 3B is advisory-only. ``legacy_executes`` is
-always true, ``map_can_override`` is always false, and protected safety cannot
-be overridden. All public trace records state that boundary explicitly.
+Phase 3A is compare-only and Phase 3B is advisory-only. Phase 3C may override
+the legacy StandUp trigger only when its explicit feature flag is enabled and
+the maintained map is actionable. It cannot override a fresh BodyMap fallen
+safety signal, mutate BodyMap, alter other behavioral-primitive domains, or
+replace the PolicyRuntime/controller execution substrate. All public trace
+records state the active boundary explicitly.
 """
 
 from __future__ import annotations
@@ -77,16 +89,18 @@ from cca8_navmap_shadow import (
     navmap_v2_shadow_match_thresholds_v1,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "StandUpMapRecommendationV1",
     "StandUpAdvisoryKindV1",
     "StandUpAdvisorySeverityV1",
+    "StandUpGuardedAuthoritySourceV1",
     "StandUpCompareTransactionV1",
     "StandUpExpectedPendingV1",
     "StandUpObservedOutcomeV1",
     "StandUpAdvisoryV1",
+    "StandUpGuardedDecisionV1",
     "standup_expected_successor_map_v1",
     "standup_compare_observation_step_v1",
     "standup_compare_selection_step_v1",
@@ -96,6 +110,12 @@ __all__ = [
     "standup_advisory_selection_step_v1",
     "standup_advisory_summary_v1",
     "render_standup_advisory_lines_v1",
+    "standup_guarded_trigger_value_v1",
+    "standup_guarded_safety_active_v1",
+    "standup_guarded_explain_v1",
+    "standup_guarded_selection_step_v1",
+    "standup_guarded_summary_v1",
+    "render_standup_guarded_lines_v1",
     "__version__",
 ]
 
@@ -1360,4 +1380,532 @@ def render_standup_advisory_lines_v1(ctx: Any) -> list[str]:
             f"prior_outcome tx={advisory.get('prior_outcome_transaction_no')} "
             f"outcome={advisory.get('prior_outcome')}"
         )
+    return lines
+
+class StandUpGuardedAuthoritySourceV1(str, Enum):
+    """Trigger-authority source for the bounded Phase 3C StandUp domain."""
+
+    WNM_NAVMAP = "wnm_navmap"
+    BODYMAP_FALLBACK = "bodymap_fallback"
+    PROTECTED_BODYMAP_SAFETY = "protected_bodymap_safety"
+
+
+@dataclass(frozen=True, slots=True)
+class StandUpGuardedDecisionV1:
+    """One feature-flagged guarded StandUp trigger and selection record.
+
+    The record grants map authority only over the StandUp trigger when the
+    maintained SELF-ground representation is actionable. The existing
+    PolicyRuntime/controller remains the executor, and a fresh BodyMap fallen
+    signal remains a protected safety override.
+    """
+
+    decision_no: int
+    transaction_no: Optional[int]
+    observation_no: Optional[int]
+    controller_step: int
+    source_stage: str
+    triggered: bool
+    authority_source: StandUpGuardedAuthoritySourceV1
+    reason: str
+    fallback_used: bool
+    fallback_reason: Optional[str]
+    protected_bodymap_fallen: bool
+    legacy_gate_triggered: bool
+    legacy_bodymap_posture: Optional[str]
+    map_recommendation: Optional[StandUpMapRecommendationV1]
+    map_body_interpretation: NavBodyStateInterpretationV1
+    map_maintained: bool
+    support_status: str
+    expected_successor_available: bool
+    selected_policy: Optional[str] = None
+    selection_result: str = "pending"
+    expected_pending_armed: bool = False
+
+    def __post_init__(self) -> None:
+        _require_positive_int(self.decision_no, field_name="decision_no")
+        if self.transaction_no is not None:
+            _require_positive_int(self.transaction_no, field_name="transaction_no")
+        if self.observation_no is not None:
+            _require_positive_int(self.observation_no, field_name="observation_no")
+        _require_non_negative_int(self.controller_step, field_name="controller_step")
+        if self.source_stage not in {"gate", "selection"}:
+            raise ValueError("source_stage must be 'gate' or 'selection'")
+        if not isinstance(self.triggered, bool):
+            raise TypeError("triggered must be bool")
+        if not isinstance(self.authority_source, StandUpGuardedAuthoritySourceV1):
+            raise TypeError("authority_source must be StandUpGuardedAuthoritySourceV1")
+        _require_nonempty_text(self.reason, field_name="reason")
+        if not isinstance(self.fallback_used, bool):
+            raise TypeError("fallback_used must be bool")
+        if self.fallback_reason is not None and not isinstance(self.fallback_reason, str):
+            raise TypeError("fallback_reason must be str or None")
+        if not isinstance(self.protected_bodymap_fallen, bool):
+            raise TypeError("protected_bodymap_fallen must be bool")
+        if not isinstance(self.legacy_gate_triggered, bool):
+            raise TypeError("legacy_gate_triggered must be bool")
+        if self.legacy_bodymap_posture is not None and not isinstance(self.legacy_bodymap_posture, str):
+            raise TypeError("legacy_bodymap_posture must be str or None")
+        if self.map_recommendation is not None and not isinstance(
+            self.map_recommendation,
+            StandUpMapRecommendationV1,
+        ):
+            raise TypeError("map_recommendation must be StandUpMapRecommendationV1 or None")
+        if not isinstance(self.map_body_interpretation, NavBodyStateInterpretationV1):
+            raise TypeError("map_body_interpretation must be NavBodyStateInterpretationV1")
+        if not isinstance(self.map_maintained, bool):
+            raise TypeError("map_maintained must be bool")
+        _require_nonempty_text(self.support_status, field_name="support_status")
+        if not isinstance(self.expected_successor_available, bool):
+            raise TypeError("expected_successor_available must be bool")
+        if self.selected_policy is not None and not isinstance(self.selected_policy, str):
+            raise TypeError("selected_policy must be str or None")
+        _require_nonempty_text(self.selection_result, field_name="selection_result")
+        if not isinstance(self.expected_pending_armed, bool):
+            raise TypeError("expected_pending_armed must be bool")
+
+        if self.authority_source is StandUpGuardedAuthoritySourceV1.WNM_NAVMAP:
+            if self.fallback_used:
+                raise ValueError("WNM_NAVMAP authority cannot also be a fallback")
+            if not self.map_maintained or self.support_status not in _ACTIONABLE_SUPPORT:
+                raise ValueError("WNM_NAVMAP authority requires actionable maintained support")
+            if self.map_recommendation not in {
+                StandUpMapRecommendationV1.STAND_UP,
+                StandUpMapRecommendationV1.DO_NOT_STAND,
+            }:
+                raise ValueError("WNM_NAVMAP authority requires an actionable recommendation")
+        elif not self.fallback_used:
+            raise ValueError("non-WNM guarded source must be recorded as fallback/safety use")
+
+        if self.protected_bodymap_fallen:
+            if self.authority_source is not StandUpGuardedAuthoritySourceV1.PROTECTED_BODYMAP_SAFETY:
+                raise ValueError("protected BodyMap fallen must own the guarded decision")
+            if not self.triggered:
+                raise ValueError("protected BodyMap fallen must trigger StandUp")
+
+    @property
+    def map_authority_used(self) -> bool:
+        """Return True when the maintained WNM supplied the trigger result."""
+        return self.authority_source is StandUpGuardedAuthoritySourceV1.WNM_NAVMAP
+
+    @property
+    def guarded_map_fallen_active(self) -> bool:
+        """Return True when guarded map authority actively requires StandUp."""
+        return (
+            self.map_authority_used
+            and self.triggered
+            and self.map_recommendation is StandUpMapRecommendationV1.STAND_UP
+            and self.map_body_interpretation is NavBodyStateInterpretationV1.FALLEN_LIKE
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe authority-explicit Phase 3C trace."""
+        return {
+            "schema": "standup_guarded_decision_v1",
+            "phase": "3C",
+            "authority_level": "guarded",
+            "authority": "guarded_standup",
+            "bounded_domain": "stand_up_trigger_and_expectation",
+            "feature_flag": "ctx.navmap_standup_guarded_enabled",
+            "feature_flag_enabled": True,
+            "controller_executor": "policy_runtime_action_center",
+            "lower_controller_unchanged": True,
+            "bodymap_mutation_allowed": False,
+            "other_policy_authority_allowed": False,
+            "protected_safety_can_be_overridden": False,
+            "map_can_override_legacy_trigger": self.map_authority_used,
+            "map_can_override_protected_safety": False,
+            "decision_no": self.decision_no,
+            "transaction_no": self.transaction_no,
+            "observation_no": self.observation_no,
+            "controller_step": self.controller_step,
+            "source_stage": self.source_stage,
+            "triggered": self.triggered,
+            "trigger_authority_source": self.authority_source.value,
+            "map_authority_used": self.map_authority_used,
+            "guarded_map_fallen_active": self.guarded_map_fallen_active,
+            "reason": self.reason,
+            "fallback_used": self.fallback_used,
+            "fallback_reason": self.fallback_reason,
+            "fallback_source": (
+                "bodymap_policy_runtime" if self.fallback_used else None
+            ),
+            "protected_bodymap_fallen": self.protected_bodymap_fallen,
+            "legacy_gate_triggered": self.legacy_gate_triggered,
+            "legacy_bodymap_posture": self.legacy_bodymap_posture,
+            "map_recommendation": (
+                self.map_recommendation.value if self.map_recommendation is not None else None
+            ),
+            "map_body_interpretation": self.map_body_interpretation.value,
+            "map_maintained": self.map_maintained,
+            "support_status": self.support_status,
+            "expected_successor_available": self.expected_successor_available,
+            "selected_policy": self.selected_policy,
+            "selected_standup": self.selected_policy == _STANDUP_POLICY,
+            "selection_result": self.selection_result,
+            "expected_pending_armed": self.expected_pending_armed,
+        }
+
+
+def _next_guarded_decision_no(ctx: Any) -> int:
+    """Advance and return the deterministic Phase 3C decision counter."""
+    try:
+        current = int(getattr(ctx, "navmap_standup_guarded_decision_no", 0) or 0)
+    except (TypeError, ValueError):
+        current = 0
+    decision_no = max(0, current) + 1
+    ctx.navmap_standup_guarded_decision_no = decision_no
+    return decision_no
+
+
+def _guarded_controller_step(ctx: Any) -> int:
+    """Return a defensive non-negative controller-step number."""
+    try:
+        return max(0, int(getattr(ctx, "controller_steps", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _store_guarded_decision(ctx: Any, decision: StandUpGuardedDecisionV1) -> dict[str, Any]:
+    """Store one ctx-local guarded decision and bounded one-row lifecycle."""
+    row = decision.as_dict()
+    ctx.navmap_standup_guarded_decision = decision
+    ctx.navmap_standup_guarded_last_update = dict(row)
+
+    history = getattr(ctx, "navmap_standup_guarded_history", [])
+    if not isinstance(history, list):
+        history = []
+    clean = [dict(item) for item in history if isinstance(item, dict)]
+    if clean and clean[-1].get("decision_no") == decision.decision_no:
+        clean[-1] = dict(row)
+    else:
+        clean.append(dict(row))
+    limit = _history_limit(ctx, "navmap_standup_guarded_history_limit")
+    ctx.navmap_standup_guarded_history = clean[-limit:]
+    return standup_guarded_summary_v1(ctx)
+
+
+def _guarded_transaction(ctx: Any) -> Optional[StandUpCompareTransactionV1]:
+    """Return the current compare transaction only while the compare path is enabled."""
+    if not bool(getattr(ctx, "navmap_standup_compare_enabled", True)):
+        return None
+    value = getattr(ctx, "navmap_standup_compare_transaction", None)
+    return value if isinstance(value, StandUpCompareTransactionV1) else None
+
+
+def _guarded_decision_from_current_state(
+    ctx: Any,
+    *,
+    legacy_gate_triggered: bool,
+    protected_bodymap_fallen: bool,
+) -> StandUpGuardedDecisionV1:
+    """Build one bounded guarded trigger decision from current runtime state."""
+    transaction = _guarded_transaction(ctx)
+    transaction_no = transaction.transaction_no if transaction is not None else None
+    observation_no = transaction.observation_no if transaction is not None else None
+    legacy_posture = transaction.legacy_bodymap_posture if transaction is not None else None
+    recommendation = transaction.map_recommendation if transaction is not None else None
+    interpretation = (
+        transaction.map_body_interpretation
+        if transaction is not None
+        else NavBodyStateInterpretationV1.UNKNOWN
+    )
+    maintained = transaction.map_maintained if transaction is not None else False
+    support_status = transaction.support_status if transaction is not None else "unavailable"
+    expected_available = bool(
+        transaction is not None and transaction.expected_successor_map is not None
+    )
+
+    if protected_bodymap_fallen:
+        source = StandUpGuardedAuthoritySourceV1.PROTECTED_BODYMAP_SAFETY
+        triggered = True
+        reason = "fresh_bodymap_fallen_protected_safety_override"
+        fallback_used = True
+        fallback_reason = "protected_bodymap_fallen"
+    elif (
+        transaction is not None #pylint: disable=too-many-boolean-expressions
+        and maintained
+        and support_status in _ACTIONABLE_SUPPORT
+        and recommendation is StandUpMapRecommendationV1.STAND_UP
+        and interpretation is NavBodyStateInterpretationV1.FALLEN_LIKE
+        and expected_available
+    ):
+        source = StandUpGuardedAuthoritySourceV1.WNM_NAVMAP
+        triggered = True
+        reason = "maintained_wnm_geometry_fallen_like"
+        fallback_used = False
+        fallback_reason = None
+    elif (
+        transaction is not None
+        and maintained
+        and support_status in _ACTIONABLE_SUPPORT
+        and recommendation is StandUpMapRecommendationV1.DO_NOT_STAND
+        and interpretation is NavBodyStateInterpretationV1.STANDING_LIKE
+    ):
+        source = StandUpGuardedAuthoritySourceV1.WNM_NAVMAP
+        triggered = False
+        reason = "maintained_wnm_geometry_standing_like"
+        fallback_used = False
+        fallback_reason = None
+    else:
+        source = StandUpGuardedAuthoritySourceV1.BODYMAP_FALLBACK
+        triggered = bool(legacy_gate_triggered)
+        fallback_used = True
+        if transaction is None:
+            fallback_reason = "compare_transaction_unavailable"
+        elif not maintained:
+            fallback_reason = "map_not_maintained"
+        elif support_status not in _ACTIONABLE_SUPPORT:
+            fallback_reason = f"support_{support_status}"
+        elif recommendation is StandUpMapRecommendationV1.DEFER:
+            fallback_reason = transaction.map_reason
+        elif interpretation in {
+            NavBodyStateInterpretationV1.UNKNOWN,
+            NavBodyStateInterpretationV1.AMBIGUOUS,
+        }:
+            fallback_reason = f"map_{interpretation.value}"
+        elif recommendation is StandUpMapRecommendationV1.STAND_UP and not expected_available:
+            fallback_reason = "expected_successor_unavailable"
+        else:
+            fallback_reason = "map_guard_conditions_not_satisfied"
+        reason = f"legacy_bodymap_fallback:{fallback_reason}"
+
+    return StandUpGuardedDecisionV1(
+        decision_no=_next_guarded_decision_no(ctx),
+        transaction_no=transaction_no,
+        observation_no=observation_no,
+        controller_step=_guarded_controller_step(ctx),
+        source_stage="gate",
+        triggered=triggered,
+        authority_source=source,
+        reason=reason,
+        fallback_used=fallback_used,
+        fallback_reason=fallback_reason,
+        protected_bodymap_fallen=bool(protected_bodymap_fallen),
+        legacy_gate_triggered=bool(legacy_gate_triggered),
+        legacy_bodymap_posture=legacy_posture,
+        map_recommendation=recommendation,
+        map_body_interpretation=interpretation,
+        map_maintained=maintained,
+        support_status=support_status,
+        expected_successor_available=expected_available,
+    )
+
+
+def standup_guarded_trigger_value_v1(
+    ctx: Any,
+    *,
+    legacy_gate_triggered: bool,
+    protected_bodymap_fallen: bool,
+) -> bool:
+    """Return the active StandUp trigger while storing guarded telemetry.
+
+    When the feature flag is disabled, this is an exact legacy pass-through and
+    creates no Phase 3C state. When enabled, actionable WNM geometry may supply
+    the trigger; all unsupported cases fall back to the supplied legacy result.
+    """
+    legacy_value = bool(legacy_gate_triggered)
+    if ctx is None or not bool(getattr(ctx, "navmap_standup_guarded_enabled", False)):
+        return legacy_value
+
+    decision = _guarded_decision_from_current_state(
+        ctx,
+        legacy_gate_triggered=legacy_value,
+        protected_bodymap_fallen=bool(protected_bodymap_fallen),
+    )
+    _store_guarded_decision(ctx, decision)
+    return decision.triggered
+
+
+def standup_guarded_safety_active_v1(ctx: Any) -> bool:
+    """Return True when guarded WNM authority currently requires StandUp."""
+    if ctx is None or not bool(getattr(ctx, "navmap_standup_guarded_enabled", False)):
+        return False
+    decision = getattr(ctx, "navmap_standup_guarded_decision", None)
+    return bool(
+        isinstance(decision, StandUpGuardedDecisionV1)
+        and decision.source_stage == "gate"
+        and decision.guarded_map_fallen_active
+    )
+
+
+def standup_guarded_explain_v1(ctx: Any) -> str:
+    """Return one concise gate explanation without recomputing the decision."""
+    if ctx is None or not bool(getattr(ctx, "navmap_standup_guarded_enabled", False)):
+        return "phase3c_guarded=off source=legacy_bodymap_policy_runtime"
+    decision = getattr(ctx, "navmap_standup_guarded_decision", None)
+    if not isinstance(decision, StandUpGuardedDecisionV1):
+        return "phase3c_guarded=on source=bodymap_fallback reason=decision_unavailable"
+    return (
+        "phase3c_guarded=on "
+        f"source={decision.authority_source.value} trigger={decision.triggered} "
+        f"map={decision.map_body_interpretation.value}/{decision.support_status} "
+        f"legacy={decision.legacy_gate_triggered} fallback={decision.fallback_used}"
+    )
+
+
+def _guarded_selection_result(
+    decision: StandUpGuardedDecisionV1,
+    selected_policy: Optional[str],
+) -> str:
+    """Return a deterministic selection outcome label for one guarded gate."""
+    selected_standup = selected_policy == _STANDUP_POLICY
+    if decision.authority_source is StandUpGuardedAuthoritySourceV1.WNM_NAVMAP:
+        if decision.triggered:
+            return "guarded_standup_selected" if selected_standup else "guarded_standup_not_selected"
+        return "guarded_do_not_stand_overridden" if selected_standup else "guarded_do_not_stand_respected"
+    if decision.authority_source is StandUpGuardedAuthoritySourceV1.PROTECTED_BODYMAP_SAFETY:
+        return "protected_safety_standup_selected" if selected_standup else "protected_safety_standup_not_selected"
+    return "fallback_standup_selected" if selected_standup else "fallback_non_standup_selected"
+
+
+def standup_guarded_selection_step_v1(
+    ctx: Any,
+    *,
+    selected_policy: Optional[str],
+) -> dict[str, Any]:
+    """Finalize the current guarded record after PolicyRuntime has selected.
+
+    This function only observes the already-completed selection. It does not
+    change the selected behavioral primitive, action, BodyMap, or safety path.
+    """
+    if ctx is None:
+        return {
+            "schema": "standup_guarded_summary_v1",
+            "phase": "3C",
+            "status": "ctx_unavailable",
+            "authority": "guarded_standup",
+        }
+    if not bool(getattr(ctx, "navmap_standup_guarded_enabled", False)):
+        return standup_guarded_summary_v1(ctx)
+
+    decision = getattr(ctx, "navmap_standup_guarded_decision", None)
+    if not isinstance(decision, StandUpGuardedDecisionV1):
+        return standup_guarded_summary_v1(ctx)
+
+    policy_value = selected_policy if isinstance(selected_policy, str) and selected_policy else None
+    pending = getattr(ctx, "navmap_standup_compare_pending", None)
+    expected_armed = bool(
+        isinstance(pending, StandUpExpectedPendingV1)
+        and decision.transaction_no is not None
+        and pending.transaction_no == decision.transaction_no
+        and policy_value == _STANDUP_POLICY
+    )
+    updated = replace(
+        decision,
+        source_stage="selection",
+        selected_policy=policy_value,
+        selection_result=_guarded_selection_result(decision, policy_value),
+        expected_pending_armed=expected_armed,
+    )
+    return _store_guarded_decision(ctx, updated)
+
+
+def standup_guarded_summary_v1(ctx: Any) -> dict[str, Any]:
+    """Return a defensive JSON-safe summary of the Phase 3C authority state."""
+    if ctx is None:
+        return {
+            "schema": "standup_guarded_summary_v1",
+            "phase": "3C",
+            "status": "ctx_unavailable",
+        }
+    history_count = len(getattr(ctx, "navmap_standup_guarded_history", []) or [])
+    if not bool(getattr(ctx, "navmap_standup_guarded_enabled", False)):
+        return {
+            "schema": "standup_guarded_summary_v1",
+            "phase": "3C",
+            "status": "disabled",
+            "authority": "legacy_bodymap_policy_runtime",
+            "feature_flag_enabled": False,
+            "history_count": history_count,
+        }
+    row = getattr(ctx, "navmap_standup_guarded_last_update", None)
+    if not isinstance(row, dict):
+        return {
+            "schema": "standup_guarded_summary_v1",
+            "phase": "3C",
+            "status": "idle",
+            "authority": "guarded_standup",
+            "feature_flag_enabled": True,
+            "history_count": history_count,
+        }
+    if row.get("status") == "error":
+        out = dict(row)
+        out["history_count"] = history_count
+        return out
+
+    source = row.get("trigger_authority_source")
+    if source == StandUpGuardedAuthoritySourceV1.WNM_NAVMAP.value:
+        status = "guarded_map_authority"
+    elif source == StandUpGuardedAuthoritySourceV1.PROTECTED_BODYMAP_SAFETY.value:
+        status = "protected_safety_fallback"
+    else:
+        status = "bodymap_fallback"
+    return {
+        "schema": "standup_guarded_summary_v1",
+        "phase": "3C",
+        "status": status,
+        "authority": "guarded_standup",
+        "feature_flag_enabled": True,
+        "decision": dict(row),
+        "history_count": history_count,
+    }
+
+
+def render_standup_guarded_lines_v1(ctx: Any) -> list[str]:
+    """Return concise human-readable Phase 3C guarded-authority lines."""
+    summary = standup_guarded_summary_v1(ctx)
+    lines = ["STANDUP PHASE 3C GUARDED AUTHORITY:"]
+    status = summary.get("status")
+    if status in {"ctx_unavailable", "disabled", "idle", "error"}:
+        lines.append(
+            "  "
+            f"status={status} feature_flag={summary.get('feature_flag_enabled')} "
+            f"authority={summary.get('authority')}"
+        )
+        if status == "error":
+            lines.append(
+                "  "
+                f"error_type={summary.get('error_type')} error={summary.get('error')}"
+            )
+        return lines
+
+    decision = summary.get("decision")
+    decision = decision if isinstance(decision, dict) else {}
+    lines.append(
+        "  "
+        f"decision={decision.get('decision_no')} tx={decision.get('transaction_no')} "
+        f"status={status} authority=guarded_standup bounded_domain=stand_up"
+    )
+    lines.append(
+        "  "
+        f"source={decision.get('trigger_authority_source')} trigger={decision.get('triggered')} "
+        f"reason={decision.get('reason')}"
+    )
+    lines.append(
+        "  "
+        f"map derived={decision.get('map_body_interpretation')} "
+        f"support={decision.get('support_status')} "
+        f"maintained={decision.get('map_maintained')} "
+        f"recommendation={decision.get('map_recommendation')} "
+        f"expected_available={decision.get('expected_successor_available')}"
+    )
+    lines.append(
+        "  "
+        f"legacy posture={decision.get('legacy_bodymap_posture')} "
+        f"legacy_gate={decision.get('legacy_gate_triggered')} "
+        f"protected_bodymap_fallen={decision.get('protected_bodymap_fallen')}"
+    )
+    lines.append(
+        "  "
+        f"fallback_used={decision.get('fallback_used')} "
+        f"fallback_reason={decision.get('fallback_reason')} "
+        "protected_safety_can_be_overridden=False"
+    )
+    lines.append(
+        "  "
+        f"selected={decision.get('selected_policy')} "
+        f"selection_result={decision.get('selection_result')} "
+        f"expected_pending_armed={decision.get('expected_pending_armed')}"
+    )
     return lines
