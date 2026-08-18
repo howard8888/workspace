@@ -23,6 +23,7 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "navmap_kernel": "cca8_navmap_kernel",
     "navmap_shadow": "cca8_navmap_shadow",
     "maternal_geometry": "cca8_maternal_geometry",
+    "maternal_temporal": "cca8_maternal_temporal",
     "standup_compare": "cca8_standup_compare",
 }
 

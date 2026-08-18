@@ -22,6 +22,7 @@ from cca8_temporal import TemporalContext
 
 if TYPE_CHECKING:
     from cca8_maternal_geometry import MaternalGeometryShadowStateV1
+    from cca8_maternal_temporal import MaternalTemporalShadowStateV1
     from cca8_navmap_kernel import NavMapV2
     from cca8_navmap_shadow import NavMapV2ShadowStateV2
     from cca8_standup_compare import (
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
         StandUpObservedOutcomeV1,
     )
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -700,6 +701,22 @@ class Ctx:
     navmap_maternal_last_update: Optional[dict[str, Any]] = None
     navmap_maternal_history: list[dict[str, Any]] = field(default_factory=list)
     navmap_maternal_history_limit: int = 25
+
+    # Phase 4B maternal Sequential/Temporal compression shadow. Compact
+    # geometry-derived SELF-maternal samples are attached to the existing
+    # bounded seqerr window and decoded into static temporal features. The
+    # path remains shadow-only and cannot influence FollowMom.
+    navmap_maternal_temporal_shadow_enabled: bool = True
+    navmap_maternal_temporal_state: Optional[MaternalTemporalShadowStateV1] = None
+    navmap_maternal_temporal_last_update: Optional[dict[str, Any]] = None
+    navmap_maternal_temporal_history: list[dict[str, Any]] = field(default_factory=list)
+    navmap_maternal_temporal_history_limit: int = 25
+    navmap_maternal_temporal_minimum_valid_samples: int = 3
+    navmap_maternal_temporal_stable_rate_tolerance: float = 0.05
+    navmap_maternal_temporal_hysteresis_rate: float = 0.02
+    navmap_maternal_temporal_stable_bearing_rate_tolerance: float = 2.0
+    navmap_maternal_temporal_bearing_hysteresis_rate: float = 1.0
+    navmap_maternal_temporal_minimum_elapsed_time: float = 1e-9
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------

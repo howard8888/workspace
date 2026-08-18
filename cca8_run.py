@@ -52,6 +52,7 @@ Core runtime:
   cca8_teaching.py, cca8_test_fixtures.py, cca8_context.py, cca8_cli.py,
   cca8_experiments.py, cca8_openai.py, cca8_working_memory.py, cca8_profiles.py,
   cca8_guidance.py, cca8_predictive.py, cca8_navmap_runtime.py, cca8_maternal_geometry.py,
+  cca8_maternal_temporal.py,
   cca8_reporting.py, cca8_observation_runtime.py,
   cca8_policy_runtime.py, and cca8_preflight.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
@@ -121,6 +122,7 @@ import cca8_working_memory
 import cca8_navmap
 import cca8_navmap_runtime
 import cca8_maternal_geometry
+import cca8_maternal_temporal
 import cca8_standup_compare
 import cca8_reporting
 import cca8_observation_runtime
@@ -237,6 +239,12 @@ navmap_ctx_transition_from_payloads_v1 = cca8_navmap_runtime.navmap_ctx_transiti
 # remains non-authoritative for FollowMom in this slice.
 maternal_geometry_shadow_summary_v1 = cca8_maternal_geometry.maternal_geometry_shadow_summary_v1
 render_maternal_geometry_shadow_lines_v1 = cca8_maternal_geometry.render_maternal_geometry_shadow_lines_v1
+
+# --- Phase 4B maternal temporal compatibility seam -----------------------------
+# The bounded Sequential/Temporal shadow reads Phase 4A geometry-derived
+# distance/bearing samples and remains non-authoritative for FollowMom.
+maternal_temporal_shadow_summary_v1 = cca8_maternal_temporal.maternal_temporal_shadow_summary_v1
+render_maternal_temporal_shadow_lines_v1 = cca8_maternal_temporal.render_maternal_temporal_shadow_lines_v1
 
 # --- Phase 3A/3B/3C/3D StandUp authority compatibility seam -------------------
 # The map-native query, expected-successor, advisory, and authority records live
@@ -523,7 +531,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -589,6 +597,8 @@ __all__ = [
     "navmap_ctx_transition_from_payloads_v1",
     "maternal_geometry_shadow_summary_v1",
     "render_maternal_geometry_shadow_lines_v1",
+    "maternal_temporal_shadow_summary_v1",
+    "render_maternal_temporal_shadow_lines_v1",
     "standup_compare_selection_step_v1",
     "standup_compare_summary_v1",
     "render_standup_compare_lines_v1",
@@ -2695,6 +2705,7 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("navmap_shadow", "cca8_navmap_shadow"),
     ("navmap_runtime", "cca8_navmap_runtime"),
     ("maternal_geometry", "cca8_maternal_geometry"),
+    ("maternal_temporal", "cca8_maternal_temporal"),
     ("standup_compare", "cca8_standup_compare"),
     ("reporting", "cca8_reporting"),
     ("observation_runtime", "cca8_observation_runtime"),
@@ -4270,6 +4281,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "prediction_error": dict(getattr(ctx, "prediction_last_error_record", {}) or {}),
                     "prediction_feedback": prediction_feedback_summary_v1(ctx),
                     "maternal_geometry_shadow": maternal_geometry_shadow_summary_v1(ctx),
+                    "maternal_temporal_shadow": maternal_temporal_shadow_summary_v1(ctx),
                     "standup_advisory": standup_advisory_summary_v1(ctx),
                     "standup_authority": standup_authority_summary_v1(ctx),
                     "standup_guarded": standup_guarded_summary_v1(ctx),
