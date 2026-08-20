@@ -26,6 +26,7 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "maternal_temporal": "cca8_maternal_temporal",
     "maternal_continuity": "cca8_maternal_continuity",
     "followmom_compare": "cca8_followmom_compare",
+    "followmom_advisory": "cca8_followmom_advisory",
     "standup_compare": "cca8_standup_compare",
 }
 

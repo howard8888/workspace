@@ -14,6 +14,7 @@ operators with CCA8 runtime registers for:
 - the Phase 4B maternal Sequential/Temporal compression shadow
 - the Phase 4C maternal continuity/localization shadow
 - the Phase 4D FollowMom compare transaction and compact expected relation
+- the Phase 4E-A non-binding FollowMom advisory
 - expected-current construction and residual comparison
 - conservative accepted-current selection
 - the diagnostic Working Navigation Map surface bridge
@@ -52,6 +53,7 @@ from typing import Any, Optional
 
 from cca8_context import Ctx
 from cca8_env import EnvObservation
+from cca8_followmom_advisory import followmom_advisory_observation_step_v1
 from cca8_followmom_compare import followmom_compare_observation_step_v1
 from cca8_maternal_continuity import maternal_continuity_shadow_observation_step_v1
 from cca8_maternal_geometry import maternal_geometry_shadow_observation_step_v1
@@ -74,7 +76,7 @@ from cca8_standup_compare import (
 )
 
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 __all__ = [
     "NAVMAP_SCOPE_MARKER_V1",
     "NAVMAP_SCOPE_PROBES_V1",
@@ -116,6 +118,7 @@ __all__ = [
     "maternal_temporal_shadow_observation_step_v1",
     "maternal_continuity_shadow_observation_step_v1",
     "followmom_compare_observation_step_v1",
+    "followmom_advisory_observation_step_v1",
     "standup_compare_observation_step_v1",
     "standup_advisory_observation_step_v1",
     "__version__",
@@ -2043,12 +2046,14 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
     # temporal readout, and Phase 4C continuity/localization state. The action
     # already applied by the legacy environment/controller path is used only to
     # close a compact expected relation. Selection and execution remain legacy.
+    followmom_compare_updated = False
     if maternal_updated and maternal_temporal_updated and maternal_continuity_updated:
         try:
             followmom_compare_observation_step_v1(
                 ctx,
                 applied_policy=applied_policy if isinstance(applied_policy, str) else None,
             )
+            followmom_compare_updated = True
         except Exception as exc:  # defensive runtime diagnostic boundary
             ctx.navmap_followmom_compare_last_update = {
                 "schema": "followmom_compare_summary_v1",
@@ -2073,6 +2078,40 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
             "map_can_override": False,
             "map_can_trigger_follow_mom": False,
             "reason": "phase4a_phase4b_or_phase4c_update_failed",
+        }
+
+    # Phase 4E-A converts the current compare transaction and immediately prior
+    # expected-versus-observed outcome into non-binding start, continuation,
+    # defer, and review guidance. It cannot alter selection or protected safety.
+    if followmom_compare_updated:
+        try:
+            followmom_advisory_observation_step_v1(ctx)
+        except Exception as exc:  # defensive runtime diagnostic boundary
+            ctx.navmap_followmom_advisory = None
+            ctx.navmap_followmom_advisory_last_update = {
+                "schema": "followmom_advisory_summary_v1",
+                "phase": "4E-A",
+                "status": "error",
+                "authority": "advisory_only",
+                "follow_mom_authority": "legacy_bodymap_policy_runtime",
+                "legacy_executes": True,
+                "map_can_override": False,
+                "protected_safety_can_be_overridden": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+    else:
+        ctx.navmap_followmom_advisory = None
+        ctx.navmap_followmom_advisory_last_update = {
+            "schema": "followmom_advisory_summary_v1",
+            "phase": "4E-A",
+            "status": "dependency_error",
+            "authority": "advisory_only",
+            "follow_mom_authority": "legacy_bodymap_policy_runtime",
+            "legacy_executes": True,
+            "map_can_override": False,
+            "protected_safety_can_be_overridden": False,
+            "reason": "phase4d_compare_observation_update_failed",
         }
 
     # Phase 3A/3B StandUp bridge. The compare path reads the just-updated

@@ -53,6 +53,7 @@ Core runtime:
   cca8_experiments.py, cca8_openai.py, cca8_working_memory.py, cca8_profiles.py,
   cca8_guidance.py, cca8_predictive.py, cca8_navmap_runtime.py, cca8_maternal_geometry.py,
   cca8_maternal_temporal.py, cca8_maternal_continuity.py, cca8_followmom_compare.py,
+  cca8_followmom_advisory.py,
   cca8_reporting.py, cca8_observation_runtime.py,
   cca8_policy_runtime.py, and cca8_preflight.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
@@ -121,6 +122,7 @@ import cca8_predictive
 import cca8_working_memory
 import cca8_navmap
 import cca8_navmap_runtime
+import cca8_followmom_advisory
 import cca8_followmom_compare
 import cca8_maternal_continuity
 import cca8_maternal_geometry
@@ -262,6 +264,13 @@ render_maternal_continuity_shadow_lines_v1 = cca8_maternal_continuity.render_mat
 followmom_compare_selection_step_v1 = cca8_followmom_compare.followmom_compare_selection_step_v1
 followmom_compare_summary_v1 = cca8_followmom_compare.followmom_compare_summary_v1
 render_followmom_compare_lines_v1 = cca8_followmom_compare.render_followmom_compare_lines_v1
+
+# --- Phase 4E-A FollowMom advisory compatibility seam --------------------------
+# Advice distinguishes initial recruitment from supported continuation, but it
+# cannot alter the legacy candidate set, selected primitive, action, or safety.
+followmom_advisory_selection_step_v1 = cca8_followmom_advisory.followmom_advisory_selection_step_v1
+followmom_advisory_summary_v1 = cca8_followmom_advisory.followmom_advisory_summary_v1
+render_followmom_advisory_lines_v1 = cca8_followmom_advisory.render_followmom_advisory_lines_v1
 
 # --- Phase 3A/3B/3C/3D StandUp authority compatibility seam -------------------
 # The map-native query, expected-successor, advisory, and authority records live
@@ -548,7 +557,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -621,6 +630,9 @@ __all__ = [
     "followmom_compare_selection_step_v1",
     "followmom_compare_summary_v1",
     "render_followmom_compare_lines_v1",
+    "followmom_advisory_selection_step_v1",
+    "followmom_advisory_summary_v1",
+    "render_followmom_advisory_lines_v1",
     "standup_compare_selection_step_v1",
     "standup_compare_summary_v1",
     "render_standup_compare_lines_v1",
@@ -2730,6 +2742,7 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("maternal_temporal", "cca8_maternal_temporal"),
     ("maternal_continuity", "cca8_maternal_continuity"),
     ("followmom_compare", "cca8_followmom_compare"),
+    ("followmom_advisory", "cca8_followmom_advisory"),
     ("standup_compare", "cca8_standup_compare"),
     ("reporting", "cca8_reporting"),
     ("observation_runtime", "cca8_observation_runtime"),
@@ -4041,6 +4054,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
         # records the original legacy gate, the effective post-filter candidate,
         # and the controller winner. It may arm an expected relation for the next
         # observation, but it cannot change the action already selected/executed.
+        followmom_compare_selection_updated = False
         try:
             followmom_compare_selection_step_v1(
                 ctx,
@@ -4048,6 +4062,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 legacy_effective_candidate=legacy_followmom_effective_candidate,
                 selected_policy=policy_name,
             )
+            followmom_compare_selection_updated = True
         except Exception as exc:
             ctx.navmap_followmom_compare_last_update = {
                 "schema": "followmom_compare_summary_v1",
@@ -4060,6 +4075,40 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 "map_can_trigger_follow_mom": False,
                 "error_type": type(exc).__name__,
                 "error": str(exc),
+            }
+
+        # Phase 4E-A refreshes non-binding advice after the real legacy candidate
+        # set and winner are known. The selected policy before and after this call
+        # is necessarily identical; protected filters remain outside map advice.
+        if followmom_compare_selection_updated:
+            try:
+                followmom_advisory_selection_step_v1(ctx)
+            except Exception as exc:
+                ctx.navmap_followmom_advisory = None
+                ctx.navmap_followmom_advisory_last_update = {
+                    "schema": "followmom_advisory_summary_v1",
+                    "phase": "4E-A",
+                    "status": "error",
+                    "authority": "advisory_only",
+                    "follow_mom_authority": "legacy_bodymap_policy_runtime",
+                    "legacy_executes": True,
+                    "map_can_override": False,
+                    "protected_safety_can_be_overridden": False,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+        else:
+            ctx.navmap_followmom_advisory = None
+            ctx.navmap_followmom_advisory_last_update = {
+                "schema": "followmom_advisory_summary_v1",
+                "phase": "4E-A",
+                "status": "dependency_error",
+                "authority": "advisory_only",
+                "follow_mom_authority": "legacy_bodymap_policy_runtime",
+                "legacy_executes": True,
+                "map_can_override": False,
+                "protected_safety_can_be_overridden": False,
+                "reason": "phase4d_compare_selection_update_failed",
             }
 
         # Phase 3A/3B/3C/3D instrumentation. Phase 3A retains an independent
@@ -4348,6 +4397,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "maternal_temporal_shadow": maternal_temporal_shadow_summary_v1(ctx),
                     "maternal_continuity_shadow": maternal_continuity_shadow_summary_v1(ctx),
                     "followmom_compare": followmom_compare_summary_v1(ctx),
+                    "followmom_advisory": followmom_advisory_summary_v1(ctx),
                     "standup_advisory": standup_advisory_summary_v1(ctx),
                     "standup_authority": standup_authority_summary_v1(ctx),
                     "standup_guarded": standup_guarded_summary_v1(ctx),

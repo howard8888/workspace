@@ -21,6 +21,7 @@ from cca8_navpatch import SurfaceGridV1
 from cca8_temporal import TemporalContext
 
 if TYPE_CHECKING:
+    from cca8_followmom_advisory import FollowMomAdvisoryV1
     from cca8_followmom_compare import (
         FollowMomCompareTransactionV1,
         FollowMomExpectedPendingV1,
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
         StandUpObservedOutcomeV1,
     )
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -759,6 +760,16 @@ class Ctx:
     navmap_followmom_compare_minimum_distance_reduction: float = 0.05
     navmap_followmom_compare_maximum_allowed_distance_increase: float = 0.10
     navmap_followmom_compare_maximum_predicted_region_radius: float = 1.00
+
+    # Phase 4E-A FollowMom advisory. The advisory converts the Phase 4D
+    # transaction and immediately prior expected-versus-observed outcome into
+    # explicit start, continuation, defer, and review guidance. It cannot alter
+    # the legacy candidate set, selected primitive, protected safety, or action.
+    navmap_followmom_advisory_enabled: bool = True
+    navmap_followmom_advisory: Optional[FollowMomAdvisoryV1] = None
+    navmap_followmom_advisory_last_update: Optional[dict[str, Any]] = None
+    navmap_followmom_advisory_history: list[dict[str, Any]] = field(default_factory=list)
+    navmap_followmom_advisory_history_limit: int = 25
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------
