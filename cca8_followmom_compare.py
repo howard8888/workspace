@@ -32,10 +32,13 @@ modest:
 * when Mom is near but receding, the next relation should keep separation near
   or prevent a material increase.
 
-The expected relation is armed only when the legacy controller actually selects
-``policy:follow_mom``.  The next observation then closes the transaction as
-``success``, ``failure``, ``unknown``, or ``not_applied``.  Prediction never
-becomes current truth, and issuing an action never fabricates its outcome.
+The expected relation is armed only when PolicyRuntime actually selects
+``policy:follow_mom``. Phase 4D initially annotates that selection as legacy;
+later guarded/default authority may reuse the same pending/outcome seam while
+recording the cognitive source that supplied the gate. The next observation
+then closes the transaction as ``success``, ``failure``, ``unknown``, or
+``not_applied``. Prediction never becomes current truth, and issuing an action
+never fabricates its outcome.
 
 Continuity boundary
 -------------------
@@ -57,9 +60,12 @@ DO_NOT_FOLLOW result against the permissive legacy fallback is recorded as a
 potentially useful over-trigger finding.  These labels are review signals, not
 behavioral commands or ground-truth judgments.
 
-All public records state ``authority=compare_only``, ``legacy_executes=True``,
-and ``map_can_override=False``.  BodyMap, PolicyRuntime, protected safety,
-WorldGraph, environment dynamics, and lower motor execution remain unchanged.
+The Phase 4D compare transaction itself always states
+``authority=compare_only`` and cannot change selection. Its authority-neutral
+pending/outcome records may later identify a guarded/default FollowMom source;
+that annotation does not grant authority inside this module. BodyMap,
+PolicyRuntime execution, protected safety, WorldGraph, environment dynamics,
+and lower motor execution remain unchanged.
 """
 
 from __future__ import annotations
@@ -95,7 +101,7 @@ from cca8_maternal_temporal import (
 )
 from cca8_navmap_kernel import NavMapRefV1, NavProvenanceV1, NavSourceClassV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "FollowMomMapRecommendationV1",
@@ -561,12 +567,20 @@ class FollowMomCompareTransactionV1:
 
 @dataclass(frozen=True, slots=True)
 class FollowMomExpectedPendingV1:
-    """One compact expected relation armed after legacy-selected FollowMom."""
+    """One compact expected relation armed after selected FollowMom.
+
+    The pending relation is authority-neutral. Phase 4D legacy selection keeps
+    the default metadata, while Phase 4F may record WNM/NavMap selection without
+    creating a second prediction/outcome mechanism.
+    """
 
     transaction_no: int
     expected_successor: FollowMomExpectedSuccessorV1
     selected_policy: str
     selected_controller_step: int
+    selection_phase: str = "4D"
+    selection_authority: str = "legacy_bodymap_policy_runtime"
+    cognitive_source: str = "legacy_bodymap_policy_runtime"
 
     def __post_init__(self) -> None:
         _require_positive_int(self.transaction_no, field_name="transaction_no")
@@ -575,6 +589,8 @@ class FollowMomExpectedPendingV1:
         if self.selected_policy != _FOLLOW_MOM_POLICY:
             raise ValueError("FollowMom pending expectation requires policy:follow_mom")
         _require_non_negative_int(self.selected_controller_step, field_name="selected_controller_step")
+        for field_name in ("selection_phase", "selection_authority", "cognitive_source"):
+            _require_nonempty_text(getattr(self, field_name), field_name=field_name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -594,6 +610,9 @@ class FollowMomObservedOutcomeV1:
     observed_proximity: MaternalProximityV1
     observed_temporal_trend: MaternalTemporalTrendV1
     reason: str
+    selection_phase: str = "4D"
+    selection_authority: str = "legacy_bodymap_policy_runtime"
+    cognitive_source: str = "legacy_bodymap_policy_runtime"
 
     def __post_init__(self) -> None:
         _require_positive_int(self.transaction_no, field_name="transaction_no")
@@ -623,10 +642,18 @@ class FollowMomObservedOutcomeV1:
         if not isinstance(self.observed_temporal_trend, MaternalTemporalTrendV1):
             raise TypeError("observed_temporal_trend must be MaternalTemporalTrendV1")
         _require_nonempty_text(self.reason, field_name="reason")
+        for field_name in ("selection_phase", "selection_authority", "cognitive_source"):
+            _require_nonempty_text(getattr(self, field_name), field_name=field_name)
 
     def as_dict(self) -> dict[str, Any]:
         """Return a JSON-safe expected-versus-observed relation outcome."""
         expected = self.expected_successor
+        legacy_gate_authoritative = self.cognitive_source in {
+            "legacy_bodymap_policy_runtime",
+            "legacy_fallback",
+            "protected_legacy_veto",
+            "legacy_compatibility",
+        }
         distance_delta = (
             self.observed_distance - expected.source_distance
             if self.observed_distance is not None
@@ -649,11 +676,20 @@ class FollowMomObservedOutcomeV1:
             "schema": "followmom_observed_outcome_v1",
             "phase": "4D",
             "authority": "compare_only",
-            "follow_mom_authority": "legacy_bodymap_policy_runtime",
+            "comparison_authority": "compare_only",
+            "selection_phase": self.selection_phase,
+            "follow_mom_authority": self.selection_authority,
+            "legacy_gate_authoritative": legacy_gate_authoritative,
             "legacy_executes": True,
+            "policy_runtime_executes": True,
+            "legacy_primitive_executor_unchanged": True,
             "map_can_override": False,
             "map_can_trigger_follow_mom": False,
-            "execution_source": "legacy_bodymap_policy_runtime",
+            "comparison_module_can_trigger_follow_mom": False,
+            "selection_map_can_supply_followmom_gate": self.cognitive_source == "wnm_navmap",
+            "selection_map_authority_used": self.cognitive_source == "wnm_navmap",
+            "cognitive_source": self.cognitive_source,
+            "execution_source": "policy_runtime_action_center",
             "behavioral_primitive": "follow_mom",
             "transaction_no": self.transaction_no,
             "expected_successor": expected.as_dict(),
@@ -1141,6 +1177,9 @@ def _finalize_pending_expectation(
         observed_proximity=observed_proximity,
         observed_temporal_trend=observed_trend,
         reason=reason,
+        selection_phase=pending.selection_phase,
+        selection_authority=pending.selection_authority,
+        cognitive_source=pending.cognitive_source,
     )
     ctx.navmap_followmom_compare_pending = None
     ctx.navmap_followmom_compare_last_outcome = result

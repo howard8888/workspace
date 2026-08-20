@@ -23,12 +23,13 @@ without creating a circular import.
 
 Behavior boundary
 -----------------
-Phase 3D changes only the bounded StandUp trigger authority supplied through
-``PolicyRuntimeHooks``: new contexts normally use actionable maintained WNM
-geometry, while unsupported maps use the complete legacy gate and fresh BodyMap
-fallen remains protected. Gate order, all other behavioral-primitive domains,
-newborn bridges, safety filtering, tie-breaking, controller execution, Scratch
-provenance, and Creative scoring remain unchanged.
+Phase 3D changes the bounded StandUp trigger authority supplied through
+``PolicyRuntimeHooks``. Phase 4F similarly lets exact current maternal WNM/NavMap
+evidence control one FollowMom applicability domain while preserving protected
+legacy false results, named true compatibility forces, and complete legacy
+fallback. Gate order, other behavioral-primitive domains, newborn sequence
+locks, topology safety, tie-breaking, controller execution, Scratch provenance,
+and Creative scoring remain unchanged.
 """
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ from cca8_context import CreativeCandidate, Ctx
 from cca8_controller import Drives, FATIGUE_HIGH, HUNGER_HIGH
 
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +96,9 @@ class PolicyRuntimeHooks:  # pylint: disable=too-few-public-methods
     standup_guarded_trigger: Callable[..., Any]
     standup_guarded_safety_active: Callable[..., Any]
     standup_guarded_explain: Callable[..., Any]
+    followmom_authority_trigger: Callable[..., Any]
+    followmom_authority_explain: Callable[..., Any]
+    followmom_authority_legacy_bridge_allowed: Callable[..., Any]
 
 
 _POLICY_RUNTIME_HOOKS: PolicyRuntimeHooks | None = None
@@ -170,6 +174,21 @@ def standup_guarded_safety_active_v1(*args: Any, **kwargs: Any) -> Any:
 def standup_guarded_explain_v1(*args: Any, **kwargs: Any) -> Any:
     """Call the configured Phase 3C/3D StandUp authority explainer."""
     return _policy_runtime_hooks().standup_guarded_explain(*args, **kwargs)
+
+
+def followmom_authority_trigger_v1(*args: Any, **kwargs: Any) -> Any:
+    """Call the configured Phase 4E-B/4F FollowMom authority trigger."""
+    return _policy_runtime_hooks().followmom_authority_trigger(*args, **kwargs)
+
+
+def followmom_authority_explain_v1(*args: Any, **kwargs: Any) -> Any:
+    """Call the configured Phase 4E-B/4F FollowMom authority explainer."""
+    return _policy_runtime_hooks().followmom_authority_explain(*args, **kwargs)
+
+
+def followmom_authority_legacy_bridge_allowed_v1(*args: Any, **kwargs: Any) -> Any:
+    """Call the authority guard for the historical FollowMom force bridge."""
+    return _policy_runtime_hooks().followmom_authority_legacy_bridge_allowed(*args, **kwargs)
 
 
 def _fallen_near_now(*args: Any, **kwargs: Any) -> Any:
@@ -1244,6 +1263,23 @@ def _newborn_follow_fallback_blocked_without_memory_v1(world, ctx) -> bool:
     return not _newborn_recent_retrieval_ok_v1(ctx, max_age_steps=3)
 
 
+def _newborn_follow_bridge_requires_legacy_compatibility_v1(ctx: Any) -> bool:
+    """Return whether the current bridge still serves the newborn route consumer.
+
+    The current environment overloads ``policy:follow_mom`` during the
+    ``struggle``/``first_stand`` route phase: the primitive moves the kid from
+    exposed terrain toward shelter in addition to regulating maternal
+    separation. Phase 4F does not yet own terrain or route geometry, so that
+    explicit consumer remains a legacy compatibility force until Phase 6
+    migrates it. A generic far-maternal fallback outside those stages remains
+    map-reviewable.
+    """
+    if ctx is None:
+        return False
+    stage = getattr(ctx, "lt_obs_last_stage", None)
+    return stage in {"struggle", "first_stand"}
+
+
 def _should_force_follow_mom_bridge_v1(world, ctx) -> bool:
     """Return True when follow_mom should bridge post-stand recovery into mom-approach.
 
@@ -1802,105 +1838,181 @@ def _gate_suckle_explain_newborn_v1(world, _drives: Drives, ctx) -> str:
     )
 
 
-def _gate_follow_mom_trigger_body_space(world, drives: Drives, ctx) -> bool:  # pylint: disable=unused-argument
-    """FollowMom gate with goat04/context behavior and newborn post-latch discipline."""
+@dataclass(frozen=True, slots=True)
+class _FollowMomLegacyGateEvaluationV1:
+    """One complete historical FollowMom gate result plus protection metadata.
+
+    ``protected_veto`` marks a false legacy result that Phase 4F may not
+    override. ``compatibility_force`` marks a true legacy result whose consumer
+    has not yet migrated. Named goat04/conflicted-repair paths and the newborn
+    ``struggle``/``first_stand`` route consumer may retain that force. The same
+    far-maternal bridge outside those route stages remains map-reviewable and
+    cannot bypass earned NavMap authority.
+    """
+
+    triggered: bool
+    reason: str
+    protected_veto: bool = False
+    compatibility_force: bool = False
+
+
+def _follow_mom_legacy_gate_evaluation_v1(
+    world: Any,
+    ctx: Any,
+) -> _FollowMomLegacyGateEvaluationV1:
+    """Return the complete pre-Phase-4F FollowMom gate and one explicit reason."""
     hint = _goat04_context_hint_active_v1(ctx)
     if hint == "hawk":
-        return False
+        return _FollowMomLegacyGateEvaluationV1(
+            triggered=False,
+            reason="goat04_hawk_context_veto",
+            protected_veto=True,
+        )
     if hint == "fox":
-        return True
+        return _FollowMomLegacyGateEvaluationV1(
+            triggered=True,
+            reason="goat04_fox_context_force",
+            compatibility_force=True,
+        )
 
     challenge_status = _newborn_conflicted_repair_status_v1(ctx)
     if challenge_status in ("armed", "failed"):
-        return False
+        return _FollowMomLegacyGateEvaluationV1(
+            triggered=False,
+            reason=f"conflicted_repair_{challenge_status}_veto",
+            protected_veto=True,
+        )
     if challenge_status == "active":
-        st = _newborn_conflicted_repair_gate_state_v1(world, ctx)
-        if st.get("posture") != "standing":
-            return False
-        if st.get("nipple_state") == "latched":
-            return False
-        # The challenge deliberately requires both pieces of state. Condition A
-        # can repair mom_distance while preserving current route:blocked. After
-        # probe, route becomes clear and follow is permitted. Condition B lacks
-        # mom_distance. Condition C reconstructs stale route:clear and follows
-        # before probing, which the environment records as an unsafe failure.
-        return st.get("mom_distance") == "far" and st.get("route_state") == "clear"
+        state = _newborn_conflicted_repair_gate_state_v1(world, ctx)
+        posture = state.get("posture")
+        nipple_state = state.get("nipple_state")
+        mom_distance = state.get("mom_distance")
+        route_state = state.get("route_state")
+        allowed = bool(
+            posture == "standing"
+            and nipple_state != "latched"
+            and mom_distance == "far"
+            and route_state == "clear"
+        )
+        return _FollowMomLegacyGateEvaluationV1(
+            triggered=allowed,
+            reason=(
+                "conflicted_repair_active_route_clear_force"
+                if allowed
+                else "conflicted_repair_active_gate_veto"
+            ),
+            protected_veto=not allowed,
+            compatibility_force=allowed,
+        )
 
-    st = _follow_mom_bridge_state_v1(world, ctx)
-    posture = st.get("posture")
+    state = _follow_mom_bridge_state_v1(world, ctx)
+    posture = state.get("posture")
 
     if posture in ("fallen", "resting"):
-        return False
+        return _FollowMomLegacyGateEvaluationV1(
+            triggered=False,
+            reason=f"protected_posture_{posture}",
+            protected_veto=True,
+        )
 
     if _newborn_post_latch_sequence_active_v1(world, ctx):
-        return False
+        return _FollowMomLegacyGateEvaluationV1(
+            triggered=False,
+            reason="post_latch_sequence_lock",
+            protected_veto=True,
+        )
 
     if _should_force_follow_mom_bridge_v1(world, ctx):
-        return True
+        return _FollowMomLegacyGateEvaluationV1(
+            triggered=True,
+            reason="newborn_post_stand_mom_far_bridge",
+            compatibility_force=_newborn_follow_bridge_requires_legacy_compatibility_v1(ctx),
+        )
 
     if _newborn_follow_fallback_blocked_without_memory_v1(world, ctx):
-        return False
+        return _FollowMomLegacyGateEvaluationV1(
+            triggered=False,
+            reason="newborn_sparse_state_without_recent_retrieval",
+            protected_veto=True,
+        )
 
     if posture is None:
         try:
             if has_pred_near_now(world, "resting", hops=3):
-                return False
+                return _FollowMomLegacyGateEvaluationV1(
+                    triggered=False,
+                    reason="resting_near_now_veto",
+                    protected_veto=True,
+                )
         except Exception:
             pass
 
     try:
-        if _wm_follow_mom_blocked_by_topology_v1(ctx):
-            return False
+        topology_blocked = bool(_wm_follow_mom_blocked_by_topology_v1(ctx))
     except Exception:
-        pass
+        topology_blocked = False
+    if topology_blocked:
+        return _FollowMomLegacyGateEvaluationV1(
+            triggered=False,
+            reason="surfacegrid_topology_safety_veto",
+            protected_veto=True,
+        )
 
-    return True
+    return _FollowMomLegacyGateEvaluationV1(
+        triggered=True,
+        reason="legacy_permissive_followmom_fallback",
+    )
 
 
-def _gate_follow_mom_explain_body_space(world, drives: Drives, ctx) -> str:  # pylint: disable=unused-argument
+def _gate_follow_mom_trigger_legacy_body_space(
+    world: Any,
+    _drives: Drives,
+    ctx: Any,
+) -> bool:  # pylint: disable=unused-argument
+    """Return the complete pre-Phase-4F BodyMap/PolicyRuntime FollowMom gate."""
+    return _follow_mom_legacy_gate_evaluation_v1(world, ctx).triggered
+
+
+def _gate_follow_mom_trigger_body_space(
+    world: Any,
+    _drives: Drives,
+    ctx: Any,
+) -> bool:  # pylint: disable=unused-argument
+    """Return the active FollowMom gate under guarded/default NavMap authority.
+
+    Every false historical result remains a protected veto. Explicit goat04,
+    conflicted-repair, and newborn ``struggle``/``first_stand`` route consumers
+    remain compatibility authority. Outside those named consumers, the ordinary
+    far-maternal bridge and permissive fallback are historical FollowMom
+    opportunities that exact current WNM/NavMap evidence may authorize or
+    suppress.
     """
-    Human-readable explanation matching _gate_follow_mom_trigger_body_space.
-    """
+    legacy = _follow_mom_legacy_gate_evaluation_v1(world, ctx)
+    return bool(
+        followmom_authority_trigger_v1(
+            ctx,
+            legacy_gate_triggered=legacy.triggered,
+            legacy_gate_reason=legacy.reason,
+            protected_legacy_veto=legacy.protected_veto,
+            legacy_compatibility_force=legacy.compatibility_force,
+        )
+    )
+
+
+def _gate_follow_mom_explain_body_space(
+    world: Any,
+    drives: Drives,
+    ctx: Any,
+) -> str:  # pylint: disable=unused-argument
+    """Return legacy-gate details plus the active FollowMom authority source."""
     hunger = float(getattr(drives, "hunger", 0.0))
     fatigue = float(getattr(drives, "fatigue", 0.0))
-    goat04_hint = _goat04_context_hint_active_v1(ctx)
-
-    posture = None
-    zone = "unknown"
-    bodymap_stale = True
-    try:
-        bodymap_stale = bodymap_is_stale(ctx) if ctx is not None else True
-        if ctx is not None and not bodymap_stale:
-            posture = body_posture(ctx)
-            zone = body_space_zone(ctx)
-    except Exception:
-        posture = posture or "n/a"
-        zone = "unknown"
-        bodymap_stale = True
-
-    rest_near_now = False
-    try:
-        rest_near_now = has_pred_near_now(world, "resting", hops=3)
-    except Exception:
-        rest_near_now = False
-
-    topo_blocked = False
-    try:
-        topo_blocked = _wm_follow_mom_blocked_by_topology_v1(ctx)
-    except Exception:
-        topo_blocked = False
-
-    sparse_follow_blocked = False
-    try:
-        sparse_follow_blocked = _newborn_follow_fallback_blocked_without_memory_v1(world, ctx)
-    except Exception:
-        sparse_follow_blocked = False
-
+    legacy = _follow_mom_legacy_gate_evaluation_v1(world, ctx)
     return (
-        "dev_gate: True, trigger: fallback=True when not fallen/resting and topology permits; "
-        f"goat04_hint={goat04_hint!r} bodymap_stale={bodymap_stale} posture={posture or 'n/a'} "
-        f"rest_near_now={rest_near_now} zone={zone} topology_blocked={topo_blocked} "
-        f"sparse_follow_blocked={sparse_follow_blocked} "
+        "dev_gate: True, legacy_followmom_gate="
+        f"{legacy.triggered} reason={legacy.reason} "
+        f"protected_veto={legacy.protected_veto} compatibility_force={legacy.compatibility_force}; "
+        f"{followmom_authority_explain_v1(ctx)}; "
         f"{_wm_navsummary_explain_bits_v1(ctx)} (hunger={hunger:.2f}, fatigue={fatigue:.2f})"
     )
 
@@ -2514,6 +2626,10 @@ class PolicyRuntime:
         _ = tie_break  # compatibility seam for older call sites / docs, avoid unused-argument warning
         matches = [p for p in self.loaded if _safe(p.trigger, world, drives, ctx)]
         triggered_all = [p.name for p in matches]
+        legacy_followmom = _follow_mom_legacy_gate_evaluation_v1(world, ctx)
+        followmom_loaded = any(p.name == "policy:follow_mom" for p in self.loaded)
+        legacy_followmom_candidate = bool(legacy_followmom.triggered and followmom_loaded)
+        active_followmom_gate = "policy:follow_mom" in triggered_all
 
         try:
             debug_state = _follow_mom_bridge_state_v1(world, ctx)
@@ -2533,9 +2649,17 @@ class PolicyRuntime:
             "stage": debug_stage if isinstance(debug_stage, str) else None,
             "state": dict(debug_state) if isinstance(debug_state, dict) else {},
             "matches_initial": list(triggered_all),
+            "followmom_legacy_gate_triggered": legacy_followmom.triggered,
+            "followmom_legacy_gate_reason": legacy_followmom.reason,
+            "followmom_legacy_protected_veto": legacy_followmom.protected_veto,
+            "followmom_legacy_compatibility_force": legacy_followmom.compatibility_force,
+            "followmom_active_gate_triggered": active_followmom_gate,
+            "followmom_legacy_effective_candidate": legacy_followmom_candidate,
+            "followmom_active_effective_candidate": None,
             "post_latch_sequence": None,
             "matches_after_post_latch": None,
             "bridge_follow_mom": None,
+            "legacy_bridge_follow_mom": None,
             "forced_follow_mom": None,
             "matches_after_bridge": None,
             "suppress_follow_mom": None,
@@ -2573,6 +2697,7 @@ class PolicyRuntime:
                 blocked_post_latch.add("policy:rest")
 
             matches = [p for p in matches if p.name not in blocked_post_latch]
+            legacy_followmom_candidate = False
 
             if not milk_drinking_now and not any(p.name == "policy:suckle" for p in matches):
                 try:
@@ -2595,16 +2720,32 @@ class PolicyRuntime:
         policy_debug["matches_after_post_latch"] = [p.name for p in matches]
         forced_follow_mom = False
         bridge_follow_mom = False
+        legacy_bridge_follow_mom = False
         if not post_latch_sequence:
             try:
-                bridge_follow_mom = _should_force_follow_mom_bridge_v1(world, ctx)
+                legacy_bridge_follow_mom = bool(_should_force_follow_mom_bridge_v1(world, ctx))
+            except Exception:
+                legacy_bridge_follow_mom = False
+            try:
+                bridge_follow_mom = bool(
+                    followmom_authority_legacy_bridge_allowed_v1(ctx)
+                    and legacy_bridge_follow_mom
+                )
             except Exception:
                 bridge_follow_mom = False
 
-        # If follow_mom already matched because its own gate fired under the newborn bridge,
-        # remember that now so the later topology suppression step does not remove it.
+        # If follow_mom already matched because its active gate fired under the
+        # newborn bridge, remember that now so the later topology suppression
+        # step does not remove it. The independent legacy candidate uses the
+        # unmodified historical bridge so Phase 4D differential telemetry stays
+        # meaningful even when Phase 4F suppresses the active candidate.
         if bridge_follow_mom and any(p.name == "policy:follow_mom" for p in matches):
             forced_follow_mom = True
+
+        legacy_forced_follow_mom = bool(
+            legacy_followmom_candidate
+            and legacy_bridge_follow_mom
+        )
 
         # In the conflicted-repair benchmark, a successful probe explicitly
         # clears the hidden route hazard. Once the challenge gate admits
@@ -2618,10 +2759,15 @@ class PolicyRuntime:
             and any(p.name == "policy:follow_mom" for p in matches)
         ):
             forced_follow_mom = True
+        if (
+            _newborn_conflicted_repair_status_v1(ctx) == "active"
+            and legacy_followmom_candidate
+        ):
+            legacy_forced_follow_mom = True
 
         if not matches:
             forced = None
-            if (not post_latch_sequence) and bridge_follow_mom:
+            if (not post_latch_sequence) and bridge_follow_mom and active_followmom_gate:
                 try:
                     forced = next((p for p in self.loaded if p.name == "policy:follow_mom"), None)
                 except Exception:
@@ -2629,14 +2775,18 @@ class PolicyRuntime:
 
             if forced is None:
                 policy_debug["bridge_follow_mom"] = bool(bridge_follow_mom)
+                policy_debug["legacy_bridge_follow_mom"] = bool(legacy_bridge_follow_mom)
                 policy_debug["forced_follow_mom"] = bool(forced_follow_mom)
                 policy_debug["matches_after_bridge"] = []
+                policy_debug["followmom_legacy_effective_candidate"] = legacy_followmom_candidate
+                policy_debug["followmom_active_effective_candidate"] = False
                 _experiment_policy_debug_record_v1(ctx, policy_debug)
                 return "no_match"
 
             matches = [forced]
             forced_follow_mom = True
         policy_debug["bridge_follow_mom"] = bool(bridge_follow_mom)
+        policy_debug["legacy_bridge_follow_mom"] = bool(legacy_bridge_follow_mom)
         policy_debug["forced_follow_mom"] = bool(forced_follow_mom)
         policy_debug["matches_after_bridge"] = [p.name for p in matches]
 
@@ -2650,9 +2800,14 @@ class PolicyRuntime:
 
         if suppress_follow_mom and not forced_follow_mom:
             matches = [p for p in matches if p.name != "policy:follow_mom"]
+        if suppress_follow_mom and not legacy_forced_follow_mom:
+            legacy_followmom_candidate = False
+        if suppress_follow_mom and not forced_follow_mom:
             if not matches:
                 policy_debug["suppress_follow_mom"] = bool(suppress_follow_mom)
                 policy_debug["matches_after_topology"] = []
+                policy_debug["followmom_legacy_effective_candidate"] = legacy_followmom_candidate
+                policy_debug["followmom_active_effective_candidate"] = False
                 _experiment_policy_debug_record_v1(ctx, policy_debug)
                 return "no_match"
 
@@ -2685,12 +2840,19 @@ class PolicyRuntime:
         if fallen_safety_active:
             safety_only = {"policy:recover_fall", "policy:stand_up"}
             matches = [p for p in matches if p.name in safety_only]
+            legacy_followmom_candidate = False
             if not matches:
                 policy_debug["matches_after_safety"] = []
+                policy_debug["followmom_legacy_effective_candidate"] = False
+                policy_debug["followmom_active_effective_candidate"] = False
                 _experiment_policy_debug_record_v1(ctx, policy_debug)
                 return "no_match"
 
         policy_debug["matches_after_safety"] = [p.name for p in matches]
+        policy_debug["followmom_legacy_effective_candidate"] = legacy_followmom_candidate
+        policy_debug["followmom_active_effective_candidate"] = any(
+            p.name == "policy:follow_mom" for p in matches
+        )
 
         # --- EFE scoring (diagnostic only) ---
         try:
@@ -3102,6 +3264,9 @@ class PolicyRuntime:
 
         try:
             policy_debug["matches_before_choice"] = [p.name for p in matches]
+            policy_debug["followmom_active_effective_candidate"] = any(
+                p.name == "policy:follow_mom" for p in matches
+            )
             policy_debug["chosen"] = getattr(chosen, "name", None)
             _experiment_policy_debug_record_v1(ctx, policy_debug)
         except Exception:
@@ -3552,6 +3717,7 @@ __all__ = [
     "_gate_rest_explain_body_space",
     "_gate_probe_ambiguity_trigger_body_first",
     "_gate_probe_ambiguity_explain_body_first",
+    "_gate_follow_mom_trigger_legacy_body_space",
     "_gate_follow_mom_trigger_body_space",
     "_gate_follow_mom_explain_body_space",
     "_gate_suckle_trigger_newborn_v1",
@@ -3559,6 +3725,7 @@ __all__ = [
     "_gate_recover_fall_trigger_body_first",
     "_gate_recover_fall_explain",
     "_newborn_workingmap_state_v1",
+    "_follow_mom_legacy_gate_evaluation_v1",
     "_follow_mom_bridge_state_v1",
     "_newborn_conflicted_repair_status_v1",
     "_newborn_recent_retrieval_ok_v1",

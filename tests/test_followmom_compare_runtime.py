@@ -38,6 +38,7 @@ def _ctx_with_bodymap() -> Ctx:
     """Return one context with the compatibility BodyMap initialized."""
     ctx = Ctx()
     ctx.body_world, ctx.body_ids = init_body_world()
+    ctx.navmap_followmom_authority_mode = "legacy"
     return ctx
 
 
@@ -128,8 +129,14 @@ def _legacy_values_from_debug(ctx: Ctx) -> tuple[bool | None, bool | None, str |
     initial = debug.get("matches_initial") if isinstance(debug, dict) else None
     effective = debug.get("matches_before_choice") if isinstance(debug, dict) else None
     chosen = debug.get("chosen") if isinstance(debug, dict) else None
-    gate = _FOLLOW_MOM in initial if isinstance(initial, list) else None
-    candidate = _FOLLOW_MOM in effective if isinstance(effective, list) else None
+    legacy_gate = debug.get("followmom_legacy_gate_triggered") if isinstance(debug, dict) else None
+    legacy_candidate = debug.get("followmom_legacy_effective_candidate") if isinstance(debug, dict) else None
+    gate = legacy_gate if isinstance(legacy_gate, bool) else (
+        _FOLLOW_MOM in initial if isinstance(initial, list) else None
+    )
+    candidate = legacy_candidate if isinstance(legacy_candidate, bool) else (
+        _FOLLOW_MOM in effective if isinstance(effective, list) else None
+    )
     selected = chosen if isinstance(chosen, str) else None
     return gate, candidate, selected
 

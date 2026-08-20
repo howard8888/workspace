@@ -41,6 +41,7 @@ def _ctx_with_bodymap() -> Ctx:
     """Return one context with the compatibility BodyMap initialized."""
     ctx = Ctx()
     ctx.body_world, ctx.body_ids = init_body_world()
+    ctx.navmap_followmom_authority_mode = "legacy"
     return ctx
 
 

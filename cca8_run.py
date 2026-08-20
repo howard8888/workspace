@@ -53,7 +53,7 @@ Core runtime:
   cca8_experiments.py, cca8_openai.py, cca8_working_memory.py, cca8_profiles.py,
   cca8_guidance.py, cca8_predictive.py, cca8_navmap_runtime.py, cca8_maternal_geometry.py,
   cca8_maternal_temporal.py, cca8_maternal_continuity.py, cca8_followmom_compare.py,
-  cca8_followmom_advisory.py,
+  cca8_followmom_advisory.py, cca8_followmom_authority.py,
   cca8_reporting.py, cca8_observation_runtime.py,
   cca8_policy_runtime.py, and cca8_preflight.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
@@ -123,6 +123,7 @@ import cca8_working_memory
 import cca8_navmap
 import cca8_navmap_runtime
 import cca8_followmom_advisory
+import cca8_followmom_authority
 import cca8_followmom_compare
 import cca8_maternal_continuity
 import cca8_maternal_geometry
@@ -271,6 +272,19 @@ render_followmom_compare_lines_v1 = cca8_followmom_compare.render_followmom_comp
 followmom_advisory_selection_step_v1 = cca8_followmom_advisory.followmom_advisory_selection_step_v1
 followmom_advisory_summary_v1 = cca8_followmom_advisory.followmom_advisory_summary_v1
 render_followmom_advisory_lines_v1 = cca8_followmom_advisory.render_followmom_advisory_lines_v1
+
+# --- Phase 4E-B/4F FollowMom authority compatibility seam ----------------------
+# Exact current identity-supported maternal evidence may control the bounded
+# FollowMom gate. Default mode makes that WNM/NavMap path the normal cognitive
+# source while protected legacy vetoes, explicit compatibility forces, and
+# complete legacy fallback remain available.
+followmom_authority_mode_v1 = cca8_followmom_authority.followmom_authority_mode_v1
+followmom_authority_trigger_value_v1 = cca8_followmom_authority.followmom_authority_trigger_value_v1
+followmom_authority_legacy_bridge_allowed_v1 = cca8_followmom_authority.followmom_authority_legacy_bridge_allowed_v1
+followmom_authority_selection_step_v1 = cca8_followmom_authority.followmom_authority_selection_step_v1
+followmom_authority_summary_v1 = cca8_followmom_authority.followmom_authority_summary_v1
+followmom_authority_explain_v1 = cca8_followmom_authority.followmom_authority_explain_v1
+render_followmom_authority_lines_v1 = cca8_followmom_authority.render_followmom_authority_lines_v1
 
 # --- Phase 3A/3B/3C/3D StandUp authority compatibility seam -------------------
 # The map-native query, expected-successor, advisory, and authority records live
@@ -486,6 +500,15 @@ def _policy_runtime_hooks_v1() -> PolicyRuntimeHooks:
         standup_guarded_explain=lambda *args, **kwargs: (
             cca8_standup_compare.standup_guarded_explain_v1(*args, **kwargs)
         ),
+        followmom_authority_trigger=lambda *args, **kwargs: (
+            cca8_followmom_authority.followmom_authority_trigger_value_v1(*args, **kwargs)
+        ),
+        followmom_authority_explain=lambda *args, **kwargs: (
+            cca8_followmom_authority.followmom_authority_explain_v1(*args, **kwargs)
+        ),
+        followmom_authority_legacy_bridge_allowed=lambda *args, **kwargs: (
+            cca8_followmom_authority.followmom_authority_legacy_bridge_allowed_v1(*args, **kwargs)
+        ),
     )
 
 
@@ -557,7 +580,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -633,6 +656,13 @@ __all__ = [
     "followmom_advisory_selection_step_v1",
     "followmom_advisory_summary_v1",
     "render_followmom_advisory_lines_v1",
+    "followmom_authority_mode_v1",
+    "followmom_authority_trigger_value_v1",
+    "followmom_authority_legacy_bridge_allowed_v1",
+    "followmom_authority_selection_step_v1",
+    "followmom_authority_summary_v1",
+    "followmom_authority_explain_v1",
+    "render_followmom_authority_lines_v1",
     "standup_compare_selection_step_v1",
     "standup_compare_summary_v1",
     "render_standup_compare_lines_v1",
@@ -2743,6 +2773,7 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("maternal_continuity", "cca8_maternal_continuity"),
     ("followmom_compare", "cca8_followmom_compare"),
     ("followmom_advisory", "cca8_followmom_advisory"),
+    ("followmom_authority", "cca8_followmom_authority"),
     ("standup_compare", "cca8_standup_compare"),
     ("reporting", "cca8_reporting"),
     ("observation_runtime", "cca8_observation_runtime"),
@@ -3986,6 +4017,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
         legacy_standup_gate_triggered: Optional[bool] = None
         legacy_followmom_gate_triggered: Optional[bool] = None
         legacy_followmom_effective_candidate: Optional[bool] = None
+        active_followmom_effective_candidate: Optional[bool] = None
 
         try:
             policy_rt.refresh_loaded(ctx)
@@ -3997,21 +4029,44 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             _wm_creative_update(policy_rt, world, drives, ctx, exec_world=exec_world)
             fired = policy_rt.consider_and_maybe_fire(world, drives, ctx, exec_world=exec_world)
 
-            # PolicyRuntime exposes the original trigger set and the effective
-            # post-filter candidate set. Phase 4D records both FollowMom values
-            # so a map disagreement can be separated from a later safety,
-            # topology, sequence, or arbitration decision.
+            # PolicyRuntime exposes both the historical FollowMom gate/candidate
+            # and the active Phase 4F gate/candidate. Phase 4D continues to record
+            # the historical values so its differential remains meaningful after
+            # default authority promotion.
             policy_debug = getattr(ctx, "experiment_policy_debug_last", None)
             matches_initial = policy_debug.get("matches_initial") if isinstance(policy_debug, dict) else None
-            if isinstance(matches_initial, list):
+            legacy_followmom_gate_value = (
+                policy_debug.get("followmom_legacy_gate_triggered")
+                if isinstance(policy_debug, dict)
+                else None
+            )
+            if isinstance(legacy_followmom_gate_value, bool):
+                legacy_followmom_gate_triggered = legacy_followmom_gate_value
+            elif isinstance(matches_initial, list):
                 legacy_followmom_gate_triggered = "policy:follow_mom" in matches_initial
             matches_before_choice = (
                 policy_debug.get("matches_before_choice")
                 if isinstance(policy_debug, dict)
                 else None
             )
-            if isinstance(matches_before_choice, list):
+            legacy_followmom_candidate_value = (
+                policy_debug.get("followmom_legacy_effective_candidate")
+                if isinstance(policy_debug, dict)
+                else None
+            )
+            if isinstance(legacy_followmom_candidate_value, bool):
+                legacy_followmom_effective_candidate = legacy_followmom_candidate_value
+            elif isinstance(matches_before_choice, list):
                 legacy_followmom_effective_candidate = "policy:follow_mom" in matches_before_choice
+            active_followmom_candidate_value = (
+                policy_debug.get("followmom_active_effective_candidate")
+                if isinstance(policy_debug, dict)
+                else None
+            )
+            if isinstance(active_followmom_candidate_value, bool):
+                active_followmom_effective_candidate = active_followmom_candidate_value
+            elif isinstance(matches_before_choice, list):
+                active_followmom_effective_candidate = "policy:follow_mom" in matches_before_choice
 
             # PolicyRuntime records both the active trigger set and, in Phase
             # 3C/3D map-authority modes, the independent legacy trigger inside
@@ -4107,6 +4162,43 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 "follow_mom_authority": "legacy_bodymap_policy_runtime",
                 "legacy_executes": True,
                 "map_can_override": False,
+                "protected_safety_can_be_overridden": False,
+                "reason": "phase4d_compare_selection_update_failed",
+            }
+
+        # Phase 4E-B/4F finalizes the already-applied FollowMom authority
+        # lifecycle. It records the actual global-arbitration winner and, when
+        # map-authorized FollowMom was selected, arms the existing compact
+        # expected-versus-observed relation. This call cannot change the winner.
+        if followmom_compare_selection_updated:
+            try:
+                followmom_authority_selection_step_v1(
+                    ctx,
+                    active_effective_candidate=active_followmom_effective_candidate,
+                    selected_policy=policy_name,
+                )
+            except Exception as exc:
+                mode = followmom_authority_mode_v1(ctx).value
+                ctx.navmap_followmom_authority_last_update = {
+                    "schema": "followmom_authority_summary_v1",
+                    "phase": "4F" if mode == "default" else "4E-B",
+                    "status": "error",
+                    "authority": "default_followmom" if mode == "default" else "guarded_followmom",
+                    "authority_mode": mode,
+                    "default_authority_active": mode == "default",
+                    "protected_safety_can_be_overridden": False,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+        elif followmom_authority_mode_v1(ctx).value != "legacy":
+            mode = followmom_authority_mode_v1(ctx).value
+            ctx.navmap_followmom_authority_last_update = {
+                "schema": "followmom_authority_summary_v1",
+                "phase": "4F" if mode == "default" else "4E-B",
+                "status": "dependency_error",
+                "authority": "default_followmom" if mode == "default" else "guarded_followmom",
+                "authority_mode": mode,
+                "default_authority_active": mode == "default",
                 "protected_safety_can_be_overridden": False,
                 "reason": "phase4d_compare_selection_update_failed",
             }
@@ -4398,6 +4490,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "maternal_continuity_shadow": maternal_continuity_shadow_summary_v1(ctx),
                     "followmom_compare": followmom_compare_summary_v1(ctx),
                     "followmom_advisory": followmom_advisory_summary_v1(ctx),
+                    "followmom_authority": followmom_authority_summary_v1(ctx),
                     "standup_advisory": standup_advisory_summary_v1(ctx),
                     "standup_authority": standup_authority_summary_v1(ctx),
                     "standup_guarded": standup_guarded_summary_v1(ctx),

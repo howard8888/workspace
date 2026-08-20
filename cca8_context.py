@@ -22,6 +22,7 @@ from cca8_temporal import TemporalContext
 
 if TYPE_CHECKING:
     from cca8_followmom_advisory import FollowMomAdvisoryV1
+    from cca8_followmom_authority import FollowMomAuthorityDecisionV1
     from cca8_followmom_compare import (
         FollowMomCompareTransactionV1,
         FollowMomExpectedPendingV1,
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
         StandUpObservedOutcomeV1,
     )
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -770,6 +771,29 @@ class Ctx:
     navmap_followmom_advisory_last_update: Optional[dict[str, Any]] = None
     navmap_followmom_advisory_history: list[dict[str, Any]] = field(default_factory=list)
     navmap_followmom_advisory_history_limit: int = 25
+
+    # Phase 4F default FollowMom NavMap authority. New sessions use exact
+    # current identity-supported maternal evidence as the normal cognitive
+    # source for the bounded FollowMom gate. Protected legacy false results
+    # and named true compatibility forces remain stronger than map authority
+    # until their consumers migrate. The map may suppress an ordinary
+    # permissive legacy candidate but cannot add FollowMom against posture,
+    # sequence, topology, benchmark, or sparse-state legacy blocks.
+    # Unsupported/ambiguous map or outcome-review states fall back to the
+    # complete historical gate. Predicted-region occlusion remains compare and
+    # advisory evidence only in this first default-authority slice.
+    #
+    # Supported modes: ``legacy`` | ``guarded`` | ``default``. The temporary
+    # ``navmap_followmom_guarded_enabled`` compatibility override mirrors the
+    # StandUp migration seam: None uses the canonical mode, True forces guarded
+    # mode, and False forces legacy mode.
+    navmap_followmom_authority_mode: str = "default"
+    navmap_followmom_guarded_enabled: Optional[bool] = None
+    navmap_followmom_authority_decision_no: int = 0
+    navmap_followmom_authority_decision: Optional[FollowMomAuthorityDecisionV1] = None
+    navmap_followmom_authority_last_update: Optional[dict[str, Any]] = None
+    navmap_followmom_authority_history: list[dict[str, Any]] = field(default_factory=list)
+    navmap_followmom_authority_history_limit: int = 25
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------

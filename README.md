@@ -12,7 +12,7 @@ Requires Python 3.11
 Please contact hschneidermd [at] alum [dot] mit [dot] edu for inquiries about additional software modules, related
  materials, or ongoing development.
 
-Architecture and migration authority: `CCA8_Project_Planning_v11.pdf`. The local source tree, tests, and traces remain authoritative for what actually runs.
+Architecture and migration authority: `CCA8_Project_Planning_v13.pdf`. The local source tree, tests, and traces remain authoritative for what actually runs.
 
 
 # Executive Overview
@@ -68,9 +68,9 @@ large collection of independent symbolic state variables. Compact predicates, sc
 be physiological/control signals, derived readouts of a named map revision, or software bookkeeping. They should not quietly become a
 second world model.
 
-The principal cognitive product is one accepted root **Working Navigation Map (WNM)** with explicitly linked submaps at appropriate
-scales and reference frames. The root may link to body/posture, maternal, nipple, terrain, hazard, shelter, object, and route maps. A linked
-submap can become the focus of attention without becoming a second equally authoritative reality.
+Detailed current cognition operates primarily on one **operative Working Navigation Map (WNM)** at a time. A small bounded ready set
+may retain body/posture, maternal, nipple, terrain, hazard, shelter, object, or route maps for rapid exchange. Zoom-in, zoom-out, lateral
+shift, return, and accepted associative jumps change which NavMap is operative; ready maps do not share equal current authority.
 
 A CCA8 Navigation Map is a bounded, addressable, spatially organized and relationally linked representation of some part of the goat's
 body, environment, object world, action possibilities, or learned experience. It preserves geometry, topology, boundaries, containment,
@@ -100,8 +100,11 @@ explanation, robotics, agentic AI, or LLM synergy remains an experimental questi
 ## **TL;DR == Current runnable NavMap predictive path**
 **THIS SECTION IS UPDATED PERIODICALLY**
 
-The current runner contains a visible, read-only NavMap predictive-processing path. It is deliberately a diagnostic path first: it does not
-yet drive ordinary policy selection, replace the live WorkingMap, become WorldGraph truth, or write accepted NavMaps into Columns.
+The current runner contains a visible general NavMap predictive-processing path plus two bounded behavioral domains that have completed
+authority migration. The generic `scene_body` expected/evidence/accepted-current path remains diagnostic. Maintained SELF-ground geometry
+now supplies default StandUp applicability, and exact-current SELF-maternal geometry/continuity/temporal evidence supplies default
+FollowMom applicability behind protected safety and explicit fallback. These bounded authorities do not make the generic accepted-current
+record WorldGraph truth or write accepted NavMaps into Columns.
 
 The present signal path is:
 
@@ -135,27 +138,27 @@ Current design rules:
 
 **Current implementation versus target architecture**
 
-- **Current implementation:** authority remains distributed across BodyMap, observation-driven WorkingMap/MapSurface, SurfaceGrid and
-  NavSummary, WorldGraph history, retrieval hints, drives, policy bridges, and the controller. The accepted-current NavMap is a shadow.
-- **Target architecture:** one accepted root WNM becomes the principal current world representation. MapSurface, SurfaceGrid,
-  NavSummary, predicates, and most BodyMap-facing values become named projections or synchronized readouts of a specific WNM
-  revision, while BodyMap retains a fast independent safety path.
-- **Migration rule:** legacy and WNM-derived paths run in shadow/compare/dual-run before any authority is promoted. The README must not
-  describe future authority as though it already controls the goat.
+- **Current implementation:** the general `scene_body` accepted-current record remains a shadow, while StandUp and FollowMom now have
+  bounded default map-native applicability authority. Other action and interpretation domains still read BodyMap, observation-driven
+  WorkingMap/MapSurface, SurfaceGrid/NavSummary, WorldGraph history, retrieval hints, drives, and compatibility bridges.
+- **Target architecture:** one NavMap is operative as WNM at a time, with a small bounded ready set supporting rapid zoom, lateral shift,
+  return, and associative exchange. MapSurface, SurfaceGrid, NavSummary, predicates, and most BodyMap-facing values become named
+  projections or synchronized readouts, while BodyMap retains a fast independent safety path.
+- **Migration rule:** each domain moves through shadow, compare, advisory, guarded, and default authority with explicit evidence and
+  fallback. Default authority in one bounded domain does not grant authority to unrelated maps or consumers.
 
-**Authoritative August 2026 baseline**
+**Phase 4F implementation checkpoint**
 
-- Git commit: `71ab4dc` (`Refactor policy runtime out of runner`)
-- Python: 3.11.4
-- Runner: `cca8_run.py` v0.9.7
-- Pylint on the runner: 10.00/10
-- Mypy on the runner: no issues
-- Preflight: PASS
-- Unit tests: 505/505
-- Coverage: 46%
-- Architecture probes: 80/80
-- Hardware/robotics host checks: 5/5
-- System fitness: 1 pass, 0 warnings, 0 failures
+- Repository authority: Howard's current local Workspace; recapture the exact clean HEAD after applying and committing this slice.
+- Python baseline: 3.11.
+- Runner: `cca8_run.py` v0.19.0.
+- Context: `cca8_context.py` v0.13.0.
+- Policy runtime: `cca8_policy_runtime.py` v0.4.0.
+- FollowMom compare: `cca8_followmom_compare.py` v0.2.0.
+- FollowMom authority: `cca8_followmom_authority.py` v0.1.0.
+- Registry: 36 components and 8 behavioral primitives.
+- Build-environment inventory after this patch: 827 collected tests (825 non-Pyvis tests plus 2 optional Pyvis tests); the
+  authoritative local pytest, Pylint, mypy, preflight, and manual-inspection wall determines the final GO decision.
 
 The NavMap Oscilloscope marker in terminal output is:
 
@@ -173,10 +176,10 @@ CCA8 is a simulation of a brain inspired by a mountain goat across its lifecycle
 is organized around Navigation Maps and one continuously reconstructed Working Navigation Map rather than around a large symbolic
 state table.
 
-The current software is not yet a complete implementation of that hypothesis. It already contains many of the required parts, but Phase 0
-showed that behavior is still controlled by a committee of BodyMap, WorkingMap, NavSummary, WorldGraph, hints, drives, prediction
-histories, and policy logic while the accepted-current NavMap remains diagnostic. The development programme therefore reorganizes
-existing authority gradually instead of performing a wholesale rewrite.
+The current software is not yet a complete implementation of that hypothesis. The generic accepted-current scene path remains diagnostic,
+and many behaviors still use BodyMap, WorkingMap, NavSummary, WorldGraph, hints, drives, prediction histories, and policy logic. StandUp
+and FollowMom are now bounded exceptions: their applicability normally comes from source-linked NavMap evidence while protected safety
+and explicit legacy fallback remain. The programme continues one vertical domain at a time rather than through a wholesale rewrite.
 
 ● **Scientific and evolutionary hypothesis**
 
@@ -211,7 +214,7 @@ without making that scalar the goat's complete cognition.
 
     sensory evidence + temporal binding + bounded long-term retrieval
         -> modality and scene candidates
-        -> one accepted root WNM with linked submaps
+        -> one operative WNM + small bounded ready set
         -> derived readouts and map-native primitive queries
         -> bounded action intent
         -> lower automatic motor implementation
@@ -262,7 +265,7 @@ integration under controlled experiments.
 ● **Documentation role**
 
 This README is the canonical project compendium: user guide, architecture explanation, implementation-status record, technical tutorial,
-and maintainer reference. Planning v11 is the current architecture and migration authority; the local source tree and tests remain the
+and maintainer reference. Planning v13 is the current architecture and migration authority; the local source tree and tests remain the
 authority for what actually executes.
 
 **Repo:** `https://github.com/howard8888/workspace`  
@@ -946,7 +949,7 @@ Three sources answer different questions:
 |---|---|
 | Current local source code, tests, and traces | What does CCA8 actually do today? |
 | Published CCA papers | What navigation-map architecture is the project trying to instantiate? |
-| Planning v11 | How should the present implementation build and test the distributed Column/NavMap kernel, then migrate safely toward map-first authority? |
+| Planning v13 | How should the present implementation move toward one operative WNM, bounded ready-set exchange, continuity, temporal compression, and safe domain-by-domain map authority? |
 
 The NavMap paradigm is an experimental scientific hypothesis. The purpose is not to protect it from failure. The purpose is to build it
 faithfully enough that success, failure, or partial success teaches us something about mammalian cognition, robotics, and artificial
@@ -2354,8 +2357,8 @@ OBSERVED.
 
 | Question | Current implementation | Target architecture |
 |---|---|---|
-| What controls immediate policy? | BodyMap, WorkingMap/MapSurface, SurfaceGrid/NavSummary, WorldGraph history, hints, drives, and policy bridges | WNM queries and named projections plus drives/protected safety; BodyMap retains rapid veto |
-| What is accepted-current NavMap? | Evidence-first diagnostic shadow | One canonical root WNM revision |
+| What controls immediate policy? | Mixed legacy sources, except default map-native StandUp and FollowMom applicability; drives and protected safety remain active | WNM queries and named projections plus drives/protected safety; BodyMap retains rapid veto |
+| What is accepted-current NavMap? | Generic scene-body record is diagnostic; bounded SELF-ground and SELF-maternal maps now have domain authority | One operative WNM with bounded ready-set exchange |
 | What is MapSurface? | Active observation-driven semantic workspace | Derived entity/relation projection of accepted WNM |
 | What is SurfaceGrid? | Active policy-facing topology scaffold | Derived conservative topology projection of WNM/submaps |
 | What does retrieval do? | Snapshot/patch/context mechanisms can influence WorkingMap and hints | Activates protected map candidates that must be aligned, compared, and accepted |
@@ -2560,6 +2563,35 @@ The compatibility field `navmap_standup_guarded_enabled` remains temporarily ava
 
 FollowMom locates SELF and the maternal entity, checks relative motion and intervening terrain, chooses a safe reachable direction, emits
 a bounded intent, and predicts a modest change in the SELF–MOM relation.
+
+### Current FollowMom authority: Phase 4F
+
+New `Ctx` sessions now use `navmap_followmom_authority_mode="default"`. The normal cognitive source for the bounded FollowMom
+applicability gate is therefore the current SELF–maternal NavMap transaction assembled from geometry, compact temporal meaning, and
+maternal identity/localization continuity. Phase 4D comparison and Phase 4E-A advice remain visible as migration evidence rather than
+being discarded.
+
+The first default-authority class is deliberately narrow and reversible:
+
+- `default` lets current exact, identity-supported, observed maternal evidence control an ordinary legacy-permissive FollowMom
+  opportunity;
+- `guarded` retains the Phase 4E-B feature-flagged authority experiment;
+- `legacy` restores the complete historical BodyMap/PolicyRuntime FollowMom gate for comparison and rollback;
+- predicted-region occlusion, lost or unlocalized tracks, identity ambiguity/mismatch, reliable negative evidence, and outcome-review
+  states fall back to the historical gate;
+- posture/fall protection, post-latch sequence locks, topology safety, sparse-state safeguards, and explicit experiment compatibility
+  routes remain above FollowMom map authority;
+- global single-winner arbitration, the Python FollowMom primitive, lower motor execution, BodyMap, and environment dynamics remain
+  unchanged.
+
+Initial applicability is separated from continuation. `far + approaching` suppresses a newly recruited FollowMom trajectory because
+relative distance alone cannot identify whether Mom or SELF produced the approach. When the immediately preceding action was actually
+FollowMom and its expected relation succeeded in new environment evidence, the same current relation may support one further
+`continue_supported` step. A fresh compact EXPECTED relation is then armed only if PolicyRuntime really selects FollowMom; the next
+observation still decides success, failure, uncertainty, or action mismatch.
+
+The temporary compatibility field `navmap_followmom_guarded_enabled` mirrors the StandUp migration seam: `None` uses the canonical mode,
+`True` forces `guarded`, and `False` forces `legacy`.
 
 Probe names an uncertainty target and predicts what additional observation should reduce it.
 
@@ -4146,14 +4178,15 @@ A: (1) Emit a `cue:*` that captures the gist (e.g., `cue:vision:silhouette:mom`)
 
 ## Architectural direction
 
-CCA8 is migrating from distributed state-first control toward one accepted root WNM with linked submaps. The current source tree is
-modular enough to support that work, but module ownership does not by itself establish cognitive authority.
+CCA8 is migrating from distributed state-first control toward one operative WNM with a small bounded ready set and explicit map
+transitions. The current source tree is modular enough to support that work, but module ownership does not by itself establish cognitive
+authority.
 
 The intended dependency direction is:
 
     environment / HAL evidence
         -> observation and map-processing owners
-        -> WorkingMap-owned accepted WNM and projections
+        -> one operative WNM, bounded ready set, and projections
         -> PolicyRuntime supervision
         -> controller primitive execution
         -> environment / HAL
@@ -4174,10 +4207,13 @@ The canonical component list used by `versions_dict()`, `versions_text()`, and `
 | `cca8_env.py` | `EnvState`, `EnvObservation`, storyboard dynamics, `PerceptionAdapter`, and reset/step boundary; supplies interpreted evidence, not agent belief |
 | `cca8_observation_runtime.py` | Masking, BodyMap updates, Sequential/Error handoffs, current legacy MapSurface/SurfaceGrid/NavPatch injection, keyframes, sparse graph writes, and cycle records |
 | `cca8_navmap.py` | Pure versioned NavMap payloads, matching, residual, learning proposal, update, transition, and outcome operators; substrate rather than runtime authority |
-| `cca8_navmap_runtime.py` | Ctx-local evidence, expected-current, accepted-current shadow, WNM-surface bridge, transitions, outcome index, scope, histories, and Oscilloscope integration |
+| `cca8_navmap_runtime.py` | Ctx-local evidence, expected-current, accepted-current shadow, maternal observation handoffs, transitions, outcome index, scope, histories, and Oscilloscope integration |
+| `cca8_followmom_compare.py` | Phase 4D map-native FollowMom applicability comparison, compact expected relation, and expected-versus-observed outcome seam |
+| `cca8_followmom_advisory.py` | Phase 4E-A start/continue/defer/review advice without independent execution authority |
+| `cca8_followmom_authority.py` | Phase 4E-B/4F guarded/default FollowMom gate authority, protected legacy vetoes, compatibility/fallback, and outcome-linked continuation |
 | `cca8_predictive.py` | Pending expectations, expected-slot augmentation, next-observation comparison, bounded histories, feedback, and rendering; map-linked signal rather than cognitive product |
-| `cca8_working_memory.py` | WorkingMap, MapSurface, SurfaceGrid, NavSummary, NavPatch orchestration, salience, Scratch, Creative, retrieval, map switching, zoom, and Probe; target owner of root WNM/protected layers or its stable owned record module |
-| `cca8_policy_runtime.py` | High-level gates, newborn bridges, safety filtering, arbitration, RL/LLM tie-breaking, EFE diagnostics, Probe, Scratch provenance, Creative scoring; current mixed-source policy authority |
+| `cca8_working_memory.py` | WorkingMap, MapSurface, SurfaceGrid, NavSummary, NavPatch orchestration, salience, Scratch, Creative, retrieval, map switching, zoom, and Probe; target owner of the operative WNM, bounded ready set, and protected layers or their stable owned record modules |
+| `cca8_policy_runtime.py` | High-level gates, newborn bridges, protected safety filtering, global arbitration, RL/LLM tie-breaking, EFE diagnostics, Probe, Scratch provenance, Creative scoring, and the bounded StandUp/FollowMom authority-consumer seams |
 | `cca8_controller.py` | Drives, primitive classes, lower Action Center execution, BodyMap readers, and skill ledger; lower cognitive/motor abstraction boundary |
 | `cca8_reporting.py` | Snapshots, WorkingMap/entity displays, temporal/cycle HUDs, transcript support, and diagnostic rendering; current posture-discrepancy mutation remains documented until explicitly moved |
 | `cca8_navpatch.py` | NavPatch and SurfaceGrid schemas, composition, matching support, and fragment helpers |
@@ -6272,8 +6308,8 @@ seed_eff is the derived per-step seed used for that specific step in seeded mode
 # Tutorial on WorkingMap
 
 WorkingMap is the workspace in which CCA8 maintains current maps, alternatives, predictions, retrievals, and temporary operations. The
-central correction carried forward in Planning v11 is that WorkingMap is **not itself the cognitive world model**. The target world model is one
-accepted root WNM inside the workspace, with linked submaps and protected source layers.
+central correction carried forward in Planning v13 is that WorkingMap is **not itself the cognitive world model**. Detailed current cognition
+uses one operative WNM at a time; a small bounded ready set and protected source layers support rapid map exchange.
 
 ## Current implementation
 
@@ -6287,7 +6323,8 @@ The current WorkingMap pipeline is implemented primarily in `cca8_working_memory
 - salience, focus, zoom, Probe, retrieval, merge/replace loading, and contextual map switching;
 - live `EnvObservation` projection.
 
-These mechanisms are behaviorally relevant today. The accepted-current NavMap path is still a downstream diagnostic shadow.
+These mechanisms are behaviorally relevant today. The generic accepted-current NavMap path remains a downstream diagnostic shadow,
+while maintained SELF-ground and exact-current SELF-maternal maps now have bounded default authority for StandUp and FollowMom.
 
 ## Target WorkingMap organization
 
@@ -6492,9 +6529,10 @@ computational purpose.
 
 ## Current authority status
 
-At the current baseline, BodyMap and observation-driven WorkingMap structures are active policy sources. WorldGraph history, retrieval
-hints, drives, and policy bridges also influence action. The accepted-current NavMap remains diagnostic. Therefore the architecture must
-be described in two layers:
+At the current baseline, BodyMap and observation-driven WorkingMap structures remain active policy sources. WorldGraph history,
+retrieval hints, drives, and compatibility bridges also influence action. The generic accepted-current NavMap remains diagnostic, but
+StandUp and FollowMom now use bounded default map-native applicability authority. Therefore the architecture must be described in two
+layers:
 
 - **current runtime contract**, which must remain accurate for developers and tests;
 - **target Map-Primacy contract**, which guides staged authority migration.
