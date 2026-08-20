@@ -26,7 +26,11 @@ or reachability; those require temporal and terrain evidence in later Phase 4
 slices.  It does not trigger, advise, gate, select, or execute FollowMom.  The
 current ``EnvObservation`` adapter exposes simulated kid and maternal positions
 in ``env_meta``.  Those values are useful engineering evidence, but they are not
-yet a biological perception model.
+yet a biological perception model.  Phase 4C adds one narrow optional identity
+inspection seam: a position explicitly marked as a different or ambiguous
+individual is excluded before the maternal element and caregiver relation are
+constructed.  This prevents coordinate coincidence from granting maternal
+identity/role while leaving ordinary Phase 4A observations unchanged.
 
 Authority boundary
 ------------------
@@ -82,7 +86,7 @@ from cca8_navmap_kernel import (
     structured_residual,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "MaternalProximityV1",
@@ -540,14 +544,63 @@ def _meta_point(env_obs: EnvObservation, key: str) -> Optional[NavPointV1]:
     return point
 
 
+def _phase4c_identity_exclusion_reason(env_obs: EnvObservation) -> Optional[str]:
+    """Return why current position cannot represent the known maternal individual.
+
+    Phase 4A predates explicit identity-continuity inspection. Phase 4C adds a
+    narrow optional metadata seam so a known different or ambiguous individual
+    is not inserted into the maternal geometry map merely because it occupies
+    ``mom_position``. With no explicit identity metadata, Phase 4A behavior is
+    unchanged.
+    """
+    meta = getattr(env_obs, "env_meta", None)
+    if not isinstance(meta, dict):
+        return None
+
+    status_raw = meta.get("maternal_identity_status")
+    status = str(status_raw).strip().lower() if isinstance(status_raw, str) else ""
+    if status in {"ambiguous", "unknown", "uncertain"}:
+        return "maternal_identity_ambiguous"
+    if status in {"mismatch", "different", "substituted"}:
+        return "maternal_identity_mismatch"
+
+    observed_identity: Optional[str]
+    candidates_raw = meta.get("maternal_identity_candidates")
+    if isinstance(candidates_raw, (list, tuple)):
+        candidates = sorted(
+            {
+                item.strip()
+                for item in candidates_raw
+                if isinstance(item, str) and item.strip()
+            }
+        )
+        if len(candidates) != 1:
+            return "maternal_identity_ambiguous"
+        observed_identity = candidates[0]
+    else:
+        identity_raw = meta.get("maternal_identity_handle")
+        observed_identity = (
+            identity_raw.strip()
+            if isinstance(identity_raw, str) and identity_raw.strip()
+            else None
+        )
+
+    if observed_identity is not None and observed_identity != _MATERNAL_ELEMENT_ID:
+        return "maternal_identity_mismatch"
+    return None
+
+
 def _observation_classification(env_obs: EnvObservation) -> tuple[str, Optional[NavPointV1]]:
-    """Return adapter status and maternal position relative to SELF."""
+    """Return adapter status and identity-eligible maternal position relative to SELF."""
     self_position = _meta_point(env_obs, "kid_position")
     maternal_position = _meta_point(env_obs, "mom_position")
     if self_position is None:
         return "self_position_missing", None
     if maternal_position is None:
         return "maternal_position_missing", None
+    identity_exclusion = _phase4c_identity_exclusion_reason(env_obs)
+    if identity_exclusion is not None:
+        return identity_exclusion, None
     relative = NavPointV1(
         x=maternal_position.x - self_position.x,
         y=maternal_position.y - self_position.y,

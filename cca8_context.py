@@ -21,6 +21,7 @@ from cca8_navpatch import SurfaceGridV1
 from cca8_temporal import TemporalContext
 
 if TYPE_CHECKING:
+    from cca8_maternal_continuity import MaternalContinuityShadowStateV1
     from cca8_maternal_geometry import MaternalGeometryShadowStateV1
     from cca8_maternal_temporal import MaternalTemporalShadowStateV1
     from cca8_navmap_kernel import NavMapV2
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
         StandUpObservedOutcomeV1,
     )
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -717,6 +718,21 @@ class Ctx:
     navmap_maternal_temporal_stable_bearing_rate_tolerance: float = 2.0
     navmap_maternal_temporal_bearing_hysteresis_rate: float = 1.0
     navmap_maternal_temporal_minimum_elapsed_time: float = 1e-9
+
+    # Phase 4C maternal identity-continuity/localization shadow. Identity and
+    # learned maternal role can persist while current exact localization ages
+    # into a widening predicted region and then an unlocalized/lost track. The
+    # record remains external, bounded, shadow-only, and cannot affect FollowMom.
+    navmap_maternal_continuity_shadow_enabled: bool = True
+    navmap_maternal_continuity_state: Optional[MaternalContinuityShadowStateV1] = None
+    navmap_maternal_continuity_last_update: Optional[dict[str, Any]] = None
+    navmap_maternal_continuity_history: list[dict[str, Any]] = field(default_factory=list)
+    navmap_maternal_continuity_history_limit: int = 25
+    navmap_maternal_continuity_max_coast_missing_observations: int = 1
+    navmap_maternal_continuity_max_unlocalized_missing_observations: int = 2
+    navmap_maternal_continuity_initial_uncertainty_radius: float = 0.25
+    navmap_maternal_continuity_uncertainty_growth_per_time: float = 0.50
+    navmap_maternal_continuity_maximum_uncertainty_radius: float = 5.0
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------

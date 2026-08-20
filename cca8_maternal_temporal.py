@@ -22,10 +22,13 @@ NavMap revisions for ordinary motion.
 
 Scope boundary
 --------------
-This slice is shadow-only.  It does not implement maternal object permanence,
-occlusion prediction, lost-track handling, FollowMom applicability, expected
-FollowMom successors, or behavioral authority.  Those remain later Phase 4
-subphases.  The existing Phase 4A geometry path remains unchanged.
+This slice is shadow-only.  Phase 4C may now supply optional deterministic
+identity/observability inspection metadata; when that metadata identifies a
+different or ambiguous individual, the current maternal temporal sample is
+invalidated so an old trajectory cannot bridge across identity substitution.
+Object permanence, predicted regions, lost-track handling, FollowMom
+applicability, expected successors, and behavioral authority remain outside
+this module.  The existing Phase 4A geometry path remains unchanged.
 
 Authority boundary
 ------------------
@@ -57,7 +60,7 @@ from cca8_env import EnvObservation
 from cca8_maternal_geometry import MaternalGeometryShadowStateV1
 from cca8_navmap_kernel import NavMapRefV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "MaternalTemporalTrendV1",
@@ -589,6 +592,65 @@ def _env_timing(ctx: Any, env_obs: EnvObservation) -> tuple[Optional[int], int, 
     return step_index, controller_steps, time_since_birth
 
 
+def _identity_support_from_observation(
+    env_obs: EnvObservation,
+    *,
+    expected_identity: str,
+) -> tuple[str, bool, Optional[str]]:
+    """Return the temporal identity handle, validity, and failure reason.
+
+    Phase 4A currently uses one fixed maternal element handle.  Phase 4C adds
+    optional deterministic inspection metadata so a different or ambiguous
+    individual cannot silently inherit the prior maternal trajectory.  With no
+    explicit metadata, the existing Phase 4A scaffold remains unchanged.
+    """
+    meta = getattr(env_obs, "env_meta", None)
+    meta = meta if isinstance(meta, dict) else {}
+
+    status_raw = meta.get("maternal_identity_status")
+    status = str(status_raw).strip().lower() if isinstance(status_raw, str) else ""
+    if status in {"ambiguous", "unknown", "uncertain"}:
+        return expected_identity, False, "identity_ambiguous"
+
+    candidates_raw = meta.get("maternal_identity_candidates")
+    if isinstance(candidates_raw, (list, tuple)):
+        candidates = sorted(
+            {
+                item.strip()
+                for item in candidates_raw
+                if isinstance(item, str) and item.strip()
+            }
+        )
+        if len(candidates) != 1:
+            return expected_identity, False, "identity_candidate_set_ambiguous"
+        observed_identity = candidates[0]
+    else:
+        identity_raw = meta.get("maternal_identity_handle")
+        observed_identity = (
+            identity_raw.strip()
+            if isinstance(identity_raw, str) and identity_raw.strip()
+            else expected_identity
+        )
+
+    if observed_identity != expected_identity:
+        return observed_identity, False, "identity_mismatch"
+
+    observability_raw = meta.get("maternal_observability")
+    observability = (
+        str(observability_raw).strip().lower()
+        if isinstance(observability_raw, str)
+        else ""
+    )
+    if observability in {"occluded", "out_of_field", "outside_field", "sensor_dropout", "blackout", "unavailable", "missing"}:
+        return observed_identity, False, "observability_without_current_maternal_position"
+
+    negative_raw = meta.get("maternal_negative_evidence")
+    negative_present = bool(negative_raw.get("present", False)) if isinstance(negative_raw, dict) else bool(negative_raw)
+    if negative_present:
+        return observed_identity, False, "negative_evidence_conflicts_with_current_temporal_sample"
+    return observed_identity, True, None
+
+
 def maternal_temporal_sample_from_geometry_state_v1(
     state: MaternalGeometryShadowStateV1,
     env_obs: EnvObservation,
@@ -606,17 +668,25 @@ def maternal_temporal_sample_from_geometry_state_v1(
         raise TypeError("env_obs must be EnvObservation")
     step_index, controller_steps, time_since_birth = _env_timing(controller_ctx, env_obs)
     readout = state.evidence_readout
+    identity_handle, identity_supported, identity_reason = _identity_support_from_observation(
+        env_obs,
+        expected_identity=readout.maternal_element_id,
+    )
     distance = readout.distance.value if readout.valid and readout.distance is not None else None
     bearing = readout.bearing.value if readout.valid and readout.bearing is not None else None
-    valid = bool(readout.valid and distance is not None)
+    valid = bool(readout.valid and distance is not None and identity_supported)
+    if not valid:
+        distance = None
+        bearing = None
     maintained_ref = state.stable_ref
+    reason = readout.reason if identity_reason is None else f"current_geometry_unknown:{identity_reason}"
     return MaternalTemporalSampleV1(
         observation_no=state.observation_no,
         source_evidence_map_ref=state.evidence_ref,
         maintained_map_ref=maintained_ref,
         frame_id=state.evidence_map.frame.frame_id,
         units=state.evidence_map.frame.units,
-        identity_handle=readout.maternal_element_id,
+        identity_handle=identity_handle,
         self_element_id=readout.self_element_id,
         maternal_element_id=readout.maternal_element_id,
         step_index=step_index,
@@ -625,7 +695,7 @@ def maternal_temporal_sample_from_geometry_state_v1(
         distance=float(distance) if distance is not None else None,
         bearing_degrees=float(bearing) if bearing is not None else None,
         valid=valid,
-        reason=readout.reason,
+        reason=reason,
     )
 
 
