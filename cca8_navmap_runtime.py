@@ -13,6 +13,7 @@ operators with CCA8 runtime registers for:
 - the Phase 4A SELF-maternal common-frame geometry shadow
 - the Phase 4B maternal Sequential/Temporal compression shadow
 - the Phase 4C maternal continuity/localization shadow
+- the Phase 4D FollowMom compare transaction and compact expected relation
 - expected-current construction and residual comparison
 - conservative accepted-current selection
 - the diagnostic Working Navigation Map surface bridge
@@ -51,6 +52,7 @@ from typing import Any, Optional
 
 from cca8_context import Ctx
 from cca8_env import EnvObservation
+from cca8_followmom_compare import followmom_compare_observation_step_v1
 from cca8_maternal_continuity import maternal_continuity_shadow_observation_step_v1
 from cca8_maternal_geometry import maternal_geometry_shadow_observation_step_v1
 from cca8_maternal_temporal import maternal_temporal_shadow_observation_step_v1
@@ -72,7 +74,7 @@ from cca8_standup_compare import (
 )
 
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "NAVMAP_SCOPE_MARKER_V1",
     "NAVMAP_SCOPE_PROBES_V1",
@@ -113,6 +115,7 @@ __all__ = [
     "maternal_geometry_shadow_observation_step_v1",
     "maternal_temporal_shadow_observation_step_v1",
     "maternal_continuity_shadow_observation_step_v1",
+    "followmom_compare_observation_step_v1",
     "standup_compare_observation_step_v1",
     "standup_advisory_observation_step_v1",
     "__version__",
@@ -1977,9 +1980,11 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
     # compact NavMap-derived distance/bearing samples to the existing bounded
     # seqerr window and emits static temporal readouts. It creates no NavMap
     # revisions and cannot affect FollowMom, BodyMap, or policy authority.
+    maternal_temporal_updated = False
     if maternal_updated:
         try:
             maternal_temporal_shadow_observation_step_v1(ctx, env_obs)
+            maternal_temporal_updated = True
         except Exception as exc:  # defensive runtime diagnostic boundary
             ctx.navmap_maternal_temporal_last_update = {
                 "schema": "maternal_temporal_shadow_update_v1",
@@ -2006,9 +2011,11 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
     # continuing maternal identity and role from current observability, exact
     # localization, uncertainty, and active-track status. It creates no NavMap
     # revisions and cannot affect FollowMom, BodyMap, or policy authority.
+    maternal_continuity_updated = False
     if maternal_updated:
         try:
             maternal_continuity_shadow_observation_step_v1(ctx, env_obs)
+            maternal_continuity_updated = True
         except Exception as exc:  # defensive runtime diagnostic boundary
             ctx.navmap_maternal_continuity_last_update = {
                 "schema": "maternal_continuity_shadow_update_v1",
@@ -2029,6 +2036,43 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
             "follow_mom_authority": "legacy_bodymap_policy_runtime",
             "map_can_trigger_follow_mom": False,
             "reason": "phase4a_geometry_update_failed",
+        }
+
+    # Phase 4D FollowMom compare/dual-run bridge. The map path independently
+    # evaluates applicability from the current Phase 4A geometry, Phase 4B
+    # temporal readout, and Phase 4C continuity/localization state. The action
+    # already applied by the legacy environment/controller path is used only to
+    # close a compact expected relation. Selection and execution remain legacy.
+    if maternal_updated and maternal_temporal_updated and maternal_continuity_updated:
+        try:
+            followmom_compare_observation_step_v1(
+                ctx,
+                applied_policy=applied_policy if isinstance(applied_policy, str) else None,
+            )
+        except Exception as exc:  # defensive runtime diagnostic boundary
+            ctx.navmap_followmom_compare_last_update = {
+                "schema": "followmom_compare_summary_v1",
+                "phase": "4D",
+                "status": "error",
+                "authority": "compare_only",
+                "follow_mom_authority": "legacy_bodymap_policy_runtime",
+                "legacy_executes": True,
+                "map_can_override": False,
+                "map_can_trigger_follow_mom": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+    else:
+        ctx.navmap_followmom_compare_last_update = {
+            "schema": "followmom_compare_summary_v1",
+            "phase": "4D",
+            "status": "dependency_error",
+            "authority": "compare_only",
+            "follow_mom_authority": "legacy_bodymap_policy_runtime",
+            "legacy_executes": True,
+            "map_can_override": False,
+            "map_can_trigger_follow_mom": False,
+            "reason": "phase4a_phase4b_or_phase4c_update_failed",
         }
 
     # Phase 3A/3B StandUp bridge. The compare path reads the just-updated

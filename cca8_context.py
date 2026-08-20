@@ -21,6 +21,11 @@ from cca8_navpatch import SurfaceGridV1
 from cca8_temporal import TemporalContext
 
 if TYPE_CHECKING:
+    from cca8_followmom_compare import (
+        FollowMomCompareTransactionV1,
+        FollowMomExpectedPendingV1,
+        FollowMomObservedOutcomeV1,
+    )
     from cca8_maternal_continuity import MaternalContinuityShadowStateV1
     from cca8_maternal_geometry import MaternalGeometryShadowStateV1
     from cca8_maternal_temporal import MaternalTemporalShadowStateV1
@@ -34,7 +39,7 @@ if TYPE_CHECKING:
         StandUpObservedOutcomeV1,
     )
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -733,6 +738,27 @@ class Ctx:
     navmap_maternal_continuity_initial_uncertainty_radius: float = 0.25
     navmap_maternal_continuity_uncertainty_growth_per_time: float = 0.50
     navmap_maternal_continuity_maximum_uncertainty_radius: float = 5.0
+
+    # Phase 4D FollowMom compare/dual-run transaction. The map path derives an
+    # independent applicability recommendation from Phase 4A geometry, Phase 4B
+    # temporal support, and Phase 4C identity/localization continuity. The
+    # legacy BodyMap/PolicyRuntime path still selects and executes every action.
+    # Compact expected SELF-maternal relation outcomes are armed only when the
+    # legacy controller actually selects FollowMom.
+    navmap_followmom_compare_enabled: bool = True
+    navmap_followmom_compare_transaction_no: int = 0
+    navmap_followmom_compare_transaction: Optional[FollowMomCompareTransactionV1] = None
+    navmap_followmom_compare_pending: Optional[FollowMomExpectedPendingV1] = None
+    navmap_followmom_compare_last_outcome: Optional[FollowMomObservedOutcomeV1] = None
+    navmap_followmom_compare_last_update: Optional[dict[str, Any]] = None
+    navmap_followmom_compare_last_outcome_update: Optional[dict[str, Any]] = None
+    navmap_followmom_compare_history: list[dict[str, Any]] = field(default_factory=list)
+    navmap_followmom_compare_history_limit: int = 25
+    navmap_followmom_compare_outcome_history: list[dict[str, Any]] = field(default_factory=list)
+    navmap_followmom_compare_outcome_history_limit: int = 25
+    navmap_followmom_compare_minimum_distance_reduction: float = 0.05
+    navmap_followmom_compare_maximum_allowed_distance_increase: float = 0.10
+    navmap_followmom_compare_maximum_predicted_region_radius: float = 1.00
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------

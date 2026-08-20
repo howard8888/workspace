@@ -52,7 +52,7 @@ Core runtime:
   cca8_teaching.py, cca8_test_fixtures.py, cca8_context.py, cca8_cli.py,
   cca8_experiments.py, cca8_openai.py, cca8_working_memory.py, cca8_profiles.py,
   cca8_guidance.py, cca8_predictive.py, cca8_navmap_runtime.py, cca8_maternal_geometry.py,
-  cca8_maternal_temporal.py, cca8_maternal_continuity.py,
+  cca8_maternal_temporal.py, cca8_maternal_continuity.py, cca8_followmom_compare.py,
   cca8_reporting.py, cca8_observation_runtime.py,
   cca8_policy_runtime.py, and cca8_preflight.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
@@ -121,6 +121,7 @@ import cca8_predictive
 import cca8_working_memory
 import cca8_navmap
 import cca8_navmap_runtime
+import cca8_followmom_compare
 import cca8_maternal_continuity
 import cca8_maternal_geometry
 import cca8_maternal_temporal
@@ -253,6 +254,14 @@ render_maternal_temporal_shadow_lines_v1 = cca8_maternal_temporal.render_materna
 # to alter FollowMom, BodyMap, PolicyRuntime, or protected safety.
 maternal_continuity_shadow_summary_v1 = cca8_maternal_continuity.maternal_continuity_shadow_summary_v1
 render_maternal_continuity_shadow_lines_v1 = cca8_maternal_continuity.render_maternal_continuity_shadow_lines_v1
+
+# --- Phase 4D FollowMom compare compatibility seam -----------------------------
+# The map path independently evaluates FollowMom applicability and compact
+# expected relation outcomes. Legacy PolicyRuntime/controller selection and
+# execution remain authoritative throughout this phase.
+followmom_compare_selection_step_v1 = cca8_followmom_compare.followmom_compare_selection_step_v1
+followmom_compare_summary_v1 = cca8_followmom_compare.followmom_compare_summary_v1
+render_followmom_compare_lines_v1 = cca8_followmom_compare.render_followmom_compare_lines_v1
 
 # --- Phase 3A/3B/3C/3D StandUp authority compatibility seam -------------------
 # The map-native query, expected-successor, advisory, and authority records live
@@ -539,7 +548,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -609,6 +618,9 @@ __all__ = [
     "render_maternal_temporal_shadow_lines_v1",
     "maternal_continuity_shadow_summary_v1",
     "render_maternal_continuity_shadow_lines_v1",
+    "followmom_compare_selection_step_v1",
+    "followmom_compare_summary_v1",
+    "render_followmom_compare_lines_v1",
     "standup_compare_selection_step_v1",
     "standup_compare_summary_v1",
     "render_standup_compare_lines_v1",
@@ -2717,6 +2729,7 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("maternal_geometry", "cca8_maternal_geometry"),
     ("maternal_temporal", "cca8_maternal_temporal"),
     ("maternal_continuity", "cca8_maternal_continuity"),
+    ("followmom_compare", "cca8_followmom_compare"),
     ("standup_compare", "cca8_standup_compare"),
     ("reporting", "cca8_reporting"),
     ("observation_runtime", "cca8_observation_runtime"),
@@ -3958,6 +3971,8 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
         exec_world = None
         policy_name = None
         legacy_standup_gate_triggered: Optional[bool] = None
+        legacy_followmom_gate_triggered: Optional[bool] = None
+        legacy_followmom_effective_candidate: Optional[bool] = None
 
         try:
             policy_rt.refresh_loaded(ctx)
@@ -3968,6 +3983,22 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 exec_world = ctx.working_world
             _wm_creative_update(policy_rt, world, drives, ctx, exec_world=exec_world)
             fired = policy_rt.consider_and_maybe_fire(world, drives, ctx, exec_world=exec_world)
+
+            # PolicyRuntime exposes the original trigger set and the effective
+            # post-filter candidate set. Phase 4D records both FollowMom values
+            # so a map disagreement can be separated from a later safety,
+            # topology, sequence, or arbitration decision.
+            policy_debug = getattr(ctx, "experiment_policy_debug_last", None)
+            matches_initial = policy_debug.get("matches_initial") if isinstance(policy_debug, dict) else None
+            if isinstance(matches_initial, list):
+                legacy_followmom_gate_triggered = "policy:follow_mom" in matches_initial
+            matches_before_choice = (
+                policy_debug.get("matches_before_choice")
+                if isinstance(policy_debug, dict)
+                else None
+            )
+            if isinstance(matches_before_choice, list):
+                legacy_followmom_effective_candidate = "policy:follow_mom" in matches_before_choice
 
             # PolicyRuntime records both the active trigger set and, in Phase
             # 3C/3D map-authority modes, the independent legacy trigger inside
@@ -3982,11 +4013,8 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             )
             if isinstance(legacy_from_guard, bool):
                 legacy_standup_gate_triggered = legacy_from_guard
-            else:
-                policy_debug = getattr(ctx, "experiment_policy_debug_last", None)
-                matches_initial = policy_debug.get("matches_initial") if isinstance(policy_debug, dict) else None
-                if isinstance(matches_initial, list):
-                    legacy_standup_gate_triggered = "policy:stand_up" in matches_initial
+            elif isinstance(matches_initial, list):
+                legacy_standup_gate_triggered = "policy:stand_up" in matches_initial
 
             fired_txt = fired if isinstance(fired, str) else None
 
@@ -4008,6 +4036,31 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
         except Exception as e:
             print(f"[env→controller] controller step error: {e}")
             ctx.env_last_action = None
+
+        # Phase 4D FollowMom compare instrumentation. This post-selection call
+        # records the original legacy gate, the effective post-filter candidate,
+        # and the controller winner. It may arm an expected relation for the next
+        # observation, but it cannot change the action already selected/executed.
+        try:
+            followmom_compare_selection_step_v1(
+                ctx,
+                legacy_gate_triggered=legacy_followmom_gate_triggered,
+                legacy_effective_candidate=legacy_followmom_effective_candidate,
+                selected_policy=policy_name,
+            )
+        except Exception as exc:
+            ctx.navmap_followmom_compare_last_update = {
+                "schema": "followmom_compare_summary_v1",
+                "phase": "4D",
+                "status": "error",
+                "authority": "compare_only",
+                "follow_mom_authority": "legacy_bodymap_policy_runtime",
+                "legacy_executes": True,
+                "map_can_override": False,
+                "map_can_trigger_follow_mom": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
 
         # Phase 3A/3B/3C/3D instrumentation. Phase 3A retains an independent
         # legacy differential, Phase 3B emits non-binding advice, and Phase 3C/3D
@@ -4294,6 +4347,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "maternal_geometry_shadow": maternal_geometry_shadow_summary_v1(ctx),
                     "maternal_temporal_shadow": maternal_temporal_shadow_summary_v1(ctx),
                     "maternal_continuity_shadow": maternal_continuity_shadow_summary_v1(ctx),
+                    "followmom_compare": followmom_compare_summary_v1(ctx),
                     "standup_advisory": standup_advisory_summary_v1(ctx),
                     "standup_authority": standup_authority_summary_v1(ctx),
                     "standup_guarded": standup_guarded_summary_v1(ctx),
