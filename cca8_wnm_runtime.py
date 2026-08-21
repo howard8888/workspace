@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Single-operative WNM and bounded-ready-set runtime for CCA8 Phase 5.
+"""Single-operative WNM and bounded-ready-set runtime for CCA8 Phases 5 and 6.
 
 Purpose
 -------
@@ -9,13 +9,13 @@ needed by that experiment:
 
 * at most one :class:`~cca8_navmap_kernel.NavMapV2` is operative;
 * a bounded ready set keeps recently operative maps available for rapid return;
-* zoom-in, zoom-out, and return are atomic committed transitions;
+* zoom-in, zoom-out, lateral shift, and return are atomic committed transitions;
 * candidates and links never become operative merely by being addressable; and
 * transition failures leave the source WNM and ready set unchanged.
 
-The runtime is deliberately content-neutral.  Phase 5 feeding code supplies the
-maps and cross-scale correspondence evidence.  Later terrain and route phases
-can reuse the same transition contract without importing feeding semantics.
+The runtime is deliberately content-neutral. Phase 5 feeding code supplies
+cross-scale correspondence evidence, while Phase 6 terrain code supplies
+overlapping route-sheet correspondence. Neither domain is imported here.
 
 Authority boundary
 ------------------
@@ -39,7 +39,7 @@ from typing import Any, Optional
 
 from cca8_navmap_kernel import NavMapRefV1, NavMapV2
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "WNMTransitionTypeV1",
@@ -66,6 +66,7 @@ class WNMTransitionTypeV1(str, Enum):
     INITIALIZE = "initialize"
     ZOOM_IN = "zoom_in"
     ZOOM_OUT = "zoom_out"
+    LATERAL_SHIFT = "lateral_shift"
     RETURN = "return"
 
 
@@ -228,7 +229,7 @@ class WNMTransitionRecordV1:
         """Return the complete JSON-safe transition and authority contract."""
         return {
             "schema": "wnm_transition_record_v1",
-            "phase": "5",
+            "phase": "5-6",
             "authority": "operative_wnm_runtime",
             "one_operative_wnm": True,
             "ready_set_has_equal_authority": False,
@@ -492,7 +493,7 @@ def wnm_commit_transition_v1(
     least-recently-used entry when the configured bound is exceeded.
     """
     if ctx is None:
-        return {"schema": "wnm_summary_v1", "phase": "5", "status": "ctx_unavailable"}
+        return {"schema": "wnm_summary_v1", "phase": "5-6", "status": "ctx_unavailable"}
     if not isinstance(destination, NavMapV2):
         raise TypeError("destination must be NavMapV2")
     if not isinstance(transition_type, WNMTransitionTypeV1):
@@ -711,7 +712,7 @@ def wnm_return_to_ref_v1(
         # direct summary-level failure without fabricating a map or transition.
         row = {
             "schema": "wnm_return_request_v1",
-            "phase": "5",
+            "phase": "5-6",
             "status": "rejected",
             "destination_ref": destination_ref.as_dict(),
             "reason": reason,
@@ -739,14 +740,14 @@ def wnm_return_to_ref_v1(
 def wnm_summary_v1(ctx: Any) -> dict[str, Any]:
     """Return a defensive JSON-safe single-operative-WNM summary."""
     if ctx is None:
-        return {"schema": "wnm_summary_v1", "phase": "5", "status": "ctx_unavailable"}
+        return {"schema": "wnm_summary_v1", "phase": "5-6", "status": "ctx_unavailable"}
     operative = wnm_operative_map_v1(ctx)
     ready = _clean_ready_entries(ctx)
     last = getattr(ctx, "wnm_last_transition_v1", None)
     last_row = last.as_dict() if isinstance(last, WNMTransitionRecordV1) else None
     return {
         "schema": "wnm_summary_v1",
-        "phase": "5",
+        "phase": "5-6",
         "status": "active" if operative is not None else "idle",
         "authority": "single_operative_wnm",
         "operative_count": 1 if operative is not None else 0,

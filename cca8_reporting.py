@@ -23,8 +23,8 @@ existing menu code, tests, and downstream imports remain compatible.
 
 Behavior boundary
 -----------------
-Reporting remains read-only. Phase 5 adds operative-WNM and feeding close-up
-lines to full and mini snapshots, but formatting does not commit a transition,
+Reporting remains read-only. Phases 5 and 6 add operative-WNM, feeding, and
+terrain-route lines to full and mini snapshots, but formatting does not commit a transition,
 change policy selection, write memory, or grant map authority. The compact
 mini-snapshot still maintains the legacy posture-discrepancy history because the
 current controller uses that history as a diagnostic signal for persistent
@@ -58,6 +58,7 @@ from typing import Any, List, Optional
 import cca8_working_memory
 from cca8_context import Ctx
 from cca8_feeding import feeding_operative_readout_v1, render_feeding_lines_v1
+from cca8_terrain import render_terrain_lines_v1, terrain_policy_readout_v1
 from cca8_controller import (
     FATIGUE_HIGH,
     HUNGER_HIGH,
@@ -92,7 +93,7 @@ from cca8_predictive import (
 )
 from cca8_wnm_runtime import render_wnm_lines_v1, wnm_summary_v1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "TeeTextIO",
@@ -1062,6 +1063,9 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.extend(render_wnm_lines_v1(ctx))
     lines.append("")
 
+    lines.extend(render_terrain_lines_v1(ctx))
+    lines.append("")
+
     lines.extend(render_feeding_lines_v1(ctx))
     lines.append("")
 
@@ -1943,6 +1947,21 @@ def mini_snapshot_text(world, ctx=None, limit: int = 50) -> str:
         )
     except Exception:
         lines.append("[wnm] (unavailable)")
+
+    try:
+        terrain = terrain_policy_readout_v1(ctx)
+        if terrain is None:
+            lines.append("[terrain] (unavailable)")
+        else:
+            lines.append(
+                "[terrain] "
+                f"role={terrain.operative_role or '(none)'} "
+                f"route={terrain.route_relation.value} clear={terrain.route_clear} "
+                f"hazard={terrain.hazard_interpretation.value} "
+                f"safe_rest={terrain.safe_to_rest} veto={terrain.motion_veto}"
+            )
+    except Exception:
+        lines.append("[terrain] (unavailable)")
 
     try:
         feeding = feeding_operative_readout_v1(ctx)

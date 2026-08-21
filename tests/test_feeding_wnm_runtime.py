@@ -211,15 +211,15 @@ def test_phase5_versions_context_defaults_and_registry_are_current() -> None:
     """Phase 5 modules and their runtime registers should be versioned and registered once."""
     ctx = Ctx()
 
-    assert cca8_run.__version__ == "0.20.0"
-    assert cca8_context.__version__ == "0.14.0"
-    assert cca8_env.__version__ == "0.3.0"
-    assert cca8_navmap_runtime.__version__ == "0.11.0"
-    assert cca8_policy_runtime.__version__ == "0.5.0"
+    assert cca8_run.__version__ == "0.21.0"
+    assert cca8_context.__version__ == "0.15.0"
+    assert cca8_env.__version__ == "0.4.0"
+    assert cca8_navmap_runtime.__version__ == "0.12.0"
+    assert cca8_policy_runtime.__version__ == "0.6.0"
     assert cca8_predictive.__version__ == "0.3.0"
-    assert cca8_reporting.__version__ == "0.2.0"
-    assert cca8_feeding.__version__ == "0.1.0"
-    assert cca8_wnm_runtime.__version__ == "0.1.0"
+    assert cca8_reporting.__version__ == "0.3.0"
+    assert cca8_feeding.__version__ == "0.2.0"
+    assert cca8_wnm_runtime.__version__ == "0.2.0"
     assert ctx.wnm_operative_map_v1 is None
     assert ctx.wnm_ready_set_v1 == []
     assert ctx.wnm_ready_capacity_v1 == 3
@@ -228,7 +228,7 @@ def test_phase5_versions_context_defaults_and_registry_are_current() -> None:
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)  # pylint: disable=protected-access
     assert registry["feeding"] == "cca8_feeding"
     assert registry["wnm_runtime"] == "cca8_wnm_runtime"
-    assert len(cca8_run._cca8_component_rows()) == 38  # pylint: disable=protected-access
+    assert len(cca8_run._cca8_component_rows()) == 39  # pylint: disable=protected-access
     assert len(cca8_run.PRIMITIVES) == 8
 
 
@@ -823,6 +823,25 @@ def test_phase5_records_are_frozen_json_safe_and_human_readable() -> None:
     assert any("lower_motor_timing=delegated" in line for line in lines)
 
 
+def test_phase6_route_claim_prevents_a_second_feeding_wnm_transition_in_the_same_cycle() -> None:
+    """An active terrain route must keep the sole operative substrate until its transition cycle completes."""
+    ctx = _ctx()
+    _initialize_overview(ctx)
+    operative_before = wnm_operative_map_v1(ctx)
+    ready_before = wnm_ready_maps_v1(ctx)
+    ctx.terrain_route_claims_wnm_v1 = True
+
+    summary = _update(ctx, _observation(stage="first_stand", step_index=1))
+
+    state = summary["state"]
+    assert isinstance(state, dict)
+    assert state["transition_attempted"] is False
+    assert wnm_operative_map_v1(ctx) is operative_before
+    assert wnm_ready_maps_v1(ctx) == ready_before
+    assert summary["wnm"]["operative_count"] == 1
+    assert summary["wnm"]["at_most_one_operative"] is True
+
+
 def test_feeding_selection_hook_preserves_hunger_and_existing_global_authority() -> None:
     """Phase 5 migrates feeding expectations, not hunger or the selected primitive."""
     ctx = _ctx()
@@ -859,10 +878,10 @@ def test_full_and_mini_snapshots_expose_the_phase5_operative_substrate() -> None
     assert "PHASE 5 FEEDING CLOSE-UP / WNM ZOOM:" in full
 
 
-def test_cycle_json_exposes_phase5_feeding_and_single_operative_wnm(
+def test_cycle_json_exposes_phase5_feeding_phase6_terrain_and_single_operative_wnm(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """One ordinary closed-loop record should expose both Phase 5 machine-readable summaries."""
+    """One ordinary closed-loop record should expose the Phase 5/6 machine-readable summaries."""
     ctx = _ctx()
     ctx.working_world = cca8_run.init_working_world()
     ctx.temporal = TemporalContext()
@@ -887,6 +906,9 @@ def test_cycle_json_exposes_phase5_feeding_and_single_operative_wnm(
     assert record["feeding"]["schema"] == "feeding_summary_v1"
     assert record["feeding"]["phase"] == "5"
     assert record["feeding"]["policy_selection_mutation_allowed"] is False
+    assert record["terrain"]["schema"] == "terrain_summary_v1"
+    assert record["terrain"]["phase"] == "6"
+    assert record["terrain"]["protected_safety_can_be_overridden"] is False
     assert record["wnm"]["schema"] == "wnm_summary_v1"
     assert record["wnm"]["operative_count"] == 1
     assert record["wnm"]["at_most_one_operative"] is True

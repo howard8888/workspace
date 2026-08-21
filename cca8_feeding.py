@@ -105,7 +105,7 @@ from cca8_wnm_runtime import (
     wnm_summary_v1,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "FeedingReachabilityV1",
@@ -1351,6 +1351,13 @@ def _initialize_or_transition(
     )
     operative = wnm_operative_map_v1(ctx)
     if operative is None:
+        return False
+
+    # Phase 6 terrain navigation runs earlier in the observation pipeline. When
+    # an active route task owns the one operative WNM, feeding may continue to
+    # maintain evidence and close pending outcomes but must not perform a second
+    # substrate transition in the same cycle or displace the route sheet.
+    if bool(getattr(ctx, "terrain_route_claims_wnm_v1", False)):
         return False
 
     feeding_task_active = evidence.stage in {"first_stand", "first_latch"}

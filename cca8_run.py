@@ -53,7 +53,8 @@ Core runtime:
   cca8_experiments.py, cca8_openai.py, cca8_working_memory.py, cca8_profiles.py,
   cca8_guidance.py, cca8_predictive.py, cca8_navmap_runtime.py, cca8_maternal_geometry.py,
   cca8_maternal_temporal.py, cca8_maternal_continuity.py, cca8_followmom_compare.py,
-  cca8_followmom_advisory.py, cca8_followmom_authority.py, cca8_feeding.py, cca8_wnm_runtime.py,
+  cca8_followmom_advisory.py, cca8_followmom_authority.py, cca8_feeding.py, cca8_terrain.py,
+  cca8_wnm_runtime.py,
   cca8_reporting.py, cca8_observation_runtime.py,
   cca8_policy_runtime.py, and cca8_preflight.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
@@ -126,6 +127,7 @@ import cca8_followmom_advisory
 import cca8_followmom_authority
 import cca8_followmom_compare
 import cca8_feeding
+import cca8_terrain
 import cca8_wnm_runtime
 import cca8_maternal_continuity
 import cca8_maternal_geometry
@@ -300,6 +302,21 @@ feeding_milk_evidence_v1 = cca8_feeding.feeding_milk_evidence_v1
 feeding_latch_evidence_v1 = cca8_feeding.feeding_latch_evidence_v1
 feeding_summary_v1 = cca8_feeding.feeding_summary_v1
 render_feeding_lines_v1 = cca8_feeding.render_feeding_lines_v1
+
+# --- Phase 6 terrain / lateral route-sheet WNM compatibility seam ------------
+# Two overlapping route sheets can become operative through explicit SELF and
+# shared-landmark correspondence. The WNM-derived grid remains dual-run and
+# its policy readout may only add a conservative safety veto.
+terrain_reset_v1 = cca8_terrain.terrain_reset_v1
+terrain_wnm_observation_step_v1 = cca8_terrain.terrain_wnm_observation_step_v1
+terrain_policy_readout_v1 = cca8_terrain.terrain_policy_readout_v1
+terrain_motion_veto_v1 = cca8_terrain.terrain_motion_veto_v1
+terrain_safe_to_rest_v1 = cca8_terrain.terrain_safe_to_rest_v1
+terrain_cliff_near_v1 = cca8_terrain.terrain_cliff_near_v1
+terrain_route_clear_v1 = cca8_terrain.terrain_route_clear_v1
+terrain_summary_v1 = cca8_terrain.terrain_summary_v1
+render_terrain_lines_v1 = cca8_terrain.render_terrain_lines_v1
+
 wnm_operative_map_v1 = cca8_wnm_runtime.wnm_operative_map_v1
 wnm_ready_maps_v1 = cca8_wnm_runtime.wnm_ready_maps_v1
 wnm_commit_transition_v1 = cca8_wnm_runtime.wnm_commit_transition_v1
@@ -601,7 +618,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -691,6 +708,15 @@ __all__ = [
     "feeding_latch_evidence_v1",
     "feeding_summary_v1",
     "render_feeding_lines_v1",
+    "terrain_reset_v1",
+    "terrain_wnm_observation_step_v1",
+    "terrain_policy_readout_v1",
+    "terrain_motion_veto_v1",
+    "terrain_safe_to_rest_v1",
+    "terrain_cliff_near_v1",
+    "terrain_route_clear_v1",
+    "terrain_summary_v1",
+    "render_terrain_lines_v1",
     "wnm_operative_map_v1",
     "wnm_ready_maps_v1",
     "wnm_commit_transition_v1",
@@ -2809,6 +2835,7 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("followmom_advisory", "cca8_followmom_advisory"),
     ("followmom_authority", "cca8_followmom_authority"),
     ("feeding", "cca8_feeding"),
+    ("terrain", "cca8_terrain"),
     ("wnm_runtime", "cca8_wnm_runtime"),
     ("standup_compare", "cca8_standup_compare"),
     ("reporting", "cca8_reporting"),
@@ -3777,6 +3804,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             ctx.navmap_last_expected_current_comparison_v1 = None
             ctx.navmap_last_accepted_current_v1 = None
             feeding_reset_v1(ctx)
+            terrain_reset_v1(ctx)
             step_idx = env_info.get("step_index", 0)
             print(
                 f"[env] Reset env scenario: "
@@ -4549,6 +4577,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "followmom_advisory": followmom_advisory_summary_v1(ctx),
                     "followmom_authority": followmom_authority_summary_v1(ctx),
                     "feeding": feeding_summary_v1(ctx),
+                    "terrain": terrain_summary_v1(ctx),
                     "wnm": wnm_summary_v1(ctx),
                     "standup_advisory": standup_advisory_summary_v1(ctx),
                     "standup_authority": standup_authority_summary_v1(ctx),

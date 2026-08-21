@@ -101,12 +101,13 @@ explanation, robotics, agentic AI, or LLM synergy remains an experimental questi
 **THIS SECTION IS UPDATED PERIODICALLY**
 
 The current runner contains a visible general NavMap predictive-processing path, two bounded behavioral domains that have completed
-authority migration, and the first genuine navigation among operative WNM maps. The generic `scene_body`
-expected/evidence/accepted-current path remains diagnostic. Maintained SELF-ground geometry supplies default StandUp applicability, and
-exact-current SELF-maternal geometry/continuity/temporal evidence supplies default FollowMom applicability behind protected safety and
-explicit fallback. Phase 5 adds an overview -> maternal-body -> nipple-mouth feeding close-up -> return round-trip in which a different
-NavMap becomes the operative WNM and prior maps enter a small bounded ready set. These bounded authorities and transitions do not make
-the generic accepted-current record WorldGraph truth or write accepted NavMaps into Columns.
+authority migration, and genuine navigation among operative WNM maps. The generic `scene_body` expected/evidence/accepted-current path
+remains diagnostic. Maintained SELF-ground geometry supplies default StandUp applicability, and exact-current SELF-maternal
+geometry/continuity/temporal evidence supplies default FollowMom applicability behind protected safety and explicit fallback. Phase 5
+adds an overview -> maternal-body -> nipple-mouth feeding close-up -> return round-trip. Phase 6 adds overlapping cliff-to-field and
+field-to-shelter route sheets, a landmark-supported lateral WNM shift, backtracking/return, and a WNM-derived SurfaceGrid running beside
+the existing grid. These bounded authorities and transitions do not make the generic accepted-current record WorldGraph truth or write
+accepted NavMaps into Columns.
 
 The present signal path is:
 
@@ -129,6 +130,12 @@ The present signal path is:
     all probes
         -> NavMap Oscilloscope
 
+    terrain_geometry_v1 + maintained route sheets + live SELF/landmark state
+        -> one operative route WNM
+        -> WNM-derived SurfaceGrid in dual-run
+        -> source-linked cliff / route / hazard / safe-to-rest readouts
+        -> conservative safety-additive policy veto or explicit UNKNOWN/fallback
+
 Current design rules:
 
 - Expected and retrieved maps are priors, not observations.
@@ -141,36 +148,59 @@ Current design rules:
 **Current implementation versus target architecture**
 
 - **Current implementation:** the general `scene_body` accepted-current record remains a shadow, while StandUp and FollowMom have
-  bounded default map-native applicability authority. Phase 5 introduces one true single-operative-WNM feeding domain with a bounded
-  ready set and map-native SeekNipple/Suckle expected relations, while leaving their global PolicyRuntime selection unchanged. Other
-  action and interpretation domains still read BodyMap, observation-driven WorkingMap/MapSurface, SurfaceGrid/NavSummary, WorldGraph
-  history, retrieval hints, drives, and compatibility bridges.
+  bounded default map-native applicability authority. Phase 5 introduces a single-operative-WNM feeding domain with a bounded ready set
+  and map-native SeekNipple/Suckle expected relations. Phase 6 adds a terrain/route domain whose overlapping route sheets can acquire,
+  laterally exchange, backtrack, and return operative WNM status. Its source-linked route readout and SurfaceGrid remain safety-additive
+  and dual-run; the existing global PolicyRuntime selector and protected lower safety paths remain unchanged. Other domains still read
+  BodyMap, observation-driven WorkingMap/MapSurface, SurfaceGrid/NavSummary, WorldGraph history, retrieval hints, drives, and
+  compatibility bridges.
 - **Target architecture:** one NavMap is operative as WNM at a time, with a small bounded ready set supporting rapid zoom, lateral shift,
   return, and associative exchange. MapSurface, SurfaceGrid, NavSummary, predicates, and most BodyMap-facing values become named
   projections or synchronized readouts, while BodyMap retains a fast independent safety path.
 - **Migration rule:** each domain moves through shadow, compare, advisory, guarded, and default authority with explicit evidence and
   fallback. Default authority in one bounded domain does not grant authority to unrelated maps or consumers.
 
-**Phase 5 implementation checkpoint**
+**Phase 6 implementation checkpoint**
 
-- Repository authority: Howard's current local Workspace; recapture the exact clean HEAD after applying and committing this slice.
+- Repository baseline used for this slice: `d1d02846ac7529137834167b5134ab088b7bbed2` (`Add feeding WNM zoom round-trip`).
+- Repository authority after application: Howard's current local Workspace and its fresh Git status/HEAD.
 - Python baseline: 3.11.
-- Runner: `cca8_run.py` v0.20.0.
-- Context: `cca8_context.py` v0.14.0.
-- Environment adapter: `cca8_env.py` v0.3.0.
-- NavMap runtime: `cca8_navmap_runtime.py` v0.11.0.
-- Predictive helper: `cca8_predictive.py` v0.3.0.
-- Policy runtime: `cca8_policy_runtime.py` v0.5.0.
+- Runner: `cca8_run.py` v0.21.0.
+- Context: `cca8_context.py` v0.15.0.
+- Environment adapter: `cca8_env.py` v0.4.0.
+- NavMap runtime: `cca8_navmap_runtime.py` v0.12.0.
+- Predictive helper remains: `cca8_predictive.py` v0.3.0.
+- Policy runtime: `cca8_policy_runtime.py` v0.6.0.
+- Reporting: `cca8_reporting.py` v0.3.0.
 - FollowMom authority remains: `cca8_followmom_authority.py` v0.1.0.
-- Single-operative WNM runtime: `cca8_wnm_runtime.py` v0.1.0.
-- Feeding close-up/runtime: `cca8_feeding.py` v0.1.0.
-- Registry: 38 components and 8 behavioral primitives.
-- Build-environment inventory after this patch: 874 collected tests (872 non-Pyvis tests plus 2 optional Pyvis tests); the
-  authoritative local pytest, Pylint, mypy, preflight, and manual-inspection wall determines the final GO decision.
+- Single-operative WNM runtime: `cca8_wnm_runtime.py` v0.2.0.
+- Feeding close-up/runtime: `cca8_feeding.py` v0.2.0.
+- Terrain, route-sheet, continuity, dynamic-overlay, and dual-run grid runtime: `cca8_terrain.py` v0.1.0.
+- Registry: 39 components and 8 behavioral primitives.
+- Build-environment inventory after this patch: 896 collected tests (894 non-Pyvis tests plus 2 optional Pyvis tests); the authoritative
+  local pytest, Pylint, mypy, preflight, and manual-inspection wall determines the final GO decision.
 
 Phase 5 does not grant SeekNipple or Suckle map authority. It changes the operative map substrate and replaces detached feeding-slot
 expectations with source-linked map-native expected relations. Hunger remains a compact drive, PolicyRuntime remains the global selector,
 and oral/head timing remains below the WNM motor boundary.
+
+Phase 6 adds two overlapping TripTik-like terrain sheets. A west route sheet represents the exposed cliff-to-field segment; an east route
+sheet represents the field-to-shelter segment. A lateral shift requires an overlap, supported stationary-landmark correspondence, an
+explicit frame transform, and preserved SELF world position. Ambiguous or negatively contradicted correspondence rejects the transition
+atomically and leaves the source WNM operative. Backtracking and route completion use the bounded ready set rather than teleporting or
+silently changing a focus label.
+
+The operative terrain WNM is projected into a second `SurfaceGridV1` and compared with the existing observation/NavPatch-derived grid.
+It does not overwrite `ctx.wm_surfacegrid`. Cliff-near, route relation, route clearance, hazard interpretation, and safe-to-rest are exposed
+as source-linked readouts carrying the operative map reference, frame, grid signature, freshness, thresholds, and derivation operator.
+During migration these values may add a conservative FollowMom or Rest veto; they cannot weaken BodyMap, fall, topology, benchmark, or
+other protected safety routes. Missing current terrain evidence preserves explicit UNKNOWN and complete legacy fallback.
+
+Stationary-landmark identity remains separate from current localization. Known occlusion may retain identity and a bounded last-supported
+location; reliable negative evidence withdraws transition support without deleting identity; compatible reappearance records
+reacquisition. Harmless periodic vegetation motion remains a compact live overlay and creates no map revisions. A fallen tree is treated as
+one material traversability/hazard change: only the affected east route family advances to a new revision, while the unrelated west route
+signature remains unchanged.
 
 The NavMap Oscilloscope marker in terminal output is:
 
@@ -191,9 +221,10 @@ state table.
 The current software is not yet a complete implementation of that hypothesis. The generic accepted-current scene path remains diagnostic,
 and many behaviors still use BodyMap, WorkingMap, NavSummary, WorldGraph, hints, drives, prediction histories, and policy logic. StandUp
 and FollowMom are bounded exceptions: their applicability normally comes from source-linked NavMap evidence while protected safety and
-explicit legacy fallback remain. Phase 5 additionally proves that overview, maternal-body, and feeding close-up maps can exchange true
-operative-WNM status through a bounded ready set, with destination-only detail queries and source-linked feeding expectations. The
-programme continues one vertical domain at a time rather than through a wholesale rewrite.
+explicit legacy fallback remain. Phase 5 proves that overview, maternal-body, and feeding close-up maps can exchange true operative-WNM
+status through a bounded ready set. Phase 6 extends the same substrate to overlapping terrain route sheets, a landmark-supported lateral
+shift, backtracking, source-linked route/hazard readouts, and material-change revision economy. The programme continues one vertical
+domain at a time rather than through a wholesale rewrite.
 
 ● **Scientific and evolutionary hypothesis**
 

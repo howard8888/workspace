@@ -53,6 +53,7 @@ from typing import Any, Callable, List, Optional
 
 from cca8_context import CreativeCandidate, Ctx
 from cca8_controller import Drives, FATIGUE_HIGH, HUNGER_HIGH
+from cca8_terrain import terrain_motion_veto_v1, terrain_safe_to_rest_v1
 from cca8_feeding import (
     feeding_latch_evidence_v1,
     feeding_milk_evidence_v1,
@@ -60,7 +61,7 @@ from cca8_feeding import (
 )
 
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -706,6 +707,12 @@ def _gate_rest_trigger_body_space(world, drives: Drives, ctx) -> bool:
     if rest_quiesce:
         return False
 
+    # Phase 6 may add a conservative rest veto only when current evidence was
+    # projected from the operative terrain route WNM. ``None`` preserves the
+    # complete legacy path; a true safety result never weakens BodyMap safety.
+    if terrain_safe_to_rest_v1(ctx) is False:
+        return False
+
     # Newborn hard-mode bridge:
     # after explicit suckling has produced milk:drinking, Rest is the correct
     # task-completion action even if ordinary fatigue is not high.
@@ -736,6 +743,7 @@ def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
     goat04_hint = _goat04_context_hint_active_v1(ctx)
     newborn_rest_bridge = _should_force_rest_bridge_v1(world, ctx)
     rest_quiesce = _should_quiesce_rest_v1(world, ctx)
+    terrain_safe_rest = terrain_safe_to_rest_v1(ctx)
     stage = getattr(ctx, "lt_obs_last_stage", None) if ctx is not None else None
 
     shelter = None
@@ -755,7 +763,8 @@ def _gate_rest_explain_body_space(world, drives: Drives, ctx) -> str:
         f"or cue:drive:fatigue_high present={fatigue_cue} "
         f"or goat04_hint={goat04_hint!r} "
         f"or newborn_rest_bridge={newborn_rest_bridge} "
-        f"(newborn_rest_quiesce={rest_quiesce}, stage={stage!r}, "
+        f"(phase6_terrain_safe_to_rest={terrain_safe_rest}, "
+        f"newborn_rest_quiesce={rest_quiesce}, stage={stage!r}, "
         f"rest_zone={zone}, shelter={shelter}, cliff={cliff})"
     )
 
@@ -1949,6 +1958,17 @@ def _follow_mom_legacy_gate_evaluation_v1(
             protected_veto=True,
         )
 
+    # Phase 6 terrain authority is safety-additive only. A current operative
+    # route-map veto becomes a protected false legacy result before any
+    # permissive newborn bridge or fallback can add FollowMom. Unsupported
+    # terrain evidence returns ``None`` and leaves historical behavior intact.
+    if terrain_motion_veto_v1(ctx) is True:
+        return _FollowMomLegacyGateEvaluationV1(
+            triggered=False,
+            reason="phase6_terrain_route_safety_veto",
+            protected_veto=True,
+        )
+
     if _should_force_follow_mom_bridge_v1(world, ctx):
         return _FollowMomLegacyGateEvaluationV1(
             triggered=True,
@@ -2035,11 +2055,13 @@ def _gate_follow_mom_explain_body_space(
     hunger = float(getattr(drives, "hunger", 0.0))
     fatigue = float(getattr(drives, "fatigue", 0.0))
     legacy = _follow_mom_legacy_gate_evaluation_v1(world, ctx)
+    terrain_veto = terrain_motion_veto_v1(ctx)
     return (
         "dev_gate: True, legacy_followmom_gate="
         f"{legacy.triggered} reason={legacy.reason} "
         f"protected_veto={legacy.protected_veto} compatibility_force={legacy.compatibility_force}; "
         f"{followmom_authority_explain_v1(ctx)}; "
+        f"phase6_terrain_motion_veto={terrain_veto}; "
         f"{_wm_navsummary_explain_bits_v1(ctx)} (hunger={hunger:.2f}, fatigue={fatigue:.2f})"
     )
 

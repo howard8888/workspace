@@ -16,6 +16,7 @@ operators with CCA8 runtime registers for:
 - the Phase 4D FollowMom compare transaction and compact expected relation
 - the Phase 4E-A non-binding FollowMom advisory
 - the Phase 5 feeding observation bridge and first operative-WNM zoom path
+- the Phase 6 terrain/hazard bridge and lateral route-sheet WNM path
 - expected-current construction and residual comparison
 - conservative accepted-current selection
 - the diagnostic Working Navigation Map surface bridge
@@ -31,9 +32,9 @@ runner remains focused on orchestration.
 
 Authority boundary
 ------------------
-The generic accepted-current path remains diagnostic and evidence-first. Phase 5
-adds real operative-WNM/ready-set authority only for deciding which feeding map
-substrate may answer detailed queries. That authority does not select a policy,
+The generic accepted-current path remains diagnostic and evidence-first. Phases
+5 and 6 add real operative-WNM/ready-set authority for feeding detail and
+overlapping terrain-route sheets. Those domains do not bypass protected safety,
 write WorldGraph truth or Columns, mutate BodyMap, or command lower motor
 execution. Feeding expectations are armed only after the existing selector has
 already chosen SeekNipple or Suckle.
@@ -73,13 +74,14 @@ from cca8_predictive import (
     compact_slot_map_text_v1 as _prediction_compact_map_text_v1,
     prediction_policy_expected_slots_v1,
 )
+from cca8_terrain import terrain_wnm_observation_step_v1
 from cca8_standup_compare import (
     standup_advisory_observation_step_v1,
     standup_compare_observation_step_v1,
 )
 
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 __all__ = [
     "NAVMAP_SCOPE_MARKER_V1",
     "NAVMAP_SCOPE_PROBES_V1",
@@ -123,6 +125,7 @@ __all__ = [
     "followmom_compare_observation_step_v1",
     "followmom_advisory_observation_step_v1",
     "feeding_wnm_observation_step_v1",
+    "terrain_wnm_observation_step_v1",
     "standup_compare_observation_step_v1",
     "standup_advisory_observation_step_v1",
     "__version__",
@@ -2126,6 +2129,29 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
             "map_can_override": False,
             "protected_safety_can_be_overridden": False,
             "reason": "phase4d_compare_observation_update_failed",
+        }
+
+    # Phase 6 terrain/hazard and overlapping route-sheet WNM bridge. It
+    # processes current adapter evidence before Phase 5 feeding navigation so
+    # an active locomotor route can claim the one operative WNM for this cycle.
+    # The WNM-derived SurfaceGrid remains dual-run and can only add a
+    # conservative safety veto; the legacy safety paths remain protected.
+    try:
+        terrain_wnm_observation_step_v1(ctx, env_obs)
+    except Exception as exc:  # defensive runtime diagnostic boundary
+        ctx.terrain_state_v1 = None
+        ctx.terrain_policy_readout_v1 = None
+        ctx.terrain_surfacegrid_v1 = None
+        ctx.terrain_route_claims_wnm_v1 = False
+        ctx.terrain_last_update_v1 = {
+            "schema": "terrain_summary_v1",
+            "phase": "6",
+            "status": "error",
+            "authority": "single_operative_wnm_terrain_domain",
+            "protected_safety_can_be_overridden": False,
+            "legacy_surfacegrid_replaced": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
         }
 
     # Phase 5 feeding close-up and first genuine operative-WNM zoom path.

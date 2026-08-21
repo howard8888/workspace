@@ -152,7 +152,7 @@ from cca8_navpatch import GRID_ENCODING_V1, CELL_UNKNOWN, CELL_TRAVERSABLE, CELL
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "EnvState",
     "EnvObservation",
@@ -279,6 +279,17 @@ class EnvState:
     newborn_benchmark_hard: bool = False
     newborn_follow_attempts: int = 0
 
+    # Phase 6 terrain/route evidence controls. These remain environment-side
+    # conditions used by PerceptionAdapter to emit a bounded evidence packet;
+    # they are not agent beliefs or WNM authority.
+    terrain_landmark_observability: str = "observed"
+    terrain_landmark_identity_handle: str = "route_landmark_boulder_v1"
+    terrain_landmark_identity_ambiguous: bool = False
+    terrain_landmark_negative_evidence: bool = False
+    terrain_tree_fallen: bool = False
+    terrain_route_correspondence_ambiguous: bool = False
+    terrain_backtrack_requested: bool = False
+
     def update_zone_from_position(self) -> None:
         """Update safety zone label from the current symbolic position."""
         mapping = {
@@ -322,6 +333,13 @@ class EnvState:
             newborn_obs_blackout_kind=self.newborn_obs_blackout_kind,
             newborn_benchmark_hard=self.newborn_benchmark_hard,
             newborn_follow_attempts=self.newborn_follow_attempts,
+            terrain_landmark_observability=self.terrain_landmark_observability,
+            terrain_landmark_identity_handle=self.terrain_landmark_identity_handle,
+            terrain_landmark_identity_ambiguous=self.terrain_landmark_identity_ambiguous,
+            terrain_landmark_negative_evidence=self.terrain_landmark_negative_evidence,
+            terrain_tree_fallen=self.terrain_tree_fallen,
+            terrain_route_correspondence_ambiguous=self.terrain_route_correspondence_ambiguous,
+            terrain_backtrack_requested=self.terrain_backtrack_requested,
         )
 
 
@@ -674,6 +692,13 @@ class FsmBackend:
             env_state.newborn_obs_blackout_kind = ""
             env_state.newborn_benchmark_hard = hard_newborn
             env_state.newborn_follow_attempts = 0
+            env_state.terrain_landmark_observability = "observed"
+            env_state.terrain_landmark_identity_handle = "route_landmark_boulder_v1"
+            env_state.terrain_landmark_identity_ambiguous = False
+            env_state.terrain_landmark_negative_evidence = False
+            env_state.terrain_tree_fallen = False
+            env_state.terrain_route_correspondence_ambiguous = False
+            env_state.terrain_backtrack_requested = False
             self._update_spatial_label(env_state)  # initialize coarse geometry / zone.
             self._sync_positions_from_symbolic_location(env_state)
 
@@ -704,6 +729,13 @@ class FsmBackend:
             )
             env_state.goat04_oracle_switch_step = -1
             env_state.goat04_oracle_response_deadline_step = -1
+            env_state.terrain_landmark_observability = "observed"
+            env_state.terrain_landmark_identity_handle = "route_landmark_boulder_v1"
+            env_state.terrain_landmark_identity_ambiguous = False
+            env_state.terrain_landmark_negative_evidence = False
+            env_state.terrain_tree_fallen = False
+            env_state.terrain_route_correspondence_ambiguous = False
+            env_state.terrain_backtrack_requested = False
 
         return env_state
 
@@ -1287,6 +1319,84 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         self._near_threshold: float = 1.0
 
     @staticmethod
+    def _terrain_geometry_v1(
+        env_state: EnvState,
+        *,
+        blackout_active: bool,
+    ) -> Dict[str, Any]:
+        """Return one bounded terrain/route evidence packet for Phase 6.
+
+        The packet exposes current SELF position, one stationary shared route
+        landmark, one harmless periodic vegetation offset, and optional test
+        conditions for occlusion, negative evidence, ambiguous correspondence,
+        backtracking, and a material fallen-tree obstruction. It contains no
+        route decision, WNM authority, actuator command, or motor trajectory.
+        """
+        landmark_observability = str(
+            getattr(env_state, "terrain_landmark_observability", "observed") or "observed"
+        ).strip().lower()
+        allowed_observability = {
+            "observed",
+            "occluded",
+            "known_occluded",
+            "unavailable",
+            "missing",
+            "ambiguous",
+            "negative_expected_location",
+        }
+        if landmark_observability not in allowed_observability:
+            landmark_observability = "unavailable"
+        if blackout_active:
+            landmark_observability = "unavailable"
+
+        negative_evidence = bool(getattr(env_state, "terrain_landmark_negative_evidence", False))
+        identity_ambiguous = bool(getattr(env_state, "terrain_landmark_identity_ambiguous", False))
+        if negative_evidence:
+            landmark_observability = "negative_expected_location"
+        elif identity_ambiguous:
+            landmark_observability = "ambiguous"
+
+        landmark_point: Dict[str, float] | None = None
+        if landmark_observability == "observed" and not blackout_active:
+            landmark_point = {"x": 0.80, "y": 0.40}
+
+        step_index = int(getattr(env_state, "step_index", 0) or 0)
+        branch_offset = 0.08 if step_index % 2 == 0 else -0.08
+        quality = 0.0 if blackout_active else (0.65 if landmark_observability == "occluded" else 0.90)
+        return {
+            "schema": "terrain_geometry_v1",
+            "source_class": "observed_adapter_evidence",
+            "source_ref": f"adapter:perception_terrain_geometry_v1:step:{step_index}",
+            "quality": quality,
+            "frame_id": "goat_route_world_frame_v1",
+            "units": "m",
+            "stage": str(getattr(env_state, "scenario_stage", "unknown") or "unknown"),
+            "position_label": str(getattr(env_state, "position", "unknown") or "unknown"),
+            "self_world_point": {
+                "x": float(env_state.kid_position[0]),
+                "y": float(env_state.kid_position[1]),
+            },
+            "landmark_identity_handle": str(
+                getattr(env_state, "terrain_landmark_identity_handle", "route_landmark_boulder_v1")
+                or "route_landmark_boulder_v1"
+            ),
+            "landmark_observability": landmark_observability,
+            "landmark_world_point": landmark_point,
+            "landmark_identity_ambiguous": identity_ambiguous,
+            "landmark_negative_evidence": negative_evidence,
+            "tree_fallen": bool(getattr(env_state, "terrain_tree_fallen", False)),
+            "vegetation_branch_offset": branch_offset,
+            "route_correspondence_ambiguous": bool(
+                getattr(env_state, "terrain_route_correspondence_ambiguous", False)
+            ),
+            "backtrack_requested": bool(getattr(env_state, "terrain_backtrack_requested", False)),
+            "blackout_active": bool(blackout_active),
+            "stationary_landmark_identity_separate_from_localization": True,
+            "periodic_vegetation_is_dynamic_only": True,
+            "lower_locomotor_trajectory_delegated": True,
+        }
+
+    @staticmethod
     def _feeding_geometry_v1(
         env_state: EnvState,
         predicates: List[str],
@@ -1646,6 +1756,10 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
 
         # Use self._near_threshold so it’s not “dead configuration”.
         meta["mom_proximity_from_raw"] = "near" if dist <= float(self._near_threshold) else "far"
+        meta["terrain_geometry_v1"] = self._terrain_geometry_v1(
+            env_state,
+            blackout_active=blackout_active,
+        )
         meta["feeding_geometry_v1"] = self._feeding_geometry_v1(
             env_state,
             preds,

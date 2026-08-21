@@ -339,6 +339,28 @@ def test_transition_never_mutates_source_or_destination_map_content() -> None:
     assert detail.to_bytes() == detail_bytes
 
 
+def test_lateral_shift_is_a_first_class_atomic_operative_transition() -> None:
+    """Overlapping route sheets should exchange WNM authority without a focus-only shortcut."""
+    ctx = Ctx()
+    west = _map("west_route", "terrain_route_west", frame_id="west_route_frame")
+    east = _map("east_route", "terrain_route_east", frame_id="east_route_frame")
+    _commit(ctx, west, WNMTransitionTypeV1.INITIALIZE, observation_no=1)
+
+    summary = _commit(
+        ctx,
+        east,
+        WNMTransitionTypeV1.LATERAL_SHIFT,
+        observation_no=2,
+        expected_source_ref=NavMapRefV1("west_route", 1),
+    )
+
+    assert wnm_operative_map_v1(ctx) is east
+    assert wnm_ready_maps_v1(ctx) == (west,)
+    assert summary["last_transition"]["transition_type"] == "lateral_shift"
+    assert summary["last_transition"]["accepted"] is True
+    assert summary["last_transition"]["prior_wnm_disposition"] == "moved_to_ready_set"
+
+
 def test_summary_renderer_and_histories_are_json_safe_and_bounded() -> None:
     """Transition diagnostics should remain deterministic, JSON-safe, and bounded."""
     ctx = Ctx()

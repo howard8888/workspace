@@ -46,9 +46,15 @@ if TYPE_CHECKING:
         StandUpGuardedDecisionV1,
         StandUpObservedOutcomeV1,
     )
+    from cca8_terrain import (
+        TerrainDynamicOverlayV1,
+        TerrainLandmarkContinuityV1,
+        TerrainPolicyReadoutV1,
+        TerrainWnmStateV1,
+    )
     from cca8_wnm_runtime import WNMReadyEntryV1, WNMTransitionRecordV1
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -841,6 +847,34 @@ class Ctx:
     feeding_last_outcome_update_v1: dict[str, Any] = field(default_factory=dict)
     feeding_outcome_history_v1: list[dict[str, Any]] = field(default_factory=list)
     feeding_outcome_history_limit_v1: int = 25
+
+    # Phase 6 terrain/hazard and overlapping lateral route-sheet WNM domain.
+    # Route maps are immutable structural sheets; current SELF position,
+    # landmark observability, harmless periodic vegetation motion, and route
+    # obstruction status live in bounded external records. The WNM-derived
+    # SurfaceGrid runs beside the legacy grid and may add but never weaken a
+    # protected safety veto.
+    terrain_wnm_enabled_v1: bool = True
+    terrain_observation_no_v1: int = 0
+    terrain_route_west_map_v1: Optional[NavMapV2] = None
+    terrain_route_east_map_v1: Optional[NavMapV2] = None
+    terrain_state_v1: Optional[TerrainWnmStateV1] = None
+    terrain_landmark_continuity_v1: Optional[TerrainLandmarkContinuityV1] = None
+    terrain_dynamic_overlay_v1: Optional[TerrainDynamicOverlayV1] = None
+    terrain_policy_readout_v1: Optional[TerrainPolicyReadoutV1] = None
+    terrain_surfacegrid_v1: Optional[SurfaceGridV1] = None
+    terrain_surfacegrid_summary_v1: dict[str, Any] = field(default_factory=dict)
+    terrain_surfacegrid_comparison_v1: dict[str, Any] = field(default_factory=dict)
+    terrain_last_material_revision_v1: dict[str, Any] = field(default_factory=dict)
+    terrain_last_update_v1: dict[str, Any] = field(default_factory=dict)
+    terrain_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    terrain_history_limit_v1: int = 25
+    terrain_material_revision_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    terrain_material_revision_history_limit_v1: int = 25
+    terrain_route_claims_wnm_v1: bool = False
+    terrain_surfacegrid_w_v1: int = 16
+    terrain_surfacegrid_h_v1: int = 16
+    terrain_surfacegrid_cells_per_unit_v1: float = 4.0
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------
