@@ -23,8 +23,9 @@ existing menu code, tests, and downstream imports remain compatible.
 
 Behavior boundary
 -----------------
-Reporting remains read-only. Phases 5 and 6 add operative-WNM, feeding, and
-terrain-route lines to full and mini snapshots, but formatting does not commit a transition,
+Reporting remains read-only. Phases 5, 6, and 7 add operative-WNM, feeding,
+terrain-route, and generalized live-dynamics lines to full and mini snapshots,
+but formatting does not commit a transition,
 change policy selection, write memory, or grant map authority. The compact
 mini-snapshot still maintains the legacy posture-discrepancy history because the
 current controller uses that history as a diagnostic signal for persistent
@@ -58,6 +59,7 @@ from typing import Any, List, Optional
 import cca8_working_memory
 from cca8_context import Ctx
 from cca8_feeding import feeding_operative_readout_v1, render_feeding_lines_v1
+from cca8_live_dynamics import TemporalRelationV1, live_dynamics_overlay_v1, render_live_dynamics_lines_v1
 from cca8_terrain import render_terrain_lines_v1, terrain_policy_readout_v1
 from cca8_controller import (
     FATIGUE_HIGH,
@@ -93,7 +95,7 @@ from cca8_predictive import (
 )
 from cca8_wnm_runtime import render_wnm_lines_v1, wnm_summary_v1
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "TeeTextIO",
@@ -1069,6 +1071,9 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.extend(render_feeding_lines_v1(ctx))
     lines.append("")
 
+    lines.extend(render_live_dynamics_lines_v1(ctx))
+    lines.append("")
+
     # POLICIES (skills readout)
     lines.append("POLICIES:\n (already run at least once, with their SkillStat statistics)  [src=skill_readout()]")
     try:
@@ -1882,6 +1887,48 @@ def _print_cog_cycle_footer(*,
     print(f"[cycle] ACT  executed={pol!r} reward={rtxt} next_action={next_action_for_env!r}")
 
 
+def _live_dynamics_mini_line_v1(ctx: Any) -> str:
+    """Return one compact Phase 7 line without mutating temporal state.
+
+    The line intentionally reports only current decoded products and the
+    materiality decision. Full source, envelope, and residual detail remains in
+    the full snapshot and cycle JSON record.
+    """
+    maternal = live_dynamics_overlay_v1(ctx, TemporalRelationV1.SELF_MATERNAL)
+    route = live_dynamics_overlay_v1(ctx, TemporalRelationV1.SELF_ROUTE)
+    support = live_dynamics_overlay_v1(ctx, TemporalRelationV1.BODY_SUPPORT)
+    motor = live_dynamics_overlay_v1(ctx, TemporalRelationV1.LOWER_MOTOR)
+    state = getattr(ctx, "live_dynamics_state_v1", None)
+    if maternal is None and route is None and support is None and motor is None:
+        return "[dynamics] (unavailable)"
+
+    def _number(value: Any) -> str:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return "unknown"
+        try:
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return "unknown"
+
+    material = None
+    if state is not None:
+        materiality = getattr(state, "materiality", None)
+        material = getattr(materiality, "material_change_recommended", None)
+    return (
+        "[dynamics] "
+        f"maternal={maternal.distance_trend.value if maternal is not None else 'unknown'} "
+        f"object_speed={_number(maternal.object_speed if maternal is not None else None)} "
+        f"route_dir={route.motion_direction.value if route is not None else 'unknown'} "
+        f"route_speed={_number(route.speed if route is not None else None)} "
+        f"support={support.support if support is not None else None}/"
+        f"{support.support_duration_observations if support is not None else None} "
+        f"slip={support.slip if support is not None else None} "
+        f"motor={motor.phase.value if motor is not None else 'unknown'} "
+        f"progress={_number(motor.lower_motor_progress if motor is not None else None)} "
+        f"material={material}"
+    )
+
+
 def mini_snapshot_text(world, ctx=None, limit: int = 50) -> str:
     """
     Compact mini-snapshot: one timekeeping line + a short list of recent bindings
@@ -1974,6 +2021,11 @@ def mini_snapshot_text(world, ctx=None, limit: int = 50) -> str:
         )
     except Exception:
         lines.append("[feeding] (unavailable)")
+
+    try:
+        lines.append(_live_dynamics_mini_line_v1(ctx))
+    except Exception:
+        lines.append("[dynamics] (unavailable)")
 
     # Compact world view: last `limit` bindings with their outgoing edges
     try:

@@ -17,6 +17,7 @@ operators with CCA8 runtime registers for:
 - the Phase 4E-A non-binding FollowMom advisory
 - the Phase 5 feeding observation bridge and first operative-WNM zoom path
 - the Phase 6 terrain/hazard bridge and lateral route-sheet WNM path
+- the Phase 7 generalized temporal-binding/live-dynamics bridge
 - expected-current construction and residual comparison
 - conservative accepted-current selection
 - the diagnostic Working Navigation Map surface bridge
@@ -34,7 +35,8 @@ Authority boundary
 ------------------
 The generic accepted-current path remains diagnostic and evidence-first. Phases
 5 and 6 add real operative-WNM/ready-set authority for feeding detail and
-overlapping terrain-route sheets. Those domains do not bypass protected safety,
+overlapping terrain-route sheets. Phase 7 adds source-linked live dynamics,
+dynamic envelopes, and structured temporal residuals without behavior authority. Those domains do not bypass protected safety,
 write WorldGraph truth or Columns, mutate BodyMap, or command lower motor
 execution. Feeding expectations are armed only after the existing selector has
 already chosen SeekNipple or Suckle.
@@ -61,6 +63,7 @@ from cca8_feeding import feeding_wnm_observation_step_v1
 from cca8_followmom_compare import followmom_compare_observation_step_v1
 from cca8_maternal_continuity import maternal_continuity_shadow_observation_step_v1
 from cca8_maternal_geometry import maternal_geometry_shadow_observation_step_v1
+from cca8_live_dynamics import live_dynamics_observation_step_v1
 from cca8_maternal_temporal import maternal_temporal_shadow_observation_step_v1
 from cca8_navmap import (
     make_navmap_payload_v1,
@@ -81,7 +84,7 @@ from cca8_standup_compare import (
 )
 
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 __all__ = [
     "NAVMAP_SCOPE_MARKER_V1",
     "NAVMAP_SCOPE_PROBES_V1",
@@ -126,6 +129,7 @@ __all__ = [
     "followmom_advisory_observation_step_v1",
     "feeding_wnm_observation_step_v1",
     "terrain_wnm_observation_step_v1",
+    "live_dynamics_observation_step_v1",
     "standup_compare_observation_step_v1",
     "standup_advisory_observation_step_v1",
     "__version__",
@@ -2186,6 +2190,30 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
             "single_operative_wnm": True,
             "protected_safety_can_be_overridden": False,
             "reason": "phase4a_or_phase4c_update_failed",
+        }
+
+    # Phase 7 generalized temporal binding. It runs after current maternal,
+    # terrain, and feeding overlays are available, attaches compact samples to
+    # the existing bounded Sequential/Error window, and compares one-step
+    # dynamic envelopes with current evidence. It cannot select a primitive,
+    # create an episodic record, or model detailed movement.
+    try:
+        live_dynamics_observation_step_v1(
+            ctx,
+            env_obs,
+            applied_policy=applied_policy if isinstance(applied_policy, str) else None,
+        )
+    except Exception as exc:  # defensive runtime diagnostic boundary
+        ctx.live_dynamics_state_v1 = None
+        ctx.live_dynamics_last_update_v1 = {
+            "schema": "live_dynamics_summary_v1",
+            "phase": "7",
+            "status": "error",
+            "authority": "source_linked_live_dynamics",
+            "policy_selection_mutation_allowed": False,
+            "protected_safety_can_be_overridden": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
         }
 
     # Phase 3A/3B StandUp bridge. The compare path reads the just-updated

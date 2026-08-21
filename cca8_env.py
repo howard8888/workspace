@@ -152,7 +152,7 @@ from cca8_navpatch import GRID_ENCODING_V1, CELL_UNKNOWN, CELL_TRAVERSABLE, CELL
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "EnvState",
     "EnvObservation",
@@ -290,6 +290,17 @@ class EnvState:
     terrain_route_correspondence_ambiguous: bool = False
     terrain_backtrack_requested: bool = False
 
+    # Phase 7 lower-controller feedback seam. These environment-side values
+    # simulate compact products that a biological lower motor system or robot
+    # controller can return to cognition. They never contain trajectories,
+    # forces, joint commands, or actuator timing. The override fields exist for
+    # deterministic focused tests and future HAL adapters.
+    last_applied_action: Optional[str] = None
+    lower_motor_slip_detected: bool = False
+    lower_motor_error_code: Optional[str] = None
+    lower_motor_progress_override: Optional[float] = None
+    lower_motor_support_override: Optional[bool] = None
+
     def update_zone_from_position(self) -> None:
         """Update safety zone label from the current symbolic position."""
         mapping = {
@@ -340,6 +351,11 @@ class EnvState:
             terrain_tree_fallen=self.terrain_tree_fallen,
             terrain_route_correspondence_ambiguous=self.terrain_route_correspondence_ambiguous,
             terrain_backtrack_requested=self.terrain_backtrack_requested,
+            last_applied_action=self.last_applied_action,
+            lower_motor_slip_detected=self.lower_motor_slip_detected,
+            lower_motor_error_code=self.lower_motor_error_code,
+            lower_motor_progress_override=self.lower_motor_progress_override,
+            lower_motor_support_override=self.lower_motor_support_override,
         )
 
 
@@ -1597,6 +1613,84 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         return preds_out, cues_out, len(preds) - len(preds_out), len(cues) - len(cues_out)
 
 
+    @staticmethod
+    def _lower_motor_progress_v1(env_state: EnvState, action: Optional[str]) -> Optional[float]:
+        """Return one bounded task-progress product for the applied action.
+
+        This is a deterministic environment/HAL adapter, not a detailed motor
+        model. It exposes only the compact progress value needed by Phase 7.
+        """
+        override = getattr(env_state, "lower_motor_progress_override", None)
+        if isinstance(override, (int, float)) and not isinstance(override, bool):
+            return max(0.0, min(1.0, float(override)))
+        if not isinstance(action, str) or not action:
+            return None
+        if action in {"policy:stand_up", "policy:recover_fall"}:
+            return 1.0 if env_state.kid_posture in {"standing", "latched", "resting"} else 0.0
+        if action == "policy:follow_mom":
+            return {"cliff_edge": 0.0, "open_field": 0.5, "shelter_area": 1.0}.get(env_state.position, 0.0)
+        if action == "policy:seek_nipple":
+            return {"hidden": 0.0, "visible": 0.33, "reachable": 0.67, "latched": 1.0}.get(
+                env_state.nipple_state,
+                0.0,
+            )
+        if action == "policy:suckle":
+            return max(0.0, min(1.0, float(env_state.newborn_milk_ticks) / 3.0))
+        if action == "policy:rest":
+            return 1.0 if env_state.kid_posture == "resting" else 0.0
+        return None
+
+    @classmethod
+    def _lower_motor_feedback_v1(cls, env_state: EnvState) -> Dict[str, Any]:
+        """Return compact lower-controller progress/error/support evidence.
+
+        The packet deliberately omits trajectories, raw actuator commands,
+        forces, and timing details. A real HAL can later produce the same small
+        contract from its controller status surface.
+        """
+        action = env_state.last_applied_action if isinstance(env_state.last_applied_action, str) else None
+        support_override = env_state.lower_motor_support_override
+        support = (
+            support_override
+            if isinstance(support_override, bool)
+            else env_state.kid_posture in {"standing", "latched", "resting"}
+        )
+        slip = bool(env_state.lower_motor_slip_detected)
+        error = env_state.lower_motor_error_code if isinstance(env_state.lower_motor_error_code, str) else None
+        progress = cls._lower_motor_progress_v1(env_state, action)
+
+        if error is None and slip:
+            error = "slip_detected"
+        if error is None and action in {"policy:stand_up", "policy:recover_fall"} and not support:
+            error = "posture_recovery_incomplete"
+
+        if action is None:
+            phase = "idle"
+        elif error is not None or slip:
+            phase = "interrupted"
+        elif progress is not None and progress >= 1.0:
+            phase = "completed"
+        elif progress is not None and progress > 0.0:
+            phase = "active"
+        else:
+            phase = "starting"
+
+        return {
+            "schema": "lower_motor_feedback_v1",
+            "source_ref": f"perception_adapter:lower_motor_feedback:step:{int(env_state.step_index)}",
+            "quality": 0.85,
+            "action_applied": action,
+            "support_contact": support,
+            "slip_detected": slip,
+            "progress": progress,
+            "phase": phase,
+            "error_code": error,
+            "detailed_movement_delegated": True,
+            "lower_motor_trajectory_present": False,
+            "actuator_commands_present": False,
+        }
+
+
     def observe(self, env_state: EnvState, ctx: Any | None = None) -> EnvObservation:
         """
         Build an EnvObservation from the current EnvState.
@@ -1765,6 +1859,7 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
             preds,
             blackout_active=blackout_active,
         )
+        meta["lower_motor_feedback_v1"] = self._lower_motor_feedback_v1(env_state)
 
         if focus is not None:
             meta["percept_focus"] = focus
@@ -2240,6 +2335,11 @@ class HybridEnvironment:
         # Advance simple time bookkeeping
         self._state.step_index = self._episode_steps
         self._state.time_since_birth += self.config.dt
+
+        # Preserve the action that the lower environment/controller actually
+        # received. Phase 7 consumes the resulting compact progress/error packet
+        # on the next observation; the action string is not itself an outcome.
+        self._state.last_applied_action = action if isinstance(action, str) and action else None
 
         # Let the FSM backend update discrete state. Future backends (physics,
         # robot, LLM) will also be invoked here with clear field-ownership rules.

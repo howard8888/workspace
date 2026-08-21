@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from cca8_maternal_continuity import MaternalContinuityShadowStateV1
     from cca8_maternal_geometry import MaternalGeometryShadowStateV1
     from cca8_maternal_temporal import MaternalTemporalShadowStateV1
+    from cca8_live_dynamics import TemporalBindingStateV1, TemporalDynamicEnvelopeV1
     from cca8_navmap_kernel import NavMapV2
     from cca8_navmap_shadow import NavMapV2ShadowStateV2
     from cca8_standup_compare import (
@@ -54,7 +55,7 @@ if TYPE_CHECKING:
     )
     from cca8_wnm_runtime import WNMReadyEntryV1, WNMTransitionRecordV1
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -875,6 +876,28 @@ class Ctx:
     terrain_surfacegrid_w_v1: int = 16
     terrain_surfacegrid_h_v1: int = 16
     terrain_surfacegrid_cells_per_unit_v1: float = 4.0
+
+    # Phase 7 generalized temporal binding and live dynamics. Compact typed
+    # samples are attached to the existing bounded Sequential/Error window; no
+    # second clock, unbounded history, full-map movie, or detailed motor
+    # trajectory is introduced. Current overlays remain source-linked to the
+    # Phase 4 maternal, Phase 5 feeding, Phase 6 terrain, and lower-controller
+    # evidence that produced them. Dynamic envelopes are EXPECTED content and
+    # are compared with the next observation through structured residuals.
+    live_dynamics_enabled_v1: bool = True
+    live_dynamics_observation_no_v1: int = 0
+    live_dynamics_state_v1: Optional[TemporalBindingStateV1] = None
+    live_dynamics_last_update_v1: dict[str, Any] = field(default_factory=dict)
+    live_dynamics_pending_envelopes_v1: dict[str, TemporalDynamicEnvelopeV1] = field(default_factory=dict)
+    live_dynamics_residual_streak_v1: dict[str, int] = field(default_factory=dict)
+    live_dynamics_event_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    live_dynamics_event_history_limit_v1: int = 25
+    live_dynamics_speed_tolerance_v1: float = 0.05
+    live_dynamics_relative_rate_tolerance_v1: float = 0.05
+    live_dynamics_envelope_speed_tolerance_v1: float = 0.15
+    live_dynamics_envelope_rate_tolerance_v1: float = 0.10
+    live_dynamics_progress_tolerance_v1: float = 0.05
+    live_dynamics_persistent_residual_observations_v1: int = 2
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------
