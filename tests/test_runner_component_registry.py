@@ -28,6 +28,8 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "followmom_compare": "cca8_followmom_compare",
     "followmom_advisory": "cca8_followmom_advisory",
     "followmom_authority": "cca8_followmom_authority",
+    "feeding": "cca8_feeding",
+    "wnm_runtime": "cca8_wnm_runtime",
     "standup_compare": "cca8_standup_compare",
 }
 

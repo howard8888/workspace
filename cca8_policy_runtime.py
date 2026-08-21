@@ -27,9 +27,9 @@ Phase 3D changes the bounded StandUp trigger authority supplied through
 ``PolicyRuntimeHooks``. Phase 4F similarly lets exact current maternal WNM/NavMap
 evidence control one FollowMom applicability domain while preserving protected
 legacy false results, named true compatibility forces, and complete legacy
-fallback. Gate order, other behavioral-primitive domains, newborn sequence
-locks, topology safety, tie-breaking, controller execution, Scratch provenance,
-and Creative scoring remain unchanged.
+fallback. Phase 5 lets the post-latch gate consult current map-linked feeding
+evidence while leaving SeekNipple/Suckle selection authority, gate order, global
+tie-breaking, controller execution, and protected safety unchanged.
 """
 
 from __future__ import annotations
@@ -53,9 +53,14 @@ from typing import Any, Callable, List, Optional
 
 from cca8_context import CreativeCandidate, Ctx
 from cca8_controller import Drives, FATIGUE_HIGH, HUNGER_HIGH
+from cca8_feeding import (
+    feeding_latch_evidence_v1,
+    feeding_milk_evidence_v1,
+    feeding_summary_v1,
+)
 
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1490,6 +1495,9 @@ def _should_quiesce_rest_v1(world, ctx) -> bool:
 def _newborn_post_latch_sequence_active_v1(world, ctx) -> bool:
     """Return True when the newborn sequence has entered the post-latch feeding phase.
 
+    Phase 5 current close-up evidence is consulted first. During migration, the
+    existing BodyMap/WorkingMap/benchmark sources remain conservative fallbacks.
+
     This benchmark helper prevents the controller from continuing earlier search
     or locomotor policies after latch has already been reached. Once latched, the
     correct sequence is suckle, then rest. This helper is conservative and accepts
@@ -1497,6 +1505,12 @@ def _newborn_post_latch_sequence_active_v1(world, ctx) -> bool:
     """
     if ctx is None:
         return False
+
+    try:
+        if feeding_latch_evidence_v1(ctx) is True or feeding_milk_evidence_v1(ctx) is True:
+            return True
+    except Exception:
+        pass
 
     try:
         st = _follow_mom_bridge_state_v1(world, ctx)
@@ -1646,17 +1660,25 @@ def _newborn_pred_seen_in_control_worlds_v1(world, ctx, pred_token: str) -> bool
 
 
 def _newborn_milk_drinking_current_v1(world, ctx) -> bool:
-    """Return True once the controller has agent-visible evidence of milk drinking.
+    """Return True once current control-visible evidence supports milk drinking.
 
-    Hard newborn mode now separates:
-
-        nipple:latched -> policy:suckle -> milk:drinking -> policy:rest
-
-    BodyMap still stores nipple/milk state in a compact slot, and policy execution
-    may write into WorkingMap first. This helper therefore checks all current
-    control-visible surfaces before deciding that Suckle should stop and Rest should
-    take over.
+    Phase 5 makes the source-linked feeding maps the first consulted source.
+    When their current evidence is supported, the map-derived milk result is
+    definitive for this cycle. During migration, current BodyMap/WorkingMap
+    surfaces remain fallback evidence if Phase 5 is unavailable or temporarily
+    unsupported. The old scan over ``cycle_json_records`` is disabled once a
+    Phase 5 runtime exists, so historical trace rows cannot masquerade as current
+    feeding evidence.
     """
+    phase5_active = False
+    try:
+        phase5_status = feeding_summary_v1(ctx)
+        phase5_active = phase5_status.get("status") == "active"
+        milk_value = feeding_milk_evidence_v1(ctx)
+        if isinstance(milk_value, bool):
+            return milk_value
+    except Exception:
+        phase5_active = False
     try:
         st = _follow_mom_bridge_state_v1(world, ctx)
         if st.get("milk_drinking") is True:
@@ -1672,6 +1694,11 @@ def _newborn_milk_drinking_current_v1(world, ctx) -> bool:
             return True
     except Exception:
         pass
+
+    # Phase 5 deliberately retires the feeding cycle-history dependency.
+    # A trace row is historical evidence, not current mouth/nipple relation.
+    if phase5_active:
+        return False
 
     try:
         records = getattr(ctx, "cycle_json_records", None)

@@ -152,7 +152,7 @@ from cca8_navpatch import GRID_ENCODING_V1, CELL_UNKNOWN, CELL_TRAVERSABLE, CELL
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 __all__ = [
     "EnvState",
     "EnvObservation",
@@ -844,7 +844,8 @@ class FsmBackend:
                         deadline_step = int(getattr(ctx, "experiment_conflicted_repair_deadline_step", -1))
                     except Exception:
                         deadline_step = -1
-                    if deadline_step >= 0 and int(steps) >= deadline_step:
+
+                    if 0 <= deadline_step <= int(steps):
                         challenge_failed_this_step = True
                         try:
                             ctx.experiment_conflicted_repair_status = "failed"
@@ -1285,6 +1286,90 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         # We may parameterize thresholds later (e.g., near/far distance).
         self._near_threshold: float = 1.0
 
+    @staticmethod
+    def _feeding_geometry_v1(
+        env_state: EnvState,
+        predicates: List[str],
+        *,
+        blackout_active: bool,
+    ) -> Dict[str, Any]:
+        """Return a small sensor-like feeding geometry packet for Phase 5.
+
+        This remains an environment/perception adapter, not an agent belief.  It
+        translates the storyboard's feeding configuration into bounded geometry
+        that the NavMap path can inspect without reading ``EnvState`` directly.
+        Current nipple and milk support are exposed only when their observation
+        predicates survive the storyboard blackout. The later generic observation
+        mask is checked again inside the Phase 5 feeding runtime before evidence
+        becomes usable.
+
+        The points use a maternal-body frame in metres.  Detailed oral/head motor
+        timing remains below the CCA8 WNM boundary; the packet reports only the
+        geometry needed to derive search, reachability, contact, latch evidence,
+        and milk evidence.
+        """
+        pred_set = {token for token in predicates if isinstance(token, str)}
+        mom_near = env_state.mom_distance in {"near", "touching"}
+        detail_supported = bool(mom_near and not blackout_active)
+        target_observed = bool(
+            detail_supported
+            and ({"nipple:found", "nipple:latched"} & pred_set)
+        )
+
+        if blackout_active:
+            observability = "blackout"
+        elif not mom_near:
+            observability = "maternal_not_near"
+        elif target_observed:
+            observability = "target_observed"
+        else:
+            observability = "target_hidden"
+
+        maternal_center = {"x": 0.0, "y": 0.0} if detail_supported else None
+        feeding_region = {"x": 0.0, "y": -0.35} if detail_supported else None
+        muzzle_point: Dict[str, float] | None = None
+        nipple_point: Dict[str, float] | None = None
+
+        if detail_supported:
+            # Coarse geometry only.  These offsets stand in for perception of
+            # muzzle-to-udder arrangement, not a motor trajectory.
+            if env_state.nipple_state == "visible":
+                muzzle_point = {"x": -0.55, "y": -0.35}
+            elif env_state.nipple_state == "reachable":
+                muzzle_point = {"x": -0.16, "y": -0.35}
+            elif env_state.nipple_state == "latched":
+                muzzle_point = {"x": 0.0, "y": -0.35}
+            else:
+                muzzle_point = {"x": -0.70, "y": -0.35}
+
+            if target_observed:
+                nipple_point = {"x": 0.0, "y": -0.35}
+
+        return {
+            "schema": "feeding_geometry_v1",
+            "source_class": "observed_adapter_evidence",
+            "source_ref": "adapter:perception_feeding_geometry_v1",
+            "quality": 0.90 if detail_supported else 0.0,
+            "frame_id": "maternal_body_feeding_frame_v1",
+            "units": "m",
+            "maternal_identity_handle": "maternal_individual",
+            "self_muzzle_identity_handle": "self_muzzle",
+            "nipple_identity_handle": "maternal_nipple",
+            "observability": observability,
+            "maternal_body_center": maternal_center,
+            "feeding_region_center": feeding_region,
+            "muzzle_point": muzzle_point,
+            "nipple_point": nipple_point,
+            "reach_distance": 0.20,
+            "contact_distance": 0.03,
+            "latch_evidence": "nipple:latched" in pred_set,
+            "milk_evidence": "milk:drinking" in pred_set,
+            "search_progress": int(env_state.newborn_seek_attempts),
+            "suckle_progress": int(env_state.newborn_suckle_ticks),
+            "milk_progress": int(env_state.newborn_milk_ticks),
+            "lower_oral_head_timing_delegated": True,
+        }
+
     def _surfacegrid_landmarks_v1(
         self, env_state: EnvState, *, dx: float, dy: float, dist: float, focus: str | None = None
     ) -> List[Dict[str, Any]]:
@@ -1523,6 +1608,7 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
 
         # --- meta ---
         meta["time_since_birth"] = env_state.time_since_birth
+        meta["step_index"] = int(env_state.step_index)
         meta["scenario_stage"] = env_state.scenario_stage
         meta["zone"] = env_state.zone
         meta["position"] = env_state.position
@@ -1560,6 +1646,11 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
 
         # Use self._near_threshold so it’s not “dead configuration”.
         meta["mom_proximity_from_raw"] = "near" if dist <= float(self._near_threshold) else "far"
+        meta["feeding_geometry_v1"] = self._feeding_geometry_v1(
+            env_state,
+            preds,
+            blackout_active=blackout_active,
+        )
 
         if focus is not None:
             meta["percept_focus"] = focus

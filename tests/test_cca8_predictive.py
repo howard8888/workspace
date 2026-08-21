@@ -205,14 +205,10 @@ def test_prediction_next_record_from_policy_posture_enriches_policy_slots_when_a
 
     assert record["schema"] == "prediction_record_v1"
     assert record["policy"] == "policy:seek_nipple"
-    assert record["expected"] == {
-        "posture": "standing",
-        "mom_distance": "near",
-        "nipple_state": "found",
-    }
+    assert record["expected"] == {"posture": "standing"}
     assert record["basis"]["binding_id"] == "b1"
-    assert record["basis"]["slot_expectation_source"] == "policy_expected_slots_v1"
-    assert record["basis"]["slot_expectation_added"] == ["mom_distance", "nipple_state"]
+    assert "slot_expectation_source" not in record["basis"]
+    assert "slot_expectation_added" not in record["basis"]
 
 
 def test_prediction_next_record_from_policy_posture_requires_latest_matching_policy() -> None:
@@ -316,13 +312,9 @@ def test_prediction_pending_record_from_ctx_enriches_legacy_policy_slots() -> No
     assert record["schema"] == "prediction_record_v1"
     assert record["policy"] == "policy:seek_nipple"
     assert record["source"] == "legacy:pred_next_posture"
-    assert record["expected"] == {
-        "posture": "standing",
-        "mom_distance": "near",
-        "nipple_state": "found",
-    }
-    assert record["basis"]["slot_expectation_source"] == "policy_expected_slots_v1"
-    assert record["basis"]["slot_expectation_added"] == ["mom_distance", "nipple_state"]
+    assert record["expected"] == {"posture": "standing"}
+    assert "slot_expectation_source" not in record["basis"]
+    assert "slot_expectation_added" not in record["basis"]
 
 
 def test_prediction_pending_record_from_ctx_returns_empty_without_pending_prediction() -> None:
@@ -370,11 +362,8 @@ def test_prediction_policy_expected_slots_covers_first_goat_policy_hypotheses() 
     assert prediction_policy_expected_slots_v1("policy:stand_up") == {"posture": "standing"}
     assert prediction_policy_expected_slots_v1("policy:recover_fall") == {"posture": "standing"}
     assert prediction_policy_expected_slots_v1("policy:rest") == {"posture": "resting"}
-    assert prediction_policy_expected_slots_v1("policy:suckle") == {"nipple_state": "latched"}
-    assert prediction_policy_expected_slots_v1("policy:seek_nipple") == {
-        "mom_distance": "near",
-        "nipple_state": "found",
-    }
+    assert prediction_policy_expected_slots_v1("policy:suckle") == {}
+    assert prediction_policy_expected_slots_v1("policy:seek_nipple") == {}
     assert prediction_policy_expected_slots_v1("policy:stand_up", expected_posture="fallen") == {
         "posture": "fallen",
     }

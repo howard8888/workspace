@@ -28,6 +28,12 @@ if TYPE_CHECKING:
         FollowMomExpectedPendingV1,
         FollowMomObservedOutcomeV1,
     )
+    from cca8_feeding import (
+        FeedingObservedOutcomeV1,
+        FeedingPendingExpectationV1,
+        FeedingRelationOverlayV1,
+        FeedingWnmStateV1,
+    )
     from cca8_maternal_continuity import MaternalContinuityShadowStateV1
     from cca8_maternal_geometry import MaternalGeometryShadowStateV1
     from cca8_maternal_temporal import MaternalTemporalShadowStateV1
@@ -40,8 +46,9 @@ if TYPE_CHECKING:
         StandUpGuardedDecisionV1,
         StandUpObservedOutcomeV1,
     )
+    from cca8_wnm_runtime import WNMReadyEntryV1, WNMTransitionRecordV1
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -794,6 +801,46 @@ class Ctx:
     navmap_followmom_authority_last_update: Optional[dict[str, Any]] = None
     navmap_followmom_authority_history: list[dict[str, Any]] = field(default_factory=list)
     navmap_followmom_authority_history_limit: int = 25
+
+    # Phase 5 single-operative WNM and bounded ready set. Operative status is
+    # an external runtime authority relationship; it does not change the source
+    # class of NavMap content or grant equal authority to ready maps.
+    wnm_operative_map_v1: Optional[NavMapV2] = None
+    wnm_ready_set_v1: list[WNMReadyEntryV1] = field(default_factory=list)
+    wnm_ready_capacity_v1: int = 3
+    wnm_transition_no_v1: int = 0
+    wnm_last_transition_v1: Optional[WNMTransitionRecordV1] = None
+    wnm_last_update_v1: dict[str, Any] = field(default_factory=dict)
+    wnm_last_refresh_v1: dict[str, Any] = field(default_factory=dict)
+    wnm_transition_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    wnm_transition_history_limit_v1: int = 25
+
+    # Phase 5 feeding map family. The Phase 4 SELF-maternal map becomes the
+    # coarse overview; stable maternal-body and nipple-mouth maps support the
+    # first real zoom round-trip. Ordinary motion/contact changes live in a
+    # compact overlay rather than a full-map history. SeekNipple/Suckle remain
+    # selected by the existing controller while their expected outcomes become
+    # map-native and source-linked.
+    feeding_wnm_enabled_v1: bool = True
+    feeding_observation_no_v1: int = 0
+    feeding_overview_map_v1: Optional[NavMapV2] = None
+    feeding_maternal_body_map_v1: Optional[NavMapV2] = None
+    feeding_closeup_map_v1: Optional[NavMapV2] = None
+    feeding_evidence_map_v1: Optional[NavMapV2] = None
+    feeding_state_v1: Optional[FeedingWnmStateV1] = None
+    feeding_overlay_v1: Optional[FeedingRelationOverlayV1] = None
+    feeding_last_update_v1: dict[str, Any] = field(default_factory=dict)
+    feeding_overlay_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    feeding_overlay_history_limit_v1: int = 25
+    feeding_expectation_transaction_no_v1: int = 0
+    feeding_pending_expectation_v1: Optional[FeedingPendingExpectationV1] = None
+    feeding_last_expectation_update_v1: dict[str, Any] = field(default_factory=dict)
+    feeding_expectation_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    feeding_expectation_history_limit_v1: int = 25
+    feeding_last_outcome_v1: Optional[FeedingObservedOutcomeV1] = None
+    feeding_last_outcome_update_v1: dict[str, Any] = field(default_factory=dict)
+    feeding_outcome_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    feeding_outcome_history_limit_v1: int = 25
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------

@@ -15,6 +15,7 @@ operators with CCA8 runtime registers for:
 - the Phase 4C maternal continuity/localization shadow
 - the Phase 4D FollowMom compare transaction and compact expected relation
 - the Phase 4E-A non-binding FollowMom advisory
+- the Phase 5 feeding observation bridge and first operative-WNM zoom path
 - expected-current construction and residual comparison
 - conservative accepted-current selection
 - the diagnostic Working Navigation Map surface bridge
@@ -30,11 +31,12 @@ runner remains focused on orchestration.
 
 Authority boundary
 ------------------
-The extracted path remains diagnostic and behavior-preserving. Accepted-current
-continues to prefer direct observed evidence; the Working Navigation Map surface
-and NavMapV2 root/SELF-ground shadow do not write WorldGraph truth, Columns,
-BodyMap, or policy-selection state. Moving this code changes ownership, not
-cognitive authority.
+The generic accepted-current path remains diagnostic and evidence-first. Phase 5
+adds real operative-WNM/ready-set authority only for deciding which feeding map
+substrate may answer detailed queries. That authority does not select a policy,
+write WorldGraph truth or Columns, mutate BodyMap, or command lower motor
+execution. Feeding expectations are armed only after the existing selector has
+already chosen SeekNipple or Suckle.
 """
 
 from __future__ import annotations
@@ -54,6 +56,7 @@ from typing import Any, Optional
 from cca8_context import Ctx
 from cca8_env import EnvObservation
 from cca8_followmom_advisory import followmom_advisory_observation_step_v1
+from cca8_feeding import feeding_wnm_observation_step_v1
 from cca8_followmom_compare import followmom_compare_observation_step_v1
 from cca8_maternal_continuity import maternal_continuity_shadow_observation_step_v1
 from cca8_maternal_geometry import maternal_geometry_shadow_observation_step_v1
@@ -76,7 +79,7 @@ from cca8_standup_compare import (
 )
 
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 __all__ = [
     "NAVMAP_SCOPE_MARKER_V1",
     "NAVMAP_SCOPE_PROBES_V1",
@@ -119,6 +122,7 @@ __all__ = [
     "maternal_continuity_shadow_observation_step_v1",
     "followmom_compare_observation_step_v1",
     "followmom_advisory_observation_step_v1",
+    "feeding_wnm_observation_step_v1",
     "standup_compare_observation_step_v1",
     "standup_advisory_observation_step_v1",
     "__version__",
@@ -1529,16 +1533,26 @@ def navmap_expected_current_payload_from_ctx_v1(ctx: Ctx) -> dict[str, Any]:
     if previous_slots:
         sources.append("previous_payload_continuity")
 
-    learned_row = _navmap_policy_index_row_for_action_v1(ctx, action, previous_slots)
-    learned_expected = _navmap_safe_dict_v1(learned_row.get("expected_slots"))
-    if learned_expected:
-        expected_slots.update(learned_expected)
-        sources.append("policy_outcome_index_expected_slots")
+    feeding_action = action in {"policy:seek_nipple", "policy:suckle"}
+    learned_row: dict[str, Any] = {}
+    if feeding_action:
+        # Phase 5 owns source-linked SeekNipple/Suckle expectations on the
+        # operative maternal-body or nipple-mouth WNM. The generic scene-body
+        # diagnostic may preserve ordinary previous-map continuity, but it must
+        # not reconstruct an independent nipple-state expectation from learned
+        # slot tables or policy defaults.
+        sources.append("phase5_feeding_expectation_external")
     else:
-        policy_defaults = prediction_policy_expected_slots_v1(action)
-        if policy_defaults:
-            expected_slots.update(policy_defaults)
-            sources.append("policy_default_expected_slots")
+        learned_row = _navmap_policy_index_row_for_action_v1(ctx, action, previous_slots)
+        learned_expected = _navmap_safe_dict_v1(learned_row.get("expected_slots"))
+        if learned_expected:
+            expected_slots.update(learned_expected)
+            sources.append("policy_outcome_index_expected_slots")
+        else:
+            policy_defaults = prediction_policy_expected_slots_v1(action)
+            if policy_defaults:
+                expected_slots.update(policy_defaults)
+                sources.append("policy_default_expected_slots")
 
     if not expected_slots:
         ctx.navmap_last_expected_current_payload_v1 = None
@@ -2112,6 +2126,40 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
             "map_can_override": False,
             "protected_safety_can_be_overridden": False,
             "reason": "phase4d_compare_observation_update_failed",
+        }
+
+    # Phase 5 feeding close-up and first genuine operative-WNM zoom path.
+    # It reuses the Phase 4 maternal overview, maintains material maternal-body
+    # and nipple-mouth detail maps, maintains one compact current relation
+    # overlay, and closes any feeding expectation for the action already
+    # applied by the environment. It does not select or execute a primitive.
+    if maternal_updated and maternal_continuity_updated:
+        try:
+            feeding_wnm_observation_step_v1(
+                ctx,
+                env_obs,
+                applied_policy=applied_policy if isinstance(applied_policy, str) else None,
+            )
+        except Exception as exc:  # defensive runtime diagnostic boundary
+            ctx.feeding_last_update_v1 = {
+                "schema": "feeding_summary_v1",
+                "phase": "5",
+                "status": "error",
+                "authority": "single_operative_wnm_feeding_domain",
+                "single_operative_wnm": True,
+                "protected_safety_can_be_overridden": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+    else:
+        ctx.feeding_last_update_v1 = {
+            "schema": "feeding_summary_v1",
+            "phase": "5",
+            "status": "dependency_error",
+            "authority": "single_operative_wnm_feeding_domain",
+            "single_operative_wnm": True,
+            "protected_safety_can_be_overridden": False,
+            "reason": "phase4a_or_phase4c_update_failed",
         }
 
     # Phase 3A/3B StandUp bridge. The compare path reads the just-updated

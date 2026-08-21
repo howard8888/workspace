@@ -53,7 +53,7 @@ Core runtime:
   cca8_experiments.py, cca8_openai.py, cca8_working_memory.py, cca8_profiles.py,
   cca8_guidance.py, cca8_predictive.py, cca8_navmap_runtime.py, cca8_maternal_geometry.py,
   cca8_maternal_temporal.py, cca8_maternal_continuity.py, cca8_followmom_compare.py,
-  cca8_followmom_advisory.py, cca8_followmom_authority.py,
+  cca8_followmom_advisory.py, cca8_followmom_authority.py, cca8_feeding.py, cca8_wnm_runtime.py,
   cca8_reporting.py, cca8_observation_runtime.py,
   cca8_policy_runtime.py, and cca8_preflight.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
@@ -125,6 +125,8 @@ import cca8_navmap_runtime
 import cca8_followmom_advisory
 import cca8_followmom_authority
 import cca8_followmom_compare
+import cca8_feeding
+import cca8_wnm_runtime
 import cca8_maternal_continuity
 import cca8_maternal_geometry
 import cca8_maternal_temporal
@@ -285,6 +287,25 @@ followmom_authority_selection_step_v1 = cca8_followmom_authority.followmom_autho
 followmom_authority_summary_v1 = cca8_followmom_authority.followmom_authority_summary_v1
 followmom_authority_explain_v1 = cca8_followmom_authority.followmom_authority_explain_v1
 render_followmom_authority_lines_v1 = cca8_followmom_authority.render_followmom_authority_lines_v1
+
+# --- Phase 5 feeding / single-operative-WNM compatibility seam ----------------
+# The Phase 4 SELF-maternal map becomes the coarse overview for one genuine
+# overview -> maternal-body -> nipple-mouth -> return round-trip. Exactly one
+# map is operative; ready maps retain no equal authority. SeekNipple and Suckle
+# selection remain in PolicyRuntime while their expectations become map-native.
+feeding_reset_v1 = cca8_feeding.feeding_reset_v1
+feeding_selection_step_v1 = cca8_feeding.feeding_selection_step_v1
+feeding_operative_readout_v1 = cca8_feeding.feeding_operative_readout_v1
+feeding_milk_evidence_v1 = cca8_feeding.feeding_milk_evidence_v1
+feeding_latch_evidence_v1 = cca8_feeding.feeding_latch_evidence_v1
+feeding_summary_v1 = cca8_feeding.feeding_summary_v1
+render_feeding_lines_v1 = cca8_feeding.render_feeding_lines_v1
+wnm_operative_map_v1 = cca8_wnm_runtime.wnm_operative_map_v1
+wnm_ready_maps_v1 = cca8_wnm_runtime.wnm_ready_maps_v1
+wnm_commit_transition_v1 = cca8_wnm_runtime.wnm_commit_transition_v1
+wnm_return_to_ref_v1 = cca8_wnm_runtime.wnm_return_to_ref_v1
+wnm_summary_v1 = cca8_wnm_runtime.wnm_summary_v1
+render_wnm_lines_v1 = cca8_wnm_runtime.render_wnm_lines_v1
 
 # --- Phase 3A/3B/3C/3D StandUp authority compatibility seam -------------------
 # The map-native query, expected-successor, advisory, and authority records live
@@ -580,7 +601,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -663,6 +684,19 @@ __all__ = [
     "followmom_authority_summary_v1",
     "followmom_authority_explain_v1",
     "render_followmom_authority_lines_v1",
+    "feeding_reset_v1",
+    "feeding_selection_step_v1",
+    "feeding_operative_readout_v1",
+    "feeding_milk_evidence_v1",
+    "feeding_latch_evidence_v1",
+    "feeding_summary_v1",
+    "render_feeding_lines_v1",
+    "wnm_operative_map_v1",
+    "wnm_ready_maps_v1",
+    "wnm_commit_transition_v1",
+    "wnm_return_to_ref_v1",
+    "wnm_summary_v1",
+    "render_wnm_lines_v1",
     "standup_compare_selection_step_v1",
     "standup_compare_summary_v1",
     "render_standup_compare_lines_v1",
@@ -2774,6 +2808,8 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("followmom_compare", "cca8_followmom_compare"),
     ("followmom_advisory", "cca8_followmom_advisory"),
     ("followmom_authority", "cca8_followmom_authority"),
+    ("feeding", "cca8_feeding"),
+    ("wnm_runtime", "cca8_wnm_runtime"),
     ("standup_compare", "cca8_standup_compare"),
     ("reporting", "cca8_reporting"),
     ("observation_runtime", "cca8_observation_runtime"),
@@ -3740,6 +3776,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             ctx.navmap_last_expected_current_payload_v1 = None
             ctx.navmap_last_expected_current_comparison_v1 = None
             ctx.navmap_last_accepted_current_v1 = None
+            feeding_reset_v1(ctx)
             step_idx = env_info.get("step_index", 0)
             print(
                 f"[env] Reset env scenario: "
@@ -4203,6 +4240,26 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 "reason": "phase4d_compare_selection_update_failed",
             }
 
+        # Phase 5 observes the already-selected primitive. It may atomically
+        # zoom the feeding-domain WNM and arm a compact map-native expectation
+        # for SeekNipple/Suckle, but it cannot change the global winner.
+        try:
+            feeding_selection_step_v1(
+                ctx,
+                selected_policy=policy_name,
+            )
+        except Exception as exc:
+            ctx.feeding_last_update_v1 = {
+                "schema": "feeding_summary_v1",
+                "phase": "5",
+                "status": "error",
+                "authority": "single_operative_wnm_feeding_domain",
+                "single_operative_wnm": True,
+                "protected_safety_can_be_overridden": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+
         # Phase 3A/3B/3C/3D instrumentation. Phase 3A retains an independent
         # legacy differential, Phase 3B emits non-binding advice, and Phase 3C/3D
         # records which trigger source actually fed PolicyRuntime. None
@@ -4491,6 +4548,8 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "followmom_compare": followmom_compare_summary_v1(ctx),
                     "followmom_advisory": followmom_advisory_summary_v1(ctx),
                     "followmom_authority": followmom_authority_summary_v1(ctx),
+                    "feeding": feeding_summary_v1(ctx),
+                    "wnm": wnm_summary_v1(ctx),
                     "standup_advisory": standup_advisory_summary_v1(ctx),
                     "standup_authority": standup_authority_summary_v1(ctx),
                     "standup_guarded": standup_guarded_summary_v1(ctx),

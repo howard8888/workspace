@@ -100,11 +100,13 @@ explanation, robotics, agentic AI, or LLM synergy remains an experimental questi
 ## **TL;DR == Current runnable NavMap predictive path**
 **THIS SECTION IS UPDATED PERIODICALLY**
 
-The current runner contains a visible general NavMap predictive-processing path plus two bounded behavioral domains that have completed
-authority migration. The generic `scene_body` expected/evidence/accepted-current path remains diagnostic. Maintained SELF-ground geometry
-now supplies default StandUp applicability, and exact-current SELF-maternal geometry/continuity/temporal evidence supplies default
-FollowMom applicability behind protected safety and explicit fallback. These bounded authorities do not make the generic accepted-current
-record WorldGraph truth or write accepted NavMaps into Columns.
+The current runner contains a visible general NavMap predictive-processing path, two bounded behavioral domains that have completed
+authority migration, and the first genuine navigation among operative WNM maps. The generic `scene_body`
+expected/evidence/accepted-current path remains diagnostic. Maintained SELF-ground geometry supplies default StandUp applicability, and
+exact-current SELF-maternal geometry/continuity/temporal evidence supplies default FollowMom applicability behind protected safety and
+explicit fallback. Phase 5 adds an overview -> maternal-body -> nipple-mouth feeding close-up -> return round-trip in which a different
+NavMap becomes the operative WNM and prior maps enter a small bounded ready set. These bounded authorities and transitions do not make
+the generic accepted-current record WorldGraph truth or write accepted NavMaps into Columns.
 
 The present signal path is:
 
@@ -138,27 +140,37 @@ Current design rules:
 
 **Current implementation versus target architecture**
 
-- **Current implementation:** the general `scene_body` accepted-current record remains a shadow, while StandUp and FollowMom now have
-  bounded default map-native applicability authority. Other action and interpretation domains still read BodyMap, observation-driven
-  WorkingMap/MapSurface, SurfaceGrid/NavSummary, WorldGraph history, retrieval hints, drives, and compatibility bridges.
+- **Current implementation:** the general `scene_body` accepted-current record remains a shadow, while StandUp and FollowMom have
+  bounded default map-native applicability authority. Phase 5 introduces one true single-operative-WNM feeding domain with a bounded
+  ready set and map-native SeekNipple/Suckle expected relations, while leaving their global PolicyRuntime selection unchanged. Other
+  action and interpretation domains still read BodyMap, observation-driven WorkingMap/MapSurface, SurfaceGrid/NavSummary, WorldGraph
+  history, retrieval hints, drives, and compatibility bridges.
 - **Target architecture:** one NavMap is operative as WNM at a time, with a small bounded ready set supporting rapid zoom, lateral shift,
   return, and associative exchange. MapSurface, SurfaceGrid, NavSummary, predicates, and most BodyMap-facing values become named
   projections or synchronized readouts, while BodyMap retains a fast independent safety path.
 - **Migration rule:** each domain moves through shadow, compare, advisory, guarded, and default authority with explicit evidence and
   fallback. Default authority in one bounded domain does not grant authority to unrelated maps or consumers.
 
-**Phase 4F implementation checkpoint**
+**Phase 5 implementation checkpoint**
 
 - Repository authority: Howard's current local Workspace; recapture the exact clean HEAD after applying and committing this slice.
 - Python baseline: 3.11.
-- Runner: `cca8_run.py` v0.19.0.
-- Context: `cca8_context.py` v0.13.0.
-- Policy runtime: `cca8_policy_runtime.py` v0.4.0.
-- FollowMom compare: `cca8_followmom_compare.py` v0.2.0.
-- FollowMom authority: `cca8_followmom_authority.py` v0.1.0.
-- Registry: 36 components and 8 behavioral primitives.
-- Build-environment inventory after this patch: 827 collected tests (825 non-Pyvis tests plus 2 optional Pyvis tests); the
+- Runner: `cca8_run.py` v0.20.0.
+- Context: `cca8_context.py` v0.14.0.
+- Environment adapter: `cca8_env.py` v0.3.0.
+- NavMap runtime: `cca8_navmap_runtime.py` v0.11.0.
+- Predictive helper: `cca8_predictive.py` v0.3.0.
+- Policy runtime: `cca8_policy_runtime.py` v0.5.0.
+- FollowMom authority remains: `cca8_followmom_authority.py` v0.1.0.
+- Single-operative WNM runtime: `cca8_wnm_runtime.py` v0.1.0.
+- Feeding close-up/runtime: `cca8_feeding.py` v0.1.0.
+- Registry: 38 components and 8 behavioral primitives.
+- Build-environment inventory after this patch: 874 collected tests (872 non-Pyvis tests plus 2 optional Pyvis tests); the
   authoritative local pytest, Pylint, mypy, preflight, and manual-inspection wall determines the final GO decision.
+
+Phase 5 does not grant SeekNipple or Suckle map authority. It changes the operative map substrate and replaces detached feeding-slot
+expectations with source-linked map-native expected relations. Hunger remains a compact drive, PolicyRuntime remains the global selector,
+and oral/head timing remains below the WNM motor boundary.
 
 The NavMap Oscilloscope marker in terminal output is:
 
@@ -178,8 +190,10 @@ state table.
 
 The current software is not yet a complete implementation of that hypothesis. The generic accepted-current scene path remains diagnostic,
 and many behaviors still use BodyMap, WorkingMap, NavSummary, WorldGraph, hints, drives, prediction histories, and policy logic. StandUp
-and FollowMom are now bounded exceptions: their applicability normally comes from source-linked NavMap evidence while protected safety
-and explicit legacy fallback remain. The programme continues one vertical domain at a time rather than through a wholesale rewrite.
+and FollowMom are bounded exceptions: their applicability normally comes from source-linked NavMap evidence while protected safety and
+explicit legacy fallback remain. Phase 5 additionally proves that overview, maternal-body, and feeding close-up maps can exchange true
+operative-WNM status through a bounded ready set, with destination-only detail queries and source-linked feeding expectations. The
+programme continues one vertical domain at a time rather than through a wholesale rewrite.
 
 ● **Scientific and evolutionary hypothesis**
 

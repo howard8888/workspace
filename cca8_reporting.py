@@ -23,11 +23,12 @@ existing menu code, tests, and downstream imports remain compatible.
 
 Behavior boundary
 -----------------
-This is a structural extraction. Reporting functions preserve their existing
-output and defensive behavior. The compact mini-snapshot still maintains the
-legacy posture-discrepancy history because the current controller uses that
-history as a diagnostic signal for persistent StandUp failure. No new cognitive
-authority, policy-selection rule, or memory write is introduced here.
+Reporting remains read-only. Phase 5 adds operative-WNM and feeding close-up
+lines to full and mini snapshots, but formatting does not commit a transition,
+change policy selection, write memory, or grant map authority. The compact
+mini-snapshot still maintains the legacy posture-discrepancy history because the
+current controller uses that history as a diagnostic signal for persistent
+StandUp failure.
 """
 
 from __future__ import annotations
@@ -56,6 +57,7 @@ from typing import Any, List, Optional
 
 import cca8_working_memory
 from cca8_context import Ctx
+from cca8_feeding import feeding_operative_readout_v1, render_feeding_lines_v1
 from cca8_controller import (
     FATIGUE_HIGH,
     HUNGER_HIGH,
@@ -88,8 +90,9 @@ from cca8_predictive import (
     prediction_feedback_mini_line_v1,
     render_prediction_feedback_lines_v1,
 )
+from cca8_wnm_runtime import render_wnm_lines_v1, wnm_summary_v1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "TeeTextIO",
@@ -1056,6 +1059,12 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.extend(render_navmap_scope_frame_lines_v1(ctx))
     lines.append("")
 
+    lines.extend(render_wnm_lines_v1(ctx))
+    lines.append("")
+
+    lines.extend(render_feeding_lines_v1(ctx))
+    lines.append("")
+
     # POLICIES (skills readout)
     lines.append("POLICIES:\n (already run at least once, with their SkillStat statistics)  [src=skill_readout()]")
     try:
@@ -1922,6 +1931,30 @@ def mini_snapshot_text(world, ctx=None, limit: int = 50) -> str:
         lines.append(navmap_scope_mini_line_v1(ctx))
     except Exception:
         lines.append(f"{NAVMAP_SCOPE_MARKER_V1} [navmap-scope] (unavailable)")
+
+    try:
+        wnm = wnm_summary_v1(ctx)
+        operative = wnm.get("operative_map")
+        operative = operative if isinstance(operative, dict) else {}
+        lines.append(
+            "[wnm] "
+            f"status={wnm.get('status')} operative={operative.get('role') or '(none)'} "
+            f"ready={wnm.get('ready_count', 0)}/{wnm.get('ready_capacity', 0)}"
+        )
+    except Exception:
+        lines.append("[wnm] (unavailable)")
+
+    try:
+        feeding = feeding_operative_readout_v1(ctx)
+        lines.append(
+            "[feeding] "
+            f"detail={feeding.get('detail_level', 'unavailable')} "
+            f"target={feeding.get('target_localized')} reach={feeding.get('reachability', 'unknown')} "
+            f"contact={feeding.get('contact')} latch={feeding.get('latch_evidence')} "
+            f"milk={feeding.get('milk_evidence')}"
+        )
+    except Exception:
+        lines.append("[feeding] (unavailable)")
 
     # Compact world view: last `limit` bindings with their outgoing edges
     try:

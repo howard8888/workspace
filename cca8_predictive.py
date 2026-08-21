@@ -19,6 +19,9 @@ Design stance
   runner, JSONL records, and state-integrity summaries keep working.
 - Runner-facing helpers live here rather than in ``cca8_run.py``; the runner
   re-exports their names for backward-compatible imports.
+- Phase 5 feeding expectations are source-linked relations owned by
+  :mod:`cca8_feeding`; this generic helper no longer invents independent
+  nipple-state defaults for SeekNipple or Suckle.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from datetime import datetime
 from typing import Any, Mapping, Optional
 
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "PREDICTION_RECORD_SCHEMA_V1",
     "PREDICTION_ERROR_SCHEMA_V1",
@@ -777,11 +780,10 @@ def prediction_policy_expected_slots_v1(policy_name: Any, *, expected_posture: A
         out.setdefault("posture", "standing")
     elif policy_name == "policy:rest":
         out.setdefault("posture", "resting")
-    elif policy_name == "policy:seek_nipple":
-        out.setdefault("mom_distance", "near")
-        out.setdefault("nipple_state", "found")
-    elif policy_name == "policy:suckle":
-        out.setdefault("nipple_state", "latched")
+    # Phase 5 deliberately removes SeekNipple/Suckle expectations from this
+    # independent slot-default helper. Their expected relations now come from
+    # the operative maternal-body or nipple-mouth feeding WNM and are evaluated
+    # by cca8_feeding. Hunger remains a legitimate compact drive.
 
     return out
 
