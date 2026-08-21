@@ -38,7 +38,12 @@ if TYPE_CHECKING:
     from cca8_maternal_geometry import MaternalGeometryShadowStateV1
     from cca8_maternal_temporal import MaternalTemporalShadowStateV1
     from cca8_live_dynamics import TemporalBindingStateV1, TemporalDynamicEnvelopeV1
-    from cca8_navmap_kernel import NavMapV2
+    from cca8_navmap_kernel import NavMapRefV1, NavMapV2
+    from cca8_navmap_memory import (
+        NavMapConsolidationEligibilityV1,
+        NavMapMemoryIndexEntryV1,
+        NavMapRetrievalTransactionV1,
+    )
     from cca8_navmap_shadow import NavMapV2ShadowStateV2
     from cca8_standup_compare import (
         StandUpAdvisoryV1,
@@ -55,7 +60,7 @@ if TYPE_CHECKING:
     )
     from cca8_wnm_runtime import WNMReadyEntryV1, WNMTransitionRecordV1
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -898,6 +903,54 @@ class Ctx:
     live_dynamics_envelope_rate_tolerance_v1: float = 0.10
     live_dynamics_progress_tolerance_v1: float = 0.05
     live_dynamics_persistent_residual_observations_v1: int = 2
+
+    # Phase 8 long-term NavMap memory, sparse retrieval, and consolidation.
+    # Rich immutable map payloads remain in Columns. These ctx-local records are
+    # lightweight hippocampal-like addresses, inverted activation tokens,
+    # transient consolidation eligibility, and bounded retrieval telemetry. A
+    # candidate reference or reinstated payload is not present truth. Retrieved
+    # maps enter the ready set or operative WNM only through an explicit WNM
+    # authority transaction, and reliable current evidence can defeat memory.
+    navmap_memory_enabled_v1: bool = True
+    navmap_memory_observation_no_v1: int = 0
+    navmap_memory_consolidation_transaction_no_v1: int = 0
+    navmap_memory_query_no_v1: int = 0
+    navmap_memory_index_v1: dict[str, NavMapMemoryIndexEntryV1] = field(default_factory=dict)
+    navmap_memory_ref_index_v1: dict[str, str] = field(default_factory=dict)
+    navmap_memory_token_index_v1: dict[str, list[str]] = field(default_factory=dict)
+    navmap_memory_eligibility_v1: dict[str, NavMapConsolidationEligibilityV1] = field(default_factory=dict)
+    navmap_memory_pending_maps_v1: dict[str, NavMapV2] = field(default_factory=dict)
+    navmap_memory_previous_operative_ref_v1: Optional[NavMapRefV1] = None
+    navmap_memory_last_consolidation_v1: dict[str, Any] = field(default_factory=dict)
+    navmap_memory_consolidation_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    navmap_memory_consolidation_history_limit_v1: int = 25
+    navmap_memory_last_retrieval_v1: Optional[NavMapRetrievalTransactionV1] = None
+    navmap_memory_last_retrieval_update_v1: dict[str, Any] = field(default_factory=dict)
+    navmap_memory_retrieval_history_v1: list[dict[str, Any]] = field(default_factory=list)
+    navmap_memory_retrieval_history_limit_v1: int = 25
+    navmap_memory_last_update_v1: dict[str, Any] = field(default_factory=dict)
+    navmap_memory_eligibility_limit_v1: int = 16
+    navmap_memory_pending_map_limit_v1: int = 16
+    navmap_memory_eligibility_ttl_v1: int = 8
+    navmap_memory_eligibility_decay_v1: float = 0.10
+    navmap_memory_consolidation_threshold_v1: float = 0.50
+    navmap_memory_consolidation_budget_v1: int = 2
+    navmap_memory_candidate_ref_limit_v1: int = 8
+    navmap_memory_reinstatement_limit_v1: int = 3
+    navmap_memory_minimum_activation_score_v1: float = 0.12
+    navmap_memory_ready_admission_score_v1: float = 0.55
+    navmap_memory_ready_admission_coverage_v1: float = 0.20
+    navmap_memory_reliable_evidence_quality_v1: float = 0.80
+    navmap_memory_auto_consolidate_v1: bool = True
+    navmap_memory_spontaneous_retrieval_v1: bool = True
+    navmap_memory_spontaneous_ready_admission_v1: bool = True
+    navmap_memory_last_spontaneous_signature_v1: Optional[str] = None
+    navmap_memory_strategic_request_v1: Optional[dict[str, Any]] = None
+    navmap_memory_retrieval_attempt_count_v1: int = 0
+    navmap_memory_clear_winner_count_v1: int = 0
+    navmap_memory_evidence_defeat_count_v1: int = 0
+    navmap_memory_ready_admission_count_v1: int = 0
+    navmap_memory_associative_jump_count_v1: int = 0
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------

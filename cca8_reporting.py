@@ -23,8 +23,8 @@ existing menu code, tests, and downstream imports remain compatible.
 
 Behavior boundary
 -----------------
-Reporting remains read-only. Phases 5, 6, and 7 add operative-WNM, feeding,
-terrain-route, and generalized live-dynamics lines to full and mini snapshots,
+Reporting remains read-only. Phases 5 through 8 add operative-WNM, feeding,
+terrain-route, generalized live-dynamics, and sparse NavMap-memory lines to full and mini snapshots,
 but formatting does not commit a transition,
 change policy selection, write memory, or grant map authority. The compact
 mini-snapshot still maintains the legacy posture-discrepancy history because the
@@ -73,6 +73,7 @@ from cca8_controller import (
     skill_readout,
     skills_to_dict,
 )
+from cca8_navmap_memory import navmap_memory_summary_v1, render_navmap_memory_lines_v1
 from cca8_navmap_runtime import (
     NAVMAP_SCOPE_MARKER_V1,
     navmap_accepted_current_mini_line_v1,
@@ -95,7 +96,7 @@ from cca8_predictive import (
 )
 from cca8_wnm_runtime import render_wnm_lines_v1, wnm_summary_v1
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "TeeTextIO",
@@ -1074,6 +1075,9 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     lines.extend(render_live_dynamics_lines_v1(ctx))
     lines.append("")
 
+    lines.extend(render_navmap_memory_lines_v1(ctx))
+    lines.append("")
+
     # POLICIES (skills readout)
     lines.append("POLICIES:\n (already run at least once, with their SkillStat statistics)  [src=skill_readout()]")
     try:
@@ -1887,6 +1891,27 @@ def _print_cog_cycle_footer(*,
     print(f"[cycle] ACT  executed={pol!r} reward={rtxt} next_action={next_action_for_env!r}")
 
 
+def _navmap_memory_mini_line_v1(ctx: Any) -> str:
+    """Return one compact Phase 8 long-term NavMap-memory line."""
+    summary = navmap_memory_summary_v1(ctx)
+    retrieval = summary.get("last_retrieval")
+    retrieval = retrieval if isinstance(retrieval, dict) else {}
+    winner = retrieval.get("winner_ref")
+    winner = winner if isinstance(winner, dict) else {}
+    winner_text = (
+        f"{winner.get('map_id')}@r{winner.get('revision')}"
+        if winner.get("map_id") is not None
+        else "none"
+    )
+    return (
+        "[navmap-memory] "
+        f"status={summary.get('status')} indexed={summary.get('sparse_index_entry_count', 0)} "
+        f"eligible={summary.get('eligibility_count', 0)} "
+        f"retrieval={retrieval.get('status', 'idle')} winner={winner_text} "
+        f"ready={retrieval.get('ready_admitted', False)} "
+        f"jump={retrieval.get('associative_jump_committed', False)}"
+    )
+
 def _live_dynamics_mini_line_v1(ctx: Any) -> str:
     """Return one compact Phase 7 line without mutating temporal state.
 
@@ -2026,6 +2051,11 @@ def mini_snapshot_text(world, ctx=None, limit: int = 50) -> str:
         lines.append(_live_dynamics_mini_line_v1(ctx))
     except Exception:
         lines.append("[dynamics] (unavailable)")
+
+    try:
+        lines.append(_navmap_memory_mini_line_v1(ctx))
+    except Exception:
+        lines.append("[navmap-memory] (unavailable)")
 
     # Compact world view: last `limit` bindings with their outgoing edges
     try:

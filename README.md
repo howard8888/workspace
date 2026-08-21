@@ -101,15 +101,18 @@ explanation, robotics, agentic AI, or LLM synergy remains an experimental questi
 **THIS SECTION IS UPDATED PERIODICALLY**
 
 The current runner contains a visible general NavMap predictive-processing path, two bounded behavioral domains that have completed
-authority migration, genuine navigation among operative WNM maps, and a generalized source-linked live-dynamics layer. The generic
-`scene_body` expected/evidence/accepted-current path remains diagnostic. Maintained SELF-ground geometry supplies default StandUp
-applicability, and exact-current SELF-maternal geometry/continuity/temporal evidence supplies default FollowMom applicability behind
-protected safety and explicit fallback. Phase 5 adds an overview -> maternal-body -> nipple-mouth feeding close-up -> return round-trip.
-Phase 6 adds overlapping cliff-to-field and field-to-shelter route sheets, a landmark-supported lateral WNM shift,
-backtracking/return, and a WNM-derived SurfaceGrid running beside the existing grid. Phase 7 reuses the existing bounded
-Sequential/Error window to decode typed motion, contact, support, slip, phase, and lower-controller progress overlays, including
-self-motion-compensated object motion and expected dynamic envelopes. These bounded authorities, transitions, and temporal overlays do
-not make the generic accepted-current record WorldGraph truth or write accepted NavMaps into Columns.
+authority migration, genuine navigation among operative WNM maps, a generalized source-linked live-dynamics layer, and the first
+Column-backed long-term NavMap memory fabric. The generic `scene_body` expected/evidence/accepted-current path remains diagnostic.
+Maintained SELF-ground geometry supplies default StandUp applicability, and exact-current SELF-maternal
+geometry/continuity/temporal evidence supplies default FollowMom applicability behind protected safety and explicit fallback. Phase 5
+adds an overview -> maternal-body -> nipple-mouth feeding close-up -> return round-trip. Phase 6 adds overlapping cliff-to-field and
+field-to-shelter route sheets, a landmark-supported lateral WNM shift, backtracking/return, and a WNM-derived SurfaceGrid running beside
+the existing grid. Phase 7 reuses the existing bounded Sequential/Error window to decode typed motion, contact, support, slip, phase,
+and lower-controller progress overlays, including self-motion-compensated object motion and expected dynamic envelopes. Phase 8
+selectively consolidates eligible immutable NavMaps into Columns, activates bounded candidate references through a sparse lightweight
+index, reinstates only a few payloads for Phase 1C matching/residuals, and preserves UNKNOWN, ambiguity, or reliable-evidence defeat.
+These bounded authorities, transitions, temporal overlays, and memory operations do not make the generic accepted-current record
+WorldGraph truth or grant retrieved content automatic WNM authority.
 
 The present signal path is:
 
@@ -145,14 +148,29 @@ The present signal path is:
         -> compact expected dynamic envelope
         -> structured residual + uncertainty + sparse event/materiality signal
 
+    eligible material/keyframe maps + compact transition/trajectory records
+        -> immutable NavMap payloads in Columns
+        -> lightweight sparse reference/token index
+
+    partial WNM/evidence map + cues + context + task bias
+        -> bounded candidate references without full-library payload scan
+        -> reinstate only a few exact Column payloads
+        -> Phase 1C alignment, match ranking, and structured residual
+        -> clear winner / ambiguous / UNKNOWN / reliable evidence defeats memory
+        -> optional ready-set admission or explicit associative jump transaction
+
 Current design rules:
 
 - Expected and retrieved maps are priors, not observations.
-- Direct evidence remains authoritative in the current diagnostic comparison.
+- Candidate references do not load payloads, and reinstatement does not grant truth or operative-WNM authority.
+- Direct evidence remains authoritative in the current diagnostic comparison; sufficiently reliable conflicting evidence can defeat a
+  retrieved memory.
 - The accepted-current diagnostic currently copies the evidence payload while recording confirmation, adjustment, context-shift, or
   context-break labels.
-- Reliable conflicting evidence is recorded rather than overwritten by expectation.
+- Reliable conflicting evidence is recorded rather than overwritten by expectation or memory.
 - `working_navmap_surface_v1` is a non-writing bridge surface. It is not policy authority, WorldGraph truth, or Column-write authority.
+- Phase 8 Column writes occur only through its explicit bounded consolidation contract, not merely because a map was activated,
+  retrieved, accepted as a diagnostic scene, or updated by ordinary live dynamics.
 
 **Current implementation versus target architecture**
 
@@ -162,34 +180,40 @@ Current design rules:
   laterally exchange, backtrack, and return operative WNM status. Its source-linked route readout and SurfaceGrid remain safety-additive
   and dual-run. Phase 7 adds generalized temporal binding over maternal, route, vegetation, feeding-contact, body-support, and lower-motor
   relations. It stores compact samples in the existing bounded Sequential/Error history, compares evidence with one-step dynamic
-  envelopes, and records sparse events without creating an episodic movie or revising NavMaps itself. The existing global PolicyRuntime
-  selector and protected lower safety paths remain unchanged. Other domains still read BodyMap, observation-driven
-  WorkingMap/MapSurface, SurfaceGrid/NavSummary, WorldGraph history, retrieval hints, drives, and compatibility bridges.
+  envelopes, and records sparse events without creating an episodic movie or revising NavMaps itself. Phase 8 stores selected immutable
+  Local, multisensory, object, terrain, body, maternal, primitive, trajectory, and before-action-after maps in Columns; keeps episodic,
+  prototype, identity, and transition memory forms distinct; and retrieves through bounded sparse references before reinstating only a
+  few payloads. Retrieved content remains a candidate unless a separate ready-admission or associative-jump transaction succeeds, and
+  reliable current evidence can reject the memory. The existing global PolicyRuntime selector and protected lower safety paths remain
+  unchanged. Other domains still read BodyMap, observation-driven WorkingMap/MapSurface, SurfaceGrid/NavSummary, WorldGraph history,
+  retrieval hints, drives, and compatibility bridges.
 - **Target architecture:** one NavMap is operative as WNM at a time, with a small bounded ready set supporting rapid zoom, lateral shift,
   return, and associative exchange. MapSurface, SurfaceGrid, NavSummary, predicates, and most BodyMap-facing values become named
   projections or synchronized readouts, while BodyMap retains a fast independent safety path.
 - **Migration rule:** each domain moves through shadow, compare, advisory, guarded, and default authority with explicit evidence and
   fallback. Default authority in one bounded domain does not grant authority to unrelated maps or consumers.
 
-**Phase 7 implementation checkpoint**
+**Phase 8 implementation checkpoint**
 
-- Repository baseline used for this slice: `bf3b4b14af92f656190bf46f0075ef9b2b64494b` (`Add terrain WNM lateral route navigation`).
+- Repository baseline used for this slice: `009877622f3a0183426864510c4889dd440ab4f9` (`Add generalized temporal binding and live dynamics`).
 - Repository authority after application: Howard's current local Workspace and its fresh Git status/HEAD.
 - Python baseline: 3.11.
-- Runner: `cca8_run.py` v0.22.0.
-- Context: `cca8_context.py` v0.16.0.
-- Environment adapter: `cca8_env.py` v0.5.0.
-- NavMap runtime: `cca8_navmap_runtime.py` v0.13.0.
+- Runner: `cca8_run.py` v0.23.0.
+- Context: `cca8_context.py` v0.17.0.
+- Environment adapter remains: `cca8_env.py` v0.5.0.
+- NavMap runtime: `cca8_navmap_runtime.py` v0.14.0.
 - Predictive helper remains: `cca8_predictive.py` v0.3.0.
 - Policy runtime remains: `cca8_policy_runtime.py` v0.6.0.
-- Reporting: `cca8_reporting.py` v0.4.0.
+- Reporting: `cca8_reporting.py` v0.5.0.
 - FollowMom authority remains: `cca8_followmom_authority.py` v0.1.0.
-- Single-operative WNM runtime remains: `cca8_wnm_runtime.py` v0.2.0.
+- Single-operative WNM runtime: `cca8_wnm_runtime.py` v0.3.0.
 - Feeding close-up/runtime remains: `cca8_feeding.py` v0.2.0.
 - Terrain, route-sheet, continuity, material-revision, and dual-run grid runtime remains: `cca8_terrain.py` v0.1.0.
-- General temporal binding, self-motion compensation, live dynamics, envelopes, and residuals: `cca8_live_dynamics.py` v0.1.0.
-- Registry: 40 components and 8 behavioral primitives.
-- Build-environment inventory after this patch: 930 collected tests (928 non-Pyvis tests plus 2 optional Pyvis tests); the authoritative
+- General temporal binding, self-motion compensation, live dynamics, envelopes, and residuals remains: `cca8_live_dynamics.py` v0.1.0.
+- Column-backed long-term NavMap storage, sparse indexing/retrieval, consolidation eligibility, and associative exchange:
+  `cca8_navmap_memory.py` v0.1.0.
+- Registry: 41 components and 8 behavioral primitives.
+- Build-environment inventory after this patch: 977 collected tests (975 non-Pyvis tests plus 2 optional Pyvis tests); the authoritative
   local pytest, Pylint, mypy, preflight, and manual-inspection wall determines the final GO decision.
 
 Phase 5 does not grant SeekNipple or Suckle map authority. It changes the operative map substrate and replaces detached feeding-slot
@@ -239,6 +263,31 @@ binding while detailed balance, force, timing, gait, and oral/head implementatio
 live-dynamics path does not select a primitive, alter drives, weaken safety, change the global single-winner selector, or replace the
 existing Phase 4B maternal readout; it records a dual-run comparison instead.
 
+Phase 8 adds the first live long-term NavMap fabric above the existing in-memory `ColumnMemory`. Rich immutable `NavMapV2` revisions are
+stored as Column payloads while ctx retains only lightweight address rows and inverted cue/context/task/structure tokens. The current
+implementation supports Local, multisensory, object, terrain, body, maternal, primitive, trajectory, and before-action-after map kinds;
+its memory forms distinguish episodic, prototype, identity, and transition records. Repeated support for an exact revision strengthens its
+index row without duplicating the Column payload, while exceptions/failures are counted separately from supporting examples.
+
+Consolidation eligibility is transient and explicitly separates `content_changed`, `plasticity_eligible`, `consolidation_pending`, and
+`consolidated`. Ordinary activation, harmless dynamics, and every cognitive cycle do not automatically become long-term maps. A bounded
+per-observation budget stores only eligible records; sparse trajectory maps require a Phase 7 event boundary and summarize start/end or
+phase-level structure rather than a full NavMap movie. Primitive maps retain precondition, task-level intent, and expected outcome while
+detailed motor trajectories remain below the WNM boundary.
+
+Spontaneous retrieval uses partial current-map structure, cues, and context. Strategic retrieval adds an explicit one-shot PFC-like task
+bias. Both first activate a bounded set of candidate references through the sparse index without scanning every Column payload. Only a few
+exact engram ids are reinstated and compared with the current query through Phase 1C alignment, match ranking, and structured residuals.
+The pipeline may return no candidates, references only, reinstatement failure, UNKNOWN, ambiguity, a clear winner, or
+`evidence_defeats_memory`. The best represented poor candidate is not forced into belief.
+
+A clear retrieved winner remains `RETRIEVED` content. It may be admitted to the bounded ready set through an explicitly non-operative
+`ready_admission` transaction, or become operative only through an explicit `associative_jump`. Ambiguous correspondence, unsupported
+matches, source-reference mismatch, or reliable conflicting evidence rejects that authority transition atomically. Ready maps do not share
+equal current authority. Episode reset clears retrieval/eligibility transients but preserves the in-session Column library and sparse index.
+This first Phase 8 slice does not add a new on-disk persistence schema, distributed memory service, WorldGraph pointer writer, behavioral
+primitive, policy-selection authority, or safety override.
+
 The NavMap Oscilloscope marker in terminal output is:
 
     (~~) [navmap-scope] ...
@@ -262,8 +311,10 @@ explicit legacy fallback remain. Phase 5 proves that overview, maternal-body, an
 status through a bounded ready set. Phase 6 extends the same substrate to overlapping terrain route sheets, a landmark-supported lateral
 shift, backtracking, source-linked route/hazard readouts, and material-change revision economy. Phase 7 adds a shared-window generalized
 temporal layer with typed live dynamics, self-motion-compensated object motion, contact/support durations, lower-controller progress,
-expected dynamic envelopes, structured residuals, and sparse materiality/event signals. The programme continues one vertical domain at
-a time rather than through a wholesale rewrite.
+expected dynamic envelopes, structured residuals, and sparse materiality/event signals. Phase 8 adds selective Column storage of
+versioned NavMaps, lightweight sparse indexing, bounded candidate-reference activation, limited payload reinstatement, Phase 1C
+matching/residuals, evidence-defeat rules, and explicit ready-set or associative-jump commitment. The programme continues one vertical
+domain at a time rather than through a wholesale rewrite.
 
 ● **Scientific and evolutionary hypothesis**
 

@@ -31,6 +31,7 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "feeding": "cca8_feeding",
     "terrain": "cca8_terrain",
     "live_dynamics": "cca8_live_dynamics",
+    "navmap_memory": "cca8_navmap_memory",
     "wnm_runtime": "cca8_wnm_runtime",
     "standup_compare": "cca8_standup_compare",
 }

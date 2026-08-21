@@ -54,7 +54,7 @@ Core runtime:
   cca8_guidance.py, cca8_predictive.py, cca8_navmap_runtime.py, cca8_maternal_geometry.py,
   cca8_maternal_temporal.py, cca8_maternal_continuity.py, cca8_followmom_compare.py,
   cca8_followmom_advisory.py, cca8_followmom_authority.py, cca8_feeding.py, cca8_terrain.py,
-  cca8_live_dynamics.py, cca8_wnm_runtime.py,
+  cca8_live_dynamics.py, cca8_navmap_memory.py, cca8_wnm_runtime.py,
   cca8_reporting.py, cca8_observation_runtime.py,
   cca8_policy_runtime.py, and cca8_preflight.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
@@ -129,6 +129,7 @@ import cca8_followmom_compare
 import cca8_feeding
 import cca8_terrain
 import cca8_live_dynamics
+import cca8_navmap_memory
 import cca8_wnm_runtime
 import cca8_maternal_continuity
 import cca8_maternal_geometry
@@ -328,8 +329,22 @@ live_dynamics_overlay_v1 = cca8_live_dynamics.live_dynamics_overlay_v1
 live_dynamics_summary_v1 = cca8_live_dynamics.live_dynamics_summary_v1
 render_live_dynamics_lines_v1 = cca8_live_dynamics.render_live_dynamics_lines_v1
 
+# --- Phase 8 long-term NavMap memory and sparse retrieval seam ----------------
+# Immutable map payloads live in Columns; lightweight ctx-local index rows
+# support bounded candidate-reference activation and selective reinstatement.
+# Retrieval does not grant present truth or operative authority.
+navmap_memory_request_strategic_retrieval_v1 = (
+    cca8_navmap_memory.navmap_memory_request_strategic_retrieval_v1
+)
+navmap_memory_retrieve_v1 = cca8_navmap_memory.navmap_memory_retrieve_v1
+navmap_memory_replay_eligible_refs_v1 = cca8_navmap_memory.navmap_memory_replay_eligible_refs_v1
+navmap_memory_reset_episode_v1 = cca8_navmap_memory.navmap_memory_reset_episode_v1
+navmap_memory_summary_v1 = cca8_navmap_memory.navmap_memory_summary_v1
+render_navmap_memory_lines_v1 = cca8_navmap_memory.render_navmap_memory_lines_v1
+
 wnm_operative_map_v1 = cca8_wnm_runtime.wnm_operative_map_v1
 wnm_ready_maps_v1 = cca8_wnm_runtime.wnm_ready_maps_v1
+wnm_admit_ready_map_v1 = cca8_wnm_runtime.wnm_admit_ready_map_v1
 wnm_commit_transition_v1 = cca8_wnm_runtime.wnm_commit_transition_v1
 wnm_return_to_ref_v1 = cca8_wnm_runtime.wnm_return_to_ref_v1
 wnm_summary_v1 = cca8_wnm_runtime.wnm_summary_v1
@@ -629,7 +644,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.22.0"
+__version__ = "0.23.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -733,8 +748,15 @@ __all__ = [
     "live_dynamics_overlay_v1",
     "live_dynamics_summary_v1",
     "render_live_dynamics_lines_v1",
+    "navmap_memory_request_strategic_retrieval_v1",
+    "navmap_memory_retrieve_v1",
+    "navmap_memory_replay_eligible_refs_v1",
+    "navmap_memory_reset_episode_v1",
+    "navmap_memory_summary_v1",
+    "render_navmap_memory_lines_v1",
     "wnm_operative_map_v1",
     "wnm_ready_maps_v1",
+    "wnm_admit_ready_map_v1",
     "wnm_commit_transition_v1",
     "wnm_return_to_ref_v1",
     "wnm_summary_v1",
@@ -2853,6 +2875,7 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("feeding", "cca8_feeding"),
     ("terrain", "cca8_terrain"),
     ("live_dynamics", "cca8_live_dynamics"),
+    ("navmap_memory", "cca8_navmap_memory"),
     ("wnm_runtime", "cca8_wnm_runtime"),
     ("standup_compare", "cca8_standup_compare"),
     ("reporting", "cca8_reporting"),
@@ -3823,6 +3846,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             feeding_reset_v1(ctx)
             terrain_reset_v1(ctx)
             live_dynamics_reset_v1(ctx)
+            navmap_memory_reset_episode_v1(ctx)
             step_idx = env_info.get("step_index", 0)
             print(
                 f"[env] Reset env scenario: "
@@ -4597,6 +4621,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     "feeding": feeding_summary_v1(ctx),
                     "terrain": terrain_summary_v1(ctx),
                     "live_dynamics": live_dynamics_summary_v1(ctx),
+                    "navmap_memory": navmap_memory_summary_v1(ctx),
                     "wnm": wnm_summary_v1(ctx),
                     "standup_advisory": standup_advisory_summary_v1(ctx),
                     "standup_authority": standup_authority_summary_v1(ctx),

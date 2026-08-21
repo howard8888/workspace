@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Single-operative WNM and bounded-ready-set runtime for CCA8 Phases 5 and 6.
+"""Single-operative WNM and bounded-ready-set runtime for CCA8 Phases 5 through 8.
 
 Purpose
 -------
@@ -9,13 +9,15 @@ needed by that experiment:
 
 * at most one :class:`~cca8_navmap_kernel.NavMapV2` is operative;
 * a bounded ready set keeps recently operative maps available for rapid return;
-* zoom-in, zoom-out, lateral shift, and return are atomic committed transitions;
+* zoom-in, zoom-out, lateral shift, return, and associative jump are atomic committed transitions;
+* retrieved candidates may enter the bounded ready set through an explicit non-operative admission transaction;
 * candidates and links never become operative merely by being addressable; and
 * transition failures leave the source WNM and ready set unchanged.
 
 The runtime is deliberately content-neutral. Phase 5 feeding code supplies
-cross-scale correspondence evidence, while Phase 6 terrain code supplies
-overlapping route-sheet correspondence. Neither domain is imported here.
+cross-scale correspondence evidence, Phase 6 terrain code supplies overlapping
+route-sheet correspondence, and Phase 8 memory code supplies retrieved-map
+admission or associative-jump requests. None of those domains is imported here.
 
 Authority boundary
 ------------------
@@ -39,7 +41,7 @@ from typing import Any, Optional
 
 from cca8_navmap_kernel import NavMapRefV1, NavMapV2
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "WNMTransitionTypeV1",
@@ -49,6 +51,7 @@ __all__ = [
     "wnm_ready_maps_v1",
     "wnm_map_by_role_v1",
     "wnm_refresh_map_v1",
+    "wnm_admit_ready_map_v1",
     "wnm_commit_transition_v1",
     "wnm_return_to_ref_v1",
     "wnm_summary_v1",
@@ -68,6 +71,8 @@ class WNMTransitionTypeV1(str, Enum):
     ZOOM_OUT = "zoom_out"
     LATERAL_SHIFT = "lateral_shift"
     RETURN = "return"
+    READY_ADMISSION = "ready_admission"
+    ASSOCIATIVE_JUMP = "associative_jump"
 
 
 def _require_positive_int(value: int, *, field_name: str) -> None:
@@ -216,20 +221,20 @@ class WNMTransitionRecordV1:
             raise ValueError("accepted transition cannot carry failure_reason")
         if not self.accepted and self.failure_reason is None:
             raise ValueError("rejected transition requires failure_reason")
+        source_optional_types = {
+            WNMTransitionTypeV1.INITIALIZE,
+            WNMTransitionTypeV1.READY_ADMISSION,
+        }
         if self.transition_type is WNMTransitionTypeV1.INITIALIZE and self.source_ref is not None:
             raise ValueError("initialize transition must not have a source_ref")
-        if (
-            self.accepted
-            and self.transition_type is not WNMTransitionTypeV1.INITIALIZE
-            and self.source_ref is None
-        ):
-            raise ValueError("accepted non-initialize transition requires a source_ref")
+        if self.accepted and self.transition_type not in source_optional_types and self.source_ref is None:
+            raise ValueError("accepted operative transition requires a source_ref")
 
     def as_dict(self) -> dict[str, Any]:
         """Return the complete JSON-safe transition and authority contract."""
         return {
             "schema": "wnm_transition_record_v1",
-            "phase": "5-6",
+            "phase": "5-8",
             "authority": "operative_wnm_runtime",
             "one_operative_wnm": True,
             "ready_set_has_equal_authority": False,
@@ -382,7 +387,7 @@ def wnm_refresh_map_v1(
     create a zoom event, or reorder unrelated ready maps.
     """
     if ctx is None:
-        return {"schema": "wnm_refresh_v1", "phase": "5", "status": "ctx_unavailable"}
+        return {"schema": "wnm_refresh_v1", "phase": "5-8", "status": "ctx_unavailable"}
     if not isinstance(navmap, NavMapV2):
         raise TypeError("navmap must be NavMapV2")
     _require_positive_int(observation_no, field_name="observation_no")
@@ -413,7 +418,7 @@ def wnm_refresh_map_v1(
 
     row = {
         "schema": "wnm_refresh_v1",
-        "phase": "5",
+        "phase": "5-8",
         "status": "updated" if updated else ("unchanged" if location != "untracked" else "untracked"),
         "location": location,
         "observation_no": observation_no,
@@ -471,6 +476,202 @@ def _rejected_transition(
     return _store_transition(ctx, record)
 
 
+
+def wnm_admit_ready_map_v1(
+    ctx: Any,
+    destination: NavMapV2,
+    *,
+    observation_no: int,
+    reason: str,
+    identity_handle: str,
+    correspondence_basis: str,
+    support: float,
+    correspondence_ambiguous: bool = False,
+    expected_source_ref: Optional[NavMapRefV1] = None,
+) -> dict[str, Any]:
+    """Admit one map to the bounded ready set without changing the operative WNM.
+
+    This is the Phase 8 authority seam between retrieval and current cognition.
+    A reinstated map remains non-authoritative after admission; it is merely
+    available for a later explicit zoom, lateral shift, return, or associative
+    jump. Candidate generation, payload reinstatement, and matching alone never
+    call this function implicitly.
+
+    The transaction is atomic. Ambiguous/unsupported correspondence, stale
+    source assumptions, or an attempt to admit the operative map family leaves
+    both activation tiers unchanged. Re-admitting the exact ready revision is
+    idempotent except for deterministic recency bookkeeping.
+    """
+    if ctx is None:
+        return {"schema": "wnm_summary_v1", "phase": "5-8", "status": "ctx_unavailable"}
+    if not isinstance(destination, NavMapV2):
+        raise TypeError("destination must be NavMapV2")
+    _require_positive_int(observation_no, field_name="observation_no")
+    _require_nonempty_text(reason, field_name="reason")
+    _require_nonempty_text(identity_handle, field_name="identity_handle")
+    _require_nonempty_text(correspondence_basis, field_name="correspondence_basis")
+    support_value = _unit_interval(support, field_name="support")
+    if not isinstance(correspondence_ambiguous, bool):
+        raise TypeError("correspondence_ambiguous must be bool")
+    if expected_source_ref is not None and not isinstance(expected_source_ref, NavMapRefV1):
+        raise TypeError("expected_source_ref must be NavMapRefV1 or None")
+
+    transition_no = _next_transition_no(ctx)
+    source = wnm_operative_map_v1(ctx)
+    ready_before = _clean_ready_entries(ctx)
+
+    if expected_source_ref is not None:
+        if source is None or _map_ref(source) != expected_source_ref:
+            return _rejected_transition(
+                ctx,
+                transition_no=transition_no,
+                observation_no=observation_no,
+                transition_type=WNMTransitionTypeV1.READY_ADMISSION,
+                source=source,
+                destination=destination,
+                reason=reason,
+                identity_handle=identity_handle,
+                correspondence_basis=correspondence_basis,
+                support=support_value,
+                correspondence_ambiguous=correspondence_ambiguous,
+                ready_before=ready_before,
+                failure_reason="operative_source_reference_mismatch",
+            )
+
+    if source is not None and source.map_id == destination.map_id:
+        return _rejected_transition(
+            ctx,
+            transition_no=transition_no,
+            observation_no=observation_no,
+            transition_type=WNMTransitionTypeV1.READY_ADMISSION,
+            source=source,
+            destination=destination,
+            reason=reason,
+            identity_handle=identity_handle,
+            correspondence_basis=correspondence_basis,
+            support=support_value,
+            correspondence_ambiguous=correspondence_ambiguous,
+            ready_before=ready_before,
+            failure_reason="destination_family_already_operative",
+        )
+
+    if correspondence_ambiguous:
+        return _rejected_transition(
+            ctx,
+            transition_no=transition_no,
+            observation_no=observation_no,
+            transition_type=WNMTransitionTypeV1.READY_ADMISSION,
+            source=source,
+            destination=destination,
+            reason=reason,
+            identity_handle=identity_handle,
+            correspondence_basis=correspondence_basis,
+            support=support_value,
+            correspondence_ambiguous=True,
+            ready_before=ready_before,
+            failure_reason="cross_map_correspondence_ambiguous",
+        )
+
+    if support_value <= 0.0:
+        return _rejected_transition(
+            ctx,
+            transition_no=transition_no,
+            observation_no=observation_no,
+            transition_type=WNMTransitionTypeV1.READY_ADMISSION,
+            source=source,
+            destination=destination,
+            reason=reason,
+            identity_handle=identity_handle,
+            correspondence_basis=correspondence_basis,
+            support=support_value,
+            correspondence_ambiguous=False,
+            ready_before=ready_before,
+            failure_reason="cross_map_correspondence_unsupported",
+        )
+
+    existing = next(
+        (entry for entry in ready_before if entry.navmap.map_id == destination.map_id),
+        None,
+    )
+    if existing is not None and existing.navmap.revision > destination.revision:
+        return _rejected_transition(
+            ctx,
+            transition_no=transition_no,
+            observation_no=observation_no,
+            transition_type=WNMTransitionTypeV1.READY_ADMISSION,
+            source=source,
+            destination=destination,
+            reason=reason,
+            identity_handle=identity_handle,
+            correspondence_basis=correspondence_basis,
+            support=support_value,
+            correspondence_ambiguous=False,
+            ready_before=ready_before,
+            failure_reason="newer_ready_revision_already_present",
+        )
+
+    ready_after = [entry for entry in ready_before if entry.navmap.map_id != destination.map_id]
+    admitted_transition_no = (
+        existing.admitted_transition_no
+        if existing is not None and existing.navmap.revision == destination.revision
+        else transition_no
+    )
+    ready_after.append(
+        WNMReadyEntryV1(
+            navmap=destination,
+            admitted_transition_no=admitted_transition_no,
+            last_used_transition_no=transition_no,
+            reason=reason,
+        )
+    )
+    ready_after.sort(
+        key=lambda item: (
+            item.last_used_transition_no,
+            item.admitted_transition_no,
+            item.navmap.map_id,
+            item.navmap.revision,
+        )
+    )
+
+    evicted: Optional[WNMReadyEntryV1] = None
+    capacity = _ready_capacity(ctx)
+    while len(ready_after) > capacity:
+        removed = ready_after.pop(0)
+        if evicted is None:
+            evicted = removed
+
+    ctx.wnm_ready_set_v1 = ready_after
+    acceptance_result = (
+        "destination_ready_membership_refreshed"
+        if existing is not None and existing.navmap.revision == destination.revision
+        else "destination_admitted_ready_non_authoritative"
+    )
+    record = WNMTransitionRecordV1(
+        transition_no=transition_no,
+        observation_no=observation_no,
+        controller_step=_controller_step(ctx),
+        transition_type=WNMTransitionTypeV1.READY_ADMISSION,
+        source_ref=_map_ref(source) if source is not None else None,
+        destination_ref=_map_ref(destination),
+        source_role=source.role if source is not None else None,
+        destination_role=destination.role,
+        source_frame_id=source.frame.frame_id if source is not None else None,
+        destination_frame_id=destination.frame.frame_id,
+        reason=reason,
+        identity_handle=identity_handle,
+        correspondence_basis=correspondence_basis,
+        support=support_value,
+        correspondence_ambiguous=False,
+        accepted=True,
+        acceptance_result=acceptance_result,
+        prior_wnm_disposition="unchanged",
+        ready_before=_ready_refs(ready_before),
+        ready_after=_ready_refs(ready_after),
+        evicted_ref=evicted.map_ref if evicted is not None else None,
+        failure_reason=None,
+    )
+    return _store_transition(ctx, record)
+
 def wnm_commit_transition_v1(
     ctx: Any,
     destination: NavMapV2,
@@ -484,7 +685,7 @@ def wnm_commit_transition_v1(
     correspondence_ambiguous: bool = False,
     expected_source_ref: Optional[NavMapRefV1] = None,
 ) -> dict[str, Any]:
-    """Atomically commit one initialize/zoom/return transition.
+    """Atomically commit one initialize/zoom/lateral/return/jump transition.
 
     Failed source, correspondence, or same-destination checks leave both the
     operative WNM and ready set exactly as they were.  A successful non-initial
@@ -493,11 +694,13 @@ def wnm_commit_transition_v1(
     least-recently-used entry when the configured bound is exceeded.
     """
     if ctx is None:
-        return {"schema": "wnm_summary_v1", "phase": "5-6", "status": "ctx_unavailable"}
+        return {"schema": "wnm_summary_v1", "phase": "5-8", "status": "ctx_unavailable"}
     if not isinstance(destination, NavMapV2):
         raise TypeError("destination must be NavMapV2")
     if not isinstance(transition_type, WNMTransitionTypeV1):
         raise TypeError("transition_type must be WNMTransitionTypeV1")
+    if transition_type is WNMTransitionTypeV1.READY_ADMISSION:
+        raise ValueError("use wnm_admit_ready_map_v1 for non-operative ready admission")
     _require_positive_int(observation_no, field_name="observation_no")
     _require_nonempty_text(reason, field_name="reason")
     _require_nonempty_text(identity_handle, field_name="identity_handle")
@@ -712,7 +915,7 @@ def wnm_return_to_ref_v1(
         # direct summary-level failure without fabricating a map or transition.
         row = {
             "schema": "wnm_return_request_v1",
-            "phase": "5-6",
+            "phase": "5-8",
             "status": "rejected",
             "destination_ref": destination_ref.as_dict(),
             "reason": reason,
@@ -740,14 +943,14 @@ def wnm_return_to_ref_v1(
 def wnm_summary_v1(ctx: Any) -> dict[str, Any]:
     """Return a defensive JSON-safe single-operative-WNM summary."""
     if ctx is None:
-        return {"schema": "wnm_summary_v1", "phase": "5-6", "status": "ctx_unavailable"}
+        return {"schema": "wnm_summary_v1", "phase": "5-8", "status": "ctx_unavailable"}
     operative = wnm_operative_map_v1(ctx)
     ready = _clean_ready_entries(ctx)
     last = getattr(ctx, "wnm_last_transition_v1", None)
     last_row = last.as_dict() if isinstance(last, WNMTransitionRecordV1) else None
     return {
         "schema": "wnm_summary_v1",
-        "phase": "5-6",
+        "phase": "5-8",
         "status": "active" if operative is not None else "idle",
         "authority": "single_operative_wnm",
         "operative_count": 1 if operative is not None else 0,

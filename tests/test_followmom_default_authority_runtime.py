@@ -990,8 +990,8 @@ def test_legacy_gate_helper_still_reproduces_protected_and_permissive_results() 
 def test_phase4f_component_versions_and_registry_entry_are_current() -> None:
     """The new authority module should be versioned and registered once."""
     assert cca8_followmom_authority.__version__ == "0.1.0"
-    assert cca8_run.__version__ == "0.22.0"
-    assert cca8_context.__version__ == "0.16.0"
+    assert cca8_run.__version__ == "0.23.0"
+    assert cca8_context.__version__ == "0.17.0"
 
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["followmom_authority"] == "cca8_followmom_authority"

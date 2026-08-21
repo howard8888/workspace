@@ -381,3 +381,100 @@ def test_summary_renderer_and_histories_are_json_safe_and_bounded() -> None:
     assert rendered[0] == "PHASE 5 OPERATIVE WNM:"
     assert any("operative=third" in line for line in rendered)
     assert all("operative_authority" in item for item in summary["ready_set"])
+
+
+def test_ready_admission_adds_non_authoritative_map_without_changing_operative() -> None:
+    """Phase 8 retrieval may admit a map to ready status without changing current WNM authority."""
+    from cca8_wnm_runtime import wnm_admit_ready_map_v1
+
+    ctx = Ctx()
+    operative = _map("operative", "operative")
+    retrieved = _map("retrieved", "retrieved")
+    _commit(ctx, operative, WNMTransitionTypeV1.INITIALIZE, observation_no=1)
+
+    summary = wnm_admit_ready_map_v1(
+        ctx,
+        retrieved,
+        observation_no=2,
+        reason="phase8_retrieval_ready",
+        identity_handle="entity:retrieved",
+        correspondence_basis="bounded_reinstatement_and_match",
+        support=0.9,
+        expected_source_ref=NavMapRefV1("operative", 1),
+    )
+
+    assert wnm_operative_map_v1(ctx) is operative
+    assert wnm_ready_maps_v1(ctx) == (retrieved,)
+    assert summary["last_transition"]["transition_type"] == "ready_admission"
+    assert summary["last_transition"]["prior_wnm_disposition"] == "unchanged"
+    assert summary["ready_set"][0]["operative_authority"] is False
+
+
+def test_ready_admission_rejects_ambiguous_candidate_atomically() -> None:
+    """Ambiguous reinstatement must not alter either activation tier."""
+    from cca8_wnm_runtime import wnm_admit_ready_map_v1
+
+    ctx = Ctx()
+    operative = _map("operative", "operative")
+    retrieved = _map("retrieved", "retrieved")
+    _commit(ctx, operative, WNMTransitionTypeV1.INITIALIZE, observation_no=1)
+
+    summary = wnm_admit_ready_map_v1(
+        ctx,
+        retrieved,
+        observation_no=2,
+        reason="ambiguous_retrieval",
+        identity_handle="entity:retrieved",
+        correspondence_basis="ambiguous_test",
+        support=0.9,
+        correspondence_ambiguous=True,
+    )
+
+    assert wnm_operative_map_v1(ctx) is operative
+    assert wnm_ready_maps_v1(ctx) == ()
+    assert summary["last_transition"]["accepted"] is False
+    assert summary["last_transition"]["failure_reason"] == "cross_map_correspondence_ambiguous"
+
+
+def test_repeated_exact_ready_admission_is_idempotent_and_refreshes_recency() -> None:
+    """Repeated retrieval should not duplicate one ready map family."""
+    from cca8_wnm_runtime import wnm_admit_ready_map_v1
+
+    ctx = Ctx()
+    operative = _map("operative", "operative")
+    retrieved = _map("retrieved", "retrieved")
+    _commit(ctx, operative, WNMTransitionTypeV1.INITIALIZE, observation_no=1)
+
+    for observation_no in (2, 3):
+        wnm_admit_ready_map_v1(
+            ctx,
+            retrieved,
+            observation_no=observation_no,
+            reason="repeat_retrieval",
+            identity_handle="entity:retrieved",
+            correspondence_basis="unit_test",
+            support=1.0,
+        )
+
+    assert wnm_ready_maps_v1(ctx) == (retrieved,)
+    assert ctx.wnm_last_transition_v1.acceptance_result == "destination_ready_membership_refreshed"
+
+
+def test_associative_jump_is_explicit_and_moves_prior_operative_to_ready() -> None:
+    """A retrieved map becomes operative only through an explicit associative-jump transaction."""
+    ctx = Ctx()
+    operative = _map("operative", "operative")
+    retrieved = _map("retrieved", "retrieved")
+    _commit(ctx, operative, WNMTransitionTypeV1.INITIALIZE, observation_no=1)
+
+    summary = _commit(
+        ctx,
+        retrieved,
+        WNMTransitionTypeV1.ASSOCIATIVE_JUMP,
+        observation_no=2,
+        expected_source_ref=NavMapRefV1("operative", 1),
+    )
+
+    assert wnm_operative_map_v1(ctx) is retrieved
+    assert wnm_ready_maps_v1(ctx) == (operative,)
+    assert summary["last_transition"]["transition_type"] == "associative_jump"

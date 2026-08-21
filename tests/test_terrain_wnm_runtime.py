@@ -149,15 +149,15 @@ def test_phase6_versions_defaults_and_registry_are_current() -> None:
     """Phase 6 modules, context registers, and component inventory should agree."""
     ctx = Ctx()
 
-    assert cca8_run.__version__ == "0.22.0"
-    assert cca8_context.__version__ == "0.16.0"
+    assert cca8_run.__version__ == "0.23.0"
+    assert cca8_context.__version__ == "0.17.0"
     assert cca8_env.__version__ == "0.5.0"
-    assert cca8_navmap_runtime.__version__ == "0.13.0"
+    assert cca8_navmap_runtime.__version__ == "0.14.0"
     assert cca8_policy_runtime.__version__ == "0.6.0"
-    assert cca8_reporting.__version__ == "0.4.0"
+    assert cca8_reporting.__version__ == "0.5.0"
     assert cca8_feeding.__version__ == "0.2.0"
     assert cca8_terrain.__version__ == "0.1.0"
-    assert cca8_wnm_runtime.__version__ == "0.2.0"
+    assert cca8_wnm_runtime.__version__ == "0.3.0"
     assert ctx.terrain_wnm_enabled_v1 is True
     assert ctx.terrain_state_v1 is None
     assert ctx.terrain_history_v1 == []
@@ -165,7 +165,7 @@ def test_phase6_versions_defaults_and_registry_are_current() -> None:
 
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)  # pylint: disable=protected-access
     assert registry["terrain"] == "cca8_terrain"
-    assert len(cca8_run._cca8_component_rows()) == 40  # pylint: disable=protected-access
+    assert len(cca8_run._cca8_component_rows()) == 41  # pylint: disable=protected-access
     assert len(cca8_run.PRIMITIVES) == 8
 
 

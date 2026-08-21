@@ -18,6 +18,7 @@ operators with CCA8 runtime registers for:
 - the Phase 5 feeding observation bridge and first operative-WNM zoom path
 - the Phase 6 terrain/hazard bridge and lateral route-sheet WNM path
 - the Phase 7 generalized temporal-binding/live-dynamics bridge
+- the Phase 8 Column-backed NavMap memory, sparse retrieval, and consolidation bridge
 - expected-current construction and residual comparison
 - conservative accepted-current selection
 - the diagnostic Working Navigation Map surface bridge
@@ -36,9 +37,12 @@ Authority boundary
 The generic accepted-current path remains diagnostic and evidence-first. Phases
 5 and 6 add real operative-WNM/ready-set authority for feeding detail and
 overlapping terrain-route sheets. Phase 7 adds source-linked live dynamics,
-dynamic envelopes, and structured temporal residuals without behavior authority. Those domains do not bypass protected safety,
-write WorldGraph truth or Columns, mutate BodyMap, or command lower motor
-execution. Feeding expectations are armed only after the existing selector has
+dynamic envelopes, and structured temporal residuals without behavior authority.
+Phase 8 may selectively consolidate eligible immutable NavMaps to Columns and
+retrieve a bounded candidate set, but retrieval remains non-authoritative until
+an explicit ready-set admission or associative-jump transaction succeeds. These
+domains do not bypass protected safety, write WorldGraph truth, mutate BodyMap,
+or command lower motor execution. Feeding expectations are armed only after the existing selector has
 already chosen SeekNipple or Suckle.
 """
 
@@ -72,6 +76,7 @@ from cca8_navmap import (
     navmap_policy_outcome_from_transition_v1,
     navmap_residual_v1,
 )
+from cca8_navmap_memory import navmap_memory_observation_step_v1
 from cca8_navmap_shadow import navmap_v2_shadow_observation_step_v1
 from cca8_predictive import (
     compact_slot_map_text_v1 as _prediction_compact_map_text_v1,
@@ -84,7 +89,7 @@ from cca8_standup_compare import (
 )
 
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 __all__ = [
     "NAVMAP_SCOPE_MARKER_V1",
     "NAVMAP_SCOPE_PROBES_V1",
@@ -130,6 +135,7 @@ __all__ = [
     "feeding_wnm_observation_step_v1",
     "terrain_wnm_observation_step_v1",
     "live_dynamics_observation_step_v1",
+    "navmap_memory_observation_step_v1",
     "standup_compare_observation_step_v1",
     "standup_advisory_observation_step_v1",
     "__version__",
@@ -1877,19 +1883,12 @@ def navmap_ctx_transition_from_payloads_v1(
 
 
 def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> dict[str, Any]:
-    """Run one read-only scene_body NavMap diagnostic update and store it on ctx.
+    """Run the ordered NavMap observation pipeline and store runtime records.
 
-    This is the first runtime bridge from EnvObservation into the NavMap helper
-    module. It deliberately does not write WorldGraph facts, Column engrams, or
-    controller/policy selection state. The only effects are ctx-local diagnostic
-    fields:
-
-      - ctx.navmap_scene_body_candidates_v1
-      - ctx.navmap_last_observation_update_v1
-      - ctx.navmap_observation_update_history_v1
-
-    The candidate pool is a small in-memory diagnostic store. It is updated with
-    the pure candidate list returned by cca8_navmap.navmap_observation_update_from_env_obs_v1.
+    The original ``scene_body`` candidate/expected/accepted path remains a
+    ctx-local diagnostic. Later bounded domains add operative-WNM transitions,
+    temporal overlays, and Phase 8 sparse Column consolidation/retrieval. The
+    function never writes WorldGraph truth or changes policy selection directly.
     """
     if ctx is None or env_obs is None:
         return {}
@@ -2211,6 +2210,29 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
             "status": "error",
             "authority": "source_linked_live_dynamics",
             "policy_selection_mutation_allowed": False,
+            "protected_safety_can_be_overridden": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+
+    # Phase 8 long-term NavMap memory. Eligible material/keyframe maps may be
+    # stored in Columns behind a sparse local index. Retrieval activates only a
+    # bounded candidate-reference set and reinstates only a few payloads for
+    # Phase 1C matching. Reliable current evidence defeats conflicting memory;
+    # ready admission or associative jump remains a separate WNM transaction.
+    try:
+        navmap_memory_observation_step_v1(
+            ctx,
+            env_obs,
+            applied_policy=applied_policy if isinstance(applied_policy, str) else None,
+        )
+    except Exception as exc:  # defensive runtime diagnostic boundary
+        ctx.navmap_memory_last_update_v1 = {
+            "schema": "navmap_memory_summary_v1",
+            "phase": "8",
+            "status": "error",
+            "authority": "column_memory_sparse_retrieval",
+            "candidate_or_retrieval_grants_truth": False,
             "protected_safety_can_be_overridden": False,
             "error_type": type(exc).__name__,
             "error": str(exc),
