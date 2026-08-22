@@ -147,23 +147,193 @@ def test_closed_loop_records_one_scope_snapshot_per_cognitive_cycle(
 
 
 def test_scope_renderers_and_main_menu_expose_the_new_instrument() -> None:
-    """The terminal UI should expose readable snapshot and history displays."""
+    """The terminal UI should expose compact, raw, drill-down, and history views."""
     ctx = Ctx()
     snapshot = _capture_once(ctx)
 
-    rendered = "\n".join(cca8_cognitive_scope.render_cognitive_scope_snapshot_lines_v1(snapshot))
+    compact = "\n".join(cca8_cognitive_scope.render_cognitive_scope_compact_snapshot_lines_v1(snapshot))
+    raw = "\n".join(cca8_cognitive_scope.render_cognitive_scope_snapshot_lines_v1(snapshot))
+    detail = "\n".join(cca8_cognitive_scope.render_cognitive_scope_port_detail_lines_v1(snapshot, "DP13"))
     history = "\n".join(cca8_cognitive_scope.render_cognitive_scope_trace_index_lines_v1(ctx))
 
-    assert "CCA8 COGNITIVE STORAGE OSCILLOSCOPE -- SNAPSHOT" in rendered
-    assert "DP00  External World / Body" in rendered
-    assert "DP18  Learning / Revision / Memory Writeback" in rendered
-    assert "DP01-DP18 are the eighteen cognitive/architectural service points" in rendered
-    assert "latest stable register at cycle end" in rendered
+    assert "COMPACT SIGNAL PATH" in compact
+    assert "DP00 WORLD" in compact
+    assert "DP18 LEARNING" in compact
+    assert "full stored signal is available by DP drill-down" in compact
+    assert "CCA8 COGNITIVE STORAGE OSCILLOSCOPE -- SNAPSHOT" in raw
+    assert "DP00  External World / Body" in raw
+    assert "DP18  Learning / Revision / Memory Writeback" in raw
+    assert "DIAGNOSTIC-POINT DETAIL" in detail
+    assert "DP13  Policy / Primitive Selection + Arbitration" in detail
+    assert "DP12  Drives" not in detail
     assert "RETAINED SNAPSHOTS" in history
     assert "snapshot=1 cycle=0" in history
     assert "Cognitive Storage Oscilloscope / System Inspector" in cca8_cli.MAIN_MENU_PROMPT
     assert cca8_cli.route_menu_alias("oscilloscope")[0] == "3"
     assert dict(cca8_run._CCA8_COMPONENT_REGISTRY)["cognitive_scope"] == "cca8_cognitive_scope"
+
+
+def test_compact_front_panel_summarizes_large_ports_without_dumping_nested_payloads() -> None:
+    """The default scope view should remain readable while preserving raw drill-down data."""
+    ctx = Ctx()
+    snapshot = _capture_once(ctx)
+    by_id = {row["port_id"]: row for row in snapshot["ports"]}
+
+    by_id["DP05"]["signal_status"] = "active"
+    by_id["DP05"]["signal"] = {
+        "event_history_count": 4,
+        "maternal_temporal": {"trend": "stable"},
+        "live_dynamics_state": {
+            "materiality": {"material_change_recommended": False},
+            "overlays": {
+                "self_maternal": {"distance_trend": "stable"},
+                "self_route": {"motion_direction": "west"},
+                "lower_motor": {"phase_detail": "interrupted"},
+            },
+        },
+    }
+    by_id["DP08"]["signal_status"] = "active"
+    by_id["DP08"]["signal"] = {
+        "candidate_count": 6,
+        "candidate_refs": [{"large": "payload"}],
+        "winner_ref": {"map_id": "goat_self_maternal_v2", "revision": 1},
+        "retrieval_status": "authority_rejected",
+        "full_payload_scan": False,
+    }
+    by_id["DP09"]["signal_status"] = "active"
+    by_id["DP09"]["signal"] = {
+        "engram_count": 13,
+        "reinstatement_count": 3,
+        "reinstatements": [
+            {"status": "reinstated_but_conflicts_with_current_evidence"},
+            {"status": "reinstated_but_conflicts_with_current_evidence"},
+            {"status": "reinstated", "reason": "exact_structural_match", "match_result": {"status": "exact"}},
+        ],
+        "last_consolidation": {"consolidated": True},
+    }
+    by_id["DP13"]["signal_status"] = "active"
+    by_id["DP13"]["signal"] = {
+        "triggered": ["policy:stand_up", "policy:recover_fall"],
+        "chosen": "policy:stand_up",
+        "selection_reason": "rl_exploit(non_drive_tiebreak)",
+        "protected_safety_filter": True,
+        "authority_source": "protected_bodymap_safety",
+    }
+    by_id["DP17"]["signal_status"] = "active"
+    by_id["DP17"]["signal"] = {
+        "prediction_error": {
+            "matched": False,
+            "severity": 1.0,
+            "error_by_slot": {"posture": 1},
+            "prediction": {"policy": "policy:stand_up", "expected": {"posture": "standing"}},
+            "observed": {"posture": "fallen"},
+        }
+    }
+
+    compact_lines = cca8_cognitive_scope.render_cognitive_scope_compact_snapshot_lines_v1(snapshot)
+    compact = "\n".join(compact_lines)
+
+    assert sum(line.startswith("DP") for line in compact_lines) == 19
+    assert "DP05 TEMPORAL" in compact
+    assert "maternal=stable | route=west | motor=interrupted" in compact
+    assert "DP08 MEMORY IDX" in compact
+    assert "candidates=6 | winner=goat_self_maternal_v2@r1" in compact
+    assert "DP09 COLUMNS" in compact
+    assert "reinstated=3 | exact=1 | conflicts=2" in compact
+    assert "DP13 POLICY" in compact
+    assert "chosen=stand_up | reason=non_drive_tiebreak" in compact
+    assert "DP17 OUTCOME" in compact
+    assert "posture=standing->fallen" in compact
+    assert "candidate_refs" not in compact
+    assert "reinstatements" not in compact
+
+    detail = "\n".join(cca8_cognitive_scope.render_cognitive_scope_port_detail_lines_v1(snapshot, "9"))
+    assert "DP09  Columns / Rich NavMap Reinstatement" in detail
+    assert '"reinstatements"' in detail
+    assert "DP08  Sparse Memory Activation" not in detail
+
+
+def test_port_normalization_and_lookup_accept_human_friendly_identifiers() -> None:
+    """The drill-down prompt should accept DP13, dp13, and 13 equivalently."""
+    snapshot = _capture_once(Ctx())
+
+    assert cca8_cognitive_scope.cognitive_scope_normalize_port_id_v1("DP13") == "DP13"
+    assert cca8_cognitive_scope.cognitive_scope_normalize_port_id_v1("dp13") == "DP13"
+    assert cca8_cognitive_scope.cognitive_scope_normalize_port_id_v1("13") == "DP13"
+    assert cca8_cognitive_scope.cognitive_scope_normalize_port_id_v1("19") is None
+    assert cca8_cognitive_scope.cognitive_scope_normalize_port_id_v1("policy") is None
+    assert cca8_cognitive_scope.cognitive_scope_find_port_v1(snapshot, "13")["port_id"] == "DP13"
+
+
+def test_scope_menu_defaults_to_compact_view_and_supports_dp_drilldown(monkeypatch, capsys) -> None:
+    """Main Menu #3 should show the front panel first and open only the requested port."""
+    ctx = Ctx()
+    _capture_once(ctx)
+    answers = iter(["1", "DP13", "", ""])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+
+    cca8_run._cognitive_scope_menu_v1(
+        HybridEnvironment(),
+        WorldGraph(),
+        Drives(),
+        ctx,
+        _PolicyRuntimeStub(),
+    )
+    output = capsys.readouterr().out
+
+    assert "SYSTEM INSPECTOR -- PHASE 1B" in output
+    assert "COMPACT SIGNAL PATH" in output
+    assert "DP00 WORLD" in output
+    assert "DIAGNOSTIC-POINT DETAIL" in output
+    assert "DP13  Policy / Primitive Selection + Arbitration" in output
+    assert "DP12  Drives / Goal / Emotion / Development" not in output
+
+
+def test_dp13_exposes_arbitration_reason_scores_and_trigger_authority() -> None:
+    """DP13 should show why a primitive won and which trigger authority supplied it."""
+    ctx = Ctx()
+    ctx.ac_triggered_policies = ["policy:stand_up", "policy:recover_fall"]
+    ctx.experiment_policy_debug_last = {
+        "matches_initial": ["policy:stand_up", "policy:recover_fall"],
+        "matches_after_safety": ["policy:stand_up", "policy:recover_fall"],
+        "matches_before_choice": ["policy:stand_up", "policy:recover_fall"],
+        "chosen": "policy:stand_up",
+        "selector_kind": "rl_exploit(non_drive_tiebreak)",
+        "selection_reason": "rl_exploit(non_drive_tiebreak)",
+        "tie_break_label": None,
+        "score_rows": [
+            {"policy": "policy:stand_up", "deficit": 0.0, "non_drive": 2.0, "q": 0.52},
+            {"policy": "policy:recover_fall", "deficit": 0.0, "non_drive": 0.0, "q": 0.24},
+        ],
+        "winner_scores": {"policy": "policy:stand_up", "deficit": 0.0, "non_drive": 2.0, "q": 0.52},
+        "fallen_safety_filter": True,
+        "legacy_fallen_safety_filter": True,
+        "guarded_map_fallen_safety_filter": False,
+        "selected_trigger_authority_source": "protected_bodymap_safety",
+        "selected_trigger_authority_reason": "fresh_bodymap_fallen_protected_safety",
+    }
+
+    snapshot = cca8_cognitive_scope.build_cognitive_scope_snapshot_v1(
+        ctx,
+        env=HybridEnvironment(),
+        env_obs=None,
+        world=WorldGraph(),
+        drives=Drives(),
+        policy_rt=_PolicyRuntimeStub(),
+        selected_policy="policy:stand_up",
+        action_applied=None,
+        env_step=None,
+    )
+
+    by_id = {row["port_id"]: row for row in snapshot["ports"]}
+    signal = by_id["DP13"]["signal"]
+    assert signal["chosen"] == "policy:stand_up"
+    assert signal["selector_kind"] == "rl_exploit(non_drive_tiebreak)"
+    assert signal["selection_reason"] == "rl_exploit(non_drive_tiebreak)"
+    assert signal["winner_scores"]["non_drive"] == 2.0
+    assert signal["protected_safety_filter"] is True
+    assert signal["authority_source"] == "protected_bodymap_safety"
+    assert signal["authority_reason"] == "fresh_bodymap_fallen_protected_safety"
 
 
 def test_lower_motor_port_distinguishes_current_selection_from_prior_applied_action() -> None:

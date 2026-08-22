@@ -61,7 +61,7 @@ from cca8_feeding import (
 )
 
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -3317,6 +3317,43 @@ class PolicyRuntime:
                 p.name == "policy:follow_mom" for p in matches
             )
             policy_debug["chosen"] = getattr(chosen, "name", None)
+            policy_debug["selector_kind"] = selector_kind
+            policy_debug["tie_break_label"] = tie_break_label or None
+            policy_debug["selection_reason"] = (
+                f"{selector_kind}; tie_break={tie_break_label}" if tie_break_label else selector_kind
+            )
+
+            score_rows: list[dict[str, Any]] = []
+            for policy in matches:
+                score_rows.append(
+                    {
+                        "policy": policy.name,
+                        "deficit": float(deficit(policy.name)),
+                        "non_drive": float(non_drive_priority(policy.name)),
+                        "q": float(skill_q(policy.name, default=0.0)),
+                    }
+                )
+            policy_debug["score_rows"] = score_rows
+            policy_debug["winner_scores"] = next(
+                (dict(row) for row in score_rows if row["policy"] == chosen.name),
+                None,
+            )
+
+            trigger_authority_source = None
+            trigger_authority_reason = None
+            if chosen.name == "policy:stand_up":
+                authority_decision = getattr(ctx, "navmap_standup_guarded_decision", None)
+                source = getattr(authority_decision, "authority_source", None)
+                trigger_authority_source = getattr(source, "value", source)
+                trigger_authority_reason = getattr(authority_decision, "reason", None)
+            elif chosen.name == "policy:follow_mom":
+                authority_decision = getattr(ctx, "navmap_followmom_authority_decision", None)
+                source = getattr(authority_decision, "authority_source", None)
+                trigger_authority_source = getattr(source, "value", source)
+                trigger_authority_reason = getattr(authority_decision, "reason", None)
+
+            policy_debug["selected_trigger_authority_source"] = trigger_authority_source
+            policy_debug["selected_trigger_authority_reason"] = trigger_authority_reason
             _experiment_policy_debug_record_v1(ctx, policy_debug)
         except Exception:
             pass

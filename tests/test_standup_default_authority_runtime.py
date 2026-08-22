@@ -230,8 +230,18 @@ def test_default_fallen_map_activates_safety_filter_and_selects_standup() -> Non
 
     assert selected == "policy:stand_up"
     assert fired.startswith("policy:stand_up")
-    assert ctx.experiment_policy_debug_last["guarded_map_fallen_safety_filter"] is True
-    assert ctx.experiment_policy_debug_last["matches_after_safety"] == ["policy:stand_up"]
+    debug = ctx.experiment_policy_debug_last
+    assert debug["guarded_map_fallen_safety_filter"] is True
+    assert debug["matches_after_safety"] == ["policy:stand_up"]
+    assert debug["selector_kind"] == "deficit"
+    assert debug["selection_reason"] == "deficit"
+    assert debug["selected_trigger_authority_source"] == "wnm_navmap"
+    assert debug["selected_trigger_authority_reason"] == "maintained_wnm_geometry_fallen_like"
+    winner_scores = debug["winner_scores"]
+    assert winner_scores["policy"] == "policy:stand_up"
+    assert winner_scores["deficit"] == 0.0
+    assert winner_scores["non_drive"] == 2.0
+    assert isinstance(winner_scores["q"], float)
 
 
 def test_default_selection_arms_expected_successor() -> None:

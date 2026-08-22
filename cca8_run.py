@@ -100,6 +100,7 @@ at the repo root and install with:
 
 # Standard Library Imports
 from __future__ import annotations
+from collections.abc import Mapping
 import argparse
 import json
 import os
@@ -645,7 +646,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.24.0"
+__version__ = "0.24.1"
 __all__ = [
     "main",
     "interactive_loop",
@@ -2407,13 +2408,40 @@ def _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt) -> dic
     )
 
 
+
+def _cognitive_scope_prompt_port_detail_v1(snapshot: Mapping[str, Any]) -> None:
+    """Let the technician drill into one stored DP signal without dumping every port."""
+    while True:
+        try:
+            raw = input("Inspect diagnostic point [DP00-DP18 | Enter = return]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if raw == "":
+            return
+
+        port_id = cca8_cognitive_scope.cognitive_scope_normalize_port_id_v1(raw)
+        if port_id is None:
+            print("Please enter DP00-DP18, or the equivalent number 0-18.")
+            continue
+        print()
+        print("\n".join(cca8_cognitive_scope.render_cognitive_scope_port_detail_lines_v1(snapshot, port_id)))
+        print()
+
+
+def _cognitive_scope_show_compact_snapshot_v1(snapshot: Mapping[str, Any]) -> None:
+    """Display the front panel and then offer repeated one-port drill-downs."""
+    print("\n".join(cca8_cognitive_scope.render_cognitive_scope_compact_snapshot_lines_v1(snapshot)))
+    _cognitive_scope_prompt_port_detail_v1(snapshot)
+
+
 def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
-    """Run Main Menu #3's first cognitive-storage-oscilloscope interface."""
+    """Run Main Menu #3's compact front panel and per-port diagnostic inspector."""
     while True:
         trace = cca8_cognitive_scope.cognitive_scope_trace_summary_v1(ctx)
         print()
         print("=" * 78)
-        print("CCA8 COGNITIVE STORAGE OSCILLOSCOPE / SYSTEM INSPECTOR -- PHASE 1")
+        print("CCA8 COGNITIVE STORAGE OSCILLOSCOPE / SYSTEM INSPECTOR -- PHASE 1B")
         print("=" * 78)
         print(
             f"Retained cognitive-cycle snapshots: {trace.get('retained_count')}/{trace.get('capacity')}  "
@@ -2421,13 +2449,14 @@ def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
         )
         print("DP00 is external simulation truth; DP01-DP18 are eighteen CCA8 service points.")
         print("The scope trace is read-only diagnostic storage, not goat memory. Signal injection is disabled.\n")
-        print("  1) Display latest retained cognitive-cycle snapshot")
+        print("  1) Display latest retained compact signal path + optional DP drill-down")
         print("  2) List retained snapshot index")
-        print("  3) Display retained snapshot by snapshot number")
-        print("  4) Display current live state (not retained; DP01 may be unavailable)")
-        print("  5) Legacy detailed Snapshot (WorldGraph + CTX + policies)")
-        print("  6) Generate / display interactive WorldGraph HTML")
-        print("  7) Clear retained oscilloscope snapshots")
+        print("  3) Display retained compact signal path by snapshot number + optional DP drill-down")
+        print("  4) Display current live compact state + optional DP drill-down")
+        print("  5) Display latest full raw all-port snapshot")
+        print("  6) Legacy detailed Snapshot (WorldGraph + CTX + policies)")
+        print("  7) Generate / display interactive WorldGraph HTML")
+        print("  8) Clear retained oscilloscope snapshots")
         print("  [Enter] Return to Main Menu")
         try:
             choice = input("Choose: ").strip()
@@ -2442,7 +2471,7 @@ def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
             if snapshot is None:
                 print("\nNo cognitive-cycle snapshot has been retained yet; showing current live state instead.\n")
                 snapshot = _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt)
-            print("\n".join(cca8_cognitive_scope.render_cognitive_scope_snapshot_lines_v1(snapshot)))
+            _cognitive_scope_show_compact_snapshot_v1(snapshot)
             continue
         if choice == "2":
             print("\n".join(cca8_cognitive_scope.render_cognitive_scope_trace_index_lines_v1(ctx, limit=30)))
@@ -2461,21 +2490,28 @@ def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
             if snapshot is None:
                 print(f"Snapshot {snapshot_no} is not retained in the current bounded trace.")
                 continue
-            print("\n".join(cca8_cognitive_scope.render_cognitive_scope_snapshot_lines_v1(snapshot)))
+            _cognitive_scope_show_compact_snapshot_v1(snapshot)
             continue
         if choice == "4":
             snapshot = _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt)
-            print("\n".join(cca8_cognitive_scope.render_cognitive_scope_snapshot_lines_v1(snapshot)))
+            _cognitive_scope_show_compact_snapshot_v1(snapshot)
             continue
         if choice == "5":
+            snapshot = cca8_cognitive_scope.cognitive_scope_latest_snapshot_v1(ctx)
+            if snapshot is None:
+                print("\nNo retained snapshot exists; showing the current live raw view instead.\n")
+                snapshot = _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt)
+            print("\n".join(cca8_cognitive_scope.render_cognitive_scope_snapshot_lines_v1(snapshot)))
+            continue
+        if choice == "6":
             print()
             print("LEGACY DETAILED SNAPSHOT -- retained temporarily for compatibility")
             print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=policy_rt))
             continue
-        if choice == "6":
+        if choice == "7":
             _open_worldgraph_pyvis_flow_v1(world)
             continue
-        if choice == "7":
+        if choice == "8":
             try:
                 confirm = input("Clear retained diagnostic snapshots? [y/N]: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
@@ -2487,7 +2523,7 @@ def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
             else:
                 print("Trace unchanged.")
             continue
-        print("Please choose 1-7 or press Enter to return.")
+        print("Please choose 1-8 or press Enter to return.")
 
 
 def _drive_tags(drives) -> list[str]:

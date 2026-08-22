@@ -15,14 +15,15 @@ module observes existing source-linked runtime state and must not manufacture
 missing intermediate signals merely to make every conceptual stage appear
 active.
 
-Scope of v0.1
+Scope of v0.2
 -------------
 - Stable DP00-DP18 diagnostic-port registry.
 - One compact snapshot envelope correlated to cognitive-cycle, controller-step,
   environment-step, selected-action, and applied-action identifiers.
 - Bounded in-memory retention, defaulting to 128 snapshots.
-- Read-only terminal renderers for the latest snapshot and retained-history
-  index.
+- Compact front-panel rendering for the complete DP00-DP18 signal path.
+- Full stored-signal drill-down for one selected diagnostic point.
+- Read-only terminal renderers for retained-history and raw all-port views.
 - Honest ``implemented``, ``partial``, ``collapsed``, ``idle``, ``missing``,
   and ``error`` states.
 
@@ -76,7 +77,7 @@ from cca8_controller import (
     skill_readout,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "COGNITIVE_SCOPE_PORTS_V1",
@@ -84,9 +85,13 @@ __all__ = [
     "build_cognitive_scope_snapshot_v1",
     "capture_cognitive_scope_snapshot_v1",
     "cognitive_scope_clear_v1",
+    "cognitive_scope_find_port_v1",
     "cognitive_scope_find_snapshot_v1",
     "cognitive_scope_latest_snapshot_v1",
+    "cognitive_scope_normalize_port_id_v1",
     "cognitive_scope_trace_summary_v1",
+    "render_cognitive_scope_compact_snapshot_lines_v1",
+    "render_cognitive_scope_port_detail_lines_v1",
     "render_cognitive_scope_snapshot_lines_v1",
     "render_cognitive_scope_trace_index_lines_v1",
     "__version__",
@@ -582,9 +587,17 @@ def _dp13_policy(ctx: Any, policy_rt: Any, selected_policy: Optional[str]) -> di
         "matches_after_safety": _json_safe(debug.get("matches_after_safety")),
         "matches_before_choice": _json_safe(debug.get("matches_before_choice")),
         "chosen": selected_policy or debug.get("chosen"),
-        "selection_reason": debug.get("selection_reason") or debug.get("reason"),
-        "protected_safety_filter": debug.get("protected_safety_filter") or debug.get("guarded_map_fallen_safety_filter"),
-        "authority_source": debug.get("authority_source") or debug.get("followmom_active_trigger_source"),
+        "selector_kind": debug.get("selector_kind"),
+        "selection_reason": debug.get("selection_reason"),
+        "tie_break_label": debug.get("tie_break_label"),
+        "score_rows": _json_safe(debug.get("score_rows")),
+        "winner_scores": _json_safe(debug.get("winner_scores")),
+        "fallen_safety_filter": debug.get("fallen_safety_filter"),
+        "legacy_fallen_safety_filter": debug.get("legacy_fallen_safety_filter"),
+        "guarded_map_fallen_safety_filter": debug.get("guarded_map_fallen_safety_filter"),
+        "protected_safety_filter": debug.get("fallen_safety_filter"),
+        "authority_source": debug.get("selected_trigger_authority_source"),
+        "authority_reason": debug.get("selected_trigger_authority_reason"),
     }
     active = bool(selected_policy or debug or loaded)
     return _port_sample("DP13", signal if active else {}, signal_status="active" if active else "idle")
@@ -884,6 +897,502 @@ def cognitive_scope_trace_summary_v1(ctx: Any) -> dict[str, Any]:
         "trace_is_cognitive_memory": False,
         "injection_enabled": False,
     }
+
+
+_COMPACT_PORT_LABELS_V1: dict[str, str] = {
+    "DP00": "WORLD",
+    "DP01": "SENSORS",
+    "DP02": "SHAPING",
+    "DP03": "ASSOCIATION",
+    "DP04": "LOCAL MAPS",
+    "DP05": "TEMPORAL",
+    "DP06": "SEGMENT",
+    "DP07": "BODYMAP",
+    "DP08": "MEMORY IDX",
+    "DP09": "COLUMNS",
+    "DP10": "COMPARE",
+    "DP11": "WNM",
+    "DP12": "DRIVES",
+    "DP13": "POLICY",
+    "DP14": "WNM OP",
+    "DP15": "MOTOR",
+    "DP16": "EXPECTED",
+    "DP17": "OUTCOME",
+    "DP18": "LEARNING",
+}
+
+
+def _mapping_or_empty(value: Any) -> Mapping[str, Any]:
+    """Return ``value`` as a mapping or an empty mapping for compact rendering."""
+    return value if isinstance(value, Mapping) else {}
+
+
+def _list_or_empty(value: Any) -> list[Any]:
+    """Return ``value`` as a list or an empty list for compact rendering."""
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
+def _compact_text(value: Any, *, missing: str = "unknown") -> str:
+    """Return one compact scalar-like terminal value."""
+    if value is None:
+        return missing
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    if isinstance(value, str):
+        return value or missing
+    return str(value)
+
+
+def _short_policy_name(value: Any) -> str:
+    """Return a policy name without the repetitive ``policy:`` prefix."""
+    text = _compact_text(value, missing="none")
+    return text.removeprefix("policy:")
+
+
+def _map_ref_text(value: Any, *, missing: str = "none") -> str:
+    """Render a map reference from either a direct map-ref or containing row."""
+    row = _mapping_or_empty(value)
+    nested = _mapping_or_empty(row.get("map_ref"))
+    if nested:
+        row = nested
+    map_id = row.get("map_id")
+    revision = row.get("revision")
+    if not isinstance(map_id, str) or not map_id:
+        return missing
+    if isinstance(revision, int):
+        return f"{map_id}@r{revision}"
+    return map_id
+
+
+def _expected_slots_text(value: Any) -> str:
+    """Return up to three expected key/value pairs for the front panel."""
+    slots = _mapping_or_empty(value)
+    if not slots:
+        return "none"
+    parts = [f"{key}={slots[key]}" for key in sorted(slots, key=str)[:3]]
+    if len(slots) > 3:
+        parts.append("...")
+    return ",".join(parts)
+
+
+def _implementation_marker(row: Mapping[str, Any]) -> str:
+    """Return a compact marker for partial, collapsed, or scaffold modules."""
+    implementation = str(row.get("implementation") or "")
+    if implementation == "collapsed":
+        return "COLLAPSED"
+    if implementation == "partial":
+        return "PARTIAL"
+    if implementation == "implemented_scaffold":
+        return "SCAFFOLD"
+    if implementation == "implemented_seam":
+        return "SEAM"
+    return ""
+
+
+def _compact_dp00(signal: Mapping[str, Any]) -> str:
+    return (
+        f"stage={_compact_text(signal.get('scenario_stage'))} | "
+        f"posture={_compact_text(signal.get('kid_posture'))} | "
+        f"mom={_compact_text(signal.get('mom_distance'))} | "
+        f"cliff={_compact_text(signal.get('cliff_distance'))} | "
+        f"nipple={_compact_text(signal.get('nipple_state'))}"
+    )
+
+
+def _compact_dp01(signal: Mapping[str, Any]) -> str:
+    raw = _mapping_or_empty(signal.get("raw_sensors"))
+    return (
+        f"preds={_compact_text(signal.get('predicate_count'), missing='0')} | "
+        f"cues={_compact_text(signal.get('cue_count'), missing='0')} | "
+        f"NavPatch={_compact_text(signal.get('nav_patch_count'), missing='0')} | "
+        f"raw_channels={len(raw)}"
+    )
+
+
+def _compact_dp02(signal: Mapping[str, Any]) -> str:
+    channels = _list_or_empty(signal.get("normalized_channel_keys"))
+    return (
+        f"COLLAPSED->adapter | channels={len(channels)} | "
+        f"NavPatch={_compact_text(signal.get('nav_patch_count'), missing='0')} | "
+        f"surface_grid={_compact_text(signal.get('surface_grid_present'))}"
+    )
+
+
+def _compact_dp03(signal: Mapping[str, Any]) -> str:
+    matches = _list_or_empty(signal.get("top_matches"))
+    top = _mapping_or_empty(matches[0]) if matches else {}
+    best = _mapping_or_empty(top.get("best"))
+    score = best.get("score")
+    score_text = f"{float(score):.2f}" if isinstance(score, (int, float)) else "n/a"
+    return (
+        f"PARTIAL | matches={_compact_text(signal.get('domain_match_count'), missing='0')} | "
+        f"decision={_compact_text(top.get('decision'))} | commit={_compact_text(top.get('commit'))} | score={score_text}"
+    )
+
+
+def _compact_dp04(signal: Mapping[str, Any]) -> str:
+    maps = _mapping_or_empty(signal.get("evidence_maps"))
+    maternal = _mapping_or_empty(maps.get("maternal_evidence"))
+    return (
+        f"PARTIAL | maps={len(maps)} | patches={_compact_text(signal.get('nav_patch_count'), missing='0')} | "
+        f"maternal={_map_ref_text(maternal)}"
+    )
+
+
+def _compact_dp05(signal: Mapping[str, Any]) -> str:
+    live = _mapping_or_empty(signal.get("live_dynamics_state"))
+    overlays = _mapping_or_empty(live.get("overlays"))
+    maternal = _mapping_or_empty(overlays.get("self_maternal"))
+    route = _mapping_or_empty(overlays.get("self_route"))
+    motor = _mapping_or_empty(overlays.get("lower_motor"))
+    materiality = _mapping_or_empty(live.get("materiality"))
+
+    maternal_trend = maternal.get("distance_trend")
+    if maternal_trend in (None, "", "unknown"):
+        maternal_summary = _mapping_or_empty(signal.get("maternal_temporal"))
+        maternal_trend = maternal_summary.get("trend")
+
+    return (
+        f"maternal={_compact_text(maternal_trend)} | route={_compact_text(route.get('motion_direction'))} | "
+        f"motor={_compact_text(motor.get('phase_detail') or motor.get('phase'))} | "
+        f"events={_compact_text(signal.get('event_history_count'), missing='0')} | "
+        f"material={_compact_text(materiality.get('material_change_recommended'))}"
+    )
+
+
+def _compact_dp06(signal: Mapping[str, Any]) -> str:
+    update = _mapping_or_empty(signal.get("observation_update"))
+    return (
+        f"PARTIAL | action={_compact_text(update.get('action'))} | "
+        f"candidates={_compact_text(signal.get('candidate_store_count'), missing='0')} | "
+        f"residuals={_compact_text(update.get('residual_count'), missing='0')} | "
+        f"matched={_compact_text(update.get('matched'))}"
+    )
+
+
+def _compact_dp07(signal: Mapping[str, Any]) -> str:
+    freshness = "stale" if signal.get("stale") is True else "fresh"
+    return (
+        f"posture={_compact_text(signal.get('posture'))} | mom={_compact_text(signal.get('mom_distance'))} | "
+        f"cliff={_compact_text(signal.get('cliff_distance'))} | zone={_compact_text(signal.get('zone'))} | {freshness}"
+    )
+
+
+def _compact_dp08(signal: Mapping[str, Any]) -> str:
+    return (
+        f"SCAFFOLD | candidates={_compact_text(signal.get('candidate_count'), missing='0')} | "
+        f"winner={_map_ref_text(signal.get('winner_ref'))} | "
+        f"status={_compact_text(signal.get('retrieval_status'))} | "
+        f"full_scan={_compact_text(signal.get('full_payload_scan'))}"
+    )
+
+
+def _compact_dp09(signal: Mapping[str, Any]) -> str:
+    reinstatements = _list_or_empty(signal.get("reinstatements"))
+    conflict_count = 0
+    exact_count = 0
+    for item in reinstatements:
+        row = _mapping_or_empty(item)
+        status = str(row.get("status") or "")
+        if "conflict" in status:
+            conflict_count += 1
+        match = _mapping_or_empty(row.get("match_result"))
+        if match.get("status") == "exact" or row.get("reason") == "exact_structural_match":
+            exact_count += 1
+    consolidation = _mapping_or_empty(signal.get("last_consolidation"))
+    return (
+        f"engrams={_compact_text(signal.get('engram_count'), missing='0')} | "
+        f"reinstated={_compact_text(signal.get('reinstatement_count'), missing='0')} | "
+        f"exact={exact_count} | conflicts={conflict_count} | "
+        f"consolidated={_compact_text(consolidation.get('consolidated'))}"
+    )
+
+
+def _compact_dp10(signal: Mapping[str, Any]) -> str:
+    return (
+        f"action={_short_policy_name(signal.get('action'))} | "
+        f"residuals={_compact_text(signal.get('residual_count'), missing='0')} | "
+        f"acceptance={_compact_text(signal.get('acceptance'))} | exact={_compact_text(signal.get('exact_match'))}"
+    )
+
+
+def _compact_dp11(signal: Mapping[str, Any]) -> str:
+    operative = _mapping_or_empty(signal.get("operative_map"))
+    role = _compact_text(operative.get("role"))
+    ready_count = _compact_text(signal.get("ready_count"), missing="0")
+    ready_capacity = _compact_text(signal.get("ready_capacity"), missing="0")
+    transition = _mapping_or_empty(signal.get("last_transition"))
+    transition_result = transition.get("acceptance_result") or transition.get("failure_reason") or "none"
+    return (
+        f"operative={role}:{_map_ref_text(operative)} | ready={ready_count}/{ready_capacity} | "
+        f"transition={_compact_text(transition_result)}"
+    )
+
+
+def _compact_dp12(signal: Mapping[str, Any]) -> str:
+    flags = _list_or_empty(signal.get("active_flags"))
+    return (
+        f"hunger={_compact_text(signal.get('hunger'))} | fatigue={_compact_text(signal.get('fatigue'))} | "
+        f"warmth={_compact_text(signal.get('warmth'))} | flags={len(flags)} | age={_compact_text(signal.get('age_days'))}d"
+    )
+
+
+def _compact_dp13(signal: Mapping[str, Any]) -> str:
+    triggered = _list_or_empty(signal.get("triggered"))
+    reason = _compact_text(signal.get("selection_reason"))
+    if reason.startswith("rl_exploit(") and reason.endswith(")"):
+        reason = reason[len("rl_exploit("):-1]
+    elif "; tie_break=" in reason:
+        reason = reason.split("; tie_break=", 1)[1]
+    if reason.startswith("non_drive_priority("):
+        reason = "non_drive_tiebreak"
+    elif reason.startswith("stable_order("):
+        reason = "stable_order"
+    return (
+        f"chosen={_short_policy_name(signal.get('chosen'))} | reason={reason} | cand={len(triggered)} | "
+        f"safety={_compact_text(signal.get('protected_safety_filter'))} | "
+        f"source={_compact_text(signal.get('authority_source'))}"
+    )
+
+
+def _compact_dp14(signal: Mapping[str, Any]) -> str:
+    transition = _mapping_or_empty(signal.get("transition"))
+    outcome = _mapping_or_empty(signal.get("last_policy_outcome"))
+    reward = outcome.get("reward")
+    reward_text = f"{float(reward):+.2f}" if isinstance(reward, (int, float)) else "n/a"
+    return (
+        f"selected={_short_policy_name(signal.get('selected_primitive'))} | "
+        f"next={_short_policy_name(signal.get('next_action_for_environment'))} | "
+        f"map_changed={_compact_text(transition.get('changed'))} | reward={reward_text}"
+    )
+
+
+def _compact_dp15(signal: Mapping[str, Any]) -> str:
+    acknowledgement = "MISMATCH" if signal.get("handoff_ack_mismatch") is True else "ok"
+    return (
+        f"selected={_short_policy_name(signal.get('selected_task_action'))} | "
+        f"applied={_short_policy_name(signal.get('action_applied_this_environment_step'))} | "
+        f"ack={acknowledgement} | slip={_compact_text(signal.get('slip_detected'))} | "
+        f"error={_compact_text(signal.get('error_code'), missing='none')}"
+    )
+
+
+def _compact_dp16(signal: Mapping[str, Any]) -> str:
+    prediction = _mapping_or_empty(signal.get("prediction_next_record"))
+    expected = _mapping_or_empty(prediction.get("expected"))
+    if not expected:
+        payload = _mapping_or_empty(signal.get("navmap_expected_payload"))
+        expected = _mapping_or_empty(payload.get("slots"))
+    pending = bool(signal.get("pending_action") or signal.get("followmom_pending") or signal.get("feeding_pending"))
+    return (
+        f"policy={_short_policy_name(prediction.get('policy'))} | expected={_expected_slots_text(expected)} | "
+        f"pending={_compact_text(pending)}"
+    )
+
+
+def _compact_dp17(signal: Mapping[str, Any]) -> str:
+    error = _mapping_or_empty(signal.get("prediction_error"))
+    prediction = _mapping_or_empty(error.get("prediction"))
+    expected = _mapping_or_empty(prediction.get("expected"))
+    observed = _mapping_or_empty(error.get("observed"))
+    by_slot = _mapping_or_empty(error.get("error_by_slot"))
+    changed = "none"
+    if by_slot:
+        slot = sorted(by_slot, key=str)[0]
+        changed = f"{slot}={_compact_text(expected.get(slot))}->{_compact_text(observed.get(slot))}"
+    matched = error.get("matched")
+    status = "match" if matched is True else "mismatch" if matched is False else "idle"
+    severity = error.get("severity")
+    severity_text = f"{float(severity):.2f}" if isinstance(severity, (int, float)) else "n/a"
+    return (
+        f"{status} | policy={_short_policy_name(prediction.get('policy'))} | {changed} | severity={severity_text}"
+    )
+
+
+def _compact_dp18(signal: Mapping[str, Any]) -> str:
+    skills = _list_or_empty(signal.get("skill_ledger"))
+    consolidation = _mapping_or_empty(signal.get("last_consolidation"))
+    outcome = _mapping_or_empty(signal.get("last_policy_outcome"))
+    return (
+        f"skill_rows={len(skills)} | last={_short_policy_name(outcome.get('action'))} | "
+        f"consolidated={_compact_text(consolidation.get('consolidated'))} | "
+        f"eligible={_compact_text(signal.get('eligibility_count'), missing='0')} | "
+        f"Columns={_compact_text(signal.get('column_engram_count'), missing='0')} | "
+        f"WG={_compact_text(signal.get('worldgraph_binding_count'), missing='0')}"
+    )
+
+
+def _compact_port_signal_v1(row: Mapping[str, Any]) -> str:
+    """Return the technician-facing one-line summary for one DP service point."""
+    status = str(row.get("signal_status") or "unknown")
+    if status != "active":
+        marker = _implementation_marker(row)
+        prefix = f"{marker} | " if marker else ""
+        return f"{prefix}{status.upper()}"
+
+    signal = _mapping_or_empty(row.get("signal"))
+    port_id = str(row.get("port_id") or "")
+    formatters: dict[str, Callable[[Mapping[str, Any]], str]] = {
+        "DP00": _compact_dp00,
+        "DP01": _compact_dp01,
+        "DP02": _compact_dp02,
+        "DP03": _compact_dp03,
+        "DP04": _compact_dp04,
+        "DP05": _compact_dp05,
+        "DP06": _compact_dp06,
+        "DP07": _compact_dp07,
+        "DP08": _compact_dp08,
+        "DP09": _compact_dp09,
+        "DP10": _compact_dp10,
+        "DP11": _compact_dp11,
+        "DP12": _compact_dp12,
+        "DP13": _compact_dp13,
+        "DP14": _compact_dp14,
+        "DP15": _compact_dp15,
+        "DP16": _compact_dp16,
+        "DP17": _compact_dp17,
+        "DP18": _compact_dp18,
+    }
+    formatter = formatters.get(port_id)
+    if formatter is None:
+        return "ACTIVE"
+    try:
+        return formatter(signal)
+    except Exception as exc:  # pragma: no cover - display must not break diagnostics
+        return f"COMPACT_RENDER_ERROR {type(exc).__name__}: {exc}"
+
+
+def cognitive_scope_normalize_port_id_v1(value: Any) -> Optional[str]:
+    """Normalize ``13``, ``DP13``, or ``dp13`` to one valid registry port id."""
+    text = str(value or "").strip().upper()
+    if text.startswith("DP"):
+        text = text[2:]
+    if not text.isdigit():
+        return None
+    number = int(text)
+    port_id = f"DP{number:02d}"
+    return port_id if port_id in _PORT_BY_ID_V1 else None
+
+
+def cognitive_scope_find_port_v1(snapshot: Mapping[str, Any], port_id: Any) -> Optional[Mapping[str, Any]]:
+    """Return one stored DP row by normalized identifier without mutating the snapshot."""
+    normalized = cognitive_scope_normalize_port_id_v1(port_id)
+    if normalized is None:
+        return None
+    ports = snapshot.get("ports")
+    if not isinstance(ports, list):
+        return None
+    for row in ports:
+        if isinstance(row, Mapping) and row.get("port_id") == normalized:
+            return row
+    return None
+
+
+def render_cognitive_scope_compact_snapshot_lines_v1(snapshot: Mapping[str, Any]) -> list[str]:
+    """Render the complete DP00-DP18 circuit as a concise technician front panel."""
+    lines = [
+        "CCA8 COGNITIVE STORAGE OSCILLOSCOPE -- COMPACT SIGNAL PATH",
+        "=" * 78,
+        (
+            f"snapshot={snapshot.get('snapshot_no') or 'live'} capture={snapshot.get('capture_kind')} "
+            f"cycle={snapshot.get('cognitive_cycle')} controller_step={snapshot.get('controller_step')} "
+            f"environment_step={snapshot.get('environment_step')}"
+        ),
+        (
+            f"applied={snapshot.get('action_applied')!r} "
+            f"selected_for_next_step={snapshot.get('action_selected_for_next_step')!r}"
+        ),
+        "One compact reading per architectural service point; full stored signal is available by DP drill-down.",
+        "The trace is diagnostic-only, outside goat cognition, and signal injection remains disabled.",
+        "-" * 78,
+    ]
+
+    ports = snapshot.get("ports")
+    if not isinstance(ports, list):
+        lines.append("(no port samples)")
+        lines.append("=" * 78)
+        return lines
+
+    for row in ports:
+        if not isinstance(row, Mapping):
+            continue
+        port_id = str(row.get("port_id") or "????")
+        label = _COMPACT_PORT_LABELS_V1.get(port_id, str(row.get("name") or "UNKNOWN").upper())
+        prefix = f"{port_id} {label:<13} "
+        summary = _compact_port_signal_v1(row)
+        wrapped = textwrap.wrap(
+            prefix + summary,
+            width=132,
+            subsequent_indent=" " * len(prefix),
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+        lines.extend(wrapped or [prefix.rstrip()])
+
+    lines.extend(
+        [
+            "-" * 78,
+            "Inspect one stored diagnostic point for full details: DP00-DP18.",
+            "=" * 78,
+        ]
+    )
+    return lines
+
+
+def render_cognitive_scope_port_detail_lines_v1(snapshot: Mapping[str, Any], port_id: Any) -> list[str]:
+    """Render the complete stored signal for one selected diagnostic point."""
+    normalized = cognitive_scope_normalize_port_id_v1(port_id)
+    row = cognitive_scope_find_port_v1(snapshot, normalized) if normalized is not None else None
+    lines = [
+        "CCA8 COGNITIVE STORAGE OSCILLOSCOPE -- DIAGNOSTIC-POINT DETAIL",
+        "=" * 78,
+        (
+            f"snapshot={snapshot.get('snapshot_no') or 'live'} cycle={snapshot.get('cognitive_cycle')} "
+            f"controller_step={snapshot.get('controller_step')} environment_step={snapshot.get('environment_step')}"
+        ),
+    ]
+    if row is None or normalized is None:
+        lines.extend(
+            [
+                f"Requested diagnostic point {port_id!r} is not available. Use DP00-DP18.",
+                "=" * 78,
+            ]
+        )
+        return lines
+
+    lines.extend(
+        [
+            f"{normalized}  {row.get('name')}",
+            f"implementation={row.get('implementation')}  signal_status={row.get('signal_status')}",
+            f"authority={row.get('authority')}",
+            f"source={row.get('source')}",
+            "-" * 78,
+            "signal:",
+        ]
+    )
+    signal = row.get("signal")
+    if isinstance(signal, Mapping) and signal:
+        rendered = json.dumps(_json_safe(signal), indent=2, sort_keys=True, ensure_ascii=True)
+        lines.extend("  " + line for line in rendered.splitlines())
+    else:
+        lines.append("  (no active signal captured)")
+
+    note = row.get("note")
+    if isinstance(note, str) and note:
+        lines.extend(["", "note:"])
+        lines.extend(
+            textwrap.wrap(
+                "  " + note,
+                width=132,
+                subsequent_indent="  ",
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+        )
+    lines.append("=" * 78)
+    return lines
 
 
 def _one_line_value(value: Any) -> str:
