@@ -60,7 +60,7 @@ if TYPE_CHECKING:
     )
     from cca8_wnm_runtime import WNMReadyEntryV1, WNMTransitionRecordV1
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -951,6 +951,16 @@ class Ctx:
     navmap_memory_evidence_defeat_count_v1: int = 0
     navmap_memory_ready_admission_count_v1: int = 0
     navmap_memory_associative_jump_count_v1: int = 0
+
+    # Cognitive storage oscilloscope (Main Menu #3, first implementation slice)
+    # ------------------------------------------------------------------------
+    # These bounded JSON-safe records are external diagnostics, not cognitive
+    # memory. No policy, WNM, retrieval, or learning path may read them.
+    cognitive_scope_enabled_v1: bool = True
+    cognitive_scope_capacity_v1: int = 128
+    cognitive_scope_snapshot_no_v1: int = 0
+    cognitive_scope_trace_v1: list[dict[str, Any]] = field(default_factory=list)
+    cognitive_scope_last_capture_v1: dict[str, Any] = field(default_factory=dict)
 
     # Per-cycle JSON log record (Phase X): minimal, replayable trace contract
     # ---------------------------------------------------------------------

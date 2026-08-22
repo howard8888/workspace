@@ -27,11 +27,13 @@ import os
 import sys
 from collections.abc import Callable
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __all__ = [
     "ASCII_LOGOS",
     "MAIN_MENU_HEADER",
     "MAIN_MENU_PROMPT",
+    "MENU_RESPONSE_DIVIDER",
+    "menu_selection_banner",
     "MENU_ALIASES",
     "MENU_NUMBER_COMPATIBILITY",
     "MIN_ALIAS_PREFIX",
@@ -44,6 +46,7 @@ __all__ = [
 ]
 
 TECH_MANUAL = "http://github.com/howard8888/workspace"
+MENU_RESPONSE_DIVIDER = "-" * 78
 
 ASCII_LOGOS = {
     "badge": r"""
@@ -68,7 +71,7 @@ MAIN_MENU_HEADER = (
     '\n'
     '\n'
     '    ============================================================================\n'
-    '                               CCA8 MAIN MENU\n'
+    '                  CCA8 MAIN MENU -- MOUNTAIN GOAT-LIKE SIMULATION\n'
     '    ============================================================================\n'
     '\n'
     '    '
@@ -78,11 +81,11 @@ MAIN_MENU_PROMPT = (
     '    Enter a menu number or one of the bracketed text commands.\n'
     '\n'
     '    # Quick Start & Tutorial\n'
-    '    1) Understanding bindings, edges, predicates, policies [understanding, tagging]\n'
+    '    1) Brief Overview of Key Concepts [understanding, tagging]\n'
     '    2) Help: System Docs and/or Tutorial with demo tour [help, tutorial, demo]\n'
     '\n'
     '    # Quick Start / Overview\n'
-    '    3) Snapshot (bindings + edges + ctx + policies) [snapshot, display]\n'
+    '    3) Cognitive Storage Oscilloscope / System Inspector [scope, oscilloscope, snapshot]\n'
     '    4) World stats [world, stats]\n'
     '    5) Recent bindings (last 5) [last, bindings]\n'
     '    6) Drives & drive tags [drives]\n'
@@ -170,6 +173,9 @@ MENU_ALIASES = {
     # Quick Start / Overview
     "snapshot": "3",
     "display": "3",
+    "scope": "3",
+    "oscilloscope": "3",
+    "cognitive-scope": "3",
     "world": "4",
     "stats": "4",
     "last": "5",
@@ -366,6 +372,19 @@ MENU_NUMBER_COMPATIBILITY = {
     "50": "50",  # SimRobotGoat RCOS sandbox
     "51": "51",  # Autonomous newborn survival demo
 }
+
+
+
+def menu_selection_banner(selection: str) -> str:
+    """Return a visible start marker for one Main Menu response.
+
+    The displayed menu number is preserved here, before compatibility routing
+    translates it to a historical internal handler key. This keeps long terminal
+    responses easy to find when the user scrolls back through prior output.
+    """
+    normalized = selection.strip()
+    label = f"#{normalized}" if normalized.isdigit() else normalized.upper()
+    return f"{MENU_RESPONSE_DIVIDER}\nMENU SELECTION {label}\n"
 
 
 

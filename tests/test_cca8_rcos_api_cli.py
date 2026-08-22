@@ -11,7 +11,7 @@ def test_profile_rcos_api_prints_explanation_and_falls_back_to_goat(capsys) -> N
     assert result == ("Mountain Goat", 0.015, 0.2, 2)
     assert "Robotic Cognitive Operating System (RCOS)" in output
     assert "an RCOS API configuration is not available" in output
-    assert "Profile will be set to mountain goat-like brain simulation" in output
+    assert "PROFILE WILL BE SET TO MOUNTAIN GOAT-LIKE BRAIN SIMULATION" in output
 
 
 def test_main_accepts_rcos_api_and_routes_to_interactive_loop(monkeypatch) -> None:

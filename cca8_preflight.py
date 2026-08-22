@@ -62,7 +62,7 @@ from cca8_env import HybridEnvironment
 from cca8_features import FactMeta
 from cca8_temporal import TemporalContext
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __all__ = [
     "PreflightRuntime",
     "run_llm_operational_preflight_check",
@@ -543,6 +543,15 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
             ("cca8_openai",      ["OpenAIRuntime", "__version__"]),
             ("cca8_profiles",    ["ProfileOperations", "choose_profile", "__version__"]),
             ("cca8_guidance",    ["TutorialRuntime", "print_tagging_and_policies_help", "__version__"]),
+            (
+                "cca8_cognitive_scope",
+                [
+                    "COGNITIVE_SCOPE_PORTS_V1",
+                    "capture_cognitive_scope_snapshot_v1",
+                    "render_cognitive_scope_snapshot_lines_v1",
+                    "__version__",
+                ],
+            ),
             (
                 "cca8_working_memory",
                 [

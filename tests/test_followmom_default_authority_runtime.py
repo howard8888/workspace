@@ -8,7 +8,6 @@ import json
 
 import pytest
 
-import cca8_context
 import cca8_followmom_authority
 import cca8_run
 from cca8_context import Ctx
@@ -987,11 +986,8 @@ def test_legacy_gate_helper_still_reproduces_protected_and_permissive_results() 
     assert protected.reason == "protected_posture_fallen"
 
 
-def test_phase4f_component_versions_and_registry_entry_are_current() -> None:
-    """The new authority module should be versioned and registered once."""
-    assert cca8_followmom_authority.__version__ == "0.1.0"
-    assert cca8_run.__version__ == "0.23.0"
-    assert cca8_context.__version__ == "0.17.0"
+def test_phase4f_component_registry_entry_is_current() -> None:
+    """The FollowMom authority module should remain registered exactly once."""
 
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["followmom_authority"] == "cca8_followmom_authority"

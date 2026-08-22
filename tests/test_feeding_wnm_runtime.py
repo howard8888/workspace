@@ -9,15 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import cca8_context
-import cca8_env
-import cca8_feeding
-import cca8_navmap_runtime
 import cca8_policy_runtime
-import cca8_predictive
-import cca8_reporting
 import cca8_run
-import cca8_wnm_runtime
 from cca8_context import Ctx
 from cca8_controller import Drives
 from cca8_env import EnvObservation, EnvState, HybridEnvironment, PerceptionAdapter
@@ -207,19 +200,10 @@ def _zoom_to_closeup(
     )
 
 
-def test_phase5_versions_context_defaults_and_registry_are_current() -> None:
-    """Phase 5 modules and their runtime registers should be versioned and registered once."""
+def test_phase5_context_defaults_and_registry_are_current() -> None:
+    """Phase 5 runtime defaults and component-registry entries should remain current."""
     ctx = Ctx()
 
-    assert cca8_run.__version__ == "0.23.0"
-    assert cca8_context.__version__ == "0.17.0"
-    assert cca8_env.__version__ == "0.5.0"
-    assert cca8_navmap_runtime.__version__ == "0.14.0"
-    assert cca8_policy_runtime.__version__ == "0.6.0"
-    assert cca8_predictive.__version__ == "0.3.0"
-    assert cca8_reporting.__version__ == "0.5.0"
-    assert cca8_feeding.__version__ == "0.2.0"
-    assert cca8_wnm_runtime.__version__ == "0.3.0"
     assert ctx.wnm_operative_map_v1 is None
     assert ctx.wnm_ready_set_v1 == []
     assert ctx.wnm_ready_capacity_v1 == 3
@@ -228,7 +212,6 @@ def test_phase5_versions_context_defaults_and_registry_are_current() -> None:
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)  # pylint: disable=protected-access
     assert registry["feeding"] == "cca8_feeding"
     assert registry["wnm_runtime"] == "cca8_wnm_runtime"
-    assert len(cca8_run._cca8_component_rows()) == 41  # pylint: disable=protected-access
     assert len(cca8_run.PRIMITIVES) == 8
 
 

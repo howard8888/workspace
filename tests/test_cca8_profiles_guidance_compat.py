@@ -220,3 +220,31 @@ def test_profile_and_guidance_versions_appear_in_runner_report() -> None:
 
     assert versions["profiles"] == cca8_profiles.__version__
     assert versions["guidance"] == cca8_guidance.__version__
+
+
+def test_goat_profile_intro_is_prominent(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """The operational baseline should be unmistakable after selecting the Goat profile."""
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": "1")
+    ctx = cca8_run.Ctx()
+
+    result = cca8_run.choose_profile(ctx, cca8_run.cca8_world_graph.WorldGraph())
+    output = capsys.readouterr().out
+
+    assert result["name"] == "Mountain Goat"
+    assert "MOUNTAIN GOAT-LIKE BRAIN SIMULATION" in output
+
+
+def test_research_profile_fallback_is_prominent(capsys: pytest.CaptureFixture[str]) -> None:
+    """Research-profile narratives should clearly announce the operational fallback."""
+    result = cca8_profiles.profile_chimpanzee(SimpleNamespace())
+    output = capsys.readouterr().out
+
+    assert result == ("Mountain Goat", 0.015, 0.2, 2)
+    assert "PROFILE WILL BE SET TO MOUNTAIN GOAT-LIKE BRAIN SIMULATION" in output
+
+
+def test_main_menu_header_identifies_operational_profile() -> None:
+    """The Main Menu header should identify the currently operational Goat simulation."""
+    import cca8_cli  # pylint: disable=import-outside-toplevel
+
+    assert "CCA8 MAIN MENU -- MOUNTAIN GOAT-LIKE SIMULATION" in cca8_cli.MAIN_MENU_HEADER

@@ -55,7 +55,7 @@ Core runtime:
   cca8_maternal_temporal.py, cca8_maternal_continuity.py, cca8_followmom_compare.py,
   cca8_followmom_advisory.py, cca8_followmom_authority.py, cca8_feeding.py, cca8_terrain.py,
   cca8_live_dynamics.py, cca8_navmap_memory.py, cca8_wnm_runtime.py,
-  cca8_reporting.py, cca8_observation_runtime.py,
+  cca8_cognitive_scope.py, cca8_reporting.py, cca8_observation_runtime.py,
   cca8_policy_runtime.py, and cca8_preflight.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
   sys, logging, math, datetime, dataclasses, typing, collections, random,
@@ -131,6 +131,7 @@ import cca8_terrain
 import cca8_live_dynamics
 import cca8_navmap_memory
 import cca8_wnm_runtime
+import cca8_cognitive_scope
 import cca8_maternal_continuity
 import cca8_maternal_geometry
 import cca8_maternal_temporal
@@ -644,7 +645,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.23.0"
+__version__ = "0.24.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -2236,6 +2237,17 @@ def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Bod
     )
 
 
+def _readme_compendium_path_v1() -> str:
+    """Return the README/compendium path colocated with the CCA8 runner.
+
+    Resolving from ``__file__`` rather than the process working directory keeps
+    Menu 2 functional when ``cca8_run.py`` is launched from another directory.
+    The caller still verifies that the file exists before asking the operating
+    system to open it.
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")
+
+
 # --- WorldGraph snapshot + engram helpers (runner-facing) ------------------------
 
 
@@ -2332,6 +2344,150 @@ def loop_helper(autosave_from_args: Optional[str], world, drives, ctx=None, time
     print("\n-----\n") #visual spacer before menu prints again
     #this is usually the end of the elif branch of a menu selection block
     #thus, control now falls to the bottom of the while loop and then back to top where while True starts its next iteration
+
+
+
+
+def _open_worldgraph_pyvis_flow_v1(world) -> None:
+    """Generate and optionally open the existing interactive WorldGraph HTML view."""
+    default_path = "world_graph.html"
+    try:
+        path = input(f"Save HTML to (default: {default_path}): ").strip() or default_path
+    except Exception:
+        path = default_path
+    try:
+        out = world.to_pyvis_html(
+            path_html=path,
+            label_mode="id+first_pred",
+            show_edge_labels=True,
+            physics=True,
+        )
+        print(f"Interactive graph written to: {out}")
+        try:
+            open_now = input("Open in your default browser now? [y/N]: ").strip().lower()
+        except Exception:
+            open_now = "n"
+        if open_now not in ("y", "yes"):
+            return
+        try:
+            import webbrowser
+
+            if sys.platform.startswith("win"):
+                os.startfile(out)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                os.system(f'open "{out}"')
+            else:
+                webbrowser.open(f"file://{out}")
+            print("(opened in your browser)")
+        except Exception as exc:
+            print(f"[warn] Could not open automatically: {exc}")
+    except Exception as exc:
+        print(f"[warn] Could not generate Pyvis HTML: {exc}")
+        print("       Tip: install with  pip install pyvis")
+
+
+def _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt) -> dict[str, Any]:
+    """Build one current-state scope view without adding it to retained history."""
+    state = getattr(env, "state", None)
+    env_step = getattr(state, "step_index", None)
+    applied = getattr(state, "last_applied_action", None)
+    selected = getattr(ctx, "env_last_action", None)
+    return cca8_cognitive_scope.build_cognitive_scope_snapshot_v1(
+        ctx,
+        env=env,
+        env_obs=None,
+        world=world,
+        drives=drives,
+        policy_rt=policy_rt,
+        selected_policy=selected if isinstance(selected, str) else None,
+        action_applied=applied if isinstance(applied, str) else None,
+        env_step=env_step if isinstance(env_step, int) else None,
+        capture_kind="manual_live",
+        snapshot_no=None,
+    )
+
+
+def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
+    """Run Main Menu #3's first cognitive-storage-oscilloscope interface."""
+    while True:
+        trace = cca8_cognitive_scope.cognitive_scope_trace_summary_v1(ctx)
+        print()
+        print("=" * 78)
+        print("CCA8 COGNITIVE STORAGE OSCILLOSCOPE / SYSTEM INSPECTOR -- PHASE 1")
+        print("=" * 78)
+        print(
+            f"Retained cognitive-cycle snapshots: {trace.get('retained_count')}/{trace.get('capacity')}  "
+            f"total captured this session: {trace.get('total_capture_count')}"
+        )
+        print("DP00 is external simulation truth; DP01-DP18 are eighteen CCA8 service points.")
+        print("The scope trace is read-only diagnostic storage, not goat memory. Signal injection is disabled.\n")
+        print("  1) Display latest retained cognitive-cycle snapshot")
+        print("  2) List retained snapshot index")
+        print("  3) Display retained snapshot by snapshot number")
+        print("  4) Display current live state (not retained; DP01 may be unavailable)")
+        print("  5) Legacy detailed Snapshot (WorldGraph + CTX + policies)")
+        print("  6) Generate / display interactive WorldGraph HTML")
+        print("  7) Clear retained oscilloscope snapshots")
+        print("  [Enter] Return to Main Menu")
+        try:
+            choice = input("Choose: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+
+        if choice == "":
+            return
+        if choice == "1":
+            snapshot = cca8_cognitive_scope.cognitive_scope_latest_snapshot_v1(ctx)
+            if snapshot is None:
+                print("\nNo cognitive-cycle snapshot has been retained yet; showing current live state instead.\n")
+                snapshot = _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt)
+            print("\n".join(cca8_cognitive_scope.render_cognitive_scope_snapshot_lines_v1(snapshot)))
+            continue
+        if choice == "2":
+            print("\n".join(cca8_cognitive_scope.render_cognitive_scope_trace_index_lines_v1(ctx, limit=30)))
+            continue
+        if choice == "3":
+            try:
+                raw = input("Snapshot number: ").strip()
+                snapshot_no = int(raw)
+            except (EOFError, KeyboardInterrupt):
+                print()
+                continue
+            except ValueError:
+                print("Please enter an integer snapshot number.")
+                continue
+            snapshot = cca8_cognitive_scope.cognitive_scope_find_snapshot_v1(ctx, snapshot_no)
+            if snapshot is None:
+                print(f"Snapshot {snapshot_no} is not retained in the current bounded trace.")
+                continue
+            print("\n".join(cca8_cognitive_scope.render_cognitive_scope_snapshot_lines_v1(snapshot)))
+            continue
+        if choice == "4":
+            snapshot = _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt)
+            print("\n".join(cca8_cognitive_scope.render_cognitive_scope_snapshot_lines_v1(snapshot)))
+            continue
+        if choice == "5":
+            print()
+            print("LEGACY DETAILED SNAPSHOT -- retained temporarily for compatibility")
+            print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=policy_rt))
+            continue
+        if choice == "6":
+            _open_worldgraph_pyvis_flow_v1(world)
+            continue
+        if choice == "7":
+            try:
+                confirm = input("Clear retained diagnostic snapshots? [y/N]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                continue
+            if confirm in ("y", "yes"):
+                removed = cca8_cognitive_scope.cognitive_scope_clear_v1(ctx)
+                print(f"Cleared {removed} retained diagnostic snapshot(s).")
+            else:
+                print("Trace unchanged.")
+            continue
+        print("Please choose 1-7 or press Enter to return.")
 
 
 def _drive_tags(drives) -> list[str]:
@@ -2877,6 +3033,7 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("live_dynamics", "cca8_live_dynamics"),
     ("navmap_memory", "cca8_navmap_memory"),
     ("wnm_runtime", "cca8_wnm_runtime"),
+    ("cognitive_scope", "cca8_cognitive_scope"),
     ("standup_compare", "cca8_standup_compare"),
     ("reporting", "cca8_reporting"),
     ("observation_runtime", "cca8_observation_runtime"),
@@ -4543,6 +4700,24 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
         except Exception:
             pass
 
+        # Cognitive storage oscilloscope: retain one bounded, read-only
+        # architectural snapshot for every closed-loop cognitive cycle.
+        try:
+            cca8_cognitive_scope.capture_cognitive_scope_snapshot_v1(
+                ctx,
+                env=env,
+                env_obs=env_obs,
+                world=world,
+                drives=drives,
+                policy_rt=policy_rt,
+                selected_policy=policy_name if isinstance(policy_name, str) else None,
+                action_applied=action_for_env if isinstance(action_for_env, str) else None,
+                env_step=step_idx if isinstance(step_idx, int) else None,
+                capture_kind="cognitive_cycle",
+            )
+        except Exception as exc:
+            logging.error("[cognitive_scope] capture failed: %s", exc, exc_info=True)
+
         # Per-cycle JSON record (Phase X scaffolding): replayable debug trace.
         # This is OFF by default; enable by setting ctx.cycle_json_enabled=True and (optionally)
         # ctx.cycle_json_path="cycle_log.jsonl".
@@ -4709,8 +4884,10 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
         except Exception as e:
             logging.error("[cycle_json] record build/append failed: %s", e, exc_info=True)
 
-    print("\n[env-loop] Closed-loop cognitive cycle complete. "
-          "You can inspect details via Snapshot or the mini-snapshot that follows.")
+    print(
+        "\n[env-loop] Closed-loop cognitive cycle complete. "
+        "Inspect the retained signal path with Menu #3 Cognitive Storage Oscilloscope."
+    )
     if teaching_mode:
         print()
         print(menu37_teaching_after_run_v1())
@@ -5316,14 +5493,15 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
 
         ckey = choice.strip().lower()
+        alias_route_message: str | None = None
 
-        # If it's not a pure number, try word/prefix routing first
+        # If it's not a pure number, try word/prefix routing first.
         if not ckey.isdigit():
             # A successful route returns a displayed menu number; ambiguous prefixes return candidate aliases.
             routed, matches = cca8_cli.route_menu_alias(ckey)
             if routed is not None:
                 if pretty_scroll:
-                    print(f"[text input menu selection successfully matched: '{ckey}' → {routed}]")
+                    alias_route_message = f"[text input menu selection successfully matched: '{ckey}' → {routed}]"
                 choice = routed
             else:
                 if len(matches) > 1:
@@ -5332,7 +5510,17 @@ def interactive_loop(args: argparse.Namespace) -> None:
                           f"{'...' if len(matches) > 6 else ''}")
                     continue #ambiguous entry thus restart while loop above for new input
 
-        ckey = choice.strip().lower() #ensure any present or future routed value is in correct form
+        # Print the displayed selection before translating it to the historical
+        # internal handler key. This gives every long menu response a stable,
+        # easy-to-find marker when scrolling backward through terminal output.
+        displayed_choice = choice.strip().lower()
+        print()
+        print(cca8_cli.menu_selection_banner(displayed_choice), end="")
+        print()
+        if alias_route_message is not None:
+            print(alias_route_message)
+
+        ckey = displayed_choice #ensure any present or future routed value is in correct form
         routed = cca8_cli.route_menu_number(ckey)
         if pretty_scroll and ckey != routed:
             print(
@@ -6427,48 +6615,9 @@ pick by priority, and execute one policy (similar to menu Instinct Step but less
 
         #----Menu Selection Code Block------------------------
         elif choice == "17":
-            # Display snapshot
-            print("Selection:  Snapshot (WorldGraph + CTX + Policies)\n")
-            print("A full, human-readable dump. The LEGEND explains some of the terms.")
-            print("Note: Various tutorials and the README/Compendium file can help you understand the terms and functionality better.")
-            print("Note: At the end of the snapshot you have the option to generate an interactive HTML graph of WorldGraph.\n")
-
-            print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=POLICY_RT))
-
-            # Optional: generate an interactive Pyvis HTML view
-            try:
-                yn = input("Generate interactive graph (Pyvis HTML)? [y/N]: ").strip().lower()
-            except Exception:
-                yn = "n"
-            if yn in ("y", "yes"):
-                default_path = "world_graph.html"
-                try:
-                    path = input(f"Save HTML to (default: {default_path}): ").strip() or default_path
-                except Exception:
-                    path = default_path
-                try:
-                    out = world.to_pyvis_html(path_html=path, label_mode="id+first_pred", show_edge_labels=True, physics=True)
-                    print(f"Interactive graph written to: {out}")
-                    try:
-                        open_now = input("Open in your default browser now? [y/N]: ").strip().lower()
-                    except Exception:
-                        open_now = "n"
-                    if open_now in ("y", "yes"):
-                        try:
-                            import webbrowser # use the top-level 'sys','os'
-                            if sys.platform.startswith("win"):
-                                os.startfile(out)  # type: ignore[attr-defined]
-                            elif sys.platform == "darwin":
-                                os.system(f'open "{out}"')
-                            else:
-                                webbrowser.open(f"file://{out}")
-                            print("(opened in your browser)")
-                        except Exception as e:
-                            print(f"[warn] Could not open automatically: {e}")
-                except Exception as e:
-                    print(f"[warn] Could not generate Pyvis HTML: {e}")
-                    print("       Tip: install with  pip install pyvis")
-
+            # Cognitive storage oscilloscope / system inspector.
+            print("Selection: CCA8 Cognitive Storage Oscilloscope / System Inspector\n")
+            _cognitive_scope_menu_v1(env, world, drives, ctx, POLICY_RT)
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -6666,8 +6815,15 @@ Note: the graph HTML file will be saved in your current directory\n
 
         #----Menu Selection Code Block------------------------
         elif choice == "23":
-            # Understanding bindings/edges/predicates/cues/anchors/policies (terminal help)
-            print("Selection: Understanding bindings, edges, predicates, cues, anchors, policies")
+            # Brief overview of key concepts (legacy help pane pending NavMap rewrite).
+            print("Selection: Brief Overview of Key Concepts")
+            print(cca8_cli.MENU_RESPONSE_DIVIDER)
+            print()
+            print(
+                "Interim Development Note Aug 21, 2026:  This section is obsolete and is in the process "
+                "of being re-written."
+            )
+            print()
             print_tagging_and_policies_help(POLICY_RT)
             loop_helper(args.autosave, world, drives, ctx)
 
@@ -8907,8 +9063,9 @@ By contrast, if you simply exit and later restart with >python cca8_run.py --aut
                 pick = ""
             #pylint:disable=no-else-continue
             if pick == "1":
-                comp = os.path.join(os.getcwd(), "README.md")
+                comp = _readme_compendium_path_v1()
                 print(f"Tutorial file (README.md which acts as an all-in-one compendium): {comp}")
+                print()
                 if os.path.exists(comp):
                     try:
                         if sys.platform.startswith("win"):
@@ -8918,11 +9075,26 @@ By contrast, if you simply exit and later restart with >python cca8_run.py --aut
                         else:
                             os.system(f'xdg-open "{comp}"')
                         print("Opened the README.md/compendium in your default viewer.")
+                        print()
+                        print(
+                            "Note: Your default markdown viewer should be displaying the README.md file now. Sometimes it may take "
+                            "a few seconds for the viewer to load the file and display. If you don't see the displayed README.md "
+                            "file, then perhaps there is no viewer available on your computer, or perhaps it is hidden behind this "
+                            "or other screens."
+                        )
+                        print()
+                        print(
+                            "Note: Depending on your desktop configuration, you may be able to leave the README.md file on screen "
+                            "and continue with another Menu selection. However, in other desktop configurations, you may have to "
+                            "exit from the markdown viewer to continue with other Menu selections."
+                        )
+                        print()
                     except Exception as e:
                         print(f"[warn] Could not open automatically: {e}")
                         print("Please open the file manually in your editor.")
                 else:
-                    print("README.md not found in the current folder. Copy it here to open directly.")
+                    print(f"README.md was not found next to cca8_run.py at: {comp}")
+                    print("Please restore/copy README.md beside cca8_run.py and try again.")
                 continue
             elif pick == "2":
                 print("Console tour is pending; please use the README/compendium for now.")

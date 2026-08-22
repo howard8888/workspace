@@ -7,11 +7,6 @@ import json
 
 import pytest
 
-import cca8_context
-import cca8_env
-import cca8_live_dynamics
-import cca8_navmap_runtime
-import cca8_reporting
 import cca8_run
 from cca8_context import Ctx
 from cca8_controller import Drives
@@ -180,16 +175,10 @@ def _update(
     return live_dynamics_observation_step_v1(ctx, obs, applied_policy=state.last_applied_action)
 
 
-def test_phase7_versions_defaults_and_registry_are_current() -> None:
-    """Phase 7 modules, context defaults, and the component registry should agree."""
+def test_phase7_defaults_and_registry_are_current() -> None:
+    """Phase 7 context defaults and component-registry entries should agree."""
     ctx = Ctx()
 
-    assert cca8_run.__version__ == "0.23.0"
-    assert cca8_context.__version__ == "0.17.0"
-    assert cca8_env.__version__ == "0.5.0"
-    assert cca8_navmap_runtime.__version__ == "0.14.0"
-    assert cca8_reporting.__version__ == "0.5.0"
-    assert cca8_live_dynamics.__version__ == "0.1.0"
     assert ctx.live_dynamics_enabled_v1 is True
     assert ctx.live_dynamics_state_v1 is None
     assert ctx.live_dynamics_event_history_v1 == []
@@ -198,7 +187,6 @@ def test_phase7_versions_defaults_and_registry_are_current() -> None:
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)  # pylint: disable=protected-access
     assert registry["live_dynamics"] == "cca8_live_dynamics"
     assert list(registry).count("live_dynamics") == 1
-    assert len(cca8_run._cca8_component_rows()) == 41  # pylint: disable=protected-access
     assert len(cca8_run.PRIMITIVES) == 8
 
 

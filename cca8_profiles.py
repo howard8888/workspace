@@ -43,7 +43,7 @@ from typing import Any, Callable, DefaultDict
 import cca8_world_graph
 from cca8_controller import Drives, action_center_step
 
-__version__ = "0.2.0"
+__version__ = "0.2.2"
 
 ProfileTuple = tuple[str, float, float, int]
 
@@ -111,15 +111,64 @@ def _goat_defaults():
     return ("Mountain Goat", 0.015, 0.2, 2)
 
 
+_PROFILE_MENU_PAUSE_ACTIVE = False
+_PROFILE_DIVIDER = "=" * 78
+
+
+def _profile_heading(title: str) -> None:
+    """Print one profile heading and pause only during interactive Profile Menu selection.
+
+    Direct profile calls such as ``--profile chimp`` remain non-interactive.  The
+    pause is enabled transiently by :func:`choose_profile` only for numbered
+    Profile Menu selections 2 through 9.
+    """
+    print()
+    print(_PROFILE_DIVIDER)
+    print(title)
+    print(_PROFILE_DIVIDER)
+    print()
+    if _PROFILE_MENU_PAUSE_ACTIVE:
+        input("Please ENTER to continue...")
+        print()
+
+
+def _print_goat_intro() -> None:
+    """Print the concise operational-baseline description for Profile Menu choice 1."""
+    _profile_heading("MOUNTAIN GOAT-LIKE BRAIN SIMULATION")
+    print(
+        "This is the operational CCA8 baseline: a goat-level mammalian cognitive architecture.\n"
+        "Current development is progressively converting its cognition to NavMap/WNM-centered operation.\n"
+    )
+
+
+def _run_interactive_profile_choice(callback: Callable[..., ProfileTuple], *args: Any) -> ProfileTuple:
+    """Run one numbered research-profile callback with the Profile Menu pause enabled."""
+    global _PROFILE_MENU_PAUSE_ACTIVE  # pylint: disable=global-statement
+
+    previous = _PROFILE_MENU_PAUSE_ACTIVE
+    _PROFILE_MENU_PAUSE_ACTIVE = True
+    try:
+        return callback(*args)
+    finally:
+        _PROFILE_MENU_PAUSE_ACTIVE = previous
+
+
 def _print_goat_fallback():
     """Explain that a research profile is not operational and use the safe baseline."""
+    print()
+    print(_PROFILE_DIVIDER)
+    print("PROFILE STATUS")
+    print(_PROFILE_DIVIDER)
+    print()
     print(
-        "\n\n======================\n\n"
         "Although narrative or dry-run scaffolding is in place, this research profile is not yet "
-        "an operational cognitive architecture.\n"
-        "Profile will be set to mountain goat-like brain simulation.\n\n"
-        "======================\n\n"
+        "an operational cognitive architecture."
     )
+    print()
+    print("PROFILE WILL BE SET TO MOUNTAIN GOAT-LIKE BRAIN SIMULATION")
+    print()
+    print(_PROFILE_DIVIDER)
+    print()
 
 
 def profile_rcos_api(_ctx) -> tuple[str, float, float, int]:
@@ -156,9 +205,9 @@ Although scaffolding is in place, an RCOS API configuration is not available.
 
 def profile_chimpanzee(_ctx) -> tuple[str, float, float, int]:
     """Print a narrative about the chimpanzee profile; fall back to Mountain Goat defaults."""
+    _profile_heading("Chimpanzee-like brain simulation")
     print('''
-Chimpanzee-like brain simulation
-\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
+As per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
 The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
     "similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better
     combinatorial language.\n
@@ -168,9 +217,9 @@ The chimpanzee has the main structures of the mountain goat brain (some differen
 
 def profile_human(_ctx) -> tuple[str, float, float, int]:
     """Print a narrative about the human profile; fall back to Mountain Goat defaults."""
+    _profile_heading("Human-like brain simulation")
     print('''
-\nHuman-like brain simulation
-\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
+As per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
 The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
     "similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better
     combinatorial language.
@@ -190,9 +239,9 @@ def profile_human_multi_brains(
     runtime = runtime or default_profile_runtime()
 
     # Narrative
+    _profile_heading("Human-like one-agent multiple-brains simulation")
     print('''
-\nHuman-like one-agent multiple-brains simulation
-\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
+As per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
 The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
     "similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better
     combinatorial language.
@@ -284,9 +333,9 @@ def profile_society_multi_agents(
     """Dry-run 3-agent society (no writes); print trace; fall back to Mountain Goat defaults."""
     runtime = runtime or default_profile_runtime()
 
+    _profile_heading("Human-like one-brain simulation × multiple-agents society")
     print('''
-\nHuman-like one-brain simulation × multiple-agents society
-\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
+As per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
 The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
     "similar" structures) but enhanced feedback pathways allowing better causal reasoning. Also better
     combinatorial language.
@@ -350,9 +399,9 @@ The human simulation has further enhanced feedback pathways and full causal reas
 
 def profile_multi_brains_adv_planning(_ctx) -> ProfileTuple:
     """Dry-run 5x256 combinatorial planning stub (no writes); print trace; fall back to Mountain Goat defaults."""
+    _profile_heading("Human-like one-agent multiple-brains simulation with combinatorial planning")
     print('''
-\nHuman-like one-agent multiple-brains simulation with combinatorial planning
-\n\nAs per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
+As per the papers on the Causal Cognitive Architecture, the mountain goat has pre-causal reasoning.
 The chimpanzee has the main structures of the mountain goat brain (some differences nonetheless in these
 "similar" structures) but hanced feedback pathways allowing better causal reasoning. Also better
 combinatorial language. "
@@ -443,9 +492,9 @@ Implementation scaffolding (this stub does not commit changes to the live world)
 
 def profile_superhuman(_ctx) -> ProfileTuple:
     """Dry-run ‘ASI’ meta-controller stub (no writes); print trace; fall back to Mountain Goat defaults."""
+    _profile_heading("Super-human-like machine simulation")
     print('''
-\nSuper-human-like machine simulation
-\n\nFeatures scaffolding for an ASI-grade architecture:
+Features scaffolding for an ASI-grade architecture:
 \n  • Hierarchical memory: massive multi-modal engrams (vision/sound/touch/text) linked to a compact symbolic index.
 \n  • Weighted graph planning: edges carry costs/uncertainty; A*/landmarks for long-range navigation in concept space.
 \n  • Meta-controller: blends proposals from symbolic search, neural value estimation, and program-synthesis planning.
@@ -491,9 +540,6 @@ def profile_superhuman(_ctx) -> ProfileTuple:
 
 
 CCA11_PROFILE_NARRATIVE = r"""
-Selection: CCA11 — One Coherent Superhuman Mind with Governed Cognitive Plurality
-=================================================================================
-
 Research status
 ---------------
 CCA11 is a future architectural research profile.  This selection records the
@@ -848,9 +894,6 @@ cognitive diversity inside one inspectable and accountable mind.
 
 
 CCA12_PROFILE_NARRATIVE = r"""
-Selection: CCA12 — Governed Pod of Complete CCA11 Cognitive Architectures
-=========================================================================
-
 Research status
 ---------------
 CCA12 is a future federated cognitive-architecture research profile.  It does
@@ -1268,6 +1311,7 @@ authority governance, traceable adjudication, and controlled action.
 
 def profile_cca11_governed_cognitive_plurality(_ctx: Any) -> ProfileTuple:
     """Describe the future CCA11 architecture, then return the operational baseline."""
+    _profile_heading("Selection: CCA11 — One Coherent Superhuman Mind with Governed Cognitive Plurality")
     print(CCA11_PROFILE_NARRATIVE)
     _print_goat_fallback()
     return _goat_defaults()
@@ -1275,6 +1319,7 @@ def profile_cca11_governed_cognitive_plurality(_ctx: Any) -> ProfileTuple:
 
 def profile_cca12_governed_pod(_ctx: Any) -> ProfileTuple:
     """Describe the future CCA12 pod architecture, then return the operational baseline."""
+    _profile_heading("Selection: CCA12 — Governed Pod of Complete CCA11 Cognitive Architectures")
     print(CCA12_PROFILE_NARRATIVE)
     _print_goat_fallback()
     return _goat_defaults()
@@ -1343,8 +1388,9 @@ def choose_profile(
             print("\nCancelled selection.... will exit program....")
             sys.exit(0)
 
-        # Fast path: Enter accepts default
+        # Fast path: Enter accepts the operational Mountain Goat baseline.
         if choice == "":
+            _print_goat_intro()
             name, sigma, jump, k = goat
             break
 
@@ -1355,33 +1401,34 @@ def choose_profile(
 
         # Numeric choices
         if choice == "1":
+            _print_goat_intro()
             name, sigma, jump, k = goat
             break
         if choice == "2":
-            name, sigma, jump, k = operations.chimpanzee(ctx)
+            name, sigma, jump, k = _run_interactive_profile_choice(operations.chimpanzee, ctx)
             break
         if choice == "3":
-            name, sigma, jump, k = operations.human(ctx)
+            name, sigma, jump, k = _run_interactive_profile_choice(operations.human, ctx)
             break
         if choice == "4":
-            name, sigma, jump, k = operations.human_multi_brains(ctx, world)
+            name, sigma, jump, k = _run_interactive_profile_choice(operations.human_multi_brains, ctx, world)
             break
         if choice == "5":
-            name, sigma, jump, k = operations.society_multi_agents(ctx)
+            name, sigma, jump, k = _run_interactive_profile_choice(operations.society_multi_agents, ctx)
             break
         if choice == "6":
-            name, sigma, jump, k = operations.multi_brains_adv_planning(ctx)
+            name, sigma, jump, k = _run_interactive_profile_choice(operations.multi_brains_adv_planning, ctx)
             break
         if choice == "7":
-            name, sigma, jump, k = operations.superhuman(ctx)
+            name, sigma, jump, k = _run_interactive_profile_choice(operations.superhuman, ctx)
             break
         if choice == "8":
             callback = operations.cca11 or profile_cca11_governed_cognitive_plurality
-            name, sigma, jump, k = callback(ctx)
+            name, sigma, jump, k = _run_interactive_profile_choice(callback, ctx)
             break
         if choice == "9":
             callback = operations.cca12 or profile_cca12_governed_pod
-            name, sigma, jump, k = callback(ctx)
+            name, sigma, jump, k = _run_interactive_profile_choice(callback, ctx)
             break
 
         # Anything else: prompt again (no silent default)
