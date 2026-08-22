@@ -646,7 +646,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.24.2"
+__version__ = "0.25.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -2390,9 +2390,18 @@ def _open_worldgraph_pyvis_flow_v1(world) -> None:
 def _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt) -> dict[str, Any]:
     """Build one current-state scope view without adding it to retained history."""
     state = getattr(env, "state", None)
-    env_step = getattr(state, "step_index", None)
-    applied = getattr(state, "last_applied_action", None)
+    output_env_step = getattr(state, "step_index", None)
+    dispatched = getattr(state, "last_applied_action", None)
     selected = getattr(ctx, "env_last_action", None)
+    pending_observation = getattr(ctx, "env_pending_observation", None)
+    prior_external_state = getattr(ctx, "env_pending_previous_state", None)
+    dispatch_succeeded = pending_observation is not None
+    if dispatch_succeeded and prior_external_state is not None:
+        external_state = prior_external_state
+        input_env_step = getattr(prior_external_state, "step_index", None)
+    else:
+        external_state = state
+        input_env_step = output_env_step
     return cca8_cognitive_scope.build_cognitive_scope_snapshot_v1(
         ctx,
         env=env,
@@ -2401,8 +2410,11 @@ def _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt) -> dic
         drives=drives,
         policy_rt=policy_rt,
         selected_policy=selected if isinstance(selected, str) else None,
-        action_applied=applied if isinstance(applied, str) else None,
-        env_step=env_step if isinstance(env_step, int) else None,
+        action_applied=dispatched if isinstance(dispatched, str) else None,
+        env_step=input_env_step if isinstance(input_env_step, int) else None,
+        external_state=external_state,
+        dispatch_succeeded=dispatch_succeeded,
+        output_env_step=output_env_step if isinstance(output_env_step, int) else None,
         capture_kind="manual_live",
         snapshot_no=None,
     )
@@ -3440,6 +3452,13 @@ def configure_goat_foraging_04_eval_v1(world, drives, ctx: Ctx, env: HybridEnvir
     try:
         ctx.env_episode_started = False
         ctx.env_last_action = None
+        ctx.env_pending_observation = None
+        ctx.env_pending_info = {}
+        ctx.env_pending_reward = 0.0
+        ctx.env_pending_done = False
+        ctx.env_pending_previous_state = None
+        ctx.navmap_pending_action_v1 = None
+        ctx.navmap_pending_reward_v1 = 0.0
     except Exception:
         pass
 
@@ -3484,17 +3503,23 @@ def configure_goat_foraging_04_eval_v1(world, drives, ctx: Ctx, env: HybridEnvir
 #pylint: disable-next=too-many-positional-arguments
 def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, *, teaching_mode: bool = False) -> None:
     """
-    Run N closed-loop steps between the HybridEnvironment and the CCA8 brain
-    in a condensed, explanatory way.
+    Run N closed-loop cognitive cycles between the environment and CCA8.
 
-    Each step:
+    Canonical cycle contract
+    ------------------------
+    ``CognitiveCycle_n`` consumes ``Observation_n``, performs the current
+    sensory/map/policy processing, produces ``Action_n`` (or an explicit null
+    action), and dispatches that output before the cycle closes. The environment
+    transition returns ``Observation_(n+1)``, which is buffered at the I/O seam
+    and is not cognitively processed until ``CognitiveCycle_(n+1)``.
+
+    Each cycle therefore:
       - advances controller_steps and the temporal soft clock (no autonomic ticks here),
-      - calls env.reset() once (if this is the first ever env step for this episode),
-        or env.step(last_policy_action, ctx) on later steps,
-      - injects EnvObservation into the WorldGraph via inject_obs_into_world(...),
+      - consumes env.reset() output once or the observation buffered by the prior cycle,
+      - injects that EnvObservation into the current CCA8 sensory/map path,
       - runs one controller step via PolicyRuntime.consider_and_maybe_fire(...),
-      - remembers the last fired policy name in ctx.env_last_action so the next
-        env.step(...) can react to it.
+      - dispatches the selected task-level output with env.apply_action(...), and
+      - buffers the resulting later observation for the next cognitive cycle.
 
     This version also prints short explanation lines for:
       - posture (why we are fallen / standing / latched / resting),
@@ -3974,9 +3999,10 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
     print(f"[env-loop] Running {n_steps} closed-loop cognitive cycle(s) (env↔controller).")
     print("[env-loop] Each cognitive cycle will:")
     print("  1) Advance controller_steps and the temporal soft clock (one drift),")
-    print("  2) Call env.reset() (first time) or env.step(last policy action),")
-    print("  3) Inject EnvObservation into the WorldGraph as pred:/cue: facts,")
-    print("  4) Run ONE controller step (Action Center) and store the last policy name.\n")
+    print("  2) Consume one current EnvObservation (reset output or the prior transition's result),")
+    print("  3) Process that observation through BodyMap / WNM / memory / policy selection,")
+    print("  4) Produce and dispatch this cycle's action, including an explicit null action, and")
+    print("  5) Buffer the resulting later observation for the next cognitive cycle.\n")
 
     if not getattr(ctx, "env_episode_started", False):
         print("[env-loop] Note: this episode has not started yet; the first cognitive cycle will call env.reset().")
@@ -4022,14 +4048,27 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             ctx.temporal.step()
 
         prev_state = None
-        action_for_env: str | None = None
+        input_state = None
+        input_from_reset = False
+        prior_action_for_input: str | None = None
+        input_reward = 0.0
 
-        # 2) Environment evolution (reset once, then step with last action)
+        # 2) Consume exactly one current observation.
+        #
+        # The first cycle consumes env.reset() output. Later cycles consume the
+        # observation produced and buffered when the preceding cognitive cycle
+        # dispatched its own output. No environment action is applied here.
         if not getattr(ctx, "env_episode_started", False):
             env_obs, env_info = env.reset()
-            _phase7_reset_run_state() # phase7 s/w devpt: clear any previous run state on env reset
+            input_from_reset = True
+            _phase7_reset_run_state()  # phase7 s/w devpt: clear any previous run state on env reset
             ctx.env_episode_started = True
             ctx.env_last_action = None
+            ctx.env_pending_observation = None
+            ctx.env_pending_info = {}
+            ctx.env_pending_reward = 0.0
+            ctx.env_pending_done = False
+            ctx.env_pending_previous_state = None
             ctx.navmap_pending_action_v1 = None
             ctx.navmap_pending_reward_v1 = 0.0
             ctx.navmap_last_payload_v1 = None
@@ -4047,25 +4086,46 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 f"scenario={env_info.get('scenario_name')}"
             )
         else:
-            # Snapshot previous EnvState so we can explain posture/nipple/zone changes.
-            try:
-                prev_state = env.state.copy()
-            except Exception:
-                prev_state = None
+            prior_raw = getattr(ctx, "env_last_action", None)
+            prior_action_for_input = prior_raw if isinstance(prior_raw, str) and prior_raw else None
+            prev_state = getattr(ctx, "env_pending_previous_state", None)
 
-            action_for_env = ctx.env_last_action
-            env_obs, _env_reward, _env_done, env_info = env.step(
-                action=action_for_env,
-                ctx=ctx,
-            )
-            ctx.env_last_action = None
-            ctx.navmap_pending_action_v1 = action_for_env if isinstance(action_for_env, str) else None
+            pending_obs = getattr(ctx, "env_pending_observation", None)
+            pending_info = getattr(ctx, "env_pending_info", None)
+            if pending_obs is not None:
+                env_obs = pending_obs
+                env_info = dict(pending_info) if isinstance(pending_info, dict) else {}
+            else:
+                # Compatibility fallback for a context created before the
+                # explicit transition buffer existed, or manually reset by a test.
+                env_obs = env.observe(ctx=ctx)
+                env_info = {
+                    "episode_index": getattr(env, "episode_index", None),
+                    "step_index": getattr(env, "episode_steps", None),
+                }
+
             try:
-                ctx.navmap_pending_reward_v1 = float(_env_reward)
+                input_reward = float(getattr(ctx, "env_pending_reward", 0.0) or 0.0)
             except (TypeError, ValueError):
-                ctx.navmap_pending_reward_v1 = 0.0
-            st = env.state
+                input_reward = 0.0
+
+            ctx.env_pending_observation = None
+            ctx.env_pending_info = {}
+            ctx.env_pending_reward = 0.0
+            ctx.env_pending_done = False
+            ctx.env_pending_previous_state = None
+
+            ctx.navmap_pending_action_v1 = prior_action_for_input
+            ctx.navmap_pending_reward_v1 = input_reward
             step_idx = env_info.get("step_index")
+
+        try:
+            input_state = env.state.copy()
+        except Exception:
+            input_state = getattr(env, "state", None)
+
+        if not input_from_reset:
+            st = input_state
             ctx_txt = ""
             try:
                 c_label = getattr(st, "context_label", None)
@@ -4074,10 +4134,11 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             except Exception:
                 ctx_txt = ""
             print(
-                f"[env] env_step={step_idx} (since reset) "
-                f"stage={st.scenario_stage} posture={st.kid_posture} "
-                f"mom_distance={st.mom_distance} nipple_state={st.nipple_state}{ctx_txt} "
-                f"action={action_for_env!r}"
+                f"[env] input env_step={step_idx} (since reset) "
+                f"stage={getattr(st, 'scenario_stage', None)} posture={getattr(st, 'kid_posture', None)} "
+                f"mom_distance={getattr(st, 'mom_distance', None)} "
+                f"nipple_state={getattr(st, 'nipple_state', None)}{ctx_txt} "
+                f"prior_action={prior_action_for_input!r}"
             )
 
         # --- Prediction error v1 record + legacy v0 vector (display/log only) ---
@@ -4161,15 +4222,15 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             if (    # pylint: disable=too-many-boolean-expressions
                 shaping_enabled
                 and v0_posture_err != 0
-                and isinstance(action_for_env, str)
-                and action_for_env
+                and isinstance(prior_action_for_input, str)
+                and prior_action_for_input
                 and isinstance(obs_posture, str)
                 and isinstance(pred_posture, str)
             ):
                 # 1) Append a standardized discrepancy entry (so RecoverFall can see streaks in menu 37)
                 entry = (
                     f"[discrepancy] env posture={obs_posture!r} "
-                    f"vs policy-expected posture={pred_posture!r} from {action_for_env}"
+                    f"vs policy-expected posture={pred_posture!r} from {prior_action_for_input}"
                 )
                 try:
                     hist = getattr(ctx, "posture_discrepancy_history", [])
@@ -4193,7 +4254,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                         for h in reversed(hist2[-10:]):
                             s = str(h)
                             if (
-                                (f"from {action_for_env}" in s)
+                                (f"from {prior_action_for_input}" in s)
                                 and ("env posture=" in s and obs_posture in s)
                                 and ("policy-expected posture=" in s and pred_posture in s)
                             ):
@@ -4206,13 +4267,13 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 # 3) Apply shaping only after the streak threshold (ignore first mismatch)
                 if streak >= 2:
                     shaping_reward = -abs(pen_mag) * float(v0_posture_err)
-                    update_skill(action_for_env, shaping_reward, ok=False, execution=False)
+                    update_skill(prior_action_for_input, shaping_reward, ok=False, execution=False)
                     try:
-                        q_now = float(skill_q(action_for_env))
+                        q_now = float(skill_q(prior_action_for_input))
                     except Exception:
                         q_now = 0.0
                     print(
-                        f"[pred_err] shaping: policy={action_for_env} reward={shaping_reward:+.2f} "
+                        f"[pred_err] shaping: policy={prior_action_for_input} reward={shaping_reward:+.2f} "
                         f"(streak={streak}) q={q_now:+.2f}"
                     )
         except Exception:
@@ -4389,26 +4450,18 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             if fired != "no_match":
                 print(f"[env→controller] {fired}")
 
-                # Extract clean "policy:..." for env.step(...) on the next loop.
+                # Extract the task-level output produced by this cognitive cycle.
                 if isinstance(fired, str):
                     first_token = fired.split()[0]
                     if isinstance(first_token, str) and first_token.startswith("policy:"):
-                        ctx.env_last_action = first_token
                         policy_name = first_token
-                    else:
-                        ctx.env_last_action = None
-                else:
-                    ctx.env_last_action = None
-            else:
-                ctx.env_last_action = None
         except Exception as e:
             print(f"[env→controller] controller step error: {e}")
-            ctx.env_last_action = None
 
         # Phase 4D FollowMom compare instrumentation. This post-selection call
         # records the original legacy gate, the effective post-filter candidate,
-        # and the controller winner. It may arm an expected relation for the next
-        # observation, but it cannot change the action already selected/executed.
+        # and the controller winner. It may arm an expected relation for later
+        # evidence, but it cannot change the action already selected internally.
         followmom_compare_selection_updated = False
         try:
             followmom_compare_selection_step_v1(
@@ -4466,7 +4519,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 "reason": "phase4d_compare_selection_update_failed",
             }
 
-        # Phase 4E-B/4F finalizes the already-applied FollowMom authority
+        # Phase 4E-B/4F finalizes the already-selected FollowMom authority
         # lifecycle. It records the actual global-arbitration winner and, when
         # map-authorized FollowMom was selected, arms the existing compact
         # expected-versus-observed relation. This call cannot change the winner.
@@ -4526,7 +4579,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
         # Phase 3A/3B/3C/3D instrumentation. Phase 3A retains an independent
         # legacy differential, Phase 3B emits non-binding advice, and Phase 3C/3D
         # records which trigger source actually fed PolicyRuntime. None
-        # of these post-selection calls may alter the winner already executed.
+        # of these post-selection calls may alter the selected winner.
         compare_selection_updated = False
         try:
             standup_compare_selection_step_v1(
@@ -4586,11 +4639,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 "error": str(exc),
             }
 
-        if teaching_mode:
-            print(menu37_teaching_after_controller_v1())
-            print()
-
-        # --- Capture NEXT-step prediction (Scratch postcondition), v1 record; v0 posture fields kept for compatibility ---
+        # --- Capture later-evidence prediction (Scratch postcondition), v1 record; v0 posture fields kept for compatibility ---
         try:
             ctx.pred_next_policy = policy_name if isinstance(policy_name, str) and policy_name else None
             ctx.pred_next_posture = None
@@ -4618,7 +4667,11 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             except Exception:
                 pass
 
-        # start/extend run for the policy we just chose (applied on the NEXT env step)
+        cycle_output_action = policy_name if isinstance(policy_name, str) and policy_name else None
+
+        # Start/extend a task-level run for the output generated from this
+        # current observation. This is internal expectation/progress bookkeeping,
+        # so it is completed before the output crosses the lower-controller seam.
         if _phase7_enabled():
             token_to_bid = {}
             if isinstance(obs_write, dict):
@@ -4627,11 +4680,81 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     token_to_bid = raw_map
 
             state_bid = _phase7_pick_state_bid(token_to_bid)
-            _phase7_start_or_extend_run(world, state_bid, policy_name, env_step=step_idx)
+            _phase7_start_or_extend_run(world, state_bid, cycle_output_action, env_step=step_idx)
+
+        # 5) Dispatch this cognitive cycle's output before the cycle closes.
+        #
+        # ``None`` is an explicit null task-level output. The simulator still
+        # advances one physical/environment transition so a later observation is
+        # available, just as lower body/world dynamics continue when the animal
+        # issues no new locomotor command.
+        action_dispatched: str | None = None
+        dispatch_succeeded = False
+        output_env_step: int | None = None
+        next_env_obs = None
+        next_env_reward = 0.0
+        next_env_done = False
+        next_env_info: dict[str, Any] = {}
+
+        try:
+            next_env_obs, next_env_reward, next_env_done, next_env_info = env.apply_action(
+                action=cycle_output_action,
+                ctx=ctx,
+            )
+            dispatch_succeeded = True
+            action_dispatched = cycle_output_action
+            if isinstance(next_env_info, dict):
+                next_step_raw = next_env_info.get("step_index")
+                if isinstance(next_step_raw, int):
+                    output_env_step = next_step_raw
+        except Exception as exc:
+            print(f"[controller→env] dispatch error: {type(exc).__name__}: {exc}")
+            try:
+                next_env_obs = env.observe(ctx=ctx)
+                output_env_step = int(getattr(env, "episode_steps", 0) or 0)
+                next_env_info = {
+                    "episode_index": getattr(env, "episode_index", None),
+                    "step_index": output_env_step,
+                    "dispatch_error": type(exc).__name__,
+                }
+            except Exception:
+                next_env_obs = None
+                next_env_info = {"dispatch_error": type(exc).__name__}
+
+        ctx.env_last_action = action_dispatched
+        ctx.env_pending_observation = next_env_obs
+        ctx.env_pending_info = dict(next_env_info) if isinstance(next_env_info, dict) else {}
+        try:
+            ctx.env_pending_reward = float(next_env_reward)
+        except (TypeError, ValueError):
+            ctx.env_pending_reward = 0.0
+        ctx.env_pending_done = bool(next_env_done)
+        try:
+            ctx.env_pending_previous_state = input_state.copy() if input_state is not None else None
+        except Exception:
+            ctx.env_pending_previous_state = input_state
+
+        # The pending action/reward describe the transition whose observation is
+        # buffered above. NavMap runtime will consume and clear them only when that
+        # later observation enters the next cognitive cycle.
+        ctx.navmap_pending_action_v1 = action_dispatched
+        ctx.navmap_pending_reward_v1 = ctx.env_pending_reward
+
+        output_label = cycle_output_action if cycle_output_action is not None else "NO_ACTION"
+        buffered_text = "buffered" if next_env_obs is not None else "unavailable"
+        print(
+            f"[controller→env] cycle_output={output_label!r} "
+            f"dispatched_in_cognitive_cycle={getattr(ctx, 'cog_cycles', None)} "
+            f"transition_env_step={output_env_step} next_observation={buffered_text}"
+        )
+
+        if teaching_mode:
+            print(menu37_teaching_after_controller_v1())
+            print()
 
         # Short summary for this step + posture/nipple/zone explanations
         try:
-            st = env.state
+            st = input_state
             try:
                 zone = body_space_zone(ctx)
             except Exception:
@@ -4660,9 +4783,9 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                         break
 
             line = (
-                f"[env-loop] summary cognitive_cycle={i+1}/{n_steps} env_step={step_idx} stage={st.scenario_stage} "
+                f"[env-loop] summary cognitive_cycle={i+1}/{n_steps} input_env_step={step_idx} stage={st.scenario_stage} "
                 f"env_posture={st.kid_posture} bm_posture={bm_posture or st.kid_posture} "
-                f"mom={st.mom_distance} nipple={st.nipple_state} last_policy={policy_name!r}"
+                f"mom={st.mom_distance} nipple={st.nipple_state} cycle_output={cycle_output_action!r}"
             )
             if expected_posture is not None:
                 line += f" expected_posture={expected_posture}"
@@ -4671,19 +4794,22 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
             print(line)
 
             if expected_posture is not None and str(expected_posture) != str(st.kid_posture):
-                print("[env-loop] note: expected_posture is a Scratch postcondition (hypothesis); env_posture is storyboard truth this tick.")
+                print(
+                    "[env-loop] note: expected_posture is a Scratch postcondition for later evidence; "
+                    "the input env_posture remains the current cycle's observed truth."
+                )
 
             quiet_rest_tail = _quiet_solved_rest_tail_v1(
                 st,
                 zone,
-                action_for_env,
-                getattr(ctx, "env_last_action", None),
+                prior_action_for_input,
+                cycle_output_action,
             )
 
             if not quiet_rest_tail:
                 # Explain why posture ended up as it is at this step.
                 try:
-                    posture_expl = _explain_posture_change(prev_state, st, action_for_env)
+                    posture_expl = _explain_posture_change(prev_state, st, prior_action_for_input)
                     if posture_expl:
                         print(f"[env-loop] explain posture: {posture_expl}")
 
@@ -4697,7 +4823,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
 
                 # Explain why nipple_state ended up as it is at this step.
                 try:
-                    nipple_expl = _explain_nipple_change(prev_state, st, action_for_env)
+                    nipple_expl = _explain_nipple_change(prev_state, st, prior_action_for_input)
                     if nipple_expl:
                         print(f"[env-loop] explain nipple: {nipple_expl}")
                 except Exception:
@@ -4726,8 +4852,12 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                     col_store_txt=col_store_txt,
                     col_retrieve_txt=col_retrieve_txt,
                     col_apply_txt=col_apply_txt,
-                    action_applied_this_step=action_for_env,
-                    next_action_for_env=getattr(ctx, "env_last_action", None),
+                    prior_action_for_input=prior_action_for_input,
+                    cycle_output_action=cycle_output_action,
+                    action_dispatched=action_dispatched,
+                    dispatch_succeeded=dispatch_succeeded,
+                    output_env_step=output_env_step,
+                    next_observation_buffered=next_env_obs is not None,
                     cycle_no=i + 1,
                     cycle_total=n_steps,
                 )
@@ -4747,8 +4877,12 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 drives=drives,
                 policy_rt=policy_rt,
                 selected_policy=policy_name if isinstance(policy_name, str) else None,
-                action_applied=action_for_env if isinstance(action_for_env, str) else None,
+                action_applied=action_dispatched if isinstance(action_dispatched, str) else None,
                 env_step=step_idx if isinstance(step_idx, int) else None,
+                external_state=input_state,
+                prior_action_for_input=prior_action_for_input,
+                dispatch_succeeded=dispatch_succeeded,
+                output_env_step=output_env_step,
                 capture_kind="cognitive_cycle",
             )
         except Exception as exc:
@@ -4759,7 +4893,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
         # ctx.cycle_json_path="cycle_log.jsonl".
         try:
             if bool(getattr(ctx, "cycle_json_enabled", False)):
-                st = env.state
+                st = input_state
                 try:
                     zone_now = body_space_zone(ctx)
                 except Exception:
@@ -4787,12 +4921,20 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 rec = {
                     "controller_steps": int(getattr(ctx, "controller_steps", 0) or 0),
                     "env_step": env_info.get("step_index") if isinstance(env_info, dict) else None,
+                    "input_env_step": env_info.get("step_index") if isinstance(env_info, dict) else None,
+                    "output_env_step": output_env_step,
                     "scenario_stage": getattr(st, "scenario_stage", None),
                     "posture": getattr(st, "kid_posture", None),
                     "mom_distance": getattr(st, "mom_distance", None),
                     "nipple_state": getattr(st, "nipple_state", None),
                     "zone": zone_now,
-                    "action_applied": action_for_env,
+                    "prior_action_for_input": prior_action_for_input,
+                    "cycle_output_action": cycle_output_action,
+                    "action_dispatched": action_dispatched,
+                    "dispatch_succeeded": dispatch_succeeded,
+                    "next_observation_buffered": next_env_obs is not None,
+                    # Compatibility alias retained for existing trace readers.
+                    "action_applied": action_dispatched,
                     "policy_fired": policy_fired_val,
                     "policy_debug": dict(getattr(ctx, "experiment_policy_debug_last", {}) or {}),
                     "llm_advice_summary": dict(llm_advice_summary),
@@ -7620,7 +7762,7 @@ At a high level, this cycle will:
   1) --> Let the simulated or real environment report what the agent is sensing now -->
   2) Convert that evidence into current internal maps and compare it with what was expected -->
   3) Record any mismatch as a prediction-error or residual signal -->
-  4) Let the Action Center select a behavior, called a policy, for the next cycle --> REPEAT
+  4) Let the Action Center select and dispatch this cycle's behavior, called a policy --> REPEAT
 
   Note: In the CCA literature, "Navigation Module" means "Action Center," and
   "Primitive" means "Policy."
@@ -7631,8 +7773,9 @@ map with updated details. However, strong, persistent, or safety-critical
 differences must not be forced to conform to the prediction; they may trigger
 an alternative or new NavMap interpretation.
 
-The environment is stepped using the action selected during the previous cycle. The new
-observation is then processed, and CCA8 selects the action to be used during the next cycle.
+The output selected from the current observation is dispatched before this cognitive cycle
+closes. The environment/body transition then produces later sensory evidence, which is
+buffered and processed as the input to the next cognitive cycle.
 """)
             input("Press Enter to continue reading...\n\n")
 
@@ -7737,9 +7880,10 @@ HybridEnvironment (newborn-goat world) and the CCA8 brain.
 
 For each cognitive cycle we will:
   1) Advance controller_steps and the temporal soft clock once,
-  2) STEP the newborn-goat environment using the last policy action (if any),
-  3) Inject the resulting EnvObservation into the WorldGraph as pred:/cue: facts,
-  4) Run ONE controller step (Action Center) and remember the last fired policy.
+  2) Consume one current EnvObservation (reset output or a buffered later observation),
+  3) Process that observation through BodyMap, WNM, memory, and policy selection,
+  4) Produce and dispatch Action_n (or an explicit null output) during CognitiveCycle_n,
+  5) Buffer Observation_(n+1) for processing in the next cognitive cycle.
 
 Menu 35 runs one cycle in verbose teaching mode.
 Menu 37 runs the compact multi-cycle timeline.

@@ -15,11 +15,11 @@ module observes existing source-linked runtime state and must not manufacture
 missing intermediate signals merely to make every conceptual stage appear
 active.
 
-Scope of v0.2
+Scope of v0.3
 -------------
 - Stable DP00-DP18 diagnostic-port registry.
 - One compact snapshot envelope correlated to cognitive-cycle, controller-step,
-  environment-step, selected-action, and applied-action identifiers.
+  input-observation step, same-cycle output dispatch, and next-observation step.
 - Bounded in-memory retention, defaulting to 128 snapshots.
 - Compact front-panel rendering for the complete DP00-DP18 signal path.
 - Full stored-signal drill-down for one selected diagnostic point.
@@ -78,7 +78,7 @@ from cca8_controller import (
     skills_to_dict,
 )
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 __all__ = [
     "COGNITIVE_SCOPE_PORTS_V1",
@@ -292,9 +292,9 @@ def _port_sample(
     }
 
 
-def _dp00_external_world(env: Any) -> dict[str, Any]:
+def _dp00_external_world(env: Any, external_state: Any = None) -> dict[str, Any]:
     """Sample simulation-only external world/body state for diagnostic reference."""
-    state = getattr(env, "state", None)
+    state = external_state if external_state is not None else getattr(env, "state", None)
     signal = _state_attrs(
         state,
         (
@@ -612,8 +612,9 @@ def _dp14_primitive_operation(ctx: Any, selected_policy: Optional[str]) -> dict[
     terrain = _safe_call(lambda: cca8_terrain.terrain_summary_v1(ctx), {})
     signal = {
         "selected_primitive": selected_policy,
-        "pending_action": getattr(ctx, "navmap_pending_action_v1", None),
-        "next_action_for_environment": getattr(ctx, "env_last_action", None),
+        "cycle_output_action": selected_policy,
+        "pending_action_for_later_evidence": getattr(ctx, "navmap_pending_action_v1", None),
+        "last_dispatched_environment_action": getattr(ctx, "env_last_action", None),
         "transition": _compact_mapping(transition, limit=12),
         "followmom_authority": _compact_mapping(followmom, limit=10),
         "feeding_status": feeding.get("status"),
@@ -631,25 +632,40 @@ def _dp14_primitive_operation(ctx: Any, selected_policy: Optional[str]) -> dict[
     )
 
 
-def _dp15_lower_motor(env: Any, selected_policy: Optional[str], action_applied: Optional[str]) -> dict[str, Any]:
+def _dp15_lower_motor(
+    env: Any,
+    selected_policy: Optional[str],
+    action_applied: Optional[str],
+    dispatch_succeeded: Optional[bool],
+) -> dict[str, Any]:
     """Sample the task-action handoff and lower-controller/environment acknowledgement."""
     state = getattr(env, "state", None)
+    environment_ack = getattr(state, "last_applied_action", None)
+    if isinstance(dispatch_succeeded, bool):
+        dispatch_ok = dispatch_succeeded
+    else:
+        dispatch_ok = bool(action_applied is not None or environment_ack is not None)
+    output_kind = "motor_action" if isinstance(selected_policy, str) and selected_policy else "null_action"
     signal = {
-        "selected_task_action": selected_policy,
-        "action_applied_this_environment_step": action_applied,
-        "environment_last_applied_action": getattr(state, "last_applied_action", None),
+        "cycle_output_action": selected_policy,
+        "output_kind": output_kind,
+        "task_action_dispatched_this_cycle": action_applied,
+        "dispatch_succeeded": dispatch_ok,
+        "environment_last_applied_action": environment_ack,
         "slip_detected": getattr(state, "lower_motor_slip_detected", None),
         "error_code": getattr(state, "lower_motor_error_code", None),
         "progress_override": getattr(state, "lower_motor_progress_override", None),
         "support_override": getattr(state, "lower_motor_support_override", None),
-        "pipeline_relation": "selected_current_cycle_is_applied_on_next_environment_step",
+        "pipeline_relation": "selected_and_dispatched_within_same_cognitive_cycle",
         "handoff_ack_mismatch": bool(
-            action_applied is not None
-            and getattr(state, "last_applied_action", None) is not None
-            and action_applied != getattr(state, "last_applied_action", None)
+            dispatch_ok
+            and (
+                selected_policy != action_applied
+                or action_applied != environment_ack
+            )
         ),
     }
-    active = bool(selected_policy or action_applied or getattr(state, "last_applied_action", None))
+    active = bool(dispatch_ok or selected_policy or action_applied or environment_ack)
     return _port_sample("DP15", signal if active else {}, signal_status="active" if active else "idle")
 
 
@@ -733,12 +749,23 @@ def build_cognitive_scope_snapshot_v1(
     selected_policy: Optional[str],
     action_applied: Optional[str],
     env_step: Optional[int],
+    external_state: Any = None,
+    prior_action_for_input: Optional[str] = None,
+    dispatch_succeeded: Optional[bool] = None,
+    output_env_step: Optional[int] = None,
     capture_kind: str = "manual_live",
     snapshot_no: Optional[int] = None,
 ) -> dict[str, Any]:
     """Build one JSON-safe full-service-point snapshot without mutating runtime."""
+    if isinstance(dispatch_succeeded, bool):
+        dispatch_status: Optional[bool] = dispatch_succeeded
+    elif action_applied is not None:
+        dispatch_status = True
+    else:
+        dispatch_status = None
+
     collectors: tuple[Callable[[], dict[str, Any]], ...] = (
-        lambda: _dp00_external_world(env),
+        lambda: _dp00_external_world(env, external_state),
         lambda: _dp01_observation(env_obs),
         lambda: _dp02_shaping(env_obs),
         lambda: _dp03_association(ctx),
@@ -753,7 +780,7 @@ def build_cognitive_scope_snapshot_v1(
         lambda: _dp12_drives(ctx, drives),
         lambda: _dp13_policy(ctx, policy_rt, selected_policy),
         lambda: _dp14_primitive_operation(ctx, selected_policy),
-        lambda: _dp15_lower_motor(env, selected_policy, action_applied),
+        lambda: _dp15_lower_motor(env, selected_policy, action_applied, dispatch_status),
         lambda: _dp16_expectation(ctx),
         lambda: _dp17_outcome(ctx),
         lambda: _dp18_learning(ctx, world),
@@ -781,13 +808,20 @@ def build_cognitive_scope_snapshot_v1(
         "cognitive_cycle": int(getattr(ctx, "cog_cycles", 0) or 0),
         "controller_step": int(getattr(ctx, "controller_steps", 0) or 0),
         "environment_step": env_step,
+        "cycle_input_environment_step": env_step,
+        "prior_action_for_input": prior_action_for_input,
+        "cycle_output_action": selected_policy,
+        "action_dispatched": action_applied,
+        "dispatch_succeeded": dispatch_status,
+        "next_observation_environment_step": output_env_step,
+        # Compatibility alias: in v0.3 this means the action dispatched in the
+        # same cognitive cycle, not an action applied at the start of a later one.
         "action_applied": action_applied,
-        "action_selected_for_next_step": selected_policy,
         "external_reference_port_count": 1,
         "cognitive_service_point_count": 18,
         "port_count": len(ports),
         "ports": ports,
-        "sampling_model": "end_of_cycle_stable_register_snapshot_v1",
+        "sampling_model": "end_of_cycle_same_cycle_output_snapshot_v2",
         "port_samples_are_exact_stage_timestamps": False,
         "trace_is_cognitive_memory": False,
         "measurement_only": True,
@@ -815,6 +849,10 @@ def capture_cognitive_scope_snapshot_v1(
     selected_policy: Optional[str],
     action_applied: Optional[str],
     env_step: Optional[int],
+    external_state: Any = None,
+    prior_action_for_input: Optional[str] = None,
+    dispatch_succeeded: Optional[bool] = None,
+    output_env_step: Optional[int] = None,
     capture_kind: str = "cognitive_cycle",
 ) -> dict[str, Any]:
     """Capture and retain one bounded cognitive-scope snapshot.
@@ -840,6 +878,10 @@ def capture_cognitive_scope_snapshot_v1(
         selected_policy=selected_policy,
         action_applied=action_applied,
         env_step=env_step,
+        external_state=external_state,
+        prior_action_for_input=prior_action_for_input,
+        dispatch_succeeded=dispatch_succeeded,
+        output_env_step=output_env_step,
         capture_kind=capture_kind,
         snapshot_no=next_no,
     )
@@ -1169,7 +1211,7 @@ def _compact_dp14(signal: Mapping[str, Any]) -> str:
     reward_text = f"{float(reward):+.2f}" if isinstance(reward, (int, float)) else "n/a"
     return (
         f"selected={_short_policy_name(signal.get('selected_primitive'))} | "
-        f"next={_short_policy_name(signal.get('next_action_for_environment'))} | "
+        f"output={_short_policy_name(signal.get('cycle_output_action'))} | "
         f"map_changed={_compact_text(transition.get('changed'))} | reward={reward_text}"
     )
 
@@ -1177,8 +1219,8 @@ def _compact_dp14(signal: Mapping[str, Any]) -> str:
 def _compact_dp15(signal: Mapping[str, Any]) -> str:
     acknowledgement = "MISMATCH" if signal.get("handoff_ack_mismatch") is True else "ok"
     return (
-        f"selected={_short_policy_name(signal.get('selected_task_action'))} | "
-        f"applied={_short_policy_name(signal.get('action_applied_this_environment_step'))} | "
+        f"output={_short_policy_name(signal.get('cycle_output_action'))} | "
+        f"dispatched={_short_policy_name(signal.get('task_action_dispatched_this_cycle'))} | "
         f"ack={acknowledgement} | slip={_compact_text(signal.get('slip_detected'))} | "
         f"error={_compact_text(signal.get('error_code'), missing='none')}"
     )
@@ -1310,11 +1352,13 @@ def render_cognitive_scope_compact_snapshot_lines_v1(snapshot: Mapping[str, Any]
         (
             f"snapshot={snapshot.get('snapshot_no') or 'live'} capture={snapshot.get('capture_kind')} "
             f"cycle={snapshot.get('cognitive_cycle')} controller_step={snapshot.get('controller_step')} "
-            f"environment_step={snapshot.get('environment_step')}"
+            f"input_env_step={snapshot.get('cycle_input_environment_step')} "
+            f"next_obs_env_step={snapshot.get('next_observation_environment_step')}"
         ),
         (
-            f"applied={snapshot.get('action_applied')!r} "
-            f"selected_for_next_step={snapshot.get('action_selected_for_next_step')!r}"
+            f"prior_action_for_input={snapshot.get('prior_action_for_input')!r} "
+            f"cycle_output={snapshot.get('cycle_output_action')!r} "
+            f"dispatched={snapshot.get('action_dispatched')!r}"
         ),
         "One compact reading per architectural service point; full stored signal is available by DP drill-down.",
         "The trace is diagnostic-only, outside goat cognition, and signal injection remains disabled.",
@@ -1362,7 +1406,8 @@ def render_cognitive_scope_port_detail_lines_v1(snapshot: Mapping[str, Any], por
         "=" * 78,
         (
             f"snapshot={snapshot.get('snapshot_no') or 'live'} cycle={snapshot.get('cognitive_cycle')} "
-            f"controller_step={snapshot.get('controller_step')} environment_step={snapshot.get('environment_step')}"
+            f"controller_step={snapshot.get('controller_step')} "
+            f"input_env_step={snapshot.get('cycle_input_environment_step')}"
         ),
     ]
     if row is None or normalized is None:
@@ -1422,11 +1467,13 @@ def render_cognitive_scope_snapshot_lines_v1(snapshot: Mapping[str, Any]) -> lis
         (
             f"snapshot={snapshot.get('snapshot_no') or 'live'} capture={snapshot.get('capture_kind')} "
             f"cognitive_cycle={snapshot.get('cognitive_cycle')} controller_step={snapshot.get('controller_step')} "
-            f"environment_step={snapshot.get('environment_step')}"
+            f"input_env_step={snapshot.get('cycle_input_environment_step')} "
+            f"next_observation_env_step={snapshot.get('next_observation_environment_step')}"
         ),
         (
-            f"action_applied={snapshot.get('action_applied')!r} "
-            f"action_selected_for_next_step={snapshot.get('action_selected_for_next_step')!r}"
+            f"prior_action_for_input={snapshot.get('prior_action_for_input')!r} "
+            f"cycle_output_action={snapshot.get('cycle_output_action')!r} "
+            f"action_dispatched={snapshot.get('action_dispatched')!r}"
         ),
         "DP00 is the external simulation reference; DP01-DP18 are the eighteen cognitive/architectural service points.",
         "The retained trace is diagnostic-only and cannot be read by CCA8 cognition. Injection is disabled.",
@@ -1503,8 +1550,8 @@ def render_cognitive_scope_trace_index_lines_v1(ctx: Any, *, limit: int = 20) ->
             continue
         lines.append(
             f"snapshot={row.get('snapshot_no')} cycle={row.get('cognitive_cycle')} "
-            f"controller_step={row.get('controller_step')} env_step={row.get('environment_step')} "
-            f"applied={row.get('action_applied')!r} selected={row.get('action_selected_for_next_step')!r}"
+            f"controller_step={row.get('controller_step')} input_env_step={row.get('cycle_input_environment_step')} "
+            f"output={row.get('cycle_output_action')!r} dispatched={row.get('action_dispatched')!r}"
         )
     if len(rows) > safe_limit:
         lines.append(f"... {len(rows) - safe_limit} older retained snapshot(s) not shown")

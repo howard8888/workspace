@@ -87,7 +87,7 @@ def test_capture_is_json_safe_bounded_and_honest_about_collapsed_stages() -> Non
     assert by_id["DP02"]["implementation"] == "collapsed"
     assert "no fabricated intermediate value" in by_id["DP02"]["note"]
     assert by_id["DP11"]["authority"] == "accepted_current"
-    assert snapshot["sampling_model"] == "end_of_cycle_stable_register_snapshot_v1"
+    assert snapshot["sampling_model"] == "end_of_cycle_same_cycle_output_snapshot_v2"
     assert snapshot["port_samples_are_exact_stage_timestamps"] is False
     assert snapshot["trace_is_cognitive_memory"] is False
     assert snapshot["measurement_only"] is True
@@ -145,6 +145,9 @@ def test_closed_loop_records_one_scope_snapshot_per_cognitive_cycle(
     assert [row["cognitive_cycle"] for row in ctx.cognitive_scope_trace_v1] == [1, 2, 3]
     assert all(row["capture_kind"] == "cognitive_cycle" for row in ctx.cognitive_scope_trace_v1)
     assert all(len(row["ports"]) == 19 for row in ctx.cognitive_scope_trace_v1)
+    assert [row["cycle_input_environment_step"] for row in ctx.cognitive_scope_trace_v1] == [0, 1, 2]
+    assert [row["next_observation_environment_step"] for row in ctx.cognitive_scope_trace_v1] == [1, 2, 3]
+    assert all(row["dispatch_succeeded"] is True for row in ctx.cognitive_scope_trace_v1)
 
 
 def test_scope_renderers_and_main_menu_expose_the_new_instrument() -> None:
@@ -372,8 +375,8 @@ def test_dp18_and_compact_view_separate_executions_from_learning_updates() -> No
         cca8_controller.reset_skills()
 
 
-def test_lower_motor_port_distinguishes_current_selection_from_prior_applied_action() -> None:
-    """DP15 must not mislabel the normal one-cycle action pipeline as a handoff fault."""
+def test_lower_motor_port_reports_same_cycle_dispatch_and_environment_ack() -> None:
+    """DP15 should report one selected-and-dispatched current-cycle action."""
     ctx = Ctx()
     env = HybridEnvironment()
     env.reset()
@@ -386,14 +389,16 @@ def test_lower_motor_port_distinguishes_current_selection_from_prior_applied_act
         world=WorldGraph(),
         drives=Drives(),
         policy_rt=_PolicyRuntimeStub(),
-        selected_policy="policy:recover_fall",
+        selected_policy="policy:stand_up",
         action_applied="policy:stand_up",
         env_step=1,
+        dispatch_succeeded=True,
+        output_env_step=1,
     )
 
     by_id = {row["port_id"]: row for row in snapshot["ports"]}
     signal = by_id["DP15"]["signal"]
-    assert signal["selected_task_action"] == "policy:recover_fall"
-    assert signal["action_applied_this_environment_step"] == "policy:stand_up"
-    assert signal["pipeline_relation"] == "selected_current_cycle_is_applied_on_next_environment_step"
+    assert signal["cycle_output_action"] == "policy:stand_up"
+    assert signal["task_action_dispatched_this_cycle"] == "policy:stand_up"
+    assert signal["pipeline_relation"] == "selected_and_dispatched_within_same_cognitive_cycle"
     assert signal["handoff_ack_mismatch"] is False

@@ -61,6 +61,44 @@ def _run_conflicted_repair(
     return result["episode_record"], cycles
 
 
+def _conflicted_repair_assignment(
+    condition: str,
+    *,
+    seed: int,
+    episode_index: int,
+    variant_mode: str,
+) -> dict:
+    """Return one condition-applied schedule without running a full episode.
+
+    These scheduler tests verify the deterministic assignment contract itself.
+    Full A/B/C episode integration is exercised separately above, so running a
+    40-cycle newborn episode merely to inspect precomputed schedule fields would
+    duplicate expensive behavior coverage.
+    """
+    ctx = Ctx()
+    cfg = ctx.experiment_cfg
+    cfg.newborn_blackout_length = 7
+    cfg.conflicted_repair_variant_mode = variant_mode
+    cfg.conflicted_repair_conflict_probability = 0.50
+    cfg.conflicted_repair_encoding_opportunities = 4
+    cfg.conflicted_repair_reacquire_probability = 0.25
+    cfg.conflicted_repair_reacquire_start_delay = 1
+    cfg.obs_mask_prob = 0.50
+    ctx.obs_mask_seed = seed
+    ctx.experiment_episode_index = episode_index
+
+    applied = cca8_experiments.experiment_apply_condition_runtime_v1(
+        None,
+        None,
+        ctx,
+        None,
+        condition_id=condition,
+        cfg=cfg,
+    )
+    assert applied.get("ok") is True
+    return cca8_experiments._newborn_conflicted_repair_assignment_v1(ctx)  # pylint: disable=protected-access
+
+
 def _cycle_with_selected_policy(cycles: list[dict], policy: str) -> dict:
     for row in cycles:
         if row.get("selected_policy") == policy:
@@ -162,7 +200,7 @@ def test_replacement_condition_can_succeed_when_memory_is_not_stale(tmp_path: Pa
     assert state["route_state"] == "clear"
 
 
-def test_factorial_assignment_is_matched_and_balanced_by_episode_index(tmp_path: Path) -> None:
+def test_factorial_assignment_is_matched_and_balanced_by_episode_index() -> None:
     expected = {
         0: "conflict_persistent",
         1: "conflict_reacquire",
@@ -171,45 +209,34 @@ def test_factorial_assignment_is_matched_and_balanced_by_episode_index(tmp_path:
     }
     for episode_index, variant in expected.items():
         rows = [
-            _run_conflicted_repair(tmp_path, condition, episode_index=episode_index)[0]
+            _conflicted_repair_assignment(
+                condition,
+                seed=955014,
+                episode_index=episode_index,
+                variant_mode="balanced_2x2",
+            )
             for condition in ("A", "B", "C")
         ]
-        assert {row["conflicted_repair_variant"] for row in rows} == {variant}
+        assert {row["variant"] for row in rows} == {variant}
+        assert all(row == rows[0] for row in rows[1:])
 
 
-def test_stochastic_schedule_is_reproducible_and_matched_across_conditions(
-    tmp_path: Path,
-) -> None:
+def test_stochastic_schedule_is_reproducible_and_matched_across_conditions() -> None:
     rows = [
-        _run_conflicted_repair(
-            tmp_path,
+        _conflicted_repair_assignment(
             condition,
             seed=540916,
             episode_index=7,
             variant_mode="stochastic_v3",
-        )[0]
+        )
         for condition in ("A", "B", "C")
     ]
 
-    matched_fields = (
-        "conflicted_repair_schedule_mode",
-        "conflicted_repair_variant",
-        "conflicted_repair_conflict_present",
-        "conflicted_repair_conflict_draw",
-        "conflicted_repair_memory_available",
-        "conflicted_repair_encoding_opportunities",
-        "conflicted_repair_encoding_successes",
-        "conflicted_repair_encoding_draws",
-        "conflicted_repair_reacquire_offsets",
-        "conflicted_repair_reacquire_draws",
-    )
-    for field in matched_fields:
-        assert len({json.dumps(row[field], sort_keys=True) for row in rows}) == 1
-
-    assert rows[0]["conflicted_repair_schedule_mode"] == "stochastic_v3"
-    assert rows[0]["conflicted_repair_encoding_opportunities"] == 4
-    assert len(rows[0]["conflicted_repair_encoding_draws"]) == 4
-    assert len(rows[0]["conflicted_repair_reacquire_draws"]) == 6
+    assert all(row == rows[0] for row in rows[1:])
+    assert rows[0]["mode"] == "stochastic_v3"
+    assert rows[0]["encoding_opportunities"] == 4
+    assert len(rows[0]["encoding_draws"]) == 4
+    assert len(rows[0]["reacquire_draws"]) == 6
 
 
 def test_stochastic_schedule_varies_across_matched_seeds() -> None:

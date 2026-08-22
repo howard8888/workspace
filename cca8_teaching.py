@@ -23,7 +23,7 @@ the same engine as Menu 37, but with extra tutorial text.
 from __future__ import annotations
 
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "menu37_teaching_intro_v1",
     "menu37_teaching_cycle_header_v1",
@@ -47,7 +47,8 @@ def menu37_teaching_intro_v1() -> str:
       -> BodyMap / WorkingMap / WorldGraph
       -> policy selection
       -> policy execution
-      -> next action stored for the following environment step
+      -> task-level output dispatched before the cognitive cycle closes
+      -> resulting later observation buffered for the next cognitive cycle
 
 [teach] Memory layers:
   EnvState is the environment-side truth. The agent does not directly read it.
@@ -81,12 +82,13 @@ def menu37_teaching_cycle_header_v1(cycle_index: int, total_cycles: int) -> str:
   This is cognitive cycle {cycle_index}/{total_cycles}.
 
   Watch the output in this order:
-    1) [env] tells you whether the environment reset or stepped forward.
+    1) [env] identifies the current observation entering this cognitive cycle.
     2) [env→working] shows current observations entering the WorkingMap / MapSurface.
     3) [env→world] shows what was written to the long-term WorldGraph.
     4) [surfacegrid] shows the current local spatial surface, if it changed.
     5) [env→controller] shows which policy won the action-selection step.
-    6) [cycle] lines summarize the same cycle in compact diagnostic form.
+    6) [controller→env] shows that cycle's task-level output crossing the lower-controller boundary.
+    7) [cycle] lines summarize the same cycle in compact diagnostic form.
 """.strip()
 
 
@@ -111,18 +113,21 @@ def menu37_teaching_after_controller_v1() -> str:
     """Return a teaching note printed after policy selection/execution."""
     return """
 [teach] Controller checkpoint:
-  The controller has now selected and executed one policy.
+  The controller has selected and internally executed one primitive, and its
+  task-level output has now crossed the environment / lower-controller boundary.
 
   Important timing detail:
-    The selected policy affects the NEXT environment step.
+    The output belongs to THIS cognitive cycle.
+    Its sensory consequences normally become evidence for a LATER cognitive cycle.
 
   For example:
-    If this cycle executes policy:stand_up, the environment only gets that action
-    when the next cycle calls env.step(action='policy:stand_up').
+    If CognitiveCycle_n selects policy:stand_up, that action is dispatched during
+    CognitiveCycle_n. The environment transition returns Observation_(n+1), which
+    is buffered and not cognitively processed until CognitiveCycle_(n+1).
 
-  This is why the terminal may show an expected posture of standing while the
-  environment still reports fallen during the same cycle. That mismatch becomes
-  prediction-error evidence on the following cycle.
+  This is why the current cycle can still report an observed posture of fallen
+  while also emitting an expected posture of standing. The standing expectation
+  is tested only when later sensory evidence enters through the normal input path.
 """.strip()
 
 

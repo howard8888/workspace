@@ -21,6 +21,7 @@ from cca8_navpatch import SurfaceGridV1
 from cca8_temporal import TemporalContext
 
 if TYPE_CHECKING:
+    from cca8_env import EnvObservation, EnvState
     from cca8_followmom_advisory import FollowMomAdvisoryV1
     from cca8_followmom_authority import FollowMomAuthorityDecisionV1
     from cca8_followmom_compare import (
@@ -60,7 +61,7 @@ if TYPE_CHECKING:
     )
     from cca8_wnm_runtime import WNMReadyEntryV1, WNMTransitionRecordV1
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -191,8 +192,8 @@ class Ctx:
     controller_steps: int = 0
     cog_cycles: int = 0  # closed-loop cognitive cycles (env_obs→update→select→execute→act); incremented in menu 35/37 flows
     # Prediction error v0 (Phase VIII):
-    # - Store the policy-written postcondition for the NEXT env step (hypothesis).
-    # - Next tick, compare to EnvObservation/EnvState and log a mismatch vector.
+    # - Store the policy-written postcondition produced in the current cognitive cycle.
+    # - Compare it only when later EnvObservation evidence enters a subsequent cycle.
     pred_next_posture: Optional[str] = None
     pred_next_policy: Optional[str] = None
     pred_err_v0_last: dict[str, int] = field(default_factory=dict)
@@ -206,7 +207,22 @@ class Ctx:
 
     last_drive_flags: Optional[set[str]] = None
     env_episode_started: bool = False       # Environment / HybridEnvironment integration
-    env_last_action: Optional[str] = None  # last fired policy name for env.step(...)
+    env_last_action: Optional[str] = None
+    # ``env_last_action`` is the task-level output actually dispatched during the
+    # most recently completed cognitive cycle. It is not a queued action waiting
+    # to be applied at the start of the next cycle.
+
+    # Environment-side transition buffer between cognitive cycles.
+    #
+    # CognitiveCycle_n consumes one observation, produces and dispatches Action_n,
+    # and stores the resulting observation here without cognitively processing it.
+    # CognitiveCycle_(n+1) consumes that buffered observation. These fields are an
+    # I/O seam outside cognition, not an additional working-memory representation.
+    env_pending_observation: Optional["EnvObservation"] = None
+    env_pending_info: dict[str, Any] = field(default_factory=dict)
+    env_pending_reward: float = 0.0
+    env_pending_done: bool = False
+    env_pending_previous_state: Optional["EnvState"] = None
     # Console UX: print the env-loop tag legend once per session (menu 35/37).
     env_loop_legend_printed: bool = False
 

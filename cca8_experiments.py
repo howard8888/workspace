@@ -64,7 +64,7 @@ from cca8_state_integrity import (
 )
 from cca8_temporal import TemporalContext
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 RunIdFactory = Callable[[Ctx | None, ExperimentProtocolConfig | None], str]
 BodySpaceZoneFn = Callable[[Ctx], str]
@@ -2584,6 +2584,13 @@ def experiment_configure_benchmark_runtime_v1(
         try:
             ctx.env_episode_started = False
             ctx.env_last_action = None
+            ctx.env_pending_observation = None
+            ctx.env_pending_info = {}
+            ctx.env_pending_reward = 0.0
+            ctx.env_pending_done = False
+            ctx.env_pending_previous_state = None
+            ctx.navmap_pending_action_v1 = None
+            ctx.navmap_pending_reward_v1 = 0.0
         except Exception:
             pass
 

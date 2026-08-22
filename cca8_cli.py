@@ -45,7 +45,7 @@ __all__ = [
     "__version__",
 ]
 
-TECH_MANUAL = "http://github.com/howard8888/workspace"
+TECH_MANUAL = "http://github.com/howard8888/workspace" #online source for tech info, on startup screen
 MENU_RESPONSE_DIVIDER = "-" * 78
 
 ASCII_LOGOS = {

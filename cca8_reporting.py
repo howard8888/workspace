@@ -96,7 +96,7 @@ from cca8_predictive import (
 )
 from cca8_wnm_runtime import render_wnm_lines_v1, wnm_summary_v1
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 
 __all__ = [
     "TeeTextIO",
@@ -1262,16 +1262,17 @@ def print_env_loop_tag_legend_once(ctx: Ctx) -> None:
     ctx.env_loop_legend_printed = True
 
     print("\nLegend (console tags):")
-    print("  [env-loop]      closed-loop driver (one cognitive cycle = env update → policy select → policy act)")
-    print("  [env]           environment events (reset/step; with HAL ON, this would be real sensor I/O)")
+    print("  [env-loop]      closed-loop driver (observation → cognition → same-cycle output dispatch)")
+    print("  [env]           current sensory input (reset or a prior transition's buffered observation)")
     print("  [env→working]   EnvObservation → WorkingMap (fast scratch / map surface)")
     print("  [env→world]     EnvObservation → WorldGraph (long-term episode index)")
-    print("  [env→controller] Action Center output (policy selection + execution)")
+    print("  [env→controller] Action Center output (policy selection + internal primitive execution)")
+    print("  [controller→env] task-level output dispatched before the cognitive cycle closes")
     print("  [wm<->col]      WorkingMap ⇄ Column keyframe pipeline (store snapshot → retrieve candidates → apply/merge priors)")
     print("  [pred_err]      prediction error v0 (expected vs observed); gates auto-retrieve and shapes policy value via penalty on streaks")
     print("  [gate:<p>]      gating explanation for policy <p>")
     print("  [pick]          which policy was selected this cycle")
-    print("  [executed]      policy execution result (effects show up in the NEXT cycle's observation)")
+    print("  [executed]      selected primitive's internal result; environmental consequences appear as later evidence")
     print("  [maps]          selection_on=map used to score; execute_on=map used to run actions")
     print("  [obs-mask]      partial-observability masking (token drops) when enabled")
     print("")
@@ -1280,8 +1281,8 @@ def print_env_loop_tag_legend_once(ctx: Ctx) -> None:
 def _quiet_solved_rest_tail_v1(
     curr_state,
     zone: str | None,
-    action_applied_this_step: str | None,
-    next_action_for_env: str | None,
+    prior_action_for_input: str | None,
+    cycle_output_action: str | None,
 ) -> bool:
     """Return True when the newborn episode is already in a stable solved rest tail.
 
@@ -1296,8 +1297,8 @@ def _quiet_solved_rest_tail_v1(
       - mom_distance == "touching"
       - nipple_state == "latched"
       - zone == "safe"
-      - no action was applied this step
-      - no next action is queued for the next environment step
+      - the current observation was not produced by a task-level action
+      - the current cognitive cycle emits an explicit null action
 
     The first transition into rest is therefore still explained normally. Only
     the later steady-state tail becomes quieter.
@@ -1322,9 +1323,9 @@ def _quiet_solved_rest_tail_v1(
     if nipple_state != "latched":
         return False
 
-    if isinstance(action_applied_this_step, str) and action_applied_this_step:
+    if isinstance(prior_action_for_input, str) and prior_action_for_input:
         return False
-    if isinstance(next_action_for_env, str) and next_action_for_env:
+    if isinstance(cycle_output_action, str) and cycle_output_action:
         return False
 
     return True
@@ -1343,8 +1344,12 @@ def _print_cog_cycle_footer(*,
                             col_store_txt: str | None,
                             col_retrieve_txt: str | None,
                             col_apply_txt: str | None,
-                            action_applied_this_step: str | None,
-                            next_action_for_env: str | None,
+                            prior_action_for_input: str | None,
+                            cycle_output_action: str | None,
+                            action_dispatched: str | None,
+                            dispatch_succeeded: bool,
+                            output_env_step: int | None,
+                            next_observation_buffered: bool,
                             cycle_no: int,
                             cycle_total: int) -> None:
     """
@@ -1704,7 +1709,7 @@ def _print_cog_cycle_footer(*,
     print(
         f"[cycle] IN   {kf_txt} cycle={cycle_no}/{cycle_total} env_step={step_txt} "
         f"stage={st_stage} posture={st_post} mom={st_mom} nipple={st_nip} zone={zone_txt} "
-        f"drives(h={dr_h} f={dr_f} w={dr_w}) applied_action={action_applied_this_step!r} "
+        f"drives(h={dr_h} f={dr_f} w={dr_w}) prior_action={prior_action_for_input!r} "
         f"obs(p={len(obs_preds)} c={len(obs_cues)}){mask_txt}"
     )
 
@@ -1785,7 +1790,7 @@ def _print_cog_cycle_footer(*,
     # ---- line 2: WorkingMap summary (surface deltas + scratch writes)
     deltas = _surface_deltas(prev_state, curr_state)
     delta_txt = _fmt_items(deltas, prefix="", limit=max_items) if deltas else "(no surface slot change)"
-    pol = fired_info.get("policy") or next_action_for_env
+    pol = fired_info.get("policy") or cycle_output_action
     added = fired_info.get("added")
     exec_on = fired_info.get("exec_on")
     scratch_txt = "(no policy fired)"
@@ -1899,10 +1904,20 @@ def _print_cog_cycle_footer(*,
     else:
         print("[cycle] COL  (no wm<->col ops this cycle)")
 
-    # ---- line 5: action recap
+    # ---- line 5: current-cycle output and lower-boundary handoff
     r = fired_info.get("reward")
     rtxt = f"{r:+.2f}" if isinstance(r, (int, float)) else "n/a"
-    print(f"[cycle] ACT  executed={pol!r} reward={rtxt} next_action={next_action_for_env!r}")
+    output_text = cycle_output_action if isinstance(cycle_output_action, str) else "NO_ACTION"
+    if dispatch_succeeded:
+        dispatched_text = action_dispatched if isinstance(action_dispatched, str) else "NO_ACTION"
+    else:
+        dispatched_text = "DISPATCH_FAILED"
+    next_step_text = str(output_env_step) if isinstance(output_env_step, int) else "?"
+    print(
+        f"[cycle] ACT  output={output_text!r} reward={rtxt} dispatched={dispatched_text!r} "
+        f"dispatch_ok={'Y' if dispatch_succeeded else 'N'} next_observation_env_step={next_step_text} "
+        f"buffered={'Y' if next_observation_buffered else 'N'}"
+    )
 
 
 def _navmap_memory_mini_line_v1(ctx: Any) -> str:

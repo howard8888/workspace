@@ -152,7 +152,7 @@ from cca8_navpatch import GRID_ENCODING_V1, CELL_UNKNOWN, CELL_TRAVERSABLE, CELL
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "EnvState",
     "EnvObservation",
@@ -2283,13 +2283,34 @@ class HybridEnvironment:
         return obs, info
 
 
-    def step(
+    def observe(self, ctx: Any = None) -> EnvObservation:
+        """Return an agent-visible observation of the current state without advancing it.
+
+        This method is the sensing half of the explicit CCA8 cognitive-cycle
+        contract. A runner may read ``Observation_n`` at the start of
+        ``CognitiveCycle_n``, perform cognition, and then call
+        :meth:`apply_action` before that cognitive cycle closes.
+
+        The method does not mutate ``EnvState``, increment environment time, or
+        apply a task-level command. The optional ``ctx`` is passed only to the
+        perception adapter so current sensor/HAL shaping can remain context-aware.
+        """
+        return self._perception.observe(self._state, ctx=ctx)
+
+
+    def apply_action(
         self,
         action: Optional[str],
         ctx: Any,
     ) -> Tuple[EnvObservation, float, bool, Dict[str, Any]]:
         """
-        Advance the environment by one tick given the agent's last action.
+        Apply the current cognitive-cycle output and advance the environment one tick.
+
+        ``CognitiveCycle_n`` dispatches ``Action_n`` through this method before
+        the cycle closes. The returned observation describes the resulting
+        environment state and is intended to become input to a later cognitive
+        cycle; callers must not automatically process it as a second sensory
+        observation inside the cycle that emitted the action.
 
         Args:
             action:
@@ -2311,7 +2332,7 @@ class HybridEnvironment:
 
         Conceptual steps:
 
-            obs, reward, done, info = env.step(action, ctx)
+            obs, reward, done, info = env.apply_action(action, ctx)
 
             1. Time bookkeeping:
                - increment episode_steps
@@ -2356,6 +2377,21 @@ class HybridEnvironment:
             "step_index": self._episode_steps,
         }
         return obs, reward, done, info
+
+
+    def step(
+        self,
+        action: Optional[str],
+        ctx: Any,
+    ) -> Tuple[EnvObservation, float, bool, Dict[str, Any]]:
+        """Gym-compatible alias for :meth:`apply_action`.
+
+        Existing environment tests, external agents, and RL-style callers may
+        continue to use ``env.step(action, ctx)``. The CCA8 runner uses the
+        explicit ``observe()`` / ``apply_action()`` names so the boundary of one
+        cognitive cycle remains visible in code.
+        """
+        return self.apply_action(action, ctx)
 
 
     # ----- Introspection helpers (optional) -----
