@@ -6,6 +6,7 @@ import json
 
 import cca8_cli
 import cca8_cognitive_scope
+import cca8_controller
 import cca8_run
 from cca8_context import Ctx
 from cca8_controller import Drives
@@ -334,6 +335,41 @@ def test_dp13_exposes_arbitration_reason_scores_and_trigger_authority() -> None:
     assert signal["protected_safety_filter"] is True
     assert signal["authority_source"] == "protected_bodymap_safety"
     assert signal["authority_reason"] == "fresh_bodymap_fallen_protected_safety"
+
+
+def test_dp18_and_compact_view_separate_executions_from_learning_updates() -> None:
+    """The cognitive DSO should expose the skill-ledger count split without changing q learning."""
+    cca8_controller.reset_skills()
+    try:
+        for _ in range(4):
+            cca8_controller.update_skill("policy:stand_up", 1.0, ok=True)
+        cca8_controller.update_skill("policy:stand_up", -0.15, ok=False, execution=False)
+
+        ctx = Ctx()
+        ctx.navmap_last_policy_outcome_v1 = {"action": "policy:stand_up"}
+        snapshot = cca8_cognitive_scope.build_cognitive_scope_snapshot_v1(
+            ctx,
+            env=HybridEnvironment(),
+            env_obs=None,
+            world=WorldGraph(),
+            drives=Drives(),
+            policy_rt=_PolicyRuntimeStub(),
+            selected_policy="policy:stand_up",
+            action_applied="policy:stand_up",
+            env_step=4,
+        )
+
+        by_id = {row["port_id"]: row for row in snapshot["ports"]}
+        stand_up = by_id["DP18"]["signal"]["skill_stats"]["policy:stand_up"]
+        assert stand_up["execution_count"] == 4
+        assert stand_up["learning_update_count"] == 5
+        assert stand_up["success_count"] == 4
+
+        compact = "\n".join(cca8_cognitive_scope.render_cognitive_scope_compact_snapshot_lines_v1(snapshot))
+        assert "DP18 LEARNING" in compact
+        assert "last=stand_up exec=4 updates=5" in compact
+    finally:
+        cca8_controller.reset_skills()
 
 
 def test_lower_motor_port_distinguishes_current_selection_from_prior_applied_action() -> None:

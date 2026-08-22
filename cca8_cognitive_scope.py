@@ -75,9 +75,10 @@ from cca8_controller import (
     body_space_zone,
     bodymap_is_stale,
     skill_readout,
+    skills_to_dict,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "COGNITIVE_SCOPE_PORTS_V1",
@@ -694,11 +695,14 @@ def _dp18_learning(ctx: Any, world: Any) -> dict[str, Any]:
     """Sample skill, revision, consolidation, and long-term-memory writeback effects."""
     memory = _safe_call(lambda: cca8_navmap_memory.navmap_memory_summary_v1(ctx), {})
     skills = _safe_call(skill_readout, "")
+    skill_stats = _safe_call(skills_to_dict, {})
+    skill_stats = skill_stats if isinstance(skill_stats, Mapping) else {}
     skill_lines = skills.strip().splitlines()[-8:] if isinstance(skills, str) and skills.strip() else []
     if skill_lines == ["(no skill stats yet)"]:
         skill_lines = []
     signal = {
         "skill_ledger": skill_lines,
+        "skill_stats": _json_safe(skill_stats),
         "last_policy_outcome": _compact_mapping(getattr(ctx, "navmap_last_policy_outcome_v1", {}), limit=12),
         "last_consolidation": _compact_mapping(memory.get("last_consolidation"), limit=14),
         "eligibility_count": memory.get("eligibility_count"),
@@ -709,6 +713,7 @@ def _dp18_learning(ctx: Any, world: Any) -> dict[str, Any]:
     }
     active = bool(
         signal["skill_ledger"]
+        or signal["skill_stats"]
         or signal["last_policy_outcome"]
         or signal["last_consolidation"]
         or int(signal["consolidation_history_count"] or 0) > 0
@@ -1213,10 +1218,17 @@ def _compact_dp17(signal: Mapping[str, Any]) -> str:
 
 def _compact_dp18(signal: Mapping[str, Any]) -> str:
     skills = _list_or_empty(signal.get("skill_ledger"))
+    stats = _mapping_or_empty(signal.get("skill_stats"))
     consolidation = _mapping_or_empty(signal.get("last_consolidation"))
     outcome = _mapping_or_empty(signal.get("last_policy_outcome"))
+    last_action = outcome.get("action")
+    last_stat = _mapping_or_empty(stats.get(last_action)) if isinstance(last_action, str) else {}
+    execution_count = last_stat.get("execution_count")
+    learning_updates = last_stat.get("learning_update_count", last_stat.get("n"))
+    skill_count = len(stats) if stats else len(skills)
     return (
-        f"skill_rows={len(skills)} | last={_short_policy_name(outcome.get('action'))} | "
+        f"skills={skill_count} | last={_short_policy_name(last_action)} "
+        f"exec={_compact_text(execution_count, missing='n/a')} updates={_compact_text(learning_updates, missing='n/a')} | "
         f"consolidated={_compact_text(consolidation.get('consolidated'))} | "
         f"eligible={_compact_text(signal.get('eligibility_count'), missing='0')} | "
         f"Columns={_compact_text(signal.get('column_engram_count'), missing='0')} | "

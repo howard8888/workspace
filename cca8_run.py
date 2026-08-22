@@ -646,7 +646,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.24.1"
+__version__ = "0.24.2"
 __all__ = [
     "main",
     "interactive_loop",
@@ -4206,7 +4206,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
                 # 3) Apply shaping only after the streak threshold (ignore first mismatch)
                 if streak >= 2:
                     shaping_reward = -abs(pen_mag) * float(v0_posture_err)
-                    update_skill(action_for_env, shaping_reward, ok=False)
+                    update_skill(action_for_env, shaping_reward, ok=False, execution=False)
                     try:
                         q_now = float(skill_q(action_for_env))
                     except Exception:
@@ -7767,8 +7767,9 @@ Menu 37 runs the compact multi-cycle timeline.
 
             print()
             print("\n[skills-hud] Learned policy values after env-loop:")
-            print("(terminology: hud==heads-up-display; n==number times policy executed; rate==% times we counted policy as successful;")
-            print("  last==reward value that policy received the last time it executed; q==learned value estimate;")
+            print("(terminology: hud==heads-up-display; exec==actual primitive executions; updates==all q/EMA learning updates;")
+            print("  rate==successful executions / executions; last_exec==latest execution reward;")
+            print("  last_update==latest reward sample, including prediction-error shaping; q==learned value estimate;")
             print("  EMA==exponential moving average of rewards; q_new = (1-alpha_smoothing_factor)*q_old + alpha*reward (alpha ~0.3))")
             print("(if RL=enabled, epsilon is theoretical % times to choose randomly, 'explore_rate' is measured % of random choices;")
             print("   delta=0 then q used only for exact ties otherwise deficit values within delta range are considered tied and q used to decide)")

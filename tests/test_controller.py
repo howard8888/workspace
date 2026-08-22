@@ -6,6 +6,7 @@ from cca8_controller import (
     Drives,
     action_center_step,
     SKILLS,
+    skill_readout,
     skills_to_dict,
     update_skill,
 )
@@ -60,7 +61,7 @@ def test_action_center_fallen_short_circuit(world):
 
 
 def test_skills_update_and_dump():
-    """Ledger increments n/succ; q is an EMA; last_reward tracks the latest."""
+    """Execution updates advance both explicit counters while preserving legacy fields."""
     update_skill("policy:example", reward=0.5, ok=True)   # q = 0.3*0.5 = 0.15
     update_skill("policy:example", reward=0.0, ok=False)  # q = 0.7*0.15 + 0.3*0 = 0.105
 
@@ -69,9 +70,40 @@ def test_skills_update_and_dump():
     row = dump["policy:example"]
 
     assert row["n"] == 2
+    assert row["learning_update_count"] == 2
+    assert row["execution_count"] == 2
     assert row["succ"] == 1
+    assert row["success_count"] == 1
     assert row["last_reward"] == pytest.approx(0.0, rel=1e-9)
+    assert row["last_execution_reward"] == pytest.approx(0.0, rel=1e-9)
     assert row["q"] == pytest.approx(0.105, rel=1e-9)
+
+
+def test_prediction_error_shaping_updates_q_without_fabricating_an_execution():
+    """A value-only shaping sample must not inflate executions or reduce execution success rate."""
+    for _ in range(4):
+        update_skill("policy:stand_up", reward=1.0, ok=True)
+
+    q_before_shaping = skills_to_dict()["policy:stand_up"]["q"]
+    update_skill("policy:stand_up", reward=-0.15, ok=False, execution=False)
+
+    row = skills_to_dict()["policy:stand_up"]
+    expected_q = (0.7 * q_before_shaping) + (0.3 * -0.15)
+    assert row["execution_count"] == 4
+    assert row["learning_update_count"] == 5
+    assert row["n"] == 5
+    assert row["success_count"] == 4
+    assert row["succ"] == 4
+    assert row["q"] == pytest.approx(expected_q, rel=1e-9)
+    assert row["last_execution_reward"] == pytest.approx(1.0, rel=1e-9)
+    assert row["last_learning_reward"] == pytest.approx(-0.15, rel=1e-9)
+
+    text = skill_readout()
+    assert "exec=4" in text
+    assert "updates=5" in text
+    assert "rate=1.00" in text
+    assert "last_exec=+1.00" in text
+    assert "last_update=-0.15" in text
 
 
 def test_standup_returns_binding_extra():

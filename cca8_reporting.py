@@ -96,7 +96,7 @@ from cca8_predictive import (
 )
 from cca8_wnm_runtime import render_wnm_lines_v1, wnm_summary_v1
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 __all__ = [
     "TeeTextIO",
@@ -1356,7 +1356,7 @@ def _print_cog_cycle_footer(*,
     "cheap digest" line-set that lets a maintainer quickly see what happened in *this* cognitive
     cycle in terms of the architecture:
 
-      inputs → MapSurface deltas → Scratch writes → WorldGraph writes → Column ops → action
+      inputs → MapSurface deltas → Scratch writes → WorldGraph observation/write accounting → Column ops → action
 
     The footer is intentionally pragmatic and will evolve as Phase IX/robotics/HAL integration evolves.
     Treat it as a reading aid, not a stable API.
@@ -1578,41 +1578,52 @@ def _print_cog_cycle_footer(*,
     dr_f = _sf(getattr(drives, "fatigue", None))
     dr_w = _sf(getattr(drives, "warmth", None))
 
-    # WG write summary (env injection)
+    # WG write summary (env injection).  The observation packet and persistent
+    # writes are distinct: token_to_bid contains reused bindings as well as new
+    # ones, while the explicit predicate/cue lists contain only bindings created
+    # during this injection transaction.
     wg_preds: list[str] = []
     wg_cues: list[str] = []
     wg_keyframe = False
     wg_reason_txt = ""
 
     if isinstance(inj, dict):
+        predicate_write_keys = (
+            "predicates",
+            "preds",
+            "created_preds",
+            "created_predicates",
+            "written_predicates",
+            "predicates_written",
+            "preds_written",
+        )
+        cue_write_keys = (
+            "cues",
+            "created_cues",
+            "written_cues",
+            "cues_written",
+        )
+        predicate_write_schema_present = any(key in inj for key in predicate_write_keys)
+        cue_write_schema_present = any(key in inj for key in cue_write_keys)
+
         wg_preds = _obs_write_family_values(
             inj,
-            (
-                "predicates",
-                "preds",
-                "created_preds",
-                "created_predicates",
-                "written_predicates",
-                "predicates_written",
-                "preds_written",
-            ),
+            predicate_write_keys,
             family="pred",
         )
         wg_cues = _obs_write_family_values(
             inj,
-            (
-                "cues",
-                "created_cues",
-                "written_cues",
-                "cues_written",
-            ),
+            cue_write_keys,
             family="cue",
         )
 
-        # Fallback for obs_write schemas that expose only token_to_bid.
+        # Backward-compatible fallback for old obs_write schemas that expose
+        # only token_to_bid.  An explicitly present empty write list is
+        # authoritative and must remain zero rather than being repopulated from
+        # reused token-to-binding references.
         # Unprefixed fallback keys are only treated as predicates when they are from
         # known state-slot families, so we do not accidentally label arbitrary cue text.
-        if not (wg_preds or wg_cues):
+        if not predicate_write_schema_present or not cue_write_schema_present:
             token_to_bid = inj.get("token_to_bid")
             if isinstance(token_to_bid, dict):
                 pred_fallback: list[str] = []
@@ -1634,8 +1645,10 @@ def _print_cog_cycle_footer(*,
                     elif _looks_like_pred_token(key):
                         pred_fallback.append(key)
 
-                wg_preds = _dedup_obs_tokens(pred_fallback)
-                wg_cues = _dedup_obs_tokens(cue_fallback)
+                if not predicate_write_schema_present:
+                    wg_preds = _dedup_obs_tokens(pred_fallback)
+                if not cue_write_schema_present:
+                    wg_cues = _dedup_obs_tokens(cue_fallback)
 
         wg_keyframe = bool(inj.get("keyframe"))
 
@@ -1867,14 +1880,15 @@ def _print_cog_cycle_footer(*,
     except Exception:
         pass
 
-    # ---- line 3: WorldGraph writes this tick
-    wg_txt = f"preds+{len(wg_preds)} cues+{len(wg_cues)}"
+    # ---- line 3: WorldGraph observation input versus actual new persistent writes
+    wg_observed_txt = f"observed preds={len(obs_preds)} cues={len(obs_cues)}"
+    wg_txt = f"persisted_new preds={len(wg_preds)} cues={len(wg_cues)}"
     if wg_keyframe:
         wg_txt += " keyframe=Y"
 
     wg_pred_txt = _fmt_items(wg_preds, prefix="pred:", limit=max_items)
     wg_cue_txt = _fmt_items(wg_cues, prefix="cue:", limit=max_items)
-    print(f"[cycle] WG   wrote {wg_txt}{wg_reason_txt} | {wg_pred_txt} | {wg_cue_txt}")
+    print(f"[cycle] WG   {wg_observed_txt} | {wg_txt}{wg_reason_txt} | {wg_pred_txt} | {wg_cue_txt}")
 
     # ---- line 4: Column ops (only meaningful on keyframes)
     if col_store_txt or col_retrieve_txt or col_apply_txt:
@@ -2241,7 +2255,9 @@ def skill_ledger_text(example_policy: str = "policy:stand_up") -> str:
     """
     lines = []
     lines.append("The Skill Ledger is per-policy runtime telemetry (RL-flavored):")
-    lines.append("  n=executions, succ=successes, rate=succ/n, q=mean reward, last=last reward.")
+    lines.append("  exec=actual primitive executions; updates=all q/EMA reward samples, including shaping.")
+    lines.append("  succ=successful executions; rate=succ/exec; q=EMA reward estimate.")
+    lines.append("  last_exec=latest execution reward; last_update=latest reward sample of any kind.")
     lines.append("  Used as a quick controller health check and for tuning/diagnostics.")
     lines.append("Sources: live in-memory ledger → cca8_controller.SKILLS;")
     lines.append("         programmatic snapshot → cca8_controller.skills_to_dict();")
@@ -2261,11 +2277,13 @@ def skill_ledger_text(example_policy: str = "policy:stand_up") -> str:
                 return dd[k]
         return default
 
-    n     = _get(row, "n", "runs", "count", default=0) or 0
-    succ  = _get(row, "succ", "successes", "ok", default=0) or 0
-    rate  = _get(row, "rate", default=(succ / n if n else None))
-    q     = _get(row, "q", "mean_reward", "avg", default=None)
-    last  = _get(row, "last", "last_reward", default=None)
+    executions = _get(row, "execution_count", "runs", "count", default=0) or 0
+    updates = _get(row, "learning_update_count", "n", default=0) or 0
+    succ = _get(row, "success_count", "succ", "successes", "ok", default=0) or 0
+    rate = _get(row, "rate", default=(succ / executions if executions else None))
+    q = _get(row, "q", "mean_reward", "avg", default=None)
+    last_exec = _get(row, "last_execution_reward", default=None)
+    last_update = _get(row, "last_learning_reward", "last_reward", "last", default=None)
 
     def _fmt(x, nd=2, plus=False):
         if x is None:
@@ -2279,12 +2297,14 @@ def skill_ledger_text(example_policy: str = "policy:stand_up") -> str:
         except Exception:
             return str(x)
 
-    lines.append(f"Example ({example_policy}): "
-                 f"n={n}, succ={succ}, rate={_fmt(rate)}, q={_fmt(q)}, last={_fmt(last, plus=True)}  "
-                 f"[src=skills_to_dict()['{example_policy}']]")
+    lines.append(
+        f"Example ({example_policy}): exec={executions}, updates={updates}, succ={succ}, rate={_fmt(rate)}, "
+        f"q={_fmt(q)}, last_exec={_fmt(last_exec, plus=True)}, last_update={_fmt(last_update, plus=True)}  "
+        f"[src=skills_to_dict()['{example_policy}']]"
+    )
     lines.append("")
-    lines.append("Interpretation: higher n builds confidence; rate≈1.0 means it rarely fails;")
-    lines.append("q tracks average reward quality; last is the most recent reward sample.")
+    lines.append("Interpretation: execution count and success rate describe behavior; update count describes learning exposure.")
+    lines.append("q incorporates every intended reward sample, including non-execution prediction-error shaping.")
     return "\n".join(lines) + "\n"
 
 
@@ -2293,7 +2313,8 @@ def skills_hud_text(ctx: Optional[Ctx] = None, *, top_n: int = 8) -> str:
     Compact HUD for learned policy values (SkillStat.q).
 
     - Sorts policies by q (EMA reward) descending.
-    - Shows basic counts: n, succ-rate, q, last_reward.
+    - Separates actual primitive executions from all q/EMA learning updates.
+    - Shows execution success rate, q, last execution reward, and last update reward.
     - If ctx is provided, also prints RL settings + explore/exploit counters.
 
     This is intentionally a *read-only* helper (no world writes).
@@ -2309,26 +2330,29 @@ def skills_hud_text(ctx: Optional[Ctx] = None, *, top_n: int = 8) -> str:
         delta = 0.0
     delta = max(delta, 0.0)
 
-    rows: list[tuple[str, int, int, float, float]] = []
+    rows: list[tuple[str, int, int, int, float, float | None, float]] = []
     for name, stat in raw.items():
         if not isinstance(name, str) or not isinstance(stat, dict):
             continue
         try:
-            n = int(stat.get("n", 0) or 0)
-            succ = int(stat.get("succ", 0) or 0)
+            executions = int(stat.get("execution_count", stat.get("n", 0)) or 0)
+            updates = int(stat.get("learning_update_count", stat.get("n", 0)) or 0)
+            succ = int(stat.get("success_count", stat.get("succ", 0)) or 0)
             q = float(stat.get("q", 0.0) or 0.0)
-            last = float(stat.get("last_reward", 0.0) or 0.0)
+            last_update = float(stat.get("last_learning_reward", stat.get("last_reward", 0.0)) or 0.0)
+            raw_last_execution = stat.get("last_execution_reward")
+            last_execution = float(raw_last_execution) if raw_last_execution is not None else None
         except Exception:
             continue
-        if n <= 0:
+        if updates <= 0 and executions <= 0:
             continue
-        rows.append((name, n, succ, q, last))
+        rows.append((name, executions, updates, succ, q, last_execution, last_update))
 
     if not rows:
         return "(no skill stats yet)"
 
-    # Sort: high q first, then higher n, then name for stability
-    rows.sort(key=lambda t: (-t[3], -t[1], t[0]))
+    # Sort: high q first, then more learning evidence, then name for stability.
+    rows.sort(key=lambda t: (-t[4], -t[2], t[0]))
 
     lines: list[str] = []
 
@@ -2356,10 +2380,12 @@ def skills_hud_text(ctx: Optional[Ctx] = None, *, top_n: int = 8) -> str:
     show_n = min(top_n, len(rows))
     lines.append(f"Skill HUD (top {show_n} by q=EMA reward):")
 
-    for i, (name, n, succ, q, last) in enumerate(rows[:show_n], start=1):
-        rate = (succ / n) if n else 0.0
+    for i, (name, executions, updates, succ, q, last_execution, last_update) in enumerate(rows[:show_n], start=1):
+        rate = (succ / executions) if executions else 0.0
+        last_execution_text = f"{last_execution:+.2f}" if last_execution is not None else " n/a"
         lines.append(
-            f"  {i:2d}) {name:<18}  n={n:3d}  rate={rate:.2f}  q={q:+.2f}  last={last:+.2f}"
+            f"  {i:2d}) {name:<18}  exec={executions:3d}  updates={updates:3d}  rate={rate:.2f}  "
+            f"q={q:+.2f}  last_exec={last_execution_text}  last_update={last_update:+.2f}"
         )
 
     return "\n".join(lines)

@@ -36,7 +36,7 @@ Concepts
         -state predicates, e.g., state:posture_standing, assert something about the agent or world that reasoner can use as facts
         -provenance tags, e.g., policy:stand_up, assert who/what produced this binding/edge rather than something  plan for, it already occurred
         -despite the same effect predicate being produced there could have been two different policies creating it, provenance tags help figure out which one
-        - Skill ledger: tiny RL-style counters (n, succ, q, last_reward) per policy; not used for selection yet.
+        - Skill ledger: tiny RL-style execution and learning-update counters plus q/EMA reward per policy.
 
 Clarification of Predicates versus other similar looking terms
 --------------------------------------------------------------
@@ -166,7 +166,7 @@ import random
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 __all__ = [
     # Version
     "__version__",
@@ -476,16 +476,30 @@ class Drives:
 
 @dataclass(slots=True)
 class SkillStat:
-    """Simple running stats per policy
-    -this is a tiny dataclass that tracks per-policy learning-like statistics
-    -really scaffolding for future RL
-    e.g., aa = SkillStat() #SkillStat(n=0, succ=0, q=0.0, last_reward=0.0)
-          print(type(aa)) #<class 'cca8_controller.SkillStat'>
+    """Running execution and value-learning statistics for one policy.
+
+    ``n`` remains the serialized legacy count and now has one precise meaning:
+    the number of reward/value updates applied to ``q``.  ``execution_count``
+    separately counts actual primitive executions.  This distinction matters
+    because prediction-error shaping may update a policy's learned value even
+    when another primitive executed during that cognitive cycle.
+
+    ``succ`` counts successful executions only.  ``last_reward`` remains the
+    latest reward used for any value update, while ``last_execution_reward``
+    records the latest reward produced by a real primitive execution.
+
+    ``execution_count=None`` is retained only as a backward-compatibility
+    marker for old saved ledgers or tests that directly instantiate the
+    pre-split record.  Readout/serialization code then infers the best available
+    execution count from legacy ``n`` and marks that inference explicitly.
     """
-    n: int = 0   #how many times this policy has been updated/attempted
-    succ: int = 0  #how many of those attempts successful
-    q: float = 0.0  #exponential moving average EMA of recent rewards
-    last_reward: float = 0.0  #most recent reward observed for that policy
+
+    n: int = 0
+    succ: int = 0
+    q: float = 0.0
+    last_reward: float = 0.0
+    execution_count: int | None = None
+    last_execution_reward: float | None = None
 
 SKILLS: Dict[str, SkillStat] = {}
 #module level dictionary keyed by policy name, i.e., {policy_name:SkillStat, ...}
@@ -493,31 +507,62 @@ SKILLS: Dict[str, SkillStat] = {}
 #e.g., SKILLS = {"policy:stand_up": SkillStat(n=3, succ=2, q=0.447, last_reward=1.0),...}
 
 
-def update_skill(name: str, reward: float, ok: bool = True, alpha: float = 0.3) -> None:
-    """Update (or create) a SkillStat:
-    - n += 1; succ += 1 if ok
-    - q ← (1 - alpha) * q + alpha * reward     (exponential moving average)
-    - last_reward ← reward
+def update_skill(
+    name: str,
+    reward: float,
+    ok: bool = True,
+    alpha: float = 0.3,
+    *,
+    execution: bool = True,
+) -> None:
+    """Apply one reward sample while distinguishing execution from shaping.
 
-    Notes:
-        * The ledger is in-memory only (not used for selection yet).
-        * Callers should pass rewards on the same scale across policies.
-    Operation:
-        e.g., let's assume SKILLS = {"policy:stand_up": SkillStat(n=3, succ=2, q=0.447, last_reward=1.0),...}
-        thus, s= SKILLS.get(name) = SkillStat(n=3, succ=2, q=0.447, last_reward=1.0)
-        if s returns as None then create instance of default SkillStat as s and then assign it to SKILLS[name]
-        then we increment the counter n, i.e., how many times policy attempted or updated and possibly the succ attribute
-        then we adjust the exponential moving average  and update the last_reward
+    Every call is a value-learning update, so legacy ``n`` and ``q`` always
+    advance.  When ``execution`` is true, the call also records one actual
+    primitive execution, updates execution success statistics, and stores the
+    latest execution reward.  When ``execution`` is false, callers may shape
+    ``q`` without falsely claiming that the policy executed again.
 
+    Parameters
+    ----------
+    name:
+        Stable policy identifier, such as ``policy:stand_up``.
+    reward:
+        Reward sample incorporated into the exponential moving average.
+    ok:
+        Whether an actual execution succeeded.  It is ignored for execution
+        counters when ``execution`` is false.
+    alpha:
+        EMA smoothing factor used by the established q-value update.
+    execution:
+        True for a real primitive attempt; false for prediction-error shaping
+        or another value-only learning sample.
+
+    Notes
+    -----
+    The q-value equation is intentionally unchanged:
+
+    ``q_new = (1 - alpha) * q_old + alpha * reward``.
     """
     s = SKILLS.get(name)
     if s is None:
-        s = SkillStat()
+        s = SkillStat(execution_count=0)
         SKILLS[name] = s
 
+    execution_count = s.execution_count
+    if execution_count is None:
+        # Old saved records and direct legacy constructors do not contain the
+        # split count.  Preserve their best available history before applying
+        # the first post-migration update.
+        execution_count = max(0, int(s.n))
+
     s.n += 1
-    if ok:
-        s.succ += 1
+    if execution:
+        execution_count += 1
+        if ok:
+            s.succ += 1
+        s.last_execution_reward = float(reward)
+    s.execution_count = execution_count
     s.q = (1 - alpha) * s.q + alpha * float(reward)
     s.last_reward = float(reward)
 
@@ -530,23 +575,65 @@ def reset_skills() -> None:
 
 
 def skills_to_dict() -> dict:
-    """Return a JSON-safe mapping of skill stats:
-    { "policy:stand_up": {"n": int, "succ": int, "q": float, "last_reward": float}, ...}
+    """Return a JSON-safe mapping with legacy and explicit count semantics.
+
+    Legacy fields remain present for old save files and callers:
+
+    - ``n`` is the total number of learning/value updates.
+    - ``succ`` is the number of successful executions.
+    - ``last_reward`` is the latest learning reward.
+
+    Explicit aliases make the diagnostic meaning unambiguous:
+
+    - ``learning_update_count``
+    - ``execution_count``
+    - ``success_count``
+    - ``last_learning_reward``
+    - ``last_execution_reward``
     """
-    return {k: asdict(v) for k, v in SKILLS.items()}
+    out: dict[str, dict] = {}
+    for name, stat in SKILLS.items():
+        row = asdict(stat)
+        inferred = stat.execution_count is None
+        execution_count = int(stat.n) if inferred else int(stat.execution_count or 0)
+        row["n"] = int(stat.n)
+        row["succ"] = int(stat.succ)
+        row["learning_update_count"] = int(stat.n)
+        row["execution_count"] = execution_count
+        row["success_count"] = int(stat.succ)
+        row["last_learning_reward"] = float(stat.last_reward)
+        row["execution_count_inferred"] = inferred
+        out[name] = row
+    return out
 
 
 def skills_from_dict(d: dict) -> None:
-    """Rebuild SKILLS dataclass values from plain dicts (robust to bad inputs).
+    """Rebuild skill records from current or legacy plain dictionaries.
+
+    Old snapshots lack ``execution_count``.  They remain loadable and are
+    marked internally with ``execution_count=None`` so the next readout can
+    identify that the count was inferred from legacy ``n``.
     """
     SKILLS.clear()
     for k, v in (d or {}).items():
         try:
+            update_count = int(v.get("learning_update_count", v.get("n", 0)))
+            execution_raw = v.get("execution_count")
+            execution_count = int(execution_raw) if execution_raw is not None else None
+            last_learning_reward = float(v.get("last_learning_reward", v.get("last_reward", 0.0)))
+            last_execution_raw = v.get("last_execution_reward")
+            last_execution_reward = (
+                float(last_execution_raw)
+                if last_execution_raw is not None
+                else (last_learning_reward if int(execution_count or update_count) > 0 else None)
+            )
             SKILLS[k] = SkillStat(
-                n=int(v.get("n", 0)),
-                succ=int(v.get("succ", 0)),
+                n=update_count,
+                succ=int(v.get("success_count", v.get("succ", 0))),
                 q=float(v.get("q", 0.0)),
-                last_reward=float(v.get("last_reward", 0.0)),
+                last_reward=last_learning_reward,
+                execution_count=execution_count,
+                last_execution_reward=last_execution_reward,
             )
         except Exception:
             # Skip malformed rows rather than breaking session load.
@@ -554,18 +641,22 @@ def skills_from_dict(d: dict) -> None:
 
 
 def skill_readout() -> str:
-    """Human-readable policy stats: one line per policy (n/succ/rate/q/last)
-    -goes through SKILLS' stats and prints out
-
-    """
+    """Return explicit execution-versus-learning telemetry per policy."""
     if not SKILLS:
         return "(no skill stats yet)"
     lines: List[str] = []
-    for name in sorted(SKILLS):
-        s = SKILLS[name]
-        rate = (s.succ / s.n) if s.n else 0.0
+    for name, row in sorted(skills_to_dict().items()):
+        execution_count = int(row.get("execution_count", 0) or 0)
+        learning_updates = int(row.get("learning_update_count", row.get("n", 0)) or 0)
+        successes = int(row.get("success_count", row.get("succ", 0)) or 0)
+        rate = (successes / execution_count) if execution_count else 0.0
+        last_execution = row.get("last_execution_reward")
+        last_execution_text = f"{float(last_execution):+.2f}" if last_execution is not None else "n/a"
+        inferred_text = " inferred_exec" if bool(row.get("execution_count_inferred")) else ""
         lines.append(
-            f"{name}: n={s.n}, succ={s.succ}, rate={rate:.2f}, q={s.q:.2f}, last={s.last_reward:+.2f}"
+            f"{name}: exec={execution_count}, updates={learning_updates}, succ={successes}, rate={rate:.2f}, "
+            f"q={float(row.get('q', 0.0)):.2f}, last_exec={last_execution_text}, "
+            f"last_update={float(row.get('last_learning_reward', row.get('last_reward', 0.0))):+.2f}{inferred_text}"
         )
     return "\n".join(lines)
 
