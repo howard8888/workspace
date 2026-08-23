@@ -19,7 +19,7 @@ Concepts
         [e.g., plannable drive condition, then yes, can create a node with e.g., "pred:drive:hunger_high", or evidence, e.g., cue:drive:hunger_high]
         -policies use drive tags in triggering (e.g., SeekNipple needs hunger), while execute may update drives (e.g., Rest reduces fatigue a bit)
     -parameter 'ctx' represents runtime context
-        -includes age_days, sigma and jump (tie-breaking, exploration settings), ticks (i.e., how many autonomic 'heartbeats' have passed), profile (e.g., "goat", "chimp", etc),
+        -includes age_days, explicit RL settings, ticks (i.e., how many autonomic 'heartbeats' have passed), profile (e.g., "goat", "chimp", etc),
            winners_k, hal and body (for multi-brain scaffolding and embodiment stub)
         -policies don't really require ctx but useful for gating behavior by age/profile, calling into HAL stubs, writing provenance, e.g., ticks, to meta
     -trigger(world, drives)
@@ -166,7 +166,7 @@ import random
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 __all__ = [
     # Version
     "__version__",
@@ -1160,24 +1160,21 @@ class Primitive:
 # -----------------------------------------------------------------------------
 
 def _policy_meta(ctx, policy_name: str) -> dict:
-    """Helper function that contains the common meta boilerplate used by each policy.
-    Note that we now timestamp with ticks.
+    """Return explicit policy provenance and runtime-ordering metadata.
+
+    ``created_at`` is wall-clock provenance. The integer counters identify the
+    cognitive cycle, Action Center invocation, and autonomic heartbeat without
+    relying on a stochastic temporal vector or event-epoch fingerprint.
     """
     now = datetime.now().isoformat(timespec="seconds")
-    m = {"policy": policy_name, "created_at": now, "ticks": getattr(ctx, "ticks", 0)}
-    h = getattr(ctx, "tvec64", None)
-    if callable(h):
-        try:
-            m["tvec64"] = h()
-        except (AttributeError, TypeError, ValueError):
-            pass
-    # Epoch stamp (which boundary epoch this write belonged to)
-    bno = getattr(ctx, "boundary_no", None)
-    if isinstance(bno, int):
-        m["epoch"] = bno
-    bvh = getattr(ctx, "boundary_vhash64", None)
-    if isinstance(bvh, str):
-        m["epoch_vhash64"] = bvh
+    m = {
+        "policy": policy_name,
+        "created_at": now,
+        "cognitive_cycle": int(getattr(ctx, "cog_cycles", 0) or 0),
+        "controller_step": int(getattr(ctx, "controller_steps", 0) or 0),
+        "autonomic_tick": int(getattr(ctx, "ticks", 0) or 0),
+        "age_days": float(getattr(ctx, "age_days", 0.0) or 0.0),
+    }
     return m
 
 
@@ -1825,7 +1822,7 @@ def _run(policy, world, ctx, drives) -> dict:
     -sample input parameter arguments, e.g. --
       policy = <cca8_controller.StandUp object at 0x0000021DC09B0890>
       world  = <cca8_world_graph.WorldGraph object at 0x0000021DC0A50C50>
-      ctx =  Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0, profile='Mountain Goat', winners_k=2, hal=None, body='(none)')
+      ctx =  Ctx(age_days=0.0, ticks=0, profile='Mountain Goat', winners_k=2, hal=None, body='(none)')
       drives = Drives(hunger=0.7, fatigue=0.2, warmth=0.6)
 
     -therefore in this example:  return StandUp.execute(WorldGraph, Ctx, Drives)
@@ -1883,7 +1880,7 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
 
     -sample input parameter arguments, e.g. --
       world  = <cca8_world_graph.WorldGraph object at 0x0000021DC0A50C50>
-      ctx =  Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0, profile='Mountain Goat', winners_k=2, hal=None, body='(none)')
+      ctx =  Ctx(age_days=0.0, ticks=0, profile='Mountain Goat', winners_k=2, hal=None, body='(none)')
       drives = Drives(hunger=0.7, fatigue=0.2, warmth=0.6)
 
     -preferred trigger mechanism --
@@ -1975,10 +1972,8 @@ def action_center_step(world, ctx, drives: Drives, preferred: str | None = None)
     #    value (SkillStat.q) is used as a secondary tie-breaker.
     rl_enabled = bool(getattr(ctx, "rl_enabled", False))
     if rl_enabled:
-        # Exploration probability (epsilon): prefer ctx.rl_epsilon, else ctx.jump, else 0.
+        # Exploration probability is explicit and independent of timekeeping.
         eps_raw = getattr(ctx, "rl_epsilon", None)
-        if eps_raw is None:
-            eps_raw = getattr(ctx, "jump", 0.0)
 
         if eps_raw is None:
             eps_f = 0.0

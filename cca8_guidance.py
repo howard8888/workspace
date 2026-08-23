@@ -29,7 +29,7 @@ from typing import Any, Callable, Optional
 
 from cca8_features import time_attrs_from_ctx
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "TutorialRuntime",
@@ -44,7 +44,6 @@ class TutorialRuntime:  # pylint: disable=too-few-public-methods,too-many-instan
     """Runner-owned operations needed by the interactive new-user tour."""
 
     snapshot_text: Callable[..., str]
-    hamming_hex64: Callable[[str, str], int]
     sorted_bids: Callable[[Any], list[str]]
     engrams_on_binding: Callable[[Any, str], list[str]]
     binding_engrams: Callable[[Any, str], Any]
@@ -195,7 +194,7 @@ Note:   Pending more tutorial-like upgrade.
 
 
 This tour will do the following and show the following displays:
-               (1) snapshot, (2) temporal context probe, (3) capture a small
+               (1) snapshot, (2) timekeeping status, (3) capture a small
                engram, (4) show the binding pointer (b#), (5) inspect that
                engram, (6) list/search engrams.
 Hints: Press Enter to accept defaults. Type Q to exit.
@@ -204,25 +203,24 @@ Hints: Press Enter to accept defaults. Type Q to exit.
     as individual menu selections also -- see those and the README.md file for more details.**
 
 [tour] 1/6 — Baseline snapshot
-Shows CTX and TEMPORAL (dim/sigma/jump; cosine; hash). Next: temporal probe.
-  • CTX shows agent counters (profile, age_days, ticks) and run context.
-  • TEMPORAL is a soft clock (dim/sigma/jump), not wall time.
-  • cosine≈1.000 → same event; <0.90 → “new event soon.”
-  • vhash64 is a compact fingerprint for quick comparisons.
+Shows CTX plus explicit runtime counters. Next: timekeeping status.
+  • cognitive_cycles orders complete sensory-input → processing → output cycles.
+  • controller_steps counts Action Center invocations, including manual flows.
+  • autonomic_ticks counts physiology/IO heartbeats independently.
+  • age_days is developmental state, not a cycle clock.
 
-[tour] 2/6 — Temporal context probe
-Updates the soft clock; prints dim/sigma/jump and cosine to last boundary.
+[tour] 2/6 — Timekeeping status
+Prints the explicit counters without mutating any of them.
 Next: capture a tiny engram.
-  • boundary() jumps the vector and increments the epoch (event count).
-  • vhash64 vs last_boundary_vhash64 → Hamming bits changed (0..64).
-  • Cosine compares “now” vs last boundary; drift lowers cosine.
-  • Status line summarizes phase (ON-BOUNDARY / DRIFTING / BOUNDARY-SOON).
+  • Environment step/time belong to EnvState, not Ctx.
+  • created_at/saved_at are wall-clock provenance only.
+  • Motion trends, freshness, duration, and phase remain source-linked in their owning subsystems.
 
 [tour] 3/6 — Capture a tiny engram
 Adds a memory item with time/provenance; visible in Snapshot. Next: show b#.
   • capture_scene creates a binding (cue/pred) and a Column engram.
   • The binding gets a pointer slot (e.g., column01 → EID).
-  • Time attrs (ticks, epoch, tvec64) come from ctx at capture time.
+  • Time attrs identify cognitive_cycle, controller_step, autonomic_tick, and age_days.
   • binding.meta['policy'] records provenance when created by a policy.
 
 [tour] 4/6 — Show binding pointer (b#)
@@ -234,7 +232,7 @@ Displays the new binding id and its attach target. Next: inspect that engram.
 
 [tour] 5/6 — Inspect engram
 Shows engram fields (channel, token, attrs). Next: list/search engrams.
-  • meta → attrs (ticks, epoch, tvec64, epoch_vhash64) for time context.
+  • meta → attrs contains explicit, directly interpretable runtime counters.
   • payload → kind/shape/bytes (varies by Column implementation).
   • Use this to verify data shape and provenance after capture.
   • Engrams persist across saves; pointers can be re-attached later.
@@ -243,8 +241,8 @@ Shows engram fields (channel, token, attrs). Next: list/search engrams.
 [tour] 6/6 — List/search engrams
 Lists and filters engrams by token/family.
   • Deduped EIDs with source binding (b#) for quick auditing.
-  • Search by name substring and/or by epoch number.
-  • Useful to confirm capture cadence across boundaries/epochs.
+  • Search by name substring and/or cognitive-cycle number.
+  • Useful to confirm capture cadence across cognitive cycles.
   • Pair with “Plan from NOW” to see if memory supports behavior.
 
     """)
@@ -264,57 +262,26 @@ Lists and filters engrams by token/family.
     if _pause("1/6"):
         return
 
-    # 2) Temporal probe (same signals as menu 26)
-    print("\n[tour] 2/6 — Temporal probe")
+    # 2) Explicit timekeeping status (same signals as menu 26)
+    print("\n[tour] 2/6 — Timekeeping status")
     try:
-        epoch = getattr(ctx, "boundary_no", 0)
-        vhash = ctx.tvec64() if hasattr(ctx, "tvec64") else None
-        lbvh  = getattr(ctx, "boundary_vhash64", None)
-        print(f"  epoch={epoch}")
-        print(f"  vhash64={vhash if vhash else '(n/a)'}")
-        print(f"  last_boundary_vhash64={lbvh if lbvh else '(n/a)'}")
-        cos = None
-        try: cos = ctx.cos_to_last_boundary()
-        except Exception: pass
-        if isinstance(cos, float):
-            print(f"  cos_to_last_boundary={cos:.4f}")
-        if vhash and lbvh:
-            try:
-                h = runtime.hamming_hex64(vhash, lbvh)
-                if h >= 0:
-                    print(f"  hamming(vhash,last_boundary)={h} bits (0..64)")
-            except Exception:
-                pass
-        tv = getattr(ctx, "temporal", None)
-        if tv:
-            print(f"  dim={getattr(tv,'dim',0)} sigma={getattr(tv,'sigma',0.0):.4f} jump={getattr(tv,'jump',0.0):.4f}")
-        if isinstance(cos, float):
-            if cos >= 0.99:      status = "ON-EVENT BOUNDARY"
-            elif cos < 0.90:     status = "EVENT BOUNDARY-SOON"
-            else:                status = "DRIFTING slowly forward in time"
-            print(f"  status={status}")
+        print(f"  cognitive_cycles={int(getattr(ctx, 'cog_cycles', 0) or 0)}")
+        print(f"  controller_steps={int(getattr(ctx, 'controller_steps', 0) or 0)}")
+        print(f"  autonomic_ticks={int(getattr(ctx, 'ticks', 0) or 0)}")
+        print(f"  age_days={float(getattr(ctx, 'age_days', 0.0) or 0.0):.4f}")
+        print("  environment step/time are reported with EnvState observations")
+        print("  wall-clock created_at/saved_at values are provenance only")
     except Exception as e:
-        print(f"(tour) probe error: {e}")
+        print(f"(tour) timekeeping error: {e}")
     if autosave_cb is not None:
         try: autosave_cb()
         except Exception: pass
     if _pause("2/6"):
         return
 
-    # 3) Capture scene (pre-capture boundary so the engram mirrors a new epoch)
+    # 3) Capture scene with explicit current counter values.
     print("\n[tour] 3/6 — Capture a small scene as a CUE engram")
     try:
-        # Boundary jump before capture
-        if ctx.temporal:
-            new_v = ctx.temporal.boundary()
-            ctx.tvec_last_boundary = list(new_v)
-            ctx.boundary_no = getattr(ctx, "boundary_no", 0) + 1
-            try:
-                ctx.boundary_vhash64 = ctx.tvec64()
-            except Exception:
-                ctx.boundary_vhash64 = None
-            print(f"[temporal] event/boundary (pre-capture) → epoch={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
-
         attrs = time_attrs_from_ctx(ctx)
         vec = [0.10, 0.20, 0.30]
         channel, token, family, attach = "vision", "silhouette:mom", "cue", "now"
@@ -327,8 +294,13 @@ Lists and filters engrams by token/family.
             meta = rec.get("meta", {}) if isinstance(rec, dict) else {}
             tattrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
             if tattrs:
-                print(f"[bridge] time on engram: ticks={tattrs.get('ticks')} tvec64={tattrs.get('tvec64')} "
-                      f"epoch={tattrs.get('epoch')} epoch_vhash64={tattrs.get('epoch_vhash64')}")
+                print(
+                    "[bridge] time on engram: "
+                    f"cognitive_cycle={tattrs.get('cognitive_cycle')} "
+                    f"controller_step={tattrs.get('controller_step')} "
+                    f"autonomic_tick={tattrs.get('autonomic_tick')} "
+                    f"age_days={tattrs.get('age_days')}"
+                )
         except Exception as e:
             print(f"(tour) get_engram note: {e}")
 
@@ -444,7 +416,11 @@ Lists and filters engrams by token/family.
                 name = (rec.get("name") or "") if isinstance(rec, dict) else ""
                 if "silhouette" in name:
                     attrs = rec.get("meta", {}).get("attrs", {}) if isinstance(rec, dict) else {}
-                    print(f"EID={_eid} src={_bid} name={name} epoch={attrs.get('epoch')} tvec64={attrs.get('tvec64')}")
+                    print(
+                        f"EID={_eid} src={_bid} name={name} "
+                        f"cognitive_cycle={attrs.get('cognitive_cycle')} "
+                        f"controller_step={attrs.get('controller_step')}"
+                    )
                     found = True
         if not found:
             print("(no matches)")

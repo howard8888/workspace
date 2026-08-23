@@ -5,7 +5,7 @@ from cca8_features import TensorPayload, FactMeta
 def test_column_memory_basic_ops():
     cm = ColumnMemory(name="testcol")
     payload = TensorPayload(data=[0.1, 0.2, 0.3], shape=(3,))
-    fm = FactMeta(name="vision:scene", links=["b2"], attrs={"epoch": 1})
+    fm = FactMeta(name="vision:scene", links=["b2"], attrs={"cognitive_cycle": 1})
 
     eid = cm.assert_fact("vision:scene", payload, meta=fm)
     assert cm.exists(eid)
@@ -22,7 +22,7 @@ def test_column_memory_basic_ops():
 
     # find() filters
     assert any(r["id"] == eid for r in cm.find(name_contains="vision"))
-    assert any(r["id"] == eid for r in cm.find(epoch=1))
+    assert any(r["id"] == eid for r in cm.find(cognitive_cycle=1))
 
     # delete
     assert cm.delete(eid) is True

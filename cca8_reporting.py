@@ -96,7 +96,7 @@ from cca8_predictive import (
 )
 from cca8_wnm_runtime import render_wnm_lines_v1, wnm_summary_v1
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 __all__ = [
     "TeeTextIO",
@@ -415,58 +415,31 @@ def print_working_map_entity_table(ctx, *, title: str = "[workingmap] MapSurface
         )
 
 
-def _hamming_hex64(a: str, b: str) -> int:
-    """Hamming distance between two hex strings (intended for 64-bit vhashes).
-    Returns -1 on parse error. Case-insensitive; extra whitespace ignored.
-    -we use for analysis of the temporal context vector
-    """
-    try:
-        xa = int(a.strip(), 16)
-        xb = int(b.strip(), 16)
-        return (xa ^ xb).bit_count()
-    except Exception:
-        return -1
-
-
-def _snapshot_temporal_legend() -> list[str]:
-    """info about temporal timekeeping in the CCA8
-    """
+def _snapshot_timekeeping_legend() -> list[str]:
+    """Return the explicit CCA8 timekeeping legend used by detailed snapshots."""
     return [
-        "LEGEND (temporal terms):",
-        "  epoch: event boundary count; increments when boundary() is taken  [src=ctx.boundary_no]",
-        "  vhash64(now): 64-bit sign-bit fingerprint of the current context vector  [src=ctx.tvec64()]",
-        "  epoch_vhash64: 64-bit fingerprint of the vector at the last boundary  [src=ctx.boundary_vhash64]",
-        "  last_boundary_vhash64: alias of epoch_vhash64 (kept for back-compat)  [alias of epoch_vhash64]",
-        "  cos_to_last_boundary: cosine(current vector, last boundary vector)  [src=ctx.cos_to_last_boundary()]",
-        "  binding (== node): holds tags, pointers to engrams, and directed edges",
-        "",
-        "Five measures of time in the CCA8 system:",
-        "  1. controller steps — one Action Center decision/execution loop   [src=ctx.controller_steps]",
-        "  2. temporal drift — cos_to_last_boundary (cosine(current, last boundary))  [src=ctx.cos_to_last_boundary();"
-        "     advanced by ctx.temporal.step()]",
-        "  3. autonomic ticks — heartbeat for physiology/IO (robotics integration)  [src=ctx.ticks]",
-        "  4. developmental age — age_days  [src=ctx.age_days]",
-        "  5. cognitive cycles — full sense->process->opt. action cycle  [src=ctx.cog_cycles]"
-        "  **see menu tutorials for more about these terms**",
+        "LEGEND (timekeeping terms):",
+        "  cognitive_cycles: complete sensory-input -> processing -> same-cycle output transactions  [src=ctx.cog_cycles]",
+        "  controller_steps: Action Center invocations, including non-closed-loop menu/autonomic flows  [src=ctx.controller_steps]",
+        "  autonomic_ticks: independent physiology/IO heartbeat count  [src=ctx.ticks]",
+        "  age_days: developmental age used by capability gates  [src=ctx.age_days]",
+        "  environment step/time: simulator-owned transition count and physical time  [src=EnvState.step_index/time_since_birth]",
+        "  wall clock: logging and provenance only; it does not order cognition  [src=created_at/saved_at]",
+        "  domain temporal state: source-linked histories, rates, durations, freshness, and phase in their owning subsystem",
         "",
     ]
 
 
 def timekeeping_line(ctx) -> str:
-    """Compact summary of the 5 time measures + cosine (robust if any piece is missing).
-    """
+    """Return one compact line of explicit CCA8 runtime counters."""
     cs = getattr(ctx, "controller_steps", 0)
-    te = getattr(ctx, "boundary_no", 0)        # temporal epochs
     at = getattr(ctx, "ticks", 0)              # autonomic ticks
     ad = getattr(ctx, "age_days", 0.0)
     cc = getattr(ctx, "cog_cycles", 0)
-    try:
-        c = ctx.cos_to_last_boundary()
-        cos_txt = f"{c:.4f}" if isinstance(c, float) else "(n/a)"
-    except Exception:
-        cos_txt = "(n/a)"
-    return (f"controller_steps={cs}, cos_to_last_boundary={cos_txt}, "
-            f"temporal_epochs={te}, autonomic_ticks={at}, age_days={ad:.4f}, cog_cycles={cc}")
+    return (
+        f"cognitive_cycles={cc}, controller_steps={cs}, "
+        f"autonomic_ticks={at}, age_days={ad:.4f}"
+    )
 
 
 def print_timekeeping_line(ctx, prefix: str = "[time] ") -> None:
@@ -874,11 +847,10 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
 
     Sections:
     - Header/anchors: EMBODIMENT (ctx.body), NOW/LATEST from world anchors.
-    - CTX (Context): agent state (profile, age_days, ticks, winners_k) +
-      temporal breadcrumbs: vhash64(now)=ctx.tvec64(), epoch=ctx.boundary_no,
-      epoch_vhash64=ctx.boundary_vhash64.
-    - TEMPORAL: params from ctx.temporal (dim, sigma, jump), cos_to_last_boundary;
-      repeats vhash64(now)/epoch/epoch_vhash64; prints a back-compat alias "vhash64:".
+    - CTX (Context): agent state (profile, age_days, ticks, winners_k).
+    - TIMEKEEPING: explicit cognitive-cycle, controller-step, autonomic, and
+      developmental counters. Environment and wall-clock time remain owned by
+      their respective boundaries.
     - DRIVES: drives.hunger/fatigue/warmth.
     - POLICIES (executed this session): per-policy SkillStat telemetry (from skill_readout()).
     - ELIGIBLE NOW: policies with dev_gate(ctx) == True (policy_rt.list_loaded_names()).
@@ -886,17 +858,11 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
     - Footer: nodes/edges count summary.
     """
 
-    def _safe(getter, default=None):
-        try:
-            return getter()
-        except Exception:
-            return default
-
     lines: List[str] = []
     lines.append("\n--------------------------------------------------------------------------------------")
     lines.append(f"WorldGraph snapshot at {datetime.now()}")
     lines.append("--------------------------------------------------------------------------------------")
-    lines.extend(_snapshot_temporal_legend())
+    lines.extend(_snapshot_timekeeping_legend())
 
     # Header / anchors
     body = (getattr(ctx, "body", None)
@@ -914,7 +880,7 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
 
     # CTX (Context)
     lines.append("CTX (Context):")
-    lines.append("(runtime agent state (profile/age/ticks) + TemporalContext soft clock)")
+    lines.append("(runtime agent state; explicit counters are reported separately below)")
     if ctx is not None:
         # Print scalar-ish fields explicitly so we can annotate their sources.
         def _add_ctx_scalar(name: str, src: str, fmt="{v}"):
@@ -931,63 +897,20 @@ def snapshot_text(world, drives=None, ctx=None, policy_rt=None) -> str:
         lines.append(f"  autonomic_ticks: {getattr(ctx,'ticks',0)}  [src=ctx.ticks]")
         _add_ctx_scalar("winners_k", "ctx.winners_k")
 
-        lines.append(
-            "  counts: controller_steps="
-            f"{getattr(ctx,'controller_steps',0)}, cog_cycles={getattr(ctx,'cog_cycles',0)}, "
-            f"temporal_epochs={getattr(ctx,'boundary_no',0)}, autonomic_ticks={getattr(ctx,'ticks',0)}" )
-
-        # Harmonized temporal breadcrumbs in CTX
-        vhash_now = _safe(ctx.tvec64)
-        lines.append(f"  vhash64(now): {vhash_now if vhash_now else '(n/a)'}  [src=ctx.tvec64()]")
-        epoch_vh = getattr(ctx, "boundary_vhash64", None)
-        lines.append(f"  epoch_vhash64: {epoch_vh if epoch_vh else '(n/a)'}  [src=ctx.boundary_vhash64]")
-        epoch_no = getattr(ctx, "boundary_no", 0)
-        lines.append(f"  epoch: {epoch_no}  [src=ctx.boundary_no]")
     else:
         lines.append("  (none)")
     lines.append("")
 
-    # TEMPORAL
-    tv = getattr(ctx, "temporal", None)
-    if tv:
-        lines.append("TEMPORAL:")
-        dim   = getattr(tv, "dim", 0)
-        sigma = getattr(tv, "sigma", 0.0)
-        jump  = getattr(tv, "jump", 0.0)
-        lines.append(f"  dim={dim}  [src=ctx.temporal.dim]")
-        lines.append(f"  sigma={sigma:.4f}  [src=ctx.temporal.sigma]")
-        lines.append(f"  jump={jump:.4f}  [src=ctx.temporal.jump]")
-
-        c = _safe(ctx.cos_to_last_boundary)
-        lines.append(
-            f"  cos_to_last_boundary: {c:.4f}  [src=ctx.cos_to_last_boundary()]"
-            if isinstance(c, float) else
-            "  cos_to_last_boundary: (n/a)  [src=ctx.cos_to_last_boundary()]"
-        )
-
-        vhash_now = _safe(ctx.tvec64)
-        if vhash_now:
-            lines.append(f"  vhash64(now): {vhash_now}  [src=ctx.tvec64()]")
-            # Back-compat alias for tests expecting plain 'vhash64:'
-            lines.append(f"  vhash64: {vhash_now}  [alias of vhash64(now)]")
-        else:
-            lines.append("  vhash64(now): (n/a)  [src=ctx.tvec64()]")
-            lines.append("  vhash64: (n/a)  [alias of vhash64(now)]")
-
-        epoch_no = getattr(ctx, "boundary_no", 0)
-        lines.append(f"  epoch: {epoch_no}  [src=ctx.boundary_no]")
-        epoch_vh = getattr(ctx, "boundary_vhash64", None)
-        if epoch_vh:
-            lines.append(f"  epoch_vhash64: {epoch_vh}  [src=ctx.boundary_vhash64]")
-            lines.append(f"  last_boundary_vhash64: {epoch_vh}  [alias of epoch_vhash64]")
-        # One-line timekeeping summary (compact view)
-        if ctx is not None:
-            lines.append("TIMEKEEPING: " + timekeeping_line(ctx))
-
-        lines.append("")
+    lines.append("TIMEKEEPING:")
+    if ctx is not None:
+        lines.append(f"  cognitive_cycles: {getattr(ctx, 'cog_cycles', 0)}  [src=ctx.cog_cycles]")
+        lines.append(f"  controller_steps: {getattr(ctx, 'controller_steps', 0)}  [src=ctx.controller_steps]")
+        lines.append(f"  autonomic_ticks: {getattr(ctx, 'ticks', 0)}  [src=ctx.ticks]")
+        lines.append(f"  age_days: {float(getattr(ctx, 'age_days', 0.0) or 0.0):.4f}  [src=ctx.age_days]")
+        lines.append("  summary: " + timekeeping_line(ctx))
     else:
-        lines.append("TEMPORAL: (none)")
-        lines.append("")
+        lines.append("  (ctx unavailable)")
+    lines.append("")
 
     # DRIVES
     lines.append("DRIVES:")
@@ -2375,9 +2298,9 @@ def skills_hud_text(ctx: Optional[Ctx] = None, *, top_n: int = 8) -> str:
         enabled = bool(getattr(ctx, "rl_enabled", False))
         eps_raw = getattr(ctx, "rl_epsilon", None)
         try:
-            eff_eps = float(eps_raw) if eps_raw is not None else float(getattr(ctx, "jump", 0.0))
+            eff_eps = float(eps_raw) if eps_raw is not None else 0.0
         except (TypeError, ValueError):
-            eff_eps = float(getattr(ctx, "jump", 0.0))
+            eff_eps = 0.0
 
         explore = int(getattr(ctx, "rl_explore_steps", 0) or 0)
         exploit = int(getattr(ctx, "rl_exploit_steps", 0) or 0)

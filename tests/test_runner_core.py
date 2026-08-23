@@ -5,7 +5,7 @@ RUN = pytest.importorskip("cca8_run", reason="missing runner")
 
 def test_versions_dict_reports_core_components():
     d = RUN.versions_dict()
-    for key in ("runner", "platform", "python", "world_graph", "controller", "column", "features", "temporal"):
+    for key in ("runner", "platform", "python", "world_graph", "controller", "column", "features"):
         assert key in d
 
 def test_io_banner_variants(capsys):

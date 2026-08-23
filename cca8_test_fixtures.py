@@ -60,7 +60,7 @@ from typing import Dict, Tuple
 from cca8_world_graph import WorldGraph
 
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __all__ = ["build_demo_world_for_inspect", "__version__"]
 
 
@@ -95,7 +95,7 @@ def build_demo_world_for_inspect() -> Tuple[WorldGraph, Dict[str, str]]:
       - stand, fallen, cue_mom:
             meta["boot"] = "test_world", meta["added_by"] = "system"
       - rest:
-            meta contains policy / created_by / created_at / ticks / epoch
+            meta contains policy / created_by / created_at plus explicit runtime counters
             and one engram pointer in column01 with a demo id.
 
     Returns
@@ -130,8 +130,10 @@ def build_demo_world_for_inspect() -> Tuple[WorldGraph, Dict[str, str]]:
         "policy": "Rest",
         "created_by": "demo_world",
         "created_at": "2025-01-01T00:00:00",
-        "ticks": 42,
-        "epoch": 3,
+        "cognitive_cycle": 3,
+        "controller_step": 42,
+        "autonomic_tick": 7,
+        "age_days": 0.5,
     }
     b_rest = world.add_predicate("state:resting", attach="latest", meta=rest_meta)
 

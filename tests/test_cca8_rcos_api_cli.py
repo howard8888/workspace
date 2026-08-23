@@ -8,7 +8,7 @@ def test_profile_rcos_api_prints_explanation_and_falls_back_to_goat(capsys) -> N
     result = cca8_run.profile_rcos_api(cca8_run.Ctx())
     output = capsys.readouterr().out
 
-    assert result == ("Mountain Goat", 0.015, 0.2, 2)
+    assert result == ("Mountain Goat", 2)
     assert "Robotic Cognitive Operating System (RCOS)" in output
     assert "an RCOS API configuration is not available" in output
     assert "PROFILE WILL BE SET TO MOUNTAIN GOAT-LIKE BRAIN SIMULATION" in output

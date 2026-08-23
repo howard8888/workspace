@@ -56,7 +56,7 @@ def test_cycle_json_record_is_single_and_efe_scores_is_list() -> None:
     world = WorldGraph()
     drives = Drives(hunger=0.5, fatigue=0.3, warmth=0.6)
 
-    ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
+    ctx = Ctx(age_days=0.0, ticks=0)
 
     # Keep this test focused on JSON record plumbing.
     ctx.cycle_json_enabled = True

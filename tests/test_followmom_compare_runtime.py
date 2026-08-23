@@ -27,7 +27,6 @@ from cca8_navmap_runtime import navmap_ctx_observation_update_step_v1
 from cca8_navmap_shadow import navmap_v2_shadow_observation_step_v1
 from cca8_observation_runtime import init_body_world, seqerr_update_from_obs, update_body_world_from_obs
 from cca8_policy_runtime import CATALOG_GATES, PolicyRuntime
-from cca8_temporal import TemporalContext
 from cca8_world_graph import WorldGraph
 
 
@@ -835,8 +834,6 @@ def test_cycle_json_exposes_phase4d_followmom_compare_summary(
     """Machine-readable cycle output should include the compare-only FollowMom trace."""
     ctx = _ctx_with_bodymap()
     ctx.working_world = cca8_run.init_working_world()
-    ctx.temporal = TemporalContext()
-    ctx.tvec_last_boundary = ctx.temporal.vector()
     ctx.cycle_json_enabled = True
     ctx.cycle_json_path = None
     world = WorldGraph()

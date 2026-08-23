@@ -31,8 +31,8 @@ from array import array
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.2.0"
-__all__ = ["FeaturePayload", "TensorPayload", "FactMeta", "__version__"]
+__version__ = "0.3.0"
+__all__ = ["FeaturePayload", "TensorPayload", "FactMeta", "time_attrs_from_ctx", "__version__"]
 
 
 # --- Module Code  -----------------------------------------------------------------------
@@ -273,7 +273,11 @@ class FactMeta:
         return {"name": self.name, "links": self.links or [], "attrs": self.attrs or {}}
 
     def with_time(self, ctx: Any) -> "FactMeta":
-        """Return a new FactMeta with {'ticks','tvec64'} merged into attrs if present on ctx.
+        """Return a new ``FactMeta`` with explicit runtime counters merged into ``attrs``.
+
+        The metadata records where the assertion occurred in CCA8's explicit
+        clocks. It does not store a stochastic temporal vector or an inferred
+        event epoch.
         """
         a = dict(self.attrs or {})
         ta = time_attrs_from_ctx(ctx)
@@ -283,38 +287,42 @@ class FactMeta:
 
 
 def time_attrs_from_ctx(ctx: Any) -> dict[str, Any]:
-    """Return {'ticks': int, 'tvec64': str, 'epoch', 'epoch_vhash64'} from ctx if available; else {}.
+    """Return explicit, JSON-safe runtime timekeeping values from ``ctx``.
 
     Purpose
     -------
-    Let column engrams mirror the runner/controller time context so you
-    can correlate Column records with WorldGraph events later without
-    decoding heavy payloads.
+    Let Column engrams and other durable records correlate with cognitive
+    execution without decoding heavy payloads. The returned values remain
+    directly interpretable:
+
+    ``cognitive_cycle``
+        Complete closed-loop cognitive cycle number.
+    ``controller_step``
+        Action Center invocation count, including manual/autonomic flows.
+    ``autonomic_tick``
+        Independent physiology/IO heartbeat count.
+    ``age_days``
+        Developmental age in days.
 
     Notes
     -----
-    - ctx.ticks is an int autonomic tick counter in the runner.
-    - ctx.tvec64() is a 64-bit sign-bit hash of the TemporalContext vector.
+    Environment step/time are owned by ``EnvState`` and are therefore not
+    inferred from ``Ctx``. Wall-clock timestamps are supplied separately by
+    the record writer as provenance.
     """
     out: dict[str, Any] = {}
-    t = getattr(ctx, "ticks", None)
-    if isinstance(t, int):
-        out["ticks"] = t
-    h = getattr(ctx, "tvec64", None)
-    if callable(h):
-        try:
-            hv = h()
-            if isinstance(hv, str):
-                out["tvec64"] = hv
-        except Exception:
-            pass
 
-    # Epoch info (for Column records)
-    bno = getattr(ctx, "boundary_no", None)
-    if isinstance(bno, int):
-        out["epoch"] = bno
-    bvh = getattr(ctx, "boundary_vhash64", None)
-    if isinstance(bvh, str):
-        out["epoch_vhash64"] = bvh
+    for attr_name, output_name in (
+        ("cog_cycles", "cognitive_cycle"),
+        ("controller_steps", "controller_step"),
+        ("ticks", "autonomic_tick"),
+    ):
+        value = getattr(ctx, attr_name, None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            out[output_name] = value
+
+    age_days = getattr(ctx, "age_days", None)
+    if isinstance(age_days, (int, float)) and not isinstance(age_days, bool):
+        out["age_days"] = float(age_days)
 
     return out

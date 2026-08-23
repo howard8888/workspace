@@ -27,7 +27,7 @@ import os
 import sys
 from collections.abc import Callable
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "ASCII_LOGOS",
     "MAIN_MENU_HEADER",
@@ -90,7 +90,7 @@ MAIN_MENU_PROMPT = (
     '    5) Recent bindings (last 5) [last, bindings]\n'
     '    6) Drives & drive tags [drives]\n'
     '    7) Skill ledger [skills]\n'
-    '    8) Temporal probe (epoch/hash/cos/hamming) [temporal, probe]\n'
+    '    8) Timekeeping status [timekeeping, time]\n'
     '\n'
     '    # Act / Simulate\n'
     '    9) Instinct step (Action Center) [instinct, act]\n'
@@ -110,7 +110,7 @@ MAIN_MENU_PROMPT = (
     '    14) Resolve engrams on a binding [resolve, engrams]\n'
     '    15) Inspect engram by id (or binding) [engram, ei]\n'
     '    16) List all engrams [engrams-all, list-engrams]\n'
-    '    17) Search engrams (by name / epoch) [search-engrams, find-engrams]\n'
+    '    17) Search engrams (by name / cognitive cycle) [search-engrams, find-engrams]\n'
     '    18) Delete engram by bid or eid [delete-engram, del-engram]\n'
     '    19) Attach existing engram to a binding [attach-engram, ae]\n'
     '\n'
@@ -182,9 +182,9 @@ MENU_ALIASES = {
     "bindings": "5",
     "drives": "6",
     "skills": "7",
-    "temporal": "8",
-    "tp": "8",
-    "probe": "8",
+    "timekeeping": "8",
+    "time": "8",
+    "clocks": "8",
 
     # Act / Simulate
     "instinct": "9",
@@ -319,7 +319,7 @@ MENU_NUMBER_COMPATIBILITY = {
     "5": "7",  # Recent bindings (last 5)
     "6": "d",  # Drives & tags (letter branch)
     "7": "13",  # Skill ledger
-    "8": "26",  # Temporal probe
+    "8": "26",  # Timekeeping status
 
     # Act / Simulate
     "9": "12",  # Instinct step

@@ -42,7 +42,6 @@ from cca8_policy_runtime import (
     PolicyRuntime,
     _follow_mom_legacy_gate_evaluation_v1,
 )
-from cca8_temporal import TemporalContext
 from cca8_world_graph import WorldGraph
 
 _FOLLOW_MOM = "policy:follow_mom"
@@ -939,8 +938,6 @@ def test_cycle_json_exposes_phase4f_default_authority(
     """Machine-readable closed-loop output should include the default authority record."""
     ctx = _ctx_with_bodymap()
     ctx.working_world = cca8_run.init_working_world()
-    ctx.temporal = TemporalContext()
-    ctx.tvec_last_boundary = ctx.temporal.vector()
     ctx.cycle_json_enabled = True
     ctx.cycle_json_path = None
     world = WorldGraph()

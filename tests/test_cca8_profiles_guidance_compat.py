@@ -58,8 +58,6 @@ def test_profile_chooser_keeps_mountain_goat_default(monkeypatch: pytest.MonkeyP
 
     assert result == {
         "name": "Mountain Goat",
-        "ctx_sigma": 0.015,
-        "ctx_jump": 0.2,
         "winners_k": 2,
     }
     assert ctx.profile == "Mountain Goat"
@@ -71,16 +69,13 @@ def test_profile_chooser_resolves_runner_callbacks_at_call_time(monkeypatch: pyt
     monkeypatch.setattr(
         cca8_run,
         "profile_chimpanzee",
-        lambda _ctx: ("Compatibility Chimp", 0.11, 0.22, 7),
+        lambda _ctx: ("Compatibility Chimp", 7),
     )
     ctx = cca8_run.Ctx()
 
     result = cca8_run.choose_profile(ctx, cca8_run.cca8_world_graph.WorldGraph())
 
-    assert result["name"] == "Compatibility Chimp"
-    assert result["ctx_sigma"] == pytest.approx(0.11)
-    assert result["ctx_jump"] == pytest.approx(0.22)
-    assert result["winners_k"] == 7
+    assert result == {"name": "Compatibility Chimp", "winners_k": 7}
     assert ctx.profile == "Compatibility Chimp"
 
 
@@ -111,7 +106,7 @@ def test_profile_chooser_routes_cca11_through_runner_callback(
     monkeypatch.setattr(
         cca8_run,
         "profile_cca11_governed_cognitive_plurality",
-        lambda _ctx: ("Compatibility CCA11", 0.31, 0.41, 11),
+        lambda _ctx: ("Compatibility CCA11", 11),
     )
     ctx = cca8_run.Ctx()
 
@@ -119,8 +114,6 @@ def test_profile_chooser_routes_cca11_through_runner_callback(
 
     assert result == {
         "name": "Compatibility CCA11",
-        "ctx_sigma": pytest.approx(0.31),
-        "ctx_jump": pytest.approx(0.41),
         "winners_k": 11,
     }
     assert ctx.profile == "Compatibility CCA11"
@@ -134,7 +127,7 @@ def test_profile_chooser_routes_cca12_through_runner_callback(
     monkeypatch.setattr(
         cca8_run,
         "profile_cca12_governed_pod",
-        lambda _ctx: ("Compatibility CCA12", 0.32, 0.42, 12),
+        lambda _ctx: ("Compatibility CCA12", 12),
     )
     ctx = cca8_run.Ctx()
 
@@ -142,8 +135,6 @@ def test_profile_chooser_routes_cca12_through_runner_callback(
 
     assert result == {
         "name": "Compatibility CCA12",
-        "ctx_sigma": pytest.approx(0.32),
-        "ctx_jump": pytest.approx(0.42),
         "winners_k": 12,
     }
     assert ctx.profile == "Compatibility CCA12"
@@ -159,8 +150,8 @@ def test_future_profile_narratives_preserve_governed_authority_distinction(
     cca12 = cca8_profiles.profile_cca12_governed_pod(SimpleNamespace())
     cca12_output = capsys.readouterr().out
 
-    assert cca11 == ("Mountain Goat", 0.015, 0.2, 2)
-    assert cca12 == ("Mountain Goat", 0.015, 0.2, 2)
+    assert cca11 == ("Mountain Goat", 2)
+    assert cca12 == ("Mountain Goat", 2)
     assert "one persistent self" in cca11_output
     assert "constitutional society of cognitive processes" in cca11_output
     assert "Agreement is not the objective" in cca11_output
@@ -239,7 +230,7 @@ def test_research_profile_fallback_is_prominent(capsys: pytest.CaptureFixture[st
     result = cca8_profiles.profile_chimpanzee(SimpleNamespace())
     output = capsys.readouterr().out
 
-    assert result == ("Mountain Goat", 0.015, 0.2, 2)
+    assert result == ("Mountain Goat", 2)
     assert "PROFILE WILL BE SET TO MOUNTAIN GOAT-LIKE BRAIN SIMULATION" in output
 
 

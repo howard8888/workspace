@@ -7,7 +7,7 @@ def _tp(vec=(0.1, 0.2, 0.3)):
 
 def test_assert_fact_sets_created_at_and_column_attr():
     col = ColumnMemory(name="column01")
-    fm  = FactMeta(name="scene:vision:silhouette:mom", links=["b3"], attrs={"epoch": 7})
+    fm  = FactMeta(name="scene:vision:silhouette:mom", links=["b3"], attrs={"cognitive_cycle": 7})
     eid = col.assert_fact("scene:vision:silhouette:mom", _tp(), fm)
     rec = col.get(eid)
     # created_at present and ISO-like
@@ -15,8 +15,8 @@ def test_assert_fact_sets_created_at_and_column_attr():
     assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", rec["meta"]["created_at"])
     # attrs["column"] annotated by column
     assert rec["meta"]["attrs"]["column"] == "column01"
-    # epoch mirrored, name carried through
-    assert rec["meta"]["attrs"]["epoch"] == 7
+    # cognitive cycle mirrored, name carried through
+    assert rec["meta"]["attrs"]["cognitive_cycle"] == 7
     assert rec["name"] == "scene:vision:silhouette:mom"
 
 def test_exists_try_get_delete_id_uniqueness_and_count():
@@ -32,15 +32,15 @@ def test_exists_try_get_delete_id_uniqueness_and_count():
     assert not col.exists(e1)
     assert col.count() == 1
 
-def test_find_filters_name_epoch_has_attr():
+def test_find_filters_name_cognitive_cycle_has_attr():
     col = ColumnMemory()
-    a = col.assert_fact("vision:silhouette:mom", _tp(), FactMeta(name="vision:silhouette:mom", attrs={"epoch": 0, "model": "demo"}))
-    b = col.assert_fact("olfaction:scent:mom",  _tp(), FactMeta(name="olfaction:scent:mom",  attrs={"epoch": 1}))
+    a = col.assert_fact("vision:silhouette:mom", _tp(), FactMeta(name="vision:silhouette:mom", attrs={"cognitive_cycle": 0, "model": "demo"}))
+    b = col.assert_fact("olfaction:scent:mom",  _tp(), FactMeta(name="olfaction:scent:mom",  attrs={"cognitive_cycle": 1}))
     # name substring
     res = col.find(name_contains="scent")
     assert [r["id"] for r in res] == [b]
-    # epoch filter
-    res = col.find(epoch=0)
+    # cognitive-cycle filter
+    res = col.find(cognitive_cycle=0)
     assert [r["id"] for r in res] == [a]
     # has_attr filter
     res = col.find(has_attr="model")

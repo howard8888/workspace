@@ -37,7 +37,6 @@ from cca8_navmap_shadow import navmap_v2_shadow_observation_step_v1
 from cca8_observation_runtime import init_body_world, seqerr_update_from_obs, update_body_world_from_obs
 from cca8_policy_runtime import CATALOG_GATES, PolicyRuntime
 from cca8_reporting import mini_snapshot_text, snapshot_text
-from cca8_temporal import TemporalContext
 from cca8_wnm_runtime import wnm_operative_map_v1, wnm_ready_maps_v1
 from cca8_world_graph import WorldGraph
 
@@ -765,7 +764,7 @@ def test_reset_clears_episode_local_wnm_feeding_and_expectation_registers() -> N
     ctx = _ctx()
     _zoom_to_closeup(ctx, target_state="hidden")
     feeding_selection_step_v1(ctx, selected_policy="policy:seek_nipple")
-    jump_before = ctx.jump
+    rl_epsilon_before = ctx.rl_epsilon
 
     feeding_reset_v1(ctx)
 
@@ -776,7 +775,7 @@ def test_reset_clears_episode_local_wnm_feeding_and_expectation_registers() -> N
     assert ctx.feeding_overlay_v1 is None
     assert ctx.feeding_pending_expectation_v1 is None
     assert ctx.feeding_expectation_history_v1 == []
-    assert ctx.jump == jump_before
+    assert ctx.rl_epsilon == rl_epsilon_before
 
 
 def test_phase5_records_are_frozen_json_safe_and_human_readable() -> None:
@@ -867,8 +866,6 @@ def test_cycle_json_exposes_phase5_feeding_phase6_terrain_and_single_operative_w
     """One ordinary closed-loop record should expose the Phase 5/6 machine-readable summaries."""
     ctx = _ctx()
     ctx.working_world = cca8_run.init_working_world()
-    ctx.temporal = TemporalContext()
-    ctx.tvec_last_boundary = ctx.temporal.vector()
     ctx.cycle_json_enabled = True
     ctx.cycle_json_path = None
     ctx.env_loop_cycle_summary = False

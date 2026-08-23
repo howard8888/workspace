@@ -44,11 +44,11 @@ def test_emit_interoceptive_cues_rising_edge_and_binding_creation():
 def test_timekeeping_line_basic_fields():
     ctx = Ctx()
     line = timekeeping_line(ctx)
+    assert "cognitive_cycles=" in line
     assert "controller_steps=" in line
-    assert "temporal_epochs=" in line
     assert "autonomic_ticks=" in line
     assert "age_days=" in line
-    assert "cog_cycles=" in line
+    assert "epoch" not in line
 
 def test_io_banner_loaded_with_autosave_same_file(capsys):
     args = SimpleNamespace(autosave="session.json")

@@ -43,9 +43,9 @@ from typing import Any, Callable, DefaultDict
 import cca8_world_graph
 from cca8_controller import Drives, action_center_step
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 
-ProfileTuple = tuple[str, float, float, int]
+ProfileTuple = tuple[str, int]
 
 __all__ = [
     "ProfileOperations",
@@ -106,9 +106,9 @@ def default_profile_runtime() -> ProfileRuntime:
         action_center_step=action_center_step,
     )
 
-def _goat_defaults():
-    """Return the Mountain Goat default profile tuple: (name, sigma, jump, winners_k)."""
-    return ("Mountain Goat", 0.015, 0.2, 2)
+def _goat_defaults() -> ProfileTuple:
+    """Return the Mountain Goat default profile tuple: ``(name, winners_k)``."""
+    return ("Mountain Goat", 2)
 
 
 _PROFILE_MENU_PAUSE_ACTIVE = False
@@ -171,7 +171,7 @@ def _print_goat_fallback():
     print()
 
 
-def profile_rcos_api(_ctx) -> tuple[str, float, float, int]:
+def profile_rcos_api(_ctx) -> ProfileTuple:
     """Explain the planned RCOS API configuration; fall back to Mountain Goat defaults."""
     print(r"""
 Robotic Cognitive Operating System (RCOS)
@@ -203,7 +203,7 @@ Although scaffolding is in place, an RCOS API configuration is not available.
     _print_goat_fallback()
     return _goat_defaults()
 
-def profile_chimpanzee(_ctx) -> tuple[str, float, float, int]:
+def profile_chimpanzee(_ctx) -> ProfileTuple:
     """Print a narrative about the chimpanzee profile; fall back to Mountain Goat defaults."""
     _profile_heading("Chimpanzee-like brain simulation")
     print('''
@@ -215,7 +215,7 @@ The chimpanzee has the main structures of the mountain goat brain (some differen
     _print_goat_fallback()
     return _goat_defaults()
 
-def profile_human(_ctx) -> tuple[str, float, float, int]:
+def profile_human(_ctx) -> ProfileTuple:
     """Print a narrative about the human profile; fall back to Mountain Goat defaults."""
     _profile_heading("Human-like brain simulation")
     print('''
@@ -1367,11 +1367,11 @@ def choose_profile(
     operations: ProfileOperations | None = None,
 ) -> dict[str, Any]:
     """Prompt for a profile. 'T' opens the README tutorial, then re-prompts.
-    Returns a dict: {"name", "ctx_sigma", "ctx_jump", "winners_k"}.
+    Returns a dict: ``{"name", "winners_k"}``.
 
     Default to Mountain Goat unless a profile is implemented.
     For unimplemented profiles, print a narrative and fall back to goat defaults.
-    Returns a dict: {"name", "ctx_sigma", "ctx_jump", "winners_k"}.
+    Returns a dict: ``{"name", "winners_k"}``.
 
     Behavior:
       - 1..9 → select profile (future profiles print a narrative or dry run, then fall back to goat defaults).
@@ -1391,7 +1391,7 @@ def choose_profile(
         # Fast path: Enter accepts the operational Mountain Goat baseline.
         if choice == "":
             _print_goat_intro()
-            name, sigma, jump, k = goat
+            name, k = goat
             break
 
         # Tutorial: open README, then re-prompt
@@ -1402,37 +1402,37 @@ def choose_profile(
         # Numeric choices
         if choice == "1":
             _print_goat_intro()
-            name, sigma, jump, k = goat
+            name, k = goat
             break
         if choice == "2":
-            name, sigma, jump, k = _run_interactive_profile_choice(operations.chimpanzee, ctx)
+            name, k = _run_interactive_profile_choice(operations.chimpanzee, ctx)
             break
         if choice == "3":
-            name, sigma, jump, k = _run_interactive_profile_choice(operations.human, ctx)
+            name, k = _run_interactive_profile_choice(operations.human, ctx)
             break
         if choice == "4":
-            name, sigma, jump, k = _run_interactive_profile_choice(operations.human_multi_brains, ctx, world)
+            name, k = _run_interactive_profile_choice(operations.human_multi_brains, ctx, world)
             break
         if choice == "5":
-            name, sigma, jump, k = _run_interactive_profile_choice(operations.society_multi_agents, ctx)
+            name, k = _run_interactive_profile_choice(operations.society_multi_agents, ctx)
             break
         if choice == "6":
-            name, sigma, jump, k = _run_interactive_profile_choice(operations.multi_brains_adv_planning, ctx)
+            name, k = _run_interactive_profile_choice(operations.multi_brains_adv_planning, ctx)
             break
         if choice == "7":
-            name, sigma, jump, k = _run_interactive_profile_choice(operations.superhuman, ctx)
+            name, k = _run_interactive_profile_choice(operations.superhuman, ctx)
             break
         if choice == "8":
             callback = operations.cca11 or profile_cca11_governed_cognitive_plurality
-            name, sigma, jump, k = _run_interactive_profile_choice(callback, ctx)
+            name, k = _run_interactive_profile_choice(callback, ctx)
             break
         if choice == "9":
             callback = operations.cca12 or profile_cca12_governed_pod
-            name, sigma, jump, k = _run_interactive_profile_choice(callback, ctx)
+            name, k = _run_interactive_profile_choice(callback, ctx)
             break
 
         # Anything else: prompt again (no silent default)
         print(f"The selection {choice!r} is not valid. Please enter 1–9, 'T', or press Enter for Mountain Goat.\n")
 
     ctx.profile = name
-    return {"name": name, "ctx_sigma": sigma, "ctx_jump": jump, "winners_k": k}
+    return {"name": name, "winners_k": k}

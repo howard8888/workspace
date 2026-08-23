@@ -10,7 +10,7 @@ def test_seeknipple_trigger_and_execute():
 
     p = SeekNipple()
     assert p.trigger(w, d) is True
-    res = p.execute(w, ctx=type("C", (), {"ticks":0, "tvec64":lambda self: None})(), drives=d)
+    res = p.execute(w, ctx=type("C", (), {"cog_cycles": 0, "controller_steps": 1, "ticks": 0, "age_days": 0.0})(), drives=d)
     assert res["status"] == "ok"
     # canonical seeking-mom fact present (no state: prefix)
     assert any("pred:seeking_mom" in (b.tags or set()) for b in w._bindings.values())

@@ -1,24 +1,31 @@
-from cca8_features import time_attrs_from_ctx, FactMeta, TensorPayload
+"""Combined feature-payload and explicit time-attribute coverage."""
+
+from __future__ import annotations
+
+from cca8_features import FactMeta, TensorPayload, time_attrs_from_ctx
 from cca8_run import Ctx
-from cca8_temporal import TemporalContext
 
-def test_time_attrs_and_factmeta_with_time_and_tensorpayload_roundtrip():
+
+def test_time_attrs_factmeta_and_tensorpayload_roundtrip() -> None:
+    """The features seam should preserve counters and dense payload values."""
     ctx = Ctx()
-    ctx.temporal = TemporalContext(dim=8, sigma=0.01, jump=0.2)
-    ctx.ticks = 5
-    ctx.boundary_no = 1
-    ctx.boundary_vhash64 = ctx.tvec64()
+    ctx.cog_cycles = 2
+    ctx.controller_steps = 5
+    ctx.ticks = 7
+    ctx.age_days = 0.25
 
-    ta = time_attrs_from_ctx(ctx)
-    assert ta.get("ticks") == 5
-    assert ta.get("epoch") == 1
-    assert isinstance(ta.get("tvec64"), str) and isinstance(ta.get("epoch_vhash64"), str)
+    attrs = time_attrs_from_ctx(ctx)
+    assert attrs == {
+        "cognitive_cycle": 2,
+        "controller_step": 5,
+        "autonomic_tick": 7,
+        "age_days": 0.25,
+    }
 
-    fm = FactMeta(name="vision:scene", links=["b1"]).with_time(ctx)
-    assert fm.as_dict()["attrs"].get("ticks") == 5
+    fact = FactMeta(name="vision:scene", links=["b1"]).with_time(ctx)
+    assert fact.as_dict()["attrs"] == attrs
 
-    tp = TensorPayload(data=[1.0, 2.0, 3.0], shape=(3,))
-    b = tp.to_bytes()
-    tp2 = TensorPayload.from_bytes(b)
-    assert tp2.shape == (3,)
-    assert tp2.data[:3] == [1.0, 2.0, 3.0]
+    payload = TensorPayload(data=[1.0, 2.0, 3.0], shape=(3,))
+    restored = TensorPayload.from_bytes(payload.to_bytes())
+    assert restored.shape == (3,)
+    assert restored.data[:3] == [1.0, 2.0, 3.0]

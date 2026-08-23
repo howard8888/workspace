@@ -5,7 +5,6 @@ import cca8_run
 import cca8_world_graph
 from cca8_controller import Drives
 from cca8_env import HybridEnvironment
-from cca8_temporal import TemporalContext
 
 
 def test_phase7_autostore_respects_stage_zone_keyframe_flags() -> None:
@@ -16,15 +15,6 @@ def test_phase7_autostore_respects_stage_zone_keyframe_flags() -> None:
     world.ensure_anchor("NOW")
 
     ctx = cca8_run.Ctx()
-
-    # TemporalContext is expected by the closed-loop runner.
-    if ctx.temporal is None:
-        ctx.temporal = TemporalContext(dim=16, sigma=ctx.sigma, jump=ctx.jump)
-        ctx.tvec_last_boundary = ctx.temporal.vector()
-        try:
-            ctx.boundary_vhash64 = ctx.tvec64()
-        except Exception:
-            ctx.boundary_vhash64 = None
 
     ctx.body_world, ctx.body_ids = cca8_run.init_body_world()
     ctx.working_world = cca8_run.init_working_world()

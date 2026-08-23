@@ -59,10 +59,9 @@ from cca8_controller import (
     body_space_zone,
 )
 from cca8_env import HybridEnvironment
-from cca8_features import FactMeta
-from cca8_temporal import TemporalContext
+from cca8_features import FactMeta, time_attrs_from_ctx
 
-__version__ = "0.1.3"
+__version__ = "0.2.0"
 __all__ = [
     "PreflightRuntime",
     "run_llm_operational_preflight_check",
@@ -484,7 +483,6 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
                         "cca8_controller",
                         "cca8_run",
                         "cca8_preflight",
-                        "cca8_temporal",
                         "cca8_features",
                         "cca8_column",
                     ]
@@ -539,7 +537,6 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
             ("cca8_controller",  ["Drives", "action_center_step", "__version__"]),
             ("cca8_column",      ["__version__"]),
             ("cca8_features",    ["__version__"]),
-            ("cca8_temporal",    ["__version__"]),
             ("cca8_openai",      ["OpenAIRuntime", "__version__"]),
             ("cca8_profiles",    ["ProfileOperations", "choose_profile", "__version__"]),
             ("cca8_guidance",    ["TutorialRuntime", "print_tagging_and_policies_help", "__version__"]),
@@ -1076,17 +1073,15 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
     try:
         _w = cca8_world_graph.WorldGraph(); _w.ensure_anchor("NOW")
         _d = Drives(); _ctx = Ctx()
-        # Instinct-like: drift once then one controller step
-        if _ctx.temporal is None:
-            _ctx.temporal = TemporalContext(dim=8, sigma=_ctx.sigma, jump=_ctx.jump)
-            _ctx.tvec_last_boundary = _ctx.temporal.vector()
-            _ctx.boundary_vhash64 = _ctx.tvec64()
         _rt = runtime.policy_runtime_factory(runtime.catalog_gates); _rt.refresh_loaded(_ctx)
-        if _ctx.temporal:
-            _ctx.temporal.step()
         _ = action_center_step(_w, _ctx, _d)
         line = runtime.timekeeping_line(_ctx)
-        if ("controller_steps=" in line) and ("age_days=" in line):
+        if (
+            "cognitive_cycles=" in line
+            and "controller_steps=" in line
+            and "autonomic_ticks=" in line
+            and "age_days=" in line
+        ):
             ok("timekeeping one-liner produced")
         else:
             bad("timekeeping one-liner missing fields")
@@ -1094,55 +1089,21 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
         bad(f"timekeeping one-liner error: {e}")
 
 
-    # Z7b) TemporalContext drift + boundary geometry
+    # Z7b) Explicit timekeeping metadata contract
     try:
-        _tctx = Ctx()
-        # Small dim so this stays inexpensive; sigma/jump large enough that we
-        # can see movement, but boundary() + tvec_last_boundary reset should
-        # bring cosine back very close to 1.0.
-        _tctx.temporal = TemporalContext(dim=16, sigma=0.03, jump=0.4)
-        _tctx.tvec_last_boundary = _tctx.temporal.vector()
-        _tctx.boundary_no = 0
-        try:
-            _tctx.boundary_vhash64 = _tctx.tvec64()
-        except Exception:
-            _tctx.boundary_vhash64 = None
-
-        _cos0 = _tctx.cos_to_last_boundary()
-        if not isinstance(_cos0, float):
-            bad("timekeeping drift/boundary: cos_to_last_boundary missing at init")
+        _tctx = Ctx(cog_cycles=3, controller_steps=5, ticks=7, age_days=0.25)
+        _attrs = time_attrs_from_ctx(_tctx)
+        if _attrs == {
+            "cognitive_cycle": 3,
+            "controller_step": 5,
+            "autonomic_tick": 7,
+            "age_days": 0.25,
+        }:
+            ok("timekeeping metadata: explicit counters exported")
         else:
-            # Drift once and ensure cosine is still finite and in [-1,1].
-            _tctx.temporal.step()
-            _cos1 = _tctx.cos_to_last_boundary()
-            if isinstance(_cos1, float) and -1.0001 <= _cos1 <= 1.0001:
-                ok("timekeeping drift: cos_to_last_boundary computed after step()")
-            else:
-                bad("timekeeping drift: cos_to_last_boundary out of range after step()")
-
-            # Boundary jump: epoch++ and cosine reset near 1.0 with a new vhash64.
-            _prev_hash = _tctx.boundary_vhash64
-            _new_v = _tctx.temporal.boundary()
-            _tctx.tvec_last_boundary = list(_new_v)
-            _tctx.boundary_no = getattr(_tctx, "boundary_no", 0) + 1
-            try:
-                _tctx.boundary_vhash64 = _tctx.tvec64()
-            except Exception:
-                _tctx.boundary_vhash64 = None
-
-            _cos2 = _tctx.cos_to_last_boundary()
-            if (
-                isinstance(_cos2, float)
-                and _cos2 > 0.95
-                and _tctx.boundary_no == 1
-                and _tctx.boundary_vhash64
-                and _tctx.boundary_vhash64 != _prev_hash
-            ):
-                ok("timekeeping boundary: epoch increment & cosine reset near 1.0")
-            else:
-                bad("timekeeping boundary: unexpected cosine/epoch/vhash behavior")
+            bad(f"timekeeping metadata: unexpected values {_attrs!r}")
     except Exception as e:
-        bad(f"timekeeping drift/boundary error: {e}")
+        bad(f"timekeeping metadata error: {e}")
 
 
     # Z8) Resolve Engrams pretty (smoke)

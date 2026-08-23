@@ -80,7 +80,7 @@ from cca8_navpatch import (
     grid_overlap_fraction_v1,
 )
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"
 
 __all__ = [
     "init_working_world",
@@ -182,7 +182,8 @@ def serialize_mapsurface_v1(ctx: Ctx, *, include_internal_ids: bool = False) -> 
     Included content (v1)
     ---------------------
     - header:
-        schema tag, controller_steps/ticks/boundary/run-step, temporal fingerprint, and a tiny BodyMap readout if available.
+        schema tag, explicit cognitive/controller/autonomic/environment counters,
+        developmental age, and a tiny BodyMap readout if available.
     - entities:
         one record per WM entity (eid/kind/pos/dist/seen + preds + cues).
     - relations:
@@ -219,12 +220,11 @@ def serialize_mapsurface_v1(ctx: Ctx, *, include_internal_ids: bool = False) -> 
     header: dict[str, Any] = {
         "schema": "wm_mapsurface_v1",
         "profile": getattr(ctx, "profile", None),
-        "controller_steps": int(getattr(ctx, "controller_steps", 0) or 0),
-        "ticks": int(getattr(ctx, "ticks", 0) or 0),
-        "boundary_no": int(getattr(ctx, "boundary_no", 0) or 0),
-        "boundary_vhash64": getattr(ctx, "boundary_vhash64", None),
-        "tvec64": (ctx.tvec64() if hasattr(ctx, "tvec64") else None),
-        "run_last_env_step": getattr(ctx, "run_last_env_step", None),
+        "cognitive_cycle": int(getattr(ctx, "cog_cycles", 0) or 0),
+        "controller_step": int(getattr(ctx, "controller_steps", 0) or 0),
+        "autonomic_tick": int(getattr(ctx, "ticks", 0) or 0),
+        "age_days": float(getattr(ctx, "age_days", 0.0) or 0.0),
+        "environment_step": getattr(ctx, "run_last_env_step", None),
     }
     if isinstance(root_bid, str) and include_internal_ids:
         header["wm_root_bid"] = root_bid
@@ -409,7 +409,7 @@ def mapsurface_payload_sig_v1(payload: dict[str, Any], *, stage: Optional[str] =
     """Stable content signature for MapSurface snapshots (used for dedup vs last).
 
     Important:
-      - excludes volatile header fields (steps/ticks/tvec/etc)
+      - excludes volatile header fields (cycle/step/tick/time values)
       - excludes volatile per-entity recency (last_seen_step)
       - includes stage/zone *if provided* (so you can choose whether those differentiate snapshots)
 
@@ -594,10 +594,11 @@ def store_mapsurface_snapshot_v1(world, ctx: Ctx, *, reason: str, attach: str = 
         "stage": stage,
         "zone": zone,
         "reason": reason,
-        "controller_steps": int(getattr(ctx, "controller_steps", 0) or 0),
-        "ticks": int(getattr(ctx, "ticks", 0) or 0),
-        "boundary_no": int(getattr(ctx, "boundary_no", 0) or 0),
-        "boundary_vhash64": getattr(ctx, "boundary_vhash64", None),
+        "cognitive_cycle": int(getattr(ctx, "cog_cycles", 0) or 0),
+        "controller_step": int(getattr(ctx, "controller_steps", 0) or 0),
+        "autonomic_tick": int(getattr(ctx, "ticks", 0) or 0),
+        "age_days": float(getattr(ctx, "age_days", 0.0) or 0.0),
+        "environment_step": getattr(ctx, "run_last_env_step", None),
         "salience_sig": sal_sig,
         "salient_preds": list(sal_preds),
         "salient_cues": list(sal_cues),

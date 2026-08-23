@@ -77,7 +77,7 @@ def test_demo_world_rest_binding_provenance_and_engrams() -> None:
 
     It should have:
       - pred:state:resting tag (or equivalent)
-      - a meta dict with policy/created_by/created_at/ticks/epoch
+      - a meta dict with policy/created_by/created_at plus explicit runtime counters
       - one engram under column01 with the expected id
       - two incoming edges (from stand and fallen), and no outgoing edges
     """
@@ -95,10 +95,12 @@ def test_demo_world_rest_binding_provenance_and_engrams() -> None:
     # Provenance keys used by menu #20's Provenance: line
     meta = rest_binding.meta
     assert meta.get("policy") == "Rest"
-    assert meta.get("created_by") == "unit_test" or "demo_world"
+    assert meta.get("created_by") == "demo_world"
     assert meta.get("created_at") == "2025-01-01T00:00:00"
-    assert meta.get("ticks") == 42
-    assert meta.get("epoch") == 3
+    assert meta.get("cognitive_cycle") == 3
+    assert meta.get("controller_step") == 42
+    assert meta.get("autonomic_tick") == 7
+    assert meta.get("age_days") == 0.5
 
     # Engram: we expect a pointer in column01
     assert isinstance(rest_binding.engrams, dict)

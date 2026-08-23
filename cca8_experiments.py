@@ -62,9 +62,7 @@ from cca8_state_integrity import (
     render_state_integrity_event_detail_lines_v1,
     summarize_newborn_state_integrity_v1,
 )
-from cca8_temporal import TemporalContext
-
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 RunIdFactory = Callable[[Ctx | None, ExperimentProtocolConfig | None], str]
 BodySpaceZoneFn = Callable[[Ctx], str]
@@ -2455,7 +2453,7 @@ def experiment_make_sandbox_runtime_v1(runtime: ExperimentRuntime) -> dict[str, 
     world = runtime.world_factory()
     drives = Drives(hunger=0.5, fatigue=0.3, warmth=0.6)
 
-    ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
+    ctx = Ctx(age_days=0.0, ticks=0)
     ctx.navpatch_enabled = True
     ctx.cycle_json_enabled = True
     ctx.cycle_json_path = None
@@ -2466,13 +2464,6 @@ def experiment_make_sandbox_runtime_v1(runtime: ExperimentRuntime) -> dict[str, 
     ctx.efe_w_risk = 1.0
     ctx.efe_w_ambiguity = 1.0
     ctx.efe_w_preference = 1.0
-
-    ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump)
-    ctx.tvec_last_boundary = ctx.temporal.vector()
-    try:
-        ctx.boundary_vhash64 = ctx.tvec64()
-    except Exception:
-        ctx.boundary_vhash64 = None
 
     ctx.wm_surfacegrid_verbose = False
     ctx.wm_surfacegrid_ascii_each_tick = False

@@ -775,7 +775,7 @@ class FsmBackend:
                 - "policy:seek_nipple"→ accelerates nipple reach / latch.
 
         ctx
-            CCA8 context object (TemporalContext, ticks, age_days, etc.).
+            CCA8 context object (cognitive/controller counters, autonomic ticks, age_days, etc.).
             Currently unused here; kept for future coupling.
 
         Returns
@@ -2319,7 +2319,7 @@ class HybridEnvironment:
                 action object.
 
             ctx:
-                The CCA8 context object (TemporalContext, ticks, age_days, etc.).
+                The CCA8 context object (cognitive/controller counters, autonomic ticks, age_days, etc.).
 
         Returns:
             (obs, reward, done, info)

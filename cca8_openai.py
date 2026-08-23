@@ -58,7 +58,7 @@ from cca8_controller import (
     bodymap_is_stale,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,21 +131,13 @@ __all__ = [
 def _fallback_timekeeping_line(ctx: Any) -> str:
     """Return a compact timekeeping line when no runner runtime is supplied."""
     controller_steps = int(getattr(ctx, "controller_steps", 0) or 0)
-    boundary_no = int(getattr(ctx, "boundary_no", 0) or 0)
     ticks = int(getattr(ctx, "ticks", 0) or 0)
     age_days = float(getattr(ctx, "age_days", 0.0) or 0.0)
     cog_cycles = int(getattr(ctx, "cog_cycles", 0) or 0)
 
-    try:
-        cosine = ctx.cos_to_last_boundary()
-        cosine_text = f"{cosine:.4f}" if isinstance(cosine, float) else "(n/a)"
-    except Exception:
-        cosine_text = "(n/a)"
-
     return (
-        f"controller_steps={controller_steps}, cos_to_last_boundary={cosine_text}, "
-        f"temporal_epochs={boundary_no}, autonomic_ticks={ticks}, "
-        f"age_days={age_days:.4f}, cog_cycles={cog_cycles}"
+        f"cognitive_cycles={cog_cycles}, controller_steps={controller_steps}, "
+        f"autonomic_ticks={ticks}, age_days={age_days:.4f}"
     )
 
 

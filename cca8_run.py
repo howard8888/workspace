@@ -46,7 +46,7 @@ Requirements
 Core runtime:
 - Python 3.11.
 - All CCA8 Python modules in the same repo directory, including:
-  cca8_world_graph.py, cca8_controller.py, cca8_temporal.py,
+  cca8_world_graph.py, cca8_controller.py,
   cca8_column.py, cca8_features.py, cca8_env.py, cca8_navpatch.py,
   cca8_rcos.py, cca8_rcos_experiments.py, cca8_state_integrity.py,
   cca8_teaching.py, cca8_test_fixtures.py, cca8_context.py, cca8_cli.py,
@@ -163,7 +163,6 @@ from cca8_controller import (
 from cca8_controller import body_shelter_distance  # pylint: disable=unused-import
 from cca8_controller import body_cliff_is_near     # pylint: disable=unused-import
 from cca8_controller import body_shelter_is_near   # pylint: disable=unused-import
-from cca8_temporal import TemporalContext
 from cca8_column import mem as column_mem
 from cca8_env import HybridEnvironment, EnvObservation, EnvConfig  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
 from cca8_rcos import (
@@ -397,8 +396,7 @@ print_startup_notices = cca8_reporting.print_startup_notices
 print_working_map_snapshot = cca8_reporting.print_working_map_snapshot
 print_working_map_layers = cca8_reporting.print_working_map_layers
 print_working_map_entity_table = cca8_reporting.print_working_map_entity_table
-_hamming_hex64 = cca8_reporting._hamming_hex64
-_snapshot_temporal_legend = cca8_reporting._snapshot_temporal_legend
+_snapshot_timekeeping_legend = cca8_reporting._snapshot_timekeeping_legend
 timekeeping_line = cca8_reporting.timekeeping_line
 print_timekeeping_line = cca8_reporting.print_timekeeping_line
 _python_loc_counts_for_file = cca8_reporting._python_loc_counts_for_file
@@ -646,7 +644,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.25.0"
+__version__ = "0.26.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -845,12 +843,12 @@ def _profile_runtime_v1() -> ProfileRuntime:
     )
 
 
-def profile_human_multi_brains(ctx: Any, world: Any) -> tuple[str, float, float, int]:
+def profile_human_multi_brains(ctx: Any, world: Any) -> tuple[str, int]:
     """Run the extracted multi-brain profile scaffold through current runner dependencies."""
     return cca8_profiles.profile_human_multi_brains(ctx, world, runtime=_profile_runtime_v1())
 
 
-def profile_society_multi_agents(ctx: Any) -> tuple[str, float, float, int]:
+def profile_society_multi_agents(ctx: Any) -> tuple[str, int]:
     """Run the extracted society profile scaffold through current runner dependencies."""
     return cca8_profiles.profile_society_multi_agents(ctx, runtime=_profile_runtime_v1())
 
@@ -888,7 +886,6 @@ def _tutorial_runtime_v1() -> TutorialRuntime:
     """Build tutorial operations from the runner compatibility surface."""
     return TutorialRuntime(
         snapshot_text=snapshot_text,
-        hamming_hex64=_hamming_hex64,
         sorted_bids=_sorted_bids,
         engrams_on_binding=_engrams_on_binding,
         binding_engrams=_tutorial_binding_engrams_v1,
@@ -1743,7 +1740,7 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
 # -----------------------
 # ENGINE (import-safe, no direct user I/O) – reusable from tests or other front-ends:
 #   • Runtime context:
-#       - Ctx: mutable runtime state (soft temporal clock, ticks, age_days, controller_steps, cog_cycles, etc.).
+#       - Ctx: mutable runtime state (explicit cycle/step/tick counters, developmental age, etc.).
 #   • Graph / edge helpers:
 #       - world_delete_edge(...), delete_edge_flow(...): engine + CLI helpers for removing edges.
 #       - Spatial stubs: _maybe_anchor_attach(...), add_spatial_relation(...).
@@ -1771,7 +1768,7 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
 #         live in cca8_navmap_runtime.py; pure schemas/operators remain in cca8_navmap.py.
 #   • Runtime reporting subsystem:
 #       - full/mini snapshots, WorkingMap displays, time/drive/skill HUDs, cycle footers, transcript teeing,
-#         and developer-facing LOC/vector utilities live in cca8_reporting.py.
+#         and developer-facing LOC utilities live in cca8_reporting.py.
 #   • Observation runtime subsystem:
 #       - BodyMap construction/update, sequential/error processing, observation masking, keyframe detection,
 #         short-lived map handoffs, sparse WorldGraph writes, and cycle JSON logging live in
@@ -3054,7 +3051,6 @@ def boot_prime_stand(world, ctx) -> None:
 _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("world_graph", "cca8_world_graph"),
     ("controller", "cca8_controller"),
-    ("temporal", "cca8_temporal"),
     ("column", "cca8_column"),
     ("features", "cca8_features"),
     ("env", "cca8_env"),
@@ -3514,7 +3510,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
     and is not cognitively processed until ``CognitiveCycle_(n+1)``.
 
     Each cycle therefore:
-      - advances controller_steps and the temporal soft clock (no autonomic ticks here),
+      - advances the explicit controller-step count (no autonomic tick here),
       - consumes env.reset() output once or the observation buffered by the prior cycle,
       - injects that EnvObservation into the current CCA8 sensory/map path,
       - runs one controller step via PolicyRuntime.consider_and_maybe_fire(...),
@@ -3998,7 +3994,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
     print_env_loop_tag_legend_once(ctx)
     print(f"[env-loop] Running {n_steps} closed-loop cognitive cycle(s) (env↔controller).")
     print("[env-loop] Each cognitive cycle will:")
-    print("  1) Advance controller_steps and the temporal soft clock (one drift),")
+    print("  1) Advance controller_steps for this Action Center invocation,")
     print("  2) Consume one current EnvObservation (reset output or the prior transition's result),")
     print("  3) Process that observation through BodyMap / WNM / memory / policy selection,")
     print("  4) Produce and dispatch this cycle's action, including an explicit null action, and")
@@ -4039,13 +4035,11 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
         except Exception:
             pass
 
-        # 1) Timekeeping for this controller loop (soft clock only)
+        # 1) Explicit ordering for this Action Center invocation.
         try:
             ctx.controller_steps = getattr(ctx, "controller_steps", 0) + 1
         except Exception:
             pass
-        if getattr(ctx, "temporal", None):
-            ctx.temporal.step()
 
         prev_state = None
         input_state = None
@@ -5516,7 +5510,7 @@ def interactive_loop(args: argparse.Namespace) -> None:
     #drives = Drives(hunger=0.5, fatigue=0.9, warmth=0.6)  #for rest gate to see hazard versus shelter
     drives = Drives(hunger=0.5, fatigue=0.3, warmth=0.6)  # moderate fatigue so fallback 'follow_mom' can win
 
-    ctx = Ctx(sigma=0.015, jump=0.2, age_days=0.0, ticks=0)
+    ctx = Ctx(age_days=0.0, ticks=0)
     # Phase X (NavPatch) defaults: enable in the interactive runner.
     # Unit tests or external callers can keep this OFF unless they explicitly opt in.
     ctx.navpatch_enabled = True
@@ -5530,13 +5524,6 @@ def interactive_loop(args: argparse.Namespace) -> None:
     ctx.efe_w_risk = 1.0
     ctx.efe_w_ambiguity = 1.0
     ctx.efe_w_preference = 1.0
-
-    ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump) # temporal soft clock (added)
-    ctx.tvec_last_boundary = ctx.temporal.vector()  # seed “last boundary”
-    try:
-        ctx.boundary_vhash64 = ctx.tvec64()
-    except Exception:
-        ctx.boundary_vhash64 = None
 
     # Phase X ergonomics:
     # - keep the SurfaceGrid HUD visible in env-loop runs,
@@ -5596,32 +5583,25 @@ def interactive_loop(args: argparse.Namespace) -> None:
     if not args.no_intro:
         print_header(args.hal_status_str, args.body_status_str)
     if getattr(args, "rcos_api", False):
-        name, sigma, jump, k = profile_rcos_api(ctx)
+        name, k = profile_rcos_api(ctx)
     elif args.profile:
         if args.profile == "goat":
-            name, sigma, jump, k = _goat_defaults()
+            name, k = _goat_defaults()
         elif args.profile == "chimp":
-            name, sigma, jump, k = profile_chimpanzee(ctx)
+            name, k = profile_chimpanzee(ctx)
         elif args.profile == "human":
-            name, sigma, jump, k = profile_human(ctx)
+            name, k = profile_human(ctx)
         else:
-            name, sigma, jump, k = profile_superhuman(ctx)
+            name, k = profile_superhuman(ctx)
     else:
         profile = choose_profile(ctx, world)
         name = profile["name"]
-        sigma = profile["ctx_sigma"]
-        jump = profile["ctx_jump"]
         k = profile["winners_k"]
 
     ctx.profile = name
-    ctx.sigma = sigma
-    ctx.jump = jump
     ctx.winners_k = k
-    print(f"Profile set: {name} (sigma={sigma}, jump={jump}, k={k})")
-    print(
-        "  sigma/jump = TemporalContext drift/jump noise scales; "
-        "k = reserved top-k winners knob (future WTA selection).\n"
-    )
+    print(f"Profile set: {name} (k={k})")
+    print("  k = reserved top-k winners knob (future WTA selection).\n")
 
     POLICY_RT.refresh_loaded(ctx)
 
@@ -6223,8 +6203,10 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
                 policy = meta.get("policy")
                 creator = meta.get("created_by") or meta.get("boot") or meta.get("added_by")
                 created_at = meta.get("created_at") or meta.get("time") or meta.get("ts")
-                ticks = meta.get("ticks")
-                epoch = meta.get("epoch")
+                cognitive_cycle = meta.get("cognitive_cycle")
+                controller_step = meta.get("controller_step")
+                autonomic_tick = meta.get("autonomic_tick")
+                age_days = meta.get("age_days")
                 bits: list[str] = []
                 if policy:
                     bits.append(f"policy={policy}")
@@ -6232,10 +6214,14 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
                     bits.append(f"created_by={creator}")
                 if created_at:
                     bits.append(f"created_at={created_at}")
-                if isinstance(ticks, int):
-                    bits.append(f"ticks={ticks}")
-                if isinstance(epoch, int):
-                    bits.append(f"epoch={epoch}")
+                if isinstance(cognitive_cycle, int):
+                    bits.append(f"cognitive_cycle={cognitive_cycle}")
+                if isinstance(controller_step, int):
+                    bits.append(f"controller_step={controller_step}")
+                if isinstance(autonomic_tick, int):
+                    bits.append(f"autonomic_tick={autonomic_tick}")
+                if isinstance(age_days, (int, float)):
+                    bits.append(f"age_days={float(age_days):.4f}")
                 return ", ".join(bits) if bits else None
 
 
@@ -6417,45 +6403,16 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
         elif choice == "11":
             # Add sensory cue
             print("Selection:  Input Sensory Cue")
-            print('''
-Adds cue:<channel>:<token> (evidence, not a goal) at NOW and may nudge a policy.
-  e.g., vision:silhouette:mom, sound:bleat:mom, scent:milk
+            print(r"""
+Adds one cue:<channel>:<token> binding at NOW, then runs one Action Center invocation.
 
-This menu selection asks you for the channel and then the token, and writes the resulting cue,
-  e.g., "cue:vision:silhouette:mom", to a new binding attached to NOW.
-A controller step==Action Center step will run and if any policies are capable of triggering,
-  the best one will be chosen and will execute.
-In addition to triggering and executing a policy (if possible) the controller step will also:
-  controller_steps ++,  temporal_drift ++  (no effect on autonomic ticks, cognitive cycles, age_days)
+Timekeeping for this manual flow is explicit:
+  - controller_steps increments once before policy selection/execution;
+  - cognitive cycles do not increment because no full EnvObservation-to-output loop runs;
+  - autonomic ticks and developmental age do not change.
 
-Consider the example where the Mountain Goat calf has just been born and stands up.
-At this point these bindings, drives, and timekeeping exist:
-b1: [anchor:NOW] -> b2: [pred:stand] -> b3: [pred:action:push_up] -> b4: [pred:action:extend_legs]
-    -> b5: [pred:posture:standing, pred:posture:standing]
-hunger=0.70, fatigue=0.20, warmth=0.60
-controller_steps=1, cog_cycles=1, temporal_epochs=1, autonomic_ticks=0,  age_days: 0.0000, cos_to_last_boundary: 1.0000
-These policies are eligible:  policy:stand_up, policy:seek_nipple, policy:rest, policy:suckle,
-       policy:recover_miss, policy:recover_fall
-
-Now add a sensory cue -- bid = world.add_cue(cue_token, attach="now", meta={"channel": ch, "user": True})
- e.g., "cue:vision:silhouette:mom" and we see a message added to b6
- note: "attach=now" means add link from NOW->new node
-Now a controller step will run -- fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx, tie_break="first")
-We see in the message displayed that policy seek_nipple executed and added 2 bindings.
-"pre" explains why it triggered including the cue provided by new binding b6; "post" shows still triggerable after
-  after policy executed; base suggestion, focus of attention and candidates for linking (see Instinct Step or README).
-
-If we look at Snapshot we now see:
--Timekeeping (controller_steps ++,  temporal_drift ++ ):
-  controller_steps=2, cog_cycles=1, temporal_epochs=1, autonomic_ticks=0, cos_to_last_boundary: 0.9857,  age_days: 0.0000
--New binding b6  [cue:vision:silhouette:mom]
--SkillStats -- new "policy:seek_nipple" statistics  ("policy:stand_up" ran before during the Instinct Step)
--New bindings created by "policy:seek_nipple" : b7: [pred:action:orient_to_mom],
-    b8: [pred:seeking_mom, pred:seeking_mom]
-(Note: If we run this Menu Step in a newborn calf then policy:stand_up will run since it is executionable with
- or without a cue and will have priority.)
-
-            ''')
+Examples include cue:vision:silhouette:mom, cue:scent:milk, and cue:sound:bleat:mom.
+""")
 
             ch = input("Channel (vision/scent/touch/sound): ").strip().lower()
             tok = input("Cue token (e.g., silhouette:mom): ").strip()
@@ -6463,16 +6420,14 @@ If we look at Snapshot we now see:
                 cue_token = f"{ch}:{tok}"
                 bid = world.add_cue(cue_token, attach="now", meta={"channel": ch, "user": True})
                 print(f"Added sensory cue: cue:{cue_token} as {bid}")
-                fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx, tie_break="first")
-                if fired != "no_match":
-                    print(fired)
                 try:
                     ctx.controller_steps = getattr(ctx, "controller_steps", 0) + 1
                 except Exception:
                     pass
-                if getattr(ctx, "temporal", None):
-                    ctx.temporal.step()   # one soft-clock drift to reflect that the action took time
-                    print_timekeeping_line(ctx)
+                fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx, tie_break="first")
+                if fired != "no_match":
+                    print(fired)
+                print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -6480,96 +6435,59 @@ If we look at Snapshot we now see:
         elif choice == "12":
             # Instinct step
             print("Selection:  Instinct Step\n")
-            # Quick explainer for the user before the step runs
-            print('''
-Purpose:
-  • Run ONE controller step ("instinct step") which will:
-   i.   Advance the soft temporal clock (temporal drift) (no autonomic tick or age_days change)
-   ii.  Propose a write-base (base_suggestion): NEAREST_PRED(targets), then HERE, then NOW
-   iii. Build a small FOA (focus-of-attention): union of small neighborhoods around NOW, LATEST, cues
-   iv.  Evaluate loaded policies and execute the first that triggers (safety-first)
-   v.   If the controller wrote new facts, then boundary jump (epoch++)
+            print(r"""
+Run one manual Action Center invocation.
 
-Let's consider an example. Consider the Mountain Goat simulation at its start, just after
-    the goat calf is born.
+This operation:
+  1. increments controller_steps once;
+  2. proposes a context-sensitive write base;
+  3. builds a small focus-of-attention neighborhood;
+  4. evaluates the currently loaded primitives and executes one winner, when applicable;
+  5. reports any graph change and the explicit runtime counters.
 
-There is by default a binding b1 with the tag "anchor:NOW" and the default bootup routines
-    will create a binding b2 with the tag "pred:stand" and a link from b1 to b2 -- this all exists.
-Ok... then we run an "instinct step".
+It does not increment cognitive_cycles because it is not a complete
+EnvObservation -> processing -> output cognitive cycle. It also does not change
+autonomic_ticks or developmental age.
+""")
 
-i.  -there is a small drift of the context vector via ctx.temporal.step()
-     (this may not matter if a policy writes a new event and there is a temporal jump later)
-
-ii. -the Action Center has to decide where to link new bindings to -- base_suggestions provides suggestions
-    -base_suggestion = choose_contextual_base(..., targets=['posture:standing', 'stand'])
-    -it first looks for NEAREST_PRED(target) and success since b2 meets the target specified
-    -thus, base_suggestion = binding b2 is recommended as the "write base", i.e. to link to
-    -the suggestion is not used since that link already exists
-    -base_suggestions can be used at different times to control write placement
-
-iii. -FOA focus of attention -- a small set of nearby nodes around NOW/LATEST, cues (for lightweight planning)
-     -NOW will also point to the new state binding created
-
-
-iv. -policy:stand_up when considered can be triggered since age_days is <3.0 and stand near NOW is True
-    -thus, policy:stand_up runs and as creates one mor more new nodes/edges (e.g., b5), and
-            bindings b2 through b5 are linked
-
-v.  -a new event occurred, thus there is a temporal jump, with epoch++
-
-    ''')
-
-            # Count one controller step
             try:
                 ctx.controller_steps += 1
             except Exception:
                 pass
 
-
             before_n = len(world._bindings)
 
-            # [TEMPORAL] drift once per instinct step
-            if ctx.temporal:
-                ctx.temporal.step()
-
             # --- context (for teaching / debugging) ---
-            base  = choose_contextual_base(world, ctx, targets=["posture:standing", "stand"])
-            foa   = compute_foa(world, ctx, max_hops=2)
+            base = choose_contextual_base(world, ctx, targets=["posture:standing", "stand"])
+            foa = compute_foa(world, ctx, max_hops=2)
             cands = candidate_anchors(world, ctx)
 
-            # annotate anchors for readability: b1(NOW), ?(HERE), etc.
-            now_id  = _anchor_id(world, "NOW")
+            # Annotate anchors for readability: b1(NOW), ?(HERE), etc.
+            now_id = _anchor_id(world, "NOW")
             here_id = _anchor_id(world, "HERE") if hasattr(world, "_anchors") else None
+
             def _ann(bid: str) -> str:
-                if bid == now_id:  return f"{bid}(NOW)"
-                if here_id and bid == here_id: return f"{bid}(HERE)"
+                if bid == now_id:
+                    return f"{bid}(NOW)"
+                if here_id and bid == here_id:
+                    return f"{bid}(HERE)"
                 return f"{bid}"
 
-            print(f"[instinct] base_suggestion={base}, anchors={[ _ann(x) for x in cands ]}, foa_size={foa['size']}")
-            print("Note: A base_suggestion is a proposal for where to attach writes this step. It is not a policy pick.")
-            print("      Anchors give us a write base (where to attach new preds/edges). Where we attach the ")
-            print("         new fact matters for searching paths and planning later.")
+            print(f"[instinct] base_suggestion={base}, anchors={[_ann(x) for x in cands]}, foa_size={foa['size']}")
+            print("Note: A base_suggestion proposes where to attach writes; it is not a policy selection.")
             print(f"[context] write-base: {_fmt_base(base)}")
             print(f"[context] anchors: {', '.join(_ann(x) for x in cands)}")
             print(f"[context] foa: size={foa['size']} (ids near NOW/LATEST + cues)")
-            print("Note: write-base is where we’ll attach any new facts/edges this step (keeps the episode local and readable).")
-            print("      anchors are candidate start points the system considers for local searches/attachment.")
-            print("      foa is the current 'focus of attention' neighborhood size used for light-weight planning.")
 
             result = action_center_step(world, ctx, drives)
-            after_n  = len(world._bindings)  #  measure write delta for this path
+            after_n = len(world._bindings)
 
-            # NOTE (Phase VIII terminology alignment):
-            # - ctx.controller_steps counts every Action Center evaluation/execution loop.
-            # - ctx.cog_cycles is reserved for CLOSED-LOOP env↔controller iterations (menu 35/37),
-            #   i.e., EnvObservation → internal update → policy select/execute → action feedback to env.
-            # Therefore: Instinct Step does not increment ctx.cog_cycles.
-
-            # Explicit summary of what executed
+            # controller_steps counts this Action Center invocation. cognitive_cycles
+            # remains reserved for complete environment-to-output cycles (menus 35/37).
             if isinstance(result, dict):
-                policy  = result.get("policy")
-                status  = result.get("status")
-                reward  = result.get("reward")
+                policy = result.get("policy")
+                status = result.get("status")
+                reward = result.get("reward")
                 binding = result.get("binding")
                 if policy and status:
                     rtxt = f"{reward:+.2f}" if isinstance(reward, (int, float)) else "n/a"
@@ -6579,19 +6497,16 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
             else:
                 print("Action Center:", result)
 
-            # Move NOW anchor to the latest stable binding when we wrote new facts
             if isinstance(result, dict) and result.get("status") == "ok" and after_n > before_n:
                 new_bid = result.get("binding")
                 if isinstance(new_bid, str):
                     try:
                         world.set_now(new_bid, tag=True, clean_previous=True)
                     except Exception:
-                        # If anything goes wrong, ignore and keep the old NOW
                         pass
 
-            # WHY: show a human explanation tied to the executed policy
             label = result.get("policy") if isinstance(result, dict) and "policy" in result else "(controller)"
-            gate  = next((p for p in POLICY_RT.loaded if p.name == label), None)
+            gate = next((policy for policy in POLICY_RT.loaded if policy.name == label), None)
             explainer: Optional[Callable[[Any, Any, Any], str]] = getattr(gate, "explain", None) if gate else None
             if explainer is not None:
                 try:
@@ -6600,43 +6515,10 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
                 except Exception:
                     pass
 
-            # delta and autosave
             if after_n == before_n:
                 print("(no new bindings/edges created this step)")
             else:
                 print(f"(graph updated: bindings {before_n} -> {after_n})")
-
-            # [TEMPORAL] boundary when the controller actually wrote
-            if isinstance(result, dict) and result.get("status") == "ok" and after_n > before_n and ctx.temporal:
-                new_v = ctx.temporal.boundary()
-                ctx.tvec_last_boundary = list(new_v)
-                # epoch++
-                ctx.boundary_no = getattr(ctx, "boundary_no", 0) + 1
-                try:
-                    ctx.boundary_vhash64 = ctx.tvec64()
-                except Exception:
-                    ctx.boundary_vhash64 = None
-                print("[temporal] a new event occurred, thus not just a drift in the context vector but ")
-                print("     instead a jump to mark a temporal boundary (cos reset to ~1.000)")
-                print(f"[temporal] boundary==event changes -> event/boundary/epoch={ctx.boundary_no}")
-                print(f"     last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
-
-            # [TEMPORAL] optional τ-cut (e.g., τ=0.90)
-            if ctx.temporal and ctx.tvec_last_boundary:
-                v_now = ctx.temporal.vector()
-                cos_now = sum(a*b for a,b in zip(v_now, ctx.tvec_last_boundary))
-                if cos_now < 0.90:
-                    new_v = ctx.temporal.boundary()
-                    ctx.tvec_last_boundary = list(new_v)
-                    # epoch++
-                    ctx.boundary_no = getattr(ctx, "boundary_no", 0) + 1
-                    try:
-                        ctx.boundary_vhash64 = ctx.tvec64()
-                    except Exception:
-                        ctx.boundary_vhash64 = None
-                    print(f"[temporal] boundary: cos_to_last_boundary {cos_now:.3f} < 0.90")
-                    print(f"[temporal] boundary -> epoch (event changes) ={ctx.boundary_no} ")
-                    print(f"     last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
 
             print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives, ctx)
@@ -6656,119 +6538,39 @@ v.  -a new event occurred, thus there is a temporal jump, with epoch++
         elif choice == "14":
             # Autonomic tick
             print("Selection: Autonomic Tick")
-            print('''
+            print(r"""
+The autonomic tick is an independent physiology/IO heartbeat. This menu action:
+  1. increments autonomic_ticks and developmental age;
+  2. updates the small fatigue model;
+  3. emits any rising-edge interoceptive cues;
+  4. refreshes developmentally available policies;
+  5. performs one Action Center invocation, incrementing controller_steps once.
 
-The autonomic tick is like a fixed-rate heartbeat in the background, particularly important for hardware and robotics.
-(To learn more about the different time systems in the architecture see the Snapshot or Instinct Step menu selections.)
-
-The result of this menu autonomic tick may cause (if conditions exist):
-  i.   increment ticks, age_days, temporal drift, fatigue
-  ii.  emit rising-edge interoceptive cues
-  iii. recompute which policies are unlocked at this age/stage via dev_gate(ctx) before evaluating triggers
-  iv.  try one controller step (Action Center): collect triggered policies, apply safety override if needed,
-  tie-break by priority, and execute one policy (same engine as Instinct Step, just less verbose here)
-
-Consider this example -- the Mountain Goat calf has just been born.
-At this time by default (note -- this might change with future software updates):
-- default -- binding b1 with the tag "anchor:NOW", b2 with tag "pred:stand", link b1--> b2
-- controller_steps=0, cog_cycles=0, temporal_epochs=0, autonomic_ticks=0, age_days: 0.0000
-- hunger=0.70, fatigue=0.20, warmth=0.60  [src=drives.hunger; drives.fatigue; drives.warmth]
-
-Ok... then we run this menu "autonomic tick" (and look at Snapshot display also):
-i.   ticks -> 1, age_day -> .01, cosine -> .98, fatigue -> .21
-
-ii.  HUNGER_HIGH = 0.60 (Controller Module), thus hunger drive at 0.70 will trigger and thus
- be present now and thus written to WorldGraph as an interoceptive cue --
- b1: [anchor:NOW], b2: [pred:stand], b3 LATEST: [cue:drive:hunger_high], with b2-->b3 now also
-
-iii. POLICY_RT.refresh_loaded(ctx) causes the Action Center to recompute and rebuild the set of
-stage-appropriate policies (via dev_gate(ctx)) so only developmentally unlocked policies can trigger
--- these are loaded and are ready for step iv
-
-iv.  try one controller step to react if anything is now actionable:
-        fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx); if fired != "no_match": print(fired)
-        (similar to Instinct Step menu but less verbose and instead more runtime version: refresh-->triggers-->pick--execute)
-   -looks at all the loaded policies re trigger(world, drives, ctx)
-      e.g., policy:stand_up wants nearby pred:stand, that you are not already standing, and young age
-   -choose best candidate triggered policy and call policy's execute(...)
-      e.g., policy:stand_up (added 3 bindings)
-            b4: [pred:action:push_up], b5: [pred:action:extend_legs], b6: [pred:posture:standing, pred:posture:standing]
-   -the extra lines below: base is the same as Instinct Step base suggestion, and again for humans not passed into action_center step;
-   foa seeds foa with LATEST and NOW, adds cue nodes, union of neighborhoods with max_hops of 2; cands are candidate anchors which could be
-   potential start anchors for planning/attachement
-
-Fixed-rate heartbeat: fatigue↑, autonomic_ticks/age_days advance, temporal drift here (with optional boundary).
-Often followed by a controller check to see if any policy should act, gather triggered policies, apply safety override,
-pick by priority, and execute one policy (similar to menu Instinct Step but less verbose)
-
-            ''')
-            drives.fatigue = min(1.0, drives.fatigue + 0.01) #ceiling clamp, never exceed 1.0
-            # advance developmental clock
+It does not increment cognitive_cycles because no complete sensory-input to
+same-cycle-output environment loop runs here.
+""")
+            drives.fatigue = min(1.0, drives.fatigue + 0.01)
             try:
                 ctx.ticks = getattr(ctx, "ticks", 0) + 1
-                ctx.age_days = getattr(ctx, "age_days", 0.0) + 0.01   # tune step as like
-                if ctx.temporal:
-                    ctx.temporal.step()
-                world.set_stage_from_ctx(ctx)           # keep the stage in sync as age changes
+                ctx.age_days = getattr(ctx, "age_days", 0.0) + 0.01
+                world.set_stage_from_ctx(ctx)
                 print(f"Autonomic: fatigue +0.01 | ticks={ctx.ticks} age_days={ctx.age_days:.2f}")
 
-                # Interoception: write cues only on threshold rising-edges to avoid clutter
                 started = _emit_interoceptive_cues(world, drives, ctx, attach="latest")
                 if started:
-                    print("[autonomic] interoceptive cues asserted: " + ", ".join(f"cue:{s}" for s in sorted(started)))
+                    print("[autonomic] interoceptive cues asserted: " + ", ".join(f"cue:{item}" for item in sorted(started)))
+            except Exception as exc:
+                print(f"Autonomic: fatigue +0.01 (exception: {type(exc).__name__}: {exc})")
 
-                # [TEMPORAL] optional τ-cut
-                if ctx.temporal:
-                    # Initialize boundary state once, on first tick with a temporal context
-                    if getattr(ctx, "tvec_last_boundary", None) is None:
-                        ctx.tvec_last_boundary = list(ctx.temporal.vector())
-                        ctx.boundary_no = getattr(ctx, "boundary_no", 0)
-                        try:
-                            ctx.boundary_vhash64 = ctx.tvec64()
-                        except Exception:
-                            ctx.boundary_vhash64 = None
-
-                    v_now = ctx.temporal.vector()
-                    cos_now = sum(a * b for a, b in zip(v_now, ctx.tvec_last_boundary))
-
-                    if cos_now < 0.90:
-                        new_v = ctx.temporal.boundary()  # re-seed & renormalize
-                        ctx.tvec_last_boundary = list(new_v)
-                        ctx.boundary_no = getattr(ctx, "boundary_no", 0) + 1
-                        try:
-                            ctx.boundary_vhash64 = ctx.tvec64()
-                        except Exception:
-                            ctx.boundary_vhash64 = None
-                        print(f"[temporal] τ-cut: cos_to_last_boundary={cos_now:.3f} < 0.90 → epoch={ctx.boundary_no}, last_boundary_vhash64={ctx.boundary_vhash64}")
-                        print("[temporal] note: writes after this boundary belong to the NEW epoch.")
-
-                    print_timekeeping_line(ctx)
-            except Exception as e:
-                print(f"Autonomic: fatigue +0.01 (exception: {type(e).__name__}: {e})")
-
-            # Refresh availability and consider firing regardless
             POLICY_RT.refresh_loaded(ctx)
-            #rebuilds the set of eligible policies by applying each gate's dev_gate(ctx) to the current context
-            #  e.g., age-->stage, etc  -- only those that pass are "loaded"=="eligible" for triggering
-            fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
-            # Controller step bookkeeping for this path:
             try:
                 ctx.controller_steps = getattr(ctx, "controller_steps", 0) + 1
             except Exception:
                 pass
-            #if getattr(ctx, "temporal", None):  #already did a temporal drift above, so don't run here (same code as pasted in for few blocks of code)
-            #   ctx.temporal.step()   # one soft-clock drift to reflect that the action took time
-            # Note: we do NOT increment cog_cycles here by design.
-            # Autonomic Tick is physiology + one controller step; cycles are counted only in Instinct Step (see comment there).
-
-
-            #runs the Action Center once:
-            # -collects policies whose trigger(world, drives, ctx) is True, i.e., eligible policy that has triggered
-            # -safety override -- e.g., if posture:fallen is near NOW then restricts policy to only policy:recover_fall, policy:stand_up
-            # -tie-break/priority -- computes a simple drive-deficit score (e.g., hunger for policy:seek_nipple, etc) and picks the max policy
-            # -executes the chosen policy via action_center_step(...) and returns a human-readable summary
+            fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
             if fired != "no_match":
                 print(fired)
+            print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -6801,111 +6603,40 @@ pick by priority, and execute one policy (similar to menu Instinct Step but less
 
         #----Menu Selection Code Block------------------------
         elif choice == "18":
-            # Simulate a fall event and try a recovery attempt immediately
+            # Simulate a fall event and try a recovery attempt immediately.
             print("Selection: Simulate a fall event\n")
-            print('''
-Summary: -Creates posture:fallen and relabels the linking edge to 'fall', then attempts recovery.
-         -Use this to demo safety gates (recover_fall / stand_up).
+            print(r"""
+Creates a current posture:fallen event, relabels the transition into that
+binding as fall, and performs one safety-oriented Action Center invocation.
 
---background primer and terminology--
-Controller steps  — one Action Center decision/execution loop (aka “instinct step”).
- -a loop in the runner that evaluates policies once and may write to the WorldGraph.
- -if that step wrote new facts, we mark a  temporal boundary (epoch++) .
- -With regards to its effects on timekeeping,  when a Controller Step occurs :
-     i)  controller_steps : ++ once per controller step
-     ii)  temporal drift : ++ (one soft-clock drift) per controller step
-     iii)  autonomic ticks : no direct change (may increase but independent heartbeat-like clock)
-     iv)  developmental age : no direct change (may increase but must be calculated elsewhere)
-     v)   cognitive cycles : ++ if there is a write to the graph (nb. need to change in the future)
-           Note: we do NOT increment cog_cycles here by design.
-           This menu is 'event injector + one controller step'; cognitive cycles are counted only in Instinct Step.
-
-
- -With regards to terminology and operations that affect controller steps:
-  “Action Center”  = the engine (`PolicyRuntime`).
-  “Controller step”  = one invocation of that engine.
-  “Instinct step”  = diagnostics +  one controller step .
-  “Autonomic tick”  = physiology +  one controller step .
-  ----
-
-Consider the example where the Mountain Goat calf has just been born.
-Thus, by default there will be b1 NOW --> b2 pred:stand
-Note: "pred:stand" is not a state but an intent (if standing we would say,
-   e.g., "pred:posture:standing" or legacy alias pred:posture:standing")
-As shown below, this menu item creates a new binding b3 with "posture:fallen"
-(it does it via world.add_predicate with attach="latest", i.e., link to b2).
-The previous LATEST → fallen edge is relabeled to 'fall' for semantic readability.
-It then calls a controller step. As shown above, this will cause the Action Center to
-  evaluate policies via PolicyRuntime.consider_and_maybe_fire(...) --> since there is
-  "posture:fallen" the safety override restricts candidate policies to {recover_fall, stand_up}
-  and given that equally priority/deficit, stand_up is earlier and will be triggered.
-The base suggestion, focus of attention, and candidates for binding are discussed in Instinct Step
-  as well as in the README.md. They are largely diagnostic. Similarly the 'post' message simply re-evalutes
-  the gate/trigger after execution; it's normal that it can still read True.
-However the line "policy:stand_up (added 3 bindings)" tells us that the policy executed and added
-3 bindings.
-If we go to Snapshot we see:
-    b1: [anchor:NOW]  [src=world._bindings['b1'].tags]
-    b2: [pred:stand]  [src=world._bindings['b2'].tags]
-    b3: [pred:posture:fallen]  [src=world._bindings['b3'].tags]
-    b4: [pred:action:push_up]  [src=world._bindings['b4'].tags]
-    b5: [pred:action:extend_legs]  [src=world._bindings['b5'].tags]
-    b6: [pred:posture:standing, pred:posture:standing]  [src=world._bindings['b6'].tags]
-Bindings b4, b5 and b6 were added and various actions occurred (or is being executed now). We see
-   that at b6 there is the predicate "pred:posture:standing".
-Also, of interest with regard to timekeeping:
-   controller_steps=1, cog_cycles=0, temporal_epochs=0, autonomic_ticks=0, vhash64()==epoch_vhash64, age_days =0.000
-
-            ''')
+Timekeeping is explicit: controller_steps increments once before policy
+selection. cognitive_cycles, autonomic_ticks, and age_days do not change.
+""")
 
             prev_latest = world._latest_binding_id
-            # Create a 'fallen' state as a new binding attached to latest
             fallen_bid = world.add_predicate(
                 "posture:fallen",
                 attach="latest",
-                meta={"event": "fall", "added_by": "user"}
+                meta={"event": "fall", "added_by": "user"},
             )
-            # Relabel the auto 'then' edge from the previous latest → fallen as 'fall'
             try:
                 if prev_latest:
-                    # Remove any auto edge regardless of label, then add a semantic one
-                    try:
-                        world_delete_edge(world, prev_latest, fallen_bid, None)
-                    except NameError:
-                        pass
+                    world_delete_edge(world, prev_latest, fallen_bid, None)
                     world.add_edge(prev_latest, fallen_bid, "fall")
-            except Exception as e:
-                print(f"[fall] relabel note: {e}")
+            except Exception as exc:
+                print(f"[fall] relabel note: {exc}")
 
             print(f"Simulated fall as {fallen_bid}")
-
-            # Refresh and consider policies now; recovery gate will nudge Action Center
             POLICY_RT.refresh_loaded(ctx)
-            fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
-            if fired != "no_match":
-                print(fired)
-            # Controller step bookkeeping for this path:
             try:
                 ctx.controller_steps = getattr(ctx, "controller_steps", 0) + 1
             except Exception:
                 pass
-            if getattr(ctx, "temporal", None):
-                ctx.temporal.step()   # one soft-clock drift to reflect that the action took time
-                print_timekeeping_line(ctx)
-
+            fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
+            if fired != "no_match":
+                print(fired)
+            print_timekeeping_line(ctx)
             loop_helper(args.autosave, world, drives, ctx)
-
-
-        #----Menu Selection Code Block------------------------
-        #elif "19"  see new_to_old compatibility map
-
-
-        #----Menu Selection Code Block------------------------
-        #elif "20"  see new_to_old compatibility map
-
-
-        #----Menu Selection Code Block------------------------
-        #elif "21"  see new_to_old compatibility map
 
 
         #----Menu Selection Code Block------------------------
@@ -7008,53 +6739,19 @@ Note: the graph HTML file will be saved in your current directory\n
 
         #----Menu Selection Code Block------------------------
         elif choice == "24":
-            # Capture scene → emit cue/predicate + tiny engram (signal bridge demo)
+            # Capture scene -> emit cue/predicate + tiny engram (signal bridge demo)
             print("Selection: Capture scene\n")
-            print('''
-Capture scene -- creates a binding, stores an engram of some scene in one of the columns,
-  and then stores a pointer to that engram in the binding.
+            print(r"""
+Capture one small sensory payload in Column memory and attach its engram pointer
+to a new WorldGraph binding.
 
--the user is prompted to enter channel, token, family, attach (NOW->new, advance LATEST; oldLATEST -> new, advance LATEST;
-   "none" -- create node unlinked, can manually add edges later) and a tiny scene vector(e.g., ".5,.5,.5")
--there is a temporal boundary jump so that the new engram starts a fresh epoch
-   e.g., [temporal] boundary (pre-capture) → epoch=1 last_boundary_vhash64=23636ff46c39b1c5 (cos≈1.000)
--time attributes are passed in creating the engram
--then -- bid, eid = world.capture_scene(channel, token, vec, attach=attach, family=family, attrs=attrs)
--this creates a new binding --  b3 with tag cue:vision:silhouette:mom and attached engram id=80ac0bc7b6624b538db354c9d5aa4a17
--as noted it creates a tiny engram in one of the Columns, and stamps it with the time from attrs  e.g., time on engram: ticks....
--it then writes a pointer on the binding so that the binding points to the engram
-     -e.g.,  b3.engrams["column01"] = 80ac0....
-     -sets bN.engrams["column01"] = <eid>
--it then returns the binding id bid and the engram id eid
--then there is a controller==Action Center step -- in the example with a newborn calf the gate and trigger conditions for
-    policy:stand_up are met, and this policy is executed
+The engram records directly interpretable provenance:
+  cognitive_cycle, controller_step, autonomic_tick, age_days, and created_at.
+No stochastic temporal vector or synthetic event epoch is created.
 
-  - When attach='latest' (default in base-aware mode), this menu now consults a write-base suggestion:
-      base = NEAREST_PRED(pred=posture:standing/stand) near NOW → binding bN
-    and uses base-aware attach semantics so the captured scene anchors under a meaningful posture node
-    instead of blindly hanging off whatever LATEST happens to be.
-
-  - Brief tutorial on how to think of the terms above and below at this point in the software development:
-    NOW_ORIGIN anchor -- episode root binding, i.e., a stable 'start' marker, but not used much otherwise at this time
-    HERE anchor -- stub right now, in future use for 'where the body is in space' (vs NOW 'where we are in time')
-    LATEST -- a pointer, really _latest_binding_id, i.e., the last binding we created
-    NOW anchor -- after execution of a policy NOW is usually moved to latest binding of event, but tiny events and cue might not move NOW
-               -- used as default start for planning/search, time anchor, center of focus of attention FOA region
-    attach = 'latest' -- flag indicating that new binding for predicate/engram/etc should be linked to the latest binding
-    attach = 'now' -- flag indicating the new binding for predicate/engram/etc should be linked to the NOW anchor binding
-    base -- 'where should this new binding be linked in the graph so that the episode stays tidy and meaningful?'
-    base_suggestion -- system saying 'given the current situation (NOW + FOA) the best node to attach new nodes to is this binding'
-    choose_contextual_base(...) -- computes base_suggestion starting from NOW, within small radius of nodes looks for binding with
-        specified target predicate, if found returns, e.g., {'base':'NEAREST_PRED', 'pred':'posture:standing', 'bid':'b5'},
-        but if not found returns, e.g., {'base':'HERE', 'bid':'?'}, i.e., strategy of HERE rather than nearest predicate and if can't
-        use HERE then will use NOW/LATEST
-    base-aware logic  -- if attach='latest' and last node was a cue or some dev_gate, etc, the new predicate/scene
-        binding would normally link to those, even though they really belong under another node, then attach='effective_attach'=='none',
-        and have NEAREST_PRED base, then _attach_via_base(...) links under NEAREST_PRED base
-
-
-
-            ''')
+When attach=latest, the menu can still use a context-sensitive write-base
+suggestion so the new binding is linked under a meaningful nearby predicate.
+""")
 
             try:
                 channel = input("Channel [vision/scent/sound/touch] (default: vision): ").strip().lower() or "vision"
@@ -7089,18 +6786,7 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
             else:
                 print("[base] write-base suggestion skipped for capture_scene: attach mode is not 'latest' (user-specified).")
 
-            # Treat capture as a new event (pre-capture boundary) so time attrs reflect a new epoch
-            if ctx.temporal:
-                new_v = ctx.temporal.boundary()
-                ctx.tvec_last_boundary = list(new_v)
-                ctx.boundary_no = getattr(ctx, "boundary_no", 0) + 1
-                try:
-                    ctx.boundary_vhash64 = ctx.tvec64()
-                except Exception:
-                    ctx.boundary_vhash64 = None
-                print(f"[temporal] boundary (pre-capture) → epoch={ctx.boundary_no} last_boundary_vhash64={ctx.boundary_vhash64} (cos≈1.000)")
-
-            # Pass time attrs when creating an engram
+            # Pass explicit runtime-ordering metadata when creating the engram.
             from cca8_features import time_attrs_from_ctx
             attrs = time_attrs_from_ctx(ctx)
             bid, eid = world.capture_scene(channel, token, vec, attach=effective_attach, family=family, attrs=attrs)
@@ -7129,9 +6815,13 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
                     meta = rec.get("meta", {})
                     attrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
                     if attrs:
-                        print(f"[bridge] time on engram: ticks={attrs.get('ticks')} "
-                              f"tvec64={attrs.get('tvec64')} epoch={attrs.get('epoch')} "
-                              f"epoch_vhash64={attrs.get('epoch_vhash64')}")
+                        print(
+                            "[bridge] time on engram: "
+                            f"cognitive_cycle={attrs.get('cognitive_cycle')} "
+                            f"controller_step={attrs.get('controller_step')} "
+                            f"autonomic_tick={attrs.get('autonomic_tick')} "
+                            f"age_days={attrs.get('age_days')}"
+                        )
                     rid   = rec.get("id", eid)
                     payload = rec.get("payload") if isinstance(rec, dict) else None
                     if isinstance(payload, dict):
@@ -7163,7 +6853,11 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
                     slots = ", ".join(eng.keys()) if isinstance(eng, dict) else "(none)"
                     print(f'[bridge] {bid} engrams now include [{slots}] (attached id={eid})')
 
-                # Optional: one controller step (Action Center) after capture
+                # Optional: one controller step (Action Center) after capture.
+                try:
+                    ctx.controller_steps = getattr(ctx, "controller_steps", 0) + 1
+                except Exception:
+                    pass
                 try:
                     res = action_center_step(world, ctx, drives)
                     if isinstance(res, dict):
@@ -7220,82 +6914,22 @@ Capture scene -- creates a binding, stores an engram of some scene in one of the
 
         #----Menu Selection Code Block------------------------
         elif choice == "26":
-            # Temporal probe (harmonized with Snapshot naming)
-            print("Selection:  Temporal Probe\n")
-            print("Shows the temporal soft clock using the same names as Snapshot,")
-            print("with source attributes for each value.\n")
-
-            # Epoch + hashes (same names as Snapshot)
-            epoch = getattr(ctx, "boundary_no", 0)
-            vhash_now = ctx.tvec64() if hasattr(ctx, "tvec64") else None
-            epoch_vh  = getattr(ctx, "boundary_vhash64", None)
-
-            print(f"  vhash64(now): {vhash_now if vhash_now else '(n/a)'}  [src=ctx.tvec64()]")
-            print(f"  vhash64: {vhash_now if vhash_now else '(n/a)'}  [alias of vhash64(now)]")
-            print(f"  epoch: {epoch}  [src=ctx.boundary_no]")
-            print(f"  epoch_vhash64: {epoch_vh if epoch_vh else '(n/a)'}  [src=ctx.boundary_vhash64]")
-            print(f"  last_boundary_vhash64: {epoch_vh if epoch_vh else '(n/a)'}  [alias of epoch_vhash64]")
-
-            # Cosine to last boundary (same name as Snapshot)
-            cos = None
-            try:
-                cos = ctx.cos_to_last_boundary()
-            except Exception:
-                cos = None
-            if isinstance(cos, float):
-                print(f"  cos_to_last_boundary: {cos:.4f}  [src=ctx.cos_to_last_boundary()]")
-            else:
-                print("  cos_to_last_boundary: (n/a)  [src=ctx.cos_to_last_boundary()]")
-
-            # Hamming distance between hashes (0..64), optional
-            if vhash_now and epoch_vh:
-                try:
-                    h = _hamming_hex64(vhash_now, epoch_vh)
-                    if h >= 0:
-                        print(f"  hamming(vhash64,epoch_vhash64): {h} bits (0..64)  [src=_hamming_hex64]")
-                except Exception:
-                    pass
-
-            # Temporal parameters (same keys as Snapshot)
-            tv = getattr(ctx, "temporal", None)
-            if tv:
-                dim   = getattr(tv, "dim", 0)
-                sigma = getattr(tv, "sigma", 0.0)
-                jump  = getattr(tv, "jump", 0.0)
-                print(f"  dim={dim}  [src=ctx.temporal.dim]")
-                print(f"  sigma={sigma:.4f}  [src=ctx.temporal.sigma]")
-                print(f"  jump={jump:.4f}  [src=ctx.temporal.jump]")
-
-            # Status derived from cosine, same thresholds as elsewhere
-            if isinstance(cos, float):
-                if cos >= 0.99:
-                    status = "ON-EVENT BOUNDARY"
-                elif cos < 0.90:
-                    status = "EVENT BOUNDARY-SOON"
-                else:
-                    status = "DRIFTING slowly forward in time"
-                print(f"  status={status}  [derived from cos_to_last_boundary]")
-
+            # Explicit timekeeping status.
+            print("Selection: Timekeeping Status\n")
             print_timekeeping_line(ctx)
+            print(r"""
+Counter meanings:
+  cognitive_cycles  complete sensory-input -> processing -> same-cycle output loops
+  controller_steps  Action Center invocations, including manual/autonomic flows
+  autonomic_ticks   independent physiology/IO heartbeats
+  age_days           developmental state
 
-            # Explanation (matches Snapshot nomenclature)
-            print("\nExplanation:")
-            print("  The temporal soft clock keeps two fingerprints of a unit vector:")
-            print("    • vhash64(now) — current context vector fingerprint  [src=ctx.tvec64()]")
-            print("    • epoch_vhash64 — fingerprint captured at the last boundary  [src=ctx.boundary_vhash64]")
-            print("  Between boundaries the vector DRIFTS a little each drift step (sigma). When a new")
-            print("  event occurs, boundary() applies a larger JUMP (jump), we record epoch_vhash64")
-            print("  to the new value, and vhash64(now) equals it immediately after.")
-            print("  Elapsed-within-epoch can be estimated by comparing now vs boundary:")
-            print("    • cos_to_last_boundary ≈ 1.000 at a boundary and decreases with drift;")
-            print("    • Hamming(vhash64(now), epoch_vhash64) counts bit flips (0..64).")
-
-            # Small legend (matches Snapshot legend terms)
-            print("\nLegend:")
-            print("  epoch = event boundary count; increments when boundary() is taken")
-            print("  vhash64(now) = fingerprint of current temporal vector")
-            print("  epoch_vhash64 = fingerprint at last boundary (alias: last_boundary_vhash64)")
-
+Other time domains remain separate:
+  EnvState.step_index and EnvState.time_since_birth belong to the simulated world.
+  created_at and saved_at are wall-clock provenance only.
+  Motion, freshness, duration, support, and phase are derived within the
+  domain-specific temporal subsystem that owns the relevant evidence.
+""")
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -7364,11 +6998,13 @@ the human-readable portions of the engram record.
 
                 attrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
                 if isinstance(attrs, dict) and attrs:
-                    ticks = attrs.get("ticks")
-                    tvec  = attrs.get("tvec64")
-                    epoch = attrs.get("epoch")
-                    evh   = attrs.get("epoch_vhash64")
-                    print(f"  time attrs: ticks={ticks} tvec64={tvec} epoch={epoch} epoch_vhash64={evh}")
+                    print(
+                        "  time attrs: "
+                        f"cognitive_cycle={attrs.get('cognitive_cycle')} "
+                        f"controller_step={attrs.get('controller_step')} "
+                        f"autonomic_tick={attrs.get('autonomic_tick')} "
+                        f"age_days={attrs.get('age_days')}"
+                    )
 
                 payload = rec.get("payload") or rec.get("data") or rec.get("value")
                 if isinstance(payload, dict):
@@ -7394,144 +7030,107 @@ the human-readable portions of the engram record.
 
         #----Menu Selection Code Block------------------------
         elif choice == "28":
-            # List all engrams by scanning bindings; dedupe by id
+            # List all engrams by scanning bindings; de-duplicate by id.
             print("Selection: List all engrams")
-            print('''
-This selection will list all engrams stored by scanning the bindings.
-Any duplicated engram ID's in different bindings will not be shown twice.
-EID -- the engram id (32 hex characters)
-src -- the source binding==node where the pointer is stored
-       note: this is the first binding found that points to that EID but de-duplicated by EID
-ticks, epoch -- when the engram was created, actually the value of these counters when it was captured
-tvec64 -- human readable 64-bit fingerprint of the temporal vector ctx.tvec64 when the engram was captured
-payload --  info from the payload's metadata TensorPayload holds data:list[float] and on serialization write contiguous float32's
-  -shape=(3,) -- 1-D vector of 3 elements
-  -kind=scene -- kind of field, not numeric dtype; "scene" kind comes from the payload's metadata
-  -fmt=tensor/list-f32  -- TensorPayload holds data:list[float] and on serialization writes contiguous float32's
-name -- engram name  e.g., scene:vision:silhouette:mom
+            print(r"""
+Lists each referenced Column engram once. Runtime provenance is shown as
+cognitive-cycle, controller-step, autonomic-tick, and developmental-age values.
+""")
 
-Note: the Column record stores {"id", "name", "payload", "meta"}; receives the time attrs + "created_at"
-Note: the binding keeps the pointer engrams["column01"] = {"id":EID, "act":1.0}
-
-            ''')
-
-            seen: set[str] = set() #useful to annotate containers created empty so mypy finds unambiguous
-            any_found = False  #type is obvious from the literal, so don't type in cases like this
-            printed_header = False
-            for bid in _sorted_bids(world):  #[b1, b2,...]
-                eids = _engrams_on_binding(world, bid)  #[] if no engram, or if engram, e.g., ['15da3c55f02c4f7db6cf657367fc8e49']
-                for eid in eids:
+            seen: set[str] = set()
+            any_found = False
+            for bid in _sorted_bids(world):
+                for eid in _engrams_on_binding(world, bid):
                     if eid in seen:
                         continue
                     seen.add(eid)
                     any_found = True
-                    # Best-effort fetch of Column record for summary
-                    rec = None
                     try:
                         rec = world.get_engram(engram_id=eid)
-                        #e.g.,  {'id': '15da3c55f02c4f7db6cf657367fc8e49', 'name': 'scene:vision:silhouette:mom',
-                        #  'payload': TensorPayload(data=[0.0, 0.0, 0.0], shape=(3,), kind='scene', fmt='tensor/list-f32'),
-                        #  'meta': {'name': 'scene:vision:silhouette:mom', 'links': ['cue:vision:silhouette:mom'],
-                        #  'attrs': {'ticks': 0, 'tvec64': '7ffe462732f60bd9', 'epoch': 1, epoch_vhash64': '7ffe462732f60bd9', 'column': 'column01'},
-                        #  'created_at': '2025-11-16T10:46:50'}, 'v': '1'}
                     except Exception:
                         rec = None
-                    ticks = epoch = tvec = evh = shape = dtype = None
+
+                    attrs = {}
+                    shape = None
+                    kind = None
+                    fmt = None
+                    name = ""
                     if isinstance(rec, dict):
+                        name = str(rec.get("name") or "")
                         meta = rec.get("meta", {})
-                        attrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
-                        if isinstance(attrs, dict):
-                            ticks = attrs.get("ticks")
-                            tvec  = attrs.get("tvec64")
-                            epoch = attrs.get("epoch")
-                            evh   = attrs.get("epoch_vhash64")
-
+                        raw_attrs: Any = meta.get("attrs", {}) if isinstance(meta, dict) else {}
+                        attrs = raw_attrs if isinstance(raw_attrs, dict) else {}
                         payload = rec.get("payload")
-                        if isinstance(payload, dict):
-                            shape = payload.get("shape") or payload.get("meta", {}).get("shape")
-                            dtype = payload.get("dtype") or payload.get("ftype") or payload.get("kind")
-                        else:
-                            shape = rec.get("shape"); dtype = rec.get("kind") or rec.get("type")
-
-                        payload = rec.get("payload")
-                        if isinstance(payload, dict):
-                            shape = payload.get("shape") or payload.get("meta", {}).get("shape")
-                            dtype = payload.get("dtype") or payload.get("ftype") or payload.get("kind")
-                        elif hasattr(payload, "meta"):  # e.g., TensorPayload object
+                        if hasattr(payload, "meta"):
                             try:
-                                pmeta = payload.meta()  # {'kind','fmt','shape','len'}
-                                shape = pmeta.get("shape")
-                                dtype = pmeta.get("kind")
+                                payload_meta = payload.meta()
+                                shape = payload_meta.get("shape")
+                                kind = payload_meta.get("kind")
+                                fmt = payload_meta.get("fmt")
                             except Exception:
-                                shape = dtype = None
-                        else:
-                            shape = rec.get("shape")
-                            dtype = rec.get("kind") or rec.get("type")
-                    name = (rec.get("name") or "") if isinstance(rec, dict) else ""
+                                pass
+                        elif isinstance(payload, dict):
+                            payload_meta = payload.get("meta", {}) if isinstance(payload.get("meta"), dict) else {}
+                            shape = payload.get("shape") or payload_meta.get("shape")
+                            kind = payload.get("kind") or payload.get("dtype") or payload_meta.get("kind")
+                            fmt = payload.get("fmt") or payload_meta.get("fmt")
 
-                    if not printed_header:
-                        print("Engrams in the system:\n")
-                        printed_header = True
-
-                    fmt = (payload.meta().get("fmt") if hasattr(payload, "meta")
-                           else (payload.get("fmt") if isinstance(payload, dict) else None))
-                    print(f"EID={eid}  src={bid}  ticks={ticks} epoch={epoch} tvec64={tvec} "
-                          f"payload(shape={shape}, kind={dtype}{', fmt='+fmt if fmt else ''})"
-                          f"{'  name='+name if name else ''}")
+                    print(
+                        f"EID={eid} src={bid} cognitive_cycle={attrs.get('cognitive_cycle')} "
+                        f"controller_step={attrs.get('controller_step')} "
+                        f"autonomic_tick={attrs.get('autonomic_tick')} age_days={attrs.get('age_days')} "
+                        f"payload(shape={shape}, kind={kind}{', fmt=' + str(fmt) if fmt else ''})"
+                        f"{' name=' + name if name else ''}"
+                    )
             if not any_found:
                 print("no engrams were found")
             loop_helper(args.autosave, world, drives, ctx)
 
 
-        #----Menu Selection  Code Block------------------------
+        #----Menu Selection Code Block------------------------
         elif choice == "29":
-            # Search engrams
-            print("Selection:  Search Engrams\n")
-            print("Search referenced engrams by name substring (case-insensitive) and/or epoch.\n"
-                  "Optional filters: channel substring (e.g., 'vision'), payload kind (e.g., 'scene'), "
-                  "and EID prefix.\n"
-                  "Note: 'Name' is not bid but the given by the tag, e.g.,name=scene:vision:silhouette:mom ")
+            # Search engrams.
+            print("Selection: Search Engrams\n")
+            print(
+                "Search referenced engrams by name substring and/or cognitive-cycle number. "
+                "Optional filters include channel, payload kind, and EID prefix.\n"
+            )
 
-            # --- inputs (all optional except 'q' which can be blank) ---
             try:
-                q = input("Name contains (substring, blank=any): ").strip()
+                query = input("Name contains (substring, blank=any): ").strip()
             except Exception:
-                q = ""
+                query = ""
             try:
-                e_in = input("Epoch equals (blank=any): ").strip()
-                epoch = int(e_in) if e_in else None
+                cycle_text = input("Cognitive cycle equals (blank=any): ").strip()
+                cognitive_cycle = int(cycle_text) if cycle_text else None
             except Exception:
-                epoch = None
+                cognitive_cycle = None
             try:
-                chan = input("Channel contains (e.g., vision, blank=any): ").strip().lower()
+                channel = input("Channel contains (e.g., vision, blank=any): ").strip().lower()
             except Exception:
-                chan = ""
+                channel = ""
             try:
-                kid = input("Payload kind equals (e.g., scene, blank=any): ").strip().lower()
+                payload_kind = input("Payload kind equals (e.g., scene, blank=any): ").strip().lower()
             except Exception:
-                kid = ""
+                payload_kind = ""
             try:
                 eid_prefix = input("EID starts with (hex prefix, blank=any): ").strip().lower()
             except Exception:
                 eid_prefix = ""
 
-            # --- scan pointers on bindings, de-dupe by EID ---
             seen = set()
-            found: list[tuple[str, str, str, dict]] = []  # (eid, src_bid, name, attrs)
-
-            for bid, b in world._bindings.items():
-                eng = getattr(b, "engrams", None)
-                if not isinstance(eng, dict):
+            found: list[tuple[str, str, str, dict[str, Any]]] = []
+            for bid, binding in world._bindings.items():
+                engrams = getattr(binding, "engrams", None)
+                if not isinstance(engrams, dict):
                     continue
-                for _slot, val in eng.items():
-                    if not (isinstance(val, dict) and "id" in val):
+                for value in engrams.values():
+                    if not (isinstance(value, dict) and isinstance(value.get("id"), str)):
                         continue
-                    eid = val["id"]
+                    eid = value["id"]
                     if eid in seen:
                         continue
                     seen.add(eid)
-
-                    # fetch column record
                     try:
                         rec = world.get_engram(engram_id=eid)
                     except Exception:
@@ -7539,51 +7138,53 @@ Note: the binding keeps the pointer engrams["column01"] = {"id":EID, "act":1.0}
                     if not isinstance(rec, dict):
                         continue
 
-                    name = rec.get("name") or ""
+                    name = str(rec.get("name") or "")
                     meta = rec.get("meta", {})
-                    attrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
+                    raw_attrs = meta.get("attrs", {}) if isinstance(meta, dict) else {}
+                    attrs = raw_attrs if isinstance(raw_attrs, dict) else {}
 
-                    # ---- filters ----
                     if eid_prefix and not eid.lower().startswith(eid_prefix):
                         continue
-                    if q and q.lower() not in name.lower():
+                    if query and query.lower() not in name.lower():
                         continue
-                    if chan and chan not in name.lower():
+                    if channel and channel not in name.lower():
                         continue
-                    if epoch is not None:
-                        ep = attrs.get("epoch")
-                        if not (isinstance(ep, int) and ep == epoch):
-                            continue
-                    if kid:
-                        # 'kind' comes from payload metadata
-                        pl = rec.get("payload")
+                    if cognitive_cycle is not None and attrs.get("cognitive_cycle") != cognitive_cycle:
+                        continue
+                    if payload_kind:
+                        payload = rec.get("payload")
                         kind = None
-                        if hasattr(pl, "meta"):
+                        if hasattr(payload, "meta"):
                             try:
-                                kind = pl.meta().get("kind")
+                                kind = payload.meta().get("kind")
                             except Exception:
                                 kind = None
-                        elif isinstance(pl, dict):
-                            kind = pl.get("kind") or (pl.get("meta", {}) or {}).get("kind")
-                        if (kind or "").lower() != kid:
+                        elif isinstance(payload, dict):
+                            payload_meta = payload.get("meta", {}) if isinstance(payload.get("meta"), dict) else {}
+                            kind = payload.get("kind") or payload_meta.get("kind")
+                        if str(kind or "").lower() != payload_kind:
                             continue
 
                     found.append((eid, bid, name, attrs))
 
-            # --- print results (epoch desc, then name, then eid) ---
             if not found:
                 print("\n(no matches)")
             else:
                 print("\nThe following matches were found:\n")
-                def _sort_key(t):
-                    eid, _bid, name, attrs = t
-                    ep = attrs.get("epoch")
-                    # sort by epoch desc (ints first), then name, then eid
-                    ep_key = -ep if isinstance(ep, int) else float("inf")
-                    return (ep_key, name or "", eid)
+
+                def _sort_key(item: tuple[str, str, str, dict[str, Any]]) -> tuple[float, str, str]:
+                    eid, _bid, name, attrs = item
+                    cycle = attrs.get("cognitive_cycle")
+                    cycle_key = -float(cycle) if isinstance(cycle, int) else float("inf")
+                    return (cycle_key, name, eid)
 
                 for eid, bid, name, attrs in sorted(found, key=_sort_key):
-                    print(f"EID={eid}  src={bid}  name={name}  epoch={attrs.get('epoch')}  tvec64={attrs.get('tvec64')}")
+                    print(
+                        f"EID={eid} src={bid} name={name} "
+                        f"cognitive_cycle={attrs.get('cognitive_cycle')} "
+                        f"controller_step={attrs.get('controller_step')} "
+                        f"autonomic_tick={attrs.get('autonomic_tick')}"
+                    )
 
             loop_helper(args.autosave, world, drives, ctx)
 
@@ -7879,7 +7480,7 @@ Optional discussion: Current threshold cutoff values:
 HybridEnvironment (newborn-goat world) and the CCA8 brain.
 
 For each cognitive cycle we will:
-  1) Advance controller_steps and the temporal soft clock once,
+  1) Advance controller_steps for this Action Center invocation,
   2) Consume one current EnvObservation (reset output or a buffered later observation),
   3) Process that observation through BodyMap, WNM, memory, and policy selection,
   4) Produce and dispatch Action_n (or an explicit null output) during CognitiveCycle_n,
@@ -8408,7 +8009,7 @@ rl_enabled (bool)
        deficit near-tie band (rl_delta) → non-drive tie-break → learned q → stable order
 
 rl_epsilon (float|None)
-  Exploration probability in [0..1]. If None, we use ctx.jump as a convenience default.
+  Exploration probability in [0..1]. If None, exploration is disabled (epsilon=0).
 
 rl_delta (float)
   Defines the deficit near-tie band within which q is allowed to decide among candidates.
@@ -8435,13 +8036,9 @@ rl_delta (float)
             enabled_now = bool(getattr(ctx, "rl_enabled", False))
             eps_now = getattr(ctx, "rl_epsilon", None)
             try:
-                jump_now = float(getattr(ctx, "jump", 0.0))
+                eff_eps = float(eps_now) if eps_now is not None else 0.0
             except Exception:
-                jump_now = 0.0
-            try:
-                eff_eps = float(eps_now) if eps_now is not None else jump_now
-            except Exception:
-                eff_eps = jump_now
+                eff_eps = 0.0
             try:
                 delta_now = float(getattr(ctx, "rl_delta", 0.0))
             except Exception:
@@ -8672,15 +8269,11 @@ rl_delta (float)
             _prune_working_world(ctx)
 
             # ---- Print updated settings ----
-            try:
-                jump_now = float(getattr(ctx, "jump", 0.0))
-            except Exception:
-                jump_now = 0.0
             eps_now2 = getattr(ctx, "rl_epsilon", None)
             try:
-                eff_eps2 = float(eps_now2) if eps_now2 is not None else jump_now
+                eff_eps2 = float(eps_now2) if eps_now2 is not None else 0.0
             except Exception:
-                eff_eps2 = jump_now
+                eff_eps2 = 0.0
             try:
                 delta_now2 = float(getattr(ctx, "rl_delta", 0.0))
             except Exception:

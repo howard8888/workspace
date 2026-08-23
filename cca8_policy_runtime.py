@@ -3197,8 +3197,6 @@ class PolicyRuntime:
             selector_kind = "llm_adviser"
         elif rl_enabled:
             epsilon_raw = getattr(ctx, "rl_epsilon", None)
-            if epsilon_raw is None:
-                epsilon_raw = getattr(ctx, "jump", 0.0)
 
             try:
                 eps_f = float(epsilon_raw) if epsilon_raw is not None else 0.0

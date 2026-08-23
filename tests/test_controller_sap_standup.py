@@ -4,15 +4,12 @@ from cca8_controller import StandUp  # Concrete policy
 
 
 class DummyCtx:
-    """Minimal ctx surrogate for StandUp._policy_meta."""
-    def __init__(self):
-        self.ticks = 0
-        self.boundary_no = 0
-        self.boundary_vhash64 = None
+    """Minimal context surrogate for explicit policy provenance."""
 
-    def tvec64(self):
-        # simple deterministic fingerprint; StandUp only cares that this is callable
-        return "0000000000000000"
+    cog_cycles = 0
+    controller_steps = 1
+    ticks = 0
+    age_days = 0.0
 
 
 def _tags_of(world, token_prefix: str):

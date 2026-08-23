@@ -8,7 +8,7 @@ def test_column_assert_and_basic_access():
     col = ColumnMemory(name="test_column")
 
     payload = TensorPayload(data=[0.1, 0.2, 0.3], shape=(3,))
-    meta = FactMeta(name="vision:scene", links=["b1"], attrs={"epoch": 1, "foo": "bar"})
+    meta = FactMeta(name="vision:scene", links=["b1"], attrs={"cognitive_cycle": 1, "foo": "bar"})
 
     eid = col.assert_fact("vision:scene", payload, meta)
 
@@ -21,7 +21,7 @@ def test_column_assert_and_basic_access():
     assert rec_try == rec_get
     assert rec_get["id"] == eid
     assert rec_get["name"] == "vision:scene"
-    assert rec_get["meta"]["attrs"]["epoch"] == 1
+    assert rec_get["meta"]["attrs"]["cognitive_cycle"] == 1
     assert col.count() == 1
     assert eid in col.list_ids()
 
@@ -40,13 +40,13 @@ def test_column_delete_and_redelete():
     assert col.delete(eid) is False
 
 
-def test_column_find_by_name_epoch_and_attr():
+def test_column_find_by_name_cognitive_cycle_and_attr():
     col = ColumnMemory(name="test_find")
     payload = TensorPayload(data=[1.0], shape=(1,))
 
-    meta1 = FactMeta(name="vision:scene", attrs={"epoch": 2, "tag": "x"})
-    meta2 = FactMeta(name="vision:other", attrs={"epoch": 3})
-    meta3 = FactMeta(name="auditory:scene", attrs={"epoch": 2, "tag": "y"})
+    meta1 = FactMeta(name="vision:scene", attrs={"cognitive_cycle": 2, "tag": "x"})
+    meta2 = FactMeta(name="vision:other", attrs={"cognitive_cycle": 3})
+    meta3 = FactMeta(name="auditory:scene", attrs={"cognitive_cycle": 2, "tag": "y"})
 
     eid1 = col.assert_fact("vision:scene", payload, meta1)
     eid2 = col.assert_fact("vision:other", payload, meta2)
@@ -57,10 +57,10 @@ def test_column_find_by_name_epoch_and_attr():
     ids = {r["id"] for r in res}
     assert {eid1, eid2}.issubset(ids)
 
-    # epoch filter
-    res_epoch = col.find(epoch=2)
-    ids_epoch = {r["id"] for r in res_epoch}
-    assert ids_epoch == {eid1, eid3}
+    # cognitive-cycle filter
+    res_cycle = col.find(cognitive_cycle=2)
+    ids_cycle = {r["id"] for r in res_cycle}
+    assert ids_cycle == {eid1, eid3}
 
     # has_attr filter
     res_attr = col.find(has_attr="tag")
@@ -68,7 +68,7 @@ def test_column_find_by_name_epoch_and_attr():
     assert ids_attr == {eid1, eid3}
 
     # combined filters
-    res_combo = col.find(name_contains="vision", epoch=2, has_attr="tag")
+    res_combo = col.find(name_contains="vision", cognitive_cycle=2, has_attr="tag")
     assert [r["id"] for r in res_combo] == [eid1]
 
 

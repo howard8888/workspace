@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
 import uuid
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["ColumnMemory", "mem", "__version__"]
 
 
@@ -87,17 +87,20 @@ class ColumnMemory:
         return ids[:limit] if isinstance(limit, int) else ids
 
     def find(self, *, name_contains: Optional[str] = None,
-             epoch: Optional[int] = None, has_attr: Optional[str] = None,
+             cognitive_cycle: Optional[int] = None, has_attr: Optional[str] = None,
              limit: Optional[int] = None) -> List[dict]:
-        """Light search over records by name substring / epoch / attr key."""
+        """Light search over records by name, cognitive cycle, or attribute key."""
         out: List[dict] = []
         needle = (name_contains or "").lower()
         for rec in self._store.values():
             if needle and needle not in (rec.get("name") or "").lower():
                 continue
-            if epoch is not None:
+            if cognitive_cycle is not None:
                 attrs = rec.get("meta", {}).get("attrs", {})
-                if not (isinstance(attrs, dict) and attrs.get("epoch") == epoch):
+                if not (
+                    isinstance(attrs, dict)
+                    and attrs.get("cognitive_cycle") == cognitive_cycle
+                ):
                     continue
             if has_attr:
                 attrs = rec.get("meta", {}).get("attrs", {})

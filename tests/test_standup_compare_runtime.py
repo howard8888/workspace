@@ -26,7 +26,6 @@ from cca8_standup_compare import (
     standup_compare_observation_step_v1,
     standup_compare_selection_step_v1,
 )
-from cca8_temporal import TemporalContext
 from cca8_world_graph import WorldGraph
 
 
@@ -289,8 +288,6 @@ def test_live_closed_loop_records_exact_legacy_gate_and_selected_standup(
     """The runner should compare against PolicyRuntime's actual trigger set and winner."""
     ctx = _ctx_with_bodymap()
     ctx.working_world = cca8_run.init_working_world()
-    ctx.temporal = TemporalContext()
-    ctx.tvec_last_boundary = ctx.temporal.vector()
     world = WorldGraph()
     world.ensure_anchor("NOW")
     world.ensure_anchor("NOW_ORIGIN")

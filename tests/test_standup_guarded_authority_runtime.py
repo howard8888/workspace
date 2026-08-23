@@ -27,7 +27,6 @@ from cca8_standup_compare import (
     standup_guarded_selection_step_v1,
     standup_guarded_summary_v1,
 )
-from cca8_temporal import TemporalContext
 from cca8_world_graph import WorldGraph
 
 
@@ -350,8 +349,6 @@ def test_live_closed_loop_with_guarded_flag_uses_protected_safety_and_selects_st
     """The ordinary birth cycle should retain protected BodyMap safety under Phase 3C."""
     ctx = _ctx_with_bodymap()
     ctx.working_world = cca8_run.init_working_world()
-    ctx.temporal = TemporalContext()
-    ctx.tvec_last_boundary = ctx.temporal.vector()
     world = _world()
 
     cca8_run.run_env_closed_loop_steps(
@@ -379,8 +376,6 @@ def test_cycle_json_record_contains_phase3c_guarded_summary(
     """The machine-readable cycle trace should expose the guarded authority source."""
     ctx = _ctx_with_bodymap()
     ctx.working_world = cca8_run.init_working_world()
-    ctx.temporal = TemporalContext()
-    ctx.tvec_last_boundary = ctx.temporal.vector()
     ctx.cycle_json_enabled = True
     ctx.cycle_json_path = None
 
@@ -429,8 +424,6 @@ def test_default_context_keeps_phase3c_disabled_in_cycle_trace(
     """The new authority path must remain opt-in for ordinary existing runs."""
     ctx = _ctx_with_bodymap(guarded=False)
     ctx.working_world = cca8_run.init_working_world()
-    ctx.temporal = TemporalContext()
-    ctx.tvec_last_boundary = ctx.temporal.vector()
     ctx.cycle_json_enabled = True
     ctx.cycle_json_path = None
 

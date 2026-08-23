@@ -1,45 +1,46 @@
-# tests/test_runner_search_engrams_filters.py
+"""Local equivalent of the runner's engram search filters."""
+
+from __future__ import annotations
+
 import cca8_world_graph as wg
 from cca8_features import time_attrs_from_ctx
-from cca8_run import Ctx, _engrams_on_binding
+from cca8_run import Ctx
 
-def _capture(w, ctx, name_tok, epoch_bump=False):
-    if epoch_bump and ctx.temporal:
-        new_v = ctx.temporal.boundary()
-        ctx.tvec_last_boundary = list(new_v)
-        ctx.boundary_no += 1
-        ctx.boundary_vhash64 = ctx.tvec64()
+
+def _capture(world: wg.WorldGraph, ctx: Ctx, token: str, cognitive_cycle: int) -> tuple[str, str]:
+    ctx.cog_cycles = cognitive_cycle
     attrs = time_attrs_from_ctx(ctx)
-    bid, eid = w.capture_scene("vision", name_tok, [0.0,0.0,0.0], attach="now", family="cue", attrs=attrs)
-    return bid, eid
+    return world.capture_scene("vision", token, [0.0, 0.0, 0.0], attach="now", family="cue", attrs=attrs)
 
-def test_search_like_filters_locally():
-    w = wg.WorldGraph(); w.ensure_anchor("NOW")
-    ctx = Ctx(); from cca8_temporal import TemporalContext
-    ctx.temporal = TemporalContext(dim=8, sigma=0.01, jump=0.2)
-    ctx.tvec_last_boundary = ctx.temporal.vector()
-    ctx.boundary_vhash64 = ctx.tvec64()
 
-    b1, e1 = _capture(w, ctx, "silhouette:mom", epoch_bump=True)   # epoch 1
-    b2, e2 = _capture(w, ctx, "silhouette:tree", epoch_bump=True)  # epoch 2
+def test_search_like_filters_locally() -> None:
+    """Name, cycle, payload-kind, and id-prefix filtering should compose."""
+    world = wg.WorldGraph()
+    world.ensure_anchor("NOW")
+    ctx = Ctx()
 
-    # emulate the runner’s scan+filters:
-    seen, matches = set(), []
-    for bid, b in w._bindings.items():
-        eng = getattr(b, "engrams", None)
-        if isinstance(eng, dict):
-            for v in eng.values():
-                eid = v.get("id") if isinstance(v, dict) else None
-                if isinstance(eid, str) and eid not in seen:
-                    seen.add(eid)
-                    rec = w.get_engram(engram_id=eid)
-                    name = rec.get("name", "")
-                    attrs = rec.get("meta", {}).get("attrs", {})
-                    # filters: substring, epoch exact, kind=scene, eid prefix
-                    if "silhouette" in name and attrs.get("epoch") in {1,2}:
-                        pl = rec.get("payload")
-                        kind = getattr(pl, "meta", lambda: {})().get("kind") if hasattr(pl,"meta") \
-                               else (pl.get("kind") if isinstance(pl, dict) else None)
-                        if kind == "scene" and eid.startswith(eid[:2]):  # trivial prefix sanity
-                            matches.append((eid, bid, name, attrs.get("epoch")))
-    assert set(m[0] for m in matches) == {e1, e2}
+    _binding1, eid1 = _capture(world, ctx, "silhouette:mom", cognitive_cycle=1)
+    _binding2, eid2 = _capture(world, ctx, "silhouette:tree", cognitive_cycle=2)
+
+    seen: set[str] = set()
+    matches: list[tuple[str, str, str, int]] = []
+    for bid, binding in world._bindings.items():  # pylint: disable=protected-access
+        engrams = getattr(binding, "engrams", None)
+        if not isinstance(engrams, dict):
+            continue
+        for value in engrams.values():
+            eid = value.get("id") if isinstance(value, dict) else None
+            if not isinstance(eid, str) or eid in seen:
+                continue
+            seen.add(eid)
+            record = world.get_engram(engram_id=eid)
+            name = record.get("name", "")
+            attrs = record.get("meta", {}).get("attrs", {})
+            if "silhouette" not in name or attrs.get("cognitive_cycle") not in {1, 2}:
+                continue
+            payload = record.get("payload")
+            kind = payload.meta().get("kind") if hasattr(payload, "meta") else None
+            if kind == "scene" and eid.startswith(eid[:2]):
+                matches.append((eid, bid, name, attrs["cognitive_cycle"]))
+
+    assert {item[0] for item in matches} == {eid1, eid2}

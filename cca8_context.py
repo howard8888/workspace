@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import cca8_world_graph
 from cca8_navpatch import SurfaceGridV1
-from cca8_temporal import TemporalContext
 
 if TYPE_CHECKING:
     from cca8_env import EnvObservation, EnvState
@@ -61,7 +60,7 @@ if TYPE_CHECKING:
     )
     from cca8_wnm_runtime import WNMReadyEntryV1, WNMTransitionRecordV1
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 __all__ = ["CreativeCandidate", "ExperimentProtocolConfig", "Ctx", "__version__"]
 
 
@@ -160,8 +159,9 @@ class Ctx:
         Enable epsilon-greedy policy selection. When enabled, the selector can use the
         controller skill ledger (SkillStat.q) as a secondary tie-break among triggered policies.
     rl_epsilon : float | None
-        Exploration probability in [0.0, 1.0]. If None, fall back to ctx.jump (so you can reuse
-        the existing “jump” knob as an exploration knob during early experiments).
+        Explicit epsilon-greedy exploration probability in [0.0, 1.0]. ``None`` is accepted
+        for compatibility and is treated as no exploration. It is never inferred from a
+        timekeeping parameter.
         # rl_delta controls how often learned value (SkillStat.q) can influence selection of which triggered policy to execute:
     rl_delta:
         = 0.0  → q is used only for exact deficit ties.
@@ -170,11 +170,8 @@ class Ctx:
 
     """
 
-    sigma: float = 0.015
-    jump: float = 0.2
-
     rl_enabled: bool = False             # Reinforcement learning (policy selection)
-    rl_epsilon: Optional[float] = None   # Reinforcement learning (policy selection)
+    rl_epsilon: Optional[float] = 0.2    # Explicit epsilon-greedy exploration probability
     rl_explore_steps: int = 0  # RL bookkeeping
     rl_exploit_steps: int = 0  # RL bookkeeping
     rl_delta: float = 0.0 # rl_delta controls how often learned value (SkillStat.q) can influence selection of triggered policies to execute
@@ -185,10 +182,15 @@ class Ctx:
     winners_k: Optional[int] = None
     hal: Optional[Any] = None
     body: str = "(none)"
-    temporal: Optional[TemporalContext] = None
-    tvec_last_boundary: Optional[list[float]] = None
-    boundary_no: int = 0
-    boundary_vhash64: Optional[str] = None
+
+    # Explicit runtime ordering and biological-development counters.
+    #
+    # ``cog_cycles`` is the canonical ordering variable for complete closed-loop
+    # cognitive cycles. ``controller_steps`` counts Action Center invocations,
+    # including manual/autonomic flows that are not complete cognitive cycles.
+    # ``ticks`` is an independent autonomic/physiological heartbeat counter, and
+    # ``age_days`` is developmental state. Environment step/time remain owned by
+    # ``EnvState``; wall-clock timestamps remain provenance only.
     controller_steps: int = 0
     cog_cycles: int = 0  # closed-loop cognitive cycles (env_obs→update→select→execute→act); incremented in menu 35/37 flows
     # Prediction error v0 (Phase VIII):
@@ -1125,27 +1127,3 @@ class Ctx:
         """quick reset of Ctx.cog_cycles counter
         """
         self.cog_cycles = 0
-
-
-    def tvec64(self) -> Optional[str]:
-        """64-bit sign-bit fingerprint of the temporal vector (hex)."""
-        tv = self.temporal
-        if not tv:
-            return None
-        v = tv.vector()
-        x = 0
-        m = min(64, len(v))
-        for i in range(m):
-            if v[i] >= 0.0:
-                x |= (1 << i)
-        return f"{x:016x}"
-
-
-    def cos_to_last_boundary(self) -> Optional[float]:
-        """Cosine(now, last_boundary); unit vectors → dot product."""
-        tv = self.temporal
-        lb = self.tvec_last_boundary
-        if not (tv and lb):
-            return None
-        v = tv.vector()
-        return sum(a*b for a, b in zip(v, lb))

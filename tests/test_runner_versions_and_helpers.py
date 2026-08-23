@@ -5,7 +5,7 @@ W = pytest.importorskip("cca8_world_graph")
 
 def test_versions_text_contains_core_sections():
     txt = R.versions_text()
-    for key in ("runner", "world_graph", "controller", "column", "features", "temporal"):
+    for key in ("runner", "world_graph", "controller", "column", "features"):
         assert key in txt.lower()
 
 def test_bindings_with_pred_helpers_hit_goal_path():

@@ -175,7 +175,6 @@ def _run_autonomous_newborn_episode(max_cycles: int = 60) -> dict[str, Any]:
     # This regression checks the deterministic autonomous policy ladder, not
     # epsilon-greedy exploration. Exploration is tested separately.
     ctx.rl_epsilon = 0.0
-    ctx.jump = 0.0
     ctx.experiment_newborn_require_resume_memory = False
     ctx.experiment_newborn_blackout_start_step = -1
     ctx.experiment_newborn_blackout_until_step = -1

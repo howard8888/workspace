@@ -502,7 +502,7 @@ authority for what actually executes.
 - [Tutorial on Main (Runner) Module Technical Features](#tutorial-on-main-runner-module-technical-features)
 - [Tutorial on Controller Module Technical Features](#tutorial-on-controller-module-technical-features)
 - [Tutorial on Reinforcement Learning in the CCA8](#tutorial-on-reinforcement-learning-in-the-cca8)
-- [Tutorial on Temporal Module Technical Features](#tutorial-on-temporal-module-technical-features)
+- [Tutorial on Timekeeping and Temporal Processing Technical Features](#tutorial-on-timekeeping-and-temporal-processing-technical-features)
 - [Tutorial on Features Module Technical Features](#tutorial-on-features-module-technical-features)
 - [Tutorial on Column Module Technical Features](#tutorial-on-column-module-technical-features)
 - [Tutorial on Approach to Simulation of the Environment](#tutorial-on-approach-to-simulation-of-the-environment)
@@ -874,7 +874,7 @@ Once you’ve seen one closed-loop episode run successfully, take a look at othe
 
 “Tutorial on Cognitive Cycles” (keyframes vs ordinary cycles; pipeline ordering invariant)
 
-“Tutorial on Timekeeping” (controller_steps vs cog_cycles vs epochs)
+“Tutorial on Timekeeping” (cognitive cycles, controller steps, autonomic ticks, developmental age, and environment time)
 
 “Prediction error and predictive coding” (how v0 is implemented; planned upgrades)
 
@@ -2305,9 +2305,9 @@ In practice, a HAL defines a few consistent surfaces: **sense()** for bulk senso
 
 ## CCA8 and future HAL integration
 
-The importance of embodiment in the generation and development to cognition is acknowledged. Embodiment shapes cognition—sensorimotor contingencies, action affordances, latency, noise, and body-centric frames all co-determine how an agent learns and reasons. CCA8’s HAL deliberately _abstracts_ embodiment during core development to decouple variables: it gives us reproducible experiments, deterministic tests, and portability across platforms without rewriting cognition. This isn’t a denial of embodiment; it’s a seam. We mitigate “embodiment debt” by (1) keeping time, units, frames, limits, and latencies explicit in the HAL manifest; (2) expressing actions as **intents** (e.g., move/gaze/manipulate) rather than device torques; (3) mirroring real timing into engrams (`ticks`, `tvec64`, `epoch`) so learning remains time-aware; and (4) swapping in realistic adapters (noise/latency/domain-randomization) when moving from headless runs to hardware. In short, HAL postpones _implementation details_ of a body while preserving the _constraints_ that matter, so embodiment can be reintroduced precisely—at the right layer—without entangling the cognitive core.
+The importance of embodiment in the generation and development of cognition is acknowledged. Embodiment shapes cognition—sensorimotor contingencies, action affordances, latency, noise, and body-centric frames all co-determine how an agent learns and reasons. CCA8’s HAL deliberately _abstracts_ embodiment during core development to decouple variables: it gives us reproducible experiments, deterministic tests, and portability across platforms without rewriting cognition. This is a seam rather than a denial of embodiment. We mitigate embodiment debt by (1) keeping units, frames, limits, rates, and latencies explicit in the HAL manifest; (2) expressing actions as task-level intents rather than device torques; (3) correlating records with explicit cognitive-cycle, controller-step, autonomic, environment-time, and wall-clock provenance where appropriate; and (4) swapping in realistic adapters when moving from headless runs to hardware.
 
-While the importance of embodiment to cognition is acknowledged, the CCA8 architecture is structured to drop in a HAL without disturbing cognition. The **Runner** already distinguishes the cognitive context (policies, temporal clock, world graph) from embodiment details; by default HAL is **OFF** and the system runs “headless.” The seams are intentional: (1) **perception bridge** — features/engrams can be filled from HAL sensor streams with time linkage (`ticks`, `tvec64`, `epoch`); (2) **action bridge** — controller **primitives/policies** can emit normalized action intents (e.g., `move_base(dx,dy,theta)`, `gaze(target)`, `manip(grasp=open/close)`), which a HAL adapter maps to device commands; (3) **timing** — the cognitive **TemporalContext** stays procedural and device-agnostic, while the HAL can expose a wall-clock/rt clock when needed.
+The **Runner** distinguishes cognitive state and policy processing from embodiment details; by default HAL is **OFF** and the system runs headless. The seams are intentional: (1) a **perception bridge** converts sensor streams into source-linked observations and engrams; (2) an **action bridge** maps task-level primitive outputs to device commands; and (3) a **timing boundary** lets the HAL expose physical timestamps, rates, deadlines, and acknowledgements without turning them into a second cognitive clock.
 
 When a HAL is enabled, CCA8 will load an *embodiment manifest* (sensors, frames, capabilities, limits), bind HAL streams to the **Features** module (creating engrams with temporal fingerprints), and route controller outputs to **act()** with safety interlocks (dead-man, estop, limit checks). This keeps the **WorldGraph** an episodic index (lightweight, device-neutral), lets **policies** remain portable, and confines hardware specialization to HAL adapters. The same simulation you run today can, with a manifest and a driver pack, target different robots with minimal code changes—exactly the portability a HAL is meant to provide.
 
@@ -2326,7 +2326,7 @@ or in hybrid sim+sensor regimes
 without rewriting core cognitive logic. HAL localizes sensor/actuator quirks and safety constraints to one layer.
 
 Q: What changes in CCA8 when HAL is turned ON?
-A: Cognition (WorldGraph, controller, TemporalContext) stays the same. The difference is that:
+A: Cognition (WorldGraph, controller, WNM/NavMap processing, and explicit runtime counters) stays the same. The difference is that:
 
 perception features/engrams can be fed from real sensors via the HAL, and
 
@@ -2504,7 +2504,7 @@ OBSERVED.
 - **env_step / step_index** — environment counter since reset.
 - **controller_steps** — number of Action Center invocations.
 - **cog_cycles** — closed-loop/productive cycle counter under current runner semantics.
-- **ticks / age_days / boundary_no / TemporalContext** — physiology/development/episode timing aids; not substitutes for map-bound motion.
+- **ticks / age_days** — physiology and developmental state. **cog_cycles / controller_steps** are explicit ordering counters; none substitutes for map-bound motion.
 - **NOW / NOW_ORIGIN / LATEST** — WorldGraph orientation and write pointers; not the accepted WNM.
 - **Attach modes** — `now`, `latest`, or `none` determine how a new WorldGraph binding is connected.
 
@@ -3123,8 +3123,10 @@ Copy code
   "meta": {
     "policy": "policy:stand_up",
     "created_at": "2025-11-27T10:09:56",
-    "ticks": 5,
-    "tvec64": "..."
+    "cognitive_cycle": 12,
+    "controller_step": 12,
+    "autonomic_tick": 5,
+    "age_days": 0.125
   },
   "engrams": {
     "column01": { "id": "<engram_id>", "act": 1.0 }
@@ -4355,7 +4357,6 @@ The canonical component list used by `versions_dict()`, `versions_text()`, and `
 | `cca8_world_graph.py` | Sparse episode/retrieval/index graph, bindings, anchors, BFS/Dijkstra, persistence, and Column pointers; not complete world model or current truth |
 | `cca8_column.py` | Heavy durable engram/map payload store; no direct acceptance authority |
 | `cca8_features.py` | Typed feature payloads, fact metadata, and temporal linkage |
-| `cca8_temporal.py` | Soft procedural clock, drift/boundary operations, and temporal similarity; not a substitute for motion bound onto maps |
 | `cca8_cli.py` | CLI parsing and presentation support |
 | `cca8_profiles.py` | Profile selection, developmental narratives, defaults, and bounded demonstrations |
 | `cca8_guidance.py` | User-facing explanations and tutorial support |
@@ -4741,7 +4742,7 @@ Menu numbering may drift as new items are added; the **names** below are the sta
 Start with these:
 
 * **Snapshot**  
-  Prints bindings, edges, drives, CTX, TEMPORAL, and policy telemetry. Shows NOW/LATEST, event boundary (epoch), soft-clock cosine, and which policies are eligible at the current developmental stage. This is your “state of the world + controller” dashboard.
+  Prints bindings, edges, drives, CTX, explicit TIMEKEEPING counters, and policy telemetry. It shows NOW/LATEST, cognitive cycles, controller steps, autonomic ticks, developmental age, and which policies are eligible at the current developmental stage.
 
 * **Drives & drive tags**  
   Shows numeric drives (`hunger`, `fatigue`, `warmth`) and the derived **drive flags** (`drive:*`) that policies use in `trigger()`. These flags are ephemeral and are not written into the graph unless you explicitly create `pred:drive:*` or `cue:drive:*` tags.
@@ -4770,7 +4771,7 @@ Once you’re comfortable, these become very useful:
   Given a binding id (or `ALL`), shows:
   - tags (`pred:*`, `cue:*`, `anchor:*`, etc.)
   - `meta` as JSON
-  - a short **Provenance** summary (`meta.policy/created_by/boot/ticks/epoch`)
+  - a short **Provenance** summary (`meta.policy/created_by/boot/cognitive_cycle/controller_step/autonomic_tick`)
   - attached engrams (slot → id/summary)
   - incoming/outgoing edges and degrees
 
@@ -5578,112 +5579,122 @@ Each zoom or switch should eventually record:
 # Tutorial on Timekeeping
 
 
-## Timekeeping in CCA8 (five measures)
+## Timekeeping in CCA8
 
-CCA8 uses five orthogonal time measures. They serve different purposes and are intentionally decoupled.
+CCA8 uses explicit, named time sources. The architecture no longer maintains a global stochastic temporal vector, vector drift,
+boundary jumps, vector hashes, or vector-derived epochs. Each remaining time value has a direct operational meaning and an identified
+owner.
 
+| Time source | Owner | Meaning | When it advances |
+|---|---|---|---|
+| `cog_cycles` | `Ctx` / closed-loop runner | Canonical ordering of complete cognitive cycles | Once for each sensory-input → processing → same-cycle output transaction |
+| `controller_steps` | `Ctx` / Action Center callers | Number of Action Center invocations | Every time policy applicability/arbitration/execution is invoked, including manual and autonomic flows |
+| `ticks` | `Ctx` / autonomic path | Independent physiology/IO heartbeat count | Only when the autonomic heartbeat advances |
+| `age_days` | `Ctx` / developmental path | Developmental state used by capability and lexicon gates | According to the explicit developmental simulation rule |
+| `step_index`, `time_since_birth` | `EnvState` | Simulator transition count and physical/simulated time | When the environment advances after an output |
+| `created_at`, `saved_at` | Record writers | Wall-clock provenance for logs and files | When the record or save file is created |
 
-**1) Controller steps** — one Action Center decision/execution loop (aka “instinct step”).  
-*Purpose:* cognition/behavior pacing (not wall-clock).  
-*Source:* a loop in the runner that evaluates policies once and may write to the WorldGraph. When that write occurs, we mark a **temporal boundary (epoch++)**. :contentReference[oaicite:0]{index=0}
+These values are related but not interchangeable. A controller step is not necessarily a complete cognitive cycle. An autonomic tick
+is not a cognitive cycle. Environment time belongs to the simulated or physical world, not to cognition. Wall-clock time is useful for
+audit and performance measurement but does not determine cognitive succession.
 
-With regards to its effects on timekeeping, **when a Controller Step occurs**:
-i) **controller_steps**: ++ every Action Center evaluation
-ii) **temporal drift**: ++ (one soft-clock drift) per controller step  
-iii) **autonomic ticks**: no change  
-iv) **developmental age**: no change  
-v) **cognitive cycles**: no direct change (they are incremented only on closed-loop env↔controller iterations; see item 5 below)
-                            
-                             
-With regards to terminology and operations that affect controller steps:
-**“Action Center”** = the engine (`PolicyRuntime`).
-**“Controller step”** = one invocation of that engine
-**“Instinct step”** = diagnostics + **one controller step**.
-**“Autonomic tick”** = physiology + **one controller step**.
-**“Simulate fall”** = inject fallen + **one controller step** (no drift) (but no cognitive cycle increment)
+### 1) Cognitive cycles — canonical cognitive ordering
 
+`ctx.cog_cycles` identifies the complete closed-loop transaction:
 
-**2) Temporal drift** — the *soft clock* (unit vector) that drifts a bit each step and jumps at boundaries.  
-*Purpose:* similarity + episode segmentation that’s unitless and cheap (cosine of current vs last-boundary vector).  
-*Drift call:* `ctx.temporal.step()`; *Boundary call:* `ctx.temporal.boundary()`; vectors are re-normalized every time. See module notes on drift vs boundary. :contentReference[oaicite:1]{index=1}  
-*Runner usage:* we drift once per instinct step and once per autonomic tick in the current build; boundary is taken when an instinct step actually writes new facts. :contentReference[oaicite:2]{index=2}
+```text
+Observation_n
+    -> sensory, map, memory, and temporal processing
+    -> primitive applicability and arbitration
+    -> Action_n or an explicit null/feedback output
+    -> output dispatched before CognitiveCycle_n closes
+```
 
+The environment or lower controller may then produce `Observation_(n+1)`. That later evidence enters cognition only in
+`CognitiveCycle_(n+1)`.
 
-**3) Autonomic ticks** — a fixed-rate heartbeat (physiology/IO), independent of controller latency.  
-*Purpose:* hardware/robotics cadence; advancing drives; dev-age.  
-*Source variable:* `ctx.ticks` (int).  
-*Where incremented today:* the **Autonomic Tick** menu path increments `ticks`, nudges drives, and performs a drift; it can also trigger a thresholded boundary. :contentReference[oaicite:3]{index=3} :contentReference[oaicite:4]{index=4}
+### 2) Controller steps — Action Center invocations
 
+`ctx.controller_steps` counts invocations of policy selection/execution. The closed-loop runner normally performs one controller step
+inside each cognitive cycle, so both counters advance together there. Manual menu operations and the autonomic path may invoke the
+Action Center without constituting a complete sensory-input-to-output cognitive cycle.
 
-**4) Developmental age (days)** — a coarse developmental measure used for stage gating.  
-*Source variable:* `ctx.age_days` (float), advanced along with autonomic ticks; used by `world.set_stage_from_ctx(ctx)`. :contentReference[oaicite:5]{index=5}
+### 3) Autonomic ticks — physiology and IO heartbeat
 
+`ctx.ticks` is an independent heartbeat for physiology, IO, and future hardware integration. It advances only in the autonomic path.
+It does not advance merely because cognition selected an action.
 
-**5) Cognitive cycles** — a derived counter for “meaningful sense→decide→act” iterations
+### 4) Developmental age
 
-In CCA8, the most canonical “cognitive cycle” is the **closed-loop env↔controller iteration** used by menu 37:
-EnvObservation → internal update (BodyMap/WorkingMap/WorldGraph as configured) → policy select/execute → action feedback to env.:contentReference[oaicite:8]{index=8}
+`ctx.age_days` represents developmental state. It may affect developmental gates and the restricted lexicon. It is not used as a
+high-resolution ordering index for events.
 
-*Source variable:* `ctx.cog_cycles` (int).
+### 5) Environment step and physical time
 
-*Where incremented today (current runner behavior):*
-- **Env-loop (menu 37; menu 35 alias)**: increments once per closed-loop iteration (ordinary or keyframe).
-- **Controller-only “Instinct step” path:** currently increments **only when the controller wrote new bindings** (i.e., a real state/action update occurred).  
-  (This is a temporary “meaningful write = cycle” definition while we continue to harden the explicit sense→process→act loop.)
+`EnvState.step_index` counts environment transitions in the current episode. `EnvState.time_since_birth` records simulated physical
+time. These are environment-side values. They may often correlate with cognitive cycles in the current simulator, but that correlation
+is an implementation property rather than an identity between the two clocks.
 
-*Contrast with controller steps:* `controller_steps` counts every Action Center invocation; in menu 37 runs they typically advance together (1 controller step per closed-loop cycle). Outside the env-loop, `controller_steps` may advance without `cog_cycles` (e.g., no-op decisions), and `cog_cycles` may increment only on a successful write.
+### 6) Wall-clock provenance
 
-*Recommended invariant:* `cog_cycles ≤ controller_steps`.
+ISO-8601 values such as `created_at` and `saved_at` support audit, logs, and file provenance. They do not establish cognitive authority,
+episode segmentation, or temporal similarity.
 
+### Temporal cognition remains explicit and domain-specific
 
-### Event boundaries & epochs
+Removing the global vector clock does not remove temporal cognition. CCA8 still uses bounded, source-linked temporal processing where
+the represented situation requires it, including:
 
-When the controller **actually writes** (graph grew), we take a **boundary jump** and increment `ctx.boundary_no` (epoch). We also update a short fingerprint of the boundary vector (`ctx.boundary_vhash64`) for snapshot readability. :contentReference[oaicite:6]{index=6}  
-A thresholded segmentation (“τ-cut”) can also force a boundary when `cos_to_last_boundary` falls below τ (default shown in code). :contentReference[oaicite:7]{index=7}
+- evidence age, freshness, staleness, and expiry;
+- maternal distance/bearing histories and approaching/stable/receding readouts;
+- contact, support, slip, progress, phase, and duration;
+- tracking/coasting/lost-track transitions;
+- active-primitive persistence and retry windows;
+- expected-successor windows and later outcome comparison.
 
-### Source fields & helpers at a glance
+These values remain in the subsystem that owns the underlying evidence. They are interpretable and testable rather than anonymous
+coordinates in a global vector.
 
-- **autonomic ticks:** `ctx.ticks` (runner increments) :contentReference[oaicite:8]{index=8}  
-- **developmental age:** `ctx.age_days` (runner increments) & `world.set_stage_from_ctx(ctx)` :contentReference[oaicite:9]{index=9}  
-- **temporal drift:** `ctx.temporal.step()`; **boundary:** `ctx.temporal.boundary()`; **epoch:** `ctx.boundary_no++` :contentReference[oaicite:10]{index=10}  
-- **soft-clock fingerprints:** current `ctx.tvec64()`; last boundary `ctx.boundary_vhash64`; cosine via `ctx.cos_to_last_boundary()` (shown in snapshot/probe UIs). :contentReference[oaicite:11]{index=11}
+### Engram and binding provenance
 
-### Recommended invariants
+When a durable record needs runtime correlation, CCA8 uses explicit metadata:
 
-- Controller-driven mode (today): each instinct **controller step** performs one **temporal drift**; boundary (epoch++) only on a real write. :contentReference[oaicite:12]{index=12}  
-- Autonomic-driven mode (future HAL): **drift** belongs to the heartbeat; controller step reads time but does not drift.  
-- Epochs never decrement; `cos_to_last_boundary` resets ≈1.000 on boundary. :contentReference[oaicite:13]{index=13} 
-  
-  
+```text
+cognitive_cycle
+controller_step
+autonomic_tick
+age_days
+created_at
+```
 
-## Data flow (a controller step)
+Environment-derived records may additionally carry their source environment step/time. The code does not infer one clock from another.
 
-1. Action Center computes active **drive flags**.  
-2. Evaluates dev gates + triggers to form a candidate set; selects ONE winner by deficit → non_drive → (RL: q tie-break / epsilon explore) → stable order. 
-3. `execute()` appends a **small chain** of predicates + edges to the WorldGraph, stamps `meta.policy`, returns a status dict, and updates the skill ledger.  
-4. Planner (on demand) runs BFS from **NOW** to a target `pred:<token>`.  
+## Data flow for one closed-loop cycle
 
-### Q&A to help you learn this section
+1. Increment `ctx.cog_cycles` for the complete cognitive transaction.
+2. Increment `ctx.controller_steps` for the Action Center invocation inside that cycle.
+3. Consume exactly one current observation.
+4. Perform current sensory, map, memory, and domain temporal processing.
+5. Select and dispatch the current cycle's output.
+6. Let the environment/lower controller advance and buffer later evidence for the next cognitive cycle.
 
-Q: When do we increment ticks (autonomic ticks) versus controller_steps?
-A: ticks increment only in the Autonomic Tick path (heartbeat: physiology, drive updates, time-based age). controller_steps increment whenever a controller step runs (Instinct step, Autonomic tick, simulate fall, env-loop, etc.). They are orthogonal measures.
+### Q&A
 
-Q: What is the semantic difference between age_days and ticks?
-A: age_days is a coarse developmental clock (used to set lexicon stage and developmental gates), while ticks is a fine-grained physiological heartbeat counter. Typically age_days advances in proportion to ticks but on a much slower scale.
+Q: Why retain both `cog_cycles` and `controller_steps`?
+A: They count different events. A cognitive cycle is the complete input-processing-output transaction. A controller step is one Action
+Center invocation and can also occur in manual or autonomic flows.
 
-Q: What does a “temporal boundary” (epoch++) represent?
-A: A boundary is taken when a controller step writes new facts (or when a thresholded τ-cut triggers). It’s a way of saying “a new episode chapter started here” in the soft-clock vector space. We then jump the temporal vector, increment boundary_no (epoch), and reset cos_to_last_boundary to ~1.0.
+Q: Why retain `ticks` if cognitive cycles exist?
+A: Physiology and hardware IO may need an independent cadence. The heartbeat should not be forced to equal cognitive decision rate.
 
-Q: Why do we maintain both wall-clock created_at timestamps and a soft temporal vector?
-A: Wall-clock is great for logs and cross-run inspection, but awkward for unitless similarity and segmentation. The soft temporal vector gives a cheap, unitless notion of “near in time” (via cosine) and supports operations like “time-aware similarity” and “episode segmentation” without relying on wall-clock units.
+Q: How are event boundaries represented now?
+A: By explicit, content-based events in the owning subsystem: stage changes, accepted WNM transitions, keyframes, material residuals,
+contact changes, prediction outcomes, or other named transitions. CCA8 no longer generates an event boundary by randomly jumping a
+time vector.
 
----
-
-
-
-
-
-
+Q: How do we ask whether two events were close in time?
+A: Use directly interpretable ordering and source information—cognitive-cycle distance, environment-step distance, physical duration, or
+a domain-specific bounded history—according to the question being asked.
 
 
 # Tutorial on Cognitive Cycles
@@ -5797,8 +5808,8 @@ Outside the env-loop, controller_steps may advance without cog_cycles (e.g., Ins
          - seed/merge mode: seed predicate priors only; do NOT inject cue:* tags into live belief (no cue leakage)
        - Exclude the engram just stored on this same keyframe (no trivial self-retrieval).
 
-   5c) Temporal boundary bookkeeping (if enabled)
-       - TemporalContext is stepped each cycle and may take a boundary jump at keyframes.
+   5c) Explicit event/keyframe record
+       - A keyframe may record its cognitive-cycle and environment-step provenance. No global time-vector drift or random boundary jump is performed.
 
 5d) (Phase X) SurfaceGrid composition (derived; policy-facing topology)
    - If Phase X is enabled, compose **WorkingMap.SurfaceGrid** from the currently active NavPatch *instances* (and the prototype payloads they reference).
@@ -6822,8 +6833,7 @@ Drives are legitimate compact biological control states. Their effects should be
 
 ## Temporal memory
 
-TemporalContext provides recency and boundary scaffolding. It is not motion itself. Motion, approach rate, contact duration, rise/slip,
-trajectory, and time-to-hazard should be bound to map regions/entities using Sequential/Error and fast feedback products.
+Temporal memory is represented through bounded, source-linked histories and their compressed current readouts. Motion, approach rate, contact duration, rise/slip, progress, and time-to-hazard remain bound to the relevant map regions, entities, observations, and lower-controller feedback. Cognitive-cycle or environment-step numbers provide ordering/provenance; they are not substitutes for the temporal relation itself.
 
 ## Keyframes and consolidation
 
@@ -7091,7 +7101,7 @@ Each action binding typically carries meta such as:
 
 * `meta["policy"] = "policy:stand_up"` (which policy created it),
 
-* temporal stamps (`ticks`, `epoch`, `tvec64`, etc.),
+* explicit provenance (`cognitive_cycle`, `controller_step`, `autonomic_tick`, `age_days`, and `created_at` where appropriate),
 
 * optional links to motor commands sent to a robot or environment.
 
@@ -7917,8 +7927,10 @@ Minimal shape:
   ],
   "meta": {
     "policy": "policy:stand_up",
-    "ticks": 12,
-    "epoch": 3
+    "cognitive_cycle": 12,
+    "controller_step": 12,
+    "autonomic_tick": 4,
+    "age_days": 0.125
   },
   "edges": [
     { "to": "b43", "label": "then", "meta": {} }
@@ -7934,7 +7946,7 @@ Minimal shape:
 - `id` is a string of the form `b<num>`, unique within the world.
 - `tags` is a list of compact string tokens (see Tagging Standard).  
   A “stateful” binding should usually include at least one `pred:*` tag.
-- `meta` holds light provenance + timestamps (policy name, boot flags, tick counters, epoch, etc.).  
+- `meta` holds light provenance and explicit runtime correlation values (policy name, boot flags, cognitive cycle, controller step, autonomic tick, age, and wall-clock creation time where appropriate).
   This should remain JSON-serializable (dict/str/int/float/bool/lists), no custom objects.
 - `edges` is an adjacency list stored on the **source** binding (directed edges).
 - `engrams` holds **pointers** to rich content stored outside the WorldGraph.  
@@ -8178,16 +8190,15 @@ The **snapshot** shown in the Runner (menu: “Display snapshot”) pulls values
   - `ticks` → `ctx.ticks`
   - `profile` → `ctx.profile`
   - `winners_k` → `ctx.winners_k`
-  - `vhash64(now)` → `ctx.tvec64()` (temporal vector fingerprint)
-  - `epoch` → `ctx.boundary_no`
-  - `epoch_vhash64` → `ctx.boundary_vhash64`
 
-- **TEMPORAL**:
+- **TIMEKEEPING**:
   
-  - `dim` → `ctx.temporal.dim`
-  - `sigma` → `ctx.temporal.sigma`
-  - `jump`  → `ctx.temporal.jump`
-  - `cos_to_last_boundary` → `ctx.cos_to_last_boundary()`
+  - `cognitive_cycles` → `ctx.cog_cycles`
+  - `controller_steps` → `ctx.controller_steps`
+  - `autonomic_ticks` → `ctx.ticks`
+  - `age_days` → `ctx.age_days`
+  - environment step/time are shown from `EnvState`/`EnvObservation` when available
+  - wall-clock snapshot time is provenance only
 
 - **DRIVES**:
   
@@ -10030,7 +10041,7 @@ The Controller is where the **“what should I do next?”** logic lives. It sit
 
 - the **WorldGraph** (what the agent believes/has experienced),
 - the **Drives** (hunger, fatigue, warmth, etc.),
-- the **TemporalContext** (soft clock, ticks/epochs),
+- explicit runtime context (cognitive-cycle/controller ordering, autonomic ticks, developmental age),
 - and, eventually, the **HAL** (robot or simulated body).
 
 Its job is to:
@@ -10542,7 +10553,7 @@ RL introduces epsilon-greedy exploration when multiple policies are triggered:
 
 - Let epsilon be the exploration rate:
   - epsilon = `rl_epsilon` if set
-  - otherwise epsilon falls back to `ctx.jump`
+  - otherwise epsilon is 0.0 (exploration disabled)
 
 Selection rule:
 
@@ -10619,7 +10630,7 @@ The Runner provides an interactive control panel:
   - with probability epsilon → choose a random triggered policy (exploration),
   - otherwise → exploit using deficit and (when applicable) the q-based soft tie-break. :contentReference[oaicite:2]{index=2}
 
-  If `rl_epsilon` is `None`, epsilon falls back to `ctx.jump` (so you can reuse the existing “jump” knob as a quick exploration control).
+  If `rl_epsilon` is `None`, effective epsilon is 0.0. Exploration is controlled only by the explicit RL setting.
 
 - `rl_delta` (soft tie-break band, >=0)  
   Controls how often learned value `q` is consulted during exploitation:
@@ -10678,180 +10689,135 @@ Note: safety gating still has priority. For example, in a “fallen” situation
 
 
 
-# Tutorial on Temporal Module Technical Features
+# Tutorial on Timekeeping and Temporal Processing Technical Features
 
-This tutorial explains how **`cca8_temporal.py`** gives CCA8 a lightweight notion of time that complements wall-clock timestamps. It covers the **why**, the **math**, and the **wiring** added to the runner and controller.
 
-## 1) Why a temporal vector if we already have timestamps?
+## 1) Why CCA8 no longer has a global temporal-vector module
 
-Wall-clock (ISO-8601) stamps are excellent for **provenance** and audit trails, but clumsy for two tasks we care about:
+The former `cca8_temporal.py` implemented a random unit vector that drifted each step and jumped at inferred boundaries. The vector's
+coordinates had no cognitive interpretation; meaning arose only from vector comparison. In the current architecture that mechanism
+was redundant with explicit cycle ordering, environment time, provenance timestamps, and domain-specific temporal processing.
 
-* **Episode segmentation.** “Did a new episode start?” Rule-of-thumb gap detectors (e.g., “>5 s”) are brittle when sim speed varies.
+The module and its runtime fields have therefore been retired. CCA8 no longer exposes `TemporalContext`, `ctx.temporal`, vector drift,
+boundary jumps, `tvec64`, vector-derived epochs, or cosine-to-boundary diagnostics.
 
-* **Time-aware similarity.** “Fetch things that happened around the same time as X.” Pure timestamps don’t give a smooth, unitless notion of “nearby.”
+## 2) Explicit timekeeping contract
 
-The Temporal module adds a **unit-norm context vector** that **drifts** a little each tick and **jumps** at boundaries. With unit vectors, **cosine = dot product**, so “near in time” becomes a cheap dot-product check—no units, no parsing, no NumPy.
+The runtime contract is intentionally small:
 
-> Design note: WorldGraph remains **atemporal** (except anchors like `NOW`). Time semantics live in `meta` and in this module/runner, not inside graph mechanics. Policies continue to stamp `created_at` directly.
+```python
+ctx.cog_cycles        # complete closed-loop cognitive cycles
+ctx.controller_steps  # Action Center invocations
+ctx.ticks             # autonomic/physiology/IO heartbeats
+ctx.age_days          # developmental state
+```
 
-* * *
+The environment owns:
 
-## 2) What the TemporalContext is
+```python
+env.state.step_index
+env.state.time_since_birth
+```
 
-`TemporalContext` maintains a **D-dimensional unit vector** (default 128-D) representing “now.” Two operations evolve it:
+Record writers may add wall-clock `created_at` or `saved_at` strings as provenance. No subsystem silently converts one time source into
+another.
 
-* `step()` – add tiny Gaussian noise (σ = `sigma`) to each component, then **re-normalize** to length 1 (a gentle **drift**).
+## 3) Provenance helpers
 
-* `boundary()` – add larger Gaussian noise (σ = `jump`), then re-normalize (a **jump** for episode cuts).  
-  Because the vector is always unit-norm, comparing two time points is just a dot product. 1.0 ≈ very close; ~0.0 ≈ far/orthogonal.
+`cca8_features.time_attrs_from_ctx(ctx)` returns a compact JSON-safe mapping when the corresponding fields are available:
 
-**Quick mental model.** Think of time as a path on a high-dimensional unit sphere: smooth motion with occasional bigger hops at important moments. “Meaning” emerges only by **comparison** (dot products), not from individual components.
+```python
+{
+    "cognitive_cycle": ctx.cog_cycles,
+    "controller_step": ctx.controller_steps,
+    "autonomic_tick": ctx.ticks,
+    "age_days": ctx.age_days,
+}
+```
 
+`FactMeta.with_time(ctx)` merges those values into `FactMeta.attrs`. Column records can therefore be correlated with the cognitive and
+controller transaction that created them without storing an opaque time fingerprint.
 
+## 4) Domain-specific temporal processing
 
-## 3) Math refresher (why cosine is cheap here)
+Timekeeping answers *when a transaction occurred*. Temporal cognition answers questions about change through time. CCA8 keeps the
+latter close to its evidence source:
 
-For vectors u,v:  
-cosθ=∥u∥∥v∥u⋅v​. If ∥u∥=∥v∥=1, then cosθ=u⋅v.  
-Same direction → 1.0; orthogonal → 0.0; opposite → −1.0. We re-normalize after every drift/jump, so comparisons are just `sum(a*b for a,b in zip(u,v))`.
+- `cca8_maternal_temporal.py` compresses bounded maternal geometry samples into distance/bearing rates and
+  approaching/stable/receding relations.
+- Sequential/Error history tracks selected sensory changes and prediction errors in a bounded window.
+- `cca8_live_dynamics.py` builds typed temporal relations, dynamic envelopes, progress, support, contact, slip, phase, and uncertainty.
+- continuity/localization modules track active, coasting, unlocalized, and lost-track states using explicit evidence support.
+- expected-successor records specify bounded later-evidence windows and outcome status.
 
+This preserves Planning v13's temporal-compression rule: short histories become current, source-linked features rather than a complete
+movie of NavMaps.
 
+## 5) Examples
 
-## 4) How we use it in CCA8 (current wiring)
+Evidence age:
 
-At this point in time, we've wired the soft clock in the **Runner** and added tiny provenance in the **Controller**:
+```python
+age_cycles = current_cycle_no - last_supported_cycle_no
+```
 
-* **Runner creates & advances the soft clock**
-  
-  * On session start: `ctx.temporal = TemporalContext(dim=128, sigma=ctx.sigma, jump=ctx.jump)`; seed `ctx.tvec_last_boundary = ctx.temporal.vector()`.
-  
-  * Every **Instinct step** and **Autonomic tick**: call `ctx.temporal.step()` once (drift).
-  
-  * On a **successful write** (graph grew): call `ctx.temporal.boundary()` and update `tvec_last_boundary` (one boundary per write).
-  
-  * (Optional) **thresholded segmentation:** if `dot(now, last_boundary) < τ` (e.g., 0.90), force a boundary.
-  
-  * Snapshots show a compact **TEMPORAL** block: `(dim, sigma, jump)`, `cos_to_last_boundary`, and a short hash.
+Controller retry window:
 
-* **Controller stamps temporal provenance**
-  
-  * Policies keep stamping `meta["created_at"]` (ISO-8601, seconds precision).
-  
-  * We also add `meta["ticks"]` and a compact **time fingerprint** `meta["tvec64"]` (sign-bit hash of the temporal vector at write time).
-  
-  * Result: each binding has both **wall-clock** and **soft-clock** context.
+```python
+eligible = current_controller_step - last_attempt_step >= retry_window_steps
+```
 
-A concise summary of this wiring is also recorded in the code comments you added on Nov 1, 2025.
+Environment duration:
 
-## 5) What the vector “looks like” (and doesn’t)
+```python
+elapsed_seconds = current_environment_time - transition_start_time
+```
 
-* It’s a plain Python **list[float]** of length `dim`, re-normalized each change; no NumPy dependency.
+Maternal movement:
 
-* Components are **standard-normal samples** at init, then small/noisy updates—**components have no human meaning** by themselves.
+```text
+bounded distance/bearing samples
+    -> approaching / stable / receding
+    -> support, rate, freshness, uncertainty
+```
 
-* We **never** read it dimension-by-dimension; we **only compare whole vectors** (cosine/dot).
-  
-  
+Each expression names the relevant clock and the represented phenomenon.
 
-## 6) Typical workflows
+## 6) Guardrails
 
-**A) Segmentation by threshold**  
-Keep `v* = last_boundary`. Each tick:
-
-`cos_now = sum(a*b for a,b in zip(ctx.temporal.vector(), v_star)) if cos_now < 0.90:    v_star = ctx.temporal.boundary()`
-
-* Small `sigma` → slow decay; rare auto cuts.
-
-* Larger `jump` → deeper cosine dip on boundary.
-
-* Tune τ per profile (goat vs chimp vs human).
-
-**B) Time-aware retrieval**  
-Store `meta["tvec64"]` (or the full vector during development). Later, “near this time” queries become nearest-neighbors by dot product (or Hamming distance on the sign bits).
-
-**C) Provenance & analytics**  
-Bindings now carry `created_at` (ISO-8601), `ticks`, and `tvec64`. You can correlate actions with recency and segment chapters post-hoc.
-
-
-
-## 7) Parameters that can be tuned
-
-* `dim` (64–128 typical): higher dims → smoother geometry, less variance in dot products.
-
-* `sigma` (drift): how fast “time” moves when nothing big happens.
-
-* `jump` (boundary): how distinct chapters feel (bigger jump → lower cosine after boundary).
-
-* `τ` (threshold): when to auto-cut based on similarity to the last boundary.
-  
-  
-
-## 8) Minimal API (developer crib)
-
-`from cca8_temporal import TemporalContextt = TemporalContext(dim=128, sigma=0.02, jump=0.25)v0 = t.vector()       # defensive copy (unit-norm) v1 = t.step()         # drift (small change) v2 = t.boundary()     # jump  (larger change)  def dot(a,b): return sum(x*y for x,y in zip(a,b)) print(dot(v0, v1))    # ~0.995–0.999… print(dot(v0, v2))    # noticeably smaller (e.g., 0.7–0.95 depending on jump)`
-
-Under the hood: `_normalize(vals)` returns a unit-norm copy and guards zero-norm with `1.0`.
-
-
-
-## 9) Invariants & guardrails
-
-* Always re-normalize after drift/boundary so cosine=dot remains valid.
-
-* TemporalContext **does not** stamp `created_at`; that remains a policy/controller responsibility.
-
-* The soft clock is **run-relative** (not meant for cross-run alignment unless you fix a random seed).
-
-* Pure-Python O(d) per tick; no heavy deps.
-  
-  
-
-## 10) Quick demo in the Runner (what to expect)
-
-1. `9` Instinct step → if the controller writes, you’ll see  
-   `[temporal] boundary after write (cos reset to ~1.000)` and `cos_to_last_boundary: 1.000` in the snapshot.
-
-2. `10` Autonomic tick × N → `cos_to_last_boundary` decays gently (drift only).
-
-3. If you enabled the τ-cut, a boundary triggers automatically once cosine drops below τ (you’ll see a console note).
-
-4. Saved JSON shows `meta.created_at`, `meta.ticks`, and `meta.tvec64` on new bindings.
-   
-   
-
-### Q&A to help you learn this section
-
-Q: Why do we need a TemporalContext vector if we already have created_at timestamps?
-A: ISO-8601 timestamps are great for logs and cross-run audit, but awkward for segmentation and similarity (“find things near this episode in time”). The TemporalContext is a procedural soft clock: a 128-D unit vector that drifts (small Gaussian noise per tick) and jumps (larger noise at boundaries). Cosine between two vectors gives a cheap, unitless “near in time vs far in time” measure without unit conversions or wall-clock parsing.
-
-Q: What do sigma and jump control?
-A: sigma controls drift noise added in each step() – how fast the soft clock wanders within an epoch. jump controls boundary noise added in boundary() – how far the vector moves when an event boundary is taken. Larger jump → more separation between episodes; larger sigma → faster within-episode decorrelation.
-
-Q: How does the runner actually use TemporalContext today?
-A: The runner:
-
-calls ctx.temporal.step() for each controller/autonomic tick (soft drift),
-
-calls ctx.temporal.boundary() when a controller step writes new facts (event boundary),
-
-caches the boundary vector and its hash in ctx.tvec_last_boundary / ctx.boundary_vhash64,
-
-exposes ctx.tvec64() and ctx.cos_to_last_boundary() so snapshots and engrams can carry time fingerprints.
-
-Q: What do tvec64 and epoch_vhash64 represent?
-A: tvec64 is a 64-bit sign-bit hash of the current TemporalContext vector (bit i encodes whether coordinate i is ≥0). epoch_vhash64 (and boundary_vhash64) is the same hash captured at the last boundary. Taken together, they let you:
-
-compare “now” vs last boundary in a compact way,
-
-annotate engrams/snapshots with a short, human-readable temporal fingerprint.
-
-Q: Can TemporalContext be used across different runs as an absolute timeline?
-A: No. It’s deliberately a relative, per-run construct. The vector is initialized from random noise and is only meaningful within a single run: high cosine ⇒ close in time in that run. Across runs, you should treat TemporalContext as local, not globally aligned.
-
-
-
-
-
+- Do not use wall-clock time to order cognition unless a real-time requirement explicitly calls for it.
+- Do not assume `controller_steps == cog_cycles` outside the closed-loop runner.
+- Do not assume `EnvState.step_index == cog_cycles` across resets, asynchronous HAL operation, or future multi-rate control.
+- Do not create an independent temporal label when it can be derived from a named source history.
+- Keep histories bounded and compress them into interpretable current relations.
+- Preserve provenance, freshness, uncertainty, and authority on temporal readouts.
+- Treat counters and timestamps as bookkeeping unless a cognitive operation explicitly reads them for a justified purpose.
+
+## 7) Validation expectations
+
+Tests should establish that:
+
+- the retired vector fields and methods are absent from `Ctx`;
+- production code no longer imports `cca8_temporal`;
+- timekeeping displays contain only explicit counters;
+- engram metadata uses the new explicit field names;
+- cognitive-cycle and controller-step counters advance under their documented contracts;
+- maternal/live-dynamics temporal behavior remains unchanged;
+- full preflight and behavioral tests remain green.
+
+### Q&A
+
+Q: Did removing the vector clock remove episode segmentation?
+A: It removed one stochastic segmentation heuristic. Content-based keyframes, WNM transitions, stage changes, prediction outcomes, and
+other explicit event records remain available and are more interpretable.
+
+Q: Can future neural modules still use temporal embeddings?
+A: Yes. A learned or task-specific temporal representation can be introduced when an experiment requires it. It should be owned by that
+model and justified by measurable benefit rather than installed as a universal architecture clock.
+
+Q: Is `cog_cycles` itself cognitive content?
+A: Normally no. It is canonical ordering/provenance infrastructure. A subsystem may derive an explicit duration or freshness measure from
+cycle numbers, but the counter does not become a belief merely because it is available in `Ctx`.
 
 
 # Tutorial on Features Module Technical Features
@@ -10947,354 +10913,250 @@ _Invariant hints_ (good practice you may already enforce):
   
   
 
-## 5) `FactMeta` — lightweight descriptor (with optional time linkage)
+## 5) `FactMeta` — lightweight descriptor with explicit runtime linkage
 
 **Fields**
 
-* `name: str` — concise, queryable label (e.g., `vision:silhouette:mom`, `scene`).
+- `name: str` — concise, queryable label such as `vision:silhouette:mom`.
+- `links: list[str] | None` — cross-references, usually WorldGraph binding ids.
+- `attrs: dict[str, Any] | None` — freeform JSON-safe descriptors.
 
-* `links: list[str] | None` — cross-refs (typically **WorldGraph binding ids** this engram relates to).
+**Helpers**
 
-* `attrs: dict[str, Any] | None` — freeform descriptors you’ll filter/sort by (e.g., `{"model":"clip-vit-b32","sensor":"camera0"}`).
+- `as_dict()` returns a JSON-safe view with defaults applied.
+- `with_time(ctx)` merges directly interpretable runtime values into `attrs` when available:
 
-**Nice helpers**
+```text
+cognitive_cycle
+controller_step
+autonomic_tick
+age_days
+```
 
-* `as_dict()` — JSON-safe view with defaults applied.
+Bindings and Column records may also carry `created_at` as wall-clock provenance. The explicit counters let a technician correlate an
+engram with the transaction that created it without decoding the payload or relying on a stochastic time fingerprint.
 
-* `with_time(ctx)` — merges runner time keys into `attrs` when available:
-  
-  * `ticks` — runner’s tick counter.
-  
-  * `tvec64` — 64-bit sign-bit hash of the temporal vector (TemporalContext fingerprint).
+## 6) Where it fits in CCA8
 
-**Why mirror time here?**  
-Bindings already carry graph-side provenance (`created_at`, `ticks`, `tvec64`). Mirroring `{"ticks","tvec64"}` into Column engrams lets you **correlate** engrams with graph events _without_ opening payload bytes.
+- **WorldGraph** stores a lightweight pointer on a binding:
 
+```python
+binding.engrams["column01"] = {"id": engram_id, "act": 1.0}
+```
 
+- **ColumnMemory** stores `{id, name, payload, meta}`.
+- `payload` satisfies the `FeaturePayload` protocol, commonly through `TensorPayload`.
+- `meta` is a `FactMeta` descriptor.
+- The signal bridge can call `time_attrs_from_ctx(ctx)` to mirror explicit runtime correlation values into the Column record.
 
-## 6) Where it fits in CCA8 (end-to-end picture)
+## 7) Minimal usage
 
-* **WorldGraph** stores _pointers_ to engrams on a binding:  
-  `binding.engrams["column01"] = {"id": "<engram_id>", "act": 1.0}`
+**Direct Column write**
 
-* **ColumnMemory** stores the **record** `{id, name, payload, meta}` where:
-  
-  * `payload` is a **FeaturePayload** (e.g., `TensorPayload`),
-  
-  * `meta` is a **FactMeta** (often with `ticks`/`tvec64` in `attrs`).
+```python
+from cca8_column import mem
+from cca8_features import FactMeta, TensorPayload
 
-* **Signal bridge** (menu **13** “Capture scene”) wraps a small vector into a `TensorPayload`, asserts it as an engram, attaches the pointer to the new binding, and—if you pass `attrs=time_attrs_from_ctx(ctx)`—**mirrors time** into the column record automatically.
-  
-  
+vector = [0.1, 0.2, 0.3]
+payload = TensorPayload(data=vector, shape=(len(vector),))
+meta = FactMeta(name="vision:silhouette:mom", links=[latest_bid]).with_time(ctx)
+engram_id = mem.assert_fact("vision:silhouette:mom", payload, meta)
+world.attach_engram(latest_bid, column="column01", engram_id=engram_id, act=1.0)
+```
 
-## 7) Minimal usage cribs
+**WorldGraph bridge**
 
-**A) Programmatic (Column direct)**
-    from cca8_column import mem
-    from cca8_features import TensorPayload, FactMeta
-    vec = [0.1, 0.2, 0.3]
-    payload = TensorPayload(data=vec, shape=(len(vec),))
-    meta = FactMeta(name="vision:silhouette:mom", links=[latest_bid]).with_time(ctx)
-    engram_id = mem.assert_fact("vision:silhouette:mom", payload, meta)
-    world.attach_engram(latest_bid, column="column01", engram_id=engram_id, act=1.0)
+```python
+from cca8_features import time_attrs_from_ctx
 
-**B) Via WorldGraph bridge (menu 13 path)**
-    from cca8_features import time_attrs_from_ctx  # if exported
-    attrs = time_attrs_from_ctx(ctx)  # {'ticks': ..., 'tvec64': ...} or {}
-    bid, engram_id = world.capture_scene("vision", "silhouette:mom",
-                                         vector=vec, attach="now",
-                                         family="cue", attrs=attrs)
+attrs = time_attrs_from_ctx(ctx)
+binding_id, engram_id = world.capture_scene(
+    "vision",
+    "silhouette:mom",
+    vector=vector,
+    attach="now",
+    family="cue",
+    attrs=attrs,
+)
+```
 
-**C) Inspect an engram**
-    rec = world.get_engram(engram_id=engram_id)
-    print(rec["meta"])   # should include {'ticks': N, 'tvec64': '...'} if mirrored
+**Inspect**
 
+```python
+record = world.get_engram(engram_id=engram_id)
+print(record["meta"]["attrs"])
+```
 
+## 8) Invariants and guardrails
 
-## 8) Invariants & guardrails (quick checklist)
-
-* `TensorPayload.to_bytes()/from_bytes()`:
-  
-  * MAGIC/VER must match; shapes parsed from little-endian u32s.
-  
-  * Body length matches `product(shape) * 4` bytes (float32).
-
-* `FactMeta` is **JSON-safe** (`as_dict()` gives lists/dicts; tuples serialize as lists).
-
-* Time linkage:
-  
-  * **Graph side**: bindings carry `created_at` (ISO-8601), `ticks`, `tvec64`.
-  
-  * **Column side**: `FactMeta.attrs` may carry `ticks`/`tvec64` (optional, by your choice).
-
-* Bridge keeps **WorldGraph fast**: engrams stay outside; bindings carry only pointers.
-  
-  
+- `TensorPayload.to_bytes()` and `from_bytes()` must preserve shape and float32 data.
+- `FactMeta.as_dict()` must remain JSON-safe.
+- `time_attrs_from_ctx()` must omit unavailable or malformed values rather than fabricate them.
+- `created_at` is wall-clock provenance; explicit counters identify cognitive/controller/autonomic context.
+- Environment step/time should be copied from an actual environment source when required, not inferred from `Ctx`.
+- WorldGraph keeps only pointers; rich payloads remain in Columns.
 
 ## 9) Why no NumPy?
 
-This module focuses on **schema + portability**, not numeric ops. `struct` + `array('f')` give a compact, stable on-disk format and fast IO with **zero heavy deps**. If/when you need vector math, you can opt-in elsewhere without changing the engram format.
+This module defines portable schemas rather than numerical algorithms. `struct` and `array('f')` provide a compact, dependency-free
+binary representation. Numerical libraries can operate elsewhere without changing the payload contract.
 
+## 10) Tests
 
+Useful tests include:
 
-## 10) Quick test ideas (already partly covered)
+- `TensorPayload` binary round-trip;
+- `FactMeta.with_time(ctx)` with complete, partial, and malformed contexts;
+- absence of retired vector/epoch metadata;
+- bridge capture followed by Column inspection;
+- pointer-only WorldGraph persistence.
 
-* `TensorPayload` round-trip bytes → equal `data/shape`, correct `meta()`.
+## The bridge: WorldGraph to Column
 
-* `FactMeta.with_time(ctx)` merges `{"ticks","tvec64"}` when available; a missing `ctx` field yields no keys.
+Menu 24 can capture a small scene, create a binding, assert a Column engram, and attach the pointer. Menus 27-29 inspect, list, and
+search records. Search can filter by name and `cognitive_cycle`; it no longer filters by vector-derived epoch.
 
-* World bridge: `capture_scene(..., attrs=time_attrs_from_ctx(ctx))` → `get_engram(...)[ "meta"]["attrs"]` contains mirrored time.
-  
+### Q&A
 
+Q: What is `FeaturePayload` and why is it a Protocol?
+A: It specifies the required payload interface without forcing every image, vector, graph, or future sensory representation to inherit
+from one concrete class.
 
-## The bridge (WorldGraph ↔ Column)
+Q: What does `FactMeta` represent?
+A: It is the lightweight, JSON-safe descriptor used to identify, link, and filter an engram without opening its rich payload.
 
-1. **Emit**: Runner **13) Capture scene** asks for channel/token/family (cue|pred), attach policy (now/latest/none), and a small vector. It creates a binding and asserts a column engram, then attaches a pointer:
+Q: What does `time_attrs_from_ctx(ctx)` return?
+A: It returns available explicit runtime values: cognitive cycle, controller step, autonomic tick, and developmental age. It does not
+return a temporal vector, vector hash, or inferred epoch.
 
-`"engrams": { "column01": { "id": "<engram_id>", "act": 1.0 } }`
-
-The Column record stores `{id, name, payload, meta}`, where `meta.attrs` carries `ticks`, `tvec64`, **epoch**, **epoch_vhash64**.
-
-2. **Attach**: Only the **pointer** (column name → id) sits on the binding; the heavy payload stays in the Column. Planning remains purely over tags/edges.
-
-3. **Inspect**:
-* **Display snapshot** shows which bindings have engrams: `engrams=[column01]`.
-
-* **Inspect binding details** prints the full pointer JSON (including the engram id).
-
-* **15) Inspect engram by id** prints the Column record (meta + payload summary). If you type a **binding id** (e.g., `b11`) it resolves its engram automatically.
-
-* **16) List all engrams** enumerates all attached engrams with time attrs.
-
-
-### Minimal API surface (dev view)
-
-* **Column store** (`cca8_column.py`):  
-  `ColumnMemory.assert_fact(name, payload, meta) -> engram_id`  
-  `ColumnMemory.get(engram_id) -> dict`  
-  (Default singleton `mem = ColumnMemory(name="column01")` used by the bridge.)
-
-* **Runner bridge** (`cca8_run.py`):  
-  `world.capture_scene(channel, token, vector, attach, family, attrs=...) -> (bid, engram_id)`  
-  plus menu **13**, **15**, **16** wrappers so you don’t have to write code to use it.
-  
-
-### Quick tutorial (CLI)
-
-1. **13) Capture scene** → use `vision / silhouette:mom / cue / now / 0.1 0.2 0.3`  
-   Runner prints both the **binding id** and the **engram id**, and echoes the time attrs mirrored into the engram.
-
-2. **20) Inspect binding details** → paste the binding id. You’ll see the engram pointer under `binding.engrams["column01"]`.
-
-3. **15) Inspect engram by id** → paste the engram id **or** just type the binding id; it resolves the pointer for you.
-
-4. **16) List all engrams** → browse all engrams with their source binding and time attrs.
-
-
-
-### Q&A to help you learn this section
-
-Q: What is FeaturePayload and why is it a Protocol rather than a base class?
-A: FeaturePayload is a typing Protocol that describes the shape a payload must have (attributes kind, fmt, shape and methods to_bytes(), from_bytes(), meta()). It’s not meant to be instantiated; instead, any class that implements this interface (like TensorPayload) can be used as a payload. This keeps the column/bridge decoupled from a single concrete type.
-
-Q: What problem does TensorPayload solve?
-A: TensorPayload is a small, dependency-free way to package dense float tensors (often 1-D embeddings) for engrams. It supports:
-
-compact binary serialization (to_bytes()),
-
-reconstruction (from_bytes()),
-
-and a lightweight meta() description (kind, fmt, shape, len).
-This lets you store vectors in column memory, move them around, and describe them to UIs without pulling in NumPy.
-
-Q: What does FactMeta represent and why must it be JSON-safe?
-A: FactMeta is a compact descriptor for an engram: it gives a name (e.g., "vision:silhouette:mom"), optional links (binding ids or other engram ids), and free-form attrs (all JSON-safe). The Column stores {id, name, payload, meta} and the WorldGraph only needs the engram id. JSON-safety ensures we can put FactMeta.as_dict() directly into snapshots or logs without serialization issues.
-
-Q: How does time_attrs_from_ctx relate to TemporalContext?
-A: time_attrs_from_ctx(ctx) builds a tiny dict like {"ticks": ..., "tvec64": "...", "epoch": ..., "epoch_vhash64": "..."} by reading the runner’s Ctx. This is used to stamp engrams with temporal context at creation time, so later you can correlate engrams with episode boundaries and soft-clock similarity without decoding heavy payloads.
-
-Q: Do I have to use TensorPayload and FactMeta or can I provide my own payloads?
-A: You can provide any payload that satisfies the FeaturePayload protocol, and you can construct FactMeta (or equivalent) however you like as long as it’s JSON-safe. TensorPayload + FactMeta are just convenient, well-documented defaults that work nicely with the signal bridge and tests.
-
-
-
-### Q&A to help you learn this section
-
-Q: What exactly is stored inside ColumnMemory?
-A: ColumnMemory is a simple in-RAM engram store. Each call to assert_fact(name, payload, meta) creates a record:
-
-{
-  "id": engram_id,
-  "name": name,
-  "payload": payload,   # often a TensorPayload
-  "meta": meta_dict,    # includes attrs
-  "v": "1"
-}
-
-and keeps it in _store[engram_id]. The WorldGraph only keeps the engram_id on bindings; the Column holds the heavy data.
-
-Q: What does FactMeta.attrs["column"] represent?
-A: When you assert a fact, ColumnMemory.assert_fact(...) ensures there is an attrs dict and sets attrs["column"] = self.name (e.g., "column01"). This lets you track which column owns an engram and is useful if you later add multiple columns (vision, audio, etc.).
-
-Q: How do I safely fetch an engram without crashing?
-A: Use try_get(engram_id) to get a record or None (never raises), or exists(engram_id) to check presence. get(engram_id) is stricter and will raise if the id is missing. For UI/tools, try_get is usually the safest choice.
-
-Q: What is find(...) used for?
-A: find(name_contains=..., epoch=..., has_attr=..., limit=...) gives you a lightweight query over the in-memory store. It’s handy for debugging and analytics, e.g., “show me all engrams whose name contains silhouette and epoch==2,” without needing a full database.
-
-Q: Does ColumnMemory persist engrams across runs?
-A: Not yet. ColumnMemory lives in RAM only. Engram ids and pointers are serialized via WorldGraph snapshots, but the column payloads themselves are currently in-memory. A future persistence layer could dump column contents to disk if needed; for now this keeps the system simple and fast for development runs.
-
-
-
+Q: Does ColumnMemory persist rich payloads across runs?
+A: The default ColumnMemory remains in RAM. WorldGraph snapshots persist pointers, but durable Column persistence is a separate future
+storage concern.
 
 
 # Tutorial on Column Module Technical Features
 
-This section explains **`cca8_column.py`** — the in-memory engram store (“Column”) that holds **rich payloads** outside the WorldGraph. Bindings keep **only pointers** to these engrams, preserving a fast, compact episode index while still giving you traceability to perceptual/feature data.
-
-**Why this module exists.**
-_ WorldGraph stays small and plannable; columns carry the heavyweight 95% (vectors, features, descriptors). The runner’s bridge writes the minimum pointer on the binding so planning/search remain unchanged. 
-The Column keeps heavy memory **out of the graph** without losing traceability: bindings stay fast and small; engrams in Column carry the payloads + time fingerprints you can inspect and query. The Runner menus make this workflow usable without writing code, albeit for small examples.
-
-
+This section explains `cca8_column.py`, the in-memory engram store that holds rich payloads outside WorldGraph. Bindings retain only
+small pointers, preserving a sparse episode/index structure while keeping rich sensory and NavMap content available for selective
+retrieval.
 
 ## 1) Mental model
 
-* **Binding (WorldGraph)** → carries tags + **engrams pointer(s)** like  
-  `{"column01": {"id": "<engram_id>", "act": 1.0}}`
+- **WorldGraph binding:** tags, edges, metadata, and a compact engram pointer.
+- **ColumnMemory:** record keyed by `engram_id`.
+- **Payload:** commonly a `TensorPayload`, NavMap payload, patch, or another `FeaturePayload` implementation.
+- **Metadata:** `FactMeta` plus Column ownership, wall-clock creation provenance, and optional explicit runtime counters.
 
-* **Column (this module)** → keyed by `engram_id`, stores the **record**:  
-  `{ "id", "name", "payload", "meta", "v" }`
+## 2) Public API
 
-* **Payload** → usually a `TensorPayload` (float32 vector) or a small dict with `meta()` describing `{"kind","fmt","shape","len"}`.
-
-* **Time linkage** → runner mirrors temporal context into the engram’s `meta.attrs`: `ticks`, `tvec64`, **`epoch`**, **`epoch_vhash64`** (hash of the last event boundary).
-  
-  
-
-## 2) Public API (what you can call)
-
+```python
 from cca8_column import mem as column_mem
 
-default singleton column ("column01")
+engram_id = column_mem.assert_fact(name, payload, meta)
+record = column_mem.get(engram_id)
+record_or_none = column_mem.try_get(engram_id)
+exists = column_mem.exists(engram_id)
+removed = column_mem.delete(engram_id)
+ids = column_mem.list_ids(limit=None)
+matches = column_mem.find(
+    name_contains=None,
+    cognitive_cycle=None,
+    has_attr=None,
+    limit=None,
+)
+count = column_mem.count()
+```
 
-Core engram_id = column_mem.assert_fact(name: str, payload, meta: FactMeta|dict) -> str record    = column_mem.get(engram_id: str) -> dict
+`find()` is intentionally lightweight. It can filter records by name substring, exact `cognitive_cycle`, or presence of an attribute.
 
-Convenience helpers (present in current build) ok = column_mem.exists(engram_id: str) -> bool record_or_none = column_mem.try_get(engram_id: str)
-    -> dict|None removed   = column_mem.delete(engram_id: str) 
-    -> bool ids       = column_mem.list_ids(limit: int|None = None) -> list[str]matches = column_mem.find(name_contains: str|None =
+## 3) Typical record shape
 
-    None,   epoch: int|None = None,  has_attr: str|None = None,   limit: int|None = None) -> list[dict]n = column_mem.count() -> int`
+```python
+{
+    "id": "<engram_id>",
+    "name": "scene:vision:silhouette:mom",
+    "payload": TensorPayload(...),
+    "meta": {
+        "name": "scene:vision:silhouette:mom",
+        "links": ["b3"],
+        "attrs": {
+            "cognitive_cycle": 12,
+            "controller_step": 15,
+            "autonomic_tick": 4,
+            "age_days": 0.125,
+            "column": "column01",
+        },
+        "created_at": "YYYY-MM-DDThh:mm:ss",
+    },
+    "v": "1",
+}
+```
 
-**Record shape (typical):**
+The explicit counters are optional. `created_at` is wall-clock provenance and is not a cognitive clock.
 
-`{   "id": "<engram_id>",   "name": "scene:vision:silhouette:mom",   "payload": TensorPayload(...),     // or a small dict with shape/kind   "meta":
- {     "name": "...", "links": ["b3"], "attrs": {       "ticks": 5, "tvec64": "…", "epoch": 2, "epoch_vhash64": "…",       "column": "column01"     },
-  "created_at": "YYYY-MM-DDThh:mm:ss"   },   "v": "1" }`
+## 4) How runtime correlation enters a Column record
 
+The caller may use:
 
+```python
+attrs = time_attrs_from_ctx(ctx)
+meta = FactMeta(name=name, links=[binding_id], attrs=attrs)
+```
 
-## 3) How time gets into Column records (bridge)
+or:
 
+```python
+meta = FactMeta(name=name, links=[binding_id]).with_time(ctx)
+```
 
-From the Runner (menu **13 Capture scene**), we pass `attrs=time_attrs_from_ctx(ctx)`, which copies **`ticks`**, **`tvec64`**, **`epoch`**, **`epoch_vhash64`** into `meta.attrs` of the Column record at **assert time**. With the current Runner, capture does a **pre-capture event boundary**, so the engram’s `epoch` reflects the **new** boundary you just created.
+Both paths copy only the available named counters. No pre-capture time-vector jump or inferred epoch is performed.
 
+## 5) Pointer discipline
 
-CLI menus that help you see this:
+WorldGraph should store only a compact pointer such as:
 
-* **24** Capture → prints binding id + engram id + mirrored time attrs.
+```python
+{"column01": {"id": engram_id, "act": 1.0}}
+```
 
-* **27** Inspect engram by id (also accepts a binding id; it resolves the pointer).
+The payload remains in ColumnMemory. Deleting an engram through the runner should also prune dangling binding pointers.
 
-* **28** List all engrams (id, source binding, time attrs, payload summary).
+## 6) Runner workflow
 
-* **29** Search engrams (by name substring / epoch).
+- **Menu 24:** capture a scene and attach its engram pointer.
+- **Menu 27:** inspect an engram by id or resolve one from a binding id.
+- **Menu 28:** list attached engrams and explicit runtime metadata.
+- **Menu 29:** search by name, cognitive cycle, channel, payload kind, or id prefix.
+- **Menu 30:** delete an engram and prune pointers.
+- **Menu 31:** attach an existing engram to another binding.
 
-* **30** Delete engram (accepts binding id or engram id; also **prunes all binding pointers** to that id).
+## 7) Guardrails
 
-* **31** Attach existing engram to a binding (demonstrates many-to-one pointers).
-  
-  
+- ColumnMemory is not present-world authority merely because a record was retrieved.
+- Retrieval must return bounded candidate references before rich reinstatement and comparison.
+- `cognitive_cycle` is correlation metadata, not an automatic memory-relevance score.
+- Do not infer environment time from controller or cognitive counters.
+- Keep metadata JSON-safe and payload schemas versioned.
+- Preserve source binding links and Column ownership for diagnostics.
 
-## 4) Minimal usage cribs
+## 8) Tests
 
-**A) Programmatic (direct Column write + pointer attach)**
+Tests should cover assertion/get/delete/count, id uniqueness, `created_at`, Column ownership, each `find()` filter, explicit-time metadata,
+absence of retired vector fields, and pointer cleanup.
 
-`from cca8_column import mem from cca8_features import TensorPayload, FactMeta, time_attrs_from_ctxvec = [0.1, 0.2, 0.3]payload = TensorPayload(data=vec, shape=(len(vec),))meta = FactMeta(name="scene:vision:silhouette:mom",                links=[latest_bid],                attrs=time_attrs_from_ctx(ctx))  # ticks, tvec64, epoch, epoch_vhash64  eid = mem.assert_fact("scene:vision:silhouette:mom", payload, meta)world.attach_engram(latest_bid, column="column01", engram_id=eid, act=1.0)`
+### Q&A
 
-**B) Via the Runner bridge (one step)**
+Q: Why did `find(epoch=...)` become `find(cognitive_cycle=...)`?
+A: The former epoch was generated by the retired stochastic vector clock. Cognitive-cycle number is directly interpretable and provides
+the correlation the current UI and tests actually need.
 
-`bid, eid = world.capture_scene(    channel="vision", token="silhouette:mom",    vector=[0.1, 0.2, 0.3], attach="now", family="cue",    attrs=time_attrs_from_ctx(ctx)  # mirrors temporal attrs )`
+Q: Does a cognitive-cycle filter imply two records are semantically similar?
+A: No. It only states when they were created relative to cognitive execution. Semantic or spatial similarity belongs to content-specific
+matching and retrieval mechanisms.
 
-**C) Lookup & inspect**
+Q: Is ColumnMemory durable?
+A: The default store is session-local RAM. Durable rich-content persistence remains a separate future implementation concern.
 
-`rec = world.get_engram(engram_id=eid) print(rec["meta"]["attrs"])   # -> ticks/tvec64/epoch/epoch_vhash64/column print(rec["payload"].meta())  # -> {'kind','fmt','shape','len'}`
-
-
-
-## 5) Invariants & guardrails
-
-* **WorldGraph only stores pointers.** Don’t stuff large blobs in bindings; keep payloads in Column.
-
-* **Provenance & time are split:** bindings stamp `created_at`, `ticks`, `tvec64`, `epoch`; engrams mirror time in `meta.attrs`.
-
-* **Pointer pruning:** deleting an engram from Column should prune any binding pointers to it (Runner menu **30**) to prevent dangling references.
-
-* **Volatility:** the default in-memory Column is session-local. Pointers aren’t persisted across restarts unless you add a persistence layer for Column (future work).
-
-* **Payload discipline:** keep payloads **small** (vectors, short descriptors). Summarize in UIs; use `.meta()` (shape/kind/len) instead of decoding bytes.
-  
-  
-
-## 6) CLI walkthrough (fast demo)
-
-1. **24** capture `vision / silhouette:mom / cue / now / 0.1 0.2 0.3`  
-   → logs binding id + engram id + mirrored time; shows a short pointer line like  
-   `[bridge] attached pointer: b3.engrams["column01"] = <EID>`
-
-2. **3** inspect binding `b3`  
-   → see `Engrams: {"column01": {"id": "<EID>", "act": 1.0}}`
-
-3. **27** inspect `b3` (or paste `<EID>`)  
-   → see full Column record; `meta.attrs.epoch` matches the boundary you just took
-
-4. **28** list  
-   → rows like `EID=<…> src=b3 ticks=… epoch=… payload(shape=(3,), dtype=scene)`
-
-5. **29** search  
-   → filter by `silhouette` and/or `epoch`
-
-6. **30** delete `b3`  
-   → “Deleted. Pruned 1 pointer(s).” Now **27** on `b3` shows “No engrams on binding b3.”
-   
-   
-
-## 7) Test ideas (unit tests you can add/extend)
-
-* **Round-trip & meta:** `assert_fact → get` preserves `id/name/payload`, `meta.attrs["epoch"]` present when provided.
-
-* **CRUD:** `exists/try_get/delete/list_ids/count` behave as advertised.
-
-* **Find:** substring match on `name`, epoch filter, `has_attr` key present.
-
-* **Pointer pruning:** after delete, runner scan finds **0** pointers to the removed id.
-  
-  
-
-## 8) Roadmap (non-breaking extensions)
-
-* Optional persistence for Column (e.g., JSONL/SQLite sidecar).
-
-* Nearest-neighbor queries on payloads (similarity search) to bias policy arbitration.
-
-* Multi-column pointers per binding (vision/audio/touch) with light aggregation in UIs.
-  
-  
-  
-  
-  
-  
 
 # Tutorial on Approach to Simulation of the Environment
 
@@ -12700,161 +12562,60 @@ PerceptionAdapter knows nothing about WorldGraph or policies; it just turns `Env
 
 ---
 
-## 7. Runner handshake and Menu Selection Envr't Step (HybridEnvironment-->WorldGraph demo) closed-loop demo
+## 7. Runner handshake and closed-loop cognitive-cycle demo
 
-The **Runner module** (`cca8_run.py`) owns the *full* simulation loop (menu, WorldGraph, controller, drives, `Ctx`). The environment module plugs in as one component of that loop. 
+The Runner owns the full simulation loop: WorldGraph, WorkingMap/WNM paths, controller, drives, `Ctx`, and the environment seam.
+`HybridEnvironment` is created after the core runtime objects:
 
-### 7.1 Where HybridEnvironment is created
-
-In `interactive_loop(args)`, after `world`, `drives`, and `ctx` are created and the temporal soft clock is initialized, the runner instantiates the environment:
-
- python
+```python
 world = cca8_world_graph.WorldGraph()
 drives = Drives()
 ctx = Ctx(...)
-ctx.temporal = TemporalContext(...)
-...
 env = HybridEnvironment()
- 
+```
 
-So `env` and `ctx` sit side-by-side in the main loop.
+No global temporal-vector object is initialized.
 
----
+### 7.1 First observation
 
-### 7.2 Menu Selection — “Cognitive Cycle (HybridEnvironment → WorldGraph demo)”
+The first cognitive cycle consumes the observation returned by `env.reset()`. The reset observation is agent-visible evidence; the
+underlying `EnvState` remains environment-side truth.
 
-This Menu Selection is a **one-step closed-loop demo** that ties together HybridEnvironment, WorldGraph, the controller, and timekeeping. 
+### 7.2 One current cognitive cycle
 
-When you choose this menu selection, the runner:
+For each cycle, the runner:
 
-1. **Prints a guide**
-   Explains the meaning of `[env]`, `[env→world]`, and `[env→controller]` lines:
-   
-   * `[env]` – summary of what the environment just did (reset vs step, stage, posture, mom distance, nipple state, action).
-   * `[env→world]` – how `EnvObservation` was injected into the WorldGraph as `pred:*` and `cue:*`.
-   * `[env→controller]` – which policy the controller fired in response (if any); a policy like `policy:stand_up` then writes its own S–A–S chain (actions and a standing predicate). 
+1. increments `ctx.cog_cycles` for the complete sensory-input-to-output transaction;
+2. increments `ctx.controller_steps` for the Action Center invocation;
+3. consumes exactly one current observation—the reset output or the later observation buffered by the preceding cycle;
+4. updates BodyMap, Sequential/Error and domain temporal processing, NavMap/WNM state, WorkingMap projections, retrieval, and
+   prediction/outcome records;
+5. selects and internally executes one primitive or records an explicit null output;
+6. dispatches `Action_n` through `env.apply_action(...)` before `CognitiveCycle_n` closes;
+7. buffers the returned `Observation_(n+1)` without cognitively processing it until the next cycle.
 
-2. **Advances internal time (soft clock + controller_steps)**
-   
-   * `ctx.controller_steps += 1`.
-   * If `ctx.temporal` exists, it calls `ctx.temporal.step()` once (soft temporal drift).
-   * Autonomic ticks (`ctx.ticks`) and `age_days` are **not** changed by this menu selection; they belong to the autonomic tick menu. 
+```text
+Observation_n
+    -> CCA8 processing
+    -> Action_n dispatched in CognitiveCycle_n
+    -> environment/lower-controller transition
+    -> Observation_(n+1) buffered
+```
 
-3. **Environment evolution**
-   
-   * **First call** – if `ctx.env_episode_started` is `False`:
-     
-      python
-     env_obs, env_info = env.reset()
-     ctx.env_episode_started = True
-     ctx.env_last_action = None
-     print(f"[env] Reset newborn_goat scenario: episode_index={...} scenario={...}")
-       :contentReference[oaicite:35]{index=35}  
-     
-     This starts a fresh newborn-goat episode at the `"birth"` stage with `kid_posture="fallen"`, `mom_distance="far"`, `nipple_state="hidden"`.   
-     
-      
-   
-   * **Subsequent calls** – feed the last fired policy back into the environment:
-     
-      python
-     action_for_env = ctx.env_last_action   # e.g., "policy:stand_up" or None
-     env_obs, _reward, _done, env_info = env.step(action=action_for_env, ctx=ctx)
-     ctx.env_last_action = None
-     st = env.state
-     print(f"[env] step={env_info['step_index']} stage={st.scenario_stage} "
-           f"posture={st.kid_posture} mom_distance={st.mom_distance} "
-           f"nipple_state={st.nipple_state} action={action_for_env!r}")
-      
-     
-     This is where `FsmBackend` can treat `policy:stand_up` or `policy:seek_nipple` as early hints and accelerate the storyboard.
+The environment transition advances `EnvState.step_index` and `time_since_birth`. Autonomic ticks and developmental age do not advance
+merely because this closed-loop cognitive cycle ran.
 
-4. **Environment → WorldGraph (observation injection)**
-   For each predicate in `env_obs.predicates`:
-   
-    python
-   bid = world.add_predicate(
-       token,
-       attach=attach,  # first "now", then "latest"
-       meta={"created_by": "env_step", "source": "HybridEnvironment"},
-   )
-   print(f"[env→world] pred:{token} → {bid} (attach={attach})")
-   attach = "latest"
-     :contentReference[oaicite:39]{index=39}  
-   
-   For each cue in `env_obs.cues`:
-   
-    python
-   bid_c = world.add_cue(
-       cue_token,
-       attach=attach_c,  # first "now", then "latest"
-       meta={"created_by": "env_step", "source": "HybridEnvironment"},
-   )
-   print(f"[env→world] cue:{cue_token} → {bid_c} (attach={attach_c})")
-   attach_c = "latest"
-     :contentReference[oaicite:40]{index=40}  
-   
-   This stamps the environment’s current view (posture, proximity, nipple state, visual cue) into the WorldGraph as ordinary `pred:*` and `cue:*` bindings, tagged with `source="HybridEnvironment"` for provenance.
-   
-    
+### 7.3 Diagnostics
 
-5. **WorldGraph → Controller → Env (action feedback)**
-   After injection, the runner gives the controller one decision step:
-   
-    python
-   POLICY_RT.refresh_loaded(ctx)
-   fired = POLICY_RT.consider_and_maybe_fire(world, drives, ctx)
-   if fired != "no_match":
-       print(f"[env→controller] {fired}")
-       # extract "policy:..." from the first token of the summary string
-       ctx.env_last_action = first_token_if_policy(fired)
-   else:
-       ctx.env_last_action = None
-     :contentReference[oaicite:41]{index=41}  
-   
-   The next time you choose this menu selection, `ctx.env_last_action` is passed into `env.step(...)` as `action`, allowing `FsmBackend` to react (e.g., treat `policy:stand_up` as standing earlier during `"struggle"`).   
-   
-    
+- `[env]` identifies the observation entering the cycle and its environment-step provenance.
+- `[env→working]` / `[env→world]` show observation injection.
+- `[env→controller]` identifies the selected primitive.
+- `[controller→env]` shows the current cycle's output crossing the lower-controller/environment boundary.
+- `[cycle]` summarizes cognitive-cycle number, controller step, output, dispatch, and the buffered next observation.
 
-6. **Discrepancy diagnostics (posture expectation vs observation)**
-   The mini-snapshot printed after this menu selection includes a **diagnostic line** when the latest environment posture and the latest **policy-expected** posture disagree.
-   Internally, the runner:
-   
-   * Finds the newest env-driven `pred:posture:*` (with `meta["source"] == "HybridEnvironment"`).
-   
-   * Finds the newest policy-written `pred:posture:*` (with `meta["policy"]` set, e.g., by `policy:stand_up`). 
-   
-   * If they differ (e.g., env says `fallen` but the last StandUp invocation wrote `standing`), it prints:
-     
-      
-     [discrepancy] env posture='fallen' at b18 vs policy-expected posture='standing'
-                  from policy:stand_up at b22
-     [discrepancy] -often the motor system will attempt an action, but it does not actually occur-
-      
-   
-   * It also keeps a short **discrepancy history** (last ~50 entries) in `ctx.posture_discrepancy_history` and prints it under:
-     
-      
-     [discrepancy history] recent posture discrepancies (most recent last):
-       [discrepancy] ...
-       :contentReference[oaicite:44]{index=44}  
-      
-   
-   These lines are **display-only diagnostics**; they do not create additional bindings. They are meant to mirror a robotics / physiology intuition:
-   
-   > *The motor system may “intend” standing, but sensors still report a fallen posture until the environment actually transitions.*
+This separation keeps the chronology clear: output belongs to the current cognitive cycle; its sensory consequences normally become
+input to a later cognitive cycle.
 
-Putting it all together, this menu selection implements a minimal closed loop:
-
- 
-world dynamics (HybridEnvironment/FsmBackend)
-  → EnvObservation (predicates + cues)
-  → WorldGraph update + one controller step
-  → policy name (e.g., "policy:stand_up")
-  → fed back into HybridEnvironment.step(...) on the next call of this menu selection
- 
-
----
 
 ## 8. Debugging and tests
 

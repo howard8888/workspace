@@ -25,7 +25,6 @@ from cca8_standup_compare import (
     standup_compare_observation_step_v1,
     standup_compare_selection_step_v1,
 )
-from cca8_temporal import TemporalContext
 from cca8_world_graph import WorldGraph
 
 
@@ -363,8 +362,6 @@ def test_live_closed_loop_finalizes_selection_advisory_without_changing_winner(
     """The runner should finalize Phase 3B only after the legacy winner already exists."""
     ctx = _ctx_with_bodymap()
     ctx.working_world = cca8_run.init_working_world()
-    ctx.temporal = TemporalContext()
-    ctx.tvec_last_boundary = ctx.temporal.vector()
     world = WorldGraph()
     world.ensure_anchor("NOW")
     world.ensure_anchor("NOW_ORIGIN")
@@ -395,8 +392,6 @@ def test_cycle_json_record_contains_phase3b_advisory_summary(
     """The existing machine-readable cycle trace should expose the advisory surface."""
     ctx = _ctx_with_bodymap()
     ctx.working_world = cca8_run.init_working_world()
-    ctx.temporal = TemporalContext()
-    ctx.tvec_last_boundary = ctx.temporal.vector()
     ctx.cycle_json_enabled = True
     ctx.cycle_json_path = None
     world = WorldGraph()
