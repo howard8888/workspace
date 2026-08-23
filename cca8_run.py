@@ -55,8 +55,9 @@ Core runtime:
   cca8_maternal_temporal.py, cca8_maternal_continuity.py, cca8_followmom_compare.py,
   cca8_followmom_advisory.py, cca8_followmom_authority.py, cca8_feeding.py, cca8_terrain.py,
   cca8_live_dynamics.py, cca8_navmap_memory.py, cca8_wnm_runtime.py,
-  cca8_cognitive_scope.py, cca8_reporting.py, cca8_observation_runtime.py,
-  cca8_policy_runtime.py, and cca8_preflight.py.
+  cca8_cognitive_scope.py, cca8_cognitive_scope_menu.py, cca8_reporting.py,
+  cca8_observation_runtime.py, cca8_policy_runtime.py, cca8_session_menu.py,
+  cca8_rcos_menu.py, and cca8_preflight.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
   sys, logging, math, datetime, dataclasses, typing, collections, random,
   time, subprocess, shutil, io, contextlib, copy, tempfile, webbrowser,
@@ -100,7 +101,6 @@ at the repo root and install with:
 
 # Standard Library Imports
 from __future__ import annotations
-from collections.abc import Mapping
 import argparse
 import json
 import os
@@ -134,6 +134,7 @@ import cca8_live_dynamics
 import cca8_navmap_memory
 import cca8_wnm_runtime
 import cca8_cognitive_scope
+import cca8_cognitive_scope_menu
 import cca8_cognitive_injection
 import cca8_maternal_continuity
 import cca8_maternal_geometry
@@ -143,10 +144,11 @@ import cca8_reporting
 import cca8_observation_runtime
 import cca8_policy_runtime
 import cca8_preflight
+import cca8_rcos_menu
+import cca8_session_menu
 import cca8_world_graph
 from cca8_controller import (
     PRIMITIVES,
-    skill_readout,
     skill_q,
     update_skill,
     skills_to_dict,
@@ -167,10 +169,7 @@ from cca8_controller import body_cliff_is_near     # pylint: disable=unused-impo
 from cca8_controller import body_shelter_is_near   # pylint: disable=unused-import
 from cca8_column import mem as column_mem
 from cca8_env import HybridEnvironment, EnvObservation, EnvConfig  # environment simulation (HybridEnvironment/EnvState/EnvObservation)
-from cca8_rcos import (
-    SIM_ROBOT_GOAT_COMMANDS,
-    SimRobotGoatHAL,
-)
+from cca8_rcos import SimRobotGoatHAL
 from cca8_context import CreativeCandidate, Ctx, ExperimentProtocolConfig  # pylint: disable=unused-import
 from cca8_teaching import (
     menu37_teaching_after_controller_v1,
@@ -648,7 +647,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.28.0"
+__version__ = "0.29.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -2243,18 +2242,12 @@ def print_header(hal_str: str = "HAL: off (no embodiment)", body_str: str = "Bod
 
 
 def _readme_compendium_path_v1() -> str:
-    """Return the README/compendium path colocated with the CCA8 runner.
-
-    Resolving from ``__file__`` rather than the process working directory keeps
-    Menu 2 functional when ``cca8_run.py`` is launched from another directory.
-    The caller still verifies that the file exists before asking the operating
-    system to open it.
-    """
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")
+    """Return README.md beside the active runner through the guidance module."""
+    return cca8_guidance.readme_compendium_path_v1(__file__)
 
 
 def _print_brief_overview_of_key_concepts_v1(policy_rt: Any) -> None:
-    """Compatibility wrapper for the current concise architecture overview."""
+    """Compatibility wrapper for the concise map-first architecture overview."""
     print("Selection: Explanation of the Architecture")
     print(cca8_cli.MENU_RESPONSE_DIVIDER)
     print()
@@ -2262,106 +2255,27 @@ def _print_brief_overview_of_key_concepts_v1(policy_rt: Any) -> None:
 
 
 def _open_readme_compendium_v1() -> None:
-    """Open the README/compendium in the platform default viewer when possible."""
-    comp = _readme_compendium_path_v1()
-    print(f"System documentation: {comp}")
-    print()
-    if not os.path.exists(comp):
-        print(f"README.md was not found next to cca8_run.py at: {comp}")
-        print("Please restore/copy README.md beside cca8_run.py and try again.")
-        return
-
-    try:
-        if sys.platform.startswith("win"):
-            os.startfile(comp)  # type: ignore[attr-defined]
-        elif sys.platform == "darwin":
-            os.system(f'open "{comp}"')
-        else:
-            os.system(f'xdg-open "{comp}"')
-        print("Opened the README.md/compendium in your default viewer.")
-        print()
-        print(
-            "The large README may take a few seconds to load. If no viewer opens, please open the file manually "
-            "in your editor or Markdown viewer."
-        )
-    except Exception as exc:
-        print(f"[warn] Could not open automatically: {exc}")
-        print("Please open the file manually in your editor.")
+    """Compatibility wrapper for opening the README/compendium."""
+    cca8_guidance.open_readme_compendium_v1(_readme_compendium_path_v1())
 
 
 def _architecture_explanation_menu_v1(policy_rt: Any) -> None:
-    """Display Main Menu #3's architecture explanation and documentation choices.
-
-    The submenu distinguishes the concise current architecture overview from
-    the full README compendium and the lower-level binding/tag/policy primer.
-    None of these choices changes cognitive state.
-    """
-    print("Selection: Explanation of the Architecture\n")
-    print("Architecture explanation options:")
-    print("  1) Concise map-first architecture overview")
-    print("  2) Open the full README/compendium system documentation")
-    print("  3) Technical primer: bindings, tags, edges, drives, and primitives")
-    print("  [Enter] Return to Main Menu")
-
-    try:
-        pick = input("Choose: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return
-    except Exception:
-        pick = ""
-
-    if pick == "1":
-        print(cca8_cli.MENU_RESPONSE_DIVIDER)
-        print()
-        print_architecture_overview_v1(policy_rt)
-        return
-
-    if pick == "2":
-        _open_readme_compendium_v1()
-        return
-
-    if pick == "3":
-        print("Selection: Technical Architecture Primer")
-        print(cca8_cli.MENU_RESPONSE_DIVIDER)
-        print_tagging_and_policies_help(policy_rt)
-        return
-
-    print("(cancelled)")
+    """Open Main Menu #3 through the extracted architecture-guidance flow."""
+    runtime = cca8_guidance.ArchitectureMenuRuntimeV1(
+        overview_printer=print_architecture_overview_v1,
+        tagging_printer=print_tagging_and_policies_help,
+        readme_path=_readme_compendium_path_v1(),
+        divider=cca8_cli.MENU_RESPONSE_DIVIDER,
+    )
+    cca8_guidance.architecture_explanation_menu_v1(policy_rt, runtime)
 
 
 def _help_menu_v1(policy_rt: Any) -> None:
-    """Compatibility wrapper for the renamed architecture-explanation menu."""
+    """Compatibility wrapper for the architecture-explanation menu."""
     _architecture_explanation_menu_v1(policy_rt)
 
 
-def _watch_cognition_menu_v1() -> Optional[str]:
-    """Return the existing cognitive-cycle handler selected from Main Menu #1.
-
-    The actual cycle implementations remain the established internal handlers
-    used by the former visible Menu 35 and Menu 37 entries. Returning their
-    handler keys avoids duplicate cognitive-cycle code while presenting a much
-    simpler top-level menu.
-    """
-    print("Selection: Watch Cognition Run\n")
-    print("Choose how you would like to watch the cognitive architecture operate:")
-    print("  1) Watch one cognitive cycle slowly (verbose teaching mode)")
-    print("  2) Watch several cognitive cycles (compact closed-loop timeline)")
-    print("  [Enter] Return to Main Menu")
-    try:
-        pick = input("Choose: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return None
-    except Exception:
-        return None
-
-    if pick == "1":
-        return "35"
-    if pick == "2":
-        return "37"
-    print("(cancelled)")
-    return None
+_watch_cognition_menu_v1 = cca8_cli.watch_cognition_menu_v1
 
 
 # --- WorldGraph snapshot + engram helpers (runner-facing) ------------------------
@@ -2464,124 +2378,15 @@ def loop_helper(autosave_from_args: Optional[str], world, drives, ctx=None, time
 
 
 
-def _open_worldgraph_pyvis_flow_v1(world) -> None:
-    """Generate and optionally open the existing interactive WorldGraph HTML view."""
-    default_path = "world_graph.html"
-    try:
-        path = input(f"Save HTML to (default: {default_path}): ").strip() or default_path
-    except Exception:
-        path = default_path
-    try:
-        out = world.to_pyvis_html(
-            path_html=path,
-            label_mode="id+first_pred",
-            show_edge_labels=True,
-            physics=True,
-        )
-        print(f"Interactive graph written to: {out}")
-        try:
-            open_now = input("Open in your default browser now? [y/N]: ").strip().lower()
-        except Exception:
-            open_now = "n"
-        if open_now not in ("y", "yes"):
-            return
-        try:
-            import webbrowser
-
-            if sys.platform.startswith("win"):
-                os.startfile(out)  # type: ignore[attr-defined]
-            elif sys.platform == "darwin":
-                os.system(f'open "{out}"')
-            else:
-                webbrowser.open(f"file://{out}")
-            print("(opened in your browser)")
-        except Exception as exc:
-            print(f"[warn] Could not open automatically: {exc}")
-    except Exception as exc:
-        print(f"[warn] Could not generate Pyvis HTML: {exc}")
-        print("       Tip: install with  pip install pyvis")
-
-
-def _show_architecture_status_v1(world, ctx, policy_rt) -> None:
-    """Display the coherent WNM/Columns/WorldGraph architecture status panel."""
-    print()
-    print(architecture_status_text_v1(world, ctx, column_mem, policy_rt))
-    print()
-
-
-def _show_recent_bindings_v1(world, *, limit: int = 5) -> None:
-    """Display a bounded WorldGraph tail as one inspector view."""
-    print()
-    print("WORLDGRAPH RECENT BINDINGS")
-    print("=" * 78)
-    print(
-        "This is a sparse episode/index tail, not the operative WNM or an assertion that every historical tag is true now."
-    )
-    print()
-    print(recent_bindings_text(world, limit=limit))
-
-
-def _show_drives_v1(drives) -> None:
-    """Display current compact biological-control values and derived flags."""
-    print()
-    print("DRIVES / INTERNAL CONTROL STATE")
-    print("=" * 78)
-    print("Numeric drives are legitimate compact control state; derived drive:* flags are not a second world model.")
-    print()
-    print(drives_and_tags_text(drives))
-
-
-def _show_timekeeping_status_v1(env, ctx) -> None:
-    """Display all explicit CCA8 time domains as one read-only inspector panel."""
-    print()
-    print(timekeeping_status_text_v1(ctx, env))
-    print()
-
-
-def _show_skill_telemetry_v1(ctx) -> None:
-    """Display current primitive execution and learning telemetry."""
-    print()
-    print("PRIMITIVE SKILL TELEMETRY")
-    print("=" * 78)
-    print("Execution counts, success telemetry, rewards, and q estimates describe primitive history; they do not grant truth.")
-    print()
-    print(skills_hud_text(ctx, top_n=20))
-    print("\nFull ledger:")
-    print(skill_readout())
-
-
-def _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt) -> dict[str, Any]:
-    """Build one current-state scope view without adding it to retained history."""
-    state = getattr(env, "state", None)
-    output_env_step = getattr(state, "step_index", None)
-    dispatched = getattr(state, "last_applied_action", None)
-    selected = getattr(ctx, "env_last_action", None)
-    pending_observation = getattr(ctx, "env_pending_observation", None)
-    prior_external_state = getattr(ctx, "env_pending_previous_state", None)
-    dispatch_succeeded = pending_observation is not None
-    if dispatch_succeeded and prior_external_state is not None:
-        external_state = prior_external_state
-        input_env_step = getattr(prior_external_state, "step_index", None)
-    else:
-        external_state = state
-        input_env_step = output_env_step
-    return cca8_cognitive_scope.build_cognitive_scope_snapshot_v1(
-        ctx,
-        env=env,
-        env_obs=None,
-        world=world,
-        drives=drives,
-        policy_rt=policy_rt,
-        selected_policy=selected if isinstance(selected, str) else None,
-        action_applied=dispatched if isinstance(dispatched, str) else None,
-        env_step=input_env_step if isinstance(input_env_step, int) else None,
-        external_state=external_state,
-        dispatch_succeeded=dispatch_succeeded,
-        output_env_step=output_env_step if isinstance(output_env_step, int) else None,
-        capture_kind="manual_live",
-        snapshot_no=None,
-    )
-
+_open_worldgraph_pyvis_flow_v1 = cca8_cognitive_scope_menu.open_worldgraph_pyvis_flow_v1
+_show_architecture_status_v1 = cca8_cognitive_scope_menu.show_architecture_status_v1
+_show_recent_bindings_v1 = cca8_cognitive_scope_menu.show_recent_bindings_v1
+_show_drives_v1 = cca8_cognitive_scope_menu.show_drives_v1
+_show_timekeeping_status_v1 = cca8_cognitive_scope_menu.show_timekeeping_status_v1
+_show_skill_telemetry_v1 = cca8_cognitive_scope_menu.show_skill_telemetry_v1
+_cognitive_scope_live_snapshot_v1 = cca8_cognitive_scope_menu.cognitive_scope_live_snapshot_v1
+_cognitive_scope_prompt_port_detail_v1 = cca8_cognitive_scope_menu.cognitive_scope_prompt_port_detail_v1
+_cognitive_scope_show_compact_snapshot_v1 = cca8_cognitive_scope_menu.cognitive_scope_show_compact_snapshot_v1
 
 
 def _cognitive_scope_injection_runtime_v1() -> cca8_cognitive_injection.CognitiveInjectionRuntimeV1:
@@ -2594,223 +2399,41 @@ def _cognitive_scope_injection_runtime_v1() -> cca8_cognitive_injection.Cognitiv
     )
 
 
-def _cognitive_scope_injection_flow_v1(ctx) -> None:
-    """Run one preset synthetic EnvObservation through a disposable sandbox."""
-    print()
-    print("CCA8 SYNTHETIC ENVOBSERVATION INJECTION -- SANDBOX ONLY")
-    print("=" * 78)
-    print("This first controller injects at DP01 only. It never receives the live session's world, WNM, drives, or environment.")
-    print("Shared skill telemetry and Column memory are restored before the diagnostic result is returned.")
-    print()
-    presets = cca8_cognitive_injection.cognitive_injection_preset_rows_v1()
-
-    print("A preset is a ready-made synthetic EnvObservation test signal.")
-    print("To run a preset, type the NUMBER shown at the left and press Enter.")
-    print("For example, type 1 and press Enter to run preset 1.")
-    print("Each number represents the synthetic test situation described beside it.")
-    print()
-
-    for index, row in enumerate(presets, start=1):
-        print(f"  {index}) {row['label']}")
-        print(f"     Synthetic situation: {row['label']}")
-        print(f"     Expected downstream path: {row['expected_path']}")
-
-    valid_choices = "1" if len(presets) == 1 else f"1-{len(presets)}"
-    print()
-    print(f"Available preset number(s): {valid_choices}")
-    print("Press Enter without typing a number to cancel.")
-
-    try:
-        choice = input(f"Enter injection preset number [{valid_choices} | Enter = cancel]: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return
-    if choice == "":
-        return
-    try:
-        selected_index = int(choice) - 1
-        selected_preset = presets[selected_index]
-        if selected_index < 0:
-            raise IndexError
-    except (TypeError, ValueError, IndexError):
-        print(f"Please choose 1-{len(presets)} or press Enter to cancel.")
-        return
-
-    next_no = int(getattr(ctx, "cognitive_scope_injection_no_v1", 0) or 0) + 1
-    injection_id = f"INJ{next_no:04d}"
-    result = cca8_cognitive_injection.run_envobservation_injection_sandbox_v1(
+def _cognitive_scope_injection_flow_v1(ctx: Any) -> None:
+    """Compatibility wrapper for the extracted DP01 sandbox menu flow."""
+    cca8_cognitive_scope_menu.cognitive_scope_injection_flow_v1(
+        ctx,
         _cognitive_scope_injection_runtime_v1(),
-        injection_id=injection_id,
-        preset_id=selected_preset["preset_id"],
+        show_compact_snapshot=_cognitive_scope_show_compact_snapshot_v1,
     )
-    result["live_diagnostic_record_updated"] = True
-    ctx.cognitive_scope_injection_no_v1 = next_no
-    ctx.cognitive_scope_last_injection_v1 = result
-
-    print()
-    print("\n".join(cca8_cognitive_injection.render_cognitive_injection_result_lines_v1(result)))
-    snapshot = result.get("snapshot")
-    if isinstance(snapshot, Mapping) and snapshot:
-        _cognitive_scope_show_compact_snapshot_v1(snapshot)
-
-    try:
-        show_transcript = input("Show the full disposable sandbox cycle transcript? [y/N]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return
-    if show_transcript in ("y", "yes"):
-        print()
-        print("\n".join(cca8_cognitive_injection.render_cognitive_injection_transcript_lines_v1(result)))
-        print()
 
 
-def _cognitive_scope_prompt_port_detail_v1(snapshot: Mapping[str, Any]) -> None:
-    """Let the technician drill into one stored DP signal without dumping every port."""
-    while True:
-        try:
-            raw = input("Inspect diagnostic point [DP00-DP18 | Enter = return]: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-        if raw == "":
-            return
-
-        port_id = cca8_cognitive_scope.cognitive_scope_normalize_port_id_v1(raw)
-        if port_id is None:
-            print("Please enter DP00-DP18, or the equivalent number 0-18.")
-            continue
-        print()
-        print("\n".join(cca8_cognitive_scope.render_cognitive_scope_port_detail_lines_v1(snapshot, port_id)))
-        print()
+def _cognitive_scope_menu_runtime_v1() -> cca8_cognitive_scope_menu.CognitiveScopeMenuRuntimeV1:
+    """Build Main Menu #2 callbacks from current runner-visible helpers."""
+    return cca8_cognitive_scope_menu.CognitiveScopeMenuRuntimeV1(
+        show_architecture_status=_show_architecture_status_v1,
+        show_recent_bindings=_show_recent_bindings_v1,
+        show_drives=_show_drives_v1,
+        show_timekeeping_status=_show_timekeeping_status_v1,
+        show_skill_telemetry=_show_skill_telemetry_v1,
+        open_worldgraph_pyvis=_open_worldgraph_pyvis_flow_v1,
+        run_injection_flow=_cognitive_scope_injection_flow_v1,
+        build_live_snapshot=_cognitive_scope_live_snapshot_v1,
+        show_compact_snapshot=_cognitive_scope_show_compact_snapshot_v1,
+        legacy_snapshot_text=snapshot_text,
+    )
 
 
-def _cognitive_scope_show_compact_snapshot_v1(snapshot: Mapping[str, Any]) -> None:
-    """Display the front panel and then offer repeated one-port drill-downs."""
-    print("\n".join(cca8_cognitive_scope.render_cognitive_scope_compact_snapshot_lines_v1(snapshot)))
-    _cognitive_scope_prompt_port_detail_v1(snapshot)
-
-
-def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
-    """Run Main Menu #2's oscilloscope, trace, and coherent system inspector."""
-    while True:
-        trace = cca8_cognitive_scope.cognitive_scope_trace_summary_v1(ctx)
-        print()
-        print("=" * 78)
-        print("CCA8 COGNITIVE STORAGE OSCILLOSCOPE / SYSTEM INSPECTOR")
-        print("=" * 78)
-        print(
-            f"Retained cognitive-cycle snapshots: {trace.get('retained_count')}/{trace.get('capacity')}  "
-            f"total captured this session: {trace.get('total_capture_count')}"
-        )
-        print("DP00 is external simulation truth; DP01-DP18 are eighteen CCA8 service points.")
-        print("The ordinary scope trace is read-only diagnostic storage, not goat memory.")
-        print("Live-session injection is disabled; a source-stamped DP01 injection is available only in a disposable sandbox.\n")
-        print("  COGNITIVE OSCILLOSCOPE / TRACE")
-        print("  1) Display latest retained compact signal path + optional DP drill-down")
-        print("  2) List retained snapshot index")
-        print("  3) Display retained compact signal path by snapshot number + optional DP drill-down")
-        print("  4) Display current live compact state + optional DP drill-down")
-        print("  5) Display latest full raw all-port snapshot")
-        print()
-        print("  SYSTEM / DATA-STORE INSPECTOR")
-        print("  6) Architecture / memory status (operative WNM, Columns, sparse index, WorldGraph)")
-        print("  7) Recent WorldGraph bindings (bounded episode/index tail)")
-        print("  8) Drives / internal control state")
-        print("  9) Explicit timekeeping / ordering (cognitive, control, autonomic, developmental, environment)")
-        print(" 10) Primitive skill telemetry")
-        print(" 11) Legacy detailed Snapshot (WorldGraph + CTX + policies)")
-        print(" 12) Generate / display interactive WorldGraph HTML")
-        print()
-        print("  SANDBOX SIGNAL INJECTION")
-        print(" 13) Inject one preset synthetic EnvObservation at DP01 and trace one disposable cognitive cycle")
-        print()
-        print("  TRACE CONTROL")
-        print(" 14) Clear retained oscilloscope snapshots")
-        print("  [Enter] Return to Main Menu")
-        try:
-            choice = input("Choose: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-
-        if choice == "":
-            return
-        if choice == "1":
-            snapshot = cca8_cognitive_scope.cognitive_scope_latest_snapshot_v1(ctx)
-            if snapshot is None:
-                print("\nNo cognitive-cycle snapshot has been retained yet; showing current live state instead.\n")
-                snapshot = _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt)
-            _cognitive_scope_show_compact_snapshot_v1(snapshot)
-            continue
-        if choice == "2":
-            print("\n".join(cca8_cognitive_scope.render_cognitive_scope_trace_index_lines_v1(ctx, limit=30)))
-            continue
-        if choice == "3":
-            try:
-                raw = input("Snapshot number: ").strip()
-                snapshot_no = int(raw)
-            except (EOFError, KeyboardInterrupt):
-                print()
-                continue
-            except ValueError:
-                print("Please enter an integer snapshot number.")
-                continue
-            snapshot = cca8_cognitive_scope.cognitive_scope_find_snapshot_v1(ctx, snapshot_no)
-            if snapshot is None:
-                print(f"Snapshot {snapshot_no} is not retained in the current bounded trace.")
-                continue
-            _cognitive_scope_show_compact_snapshot_v1(snapshot)
-            continue
-        if choice == "4":
-            snapshot = _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt)
-            _cognitive_scope_show_compact_snapshot_v1(snapshot)
-            continue
-        if choice == "5":
-            snapshot = cca8_cognitive_scope.cognitive_scope_latest_snapshot_v1(ctx)
-            if snapshot is None:
-                print("\nNo retained snapshot exists; showing the current live raw view instead.\n")
-                snapshot = _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt)
-            print("\n".join(cca8_cognitive_scope.render_cognitive_scope_snapshot_lines_v1(snapshot)))
-            continue
-        if choice == "6":
-            _show_architecture_status_v1(world, ctx, policy_rt)
-            continue
-        if choice == "7":
-            _show_recent_bindings_v1(world, limit=5)
-            continue
-        if choice == "8":
-            _show_drives_v1(drives)
-            continue
-        if choice == "9":
-            _show_timekeeping_status_v1(env, ctx)
-            continue
-        if choice == "10":
-            _show_skill_telemetry_v1(ctx)
-            continue
-        if choice == "11":
-            print()
-            print("LEGACY DETAILED SNAPSHOT -- retained temporarily for compatibility")
-            print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=policy_rt))
-            continue
-        if choice == "12":
-            _open_worldgraph_pyvis_flow_v1(world)
-            continue
-        if choice == "13":
-            _cognitive_scope_injection_flow_v1(ctx)
-            continue
-        if choice == "14":
-            try:
-                confirm = input("Clear retained diagnostic snapshots? [y/N]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                continue
-            if confirm in ("y", "yes"):
-                removed = cca8_cognitive_scope.cognitive_scope_clear_v1(ctx)
-                print(f"Cleared {removed} retained diagnostic snapshot(s).")
-            else:
-                print("Trace unchanged.")
-            continue
-        print("Please choose 1-14 or press Enter to return.")
+def _cognitive_scope_menu_v1(env: Any, world: Any, drives: Any, ctx: Any, policy_rt: Any) -> None:
+    """Open the extracted Cognitive Storage Oscilloscope / System Inspector."""
+    cca8_cognitive_scope_menu.cognitive_scope_menu_v1(
+        env,
+        world,
+        drives,
+        ctx,
+        policy_rt,
+        runtime=_cognitive_scope_menu_runtime_v1(),
+    )
 
 
 def _drive_tags(drives) -> list[str]:
@@ -3356,6 +2979,7 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("navmap_memory", "cca8_navmap_memory"),
     ("wnm_runtime", "cca8_wnm_runtime"),
     ("cognitive_scope", "cca8_cognitive_scope"),
+    ("cognitive_scope_menu", "cca8_cognitive_scope_menu"),
     ("cognitive_injection", "cca8_cognitive_injection"),
     ("standup_compare", "cca8_standup_compare"),
     ("reporting", "cca8_reporting"),
@@ -3363,8 +2987,10 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("policy_runtime", "cca8_policy_runtime"),
     ("navpatch", "cca8_navpatch"),
     ("rcos", "cca8_rcos"),
+    ("rcos_menu", "cca8_rcos_menu"),
     ("rcos_experiments", "cca8_rcos_experiments"),
     ("state_integrity", "cca8_state_integrity"),
+    ("session_menu", "cca8_session_menu"),
     ("teaching", "cca8_teaching"),
     ("predictive", "cca8_predictive"),
     ("test_fixtures", "cca8_test_fixtures"),
@@ -5517,261 +5143,11 @@ def candidate_anchors(world, ctx) -> list[str]:  # pylint: disable=unused-argume
 
 
 
-def _sim_robot_goat_value_text_v1(value: Any) -> str:
-    """Return a compact terminal-safe text form for the RCOS sandbox menu."""
-    if value is None:
-        return "(none)"
-    if isinstance(value, bool):
-        return "yes" if value else "no"
-    if isinstance(value, float):
-        return f"{value:.3f}"
-    return str(value)
-
-
-def _sim_robot_goat_obs_lines_v1(obs: EnvObservation) -> list[str]:
-    """Return a compact human-readable summary of one SimRobotGoat observation.
-
-    This is a runner-only presentation helper. It does not interpret or mutate the
-    simulated robot world. All state-transition logic remains in cca8_rcos.py.
-    """
-    raw = obs.raw_sensors if isinstance(obs.raw_sensors, dict) else {}
-    meta = obs.env_meta if isinstance(obs.env_meta, dict) else {}
-
-    pos = meta.get("position") if isinstance(meta.get("position"), dict) else {}
-    goal = meta.get("goal") if isinstance(meta.get("goal"), dict) else {}
-    milestones = meta.get("milestones") if isinstance(meta.get("milestones"), list) else []
-
-    x_val = pos.get("x", raw.get("x"))
-    y_val = pos.get("y", raw.get("y"))
-    gx_val = goal.get("x")
-    gy_val = goal.get("y")
-
-    return [
-        "[rcos] observation",
-        (
-            f"  position=({_sim_robot_goat_value_text_v1(x_val)}, {_sim_robot_goat_value_text_v1(y_val)}) "
-            f"heading={_sim_robot_goat_value_text_v1(raw.get('heading', meta.get('heading')))} "
-            f"battery={_sim_robot_goat_value_text_v1(raw.get('battery'))} "
-            f"fatigue={_sim_robot_goat_value_text_v1(raw.get('fatigue'))}"
-        ),
-        (
-            f"  goal=({_sim_robot_goat_value_text_v1(gx_val)}, {_sim_robot_goat_value_text_v1(gy_val)}) "
-            f"hazard_near={_sim_robot_goat_value_text_v1(raw.get('hazard_near'))} "
-            f"at_target={_sim_robot_goat_value_text_v1(raw.get('at_target'))} "
-            f"at_dock={_sim_robot_goat_value_text_v1(raw.get('at_dock'))}"
-        ),
-        f"  predicates={list(obs.predicates or [])}",
-        f"  cues={list(obs.cues or [])}",
-        (
-            f"  step_index={_sim_robot_goat_value_text_v1(meta.get('step_index'))} "
-            f"milestones={milestones}"
-        ),
-    ]
-
-
-def _sim_robot_goat_status_lines_v1(status: dict[str, Any]) -> list[str]:
-    """Return a compact status block for the runner-side SimRobotGoat sandbox menu.
-
-    This helper exists so the menu branch stays readable and the formatting logic is
-    centralized in one small place.
-    """
-    state = status.get("state") if isinstance(status.get("state"), dict) else {}
-    summary = status.get("summary") if isinstance(status.get("summary"), dict) else {}
-    milestones = status.get("milestones") if isinstance(status.get("milestones"), list) else []
-
-    return [
-        "[rcos] status",
-        (
-            f"  done={_sim_robot_goat_value_text_v1(status.get('done'))} "
-            f"hal_estopped={_sim_robot_goat_value_text_v1(status.get('hal_estopped'))} "
-            f"success={_sim_robot_goat_value_text_v1(summary.get('success'))} "
-            f"done_reason={_sim_robot_goat_value_text_v1(summary.get('done_reason'))}"
-        ),
-        (
-            f"  milestone_score={_sim_robot_goat_value_text_v1(summary.get('milestone_score'))} "
-            f"steps={_sim_robot_goat_value_text_v1(summary.get('steps'))}"
-        ),
-        (
-            f"  posture={_sim_robot_goat_value_text_v1(state.get('posture'))} "
-            f"heading={_sim_robot_goat_value_text_v1(state.get('heading'))} "
-            f"position=({_sim_robot_goat_value_text_v1(state.get('x'))}, "
-            f"{_sim_robot_goat_value_text_v1(state.get('y'))})"
-        ),
-        (
-            f"  battery={_sim_robot_goat_value_text_v1(state.get('battery'))} "
-            f"fatigue={_sim_robot_goat_value_text_v1(state.get('fatigue'))} "
-            f"step_index={_sim_robot_goat_value_text_v1(state.get('step_index'))}"
-        ),
-        (
-            f"  milestones={milestones} "
-            f"falls={_sim_robot_goat_value_text_v1(summary.get('falls'))} "
-            f"safety_violations={_sim_robot_goat_value_text_v1(summary.get('safety_violations'))} "
-            f"loops={_sim_robot_goat_value_text_v1(summary.get('repeated_action_loop_count'))}"
-        ),
-        (
-            f"  target_inspected={_sim_robot_goat_value_text_v1(summary.get('target_inspected'))} "
-            f"at_dock={_sim_robot_goat_value_text_v1(summary.get('at_dock'))} "
-            f"returned_to_dock={_sim_robot_goat_value_text_v1(summary.get('returned_to_dock'))} "
-            f"final_posture={_sim_robot_goat_value_text_v1(summary.get('final_posture'))}"
-        ),
-    ]
-
-
-def _sim_robot_goat_ack_lines_v1(ack: Any) -> list[str]:
-    """Return a compact acknowledgement block for one SimRobotGoat command."""
-    data: dict[str, Any]
-
-    if isinstance(ack, dict):
-        data = dict(ack)
-    elif hasattr(ack, "to_dict") and callable(getattr(ack, "to_dict")):
-        try:
-            data = dict(ack.to_dict())
-        except Exception:
-            data = {"note": str(ack)}
-    else:
-        data = {"note": str(ack)}
-
-    new_milestones = data.get("new_milestones")
-    if not isinstance(new_milestones, list):
-        new_milestones = []
-
-    return [
-        "[rcos] ack",
-        (
-            f"  command={_sim_robot_goat_value_text_v1(data.get('command'))} "
-            f"ok={_sim_robot_goat_value_text_v1(data.get('ok'))} "
-            f"status={_sim_robot_goat_value_text_v1(data.get('status'))} "
-            f"changed={_sim_robot_goat_value_text_v1(data.get('changed'))} "
-            f"reward={_sim_robot_goat_value_text_v1(data.get('reward'))}"
-        ),
-        f"  note={_sim_robot_goat_value_text_v1(data.get('note'))}",
-        f"  new_milestones={new_milestones}",
-    ]
-
-
-def sim_robot_goat_menu_50_interactive(sim_hal: Optional[SimRobotGoatHAL]) -> SimRobotGoatHAL:
-    """Interactive Stage-1 RCOS sandbox menu for SimRobotGoat.
-
-    Design intent
-    -------------
-    This is intentionally a thin runner wrapper only. All robot/world logic remains
-    inside cca8_rcos.py. The runner is responsible only for terminal I/O, command
-    selection, and compact status rendering.
-    """
-    hal = sim_hal if isinstance(sim_hal, SimRobotGoatHAL) else SimRobotGoatHAL()
-
-    if getattr(getattr(hal, "env", None), "state", None) is None:
-        obs = hal.reset()
-        print("\n[rcos] Initialized SimRobotGoat sandbox.")
-        for line in _sim_robot_goat_obs_lines_v1(obs):
-            print(line)
-        print()
-        for line in _sim_robot_goat_status_lines_v1(hal.status()):
-            print(line)
-        print()
-        print(hal.env.render_ascii())
-
-    while True:
-        print("\nSelection: SimRobotGoat RCOS sandbox")
-        print("  1) Reset episode")
-        print("  2) Show ASCII map")
-        print("  3) Show status / summary")
-        print("  4) Sense current observation")
-        print("  5) Step one Stage-1 command")
-        print("  6) HAL emergency stop")
-        print("  Enter) Return to main menu")
-
-        choice = input("\nChoose [1,2,3,4,5,6, Enter]: ").strip().lower()
-
-        if choice == "":
-            print("[rcos] Returning to main menu.")
-            return hal
-
-        if choice in ("1", "reset", "r"):
-            raw_seed = input("\nReset seed (blank = keep current deterministic stream): ").strip()
-            seed_value: Optional[int] = None
-
-            if raw_seed:
-                try:
-                    seed_value = int(raw_seed)
-                except ValueError:
-                    print("[rcos] Invalid seed. Please enter an integer or leave blank.")
-                    continue
-
-            obs = hal.reset(seed=seed_value)
-            print("\n[rcos] Episode reset.")
-            for line in _sim_robot_goat_obs_lines_v1(obs):
-                print(line)
-            print()
-            for line in _sim_robot_goat_status_lines_v1(hal.status()):
-                print(line)
-            print()
-            print(hal.env.render_ascii())
-            continue
-
-        if choice in ("2", "map", "ascii", "render"):
-            print("\n[rcos] ASCII map")
-            print(hal.env.render_ascii())
-            continue
-
-        if choice in ("3", "status", "summary"):
-            print()
-            for line in _sim_robot_goat_status_lines_v1(hal.status()):
-                print(line)
-            continue
-
-        if choice in ("4", "sense", "obs", "observe"):
-            obs = hal.sense()
-            print()
-            for line in _sim_robot_goat_obs_lines_v1(obs):
-                print(line)
-            continue
-
-        if choice in ("5", "step", "command", "act"):
-            print("\n[rcos] Available Stage-1 commands:")
-            for idx, command_name in enumerate(SIM_ROBOT_GOAT_COMMANDS, start=1):
-                print(f"  {idx}) {command_name}")
-
-            raw_command = input("\nCommand number or name (blank = cancel): ").strip().lower()
-            if not raw_command:
-                print("[rcos] Command step cancelled.")
-                continue
-
-            command = raw_command
-            if raw_command.isdigit():
-                cmd_index = int(raw_command)
-                if 1 <= cmd_index <= len(SIM_ROBOT_GOAT_COMMANDS):
-                    command = SIM_ROBOT_GOAT_COMMANDS[cmd_index - 1]
-                else:
-                    print("[rcos] Invalid command number.")
-                    continue
-
-            ack = hal.act(command)
-            print()
-            for line in _sim_robot_goat_ack_lines_v1(ack):
-                print(line)
-
-            obs = hal.sense()
-            print()
-            for line in _sim_robot_goat_obs_lines_v1(obs):
-                print(line)
-
-            print()
-            for line in _sim_robot_goat_status_lines_v1(hal.status()):
-                print(line)
-
-            print()
-            print(hal.env.render_ascii())
-            continue
-
-        if choice in ("6", "estop", "stop", "emergency"):
-            hal.emergency_stop()
-            print("\n[rcos] HAL emergency stop latched. Use reset to clear it.")
-            for line in _sim_robot_goat_status_lines_v1(hal.status()):
-                print(line)
-            continue
-
-        print(f"[rcos] Unknown selection: {choice!r}")
+_sim_robot_goat_value_text_v1 = cca8_rcos_menu.sim_robot_goat_value_text_v1
+_sim_robot_goat_obs_lines_v1 = cca8_rcos_menu.sim_robot_goat_obs_lines_v1
+_sim_robot_goat_status_lines_v1 = cca8_rcos_menu.sim_robot_goat_status_lines_v1
+_sim_robot_goat_ack_lines_v1 = cca8_rcos_menu.sim_robot_goat_ack_lines_v1
+sim_robot_goat_menu_50_interactive = cca8_rcos_menu.sim_robot_goat_menu_50_interactive
 
 
 # --------------------------------------------------------------------------------------
@@ -7884,635 +7260,13 @@ right place for harder A/B/C stress tests.
 
         #----Menu Selection Code Block------------------------
         elif choice == "40":
-            # Configure episode starting state (drives + age_days)
-            print("Selection: Configure episode starting state (drives + age_days)\n")
-            print("(For development work, it is useful to adjust starting state attributes and see the")
-            print("  effect on program behavior.)\n")
-
-            # Read current values defensively
-            try:
-                current_hunger = float(getattr(drives, "hunger", 0.0))
-            except Exception:
-                current_hunger = 0.0
-            try:
-                current_fatigue = float(getattr(drives, "fatigue", 0.0))
-            except Exception:
-                current_fatigue = 0.0
-            try:
-                current_warmth = float(getattr(drives, "warmth", 0.0))
-            except Exception:
-                current_warmth = 0.0
-            try:
-                current_age = float(getattr(ctx, "age_days", 0.0) or 0.0)
-            except Exception:
-                current_age = 0.0
-
-            # Partial observability knob (obs masking)
-            try:
-                cur_p = float(getattr(ctx, "obs_mask_prob", 0.0) or 0.0)
-            except Exception:
-                cur_p = 0.0
-            try:
-                cur_seed = getattr(ctx, "obs_mask_seed", None)
-            except Exception:
-                cur_seed = None
-            cur_mode = "seeded" if cur_seed is not None else "global"
-            try:
-                cur_verbose = bool(getattr(ctx, "obs_mask_verbose", True))
-            except Exception:
-                cur_verbose = True
-
-            print()
-            print(
-                "Partial observability (obs masking): "
-                f"obs_mask_prob={cur_p:.2f} mode={cur_mode} obs_mask_seed={cur_seed!r} verbose={cur_verbose}"
-            )
-            print("  obs_mask_prob:")
-            print("    0.00 = fully observed (default)")
-            print("    0.10–0.30 = mild partial observability (good starting range)")
-            print("  obs_mask_seed:")
-            print("    None = stochastic masking (uses global RNG)")
-            print("    int  = reproducible masking (seeded per env step; independent of RL randomness)")
-            print("  Protected (never dropped): posture:* , hazard:cliff:* , proximity:shelter:*")
-
-            s = input("Set obs_mask_prob in [0..1] (blank=keep current): ").strip()
-            if s:
-                try:
-                    v = float(s)
-                    v = max(0.0, min(1.0, v))
-                    ctx.obs_mask_prob = v
-                    try:
-                        ctx.obs_mask_last_cfg_sig = None
-                    except Exception:
-                        pass
-                    print(f"(updated) obs_mask_prob={ctx.obs_mask_prob:.2f}")
-                except ValueError:
-                    print("(warn) invalid obs_mask_prob; keeping current value.")
-
-            s = input("Set obs_mask_seed (blank=keep; 'none'/'off'=disable; int=enable): ").strip().lower()
-            if s:
-                if s in ("none", "off", "disable", "disabled"):
-                    ctx.obs_mask_seed = None
-                    try:
-                        ctx.obs_mask_last_cfg_sig = None
-                    except Exception:
-                        pass
-                    print("(updated) obs_mask_seed=None (stochastic/global RNG)")
-                else:
-                    try:
-                        ctx.obs_mask_seed = int(float(s))
-                        try:
-                            ctx.obs_mask_last_cfg_sig = None
-                        except Exception:
-                            pass
-                        print(f"(updated) obs_mask_seed={ctx.obs_mask_seed} (reproducible)")
-                    except ValueError:
-                        print("(warn) invalid obs_mask_seed; keeping current value.")
-
-            rawv = input("obs-mask verbose logs? [Enter=toggle | on | off]: ").strip().lower()
-            if rawv in ("on", "true", "1", "yes", "y"):
-                ctx.obs_mask_verbose = True
-            elif rawv in ("off", "false", "0", "no", "n"):
-                ctx.obs_mask_verbose = False
-            elif rawv == "":
-                ctx.obs_mask_verbose = not bool(getattr(ctx, "obs_mask_verbose", True))
-            print(f"(now) obs_mask_verbose={bool(getattr(ctx, 'obs_mask_verbose', True))}")
-
-            # WM<->Column auto-retrieve enable + mode toggle
-            # WorkingMap↔Column auto-retrieve controls (keyframes)
-            # - merge   = conservative prior (fills missing slot families only; does NOT inject cue:* into belief-now)
-            # - replace = strong prior (clears + rebuilds MapSurface from the snapshot; useful for debug)
-            try:
-                ar_enabled = bool(getattr(ctx, "wm_mapsurface_autoretrieve_enabled", False))
-            except Exception:
-                ar_enabled = False
-            try:
-                ar_mode = str(getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge").strip().lower()
-            except Exception:
-                ar_mode = "merge"
-            if ar_mode == "r":
-                ar_mode = "replace"
-            if ar_mode not in ("merge", "replace"):
-                ar_mode = "merge"
-            print()
-            print(f"WM<->Column auto-retrieve (keyframes): enabled={ar_enabled} mode={ar_mode}")
-            print("  merge   = conservative prior fill (no overwrite; no cue leakage)")
-            print("  replace = rebuild MapSurface from engram snapshot (debug/strong prior)")
-
-            s = input("Set auto-retrieve enabled? [Enter=keep | t=toggle | on | off]: ").strip().lower()
-            if s:
-                if s in ("t", "toggle"):
-                    ar_enabled = not ar_enabled
-                elif s in ("on", "true", "1", "yes", "y"):
-                    ar_enabled = True
-                elif s in ("off", "false", "0", "no", "n", "disable", "disabled"):
-                    ar_enabled = False
-                else:
-                    print("(warn) invalid input; keeping current enabled setting.")
-            try:
-                ctx.wm_mapsurface_autoretrieve_enabled = ar_enabled
-            except Exception:
-                pass
-            s = input("Set auto-retrieve mode? [Enter=keep | t=toggle | merge | replace]: ").strip().lower()
-            if s:
-                if s in ("t", "toggle"):
-                    ar_mode = "replace" if ar_mode == "merge" else "merge"
-                elif s in ("merge", "m"):
-                    ar_mode = "merge"
-                elif s in ("replace", "r"):
-                    ar_mode = "replace"
-                else:
-                    print("(warn) invalid mode; keeping current mode.")
-            try:
-                ctx.wm_mapsurface_autoretrieve_mode = ar_mode
-            except Exception:
-                pass
-            print(f"(now) wm_mapsurface_autoretrieve_enabled={ar_enabled} wm_mapsurface_autoretrieve_mode={ar_mode}")
-
-            print("Current values:")
-            print(f"  hunger   = {current_hunger:.2f}")
-            print(f"  fatigue  = {current_fatigue:.2f}")
-            print(f"  warmth   = {current_warmth:.2f}")
-            print(f"  age_days = {current_age:.2f}")
-            print("\nEnter new values or press Enter to keep the current value.")
-            print("Drives are clamped to the range [0.0, 1.0]. age_days must be ≥ 0.\n")
-
-            def _prompt_float(
-                label: str,
-                cur: float,
-                low: float | None = None,
-                high: float | None = None,
-            ) -> float:
-                """Prompt for a float with optional clamping; blank keeps current."""
-                try:
-                    raw = input(f"{label} (current={cur:.2f}): ").strip()
-                except Exception:
-                    return cur
-                if not raw:
-                    return cur
-                try:
-                    val = float(raw)
-                except Exception:
-                    print(f"  [warn] Could not parse {label!r}; keeping previous value.")
-                    return cur
-                if low is not None and val < low:
-                    print(f"  [warn] {label} below minimum {low:.2f}; clamping.")
-                    val = low
-                if high is not None and val > high:
-                    print(f"  [warn] {label} above maximum {high:.2f}; clamping.")
-                    val = high
-                return val
-
-            # Update drives in-place (these are the same objects used by env-loop)
-            new_hunger = _prompt_float("hunger", current_hunger, 0.0, 1.0)
-            new_fatigue = _prompt_float("fatigue", current_fatigue, 0.0, 1.0)
-            new_warmth = _prompt_float("warmth", current_warmth, 0.0, 1.0)
-
-            try:
-                drives.hunger = new_hunger
-            except Exception:
-                pass
-            try:
-                drives.fatigue = new_fatigue
-            except Exception:
-                pass
-            try:
-                drives.warmth = new_warmth
-            except Exception:
-                pass
-
-            # Update age_days (non-negative float)
-            try:
-                raw_age = input(f"age_days (current={current_age:.2f}): ").strip()
-            except Exception:
-                raw_age = ""
-            if raw_age:
-                try:
-                    val = float(raw_age)
-                    if val < 0.0:
-                        print("  [warn] age_days below 0.0; clamping to 0.0.")
-                        val = 0.0
-                    ctx.age_days = val
-                except Exception:
-                    print("  [warn] Could not parse age_days; keeping previous value.")
-            else:
-                # Ensure ctx.age_days is at least present
-                try:
-                    ctx.age_days = current_age
-                except Exception:
-                    pass
-
-            print("\n[config] Updated episode starting state:")
-            print(
-                f"  hunger={getattr(drives, 'hunger', new_hunger):.2f} "
-                f"fatigue={getattr(drives, 'fatigue', new_fatigue):.2f} "
-                f"warmth={getattr(drives, 'warmth', new_warmth):.2f} "
-                f"age_days={getattr(ctx, 'age_days', current_age):.2f}"
-            )
+            cca8_session_menu.configure_episode_starting_state_v1(drives, ctx)
             loop_helper(args.autosave, world, drives, ctx)
-
 
         #----Menu Selection Code Block------------------------
         elif choice == "41":
-            print("Menu 41 retired. Memory pipeline is hardwired (Phase VII daily-driver).")
-            # If later we decide for this menu selection to be interactive again, we should also update the
-            #   unreachable “Current settings / presets” prints so they display zone/pred_err/milestone/emotion
-            #   keyframe knobs (not just stage).
-            print("""[guide] This menu is the main "knobs and buttons" reference card for CCA8 experiments.
-
-NOTE (current runner behavior)
-------------------------------
-Menu 41 is currently "reference-only":
-- The Phase VII daily-driver memory pipeline is hardwired at startup (see apply_hardwired_profile_phase7).
-- This menu prints a cheat sheet and returns to the main menu (it does not run an interactive edit flow right now).
-
-Mental model you should have to understand these settings
----------------------------------------------------------
-
-At runtime it helps to keep FOUR memory structures in mind:
-
-1) BodyMap (ctx.body_world)
-   - Tiny, safety-critical belief-now register (posture, mom distance, nipple/milk, shelter/cliff).
-   - Updated on every EnvObservation tick; read by gates and tie-break logic.
-
-2) WorkingMap (ctx.working_world)
-   - Short-term working memory with three layers:
-     - MapSurface (WM_ROOT + entity nodes): stable, overwrite-by-slot-family belief table.
-     - Scratch (WM_SCRATCH): policy action chains + predicted postconditions (hypotheses).
-     - Creative (WM_CREATIVE): counterfactual rollouts (future; inspect-only scaffolding today).
-   - By default this is NOT a dense tick-log: MapSurface updates entity nodes in place.
-     (Optional: ctx.working_trace=True appends a legacy per-tick trace for debugging.)
-
-3) WorldGraph (world)
-   - Durable long-term episode index that persists (autosave / save session).
-   - Receives EnvObservation injection (subject to the "long-term env obs" knobs).
-   - Receives policy writes unless Phase VII working_first is enabled (then policies execute into WorkingMap).
-
-4) Columns / Engrams (cca8_column.mem)
-   - Heavy payload store (append-only / immutable records).
-   - WorldGraph/WorkingMap bindings hold only pointers (binding.engrams["column01"]["id"]=...).
-
-Fixed dataflow (env → agent boundary)
--------------------------------------
-EnvObservation → BodyMap update (always) → WorkingMap mirror (if enabled) → WorldGraph injection (if enabled)
-
-Keyframes are decided at the env→memory boundary hook (inject_obs_into_world) BEFORE policy selection.
-
-Cue-slot de-duplication (long-term)
------------------------------------
-In changes-mode we can de-duplicate repeated cue tokens:
-- rising edge (absent→present) writes a cue:* binding
-- held cues do not create new bindings; they bump prominence on the last cue binding
-- if a cue disappears and later reappears, a new cue:* binding is written again
-
-Long-term EnvObservation → WorldGraph injection
------------------------------------------------
-longterm_obs_enabled (bool)
-  ON  : write env predicates/cues to WorldGraph (subject to mode settings)
-  OFF : skip long-term WorldGraph writes (BodyMap still updates; WorkingMap still mirrors if enabled)
-
-longterm_obs_mode ("snapshot" vs "changes")
-  snapshot : write every observed predicate each tick (dense; old behavior)
-  changes  : treat predicates as state-slots (posture, proximity:mom, hazard:cliff, ...)
-             write only when a slot changes (plus optional re-asserts/keyframes)
-
-longterm_obs_reassert_steps (int)
-  In changes mode: re-emit an unchanged slot after N controller steps (a "re-observation" cadence).
-
-longterm_obs_dedup_cues (bool)
-  In changes mode: write cue:* only on rising-edge (absent→present); held cues bump prominence instead.
-
-longterm_obs_verbose (bool)
-  In changes mode: print verbose per-slot reuse lines when slots are unchanged (can be noisy).
-
-Keyframes (episode boundaries)
-------------------------------
-In changes mode we maintain per-slot caches (ctx.lt_obs_slots and ctx.lt_obs_cues).
-A keyframe clears those caches so the current state is written again as a clean boundary snapshot.
-
-Keyframe triggers (Phase IX; evaluated ONLY at the env→memory boundary hook):
-  - env_reset: time_since_birth <= 0.0
-  - stage_change: scenario_stage changed (longterm_obs_keyframe_on_stage_change)
-  - zone_change: coarse safety zone flip (longterm_obs_keyframe_on_zone_change)
-  - periodic: every N controller steps (longterm_obs_keyframe_period_steps)
-  - surprise: pred_err v0 sustained mismatch (longterm_obs_keyframe_on_pred_err + min_streak)
-  - milestones: env_meta milestones and/or derived slot transitions (longterm_obs_keyframe_on_milestone)
-  - emotion/arousal: env_meta emotion/affect (rising-edge into "high") with threshold
-                     (longterm_obs_keyframe_on_emotion + emotion_threshold)
-
-Keyframe semantics (what "happens at a boundary"):
-  - clear long-term slot caches (so the next observation writes as "first" for each slot)
-  - (if Phase VII WM<->Column pipeline is enabled) boundary store/retrieve/apply can run:
-        store snapshot → optional retrieve candidates → apply priors (replace or seed/merge)
-    Reserved future: post-execution write-back / reconsolidation slot.
-
-Manual keyframe (without env.reset):
-  - clearing ctx.lt_obs_slots (and ctx.lt_obs_cues) forces the next env observation to be treated as "first".
-
-Phase VII memory pipeline knobs (WorkingMap-first + run compression)
---------------------------------------------------------------------
-phase7_working_first (bool)
-  OFF: policies write into WorldGraph (action/preds accumulate there)
-  ON : policies execute into WorkingMap.Scratch; WorldGraph stays sparse (env keyframes + pointers + runs)
-
-phase7_run_compress (bool)
-  If ON: long-term WorldGraph action logging collapses repeated identical policies into one "run" node:
-    state → action(run_len=3) → state
-  A boundary (stage/posture/nipple/zone signature change) or policy change closes the run.
-
-phase7_move_longterm_now_to_env (bool)
-  OFF: long-term NOW moves only when new bindings are written (or at keyframes)
-  ON : long-term NOW is actively moved to the current env state binding each step (debug-friendly)
-
-RL policy selection (epsilon-greedy among triggered candidates)
---------------------------------------------------------------
-rl_enabled (bool)
-  OFF: deterministic winner: deficit → non-drive tie-break → stable order
-  ON : epsilon-greedy: explore with probability epsilon; otherwise exploit:
-       deficit near-tie band (rl_delta) → non-drive tie-break → learned q → stable order
-
-rl_epsilon (float|None)
-  Exploration probability in [0..1]. If None, exploration is disabled (epsilon=0).
-
-rl_delta (float)
-  Defines the deficit near-tie band within which q is allowed to decide among candidates.
-
-(For full examples and the authoritative contract, see README.md: keyframes, WM<->Column pipeline, and cognitive cycles.)
-""")
-
-            # Control panel: RL policy selection + WorkingMap + long-term WorldGraph obs injection
-            print("Selection: Control Panel (RL policy selection + memory knobs)\n")
-            #print("""[guide] This menu is the main "knobs and buttons" control panel for CCA8 experiments.
-
-
-
+            cca8_session_menu.show_retired_memory_pipeline_guide_v1()
             loop_helper(args.autosave, world, drives, ctx)
-            continue
-            #pylint: disable=unreachable
-
-            # Ensure WorkingMap exists
-            if getattr(ctx, "working_world", None) is None:
-                ctx.working_world = init_working_world()
-            ww = ctx.working_world
-
-            # --- Current RL settings ---
-            enabled_now = bool(getattr(ctx, "rl_enabled", False))
-            eps_now = getattr(ctx, "rl_epsilon", None)
-            try:
-                eff_eps = float(eps_now) if eps_now is not None else 0.0
-            except Exception:
-                eff_eps = 0.0
-            try:
-                delta_now = float(getattr(ctx, "rl_delta", 0.0))
-            except Exception:
-                delta_now = 0.0
-            delta_now = max(delta_now, 0.0)
-            explore_steps = int(getattr(ctx, "rl_explore_steps", 0) or 0)
-            exploit_steps = int(getattr(ctx, "rl_exploit_steps", 0) or 0)
-
-            # --- Current memory settings ---
-            world_mode = world.get_memory_mode() if hasattr(world, "get_memory_mode") else "episodic"
-            wm_enabled = bool(getattr(ctx, "working_enabled", False))
-            wm_verbose = bool(getattr(ctx, "working_verbose", False))
-            wm_max = int(getattr(ctx, "working_max_bindings", 0) or 0)
-            wm_count = len(getattr(ww, "_bindings", {}))  # pylint: disable=protected-access
-
-            lt_enabled = bool(getattr(ctx, "longterm_obs_enabled", True))
-            lt_mode = str(getattr(ctx, "longterm_obs_mode", "snapshot"))
-            lt_reassert = int(getattr(ctx, "longterm_obs_reassert_steps", 0) or 0)
-            lt_keyframe = bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True))
-            lt_verbose = bool(getattr(ctx, "longterm_obs_verbose", False))
-
-            print("Current settings:")
-            print(f"  phase7 s/w dev't: working_first={bool(getattr(ctx,'phase7_working_first',False))} run_compress={bool(getattr(ctx,'phase7_run_compress',False))} run_verbose={bool(getattr(ctx,'phase7_run_verbose',False))} move_NOW_to_env={bool(getattr(ctx,'phase7_move_longterm_now_to_env',False))}")
-            print(f"  RL: enabled={enabled_now} epsilon={eps_now!r} effective={eff_eps:.3f} delta={delta_now:.3f} (explore={explore_steps}, exploit={exploit_steps})")
-            print(f"  WorkingMap: enabled={wm_enabled} verbose={wm_verbose} max_bindings={wm_max} bindings={wm_count}")
-            print(f"  WorldGraph: memory_mode={world_mode}")
-            print(f"  Long-term env obs: enabled={lt_enabled} mode={lt_mode} reassert_steps={lt_reassert} keyframe_on_stage={lt_keyframe} verbose={lt_verbose}")
-            print()
-
-            # Quick exit if user just wants to view status
-            edit = input("Adjust settings now? [y/N]: ").strip().lower()
-            if edit not in ("y", "yes"):
-                loop_helper(args.autosave, world, drives, ctx)
-                continue
-
-            # ---- Presets (quick tuning of long-term env obs) ----
-            print("\nPresets (long-term env obs):")
-            print("  bio    = changes + keyframes + reassert=25 (periodic re-observation)")
-            print("  sparse = changes + keyframes + reassert=0  (minimal long-term growth)")
-            print("  debug  = snapshot + verbose (write every env pred each tick)")
-            preset = input("Preset? [Enter=skip | bio | sparse | debug]: ").strip().lower()
-            if preset in ("bio", "biological"):
-                ctx.longterm_obs_enabled = True
-                ctx.longterm_obs_mode = "changes"
-                ctx.longterm_obs_reassert_steps = 25
-                ctx.longterm_obs_keyframe_on_stage_change = False
-                ctx.longterm_obs_verbose = False
-            elif preset in ("sparse", "minimal"):
-                ctx.longterm_obs_enabled = True
-                ctx.longterm_obs_mode = "changes"
-                ctx.longterm_obs_reassert_steps = 0
-                ctx.longterm_obs_keyframe_on_stage_change = False
-                ctx.longterm_obs_verbose = False
-            elif preset in ("debug", "trace"):
-                ctx.longterm_obs_enabled = True
-                ctx.longterm_obs_mode = "snapshot"
-                ctx.longterm_obs_reassert_steps = 0
-                ctx.longterm_obs_keyframe_on_stage_change = True
-                ctx.longterm_obs_verbose = True
-
-            # ---- RL controls ----
-            print("\nRL policy selection:")
-            raw = input("RL enabled? [Enter=toggle | on | off]: ").strip().lower()
-            if raw in ("on", "true", "1", "yes", "y"):
-                enabled_new = True
-            elif raw in ("off", "false", "0", "no", "n"):
-                enabled_new = False
-            elif raw == "":
-                enabled_new = not enabled_now
-            else:
-                enabled_new = enabled_now
-
-            eps_new = eps_now
-            if enabled_new:
-                raw_eps = input(f"rl_epsilon (0..1 or 'none'; current={eps_now!r}, effective={eff_eps:.3f}; Enter=keep): ").strip().lower()
-                if raw_eps == "":
-                    eps_new = eps_now
-                elif raw_eps in ("none", "null"):
-                    eps_new = None
-                else:
-                    try:
-                        v = float(raw_eps)
-                        v = max(v, 0.0)
-                        v = min(v, 1.0)
-                        eps_new = v
-                    except ValueError:
-                        eps_new = eps_now
-
-                raw_delta = input(f"rl_delta (>=0; current={delta_now:.3f}; Enter=keep): ").strip().lower()
-                if raw_delta != "":
-                    try:
-                        v = float(raw_delta)
-                        v = max(v, 0.0)
-                        ctx.rl_delta = v
-                    except ValueError:
-                        pass
-
-            ctx.rl_enabled = enabled_new
-            ctx.rl_epsilon = eps_new
-
-            # ---- WorkingMap controls ----
-            print("\nWorkingMap (short-term raw trace):")
-            raw = input("WorkingMap capture? [Enter=toggle | on | off]: ").strip().lower()
-            if raw in ("on", "true", "1", "yes", "y"):
-                ctx.working_enabled = True
-            elif raw in ("off", "false", "0", "no", "n"):
-                ctx.working_enabled = False
-            elif raw == "":
-                ctx.working_enabled = not bool(getattr(ctx, "working_enabled", False))
-
-            rawv = input("WorkingMap verbose? [Enter=toggle | on | off]: ").strip().lower()
-            if rawv in ("on", "true", "1", "yes", "y"):
-                ctx.working_verbose = True
-            elif rawv in ("off", "false", "0", "no", "n"):
-                ctx.working_verbose = False
-            elif rawv == "":
-                ctx.working_verbose = not bool(getattr(ctx, "working_verbose", False))
-
-            rawm = input(f"WorkingMap max_bindings (current={wm_max}; Enter=keep): ").strip()
-            if rawm:
-                try:
-                    ctx.working_max_bindings = max(0, int(float(rawm)))
-                except ValueError:
-                    print("  (ignored: could not parse max_bindings)")
-
-             # ---- phase7 s/w devp't scaffolding memory pipeline knobs ----
-            print("\nphase7 s/w devp't memory pipeline (experimental):")
-            raw = input("working_first (execute policies in WorkingMap)? [Enter=toggle | on | off]: ").strip().lower()
-            if raw in ("on", "true", "1", "yes", "y"):
-                ctx.phase7_working_first = True
-            elif raw in ("off", "false", "0", "no", "n"):
-                ctx.phase7_working_first = False
-            elif raw == "":
-                ctx.phase7_working_first = not bool(getattr(ctx, "phase7_working_first", False))
-
-            raw = input("run_compress (compress repeated policy actions in long-term WorldGraph)? [Enter=toggle | on | off]: ").strip().lower()
-            if raw in ("on", "true", "1", "yes", "y"):
-                ctx.phase7_run_compress = True
-                # If we are compressing actions, it's usually because we want long-term WorldGraph sparse.
-                ctx.phase7_working_first = True
-            elif raw in ("off", "false", "0", "no", "n"):
-                ctx.phase7_run_compress = False
-            elif raw == "":
-                ctx.phase7_run_compress = not bool(getattr(ctx, "phase7_run_compress", False))
-                if bool(getattr(ctx, "phase7_run_compress", False)):
-                    ctx.phase7_working_first = True
-
-            raw = input("run_verbose (print run-compression debug lines)? [Enter=toggle | on | off]: ").strip().lower()
-            if raw in ("on", "true", "1", "yes", "y"):
-                ctx.phase7_run_verbose = True
-            elif raw in ("off", "false", "0", "no", "n"):
-                ctx.phase7_run_verbose = False
-            elif raw == "":
-                ctx.phase7_run_verbose = not bool(getattr(ctx, "phase7_run_verbose", False))
-
-            raw = input("move_longterm_NOW_to_env (move long-term NOW to env state each step)? [Enter=toggle | on | off]: ").strip().lower()
-            if raw in ("on", "true", "1", "yes", "y"):
-                ctx.phase7_move_longterm_now_to_env = True
-            elif raw in ("off", "false", "0", "no", "n"):
-                ctx.phase7_move_longterm_now_to_env = False
-            elif raw == "":
-                ctx.phase7_move_longterm_now_to_env = not bool(getattr(ctx, "phase7_move_longterm_now_to_env", False))
-
-            # ---- WorldGraph memory_mode ----
-            if hasattr(world, "set_memory_mode") and hasattr(world, "get_memory_mode"):
-                print("\nWorldGraph memory_mode:")
-                print("  episodic = every add creates a new binding (dense trace)")
-                print("  semantic = reuse identical pred/cue bindings (less clutter; experimental)")
-                raw_mode = input(f"memory_mode (current={world.get_memory_mode()}; Enter=keep): ").strip().lower()
-                if raw_mode in ("episodic", "semantic"):
-                    world.set_memory_mode(raw_mode)
-
-            # ---- Long-term env observation injection knobs ----
-            print("\nLong-term EnvObservation → WorldGraph injection:")
-            raw_lt = input("Enabled? [Enter=toggle | on | off]: ").strip().lower()
-            if raw_lt in ("on", "true", "1", "yes", "y"):
-                ctx.longterm_obs_enabled = True
-            elif raw_lt in ("off", "false", "0", "no", "n"):
-                ctx.longterm_obs_enabled = False
-            elif raw_lt == "":
-                ctx.longterm_obs_enabled = not bool(getattr(ctx, "longterm_obs_enabled", True))
-
-            print("Mode options:")
-            print("  changes  = write only when a state slot changes (dedup env preds)")
-            print("  snapshot = write every observed pred each tick (old behavior)")
-            raw_ltm = input(f"mode (current={getattr(ctx,'longterm_obs_mode','snapshot')}; Enter=keep): ").strip().lower()
-            if raw_ltm in ("changes", "snapshot"):
-                ctx.longterm_obs_mode = raw_ltm
-
-            raw_rs = input(f"reassert_steps (current={getattr(ctx,'longterm_obs_reassert_steps',0)}; Enter=keep): ").strip()
-            if raw_rs:
-                try:
-                    ctx.longterm_obs_reassert_steps = max(0, int(float(raw_rs)))
-                except ValueError:
-                    print("  (ignored: could not parse reassert steps)")
-
-            raw_kf = input("keyframe_on_stage_change? [Enter=toggle | on | off]: ").strip().lower()
-            if raw_kf in ("on", "true", "1", "yes", "y"):
-                ctx.longterm_obs_keyframe_on_stage_change = False
-            elif raw_kf in ("off", "false", "0", "no", "n"):
-                ctx.longterm_obs_keyframe_on_stage_change = False
-            elif raw_kf == "":
-                #ctx.longterm_obs_keyframe_on_stage_change = not bool(getattr(ctx, "longterm_obs_keyframe_on_stage_change", True))
-                ctx.longterm_obs_keyframe_on_stage_change = False
-
-            raw_lv = input("longterm_obs_verbose (show reuse lines)? [Enter=toggle | on | off]: ").strip().lower()
-            if raw_lv in ("on", "true", "1", "yes", "y"):
-                ctx.longterm_obs_verbose = True
-            elif raw_lv in ("off", "false", "0", "no", "n"):
-                ctx.longterm_obs_verbose = False
-            elif raw_lv == "":
-                ctx.longterm_obs_verbose = not bool(getattr(ctx, "longterm_obs_verbose", False))
-
-            # ---- Optional clears ----
-            rawc = input("\nClear WorkingMap now? [y/N]: ").strip().lower()
-            if rawc in ("y", "yes"):
-                reset_working_world(ctx)
-
-            raw_slot = input("Clear long-term slot cache now? (next env obs treated as 'first') [y/N]: ").strip().lower()
-            if raw_slot in ("y", "yes"):
-                try:
-                    ctx.lt_obs_slots.clear()
-                    ctx.lt_obs_last_stage = None
-                except Exception:
-                    pass
-
-            # Re-prune after changes
-            _prune_working_world(ctx)
-
-            # ---- Print updated settings ----
-            eps_now2 = getattr(ctx, "rl_epsilon", None)
-            try:
-                eff_eps2 = float(eps_now2) if eps_now2 is not None else 0.0
-            except Exception:
-                eff_eps2 = 0.0
-            try:
-                delta_now2 = float(getattr(ctx, "rl_delta", 0.0))
-            except Exception:
-                delta_now2 = 0.0
-
-            world_mode2 = world.get_memory_mode() if hasattr(world, "get_memory_mode") else "episodic"
-            ww_count2 = len(getattr(ctx.working_world, "_bindings", {}))  # pylint: disable=protected-access
-
-            print("\nUpdated settings:")
-            print(f"  RL: enabled={bool(getattr(ctx,'rl_enabled',False))} epsilon={getattr(ctx,'rl_epsilon',None)!r} effective={eff_eps2:.3f} delta={max(0.0, float(delta_now2)):.3f}")
-            print(f"  WorkingMap: enabled={bool(getattr(ctx,'working_enabled',False))} verbose={bool(getattr(ctx,'working_verbose',False))} max_bindings={int(getattr(ctx,'working_max_bindings',0) or 0)} bindings={ww_count2}")
-            print(f"  WorldGraph: memory_mode={world_mode2}")
-            print(f"  Long-term env obs: enabled={bool(getattr(ctx,'longterm_obs_enabled',True))} mode={getattr(ctx,'longterm_obs_mode','snapshot')} reassert_steps={int(getattr(ctx,'longterm_obs_reassert_steps',0) or 0)} keyframe_on_stage={bool(getattr(ctx,'longterm_obs_keyframe_on_stage_change',True))} verbose={bool(getattr(ctx,'longterm_obs_verbose',False))}")
-
-            loop_helper(args.autosave, world, drives, ctx)
-
 
         #----Menu Selection Code Block------------------------
         elif choice == "42":

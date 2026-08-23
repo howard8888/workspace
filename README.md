@@ -4354,8 +4354,8 @@ The intended dependency direction is:
         -> environment / HAL
 
 `cca8_run.py` remains the executable composition root and compatibility facade. Extracted runtime modules must not import the runner.
-The runner constructs the session, installs hook bundles, coordinates cycle order, hosts menus, wires persistence and experiments, and
-preserves historical imports and monkeypatch seams.
+The runner constructs the session, installs hook bundles, coordinates cycle order, dispatches focused menu modules, wires persistence
+and experiments, and preserves historical imports and monkeypatch seams.
 
 ## Modules and current ownership
 
@@ -4364,7 +4364,7 @@ The canonical component list used by `versions_dict()`, `versions_text()`, and `
 
 | Module | Current responsibility and architecture status |
 |---|---|
-| `cca8_run.py` | Entry point, session construction, high-level cycle orchestration, menu dispatch, persistence wiring, callback installation, and compatibility facade |
+| `cca8_run.py` | Entry point, session construction, high-level cycle orchestration, focused-menu dispatch, persistence wiring, callback installation, and compatibility facade |
 | `cca8_context.py` | `Ctx`, experiment configuration, counters, flags, handles, histories, and cross-cycle registers; useful mutable contract but a high-risk hidden-authority surface |
 | `cca8_env.py` | `EnvState`, `EnvObservation`, storyboard dynamics, `PerceptionAdapter`, and the explicit `reset` / `observe` / `apply_action` boundary (`step` remains a compatibility alias); supplies interpreted evidence, not agent belief |
 | `cca8_observation_runtime.py` | Masking, BodyMap updates, Sequential/Error handoffs, current legacy MapSurface/SurfaceGrid/NavPatch injection, keyframes, sparse graph writes, and cycle records |
@@ -4382,18 +4382,21 @@ The canonical component list used by `versions_dict()`, `versions_text()`, and `
 | `cca8_world_graph.py` | Sparse episode/retrieval/index graph, bindings, anchors, BFS/Dijkstra, persistence, and Column pointers; not complete world model or current truth |
 | `cca8_column.py` | Heavy durable engram/map payload store; no direct acceptance authority |
 | `cca8_features.py` | Typed feature payloads, fact metadata, and explicit cognitive-cycle/controller/autonomic/developmental provenance linkage |
-| `cca8_cli.py` | CLI parsing and presentation support |
+| `cca8_cli.py` | CLI parsing, startup/main-menu presentation, alias/number routing, and the small Main Menu #1 watch-mode chooser |
 | `cca8_profiles.py` | Profile selection, developmental narratives, defaults, and bounded demonstrations |
-| `cca8_guidance.py` | User-facing explanations and tutorial support |
+| `cca8_guidance.py` | User-facing architecture explanations, Main Menu #3 documentation flow, technical primer, and new-user tutorial support |
 | `cca8_teaching.py` | Verbose cycle annotations used by Main Menu #1 option 1 |
-| `cca8_cognitive_scope.py` | DP00–DP18 Cognitive Storage Oscilloscope: bounded end-of-cycle snapshots, compact/full/drill-down views, and no cognitive or policy authority |
-| `cca8_cognitive_injection.py` | First bounded signal-injection controller: one source-stamped synthetic `EnvObservation` at DP01, one ordinary cognitive cycle in a disposable sandbox, correlated DP00–DP18 trace, and explicit shared-state rollback |
+| `cca8_cognitive_scope.py` | DP00–DP18 Cognitive Storage Oscilloscope collectors and renderers: bounded end-of-cycle snapshots, compact/full/drill-down views, and no cognitive or policy authority |
+| `cca8_cognitive_scope_menu.py` | Main Menu #2 terminal controller: retained/live trace navigation, system/store views, DP drill-down, Pyvis routing, trace clearing, and bounded sandbox-injection presentation |
+| `cca8_cognitive_injection.py` | First bounded signal-injection engine: one source-stamped synthetic `EnvObservation` at DP01, one ordinary cognitive cycle in a disposable sandbox, correlated DP00–DP18 trace, and explicit shared-state rollback |
 | `cca8_preflight.py` | Test, architecture-probe, host/hardware-readiness, and system-fitness validation wall |
 | `cca8_experiments.py` | Experiment definitions, stressors, conditions, scoring, statistics, JSON/JSONL output, and Menu 49 |
 | `cca8_openai.py` | Optional bounded OpenAI adviser and structured request/response support |
 | `cca8_rcos.py` | SimRobotGoat/RCOS mission-state, command vocabulary, supervision, and HAL-like sandbox seam |
+| `cca8_rcos_menu.py` | Thin Menu 50 terminal wrapper and compact observation/status/acknowledgement rendering for SimRobotGoat |
 | `cca8_rcos_experiments.py` | RCOS long-horizon experiments, perturbations, repeats, and ablations |
 | `cca8_state_integrity.py` | Long-horizon state-integrity metrics, guards, and repair research support |
+| `cca8_session_menu.py` | Menu 40 starting-state/observation-mask configuration and Menu 41 reference-only memory/RL guidance; no policy execution |
 | `cca8_test_fixtures.py` | Deterministic fixtures for tests, preflight, and demonstrations |
 
 Publication and validation adjuncts remain part of the authoritative repository and should not be casually modified during core architecture
@@ -4739,12 +4742,15 @@ multi-domain inspection panel. Historical direct numbers remain accepted for com
 
 ## Cognitive Storage Oscilloscope and System Inspector
 
-`cca8_cognitive_scope.py` implements a measurement-only trace across the current cognitive cycle. It samples stable runtime registers at
-the end of a cycle and stores bounded immutable snapshots in a ring buffer (default capacity 128). The ordinary retained trace is outside
-cognition: it does not write observed evidence, change WNM authority, select policies, alter memory, or control output. **Live-session
-signal injection remains disabled.**
+`cca8_cognitive_scope.py` implements the measurement-only DP00–DP18 trace and its renderers. It samples stable runtime registers at
+the end of a cycle and stores bounded immutable snapshots in a ring buffer (default capacity 128).
+`cca8_cognitive_scope_menu.py` owns Main Menu #2 prompting, retained/live trace navigation, system/store subpanels, drill-down,
+visualization routing, trace clearing, and injection presentation. The ordinary retained trace is outside cognition: it does not write
+observed evidence, change WNM authority, select policies, alter memory, or control output. **Live-session signal injection remains
+disabled.**
 
-`cca8_cognitive_injection.py` supplies a separate first injection slice. Main Menu #2 option 13 creates one source-stamped synthetic
+`cca8_cognitive_injection.py` supplies the separate injection engine, while `cca8_cognitive_scope_menu.py` owns its terminal flow.
+Main Menu #2 option 13 creates one source-stamped synthetic
 `EnvObservation` at DP01 and runs exactly one ordinary cognitive cycle in a newly constructed disposable sandbox. The current preset is
 fallen-near-cliff with Mom and shelter far. Its purpose is to demonstrate the measurement/control seam and let the technician follow a
 known packet through DP01–DP18. It is not an arbitrary-port editor, does not accept live session objects, does not inject below the motor
@@ -9645,8 +9651,12 @@ constructs the session, installs callbacks between extracted modules, handles pe
 
 > **Module-ownership note:** implementations historically located in the runner now live in modules such as `cca8_context.py`,
 > `cca8_cli.py`, `cca8_preflight.py`, `cca8_reporting.py`, `cca8_observation_runtime.py`, `cca8_policy_runtime.py`,
-> `cca8_working_memory.py`, `cca8_profiles.py`, `cca8_guidance.py`, and `cca8_cognitive_scope.py`. The runner may re-export compatibility
+> `cca8_working_memory.py`, `cca8_profiles.py`, `cca8_guidance.py`, `cca8_cognitive_scope.py`,
+> `cca8_cognitive_scope_menu.py`, `cca8_session_menu.py`, and `cca8_rcos_menu.py`. The runner may re-export compatibility
 > names, but physical ownership should be checked with `python cca8_run.py --about` and the current source.
+
+A focused regression test keeps `cca8_run.py` below 8,000 physical lines. New menu presentation or subsystem-specific interaction should
+normally be added to its owning module and connected through a small runner callback bridge rather than expanding the composition root.
 
 ## Current command flow
 
@@ -9727,7 +9737,8 @@ exit_code = main(["--about"])
 ```
 
 WorldGraph planning belongs to `cca8_world_graph.py`; policy arbitration belongs to `cca8_policy_runtime.py`; low-level primitive
-execution and drives belong to `cca8_controller.py`; DP00–DP18 inspection belongs to `cca8_cognitive_scope.py`.
+execution and drives belong to `cca8_controller.py`; DP00–DP18 collection/rendering belongs to `cca8_cognitive_scope.py`;
+Main Menu #2 interaction belongs to `cca8_cognitive_scope_menu.py`.
 
 ## HAL boundary
 
@@ -9744,7 +9755,10 @@ hardware package is installed.
 - `cca8_observation_runtime.py` — current observation ingestion and working-state updates;
 - `cca8_policy_runtime.py` — applicability, safety, authority, and arbitration;
 - `cca8_reporting.py` — cycle and snapshot rendering;
-- `cca8_cognitive_scope.py` — read-only DP00–DP18 end-of-cycle inspection.
+- `cca8_cognitive_scope.py` — read-only DP00–DP18 collection and rendering;
+- `cca8_cognitive_scope_menu.py` — Main Menu #2 oscilloscope/system-inspector interaction;
+- `cca8_session_menu.py` — episode-start configuration and retired memory-control guidance;
+- `cca8_rcos_menu.py` — thin SimRobotGoat Menu 50 presentation.
 
 # Tutorial on Controller Module Technical Features
 

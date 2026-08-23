@@ -5,7 +5,7 @@
 Purpose
 -------
 This module implements the first diagnostic-instrumentation slice for Main
-Menu item 3.  It samples the architectural service points defined by
+Menu item 2.  It samples the architectural service points defined by
 ``CCA8 High-Level Architecture v03`` and stores compact, JSON-safe snapshots
 in a bounded ring buffer on :class:`cca8_context.Ctx`.
 
@@ -80,7 +80,7 @@ from cca8_controller import (
     skills_to_dict,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     "COGNITIVE_SCOPE_PORTS_V1",

@@ -151,3 +151,34 @@ def test_scope_submenu_routes_dp01_sandbox_injection(
     assert "SANDBOX SIGNAL INJECTION" in output
     assert "DP01_INJECTION_SENTINEL" in output
     assert "14) Clear retained oscilloscope snapshots" in output
+
+
+def test_scope_submenu_preserves_runner_legacy_snapshot_seam(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Menu #2 option 11 should still resolve the runner-visible snapshot helper."""
+    responses = iter(("11", ""))
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
+    monkeypatch.setattr(
+        cca8_run.cca8_cognitive_scope,
+        "cognitive_scope_trace_summary_v1",
+        lambda _ctx: {"retained_count": 0, "capacity": 128, "total_capture_count": 0},
+    )
+    monkeypatch.setattr(
+        cca8_run,
+        "snapshot_text",
+        lambda _world, **_kwargs: "LEGACY_SNAPSHOT_SENTINEL",
+    )
+
+    cca8_run._cognitive_scope_menu_v1(  # pylint: disable=protected-access
+        object(),
+        object(),
+        object(),
+        cca8_run.Ctx(),
+        object(),
+    )
+
+    output = capsys.readouterr().out
+    assert "LEGACY DETAILED SNAPSHOT" in output
+    assert "LEGACY_SNAPSHOT_SENTINEL" in output

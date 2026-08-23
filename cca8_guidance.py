@@ -25,21 +25,42 @@ from __future__ import annotations
 # pylint: disable=too-many-statements
 
 import json
+import os
+import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from cca8_features import time_attrs_from_ctx
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
+    "ArchitectureMenuRuntimeV1",
     "TutorialRuntime",
+    "architecture_explanation_menu_v1",
     "architecture_overview_text_v1",
     "print_architecture_overview_v1",
+    "open_readme_compendium_v1",
     "print_tagging_and_policies_help",
+    "readme_compendium_path_v1",
     "run_new_user_tour",
     "__version__",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class ArchitectureMenuRuntimeV1:  # pylint: disable=too-few-public-methods
+    """Runner-owned presentation callbacks for Main Menu #3.
+
+    The callback bundle avoids importing :mod:`cca8_run` and preserves the
+    runner's historical monkeypatch seams for the overview and technical
+    primer. ``readme_path`` is resolved beside the runner before the menu opens.
+    """
+
+    overview_printer: Callable[[Any], None]
+    tagging_printer: Callable[[Any], None]
+    readme_path: str
+    divider: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +72,75 @@ class TutorialRuntime:  # pylint: disable=too-few-public-methods,too-many-instan
     engrams_on_binding: Callable[[Any, str], list[str]]
     binding_engrams: Callable[[Any, str], Any]
     action_center_step: Callable[[Any, Any, Any], Any]
+
+
+def readme_compendium_path_v1(runner_file: str) -> str:
+    """Return the README path colocated with the supplied runner file."""
+    return os.path.join(os.path.dirname(os.path.abspath(runner_file)), "README.md")
+
+
+def open_readme_compendium_v1(path: str) -> None:
+    """Open the README/compendium in the platform default viewer when possible."""
+    print(f"System documentation: {path}")
+    print()
+    if not os.path.exists(path):
+        print(f"README.md was not found next to cca8_run.py at: {path}")
+        print("Please restore/copy README.md beside cca8_run.py and try again.")
+        return
+
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            os.system(f'open "{path}"')
+        else:
+            os.system(f'xdg-open "{path}"')
+        print("Opened the README.md/compendium in your default viewer.")
+        print()
+        print(
+            "The large README may take a few seconds to load. If no viewer opens, please open the file manually "
+            "in your editor or Markdown viewer."
+        )
+    except Exception as exc:
+        print(f"[warn] Could not open automatically: {exc}")
+        print("Please open the file manually in your editor.")
+
+
+def architecture_explanation_menu_v1(
+    policy_rt: Any,
+    runtime: ArchitectureMenuRuntimeV1,
+) -> None:
+    """Display architecture explanation, documentation, and primer choices."""
+    print("Selection: Explanation of the Architecture\n")
+    print("Architecture explanation options:")
+    print("  1) Concise map-first architecture overview")
+    print("  2) Open the full README/compendium system documentation")
+    print("  3) Technical primer: bindings, tags, edges, drives, and primitives")
+    print("  [Enter] Return to Main Menu")
+
+    try:
+        pick = input("Choose: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    except Exception:
+        pick = ""
+
+    if pick == "1":
+        print(runtime.divider)
+        print()
+        runtime.overview_printer(policy_rt)
+        return
+    if pick == "2":
+        open_readme_compendium_v1(runtime.readme_path)
+        return
+    if pick == "3":
+        print("Selection: Technical Architecture Primer")
+        print(runtime.divider)
+        runtime.tagging_printer(policy_rt)
+        return
+
+    print("(cancelled)")
 
 
 def architecture_overview_text_v1() -> str:

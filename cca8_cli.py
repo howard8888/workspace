@@ -4,9 +4,10 @@
 
 Purpose
 -------
-This module owns the passive command-line interface layer that was previously
-embedded in ``cca8_run.py``: startup logos, the welcome header, the main-menu
-text, text-command aliases, and legacy menu-number routing.
+This module owns the lightweight command-line presentation and routing layer
+that was previously embedded in ``cca8_run.py``: startup logos, the welcome
+header, main-menu text, text-command aliases, legacy number routing, and the
+small Main Menu #1 watch-mode chooser.
 
 The extraction is intentionally structural. ``cca8_run`` remains responsible
 for runtime construction, profile selection, menu-handler execution, and the
@@ -17,8 +18,9 @@ callers continue to work.
 Design boundary
 ---------------
 Only standard-library modules are imported here. Keeping this module independent
-of ``cca8_run`` avoids a circular import and makes the deterministic menu-routing
-logic inexpensive to test without constructing a CCA8 world or controller.
+of ``cca8_run`` avoids a circular import and makes deterministic routing and the
+small watch-mode prompt inexpensive to test without constructing a CCA8 world or
+controller.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ import os
 import sys
 from collections.abc import Callable
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 __all__ = [
     "ASCII_LOGOS",
     "MAIN_MENU_HEADER",
@@ -42,6 +44,7 @@ __all__ = [
     "print_header",
     "route_menu_alias",
     "route_menu_number",
+    "watch_cognition_menu_v1",
     "__version__",
 ]
 
@@ -382,6 +385,34 @@ def menu_selection_banner(selection: str) -> str:
     normalized = selection.strip()
     label = f"#{normalized}" if normalized.isdigit() else normalized.upper()
     return f"{MENU_RESPONSE_DIVIDER}\nMENU SELECTION {label}\n"
+
+
+def watch_cognition_menu_v1() -> str | None:
+    """Return the established one-cycle or multi-cycle handler selected by the user.
+
+    Main Menu #1 is intentionally a navigation shell. The actual cognitive-cycle
+    implementations remain in the runner's historical handlers 35 and 37, keeping
+    the execution path single-source while presenting a compact top-level menu.
+    """
+    print("Selection: Watch Cognition Run\n")
+    print("Choose how you would like to watch the cognitive architecture operate:")
+    print("  1) Watch one cognitive cycle slowly (verbose teaching mode)")
+    print("  2) Watch several cognitive cycles (compact closed-loop timeline)")
+    print("  [Enter] Return to Main Menu")
+    try:
+        pick = input("Choose: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    except Exception:
+        return None
+
+    if pick == "1":
+        return "35"
+    if pick == "2":
+        return "37"
+    print("(cancelled)")
+    return None
 
 
 
