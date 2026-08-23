@@ -27,7 +27,7 @@ import os
 import sys
 from collections.abc import Callable
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 __all__ = [
     "ASCII_LOGOS",
     "MAIN_MENU_HEADER",
@@ -80,11 +80,8 @@ MAIN_MENU_HEADER = (
 MAIN_MENU_PROMPT = (
     '    Enter a menu number or one of the bracketed text commands.\n'
     '\n'
-    '    # Quick Start & Tutorial\n'
-    '    1) Brief Overview of Key Concepts [understanding, tagging]\n'
-    '    2) Help: System Docs and/or Tutorial with demo tour [help, tutorial, demo]\n'
-    '\n'
     '    # Quick Start / Overview\n'
+    '    2) Help: Docs / Brief Overview / Tutorial [help, overview, tutorial, demo]\n'
     '    3) Cognitive Storage Oscilloscope / System Inspector [scope, oscilloscope, snapshot]\n'
     '    4) World stats [world, stats]\n'
     '    5) Recent bindings (last 5) [last, bindings]\n'
@@ -162,15 +159,14 @@ MAIN_MENU_PROMPT = (
 MIN_ALIAS_PREFIX = 3
 
 MENU_ALIASES = {
-    # Quick Start & Tutorial
-    "understanding": "1",
-    "tagging": "1",
+    # Quick Start / Overview
+    "understanding": "2",
+    "tagging": "2",
     "help": "2",
+    "overview": "2",
     "tutorial": "2",
     "tour": "2",
     "demo": "2",
-
-    # Quick Start / Overview
     "snapshot": "3",
     "display": "3",
     "scope": "3",
@@ -309,11 +305,9 @@ MENU_ALIASES = {
 }
 
 MENU_NUMBER_COMPATIBILITY = {
-    # Quick Start & Tutorial
-    "1": "23",  # Understanding (help pane)
-    "2": "t",  # Tutorial (letter branch)
-
     # Quick Start / Overview
+    "1": "t",  # Retired top-level overview number; forward to Help submenu.
+    "2": "t",  # Help submenu.
     "3": "17",  # Snapshot (display)
     "4": "1",  # World stats
     "5": "7",  # Recent bindings (last 5)

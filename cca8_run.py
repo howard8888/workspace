@@ -644,7 +644,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.26.0"
+__version__ = "0.26.1"
 __all__ = [
     "main",
     "interactive_loop",
@@ -2244,6 +2244,87 @@ def _readme_compendium_path_v1() -> str:
     system to open it.
     """
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")
+
+
+def _print_brief_overview_of_key_concepts_v1(policy_rt: Any) -> None:
+    """Print the legacy key-concepts overview from the Help submenu or compatibility route."""
+    print("Selection: Brief Overview of Key Concepts")
+    print(cca8_cli.MENU_RESPONSE_DIVIDER)
+    print()
+    print(
+        "Interim Development Note Aug 21, 2026:  This section is obsolete and is in the process "
+        "of being re-written."
+    )
+    print()
+    print_tagging_and_policies_help(policy_rt)
+
+
+def _help_menu_v1(policy_rt: Any) -> None:
+    """Display the compact Help submenu used by Main Menu selection 2.
+
+    The former top-level Brief Overview entry now lives here so the Main Menu
+    has one Quick Start / Overview section while the existing documentation and
+    future console-tour paths remain easy to find.
+    """
+    print("Selection: Help -- Docs, Brief Overview, and Tutorial\n")
+    print("Help options:")
+    print("  1) README/compendium System Documentation")
+    print("  2) Brief Overview of Key Concepts")
+    print("  3) Console Tour (pending)")
+    print("  [Enter] Return to Main Menu")
+
+    try:
+        pick = input("Choose: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    except Exception:
+        pick = ""
+
+    if pick == "1":
+        comp = _readme_compendium_path_v1()
+        print(f"Tutorial file (README.md which acts as an all-in-one compendium): {comp}")
+        print()
+        if os.path.exists(comp):
+            try:
+                if sys.platform.startswith("win"):
+                    os.startfile(comp)  # type: ignore[attr-defined]
+                elif sys.platform == "darwin":
+                    os.system(f'open "{comp}"')
+                else:
+                    os.system(f'xdg-open "{comp}"')
+                print("Opened the README.md/compendium in your default viewer.")
+                print()
+                print(
+                    "Note: Your default markdown viewer should be displaying the README.md file now. Sometimes it may take "
+                    "a few seconds for the viewer to load the file and display. If you don't see the displayed README.md "
+                    "file, then perhaps there is no viewer available on your computer, or perhaps it is hidden behind this "
+                    "or other screens."
+                )
+                print()
+                print(
+                    "Note: Depending on your desktop configuration, you may be able to leave the README.md file on screen "
+                    "and continue with another Menu selection. However, in other desktop configurations, you may have to "
+                    "exit from the markdown viewer to continue with other Menu selections."
+                )
+                print()
+            except Exception as exc:
+                print(f"[warn] Could not open automatically: {exc}")
+                print("Please open the file manually in your editor.")
+        else:
+            print(f"README.md was not found next to cca8_run.py at: {comp}")
+            print("Please restore/copy README.md beside cca8_run.py and try again.")
+        return
+
+    if pick == "2":
+        _print_brief_overview_of_key_concepts_v1(policy_rt)
+        return
+
+    if pick == "3":
+        print("Console tour is pending; please use the README/compendium for now.")
+        return
+
+    print("(cancelled)")
 
 
 # --- WorldGraph snapshot + engram helpers (runner-facing) ------------------------
@@ -6723,21 +6804,6 @@ Note: the graph HTML file will be saved in your current directory\n
 
 
         #----Menu Selection Code Block------------------------
-        elif choice == "23":
-            # Brief overview of key concepts (legacy help pane pending NavMap rewrite).
-            print("Selection: Brief Overview of Key Concepts")
-            print(cca8_cli.MENU_RESPONSE_DIVIDER)
-            print()
-            print(
-                "Interim Development Note Aug 21, 2026:  This section is obsolete and is in the process "
-                "of being re-written."
-            )
-            print()
-            print_tagging_and_policies_help(POLICY_RT)
-            loop_helper(args.autosave, world, drives, ctx)
-
-
-        #----Menu Selection Code Block------------------------
         elif choice == "24":
             # Capture scene -> emit cue/predicate + tiny engram (signal bridge demo)
             print("Selection: Capture scene\n")
@@ -8824,60 +8890,10 @@ By contrast, if you simply exit and later restart with >python cca8_run.py --aut
 
         #----Menu Selection Code Block------------------------
         elif choice.lower() == "t":
-            # Help and Tutorial selection that opens project documentation
-            print("Selection:  Help -- System Docs and Tutorial\n")
-
-            print("\nTutorial options:")
-            print("  1) README/compendium System Documentation")
-            print("  2) Console Tour (pending)")
-            print("  [Enter] Cancel")
-            try:
-                pick = input("Choose: ").strip()
-            except Exception:
-                pick = ""
-            #pylint:disable=no-else-continue
-            if pick == "1":
-                comp = _readme_compendium_path_v1()
-                print(f"Tutorial file (README.md which acts as an all-in-one compendium): {comp}")
-                print()
-                if os.path.exists(comp):
-                    try:
-                        if sys.platform.startswith("win"):
-                            os.startfile(comp)  # type: ignore[attr-defined]
-                        elif sys.platform == "darwin":
-                            os.system(f'open "{comp}"')
-                        else:
-                            os.system(f'xdg-open "{comp}"')
-                        print("Opened the README.md/compendium in your default viewer.")
-                        print()
-                        print(
-                            "Note: Your default markdown viewer should be displaying the README.md file now. Sometimes it may take "
-                            "a few seconds for the viewer to load the file and display. If you don't see the displayed README.md "
-                            "file, then perhaps there is no viewer available on your computer, or perhaps it is hidden behind this "
-                            "or other screens."
-                        )
-                        print()
-                        print(
-                            "Note: Depending on your desktop configuration, you may be able to leave the README.md file on screen "
-                            "and continue with another Menu selection. However, in other desktop configurations, you may have to "
-                            "exit from the markdown viewer to continue with other Menu selections."
-                        )
-                        print()
-                    except Exception as e:
-                        print(f"[warn] Could not open automatically: {e}")
-                        print("Please open the file manually in your editor.")
-                else:
-                    print(f"README.md was not found next to cca8_run.py at: {comp}")
-                    print("Please restore/copy README.md beside cca8_run.py and try again.")
-                continue
-            elif pick == "2":
-                print("Console tour is pending; please use the README/compendium for now.")
-                continue
-            else:
-                print("(cancelled)")
-                continue
-        #pylint:enable=no-else-continue
-        #no loop_helper(...) -- tutorial/help returns to main menu
+            # Compact Help submenu: docs, the former top-level overview, and tutorial status.
+            _help_menu_v1(POLICY_RT)
+            continue
+        #no loop_helper(...) -- Help returns directly to the main menu
 
         #----Menu Selection Code Block------------------------
             ##END OF MENU SELECTION BLOCKS

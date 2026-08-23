@@ -37,9 +37,11 @@ def test_runner_header_wrapper_supplies_runner_owned_values(monkeypatch: pytest.
 
 
 def test_exact_alias_and_unique_prefix_routing() -> None:
-    """Exact aliases and unique prefixes should preserve the historical routes."""
+    """Exact aliases and unique prefixes should preserve the current displayed routes."""
     assert cca8_cli.route_menu_alias(" snapshot ") == ("3", [])
     assert cca8_cli.route_menu_alias("SNAP") == ("3", ["snapshot"])
+    assert cca8_cli.route_menu_alias("understanding") == ("2", [])
+    assert cca8_cli.route_menu_alias("overview") == ("2", [])
     assert cca8_cli.route_menu_alias("robotg") == ("50", ["robotgoat"])
 
 
@@ -56,6 +58,8 @@ def test_ambiguous_and_too_short_aliases_are_not_routed() -> None:
 
 def test_menu_number_compatibility_preserves_handler_keys() -> None:
     """Displayed numbers should still resolve to the existing runner handler keys."""
+    assert cca8_cli.route_menu_number("1") == "t"
+    assert cca8_cli.route_menu_number("2") == "t"
     assert cca8_cli.route_menu_number(" 3 ") == "17"
     assert cca8_cli.route_menu_number("31") == "9"
     assert cca8_cli.route_menu_number("51") == "51"

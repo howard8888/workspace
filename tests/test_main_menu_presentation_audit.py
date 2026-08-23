@@ -2,7 +2,10 @@
 # -*- coding: utf-8 -*-
 """Focused presentation checks for the incremental Main Menu audit."""
 
+import builtins
 import os
+
+import pytest
 
 import cca8_cli
 import cca8_run
@@ -16,9 +19,33 @@ def test_menu_selection_banner_preserves_displayed_number() -> None:
     )
 
 
-def test_main_menu_item_one_uses_interim_key_concepts_title() -> None:
-    """Menu 1 should advertise its temporary high-level purpose during the NavMap migration."""
-    assert "1) Brief Overview of Key Concepts [understanding, tagging]" in cca8_cli.MAIN_MENU_PROMPT
+def test_main_menu_uses_one_quick_start_overview_section() -> None:
+    """The former tutorial and overview groups should occupy one compact section."""
+    assert "# Quick Start & Tutorial" not in cca8_cli.MAIN_MENU_PROMPT
+    assert cca8_cli.MAIN_MENU_PROMPT.count("# Quick Start / Overview") == 1
+    assert "1) Brief Overview of Key Concepts" not in cca8_cli.MAIN_MENU_PROMPT
+    assert "2) Help: Docs / Brief Overview / Tutorial" in cca8_cli.MAIN_MENU_PROMPT
+
+
+def test_help_submenu_contains_former_brief_overview(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Help option 2 should render the overview removed from the top-level menu."""
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": "2")
+    monkeypatch.setattr(
+        cca8_run,
+        "print_tagging_and_policies_help",
+        lambda _policy_rt: print("BRIEF_OVERVIEW_SENTINEL"),
+    )
+
+    cca8_run._help_menu_v1(object())  # pylint: disable=protected-access
+
+    output = capsys.readouterr().out
+    assert "Help options:" in output
+    assert "2) Brief Overview of Key Concepts" in output
+    assert "Selection: Brief Overview of Key Concepts" in output
+    assert "BRIEF_OVERVIEW_SENTINEL" in output
 
 
 def test_readme_compendium_path_tracks_runner_location() -> None:
