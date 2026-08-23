@@ -92,6 +92,8 @@ def test_capture_is_json_safe_bounded_and_honest_about_collapsed_stages() -> Non
     assert snapshot["trace_is_cognitive_memory"] is False
     assert snapshot["measurement_only"] is True
     assert snapshot["injection_enabled"] is False
+    assert snapshot["sandbox_injection_available"] is True
+    assert snapshot["live_injection_enabled"] is False
 
     json.dumps(snapshot, allow_nan=False)
 
@@ -164,6 +166,7 @@ def test_scope_renderers_and_main_menu_expose_the_new_instrument() -> None:
     assert "DP00 WORLD" in compact
     assert "DP18 LEARNING" in compact
     assert "full stored signal is available by DP drill-down" in compact
+    assert "DP01 sandbox injection" in compact
     assert "CCA8 COGNITIVE STORAGE OSCILLOSCOPE -- SNAPSHOT" in raw
     assert "DP00  External World / Body" in raw
     assert "DP18  Learning / Revision / Memory Writeback" in raw

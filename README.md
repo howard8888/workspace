@@ -817,8 +817,9 @@ Export interactive graph (HTML) if you want a visual of the episode skeleton.
 
 ### Quick Cognitive Storage Oscilloscope test
 
-Main Menu **#2** is the **Cognitive Storage Oscilloscope / System Inspector**. It is the broad read-only inspection surface for the whole
-cognitive cycle rather than only the older six-probe NavMap comparison path.
+Main Menu **#2** is the **Cognitive Storage Oscilloscope / System Inspector**. It is the broad diagnostic console for the whole
+cognitive cycle rather than only the older six-probe NavMap comparison path. Its ordinary scope and store views are read-only; the
+separate option 13 injection demonstration is confined to a disposable sandbox.
 
 Run:
 
@@ -830,8 +831,31 @@ Main Menu: 2
 
 Before any closed-loop episode, the inspector may show idle or unavailable data points. Use Main Menu **#1 option 1** for one verbose
 cycle, or **option 2** for a short compact run, then return to Main Menu **#2**. Use the compact view for the full signal path, the full
-view for more fields, or
-drill into one diagnostic point.
+view for more fields, or drill into one diagnostic point.
+
+To try the first bounded signal-injection controller, choose **Main Menu #2 option 13**, then preset **1**. CCA8 creates one
+source-stamped synthetic `EnvObservation` describing a fallen calf near a cliff with Mom and shelter far. A numeric
+`diagnostic_pulse=1.0` channel and canonical fall cues make the packet easy to recognize at DP01. The packet then passes through the
+ordinary one-cycle path, so the resulting compact trace should show, among other things:
+
+```text
+DP01  synthetic EnvObservation evidence
+DP04  Local/evidence NavMaps
+DP06  evidence-map candidate/update
+DP07  BodyMap: fallen, cliff near
+DP11  one operative WNM
+DP13  StandUp selected under protected safety
+DP15  StandUp dispatched inside the same sandbox cognitive cycle
+DP16  expected successor: posture=standing
+DP18  sandbox learning/writeback readings
+```
+
+The injection is **sandbox-only**. A fresh disposable WorldGraph, Ctx, WorkingMap/WNM, environment, drives, and scope trace are used;
+the live cognitive session is not supplied to the test cycle. Process-shared skill telemetry and Column memory are copied and restored
+before the result is returned. The injected packet is labelled `synthetic_test_evidence`, cannot bypass protected safety, and receives no
+live-session or actuator authority. After completion, the runner updates only the live context's bounded diagnostic injection number and
+latest-result record so the technician can inspect provenance; this is instrumentation state, not goat cognition. Main Menu #2 can
+optionally display the full ordinary sandbox-cycle terminal transcript after the compact DP trace.
 
 The inspector records a stable end-of-cycle snapshot across **DP00–DP18**. Useful first checks are:
 
@@ -4362,7 +4386,8 @@ The canonical component list used by `versions_dict()`, `versions_text()`, and `
 | `cca8_profiles.py` | Profile selection, developmental narratives, defaults, and bounded demonstrations |
 | `cca8_guidance.py` | User-facing explanations and tutorial support |
 | `cca8_teaching.py` | Verbose cycle annotations used by Main Menu #1 option 1 |
-| `cca8_cognitive_scope.py` | Read-only DP00–DP18 Cognitive Storage Oscilloscope: bounded end-of-cycle snapshots, compact/full/drill-down views, and no cognitive or policy authority |
+| `cca8_cognitive_scope.py` | DP00–DP18 Cognitive Storage Oscilloscope: bounded end-of-cycle snapshots, compact/full/drill-down views, and no cognitive or policy authority |
+| `cca8_cognitive_injection.py` | First bounded signal-injection controller: one source-stamped synthetic `EnvObservation` at DP01, one ordinary cognitive cycle in a disposable sandbox, correlated DP00–DP18 trace, and explicit shared-state rollback |
 | `cca8_preflight.py` | Test, architecture-probe, host/hardware-readiness, and system-fitness validation wall |
 | `cca8_experiments.py` | Experiment definitions, stressors, conditions, scoring, statistics, JSON/JSONL output, and Menu 49 |
 | `cca8_openai.py` | Optional bounded OpenAI adviser and structured request/response support |
@@ -4699,9 +4724,10 @@ source and tests.
 The Main Menu now groups its first three entries under one **`# Quick Start/ Overview`** heading:
 
 1. **Watch Cognition Run** — opens a two-choice submenu for one slow annotated cognitive cycle or several compact closed-loop cycles.
-2. **Cognitive Storage Oscilloscope / System Inspector** — the primary read-only inspection interface. It includes the DP00–DP18 trace,
+2. **Cognitive Storage Oscilloscope / System Inspector** — the primary inspection interface. It includes the DP00–DP18 trace,
    retained-cycle navigation, architecture/memory status, recent WorldGraph bindings, drives, explicit timekeeping/ordering, primitive
-   skill telemetry, the legacy detailed Snapshot, and WorldGraph visualization.
+   skill telemetry, the legacy detailed Snapshot, WorldGraph visualization, and one tightly bounded DP01 signal-injection demonstration
+   that runs only in a fresh disposable sandbox.
 3. **Explanation of the Architecture** — provides a concise map-first architecture overview, opens the full README/compendium, and
    offers a lower-level primer on bindings, tags, edges, drives, and primitives.
 
@@ -4714,8 +4740,16 @@ multi-domain inspection panel. Historical direct numbers remain accepted for com
 ## Cognitive Storage Oscilloscope and System Inspector
 
 `cca8_cognitive_scope.py` implements a measurement-only trace across the current cognitive cycle. It samples stable runtime registers at
-the end of a cycle and stores bounded immutable snapshots in a ring buffer (default capacity 128). The trace is outside cognition: it does
-not write observed evidence, change WNM authority, select policies, alter memory, or control output. Injection is disabled.
+the end of a cycle and stores bounded immutable snapshots in a ring buffer (default capacity 128). The ordinary retained trace is outside
+cognition: it does not write observed evidence, change WNM authority, select policies, alter memory, or control output. **Live-session
+signal injection remains disabled.**
+
+`cca8_cognitive_injection.py` supplies a separate first injection slice. Main Menu #2 option 13 creates one source-stamped synthetic
+`EnvObservation` at DP01 and runs exactly one ordinary cognitive cycle in a newly constructed disposable sandbox. The current preset is
+fallen-near-cliff with Mom and shelter far. Its purpose is to demonstrate the measurement/control seam and let the technician follow a
+known packet through DP01–DP18. It is not an arbitrary-port editor, does not accept live session objects, does not inject below the motor
+boundary, and does not grant synthetic content live WNM, memory, policy, or actuator authority. Process-shared skill and Column effects
+created during the demonstration are restored in `finally` before the result is returned.
 
 The System / Data-Store Inspector section includes a dedicated **Explicit timekeeping / ordering** panel. It displays the current
 cognitive-cycle, controller-step, autonomic-tick, developmental-age, environment-step, environment-time, configured environment-delta,
@@ -4757,7 +4791,7 @@ legacy Snapshot, but Main Menu #2's DP00–DP18 inspector is now the primary sys
 
 - **Main Menu #1, option 1:** one annotated current-cycle transaction.
 - **Main Menu #1, option 2:** several complete cycles with compact diagnostics and JSONL traces.
-- **Main Menu #2:** DP00–DP18 oscilloscope, architecture/store/timekeeping inspection, and trace management.
+- **Main Menu #2:** DP00–DP18 oscilloscope, architecture/store/timekeeping inspection, disposable DP01 signal injection, and trace management.
 - **Main Menu #3:** architecture explanation and full system documentation.
 - **Plan to predicate:** interactive WorldGraph planning from NOW.
 - **Inspect binding details / Pyvis export:** graph and provenance inspection.
@@ -6561,7 +6595,7 @@ Menu numbers may change; use the displayed runner menu as authority.
 
 - Main Menu #1 option 1: one verbose closed-loop cycle and Oscilloscope teaching output.
 - Main Menu #1 option 2: compact multi-cycle run.
-- Main Menu #2: Cognitive Storage Oscilloscope / System Inspector, including explicit timekeeping/ordering inspection.
+- Main Menu #2: Cognitive Storage Oscilloscope / System Inspector, including explicit timekeeping/ordering inspection and the bounded disposable DP01 injection demonstration.
 - Main Menu #3: architecture explanation and README/compendium access.
 - Menu 38: inspect BodyMap.
 - Menu 42: configure contextual map-switch evaluation.

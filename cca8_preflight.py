@@ -61,7 +61,7 @@ from cca8_controller import (
 from cca8_env import HybridEnvironment
 from cca8_features import FactMeta, time_attrs_from_ctx
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "PreflightRuntime",
     "run_llm_operational_preflight_check",
@@ -546,6 +546,15 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
                     "COGNITIVE_SCOPE_PORTS_V1",
                     "capture_cognitive_scope_snapshot_v1",
                     "render_cognitive_scope_snapshot_lines_v1",
+                    "__version__",
+                ],
+            ),
+            (
+                "cca8_cognitive_injection",
+                [
+                    "CognitiveInjectionRuntimeV1",
+                    "build_fallen_near_cliff_injection_v1",
+                    "run_envobservation_injection_sandbox_v1",
                     "__version__",
                 ],
             ),

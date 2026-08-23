@@ -33,6 +33,8 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "live_dynamics": "cca8_live_dynamics",
     "navmap_memory": "cca8_navmap_memory",
     "wnm_runtime": "cca8_wnm_runtime",
+    "cognitive_scope": "cca8_cognitive_scope",
+    "cognitive_injection": "cca8_cognitive_injection",
     "standup_compare": "cca8_standup_compare",
 }
 

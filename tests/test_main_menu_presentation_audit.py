@@ -117,4 +117,37 @@ def test_scope_submenu_owns_explicit_timekeeping_inspection(
     output = capsys.readouterr().out
     assert "Explicit timekeeping / ordering" in output
     assert "TIMEKEEPING_INSPECTOR_SENTINEL" in output
-    assert "13) Clear retained oscilloscope snapshots" in output
+    assert "13) Inject one preset synthetic EnvObservation at DP01" in output
+    assert "14) Clear retained oscilloscope snapshots" in output
+
+
+def test_scope_submenu_routes_dp01_sandbox_injection(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Main Menu #2 option 13 should invoke the bounded sandbox controller."""
+    responses = iter(("13", ""))
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
+    monkeypatch.setattr(
+        cca8_run.cca8_cognitive_scope,
+        "cognitive_scope_trace_summary_v1",
+        lambda _ctx: {"retained_count": 0, "capacity": 128, "total_capture_count": 0},
+    )
+    monkeypatch.setattr(
+        cca8_run,
+        "_cognitive_scope_injection_flow_v1",
+        lambda _ctx: print("DP01_INJECTION_SENTINEL"),
+    )
+
+    cca8_run._cognitive_scope_menu_v1(  # pylint: disable=protected-access
+        object(),
+        object(),
+        object(),
+        cca8_run.Ctx(),
+        object(),
+    )
+
+    output = capsys.readouterr().out
+    assert "SANDBOX SIGNAL INJECTION" in output
+    assert "DP01_INJECTION_SENTINEL" in output
+    assert "14) Clear retained oscilloscope snapshots" in output

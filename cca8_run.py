@@ -116,6 +116,7 @@ from typing import Optional, Any, Dict, List, Callable
 # CCA8 Module Imports
 #import cca8_world_graph as wgmod  # modular alternative: allows swapping WorldGraph engines
 import cca8_cli
+import cca8_controller
 import cca8_guidance
 import cca8_profiles
 import cca8_experiments
@@ -133,6 +134,7 @@ import cca8_live_dynamics
 import cca8_navmap_memory
 import cca8_wnm_runtime
 import cca8_cognitive_scope
+import cca8_cognitive_injection
 import cca8_maternal_continuity
 import cca8_maternal_geometry
 import cca8_maternal_temporal
@@ -646,7 +648,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.27.1"
+__version__ = "0.28.0"
 __all__ = [
     "main",
     "interactive_loop",
@@ -2582,6 +2584,86 @@ def _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt) -> dic
 
 
 
+def _cognitive_scope_injection_runtime_v1() -> cca8_cognitive_injection.CognitiveInjectionRuntimeV1:
+    """Return the runner-owned callback bundle for disposable DP01 injection."""
+    return cca8_cognitive_injection.CognitiveInjectionRuntimeV1(
+        policy_runtime_factory=lambda: PolicyRuntime(CATALOG_GATES),
+        run_closed_loop_steps=run_env_closed_loop_steps,
+        skill_store=cca8_controller.SKILLS,
+        column_memory=column_mem,
+    )
+
+
+def _cognitive_scope_injection_flow_v1(ctx) -> None:
+    """Run one preset synthetic EnvObservation through a disposable sandbox."""
+    print()
+    print("CCA8 SYNTHETIC ENVOBSERVATION INJECTION -- SANDBOX ONLY")
+    print("=" * 78)
+    print("This first controller injects at DP01 only. It never receives the live session's world, WNM, drives, or environment.")
+    print("Shared skill telemetry and Column memory are restored before the diagnostic result is returned.")
+    print()
+    presets = cca8_cognitive_injection.cognitive_injection_preset_rows_v1()
+
+    print("A preset is a ready-made synthetic EnvObservation test signal.")
+    print("To run a preset, type the NUMBER shown at the left and press Enter.")
+    print("For example, type 1 and press Enter to run preset 1.")
+    print("Each number represents the synthetic test situation described beside it.")
+    print()
+
+    for index, row in enumerate(presets, start=1):
+        print(f"  {index}) {row['label']}")
+        print(f"     Synthetic situation: {row['label']}")
+        print(f"     Expected downstream path: {row['expected_path']}")
+
+    valid_choices = "1" if len(presets) == 1 else f"1-{len(presets)}"
+    print()
+    print(f"Available preset number(s): {valid_choices}")
+    print("Press Enter without typing a number to cancel.")
+
+    try:
+        choice = input(f"Enter injection preset number [{valid_choices} | Enter = cancel]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    if choice == "":
+        return
+    try:
+        selected_index = int(choice) - 1
+        selected_preset = presets[selected_index]
+        if selected_index < 0:
+            raise IndexError
+    except (TypeError, ValueError, IndexError):
+        print(f"Please choose 1-{len(presets)} or press Enter to cancel.")
+        return
+
+    next_no = int(getattr(ctx, "cognitive_scope_injection_no_v1", 0) or 0) + 1
+    injection_id = f"INJ{next_no:04d}"
+    result = cca8_cognitive_injection.run_envobservation_injection_sandbox_v1(
+        _cognitive_scope_injection_runtime_v1(),
+        injection_id=injection_id,
+        preset_id=selected_preset["preset_id"],
+    )
+    result["live_diagnostic_record_updated"] = True
+    ctx.cognitive_scope_injection_no_v1 = next_no
+    ctx.cognitive_scope_last_injection_v1 = result
+
+    print()
+    print("\n".join(cca8_cognitive_injection.render_cognitive_injection_result_lines_v1(result)))
+    snapshot = result.get("snapshot")
+    if isinstance(snapshot, Mapping) and snapshot:
+        _cognitive_scope_show_compact_snapshot_v1(snapshot)
+
+    try:
+        show_transcript = input("Show the full disposable sandbox cycle transcript? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    if show_transcript in ("y", "yes"):
+        print()
+        print("\n".join(cca8_cognitive_injection.render_cognitive_injection_transcript_lines_v1(result)))
+        print()
+
+
 def _cognitive_scope_prompt_port_detail_v1(snapshot: Mapping[str, Any]) -> None:
     """Let the technician drill into one stored DP signal without dumping every port."""
     while True:
@@ -2621,7 +2703,8 @@ def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
             f"total captured this session: {trace.get('total_capture_count')}"
         )
         print("DP00 is external simulation truth; DP01-DP18 are eighteen CCA8 service points.")
-        print("The scope trace is read-only diagnostic storage, not goat memory. Signal injection is disabled.\n")
+        print("The ordinary scope trace is read-only diagnostic storage, not goat memory.")
+        print("Live-session injection is disabled; a source-stamped DP01 injection is available only in a disposable sandbox.\n")
         print("  COGNITIVE OSCILLOSCOPE / TRACE")
         print("  1) Display latest retained compact signal path + optional DP drill-down")
         print("  2) List retained snapshot index")
@@ -2638,8 +2721,11 @@ def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
         print(" 11) Legacy detailed Snapshot (WorldGraph + CTX + policies)")
         print(" 12) Generate / display interactive WorldGraph HTML")
         print()
+        print("  SANDBOX SIGNAL INJECTION")
+        print(" 13) Inject one preset synthetic EnvObservation at DP01 and trace one disposable cognitive cycle")
+        print()
         print("  TRACE CONTROL")
-        print(" 13) Clear retained oscilloscope snapshots")
+        print(" 14) Clear retained oscilloscope snapshots")
         print("  [Enter] Return to Main Menu")
         try:
             choice = input("Choose: ").strip()
@@ -2710,6 +2796,9 @@ def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
             _open_worldgraph_pyvis_flow_v1(world)
             continue
         if choice == "13":
+            _cognitive_scope_injection_flow_v1(ctx)
+            continue
+        if choice == "14":
             try:
                 confirm = input("Clear retained diagnostic snapshots? [y/N]: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
@@ -2721,7 +2810,7 @@ def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
             else:
                 print("Trace unchanged.")
             continue
-        print("Please choose 1-13 or press Enter to return.")
+        print("Please choose 1-14 or press Enter to return.")
 
 
 def _drive_tags(drives) -> list[str]:
@@ -3267,6 +3356,7 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("navmap_memory", "cca8_navmap_memory"),
     ("wnm_runtime", "cca8_wnm_runtime"),
     ("cognitive_scope", "cca8_cognitive_scope"),
+    ("cognitive_injection", "cca8_cognitive_injection"),
     ("standup_compare", "cca8_standup_compare"),
     ("reporting", "cca8_reporting"),
     ("observation_runtime", "cca8_observation_runtime"),

@@ -15,7 +15,7 @@ module observes existing source-linked runtime state and must not manufacture
 missing intermediate signals merely to make every conceptual stage appear
 active.
 
-Scope of v0.3
+Scope of v0.4
 -------------
 - Stable DP00-DP18 diagnostic-port registry.
 - One compact snapshot envelope correlated to cognitive-cycle, controller-step,
@@ -27,7 +27,9 @@ Scope of v0.3
 - Honest ``implemented``, ``partial``, ``collapsed``, ``idle``, ``missing``,
   and ``error`` states.
 
-Signal injection is intentionally not implemented in this phase.
+A first DP01 signal-injection controller now exists in a separate disposable
+sandbox. Live-session injection remains prohibited. The ordinary retained trace
+continues to be read-only and external to cognition.
 """
 
 from __future__ import annotations
@@ -78,7 +80,7 @@ from cca8_controller import (
     skills_to_dict,
 )
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 __all__ = [
     "COGNITIVE_SCOPE_PORTS_V1",
@@ -826,6 +828,8 @@ def build_cognitive_scope_snapshot_v1(
         "trace_is_cognitive_memory": False,
         "measurement_only": True,
         "injection_enabled": False,
+        "sandbox_injection_available": True,
+        "live_injection_enabled": False,
     }
 
 
@@ -943,6 +947,8 @@ def cognitive_scope_trace_summary_v1(ctx: Any) -> dict[str, Any]:
         "latest_snapshot_no": rows[-1].get("snapshot_no") if rows and isinstance(rows[-1], dict) else None,
         "trace_is_cognitive_memory": False,
         "injection_enabled": False,
+        "sandbox_injection_available": True,
+        "live_injection_enabled": False,
     }
 
 
@@ -1344,6 +1350,21 @@ def cognitive_scope_find_port_v1(snapshot: Mapping[str, Any], port_id: Any) -> O
     return None
 
 
+def _scope_injection_status_line_v1(snapshot: Mapping[str, Any]) -> str:
+    """Return the correct live-versus-sandbox injection status for one snapshot."""
+    if bool(snapshot.get("injection_enabled")):
+        metadata = snapshot.get("sandbox_injection")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        return (
+            f"Synthetic injection={metadata.get('injection_id')} entered at {metadata.get('boundary', 'DP01')} in a "
+            "disposable sandbox; it has no live-session authority."
+        )
+    return (
+        "The trace is diagnostic-only and outside goat cognition. Live-session injection is disabled; "
+        "Main Menu #2 offers a separate source-stamped DP01 sandbox injection."
+    )
+
+
 def render_cognitive_scope_compact_snapshot_lines_v1(snapshot: Mapping[str, Any]) -> list[str]:
     """Render the complete DP00-DP18 circuit as a concise technician front panel."""
     lines = [
@@ -1361,7 +1382,7 @@ def render_cognitive_scope_compact_snapshot_lines_v1(snapshot: Mapping[str, Any]
             f"dispatched={snapshot.get('action_dispatched')!r}"
         ),
         "One compact reading per architectural service point; full stored signal is available by DP drill-down.",
-        "The trace is diagnostic-only, outside goat cognition, and signal injection remains disabled.",
+        _scope_injection_status_line_v1(snapshot),
         "-" * 78,
     ]
 
@@ -1476,7 +1497,7 @@ def render_cognitive_scope_snapshot_lines_v1(snapshot: Mapping[str, Any]) -> lis
             f"action_dispatched={snapshot.get('action_dispatched')!r}"
         ),
         "DP00 is the external simulation reference; DP01-DP18 are the eighteen cognitive/architectural service points.",
-        "The retained trace is diagnostic-only and cannot be read by CCA8 cognition. Injection is disabled.",
+        _scope_injection_status_line_v1(snapshot),
         "Phase 1 samples each port's latest stable register at cycle end; exact per-stage timestamps are future work.",
         "-" * 78,
     ]
@@ -1534,7 +1555,7 @@ def render_cognitive_scope_trace_index_lines_v1(ctx: Any, *, limit: int = 20) ->
             f"total_captured={summary['total_capture_count']} oldest={summary['oldest_snapshot_no']} "
             f"latest={summary['latest_snapshot_no']}"
         ),
-        "Diagnostic trace only; not cognitive memory. Injection is disabled.",
+        "Diagnostic trace only; not cognitive memory. Live injection is disabled; DP01 sandbox injection is separate.",
         "-" * 78,
     ]
     trace = getattr(ctx, "cognitive_scope_trace_v1", None)
