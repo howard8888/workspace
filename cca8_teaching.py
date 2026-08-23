@@ -16,14 +16,15 @@ This module is deliberately simple:
 - all functions return strings,
 - explanations can be expanded cumulatively as additional terminal output is documented.
 
-The first use case is Menu 35, which runs one closed-loop cognitive cycle using
-the same engine as Menu 37, but with extra tutorial text.
+The first use case is Main Menu #1 option 1, which runs one closed-loop
+cognitive cycle using the same engine as option 2, but with extra tutorial
+text.
 """
 
 from __future__ import annotations
 
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "menu37_teaching_intro_v1",
     "menu37_teaching_cycle_header_v1",
@@ -139,6 +140,8 @@ def menu37_teaching_after_run_v1() -> str:
 [teach] Useful follow-up inspections:
   Menu 38 shows the BodyMap summary.
   Menu 43 shows the WorkingMap / MapSurface snapshot.
-  Menu 3 shows the long-term WorldGraph snapshot.
+  Main Menu #2 opens the Cognitive Storage Oscilloscope / System Inspector;
+  option 7 shows recent WorldGraph bindings and option 10 shows the legacy
+  detailed Snapshot.
   cycle_log.jsonl stores the machine-readable version of the same cycle trace.
 """.strip()

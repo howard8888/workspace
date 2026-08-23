@@ -27,7 +27,7 @@ import os
 import sys
 from collections.abc import Callable
 
-__version__ = "0.3.1"
+__version__ = "0.4.1"
 __all__ = [
     "ASCII_LOGOS",
     "MAIN_MENU_HEADER",
@@ -81,22 +81,16 @@ MAIN_MENU_PROMPT = (
     '    Enter a menu number or one of the bracketed text commands.\n'
     '\n'
     '    # Quick Start / Overview\n'
-    '    2) Help: Docs / Brief Overview / Tutorial [help, overview, tutorial, demo]\n'
-    '    3) Cognitive Storage Oscilloscope / System Inspector [scope, oscilloscope, snapshot]\n'
-    '    4) World stats [world, stats]\n'
-    '    5) Recent bindings (last 5) [last, bindings]\n'
-    '    6) Drives & drive tags [drives]\n'
-    '    7) Skill ledger [skills]\n'
-    '    8) Timekeeping status [timekeeping, time]\n'
+    '    1) Watch Cognition Run [watch, cognition, run]\n'
+    '    2) Cognitive Storage Oscilloscope / System Inspector [scope, oscilloscope, snapshot]\n'
+    '    3) Explanation of the Architecture [architecture, explain, help, docs, overview, tutorial]\n'
     '\n'
     '    # Act / Simulate\n'
     '    9) Instinct step (Action Center) [instinct, act]\n'
     '    10) Autonomic tick (emit interoceptive cues) [autonomic, tick]\n'
     '    11) Simulate fall (add posture:fallen and try recovery) [fall, simulate]\n'
     '\n'
-    '    # Simulation of the Environment (HybridEnvironment demo)\n'
-    '    35) Run 1 Cognitive Cycle (verbose teaching mode) [env, hybrid, verbose]\n'
-    '    37) Run n Cognitive Cycles (closed-loop timeline) [envloop, envrun]\n'
+    '    # Additional Simulation / Environment Tools\n'
     '    38) Inspect BodyMap (summary from BodyMap helpers) [bodymap, bsnap]\n'
     '    39) Spatial scene demo (NOW-near + resting-in-shelter?) [spatial, near]\n'
     '    51) Autonomous newborn survival demo (isolated hard-mode sandbox) [survival, newborn-demo]\n'
@@ -121,7 +115,7 @@ MAIN_MENU_PROMPT = (
     '    26) Planner strategy (toggle BFS ↔ Dijkstra) [planner, strategy]\n'
     '    27) Export and display interactive graph with options [pyvis, graph]\n'
     '\n'
-    '    # Save / System / Help\n'
+    '    # Save / System\n'
     '    28) Export snapshot (text only) [export snapshot]\n'
     '    29) Save session → path [save]\n'
     '    30) Load session → path [load]\n'
@@ -147,10 +141,10 @@ MAIN_MENU_PROMPT = (
     '    50) SimRobotGoat RCOS sandbox [rcos, simgoat, robotgoat]\n'
     '\n'
     '        New user suggestion:\n'
-    '      #35: Watch one cognitive cycle slowly -->\n'
-    '      #3 : Inspect what that cycle produced -->\n'
+    '      #1 : Watch one or several cognitive cycles -->\n'
+    '      #2 : Inspect what those cycles produced -->\n'
+    '      #3 : Read an explanation of the architecture -->\n'
     '      #51: Watch the architecture conduct a complete autonomous episode\n'
-    '      (Use #2 at any time for the tutorial and documentation)\n'
     '      SCROLL UP TO SEE ALL OF THE MENU CHOICES\n'
     '\n'
     '    Enter Menu Choice: '
@@ -160,18 +154,33 @@ MIN_ALIAS_PREFIX = 3
 
 MENU_ALIASES = {
     # Quick Start / Overview
-    "understanding": "2",
-    "tagging": "2",
-    "help": "2",
-    "overview": "2",
-    "tutorial": "2",
-    "tour": "2",
-    "demo": "2",
-    "snapshot": "3",
-    "display": "3",
-    "scope": "3",
-    "oscilloscope": "3",
-    "cognitive-scope": "3",
+    "watch": "1",
+    "cognition": "1",
+    "run": "1",
+    "cycle": "1",
+    "cycles": "1",
+    "demo": "1",
+    "env": "1",
+    "environment": "1",
+    "hybrid": "1",
+    "verbose": "1",
+    "envloop": "1",
+    "envrun": "1",
+    "envsteps": "1",
+    "snapshot": "2",
+    "display": "2",
+    "scope": "2",
+    "oscilloscope": "2",
+    "cognitive-scope": "2",
+    "understanding": "3",
+    "tagging": "3",
+    "help": "3",
+    "docs": "3",
+    "architecture": "3",
+    "explain": "3",
+    "overview": "3",
+    "tutorial": "3",
+    "tour": "3",
     "world": "4",
     "stats": "4",
     "last": "5",
@@ -251,16 +260,10 @@ MENU_ALIASES = {
     "sloc": "33",
     "pygount": "33",
     "reset": "34",
-    "env": "35",
-    "environment": "35",
-    "hybrid": "35",
     "mini": "36",
     "msnap": "36",
 
     # Memories
-    "envloop": "37",
-    "envrun": "37",
-    "envsteps": "37",
     "bodymap": "38",
     "bsnap": "38",
     "spatial": "39",
@@ -306,14 +309,14 @@ MENU_ALIASES = {
 
 MENU_NUMBER_COMPATIBILITY = {
     # Quick Start / Overview
-    "1": "t",  # Retired top-level overview number; forward to Help submenu.
-    "2": "t",  # Help submenu.
-    "3": "17",  # Snapshot (display)
+    "1": "watch",  # Watch Cognition Run submenu.
+    "2": "scope",  # Cognitive Storage Oscilloscope / System Inspector.
+    "3": "architecture",  # Explanation of the Architecture.
     "4": "1",  # World stats
     "5": "7",  # Recent bindings (last 5)
     "6": "d",  # Drives & tags (letter branch)
     "7": "13",  # Skill ledger
-    "8": "26",  # Timekeeping status
+    "8": "26",  # Historical direct Timekeeping Status compatibility route.
 
     # Act / Simulate
     "9": "12",  # Instinct step

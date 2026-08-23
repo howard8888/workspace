@@ -398,6 +398,7 @@ print_working_map_layers = cca8_reporting.print_working_map_layers
 print_working_map_entity_table = cca8_reporting.print_working_map_entity_table
 _snapshot_timekeeping_legend = cca8_reporting._snapshot_timekeeping_legend
 timekeeping_line = cca8_reporting.timekeeping_line
+timekeeping_status_text_v1 = cca8_reporting.timekeeping_status_text_v1
 print_timekeeping_line = cca8_reporting.print_timekeeping_line
 _python_loc_counts_for_file = cca8_reporting._python_loc_counts_for_file
 _compute_loc_by_dir = cca8_reporting._compute_loc_by_dir
@@ -405,6 +406,7 @@ _render_loc_by_dir_table = cca8_reporting._render_loc_by_dir_table
 _parse_vector = cca8_reporting._parse_vector
 snapshot_text = cca8_reporting.snapshot_text
 export_snapshot = cca8_reporting.export_snapshot
+architecture_status_text_v1 = cca8_reporting.architecture_status_text_v1
 recent_bindings_text = cca8_reporting.recent_bindings_text
 print_env_loop_tag_legend_once = cca8_reporting.print_env_loop_tag_legend_once
 _quiet_solved_rest_tail_v1 = cca8_reporting._quiet_solved_rest_tail_v1
@@ -644,12 +646,14 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.26.1"
+__version__ = "0.27.1"
 __all__ = [
     "main",
     "interactive_loop",
     "run_preflight_full",
     "snapshot_text",
+    "architecture_status_text_v1",
+    "print_architecture_overview_v1",
     "prediction_feedback_summary_v1",
     "prediction_next_record_from_policy_posture_v1",
     "prediction_source_for_execution_target_v1",
@@ -831,6 +835,7 @@ profile_cca11_governed_cognitive_plurality = cca8_profiles.profile_cca11_governe
 profile_cca12_governed_pod = cca8_profiles.profile_cca12_governed_pod
 _open_readme_tutorial = cca8_profiles.open_readme_tutorial
 print_tagging_and_policies_help = cca8_guidance.print_tagging_and_policies_help
+print_architecture_overview_v1 = cca8_guidance.print_architecture_overview_v1
 
 
 def _profile_runtime_v1() -> ProfileRuntime:
@@ -2247,30 +2252,53 @@ def _readme_compendium_path_v1() -> str:
 
 
 def _print_brief_overview_of_key_concepts_v1(policy_rt: Any) -> None:
-    """Print the legacy key-concepts overview from the Help submenu or compatibility route."""
-    print("Selection: Brief Overview of Key Concepts")
+    """Compatibility wrapper for the current concise architecture overview."""
+    print("Selection: Explanation of the Architecture")
     print(cca8_cli.MENU_RESPONSE_DIVIDER)
     print()
-    print(
-        "Interim Development Note Aug 21, 2026:  This section is obsolete and is in the process "
-        "of being re-written."
-    )
+    print_architecture_overview_v1(policy_rt)
+
+
+def _open_readme_compendium_v1() -> None:
+    """Open the README/compendium in the platform default viewer when possible."""
+    comp = _readme_compendium_path_v1()
+    print(f"System documentation: {comp}")
     print()
-    print_tagging_and_policies_help(policy_rt)
+    if not os.path.exists(comp):
+        print(f"README.md was not found next to cca8_run.py at: {comp}")
+        print("Please restore/copy README.md beside cca8_run.py and try again.")
+        return
+
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(comp)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            os.system(f'open "{comp}"')
+        else:
+            os.system(f'xdg-open "{comp}"')
+        print("Opened the README.md/compendium in your default viewer.")
+        print()
+        print(
+            "The large README may take a few seconds to load. If no viewer opens, please open the file manually "
+            "in your editor or Markdown viewer."
+        )
+    except Exception as exc:
+        print(f"[warn] Could not open automatically: {exc}")
+        print("Please open the file manually in your editor.")
 
 
-def _help_menu_v1(policy_rt: Any) -> None:
-    """Display the compact Help submenu used by Main Menu selection 2.
+def _architecture_explanation_menu_v1(policy_rt: Any) -> None:
+    """Display Main Menu #3's architecture explanation and documentation choices.
 
-    The former top-level Brief Overview entry now lives here so the Main Menu
-    has one Quick Start / Overview section while the existing documentation and
-    future console-tour paths remain easy to find.
+    The submenu distinguishes the concise current architecture overview from
+    the full README compendium and the lower-level binding/tag/policy primer.
+    None of these choices changes cognitive state.
     """
-    print("Selection: Help -- Docs, Brief Overview, and Tutorial\n")
-    print("Help options:")
-    print("  1) README/compendium System Documentation")
-    print("  2) Brief Overview of Key Concepts")
-    print("  3) Console Tour (pending)")
+    print("Selection: Explanation of the Architecture\n")
+    print("Architecture explanation options:")
+    print("  1) Concise map-first architecture overview")
+    print("  2) Open the full README/compendium system documentation")
+    print("  3) Technical primer: bindings, tags, edges, drives, and primitives")
     print("  [Enter] Return to Main Menu")
 
     try:
@@ -2282,49 +2310,56 @@ def _help_menu_v1(policy_rt: Any) -> None:
         pick = ""
 
     if pick == "1":
-        comp = _readme_compendium_path_v1()
-        print(f"Tutorial file (README.md which acts as an all-in-one compendium): {comp}")
+        print(cca8_cli.MENU_RESPONSE_DIVIDER)
         print()
-        if os.path.exists(comp):
-            try:
-                if sys.platform.startswith("win"):
-                    os.startfile(comp)  # type: ignore[attr-defined]
-                elif sys.platform == "darwin":
-                    os.system(f'open "{comp}"')
-                else:
-                    os.system(f'xdg-open "{comp}"')
-                print("Opened the README.md/compendium in your default viewer.")
-                print()
-                print(
-                    "Note: Your default markdown viewer should be displaying the README.md file now. Sometimes it may take "
-                    "a few seconds for the viewer to load the file and display. If you don't see the displayed README.md "
-                    "file, then perhaps there is no viewer available on your computer, or perhaps it is hidden behind this "
-                    "or other screens."
-                )
-                print()
-                print(
-                    "Note: Depending on your desktop configuration, you may be able to leave the README.md file on screen "
-                    "and continue with another Menu selection. However, in other desktop configurations, you may have to "
-                    "exit from the markdown viewer to continue with other Menu selections."
-                )
-                print()
-            except Exception as exc:
-                print(f"[warn] Could not open automatically: {exc}")
-                print("Please open the file manually in your editor.")
-        else:
-            print(f"README.md was not found next to cca8_run.py at: {comp}")
-            print("Please restore/copy README.md beside cca8_run.py and try again.")
+        print_architecture_overview_v1(policy_rt)
         return
 
     if pick == "2":
-        _print_brief_overview_of_key_concepts_v1(policy_rt)
+        _open_readme_compendium_v1()
         return
 
     if pick == "3":
-        print("Console tour is pending; please use the README/compendium for now.")
+        print("Selection: Technical Architecture Primer")
+        print(cca8_cli.MENU_RESPONSE_DIVIDER)
+        print_tagging_and_policies_help(policy_rt)
         return
 
     print("(cancelled)")
+
+
+def _help_menu_v1(policy_rt: Any) -> None:
+    """Compatibility wrapper for the renamed architecture-explanation menu."""
+    _architecture_explanation_menu_v1(policy_rt)
+
+
+def _watch_cognition_menu_v1() -> Optional[str]:
+    """Return the existing cognitive-cycle handler selected from Main Menu #1.
+
+    The actual cycle implementations remain the established internal handlers
+    used by the former visible Menu 35 and Menu 37 entries. Returning their
+    handler keys avoids duplicate cognitive-cycle code while presenting a much
+    simpler top-level menu.
+    """
+    print("Selection: Watch Cognition Run\n")
+    print("Choose how you would like to watch the cognitive architecture operate:")
+    print("  1) Watch one cognitive cycle slowly (verbose teaching mode)")
+    print("  2) Watch several cognitive cycles (compact closed-loop timeline)")
+    print("  [Enter] Return to Main Menu")
+    try:
+        pick = input("Choose: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    except Exception:
+        return None
+
+    if pick == "1":
+        return "35"
+    if pick == "2":
+        return "37"
+    print("(cancelled)")
+    return None
 
 
 # --- WorldGraph snapshot + engram helpers (runner-facing) ------------------------
@@ -2465,6 +2500,54 @@ def _open_worldgraph_pyvis_flow_v1(world) -> None:
         print("       Tip: install with  pip install pyvis")
 
 
+def _show_architecture_status_v1(world, ctx, policy_rt) -> None:
+    """Display the coherent WNM/Columns/WorldGraph architecture status panel."""
+    print()
+    print(architecture_status_text_v1(world, ctx, column_mem, policy_rt))
+    print()
+
+
+def _show_recent_bindings_v1(world, *, limit: int = 5) -> None:
+    """Display a bounded WorldGraph tail as one inspector view."""
+    print()
+    print("WORLDGRAPH RECENT BINDINGS")
+    print("=" * 78)
+    print(
+        "This is a sparse episode/index tail, not the operative WNM or an assertion that every historical tag is true now."
+    )
+    print()
+    print(recent_bindings_text(world, limit=limit))
+
+
+def _show_drives_v1(drives) -> None:
+    """Display current compact biological-control values and derived flags."""
+    print()
+    print("DRIVES / INTERNAL CONTROL STATE")
+    print("=" * 78)
+    print("Numeric drives are legitimate compact control state; derived drive:* flags are not a second world model.")
+    print()
+    print(drives_and_tags_text(drives))
+
+
+def _show_timekeeping_status_v1(env, ctx) -> None:
+    """Display all explicit CCA8 time domains as one read-only inspector panel."""
+    print()
+    print(timekeeping_status_text_v1(ctx, env))
+    print()
+
+
+def _show_skill_telemetry_v1(ctx) -> None:
+    """Display current primitive execution and learning telemetry."""
+    print()
+    print("PRIMITIVE SKILL TELEMETRY")
+    print("=" * 78)
+    print("Execution counts, success telemetry, rewards, and q estimates describe primitive history; they do not grant truth.")
+    print()
+    print(skills_hud_text(ctx, top_n=20))
+    print("\nFull ledger:")
+    print(skill_readout())
+
+
 def _cognitive_scope_live_snapshot_v1(env, world, drives, ctx, policy_rt) -> dict[str, Any]:
     """Build one current-state scope view without adding it to retained history."""
     state = getattr(env, "state", None)
@@ -2526,12 +2609,12 @@ def _cognitive_scope_show_compact_snapshot_v1(snapshot: Mapping[str, Any]) -> No
 
 
 def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
-    """Run Main Menu #3's compact front panel and per-port diagnostic inspector."""
+    """Run Main Menu #2's oscilloscope, trace, and coherent system inspector."""
     while True:
         trace = cca8_cognitive_scope.cognitive_scope_trace_summary_v1(ctx)
         print()
         print("=" * 78)
-        print("CCA8 COGNITIVE STORAGE OSCILLOSCOPE / SYSTEM INSPECTOR -- PHASE 1B")
+        print("CCA8 COGNITIVE STORAGE OSCILLOSCOPE / SYSTEM INSPECTOR")
         print("=" * 78)
         print(
             f"Retained cognitive-cycle snapshots: {trace.get('retained_count')}/{trace.get('capacity')}  "
@@ -2539,14 +2622,24 @@ def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
         )
         print("DP00 is external simulation truth; DP01-DP18 are eighteen CCA8 service points.")
         print("The scope trace is read-only diagnostic storage, not goat memory. Signal injection is disabled.\n")
+        print("  COGNITIVE OSCILLOSCOPE / TRACE")
         print("  1) Display latest retained compact signal path + optional DP drill-down")
         print("  2) List retained snapshot index")
         print("  3) Display retained compact signal path by snapshot number + optional DP drill-down")
         print("  4) Display current live compact state + optional DP drill-down")
         print("  5) Display latest full raw all-port snapshot")
-        print("  6) Legacy detailed Snapshot (WorldGraph + CTX + policies)")
-        print("  7) Generate / display interactive WorldGraph HTML")
-        print("  8) Clear retained oscilloscope snapshots")
+        print()
+        print("  SYSTEM / DATA-STORE INSPECTOR")
+        print("  6) Architecture / memory status (operative WNM, Columns, sparse index, WorldGraph)")
+        print("  7) Recent WorldGraph bindings (bounded episode/index tail)")
+        print("  8) Drives / internal control state")
+        print("  9) Explicit timekeeping / ordering (cognitive, control, autonomic, developmental, environment)")
+        print(" 10) Primitive skill telemetry")
+        print(" 11) Legacy detailed Snapshot (WorldGraph + CTX + policies)")
+        print(" 12) Generate / display interactive WorldGraph HTML")
+        print()
+        print("  TRACE CONTROL")
+        print(" 13) Clear retained oscilloscope snapshots")
         print("  [Enter] Return to Main Menu")
         try:
             choice = input("Choose: ").strip()
@@ -2594,14 +2687,29 @@ def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
             print("\n".join(cca8_cognitive_scope.render_cognitive_scope_snapshot_lines_v1(snapshot)))
             continue
         if choice == "6":
+            _show_architecture_status_v1(world, ctx, policy_rt)
+            continue
+        if choice == "7":
+            _show_recent_bindings_v1(world, limit=5)
+            continue
+        if choice == "8":
+            _show_drives_v1(drives)
+            continue
+        if choice == "9":
+            _show_timekeeping_status_v1(env, ctx)
+            continue
+        if choice == "10":
+            _show_skill_telemetry_v1(ctx)
+            continue
+        if choice == "11":
             print()
             print("LEGACY DETAILED SNAPSHOT -- retained temporarily for compatibility")
             print(snapshot_text(world, drives=drives, ctx=ctx, policy_rt=policy_rt))
             continue
-        if choice == "7":
+        if choice == "12":
             _open_worldgraph_pyvis_flow_v1(world)
             continue
-        if choice == "8":
+        if choice == "13":
             try:
                 confirm = input("Clear retained diagnostic snapshots? [y/N]: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
@@ -2613,7 +2721,7 @@ def _cognitive_scope_menu_v1(env, world, drives, ctx, policy_rt) -> None:
             else:
                 print("Trace unchanged.")
             continue
-        print("Please choose 1-8 or press Enter to return.")
+        print("Please choose 1-13 or press Enter to return.")
 
 
 def _drive_tags(drives) -> list[str]:
@@ -5139,7 +5247,7 @@ def run_env_closed_loop_steps(env, world, drives, ctx, policy_rt, n_steps: int, 
 
     print(
         "\n[env-loop] Closed-loop cognitive cycle complete. "
-        "Inspect the retained signal path with Menu #3 Cognitive Storage Oscilloscope."
+        "Inspect the retained signal path with Main Menu #2 Cognitive Storage Oscilloscope."
     )
     if teaching_mode:
         print()
@@ -5761,46 +5869,28 @@ def interactive_loop(args: argparse.Namespace) -> None:
 
         ckey = displayed_choice #ensure any present or future routed value is in correct form
         routed = cca8_cli.route_menu_number(ckey)
-        if pretty_scroll and ckey != routed:
+        semantic_top_level_handlers = {"watch", "scope", "architecture"}
+        if pretty_scroll and ckey != routed and routed not in semantic_top_level_handlers:
             print(
                 "[[menu numbering auto-compatibility] processed input entry "
                 f"routed to old value: {ckey} → {routed}]\n"
             )
         choice = routed
 
+        # Main Menu #1 is a small navigation shell over the established one-cycle
+        # and multi-cycle handlers. Keep those cycle implementations single-source.
+        if choice == "watch":
+            selected_cycle_handler = _watch_cognition_menu_v1()
+            if selected_cycle_handler is None:
+                continue
+            choice = selected_cycle_handler
+
         #FIRST MENU SELECTION CODE BLOCK.... WITHIN interactive menu while loop >>>>>> of interactive_menu()
         #----Menu Selection Code Block------------------------
         if choice == "1":
-            # World stats
-            now_id = _anchor_id(world, "NOW")
-            print("Selection:  World Graph Statistics\n")
-            print('''
-The CCA8 architecture holds symbolic declarative memory (i.e., episodic and semantic memory) in the WorldGraph.
-
-There are bindings (i.e., nodes) in the WorldGraph, each of which holds directed edges to other bindings (i.e., nodes),
- concise semantic and episodic information, metadata, and pointers to engrams in the cortical-like Columns which
- is the rich store of knowledge.
-e.g., 'b1' means binding 1, 'b2' means binding 2, and so on
-
-As mentioned, the bindings (i.e., nodes) are linked to each other by directed edges.
-An 'anchor' is a binding which we use to start the WorldGraph as well as a starting point somewhere in the middle
-  of the graph. Symbolic procedural knowledge is held in the Policies which currently are held in the
-  Controller Module.
-A policy (i.e., same as primitive in the CCA8 published papers) is a simple set of conditional actions.
-In order to execute, a policy must be loaded (e.g., meets development requirements) and then it must be triggered.
-
-Note we are showing the symbolic statistics here. The distributed, rich information of the CCA8, i.e., its engrams,
-  are held in the Columns.\n
-Below we show some general WorldGraph and Policy statistics. See Snapshot and other menu selections for more details
-  on the system.
-
-            ''')
-            print(f"Bindings: {len(world._bindings)}  Anchors: NOW={now_id}  Latest: {world._latest_binding_id}")
-            try:
-                print(f"Policies loaded: {len(POLICY_RT.loaded)} -> {', '.join(POLICY_RT.list_loaded_names()) or '(none)'}")
-            except Exception:
-                pass
-            print_timekeeping_line(ctx)
+            # Legacy Main Menu #4 compatibility route: architecture/memory status.
+            print("Selection: Architecture / Memory Status\n")
+            _show_architecture_status_v1(world, ctx, POLICY_RT)
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -6181,17 +6271,9 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
 
         #----Menu Selection Code Block------------------------
         elif choice == "7":
-            # Show last 5 bindings
-            print("Selection:  Recent Bindings\n")
-            print("Shows the 5 most recent bindings (bN). For each: tags and any engram slots attached.")
-            print(" 'outdeg' is the number of outgoing edges, e.g., outdeg=2 means there are 2 outgoing edges")
-            print(" 'preview' is a short sample of up to 3 these outgoing edges")
-            print("     e.g., outdeg=2 preview=[initiate_stand:b2, then:b3]")
-            print("     -this means 2 outgoing edges, 1 edge goes to b2 with action label 'initiate_stand', 1 edge ")
-            print("          goes to b3 with action label 'then'")
-            print("Tip: use 'Inspect binding details' for full meta/edges on a specific id.\n")
-
-            print(recent_bindings_text(world, limit=5))
+            # Legacy Main Menu #5 compatibility route.
+            print("Selection: Recent WorldGraph Bindings\n")
+            _show_recent_bindings_v1(world, limit=5)
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -6607,11 +6689,9 @@ autonomic_ticks or developmental age.
 
         #----Menu Selection Code Block------------------------
         elif choice == "13":
-            # Skill Ledger
-            print("Selection: Skill Ledger\n")
-            print(skill_ledger_text("policy:stand_up"))
-            print("Full ledger:  [src=cca8_controller.skill_readout()]")
-            print(skill_readout())
+            # Legacy Main Menu #7 compatibility route.
+            print("Selection: Primitive Skill Telemetry\n")
+            _show_skill_telemetry_v1(ctx)
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -6675,7 +6755,7 @@ same-cycle-output environment loop runs here.
 
 
         #----Menu Selection Code Block------------------------
-        elif choice == "17":
+        elif choice in ("scope", "17"):
             # Cognitive storage oscilloscope / system inspector.
             print("Selection: CCA8 Cognitive Storage Oscilloscope / System Inspector\n")
             _cognitive_scope_menu_v1(env, world, drives, ctx, POLICY_RT)
@@ -6980,22 +7060,9 @@ suggestion so the new binding is linked under a meaningful nearby predicate.
 
         #----Menu Selection Code Block------------------------
         elif choice == "26":
-            # Explicit timekeeping status.
+            # Historical Main Menu #8 compatibility route.
             print("Selection: Timekeeping Status\n")
-            print_timekeeping_line(ctx)
-            print(r"""
-Counter meanings:
-  cognitive_cycles  complete sensory-input -> processing -> same-cycle output loops
-  controller_steps  Action Center invocations, including manual/autonomic flows
-  autonomic_ticks   independent physiology/IO heartbeats
-  age_days           developmental state
-
-Other time domains remain separate:
-  EnvState.step_index and EnvState.time_since_birth belong to the simulated world.
-  created_at and saved_at are wall-clock provenance only.
-  Motion, freshness, duration, support, and phase are derived within the
-  domain-specific temporal subsystem that owns the relevant evidence.
-""")
+            _show_timekeeping_status_v1(env, ctx)
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -7552,8 +7619,8 @@ For each cognitive cycle we will:
   4) Produce and dispatch Action_n (or an explicit null output) during CognitiveCycle_n,
   5) Buffer Observation_(n+1) for processing in the next cognitive cycle.
 
-Menu 35 runs one cycle in verbose teaching mode.
-Menu 37 runs the compact multi-cycle timeline.
+Main Menu #1 option 1 runs one cycle in verbose teaching mode.
+Main Menu #1 option 2 runs the compact multi-cycle timeline.
 """)
             print("[policy-selection] Candidates = dev_gate passes AND trigger(...) returns True.")
             print("[policy-selection] Winner = highest deficit → non_drive → (RL: q | non-RL: stable order).")
@@ -8370,7 +8437,7 @@ rl_delta (float)
                 print("  - env.config.scenario_name = 'goat_foraging_04'")
                 print("  - milestone-driven keyframes ON")
                 print("  - WorkingMap/Column auto-retrieve ON (merge mode)")
-                print("  - next menu 35/37 call will start a fresh goat_foraging_04 episode")
+                print("  - the next Main Menu #1 option 1/2 run will start a fresh goat_foraging_04 episode")
             except Exception as e:
                 print(f"[goat04] configuration error: {e}")
 
@@ -8459,7 +8526,7 @@ rl_delta (float)
 
             if not rows:
                 print("(none) No wm_mapsurface engrams found in column memory yet.")
-                print("Tip: run menu 44 (manual store) or run menu 37 until a stage/zone boundary occurs.")
+                print("Tip: run menu 44 (manual store) or Main Menu #1 option 2 until a stage/zone boundary occurs.")
                 loop_helper(args.autosave, world, drives, ctx)
                 continue
 
@@ -8513,7 +8580,7 @@ rl_delta (float)
 
             if not info.get("ok"):
                 print("(none) No wm_mapsurface engrams found for retrieval.")
-                print("Tip: run menu 37 to auto-store keyframes, or menu 44 to store manually.")
+                print("Tip: use Main Menu #1 option 2 to auto-store keyframes, or menu 44 to store manually.")
                 loop_helper(args.autosave, world, drives, ctx)
                 continue
 
@@ -8819,10 +8886,9 @@ This "load session" is a manual one-shot load snapshot, i.e., you are retrieving
 
         #----Menu Selection Code Block------------------------
         elif choice.lower() == "d":
-            # Show drives (raw + tags), robust across Drives variants
-            print("Selection: Drives & Drive Tags\n")
-            print("Shows raw drive values and threshold flags with their sources.\n")
-            print(drives_and_tags_text(drives))
+            # Legacy Main Menu #6 compatibility route.
+            print("Selection: Drives / Internal Control State\n")
+            _show_drives_v1(drives)
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -8889,11 +8955,11 @@ By contrast, if you simply exit and later restart with >python cca8_run.py --aut
 
 
         #----Menu Selection Code Block------------------------
-        elif choice.lower() == "t":
-            # Compact Help submenu: docs, the former top-level overview, and tutorial status.
-            _help_menu_v1(POLICY_RT)
+        elif choice.lower() in ("t", "architecture"):
+            # Architecture explanation and documentation submenu.
+            _architecture_explanation_menu_v1(POLICY_RT)
             continue
-        #no loop_helper(...) -- Help returns directly to the main menu
+        #no loop_helper(...) -- explanatory material returns directly to the main menu
 
         #----Menu Selection Code Block------------------------
             ##END OF MENU SELECTION BLOCKS

@@ -17,6 +17,7 @@ def test_runner_reporting_compatibility_surface() -> None:
         "print_working_map_entity_table",
         "_snapshot_timekeeping_legend",
         "timekeeping_line",
+        "timekeeping_status_text_v1",
         "print_timekeeping_line",
         "_python_loc_counts_for_file",
         "_compute_loc_by_dir",

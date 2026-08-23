@@ -78,7 +78,7 @@ from cca8_controller import (
     skills_to_dict,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__ = [
     "COGNITIVE_SCOPE_PORTS_V1",
@@ -1540,7 +1540,7 @@ def render_cognitive_scope_trace_index_lines_v1(ctx: Any, *, limit: int = 20) ->
     trace = getattr(ctx, "cognitive_scope_trace_v1", None)
     rows = trace if isinstance(trace, list) else []
     if not rows:
-        lines.append("(no retained cognitive-cycle snapshots; run Menu 35 or 37 first)")
+        lines.append("(no retained cognitive-cycle snapshots; use Main Menu #1 option 1 or 2 first)")
         lines.append("=" * 78)
         return lines
 

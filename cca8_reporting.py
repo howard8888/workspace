@@ -96,7 +96,7 @@ from cca8_predictive import (
 )
 from cca8_wnm_runtime import render_wnm_lines_v1, wnm_summary_v1
 
-__version__ = "0.7.0"
+__version__ = "0.8.1"
 
 __all__ = [
     "TeeTextIO",
@@ -106,9 +106,11 @@ __all__ = [
     "print_working_map_layers",
     "print_working_map_entity_table",
     "timekeeping_line",
+    "timekeeping_status_text_v1",
     "print_timekeeping_line",
     "snapshot_text",
     "export_snapshot",
+    "architecture_status_text_v1",
     "recent_bindings_text",
     "print_env_loop_tag_legend_once",
     "mini_snapshot_text",
@@ -440,6 +442,126 @@ def timekeeping_line(ctx) -> str:
         f"cognitive_cycles={cc}, controller_steps={cs}, "
         f"autonomic_ticks={at}, age_days={ad:.4f}"
     )
+
+
+def timekeeping_status_text_v1(ctx, env=None) -> str:
+    """Return a read-only inspector panel for CCA8's explicit time domains.
+
+    CCA8 deliberately keeps cognitive ordering, Action Center invocations,
+    autonomic physiology/IO heartbeats, developmental age, environment
+    transitions, simulated physical time, wall-clock provenance, and
+    domain-specific temporal cognition separate. This renderer gathers the
+    currently observable values without inferring one domain from another and
+    without recreating the retired stochastic temporal-vector clock.
+
+    Args:
+        ctx: Current CCA8 runtime context. Missing or malformed values are
+            displayed as unavailable rather than fabricated.
+        env: Optional HybridEnvironment-like object. When present, its current
+            ``state``, ``config``, and ``episode_index`` values supply the
+            environment-side transition and physical-time readouts.
+
+    Returns:
+        A human-readable multi-line status panel. The function does not advance
+        a counter, consume an observation, mutate the environment, or write a
+        diagnostic snapshot.
+    """
+
+    def _safe_attr(owner: Any, name: str) -> Any:
+        if owner is None:
+            return None
+        try:
+            return getattr(owner, name, None)
+        except Exception:
+            return None
+
+    def _integer_text(value: Any) -> str:
+        if isinstance(value, bool):
+            return "unavailable"
+        try:
+            return str(int(value))
+        except (TypeError, ValueError):
+            return "unavailable"
+
+    def _float_text(value: Any) -> str:
+        if isinstance(value, bool):
+            return "unavailable"
+        try:
+            return f"{float(value):.4f}"
+        except (TypeError, ValueError):
+            return "unavailable"
+
+    state = _safe_attr(env, "state")
+    config = _safe_attr(env, "config")
+    pending_observation = _safe_attr(ctx, "env_pending_observation")
+    pending_meta = _safe_attr(pending_observation, "env_meta")
+    pending_meta = pending_meta if isinstance(pending_meta, dict) else {}
+
+    pending_step = pending_meta.get("step_index")
+    pending_environment_time = pending_meta.get("time_since_birth")
+    last_action = _safe_attr(ctx, "env_last_action")
+    last_action_text = last_action if isinstance(last_action, str) and last_action else "none"
+    cognitive_cycles_text = _integer_text(_safe_attr(ctx, "cog_cycles"))
+    controller_steps_text = _integer_text(_safe_attr(ctx, "controller_steps"))
+    autonomic_ticks_text = _integer_text(_safe_attr(ctx, "ticks"))
+    age_days_text = _float_text(_safe_attr(ctx, "age_days"))
+
+    lines = [
+        "CCA8 EXPLICIT TIMEKEEPING / ORDERING",
+        "=" * 78,
+        "CCA8 uses separate named time domains. No counter is a universal cognitive clock,",
+        "and no stochastic temporal vector or vector-derived epoch is active.",
+        "",
+        "COMPACT SUMMARY",
+        (
+            f"  cognitive_cycles={cognitive_cycles_text}, controller_steps={controller_steps_text}, "
+            f"autonomic_ticks={autonomic_ticks_text}, age_days={age_days_text}"
+        ),
+        "",
+        "COGNITIVE / CONTROL ORDER",
+        f"  cognitive_cycles: {cognitive_cycles_text}  [src=ctx.cog_cycles]",
+        "    Complete Observation_n -> processing -> same-cycle Output_n transactions.",
+        f"  controller_steps: {controller_steps_text}  [src=ctx.controller_steps]",
+        "    Action Center invocations; manual and autonomic flows may advance this independently.",
+        "",
+        "BIOLOGICAL / DEVELOPMENTAL",
+        f"  autonomic_ticks: {autonomic_ticks_text}  [src=ctx.ticks]",
+        "    Independent physiology/IO heartbeat count.",
+        f"  age_days: {age_days_text}  [src=ctx.age_days]",
+        "    Developmental state used by capability gates; not a high-resolution event clock.",
+        "",
+        "ENVIRONMENT / PHYSICAL TIME",
+        f"  episode_index: {_integer_text(_safe_attr(env, 'episode_index'))}  [src=env.episode_index]",
+        f"  environment_step: {_integer_text(_safe_attr(state, 'step_index'))}  [src=env.state.step_index]",
+        (
+            "  environment_time: "
+            f"{_float_text(_safe_attr(state, 'time_since_birth'))}  [src=env.state.time_since_birth]"
+        ),
+        f"  dt_per_transition: {_float_text(_safe_attr(config, 'dt'))}  [src=env.config.dt]",
+        "    Environment values belong to the simulated or physical world, not to cognition.",
+        "",
+        "CURRENT I/O-SEAM CORRELATION",
+        (
+            "  buffered_next_observation_step: "
+            f"{_integer_text(pending_step)}  [src=ctx.env_pending_observation.env_meta.step_index]"
+        ),
+        (
+            "  buffered_next_observation_time: "
+            f"{_float_text(pending_environment_time)}  "
+            "[src=ctx.env_pending_observation.env_meta.time_since_birth]"
+        ),
+        f"  last_dispatched_action: {last_action_text}  [src=ctx.env_last_action]",
+        "    Buffered later evidence is processed only in a later cognitive cycle.",
+        "",
+        "OTHER TEMPORAL DOMAINS",
+        "  wall clock: created_at/saved_at values are logging and persistence provenance only.",
+        (
+            "  domain temporal cognition: source-linked motion, rate, duration, freshness, phase, "
+            "support, slip, and progress."
+        ),
+        "  Event boundaries arise from explicit content or transactions, not random clock jumps.",
+    ]
+    return "\n".join(lines)
 
 
 def print_timekeeping_line(ctx, prefix: str = "[time] ") -> None:
@@ -1111,6 +1233,173 @@ def export_snapshot(world, drives=None, ctx=None, policy_rt=None,
     print("Exported snapshot (text only):")
     print(f"  {path_txt_abs}")
     print(f"Directory: {out_dir}")
+
+
+def architecture_status_text_v1(world, ctx, column_memory, policy_rt=None) -> str:
+    """Return a read-only status panel for CCA8's current architecture and stores.
+
+    This panel replaces the obsolete WorldGraph-centric statistics lecture. It
+    distinguishes current cognitive authority, rich long-term content, the
+    Phase-8 sparse-retrieval scaffold, and the WorldGraph's present migration
+    role. The function reads only public helpers or stable diagnostic fields and
+    does not activate memory, change the WNM, select a primitive, or mutate a
+    store.
+
+    Args:
+        world: Current WorldGraph-like episode/index object.
+        ctx: Current CCA8 runtime context.
+        column_memory: Current ColumnMemory-like rich payload store.
+        policy_rt: Optional PolicyRuntime-like registry for loaded-primitives
+            status.
+
+    Returns:
+        A human-readable multi-line status panel.
+    """
+
+    def _safe_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _map_ref_text(value: Any) -> str:
+        if not isinstance(value, dict):
+            return "none"
+        map_id = value.get("map_id")
+        revision = value.get("revision")
+        if not isinstance(map_id, str) or not map_id:
+            return "none"
+        return f"{map_id}@r{revision}" if isinstance(revision, int) else map_id
+
+    bindings = getattr(world, "_bindings", {})
+    bindings = bindings if isinstance(bindings, dict) else {}
+    anchors = getattr(world, "_anchors", {})
+    anchors = anchors if isinstance(anchors, dict) else {}
+
+    edge_count = 0
+    pointer_count = 0
+    pointer_ids: set[str] = set()
+    dangling_pointer_count = 0
+    exists_fn = getattr(column_memory, "exists", None)
+
+    for binding in bindings.values():
+        edges = getattr(binding, "edges", None)
+        if isinstance(edges, list):
+            edge_count += len(edges)
+
+        engrams = getattr(binding, "engrams", None)
+        if not isinstance(engrams, dict):
+            continue
+        for pointer in engrams.values():
+            if not isinstance(pointer, dict):
+                continue
+            engram_id = pointer.get("id")
+            if not isinstance(engram_id, str) or not engram_id:
+                continue
+            pointer_count += 1
+            pointer_ids.add(engram_id)
+            if callable(exists_fn):
+                try:
+                    if not bool(exists_fn(engram_id)):
+                        dangling_pointer_count += 1
+                except Exception:
+                    dangling_pointer_count += 1
+
+    count_fn = getattr(column_memory, "count", None)
+    try:
+        column_count = _safe_int(count_fn()) if callable(count_fn) else 0
+    except Exception:
+        column_count = 0
+
+    wnm = wnm_summary_v1(ctx)
+    operative = wnm.get("operative_map")
+    operative = operative if isinstance(operative, dict) else {}
+    operative_ref = _map_ref_text(operative.get("map_ref"))
+    operative_role = operative.get("role") if isinstance(operative.get("role"), str) else "none"
+    operative_frame = operative.get("frame_id") if isinstance(operative.get("frame_id"), str) else "none"
+
+    memory = navmap_memory_summary_v1(ctx)
+    retrieval = memory.get("last_retrieval")
+    retrieval = retrieval if isinstance(retrieval, dict) else {}
+    retrieval_status = retrieval.get("status") if isinstance(retrieval.get("status"), str) else "idle"
+    retrieval_winner = _map_ref_text(retrieval.get("winner_ref"))
+
+    anchor_text = ", ".join(f"{name}={bid}" for name, bid in sorted(anchors.items())) or "(none)"
+    latest = getattr(world, "_latest_binding_id", None)
+    planner_fn = getattr(world, "get_planner", None)
+    memory_mode_fn = getattr(world, "get_memory_mode", None)
+    try:
+        planner = str(planner_fn()) if callable(planner_fn) else "unknown"
+    except Exception:
+        planner = "unknown"
+    try:
+        world_memory_mode = str(memory_mode_fn()) if callable(memory_mode_fn) else "unknown"
+    except Exception:
+        world_memory_mode = "unknown"
+
+    loaded_names: list[str] = []
+    try:
+        raw_names = policy_rt.list_loaded_names() if policy_rt is not None else []
+        loaded_names = [name for name in raw_names if isinstance(name, str)]
+    except Exception:
+        loaded_names = []
+
+    lines = [
+        "CCA8 ARCHITECTURE / MEMORY STATUS",
+        "=" * 78,
+        "",
+        "CURRENT COGNITION",
+        f"  Operative WNM: status={wnm.get('status')} authority={wnm.get('authority')}",
+        f"  map={operative_ref} role={operative_role} frame={operative_frame}",
+        (
+            "  ready maps="
+            f"{wnm.get('ready_count', 0)}/{wnm.get('ready_capacity', 0)} "
+            f"equal_current_authority={wnm.get('ready_has_equal_authority', False)}"
+        ),
+        "",
+        "LONG-TERM RICH CONTENT",
+        f"  Columns: total engrams={column_count}",
+        (
+            "  Phase-8 indexed NavMap payloads="
+            f"{memory.get('column_payload_count_indexed', 0)} "
+            f"eligibility={memory.get('eligibility_count', 0)} "
+            f"pending={memory.get('eligibility_pending_count', 0)}"
+        ),
+        "  Stored or retrieved content does not become current truth automatically.",
+        "",
+        "SPARSE MEMORY ACTIVATION",
+        "  Current implementation: ctx-local sparse reference/token index scaffold.",
+        (
+            "  entries="
+            f"{memory.get('sparse_index_entry_count', 0)} "
+            f"tokens={memory.get('inverted_token_count', 0)} "
+            f"last_retrieval={retrieval_status} winner={retrieval_winner}"
+        ),
+        (
+            "  full_payload_scan="
+            f"{memory.get('candidate_generation_uses_full_payload_scan', False)} "
+            f"retrieval_grants_truth={memory.get('retrieval_grants_truth', False)}"
+        ),
+        "",
+        "WORLDGRAPH",
+        "  Current role: sparse episode/retrieval/index structure plus legacy symbolic compatibility content.",
+        f"  bindings={len(bindings)} edges={edge_count} anchors={anchor_text} latest={latest}",
+        f"  planner={planner} memory_mode={world_memory_mode}",
+        (
+            "  Column pointers="
+            f"{pointer_count} unique_engram_ids={len(pointer_ids)} dangling={dangling_pointer_count}"
+        ),
+        "",
+        "POLICY / PRIMITIVE RUNTIME",
+        f"  loaded={len(loaded_names)} -> {', '.join(loaded_names) if loaded_names else '(none reported)'}",
+        "",
+        "ARCHITECTURAL CONTRACT",
+        "  WorldGraph should become the thin associative/episodic lookup into rich Column NavMaps.",
+        "  Columns hold the durable map content; retrieval supplies candidates, not present-world authority.",
+        "  Exactly one operative WNM has accepted-current authority; BodyMap remains a protected fast path.",
+        "  Legacy predicates, projections, caches, and migration records remain subject to the memory audit.",
+    ]
+    return "\n".join(lines)
 
 
 def recent_bindings_text(world, limit: int = 5) -> str:

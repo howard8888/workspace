@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CCA8 explanatory help and new-user terminal tour.
+"""CCA8 architecture guidance and new-user terminal tour.
 
 Purpose
 -------
 This module owns terminal guidance whose primary job is to explain the CCA8
-architecture: the bindings/policies help pane and the six-step new-user tour.
+architecture: the map-first architecture overview, the bindings/policies help
+pane, and the six-step new-user tour.
 The tour receives runner-owned inspection callbacks through an explicit frozen
 runtime bridge, so this module remains independent of :mod:`cca8_run`.
 """
@@ -29,10 +30,12 @@ from typing import Any, Callable, Optional
 
 from cca8_features import time_attrs_from_ctx
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "TutorialRuntime",
+    "architecture_overview_text_v1",
+    "print_architecture_overview_v1",
     "print_tagging_and_policies_help",
     "run_new_user_tour",
     "__version__",
@@ -48,6 +51,125 @@ class TutorialRuntime:  # pylint: disable=too-few-public-methods,too-many-instan
     engrams_on_binding: Callable[[Any, str], list[str]]
     binding_engrams: Callable[[Any, str], Any]
     action_center_step: Callable[[Any, Any, Any], Any]
+
+
+def architecture_overview_text_v1() -> str:
+    """Return the concise terminal explanation of the current CCA8 architecture.
+
+    The overview deliberately separates the mature map-first target from the
+    mixed-source migration checkpoint that currently runs. It is short enough
+    for an interactive terminal but preserves the governing distinctions among
+    evidence, protected safety, the operative WNM, long-term memory, primitive
+    selection, same-cycle output, and later outcome evidence.
+    """
+    return """
+CCA8 ARCHITECTURE OVERVIEW
+==========================
+
+CCA8 is a recurrent, embodied, map-first cognitive architecture inspired by a
+mountain-goat-level mammalian brain. Its central cognitive representation is a
+Navigation Map (NavMap), not a detached table of symbolic state variables.
+
+The target information path is:
+
+    external world / body
+        -> agent-visible sensory evidence
+        -> evidence and Local NavMaps + bounded temporal processing
+        -> protected BodyMap safety path
+        -> sparse WorldGraph memory activation
+        -> rich NavMaps reinstated from Columns
+        -> alignment, comparison, and structured residuals
+        -> ONE operative Working Navigation Map (WNM) + bounded ready set
+        -> Policy / Primitive selection and arbitration
+        -> selected primitive operates on the operative WNM
+        -> Action_n, feedback, WNM transition, retrieval request, or NO_ACTION
+        -> Action_n is dispatched before CognitiveCycle_n closes
+        -> Observation_(n+1) enters cognition in the next cycle or later
+
+Key architectural roles
+-----------------------
+
+  Navigation Map / NavMap
+      A bounded, addressable, spatially organized and relationally linked
+      representation with an explicit frame, scale, provenance, support, and
+      uncertainty. Stable environmental maps are allocentric-biased; local
+      sensory, body, object, and action maps may use other explicit frames.
+
+  Operative WNM
+      Exactly one NavMap has detailed accepted-current cognitive authority at a
+      time. Ready, expected, retrieved, inferred, and imagined maps may affect
+      processing but are not co-equal present worlds.
+
+  BodyMap
+      A protected fast body and near-space safety path. It may veto unsafe
+      action and remains independently protective while ordinary cognition
+      migrates toward WNM-derived readouts.
+
+  WorldGraph
+      The intended sparse associative, episodic, action, and retrieval index.
+      It helps answer "where should memory look?" It is not the complete world
+      model or automatic current truth. Legacy symbolic content remains during
+      migration and is subject to audit, demotion, derivation, or retirement.
+
+  Columns
+      The rich durable store for NavMaps, prototypes, trajectories,
+      transformations, and other engrams. Retrieved content remains a candidate
+      until aligned, compared with current evidence, and explicitly accepted.
+
+  Sequential/Error and live dynamics
+      Bounded histories are compressed into motion, rate, duration, phase,
+      contact, support, slip, progress, and uncertainty. CCA8 does not preserve
+      a complete movie of successive NavMaps.
+
+  Policy / Primitive system
+      Several primitives may be applicable. Protected safety and arbitration
+      select one current working primitive. The primitive then operates on the
+      WNM and may produce action, expectation, feedback, retrieval, or a map
+      transition. Detailed motor trajectories remain below CCA8 in lower
+      controllers or the HAL.
+
+Authority rules
+---------------
+
+  * OBSERVED, MAINTAINED, EXPECTED, RETRIEVED, INFERRED, IMAGINED, and
+    ACCEPTED-CURRENT content remain distinguishable.
+  * Reliable current evidence defeats unsupported expectation or memory.
+  * UNKNOWN and DEFER are valid outcomes.
+  * A command does not prove success; later sensory evidence supplies the
+    ordinary outcome signal.
+  * Diagnostic traces observe the architecture but are not cognitive memory.
+
+Current implementation versus target
+------------------------------------
+
+CCA8 is deliberately migrating one bounded domain at a time. StandUp and
+FollowMom already use bounded map-native applicability authority, and feeding,
+terrain, temporal, WNM-transition, and Column-memory paths are implemented.
+Other consumers still use BodyMap, WorkingMap/MapSurface, SurfaceGrid,
+WorldGraph history, drives, and compatibility bridges. The architecture audit
+must therefore identify canonical maps, derived projections, protected fast
+paths, temporary scaffolding, and structures ready for retirement.
+
+Use Main Menu #1 to watch cognition run and Main Menu #2 to inspect the same
+cycle with the Cognitive Storage Oscilloscope / System Inspector.
+""".strip()
+
+
+def print_architecture_overview_v1(policy_rt: Any = None) -> None:
+    """Print the concise architecture overview and the currently loaded primitives."""
+    print(architecture_overview_text_v1())
+
+    try:
+        names = policy_rt.list_loaded_names() if policy_rt is not None else []
+    except Exception:
+        names = []
+
+    if names:
+        print("\nBehavioral primitives currently loaded for this profile:")
+        for name in names:
+            print(f"  - {name}")
+    print()
+
 
 def print_tagging_and_policies_help(policy_rt=None) -> None:
     """Terminal help: bindings, edges, predicates, cues, anchors, provenance/engrams, and policies.
@@ -103,15 +225,18 @@ Provenance & Engrams
   • Where is the rich data?  binding.engrams[...] → pointers (large payloads live outside WorldGraph)
 
 Maps & Memory (where things live)
-  • WorldGraph  → symbolic episode index (bindings/edges/tags); great for inspection + planning over pred:*.
-  • BodyMap     → agent-centric working state used for gating (fast, “what do I believe right now?”).
+  • NavMaps / operative WNM → rich map-like cognition; exactly one accepted-current map has operative authority.
+  • WorldGraph  → sparse episode/retrieval/index structure; historical tags are not automatic current truth.
+  • Columns     → rich durable NavMaps, prototypes, trajectories, transformations, and other engrams.
+  • BodyMap     → protected fast body/near-space safety path; it can constrain action independently.
   • Drives      → numeric interoception state (hunger/fatigue/etc.); may emit cue:drive:* threshold events.
-  • Engrams     → pointers from bindings to richer payloads stored outside the graph (future: Column / disk store).
+  • Engram pointers → lightweight WorldGraph references to rich Column payloads.
 
 Memory types (rough mapping)
-  • Declarative / semantic → stable pred:* summaries (small in WorldGraph; richer payloads via engrams / Column later).
-  • Episodic               → sequences of bindings/edges anchored by NOW (plus engram payload pointers).
-  • Procedural             → policies + any learned parameters/weights/skill stats used to select/execute actions.
+  • Current cognition      → one operative WNM plus protected evidence/expected/retrieved layers and ready maps.
+  • Rich long-term content → versioned NavMaps and engrams in Columns.
+  • Sparse episodic index  → WorldGraph bindings, actions, anchors, keyframes, and Column pointers.
+  • Procedural             → behavioral primitives plus learned competence/outcome telemetry.
 
 Anchors
   • anchor:NOW exists; used as the start for planning; may have no pred:*

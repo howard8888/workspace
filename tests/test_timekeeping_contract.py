@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from cca8_column import ColumnMemory
 from cca8_context import Ctx
 from cca8_features import FactMeta, TensorPayload, time_attrs_from_ctx
-from cca8_reporting import timekeeping_line
+from cca8_reporting import timekeeping_line, timekeeping_status_text_v1
 
 
 def _payload() -> TensorPayload:
@@ -64,3 +64,43 @@ def test_timekeeping_line_has_one_unambiguous_counter_set() -> None:
     assert timekeeping_line(ctx) == (
         "cognitive_cycles=4, controller_steps=5, autonomic_ticks=6, age_days=0.1250"
     )
+
+
+def test_timekeeping_status_panel_reports_all_named_domains_without_mutation() -> None:
+    """The inspector should show current values from each owner without advancing any clock."""
+    pending_observation = SimpleNamespace(env_meta={"step_index": 13, "time_since_birth": 6.5})
+    ctx = SimpleNamespace(
+        cog_cycles=8,
+        controller_steps=11,
+        ticks=3,
+        age_days=0.25,
+        env_pending_observation=pending_observation,
+        env_last_action="policy:follow_mom",
+    )
+    env = SimpleNamespace(
+        state=SimpleNamespace(step_index=13, time_since_birth=6.5),
+        config=SimpleNamespace(dt=0.5),
+        episode_index=2,
+    )
+    ctx_before = dict(vars(ctx))
+    env_state_before = dict(vars(env.state))
+
+    text = timekeeping_status_text_v1(ctx, env)
+
+    assert "CCA8 EXPLICIT TIMEKEEPING / ORDERING" in text
+    assert "cognitive_cycles=8" in text
+    assert "controller_steps=11" in text
+    assert "autonomic_ticks=3" in text
+    assert "age_days=0.2500" in text
+    assert "episode_index: 2" in text
+    assert "environment_step: 13" in text
+    assert "environment_time: 6.5000" in text
+    assert "dt_per_transition: 0.5000" in text
+    assert "buffered_next_observation_step: 13" in text
+    assert "buffered_next_observation_time: 6.5000" in text
+    assert "last_dispatched_action: policy:follow_mom" in text
+    assert "domain temporal cognition" in text
+    assert "tvec64" not in text
+    assert "cos_to_last_boundary" not in text
+    assert vars(ctx) == ctx_before
+    assert vars(env.state) == env_state_before

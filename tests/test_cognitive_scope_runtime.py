@@ -1,4 +1,4 @@
-"""Focused tests for Main Menu #3 cognitive storage oscilloscope phase 1."""
+"""Focused tests for Main Menu #2 cognitive storage oscilloscope phase 1."""
 
 from __future__ import annotations
 
@@ -173,7 +173,7 @@ def test_scope_renderers_and_main_menu_expose_the_new_instrument() -> None:
     assert "RETAINED SNAPSHOTS" in history
     assert "snapshot=1 cycle=0" in history
     assert "Cognitive Storage Oscilloscope / System Inspector" in cca8_cli.MAIN_MENU_PROMPT
-    assert cca8_cli.route_menu_alias("oscilloscope")[0] == "3"
+    assert cca8_cli.route_menu_alias("oscilloscope")[0] == "2"
     assert dict(cca8_run._CCA8_COMPONENT_REGISTRY)["cognitive_scope"] == "cca8_cognitive_scope"
 
 
@@ -270,7 +270,7 @@ def test_port_normalization_and_lookup_accept_human_friendly_identifiers() -> No
 
 
 def test_scope_menu_defaults_to_compact_view_and_supports_dp_drilldown(monkeypatch, capsys) -> None:
-    """Main Menu #3 should show the front panel first and open only the requested port."""
+    """Main Menu #2 should show the front panel first and open only the requested port."""
     ctx = Ctx()
     _capture_once(ctx)
     answers = iter(["1", "DP13", "", ""])
@@ -285,12 +285,44 @@ def test_scope_menu_defaults_to_compact_view_and_supports_dp_drilldown(monkeypat
     )
     output = capsys.readouterr().out
 
-    assert "SYSTEM INSPECTOR -- PHASE 1B" in output
+    assert "CCA8 COGNITIVE STORAGE OSCILLOSCOPE / SYSTEM INSPECTOR" in output
     assert "COMPACT SIGNAL PATH" in output
     assert "DP00 WORLD" in output
     assert "DIAGNOSTIC-POINT DETAIL" in output
     assert "DP13  Policy / Primitive Selection + Arbitration" in output
     assert "DP12  Drives / Goal / Emotion / Development" not in output
+
+
+def test_scope_menu_integrates_architecture_bindings_drives_timekeeping_and_skill_views(monkeypatch, capsys) -> None:
+    """Former top-level inspection functions should now live coherently inside Main Menu #2."""
+    answers = iter(["6", "7", "8", "9", "10", ""])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    monkeypatch.setattr(cca8_run, "_show_architecture_status_v1", lambda *_args: print("STATUS_SENTINEL"))
+    monkeypatch.setattr(cca8_run, "_show_recent_bindings_v1", lambda *_args, **_kwargs: print("BINDINGS_SENTINEL"))
+    monkeypatch.setattr(cca8_run, "_show_drives_v1", lambda *_args: print("DRIVES_SENTINEL"))
+    monkeypatch.setattr(cca8_run, "_show_timekeeping_status_v1", lambda *_args: print("TIMEKEEPING_SENTINEL"))
+    monkeypatch.setattr(cca8_run, "_show_skill_telemetry_v1", lambda *_args: print("SKILLS_SENTINEL"))
+
+    cca8_run._cognitive_scope_menu_v1(
+        HybridEnvironment(),
+        WorldGraph(),
+        Drives(),
+        Ctx(),
+        _PolicyRuntimeStub(),
+    )
+    output = capsys.readouterr().out
+
+    assert "SYSTEM / DATA-STORE INSPECTOR" in output
+    assert "Architecture / memory status" in output
+    assert "Recent WorldGraph bindings" in output
+    assert "Drives / internal control state" in output
+    assert "Explicit timekeeping / ordering" in output
+    assert "Primitive skill telemetry" in output
+    assert "STATUS_SENTINEL" in output
+    assert "BINDINGS_SENTINEL" in output
+    assert "DRIVES_SENTINEL" in output
+    assert "TIMEKEEPING_SENTINEL" in output
+    assert "SKILLS_SENTINEL" in output
 
 
 def test_dp13_exposes_arbitration_reason_scores_and_trigger_authority() -> None:

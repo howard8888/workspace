@@ -89,7 +89,7 @@ from cca8_standup_compare import (
 )
 
 
-__version__ = "0.14.0"
+__version__ = "0.14.1"
 __all__ = [
     "NAVMAP_SCOPE_MARKER_V1",
     "NAVMAP_SCOPE_PROBES_V1",
@@ -1246,7 +1246,7 @@ def render_navmap_scope_frame_lines_v1(ctx: Any) -> list[str]:
 
     if frame["status"] == "idle":
         lines.append("  status=idle probes=all_off [src=ctx.navmap_* diagnostic registers]")
-        lines.append("  legend: run menu 35 or 37 to put evidence/expectation/residual signals on the scope.")
+        lines.append("  legend: use Main Menu #1 option 1 or 2 to put evidence/expectation/residual signals on the scope.")
         return lines
 
     confidence = frame["policy_confidence"]
