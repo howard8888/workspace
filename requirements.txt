@@ -8,6 +8,7 @@ pyvis
 pygount
 psutil
 pytest
-pytest-cov
+# Coverage is intentionally optional and is not installed by the normal CCA8 requirements.
+# See README.md for the pure-Python Coverage.py installation used with --preflight --coverage.
 pylint
 mypy

@@ -69,12 +69,12 @@ Optional PyPI packages used by menu features / development workflow:
 - psutil: optional richer system-memory check during preflight.
 - openai: Main Menu #10 LLM setup and hybrid adviser experiments.
 - pytest: unit-test runner used by --preflight.
-- pytest-cov: optional coverage integration for pytest.
+- pytest-cov / Coverage.py: optional coverage tooling used only when explicitly requested with --preflight --coverage.
 - pylint: external lint command used during development.
 - mypy: external static type checker used during development.
 
 Recommended setup on a fresh Windows Python 3.13 environment:
-    py -m pip install --upgrade openai pyvis pygount psutil pytest pytest-cov pylint mypy
+       py -m pip install --upgrade openai pyvis pygount psutil pytest pylint mypy
 
 For a more standard repo layout, keep the same package list in requirements.txt
 at the repo root and install with:
@@ -648,7 +648,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.30.3"
+__version__ = "0.30.4"
 __all__ = [
     "main",
     "interactive_loop",
@@ -5788,7 +5788,7 @@ Note: For payload/meta details use menu selection "Inspect engram by id"
         elif choice == "9":
             # Run preflight now
             print("Selection:  Preflight\n")
-            print("Runs pytest (unit tests framework) and coverage, then a series of whole-flow custom tests.\n")
+            print("Runs pytest and the full CCA8 validation wall. Coverage is optional and disabled by default.\n")
 
             #rc = run_preflight_full(args)
             run_preflight_full(args)
@@ -7826,6 +7826,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Use CCA8 as RCOS (Robot Cognitive Operationg System)",
     )
     p.add_argument("--preflight", action="store_true", help="Run full unit tests and preflight and exit")
+    p.add_argument(
+        "--coverage",
+        action="store_true",
+        help="Enable optional pure-Python coverage for a full preflight run (default: off)",
+    )
     #p.add_argument("--write-artifacts", action="store_true", help="Write preflight artifacts to disk")
     p.add_argument("--load", help="Load session from JSON file")
     p.add_argument("--save", help="Save session to JSON file on exit")

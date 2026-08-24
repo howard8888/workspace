@@ -2375,6 +2375,31 @@ By adhering to this contract in both sim and real deployments, you can reuse cog
 
 # Hardware preflight lane (host-readiness checks; device I/O pending)
 
+Note:
+Normal preflight:
+    python cca8_run.py --preflight
+
+Optional coverage preflight:
+    python cca8_run.py --preflight --coverage
+
+
+
+For the pure-Python optional installation on Windows:
+set COVERAGE_DISABLE_EXTENSION=1
+python -m pip install --no-binary=coverage --no-cache-dir coverage==7.15.4
+set COVERAGE_DISABLE_EXTENSION=
+python -m pip install pytest-cov==7.1.0
+
+python -m coverage --version
+
+must report:
+
+without C extension
+
+before CCA8 will accept --coverage.
+
+
+
 When you run `--preflight`, Part 3 reports the configured HAL/body flags and performs five host-readiness checks that are useful for simulation and future robotics work:
 
 1. CPU enumeration (`os.cpu_count()`)

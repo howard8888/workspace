@@ -85,3 +85,17 @@ def test_runner_llm_preflight_wrapper_passes_runner_helpers(monkeypatch: pytest.
         "options": {"temperature": 0.0},
         "text": "text-from-runner",
     }
+
+
+def test_runner_cli_passes_explicit_coverage_flag_to_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The --coverage CLI switch should reach the full preflight unchanged."""
+    captured: dict[str, Any] = {}
+
+    def fake_preflight(args: Any) -> int:
+        captured["coverage"] = args.coverage
+        return 0
+
+    monkeypatch.setattr(cca8_run, "run_preflight_full", fake_preflight)
+
+    assert cca8_run.main(["--preflight", "--coverage"]) == 0
+    assert captured["coverage"] is True

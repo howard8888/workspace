@@ -38,6 +38,7 @@ from __future__ import annotations
 # pylint: disable=too-many-return-statements
 # pylint: disable=too-many-statements
 
+from importlib import metadata as importlib_metadata
 import json
 import os
 import platform
@@ -61,7 +62,8 @@ from cca8_controller import (
 from cca8_env import HybridEnvironment
 from cca8_features import FactMeta, time_attrs_from_ctx
 
-__version__ = "0.2.3"
+
+__version__ = "0.2.4"
 __all__ = [
     "PreflightRuntime",
     "run_llm_operational_preflight_check",
@@ -69,6 +71,103 @@ __all__ = [
     "run_preflight_lite_maybe",
     "__version__",
 ]
+_COVERAGE_PACKAGES: tuple[str, ...] = (
+    "cca8_world_graph",
+    "cca8_controller",
+    "cca8_run",
+    "cca8_preflight",
+    "cca8_features",
+    "cca8_column",
+)
+_COVERAGE_FAIL_UNDER = 30.0
+
+
+def _coverage_requested(args: Any) -> bool:
+    """Return True only when the caller explicitly requested coverage.
+
+    Coverage is deliberately opt-in for CCA8 preflight. Routine pytest and
+    preflight validation should remain independent of the optional coverage
+    instrumentation stack.
+    """
+    return bool(getattr(args, "coverage", False))
+
+
+def _coverage_preflight_status() -> tuple[bool, str]:
+    """Check that optional coverage tooling is installed in pure-Python form.
+
+    This function inspects installed-package metadata without importing
+    Coverage.py. That distinction is intentional: importing a native Coverage
+    tracer can itself cause operating-system code-integrity/security checks.
+
+    Returns
+    -------
+    tuple[bool, str]
+        ``(True, message)`` when Coverage.py and pytest-cov are available and
+        no native tracer extension is installed.
+
+        ``(False, message)`` when coverage cannot be run safely under the CCA8
+        pure-Python coverage contract.
+    """
+    try:
+        coverage_dist = importlib_metadata.distribution("coverage")
+    except importlib_metadata.PackageNotFoundError:
+        return False, "Coverage.py is not installed"
+
+    native_tracers: list[str] = []
+    for entry in coverage_dist.files or ():
+        normalized = str(entry).replace("\\", "/")
+        filename = normalized.rsplit("/", 1)[-1].lower()
+        if filename.startswith("tracer.") and filename.endswith((".pyd", ".so", ".dylib")):
+            native_tracers.append(normalized)
+
+    if native_tracers:
+        return (
+            False,
+            "a native Coverage tracer is installed; "
+            f"found {native_tracers[0]!r}. Reinstall Coverage.py without its C extension",
+        )
+
+    try:
+        importlib_metadata.distribution("pytest-cov")
+    except importlib_metadata.PackageNotFoundError:
+        return False, "pytest-cov is not installed"
+
+    return True, "pure-Python Coverage.py and pytest-cov are available"
+
+
+def _build_pytest_args(*, coverage_enabled: bool, coveragerc_exists: bool) -> list[str]:
+    """Build the pytest command arguments used by full preflight.
+
+    Normal preflight explicitly blocks the optional pytest-cov plugin so
+    coverage cannot activate accidentally. Coverage arguments are added only
+    after the caller requested coverage and the pure-Python installation check
+    succeeded.
+    """
+    pytest_args = [
+        "-v",
+        "-ra",
+        "--junitxml=.coverage/junit.xml",
+    ]
+
+    if not coverage_enabled:
+        pytest_args.extend(["-p", "no:pytest_cov", "tests"])
+        return pytest_args
+
+    for package_name in _COVERAGE_PACKAGES:
+        pytest_args.extend(["--cov", package_name])
+
+    if coveragerc_exists:
+        pytest_args.extend(["--cov-config", ".coveragerc"])
+
+    # Keep routine terminal output readable. The XML artifact retains the
+    # detailed coverage data when the user explicitly requests coverage.
+    pytest_args.extend(
+        [
+            "--cov-report=xml:.coverage/coverage.xml",
+            "tests",
+        ]
+    )
+    return pytest_args
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,17 +431,25 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
     calls pytest to run whatever unit tests are present in the /tests subdirectory from the main working directory.
 
     """
+    coverage_requested = _coverage_requested(args)
+    coverage_active = False
     print("\nPreflight running....")
     print("Like an aircraft pre-flight, this check verifies the critical parts of")
     print("the CCA8 architecture and simulation before you “fly” the system.\n")
-    print("There are four main parts. The first part runs a variety of unit tests,")
-    print("currently pytest-based. Coverage reports the percent of EXECUTABLE lines")
-    print("exercised. Comments and docstrings are ignored; ordinary code lines—")
-    print("including print(...) and input(...)—COUNT toward coverage, but not always. We")
-    print("generally aim for ≥30% line coverage as a useful signal, focusing on critical paths")
-    print("over raw percentage (diminishing returns with higher percentages unless mission critical).")
-    print("(Due to where results are read from, the percentage may differ by one or two percent")
-    print("in the body and summary line of the report.)\n")
+    print("There are four main parts. The first part runs the repository unit tests with pytest.")
+    if coverage_requested:
+        print(
+            "Optional coverage was explicitly requested. CCA8 will use it only if "
+            "Coverage.py is installed without a native tracer extension."
+        )
+        print(
+            f"Coverage must exercise at least {_COVERAGE_FAIL_UNDER:.0f}% of executable lines.\n"
+        )
+    else:
+        print(
+            "Coverage is disabled by default. Use '--preflight --coverage' when a deliberate "
+            "coverage measurement is wanted.\n"
+        )
     print("The second part of preflight runs scenario checks to catch issues which the unit")
     print("tests can miss, particularly whole-flow behavior (CLI → persistence →")
     print("relaunch).\n")
@@ -466,46 +573,57 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
                 import pytest as _pytest
                 print("[preflight] Running unit tests (pytest)...\n")
 
-                # Detect pytest-cov plugin; if missing, run without coverage
-                try:
-                    import pytest_cov as _pytest_cov  # noqa: F401  ## pylint: disable=unused-import
-                    _have_cov = True
-                except Exception:
-                    _have_cov = False
+                if coverage_requested:
+                    coverage_ready, coverage_message = _coverage_preflight_status()
+                    if coverage_ready:
+                        coverage_active = True
+                        ok(f"coverage opt-in: {coverage_message}\n")
+                    else:
+                        bad(
+                            "coverage was requested but cannot run under the CCA8 pure-Python "
+                            f"coverage contract: {coverage_message}\n"
+                        )
 
-                # Always ensure artifacts dir exists (for JUnit/coverage outputs)
+                # JUnit output is retained for test counts even when coverage is disabled.
                 _os.makedirs(".coverage", exist_ok=True)
 
-                if _have_cov:
+                coverage_xml = ".coverage/coverage.xml"
+                if coverage_requested and _os.path.exists(coverage_xml):
+                    try:
+                        _os.remove(coverage_xml)
+                    except OSError:
+                        pass
+
+                if coverage_active:
                     _os.environ.setdefault("COVERAGE_FILE", ".coverage/.coverage.preflight")
-                    _cov_pkgs = [
-                        "cca8_world_graph",
-                        "cca8_controller",
-                        "cca8_run",
-                        "cca8_preflight",
-                        "cca8_features",
-                        "cca8_column",
-                    ]
-                    _args = ["-v", "-ra", "--junitxml=.coverage/junit.xml"]
-                    for _pkg in _cov_pkgs:
-                        _args += ["--cov", _pkg]
-                    if _os.path.exists(".coveragerc"):
-                        _args += ["--cov-config", ".coveragerc"]
-                    # human + machine readable reports
-                    _args += ["--cov-report=term-missing",
-                              "--cov-report=xml:.coverage/coverage.xml",
-                              "tests"]
-                else:
-                    # Fallback: no coverage plugin, but still produce JUnit for counts
-                    _args = ["-v", "-ra", "--junitxml=.coverage/junit.xml", "tests"]
+
+                _args = _build_pytest_args(
+                    coverage_enabled=coverage_active,
+                    coveragerc_exists=_os.path.exists(".coveragerc"),
+                )
 
                 _rc = _pytest.main(_args)
                 if _rc == 0:
                     ok("pytest: all tests passed\n")
-                    if _have_cov:
-                        ok("coverage: see .coverage/coverage.xml and console summary above\n")
+
+                    if coverage_active:
+                        coverage_pct = _parse_coverage_pct(".coverage/coverage.xml")
+                        if coverage_pct is None:
+                            bad("coverage was requested but .coverage/coverage.xml was not produced\n")
+                        elif coverage_pct < _COVERAGE_FAIL_UNDER:
+                            bad(
+                                f"coverage: {coverage_pct:.0f}% is below the "
+                                f"{_COVERAGE_FAIL_UNDER:.0f}% requirement\n"
+                            )
+                        else:
+                            ok(
+                                f"coverage: {coverage_pct:.0f}% "
+                                f"(≥{_COVERAGE_FAIL_UNDER:.0f}%); "
+                                "details written to .coverage/coverage.xml\n"
+                            )
                 else:
-                    bad(f"pytest: test run reported failures (exit={_rc})\n")
+                    lane = "pytest/coverage" if coverage_active else "pytest"
+                    bad(f"{lane}: test run reported failures (exit={_rc})\n")
             except Exception as e:
                 bad(f"pytest run error: {e}")
         else:
@@ -1621,12 +1739,23 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
     tests_fail  = (junit.get("failures", 0) or 0) + (junit.get("errors", 0) or 0)
     tests_skip  = junit.get("skipped", 0) or 0
     tests_pass  = (tests_total - tests_fail - tests_skip) if isinstance(tests_total, int) else None
-    cov_pct     = _parse_coverage_pct(".coverage/coverage.xml")
+    cov_pct = _parse_coverage_pct(".coverage/coverage.xml") if coverage_active else None
 
     tests_txt = (f"unit_tests={tests_pass}/{tests_total}"
                  if isinstance(tests_total, int) else "unit_tests=—")
-    cov_txt   = (f"coverage={cov_pct:.0f}% ({'≥30' if (cov_pct or 0.0) >= 30.0 else '<30'})"
-                 if (cov_pct is not None) else "coverage=—")
+    if not coverage_requested:
+        cov_txt = "coverage=disabled"
+    elif not coverage_active:
+        cov_txt = "coverage=not-run"
+    elif cov_pct is None:
+        cov_txt = "coverage=unavailable"
+    else:
+        threshold_text = (
+            f"≥{_COVERAGE_FAIL_UNDER:.0f}"
+            if cov_pct >= _COVERAGE_FAIL_UNDER
+            else f"<{_COVERAGE_FAIL_UNDER:.0f}"
+        )
+        cov_txt = f"coverage={cov_pct:.0f}% ({threshold_text})"
 
     # Probes (Part 2) — exclude the earlier Part 1 pytest-lane bookkeeping
     probe_checks = max(0, checks - probe_checks_offset)

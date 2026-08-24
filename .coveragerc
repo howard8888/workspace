@@ -4,9 +4,14 @@
 #  is reasonable and pragmatic way to keep the reported percentage focused on actual logic
 
 [run]
+core = pytrace
+# CCA8 intentionally uses Coverage.py's pure-Python tracer.
+# Coverage is opt-in and should not depend on a native tracer extension.
+
 branch = True
 #enables branch coverage, i.e., not just which lines of code executed but which decision paths, i.e., branches
 #  in the code were taken
+
 disable_warnings = module-not-measured
 # to disable the warnings that occur about 'coveragewarnings' since we import some modules before measuring them
 
