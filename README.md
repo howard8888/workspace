@@ -8,7 +8,7 @@ NOTE: This README is large; if GitHub truncates the preview at the 512 KiB rende
 
 
 Software was developed in a Windows environment but should run with minimal changes in a macOS or Linux environment.
-Requires Python 3.11
+Requires Python 3.13
 Please contact hschneidermd [at] alum [dot] mit [dot] edu for inquiries about additional software modules, related
  materials, or ongoing development.
 
@@ -20,7 +20,7 @@ Architecture and migration authority: `CCA8_Project_Planning_v13.pdf`. The local
 ## **TL;DR == Run code**
 
 Requirements:
-- Python 3.11
+- Python 3.13
 - All root-level `cca8_*.py` production modules in the same repository directory
 - Optional: unit-test files in the `tests/` directory (used by `--preflight`)
 - Python standard-library modules are included with a normal Python installation
@@ -4681,7 +4681,7 @@ See the command-line contract implemented by the current checkout:
 python cca8_run.py --help
 ```
 
-Use `python3` on systems where `python` does not select Python 3.11.
+Use `python3` on systems where `python` does not select Python 3.13.
 
 ## Current command-line flags
 

@@ -4,7 +4,7 @@
 *************************************
 
 Software was developed in a Windows environment but should run with minimal changes in a macOS or Linux environment.
-Requires Python 3.11
+Requires Python 3.13
 Please contact __  for inquiries about additional software modules, related
  materials, or ongoing development.
 
@@ -44,7 +44,7 @@ Requirements
 ------------
 
 Core runtime:
-- Python 3.11.
+- Python 3.13.
 - All CCA8 Python modules in the same repo directory, including:
   cca8_world_graph.py, cca8_controller.py,
   cca8_column.py, cca8_features.py, cca8_env.py, cca8_navpatch.py,
@@ -73,7 +73,7 @@ Optional PyPI packages used by menu features / development workflow:
 - pylint: external lint command used during development.
 - mypy: external static type checker used during development.
 
-Recommended setup on a fresh Windows Python 3.11 environment:
+Recommended setup on a fresh Windows Python 3.13 environment:
     py -m pip install --upgrade openai pyvis pygount psutil pytest pytest-cov pylint mypy
 
 For a more standard repo layout, keep the same package list in requirements.txt
