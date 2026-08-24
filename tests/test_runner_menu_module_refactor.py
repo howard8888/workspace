@@ -11,6 +11,7 @@ import pytest
 
 import cca8_cli
 import cca8_cognitive_scope_menu
+import cca8_main_menu
 import cca8_rcos_menu
 import cca8_run
 import cca8_session_menu
@@ -33,6 +34,14 @@ def test_runner_reexports_focused_menu_helpers() -> None:
     assert cca8_run._sim_robot_goat_obs_lines_v1 is cca8_rcos_menu.sim_robot_goat_obs_lines_v1
     assert cca8_run._sim_robot_goat_status_lines_v1 is cca8_rcos_menu.sim_robot_goat_status_lines_v1
     assert cca8_run._cognitive_scope_live_snapshot_v1 is cca8_cognitive_scope_menu.cognitive_scope_live_snapshot_v1
+    assert cca8_run._open_worldgraph_pyvis_flow_v1 is cca8_cognitive_scope_menu.open_worldgraph_pyvis_flow_v1
+
+
+def test_main_menu_router_is_extracted_from_runner() -> None:
+    """The stable 13-choice routing logic should live outside the composition root."""
+    assert hasattr(cca8_main_menu, "resolve_top_level_choice_v1")
+    assert hasattr(cca8_main_menu, "manual_controls_menu_v1")
+    assert hasattr(cca8_main_menu, "memory_operations_menu_v1")
 
 
 def test_episode_starting_state_menu_updates_and_clamps_explicit_settings(
@@ -93,3 +102,37 @@ def test_rcos_menu_renderers_operate_without_runner_state() -> None:
     assert "predicates=" in observation_text
     assert "[rcos] status" in status_text
     assert "milestone_score=" in status_text
+
+
+def test_worldgraph_pyvis_flow_owns_visualization_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The extracted Oscilloscope menu should be the one Pyvis terminal controller."""
+    responses = iter(("first_pred", "n", "n", "custom_graph.html", "n"))
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
+    calls: list[dict[str, object]] = []
+
+    class _WorldStub:
+        def to_pyvis_html(self, **kwargs: object) -> str:
+            calls.append(dict(kwargs))
+            return "custom_graph.html"
+
+    cca8_cognitive_scope_menu.open_worldgraph_pyvis_flow_v1(_WorldStub())
+
+    assert calls == [
+        {
+            "path_html": "custom_graph.html",
+            "label_mode": "first_pred",
+            "show_edge_labels": False,
+            "physics": False,
+        }
+    ]
+
+
+def test_runner_delegates_historical_pyvis_prompt_flow() -> None:
+    """The Runner should call the extracted Pyvis controller rather than duplicate its prompts."""
+    source = Path(cca8_run.__file__).resolve().read_text(encoding="utf-8")
+
+    assert "_open_worldgraph_pyvis_flow_v1(world)" in source
+    assert "Node label mode [id / first_pred / id+first_pred]" not in source
+    assert "Enable physics (force-directed layout)?" not in source

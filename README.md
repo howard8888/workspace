@@ -484,9 +484,9 @@ authority for what actually executes.
 - [Persistence: Autosave/Load](#persistence-autosaveload)
 - [Runner, menus, and CLI](#runner-menus-and-cli)
 - [Cognitive Storage Oscilloscope and System Inspector](#cognitive-storage-oscilloscope-and-system-inspector)
-- [Menu 48: OpenAI / LLM setup, smoke test, state-summary demo, and advanced request knobs](#menu-48-openai--llm-setup-smoke-test-state-summary-demo-and-advanced-request-knobs)
+- [Main Menu #10: LLM / External Model Integration](#main-menu-10-llm--external-model-integration)
 - [Experiments](#experiments)
-- [Menu 49: Experiments / Benchmarks](#menu-49-experiments--benchmarks)
+- [Main Menu #8: Experiments / Benchmarks](#main-menu-8-experiments--benchmarks)
 - [Experiment protocol: conditions A–E](#experiment-protocol-conditions-ae)
 - [Current benchmark suite](#current-benchmark-suite)
 - [Experiment outputs and JSONL records](#experiment-outputs-and-jsonl-records)
@@ -749,7 +749,7 @@ context) and a candidate action/policy, produce a small **OutcomeSketch** (risk/
 
 **Optional: If you want to see that priors matter, enable observation masking:**
 
-Go to menu 40: Configure episode starting state (drives + age_days)
+Go to **Main Menu #5 → Partial-observability / observation masking**
 
 Set:
 
@@ -786,7 +786,7 @@ Tip: set obs_mask_prob back to 0.00 for “fully observed baseline” runs.
 If you want to see the **WorkingMap ⇄ Column** memory pipeline in a controlled context-switch task, use the dedicated
 goat-foraging evaluation harness:
 
-- go to **menu 42**: *Configure goat_foraging_04 contextual map-switch evaluation*
+- go to **Main Menu #8 → Configure goat_foraging_04 contextual map switching**
 - then use **Main Menu #1 → option 2** for `N = 20` (or `N = 50` if you want a longer trace)
 
 What to look for:
@@ -819,7 +819,7 @@ Export interactive graph (HTML) if you want a visual of the episode skeleton.
 
 Main Menu **#2** is the **Cognitive Storage Oscilloscope / System Inspector**. It is the broad diagnostic console for the whole
 cognitive cycle rather than only the older six-probe NavMap comparison path. Its ordinary scope and store views are read-only; the
-separate option 13 injection demonstration is confined to a disposable sandbox.
+separate **Sandbox Signal Injection** panel is confined to a disposable sandbox.
 
 Run:
 
@@ -833,7 +833,7 @@ Before any closed-loop episode, the inspector may show idle or unavailable data 
 cycle, or **option 2** for a short compact run, then return to Main Menu **#2**. Use the compact view for the full signal path, the full
 view for more fields, or drill into one diagnostic point.
 
-To try the first bounded signal-injection controller, choose **Main Menu #2 option 13**, then preset **1**. CCA8 creates one
+To try the first bounded signal-injection controller, choose **Main Menu #2 → Sandbox Signal Injection**, then preset **1**. CCA8 creates one
 source-stamped synthetic `EnvObservation` describing a fallen calf near a cliff with Mom and shelter far. A numeric
 `diagnostic_pulse=1.0` channel and canonical fall cues make the packet easy to recognize at DP01. The packet then passes through the
 ordinary one-cycle path, so the resulting compact trace should show, among other things:
@@ -2081,11 +2081,11 @@ The current episode summary includes:
 
 This gives the RCOS work an immediate experimental footing rather than being only a user-interface demo.
 
-### Menu 50: interactive RCOS sandbox
+### Main Menu #9: interactive RCOS sandbox
 
 The runner now exposes the Stage 1 sandbox through:
 
-- **Menu 50: SimRobotGoat RCOS sandbox**
+- **Main Menu #9: SimRobotGoat RCOS sandbox**
 
 This menu is intentionally thin. It does not implement robot logic itself. It simply wraps the RCOS module so the user can:
 
@@ -2102,7 +2102,8 @@ One important implementation principle is:
 
 > The RCOS sandbox is isolated from the main CCA8 simulation state.
 
-In practical terms, you can enter Menu 50, test the robot sandbox, then return to the main menu without mutating the ordinary CCA8 WorldGraph / controller timeline. That isolation is deliberate and useful.
+In practical terms, you can enter Main Menu #9, test the robot sandbox, then return to the main menu without mutating the ordinary CCA8
+WorldGraph / controller timeline. Historical direct number 50 remains accepted.
 
 ### Why this Stage 1 work matters
 
@@ -4382,21 +4383,22 @@ The canonical component list used by `versions_dict()`, `versions_text()`, and `
 | `cca8_world_graph.py` | Sparse episode/retrieval/index graph, bindings, anchors, BFS/Dijkstra, persistence, and Column pointers; not complete world model or current truth |
 | `cca8_column.py` | Heavy durable engram/map payload store; no direct acceptance authority |
 | `cca8_features.py` | Typed feature payloads, fact metadata, and explicit cognitive-cycle/controller/autonomic/developmental provenance linkage |
-| `cca8_cli.py` | CLI parsing, startup/main-menu presentation, alias/number routing, and the small Main Menu #1 watch-mode chooser |
+| `cca8_cli.py` | CLI parsing, compact 13-choice Main Menu presentation, alias/number compatibility routing, and the Main Menu #1 watch-mode chooser |
 | `cca8_profiles.py` | Profile selection, developmental narratives, defaults, and bounded demonstrations |
 | `cca8_guidance.py` | User-facing architecture explanations, Main Menu #3 documentation flow, technical primer, and new-user tutorial support |
+| `cca8_main_menu.py` | Stable top-level workbench submenus for manual controls, memory mutation, WorldGraph editing/planning, experiments, sessions, and developer utilities; returns established runner handler keys rather than duplicating implementations |
 | `cca8_teaching.py` | Verbose cycle annotations used by Main Menu #1 option 1 |
 | `cca8_cognitive_scope.py` | DP00–DP18 Cognitive Storage Oscilloscope collectors and renderers: bounded end-of-cycle snapshots, compact/full/drill-down views, and no cognitive or policy authority |
-| `cca8_cognitive_scope_menu.py` | Main Menu #2 terminal controller: retained/live trace navigation, system/store views, DP drill-down, Pyvis routing, trace clearing, and bounded sandbox-injection presentation |
+| `cca8_cognitive_scope_menu.py` | Main Menu #2 terminal controller: six intent-oriented inspector panels covering retained/live traces, current cognition, memory stores, visualizations, bounded sandbox injection, and trace/display controls |
 | `cca8_cognitive_injection.py` | First bounded signal-injection engine: one source-stamped synthetic `EnvObservation` at DP01, one ordinary cognitive cycle in a disposable sandbox, correlated DP00–DP18 trace, and explicit shared-state rollback |
 | `cca8_preflight.py` | Test, architecture-probe, host/hardware-readiness, and system-fitness validation wall |
-| `cca8_experiments.py` | Experiment definitions, stressors, conditions, scoring, statistics, JSON/JSONL output, and Menu 49 |
+| `cca8_experiments.py` | Experiment definitions, stressors, conditions, scoring, statistics, JSON/JSONL output, and Main Menu #8 |
 | `cca8_openai.py` | Optional bounded OpenAI adviser and structured request/response support |
 | `cca8_rcos.py` | SimRobotGoat/RCOS mission-state, command vocabulary, supervision, and HAL-like sandbox seam |
-| `cca8_rcos_menu.py` | Thin Menu 50 terminal wrapper and compact observation/status/acknowledgement rendering for SimRobotGoat |
+| `cca8_rcos_menu.py` | Thin Main Menu #9 terminal wrapper and compact observation/status/acknowledgement rendering for SimRobotGoat |
 | `cca8_rcos_experiments.py` | RCOS long-horizon experiments, perturbations, repeats, and ablations |
 | `cca8_state_integrity.py` | Long-horizon state-integrity metrics, guards, and repair research support |
-| `cca8_session_menu.py` | Menu 40 starting-state/observation-mask configuration and Menu 41 reference-only memory/RL guidance; no policy execution |
+| `cca8_session_menu.py` | Main Menu #5 runtime/episode configuration, hidden Menu 40 combined compatibility flow, and hidden Menu 41 reference-only memory/RL guidance; no policy execution |
 | `cca8_test_fixtures.py` | Deterministic fixtures for tests, preflight, and demonstrations |
 
 Publication and validation adjuncts remain part of the authoritative repository and should not be casually modified during core architecture
@@ -4722,42 +4724,57 @@ python cca8_run.py --load session.json --save session_end.json
 Session files use JSON and atomic replacement. The exact persisted shape and backward-compatibility behavior are owned by the current
 source and tests.
 
-## Main Menu: Quick Start / Overview
+## Main Menu: thirteen stable workbenches
 
-The Main Menu now groups its first three entries under one **`# Quick Start/ Overview`** heading:
+The visible Main Menu is intentionally limited to **thirteen stable choices** so it fits on one ordinary terminal screen. Detailed
+functions live in submenus organized by user intent rather than by the order in which features were historically added:
 
-1. **Watch Cognition Run** — opens a two-choice submenu for one slow annotated cognitive cycle or several compact closed-loop cycles.
-2. **Cognitive Storage Oscilloscope / System Inspector** — the primary inspection interface. It includes the DP00–DP18 trace,
-   retained-cycle navigation, architecture/memory status, recent WorldGraph bindings, drives, explicit timekeeping/ordering, primitive
-   skill telemetry, the legacy detailed Snapshot, WorldGraph visualization, and one tightly bounded DP01 signal-injection demonstration
-   that runs only in a fresh disposable sandbox.
-3. **Explanation of the Architecture** — provides a concise map-first architecture overview, opens the full README/compendium, and
-   offers a lower-level primer on bindings, tags, edges, drives, and primitives.
+| Main Menu | Purpose |
+|---|---|
+| **1. Watch Cognition Run** | One slow annotated cognitive cycle, several compact cycles, or a complete isolated newborn-survival episode |
+| **2. Cognitive Storage Oscilloscope / System Inspector** | Universal read-only inspection console plus a clearly separated disposable DP01 injection demonstration |
+| **3. Architecture, Documentation & Tutorial** | Concise map-first overview, README/compendium, and technical primer |
+| **4. Manual Inputs & One-Step Controls** | Manual Action Center invocation, autonomic tick, simulated fall, and manual sensory cue |
+| **5. Runtime / Episode Configuration** | Drives/age, observation masking, WorkingMap/Column auto-retrieval, and mini-snapshot display |
+| **6. Memory Operations** | Capture/store/load/attach/delete/clear operations that can change WorkingMap, Columns, or engram pointers |
+| **7. WorldGraph Editing & Planning** | Add/connect/delete graph elements, plan from NOW, and choose BFS or Dijkstra |
+| **8. Experiments & Benchmarks** | Experiment protocol console and `goat_foraging_04` contextual map-switch configuration |
+| **9. RCOS / Robotics** | SimRobotGoat RCOS/HAL sandbox |
+| **10. LLM / External Model Integration** | OpenAI setup, smoke test, state-summary demo, request settings, and evaluation support |
+| **11. Session Save / Load / Reset** | Persistence operations and current I/O-path status |
+| **12. Validation & Developer Utilities** | Full preflight, source-line report, and component version/path report |
+| **13. Quit** | Cleanly leave the interactive runner |
 
-This replaces the older long front-page list of separate cycle-run, WorldGraph-statistics, recent-binding, drive, skill, and timekeeping
-entries.
-The former visible 35/37 cycle choices now live under #1. The useful functions of the former visible #4–#7 entries now live coherently
-under #2 rather than being copied into the inspector unchanged. The former visible #8 Timekeeping Status also lives under #2 as a fuller
-multi-domain inspection panel. Historical direct numbers remain accepted for compatibility.
+The key safety/clarity split is:
+
+```text
+Main Menu #2  = observe cognition and memory
+Main Menu #6  = change memory
+Main Menu #7  = edit or plan through WorldGraph
+```
+
+Historical direct numbers **14-51** remain accepted but are deliberately hidden from the front page. The new meanings of **4-13** are
+canonical, so conflicting older meanings of those numbers are reached through the new submenus or their text aliases instead. Useful
+specific text commands such as `save`, `load`, `preflight`, `bodymap`, `wpick`, and `pyvis` remain available.
 
 ## Cognitive Storage Oscilloscope and System Inspector
 
 `cca8_cognitive_scope.py` implements the measurement-only DP00–DP18 trace and its renderers. It samples stable runtime registers at
 the end of a cycle and stores bounded immutable snapshots in a ring buffer (default capacity 128).
-`cca8_cognitive_scope_menu.py` owns Main Menu #2 prompting, retained/live trace navigation, system/store subpanels, drill-down,
-visualization routing, trace clearing, and injection presentation. The ordinary retained trace is outside cognition: it does not write
-observed evidence, change WNM authority, select policies, alter memory, or control output. **Live-session signal injection remains
-disabled.**
+`cca8_cognitive_scope_menu.py` owns Main Menu #2 prompting and groups the console into six panels: Signal Path / Retained Cycles,
+Current Cognition & Control State, Memory Stores & WorldGraph State, Visualizations & Diagnostic Exports, Sandbox Signal Injection,
+and Trace & Display Controls. The ordinary retained trace is outside cognition: it does not write observed evidence, change WNM
+authority, select policies, alter memory, or control output. **Live-session signal injection remains disabled.**
 
 `cca8_cognitive_injection.py` supplies the separate injection engine, while `cca8_cognitive_scope_menu.py` owns its terminal flow.
-Main Menu #2 option 13 creates one source-stamped synthetic
+The **Sandbox Signal Injection** panel creates one source-stamped synthetic
 `EnvObservation` at DP01 and runs exactly one ordinary cognitive cycle in a newly constructed disposable sandbox. The current preset is
 fallen-near-cliff with Mom and shelter far. Its purpose is to demonstrate the measurement/control seam and let the technician follow a
 known packet through DP01–DP18. It is not an arbitrary-port editor, does not accept live session objects, does not inject below the motor
 boundary, and does not grant synthetic content live WNM, memory, policy, or actuator authority. Process-shared skill and Column effects
 created during the demonstration are restored in `finally` before the result is returned.
 
-The System / Data-Store Inspector section includes a dedicated **Explicit timekeeping / ordering** panel. It displays the current
+The **Current Cognition & Control State** panel includes a dedicated **Explicit timekeeping / ordering** view. It displays the current
 cognitive-cycle, controller-step, autonomic-tick, developmental-age, environment-step, environment-time, configured environment-delta,
 and buffered-next-observation correlation values together, while preserving their separate owners and meanings. Wall-clock provenance
 and source-linked temporal cognition are explained but are not collapsed into another universal clock.
@@ -4797,19 +4814,25 @@ legacy Snapshot, but Main Menu #2's DP00–DP18 inspector is now the primary sys
 
 - **Main Menu #1, option 1:** one annotated current-cycle transaction.
 - **Main Menu #1, option 2:** several complete cycles with compact diagnostics and JSONL traces.
-- **Main Menu #2:** DP00–DP18 oscilloscope, architecture/store/timekeeping inspection, disposable DP01 signal injection, and trace management.
+- **Main Menu #1, option 3:** a complete isolated autonomous newborn-survival episode.
+- **Main Menu #2:** six-panel DP00-DP18 oscilloscope/system inspector, including BodyMap, WorkingMap, WorldGraph/Column/engram views,
+  explicit timekeeping, visualizations, bounded DP01 injection, and trace/display controls.
 - **Main Menu #3:** architecture explanation and full system documentation.
-- **Plan to predicate:** interactive WorldGraph planning from NOW.
-- **Inspect binding details / Pyvis export:** graph and provenance inspection.
-- **Menu 48:** optional OpenAI setup, smoke test, read-only state-summary demo, and evaluation support.
-- **Menu 49:** controlled experiments and benchmarks.
+- **Main Menu #6:** all memory-mutating operations.
+- **Main Menu #7:** WorldGraph editing and planning.
+- **Main Menu #8:** controlled experiments and benchmarks.
+- **Main Menu #9:** RCOS/robotics sandbox.
+- **Main Menu #10:** optional OpenAI/LLM integration.
+- **Main Menu #11:** session persistence.
+- **Main Menu #12:** preflight and developer reports.
 
-Menu numbers outside the explicitly named stable entries can move as the runner evolves. Prefer the displayed menu labels and
-`python cca8_run.py --help` over old screenshots or copied command examples.
+Historical direct numbers 14-51 remain accepted for compatibility, but new documentation should use the stable top-level workbenches and
+the displayed submenu labels.
 
-# Menu 48: OpenAI / LLM setup, smoke test, state-summary demo, and advanced request knobs
+# Main Menu #10: LLM / External Model Integration
 
-Menu **48** is the current entry point for OpenAI / LLM work inside the runner.
+Main Menu **#10: LLM / External Model Integration** is the visible entry point for OpenAI / LLM work. Historical direct number **48**
+remains accepted.
 
 It keeps the first bridge deliberately simple and readable:
 
@@ -5093,9 +5116,9 @@ Current metric names such as `state_integrity_score` remain compatibility/resear
 architecture is a state-vector system.
 
 
-## Menu 49: Experiments / Benchmarks
+## Main Menu #8: Experiments / Benchmarks
 
-Menu 49 is the entry point for experiment work.
+Main Menu #8 is the visible entry point for experiment work. Historical direct number 49 remains accepted.
 
 It currently supports:
 
@@ -6597,19 +6620,18 @@ WorldGraph receives sparse indexes and pointers; Columns receive the rich map pa
 
 ## Current menu tools
 
-Menu numbers may change; use the displayed runner menu as authority.
+Use the stable displayed workbenches rather than memorizing hidden compatibility numbers:
 
 - Main Menu #1 option 1: one verbose closed-loop cycle and Oscilloscope teaching output.
 - Main Menu #1 option 2: compact multi-cycle run.
-- Main Menu #2: Cognitive Storage Oscilloscope / System Inspector, including explicit timekeeping/ordering inspection and the bounded disposable DP01 injection demonstration.
+- Main Menu #1 option 3: complete isolated newborn-survival episode.
+- Main Menu #2 -> Current Cognition & Control State: inspect BodyMap and WorkingMap/MapSurface/SurfaceGrid.
+- Main Menu #2 -> Memory Stores & WorldGraph State: inspect bindings, predicates, engrams, MapSurface records, and retrieval ranking.
+- Main Menu #2 -> Sandbox Signal Injection: run the bounded disposable DP01 injection demonstration.
 - Main Menu #3: architecture explanation and README/compendium access.
-- Menu 38: inspect BodyMap.
-- Menu 42: configure contextual map-switch evaluation.
-- Menu 43: inspect WorkingMap/MapSurface payload.
-- Menu 44: store MapSurface snapshot.
-- Menu 45: list recent MapSurface engrams.
-- Menu 46: rank a stored MapSurface candidate.
-- Menu 47: load a stored MapSurface into WorkingMap.
+- Main Menu #5: configure drives/age, observation masking, auto-retrieval, and display behavior.
+- Main Menu #6: capture/store/load/attach/delete/clear memory.
+- Main Menu #8: experiments, including contextual map-switch configuration.
 
 ## Debugging order
 

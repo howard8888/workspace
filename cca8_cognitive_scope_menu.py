@@ -31,6 +31,9 @@ from __future__ import annotations
 # Interactive diagnostic boundaries should report errors without terminating
 # the live CCA8 session.
 # pylint: disable=broad-exception-caught
+# pylint: disable=too-many-branches
+# pylint: disable=too-many-statements
+# pylint: disable=duplicate-code
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -39,13 +42,14 @@ import sys
 from typing import Any
 import webbrowser
 
+import cca8_cli
 import cca8_cognitive_injection
 import cca8_cognitive_scope
 import cca8_reporting
 from cca8_column import mem as column_mem
 from cca8_controller import skill_readout
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "CognitiveScopeMenuRuntimeV1",
@@ -87,27 +91,59 @@ class CognitiveScopeMenuRuntimeV1:  # pylint: disable=too-few-public-methods
     legacy_snapshot_text: Callable[..., str]
 
 
+
 def open_worldgraph_pyvis_flow_v1(world: Any) -> None:
-    """Generate and optionally open the existing interactive WorldGraph view."""
+    """Generate and optionally open an interactive WorldGraph HTML view.
+
+    This is the single terminal controller for both the current Oscilloscope
+    visualization panel and the hidden historical direct-menu compatibility
+    route. Presentation options remain here so ``cca8_run`` does not carry a
+    second Pyvis interaction flow.
+    """
+    print()
+    print("INTERACTIVE WORLDGRAPH HTML")
+    print("=" * 78)
+    print("Node labels can show ids, first predicates, or both.")
+    print("Edge-label text is useful on small graphs and can be hidden on larger graphs.")
+    print("Physics uses a force-directed layout and is usually best left enabled.")
+    print()
+
+    label_mode = cca8_cli.read_menu_input_v1(
+        "Node label mode [id / first_pred / id+first_pred] (default: id+first_pred): "
+    )
+    if label_mode is None:
+        return
+    label_mode = label_mode.lower()
+    if label_mode not in {"id", "first_pred", "id+first_pred"}:
+        label_mode = "id+first_pred"
+
+    edge_choice = cca8_cli.read_menu_input_v1("Show edge labels on links? [Y/n]: ")
+    if edge_choice is None:
+        return
+    show_edge_labels = edge_choice.lower() not in {"n", "no", "0"}
+
+    physics_choice = cca8_cli.read_menu_input_v1("Enable physics (force-directed layout)? [Y/n]: ")
+    if physics_choice is None:
+        return
+    physics = physics_choice.lower() not in {"n", "no", "0"}
+
     default_path = "world_graph.html"
-    try:
-        path = input(f"Save HTML to (default: {default_path}): ").strip() or default_path
-    except Exception:
-        path = default_path
+    path_choice = cca8_cli.read_menu_input_v1(f"Save HTML to (default: {default_path}): ")
+    if path_choice is None:
+        return
+    path = path_choice or default_path
 
     try:
         out = world.to_pyvis_html(
             path_html=path,
-            label_mode="id+first_pred",
-            show_edge_labels=True,
-            physics=True,
+            label_mode=label_mode,
+            show_edge_labels=show_edge_labels,
+            physics=physics,
         )
         print(f"Interactive graph written to: {out}")
-        try:
-            open_now = input("Open in your default browser now? [y/N]: ").strip().lower()
-        except Exception:
-            open_now = "n"
-        if open_now not in ("y", "yes"):
+
+        open_now = cca8_cli.read_menu_input_v1("Open in your default browser now? [y/N]: ")
+        if open_now is None or open_now.lower() not in ("y", "yes"):
             return
 
         try:
@@ -317,7 +353,7 @@ def cognitive_scope_injection_flow_v1(
         print()
 
 
-def cognitive_scope_menu_v1(
+def _scope_trace_menu_v1(
     env: Any,
     world: Any,
     drives: Any,
@@ -326,50 +362,20 @@ def cognitive_scope_menu_v1(
     *,
     runtime: CognitiveScopeMenuRuntimeV1,
 ) -> None:
-    """Run Main Menu #2's oscilloscope and coherent system inspector."""
+    """Display retained/live DP00-DP18 trace operations."""
     while True:
-        trace = cca8_cognitive_scope.cognitive_scope_trace_summary_v1(ctx)
         print()
+        print("COGNITIVE SIGNAL PATH / RETAINED CYCLES")
         print("=" * 78)
-        print("CCA8 COGNITIVE STORAGE OSCILLOSCOPE / SYSTEM INSPECTOR")
-        print("=" * 78)
-        print(
-            f"Retained cognitive-cycle snapshots: {trace.get('retained_count')}/{trace.get('capacity')}  "
-            f"total captured this session: {trace.get('total_capture_count')}"
-        )
-        print("DP00 is external simulation truth; DP01-DP18 are eighteen CCA8 service points.")
-        print("The ordinary scope trace is read-only diagnostic storage, not goat memory.")
-        print("Live-session injection is disabled; a source-stamped DP01 injection is available only in a disposable sandbox.\n")
-        print("  COGNITIVE OSCILLOSCOPE / TRACE")
         print("  1) Display latest retained compact signal path + optional DP drill-down")
         print("  2) List retained snapshot index")
         print("  3) Display retained compact signal path by snapshot number + optional DP drill-down")
         print("  4) Display current live compact state + optional DP drill-down")
         print("  5) Display latest full raw all-port snapshot")
-        print()
-        print("  SYSTEM / DATA-STORE INSPECTOR")
-        print("  6) Architecture / memory status (operative WNM, Columns, sparse index, WorldGraph)")
-        print("  7) Recent WorldGraph bindings (bounded episode/index tail)")
-        print("  8) Drives / internal control state")
-        print("  9) Explicit timekeeping / ordering (cognitive, control, autonomic, developmental, environment)")
-        print(" 10) Primitive skill telemetry")
-        print(" 11) Legacy detailed Snapshot (WorldGraph + CTX + policies)")
-        print(" 12) Generate / display interactive WorldGraph HTML")
-        print()
-        print("  SANDBOX SIGNAL INJECTION")
-        print(" 13) Inject one preset synthetic EnvObservation at DP01 and trace one disposable cognitive cycle")
-        print()
-        print("  TRACE CONTROL")
-        print(" 14) Clear retained oscilloscope snapshots")
-        print("  [Enter] Return to Main Menu")
+        print("  [Enter] Return to the Oscilloscope front panel")
 
-        try:
-            choice = input("Choose: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-
-        if choice == "":
+        choice = cca8_cli.read_menu_input_v1()
+        if not choice:
             return
         if choice == "1":
             snapshot = cca8_cognitive_scope.cognitive_scope_latest_snapshot_v1(ctx)
@@ -408,42 +414,230 @@ def cognitive_scope_menu_v1(
                 snapshot = runtime.build_live_snapshot(env, world, drives, ctx, policy_rt)
             print("\n".join(cca8_cognitive_scope.render_cognitive_scope_snapshot_lines_v1(snapshot)))
             continue
-        if choice == "6":
+        print("Please choose 1-5 or press Enter to return.")
+
+
+def _scope_current_state_menu_v1(
+    env: Any,
+    world: Any,
+    drives: Any,
+    ctx: Any,
+    policy_rt: Any,
+    *,
+    runtime: CognitiveScopeMenuRuntimeV1,
+) -> str | None:
+    """Display current cognition/control views or return a legacy read-only handler."""
+    while True:
+        print()
+        print("CURRENT COGNITION & CONTROL STATE")
+        print("=" * 78)
+        print("  1) Operative WNM / ready set and architecture status")
+        print("  2) Protected BodyMap")
+        print("  3) WorkingMap / MapSurface / SurfaceGrid")
+        print("  4) Spatial scene relations around NOW")
+        print("  5) Drives / internal control state")
+        print("  6) Explicit timekeeping / ordering")
+        print("  7) Primitive skill telemetry")
+        print("  [Enter] Return to the Oscilloscope front panel")
+
+        choice = cca8_cli.read_menu_input_v1()
+        if not choice:
+            return None
+        if choice == "1":
             runtime.show_architecture_status(world, ctx, policy_rt)
             continue
-        if choice == "7":
-            runtime.show_recent_bindings(world, limit=5)
-            continue
-        if choice == "8":
+        if choice == "2":
+            return "38"
+        if choice == "3":
+            return "43"
+        if choice == "4":
+            return "39"
+        if choice == "5":
             runtime.show_drives(drives)
             continue
-        if choice == "9":
+        if choice == "6":
             runtime.show_timekeeping_status(env, ctx)
             continue
-        if choice == "10":
+        if choice == "7":
             runtime.show_skill_telemetry(ctx)
             continue
-        if choice == "11":
+        print("Please choose 1-7 or press Enter to return.")
+
+
+def _scope_memory_stores_menu_v1(
+    world: Any,
+    ctx: Any,
+    policy_rt: Any,
+    *,
+    runtime: CognitiveScopeMenuRuntimeV1,
+) -> str | None:
+    """Display memory/index views or return a historical read-only handler."""
+    while True:
+        print()
+        print("MEMORY STORES & WORLDGRAPH STATE -- READ ONLY")
+        print("=" * 78)
+        print("  1) Architecture / memory status")
+        print("  2) Recent WorldGraph bindings")
+        print("  3) Inspect one WorldGraph binding")
+        print("  4) List WorldGraph predicates")
+        print("  5) Resolve engram pointers on a binding")
+        print("  6) Inspect one engram")
+        print("  7) List all engrams")
+        print("  8) Search engrams")
+        print("  9) WorkingMap / MapSurface snapshot")
+        print(" 10) List recent MapSurface engrams")
+        print(" 11) Rank the best MapSurface candidate without loading it")
+        print("  [Enter] Return to the Oscilloscope front panel")
+
+        choice = cca8_cli.read_menu_input_v1()
+        if not choice:
+            return None
+        if choice == "1":
+            runtime.show_architecture_status(world, ctx, policy_rt)
+            continue
+        if choice == "2":
+            runtime.show_recent_bindings(world, limit=5)
+            continue
+        routes = {
+            "3": "10",
+            "4": "2",
+            "5": "6",
+            "6": "27",
+            "7": "28",
+            "8": "29",
+            "9": "43",
+            "10": "45",
+            "11": "46",
+        }
+        routed = routes.get(choice)
+        if routed is not None:
+            return routed
+        print("Please choose 1-11 or press Enter to return.")
+
+
+def _scope_visualization_menu_v1(
+    world: Any,
+    drives: Any,
+    ctx: Any,
+    policy_rt: Any,
+    *,
+    runtime: CognitiveScopeMenuRuntimeV1,
+) -> str | None:
+    """Display diagnostic reports/visualization or return the text-export handler."""
+    while True:
+        print()
+        print("VISUALIZATIONS & DIAGNOSTIC EXPORTS")
+        print("=" * 78)
+        print("  1) Legacy detailed Snapshot")
+        print("  2) Generate / display interactive WorldGraph HTML")
+        print("  3) Export a diagnostic text snapshot")
+        print("  [Enter] Return to the Oscilloscope front panel")
+
+        choice = cca8_cli.read_menu_input_v1()
+        if not choice:
+            return None
+        if choice == "1":
             print()
             print("LEGACY DETAILED SNAPSHOT -- retained temporarily for compatibility")
             print(runtime.legacy_snapshot_text(world, drives=drives, ctx=ctx, policy_rt=policy_rt))
             continue
-        if choice == "12":
+        if choice == "2":
             runtime.open_worldgraph_pyvis(world)
             continue
-        if choice == "13":
-            runtime.run_injection_flow(ctx)
-            continue
-        if choice == "14":
-            try:
-                confirm = input("Clear retained diagnostic snapshots? [y/N]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                continue
-            if confirm in ("y", "yes"):
+        if choice == "3":
+            return "16"
+        print("Please choose 1-3 or press Enter to return.")
+
+
+def _scope_trace_controls_menu_v1(ctx: Any) -> str | None:
+    """Clear retained scope records or return the existing display-toggle handler."""
+    while True:
+        print()
+        print("TRACE & DISPLAY CONTROLS")
+        print("=" * 78)
+        print("  1) Clear retained oscilloscope snapshots")
+        print("  2) Toggle mini-snapshot after ordinary menu operations")
+        print("  [Enter] Return to the Oscilloscope front panel")
+
+        choice = cca8_cli.read_menu_input_v1()
+        if not choice:
+            return None
+        if choice == "1":
+            confirm = cca8_cli.read_menu_input_v1("Clear retained diagnostic snapshots? [y/N]: ")
+            if isinstance(confirm, str) and confirm.lower() in ("y", "yes"):
                 removed = cca8_cognitive_scope.cognitive_scope_clear_v1(ctx)
                 print(f"Cleared {removed} retained diagnostic snapshot(s).")
             else:
                 print("Trace unchanged.")
             continue
-        print("Please choose 1-14 or press Enter to return.")
+        if choice == "2":
+            return "36"
+        print("Please choose 1-2 or press Enter to return.")
+
+
+def cognitive_scope_menu_v1(
+    env: Any,
+    world: Any,
+    drives: Any,
+    ctx: Any,
+    policy_rt: Any,
+    *,
+    runtime: CognitiveScopeMenuRuntimeV1,
+) -> str | None:
+    """Run Main Menu #2 and return an optional established read-only handler.
+
+    The front panel keeps the complete inspector conceptually unified while
+    grouping its many functions by technician intent. Views already owned by
+    the runner are returned as historical handler keys rather than duplicated.
+    """
+    while True:
+        trace = cca8_cognitive_scope.cognitive_scope_trace_summary_v1(ctx)
+        print()
+        print("=" * 78)
+        print("CCA8 COGNITIVE STORAGE OSCILLOSCOPE / SYSTEM INSPECTOR")
+        print("=" * 78)
+        print(
+            f"Retained cognitive-cycle snapshots: {trace.get('retained_count')}/{trace.get('capacity')}  "
+            f"total captured this session: {trace.get('total_capture_count')}"
+        )
+        print("DP00 is external simulation truth; DP01-DP18 are eighteen CCA8 service points.")
+        print("The ordinary scope trace and store views are read-only diagnostic instrumentation.")
+        print("The source-stamped DP01 injector remains confined to a disposable sandbox.\n")
+        print("  1) Signal Path / Retained Cognitive Cycles")
+        print("  2) Current Cognition & Control State")
+        print("  3) Memory Stores & WorldGraph State")
+        print("  4) Visualizations & Diagnostic Exports")
+        print("  5) Sandbox Signal Injection")
+        print("  6) Trace & Display Controls")
+        print("  [Enter] Return to Main Menu")
+
+        choice = cca8_cli.read_menu_input_v1()
+        if not choice:
+            return None
+        if choice == "1":
+            _scope_trace_menu_v1(env, world, drives, ctx, policy_rt, runtime=runtime)
+            continue
+        if choice == "2":
+            routed = _scope_current_state_menu_v1(env, world, drives, ctx, policy_rt, runtime=runtime)
+            if routed is not None:
+                return routed
+            continue
+        if choice == "3":
+            routed = _scope_memory_stores_menu_v1(world, ctx, policy_rt, runtime=runtime)
+            if routed is not None:
+                return routed
+            continue
+        if choice == "4":
+            routed = _scope_visualization_menu_v1(world, drives, ctx, policy_rt, runtime=runtime)
+            if routed is not None:
+                return routed
+            continue
+        if choice == "5":
+            runtime.run_injection_flow(ctx)
+            continue
+        if choice == "6":
+            routed = _scope_trace_controls_menu_v1(ctx)
+            if routed is not None:
+                return routed
+            continue
+        print("Please choose 1-6 or press Enter to return.")

@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Interactive session-configuration and retired-control-panel guidance.
+"""Interactive runtime/episode configuration and legacy guidance.
 
 Purpose
 -------
-This module owns two Main Menu flows that do not belong in the composition
-root:
+This module owns Main Menu #5, which presents independent controls for starting
+drives/developmental age, observation masking, bounded WorkingMap-to-Column
+auto-retrieval, and mini-snapshot display. It also preserves two hidden
+compatibility flows:
 
-- Menu 40, which edits the starting drives, developmental age, observation
-  masking, and bounded WorkingMap-to-Column auto-retrieval settings;
-- Menu 41, which is now a reference-only explanation of the hardwired memory
-  pipeline and its historical experimental knobs.
+- historical Menu 40, which asks the older combined sequence of settings;
+- historical Menu 41, a reference-only explanation of the hardwired memory
+  pipeline and its earlier experimental knobs.
 
 The functions mutate only the explicit ``drives`` and ``ctx`` objects supplied
 by the runner. They do not import :mod:`cca8_run`, construct cognitive state,
@@ -22,16 +23,24 @@ from __future__ import annotations
 # The interactive settings flow is deliberately defensive so a malformed
 # development value cannot terminate the CCA8 session.
 # pylint: disable=broad-exception-caught
+# pylint: disable=too-many-branches
 # pylint: disable=too-many-statements
 
 from typing import Any
 
-__version__ = "0.1.0"
+import cca8_cli
+
+__version__ = "0.2.1"
 
 __all__ = [
+    "configure_drives_and_age_v1",
     "configure_episode_starting_state_v1",
+    "configure_mapsurface_autoretrieve_v1",
+    "configure_observation_masking_v1",
     "retired_memory_pipeline_guide_text_v1",
+    "runtime_configuration_menu_v1",
     "show_retired_memory_pipeline_guide_v1",
+    "toggle_mini_snapshot_v1",
     "__version__",
 ]
 
@@ -73,44 +82,39 @@ def _prompt_float(
     return value
 
 
-def configure_episode_starting_state_v1(drives: Any, ctx: Any) -> None:
-    """Interactively update explicit episode-starting and masking settings.
+def configure_observation_masking_v1(
+    ctx: Any,
+    *,
+    show_heading: bool = True,
+    blank_toggles_verbose: bool = False,
+) -> None:
+    """Configure partial-observability probability, seed, and terminal logging.
 
-    The operation preserves the historical Menu 40 behavior. Drive values are
-    clamped to ``[0.0, 1.0]``; developmental age is clamped to zero or above;
-    observation-mask probability is clamped to ``[0.0, 1.0]``. Blank numeric
-    responses keep the current value. The verbose-mask prompt intentionally
-    retains its historical blank-means-toggle behavior.
+    ``blank_toggles_verbose`` preserves the hidden historical Menu 40
+    behavior. Main Menu #5 uses the safer blank-means-keep contract.
     """
-    print("Selection: Configure episode starting state (drives + age_days)\n")
-    print("(For development work, it is useful to adjust starting state attributes and see the")
-    print("  effect on program behavior.)\n")
+    current_probability = _safe_float(getattr(ctx, "obs_mask_prob", 0.0) or 0.0)
+    current_seed = getattr(ctx, "obs_mask_seed", None)
+    mask_mode = "seeded" if current_seed is not None else "global"
+    current_verbose = bool(getattr(ctx, "obs_mask_verbose", True))
 
-    current_hunger = _safe_float(getattr(drives, "hunger", 0.0))
-    current_fatigue = _safe_float(getattr(drives, "fatigue", 0.0))
-    current_warmth = _safe_float(getattr(drives, "warmth", 0.0))
-    current_age = _safe_float(getattr(ctx, "age_days", 0.0) or 0.0)
-
-    current_mask_probability = _safe_float(getattr(ctx, "obs_mask_prob", 0.0) or 0.0)
-    current_mask_seed = getattr(ctx, "obs_mask_seed", None)
-    mask_mode = "seeded" if current_mask_seed is not None else "global"
-    current_mask_verbose = bool(getattr(ctx, "obs_mask_verbose", True))
-
-    print()
+    if show_heading:
+        print()
+        print("PARTIAL-OBSERVABILITY / OBSERVATION-MASK CONFIGURATION")
+        print("=" * 78)
     print(
-        "Partial observability (obs masking): "
-        f"obs_mask_prob={current_mask_probability:.2f} mode={mask_mode} "
-        f"obs_mask_seed={current_mask_seed!r} verbose={current_mask_verbose}"
+        f"Current: obs_mask_prob={current_probability:.2f} mode={mask_mode} "
+        f"obs_mask_seed={current_seed!r} verbose={current_verbose}"
     )
-    print("  obs_mask_prob:")
-    print("    0.00 = fully observed (default)")
-    print("    0.10–0.30 = mild partial observability (good starting range)")
-    print("  obs_mask_seed:")
-    print("    None = stochastic masking (uses global RNG)")
-    print("    int  = reproducible masking (seeded per env step; independent of RL randomness)")
-    print("  Protected (never dropped): posture:* , hazard:cliff:* , proximity:shelter:*")
+    print("  0.00 = fully observed (default)")
+    print("  0.10-0.30 = mild partial observability")
+    print("  None seed = stochastic/global RNG; integer seed = reproducible per environment step")
+    print("  Protected families are never dropped: posture:*, hazard:cliff:*, proximity:shelter:*")
 
-    raw = input("Set obs_mask_prob in [0..1] (blank=keep current): ").strip()
+    try:
+        raw = input("Set obs_mask_prob in [0..1] (blank=keep current): ").strip()
+    except Exception:
+        raw = ""
     if raw:
         try:
             ctx.obs_mask_prob = max(0.0, min(1.0, float(raw)))
@@ -119,7 +123,10 @@ def configure_episode_starting_state_v1(drives: Any, ctx: Any) -> None:
         except (TypeError, ValueError):
             print("(warn) invalid obs_mask_prob; keeping current value.")
 
-    raw = input("Set obs_mask_seed (blank=keep; 'none'/'off'=disable; int=enable): ").strip().lower()
+    try:
+        raw = input("Set obs_mask_seed (blank=keep; 'none'/'off'=disable; int=enable): ").strip().lower()
+    except Exception:
+        raw = ""
     if raw:
         if raw in ("none", "off", "disable", "disabled"):
             ctx.obs_mask_seed = None
@@ -133,60 +140,91 @@ def configure_episode_starting_state_v1(drives: Any, ctx: Any) -> None:
             except (TypeError, ValueError):
                 print("(warn) invalid obs_mask_seed; keeping current value.")
 
-    raw = input("obs-mask verbose logs? [Enter=toggle | on | off]: ").strip().lower()
+    verbose_prompt = (
+        "obs-mask verbose logs? [Enter=toggle | on | off]: "
+        if blank_toggles_verbose
+        else "obs-mask verbose logs? [Enter=keep | t=toggle | on | off]: "
+    )
+    try:
+        raw = input(verbose_prompt).strip().lower()
+    except Exception:
+        raw = ""
     if raw in ("on", "true", "1", "yes", "y"):
         ctx.obs_mask_verbose = True
     elif raw in ("off", "false", "0", "no", "n"):
         ctx.obs_mask_verbose = False
-    elif raw == "":
+    elif raw in ("t", "toggle") or (raw == "" and blank_toggles_verbose):
         ctx.obs_mask_verbose = not bool(getattr(ctx, "obs_mask_verbose", True))
+    elif raw:
+        print("(warn) invalid verbose setting; keeping current value.")
     print(f"(now) obs_mask_verbose={bool(getattr(ctx, 'obs_mask_verbose', True))}")
 
-    auto_retrieve_enabled = bool(getattr(ctx, "wm_mapsurface_autoretrieve_enabled", False))
-    auto_retrieve_mode = str(getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge").strip().lower()
-    if auto_retrieve_mode == "r":
-        auto_retrieve_mode = "replace"
-    if auto_retrieve_mode not in ("merge", "replace"):
-        auto_retrieve_mode = "merge"
 
-    print()
-    print(f"WM<->Column auto-retrieve (keyframes): enabled={auto_retrieve_enabled} mode={auto_retrieve_mode}")
-    print("  merge   = conservative prior fill (no overwrite; no cue leakage)")
-    print("  replace = rebuild MapSurface from engram snapshot (debug/strong prior)")
+def configure_mapsurface_autoretrieve_v1(ctx: Any, *, show_heading: bool = True) -> None:
+    """Configure bounded keyframe-triggered WorkingMap/Column retrieval."""
+    enabled = bool(getattr(ctx, "wm_mapsurface_autoretrieve_enabled", False))
+    mode = str(getattr(ctx, "wm_mapsurface_autoretrieve_mode", "merge") or "merge").strip().lower()
+    if mode == "r":
+        mode = "replace"
+    if mode not in ("merge", "replace"):
+        mode = "merge"
 
-    raw = input("Set auto-retrieve enabled? [Enter=keep | t=toggle | on | off]: ").strip().lower()
+    if show_heading:
+        print()
+        print("WORKINGMAP <-> COLUMN AUTO-RETRIEVAL CONFIGURATION")
+        print("=" * 78)
+    print(f"Current: enabled={enabled} mode={mode}")
+    print("  merge   = conservative prior fill; no overwrite and no cue leakage")
+    print("  replace = rebuild MapSurface from an engram snapshot; strong-prior/debug mode")
+
+    try:
+        raw = input("Set auto-retrieve enabled? [Enter=keep | t=toggle | on | off]: ").strip().lower()
+    except Exception:
+        raw = ""
     if raw in ("t", "toggle"):
-        auto_retrieve_enabled = not auto_retrieve_enabled
+        enabled = not enabled
     elif raw in ("on", "true", "1", "yes", "y"):
-        auto_retrieve_enabled = True
+        enabled = True
     elif raw in ("off", "false", "0", "no", "n", "disable", "disabled"):
-        auto_retrieve_enabled = False
+        enabled = False
     elif raw:
         print("(warn) invalid input; keeping current enabled setting.")
-    ctx.wm_mapsurface_autoretrieve_enabled = auto_retrieve_enabled
+    ctx.wm_mapsurface_autoretrieve_enabled = enabled
 
-    raw = input("Set auto-retrieve mode? [Enter=keep | t=toggle | merge | replace]: ").strip().lower()
+    try:
+        raw = input("Set auto-retrieve mode? [Enter=keep | t=toggle | merge | replace]: ").strip().lower()
+    except Exception:
+        raw = ""
     if raw in ("t", "toggle"):
-        auto_retrieve_mode = "replace" if auto_retrieve_mode == "merge" else "merge"
+        mode = "replace" if mode == "merge" else "merge"
     elif raw in ("merge", "m"):
-        auto_retrieve_mode = "merge"
+        mode = "merge"
     elif raw in ("replace", "r"):
-        auto_retrieve_mode = "replace"
+        mode = "replace"
     elif raw:
         print("(warn) invalid mode; keeping current mode.")
-    ctx.wm_mapsurface_autoretrieve_mode = auto_retrieve_mode
-    print(
-        f"(now) wm_mapsurface_autoretrieve_enabled={auto_retrieve_enabled} "
-        f"wm_mapsurface_autoretrieve_mode={auto_retrieve_mode}"
-    )
+    ctx.wm_mapsurface_autoretrieve_mode = mode
+    print(f"(now) wm_mapsurface_autoretrieve_enabled={enabled} wm_mapsurface_autoretrieve_mode={mode}")
 
+
+def configure_drives_and_age_v1(drives: Any, ctx: Any, *, show_heading: bool = True) -> None:
+    """Configure numeric homeostatic drives and developmental age."""
+    current_hunger = _safe_float(getattr(drives, "hunger", 0.0))
+    current_fatigue = _safe_float(getattr(drives, "fatigue", 0.0))
+    current_warmth = _safe_float(getattr(drives, "warmth", 0.0))
+    current_age = _safe_float(getattr(ctx, "age_days", 0.0) or 0.0)
+
+    if show_heading:
+        print()
+        print("STARTING DRIVES & DEVELOPMENTAL AGE")
+        print("=" * 78)
     print("Current values:")
     print(f"  hunger   = {current_hunger:.2f}")
     print(f"  fatigue  = {current_fatigue:.2f}")
     print(f"  warmth   = {current_warmth:.2f}")
     print(f"  age_days = {current_age:.2f}")
-    print("\nEnter new values or press Enter to keep the current value.")
-    print("Drives are clamped to the range [0.0, 1.0]. age_days must be ≥ 0.\n")
+    print("Enter new values or press Enter to keep the current value.")
+    print("Drives are clamped to [0.0, 1.0]; age_days is clamped to zero or above.\n")
 
     new_hunger = _prompt_float("hunger", current_hunger, 0.0, 1.0)
     new_fatigue = _prompt_float("fatigue", current_fatigue, 0.0, 1.0)
@@ -219,6 +257,61 @@ def configure_episode_starting_state_v1(drives: Any, ctx: Any) -> None:
         f"warmth={getattr(drives, 'warmth', new_warmth):.2f} "
         f"age_days={getattr(ctx, 'age_days', current_age):.2f}"
     )
+
+
+def toggle_mini_snapshot_v1(ctx: Any) -> bool:
+    """Toggle the compact post-operation snapshot and return the new value."""
+    current = bool(getattr(ctx, "mini_snapshot", False))
+    ctx.mini_snapshot = not current
+    print(f"Mini-snapshot after ordinary menu operations: {'ON' if ctx.mini_snapshot else 'OFF'}")
+    return bool(ctx.mini_snapshot)
+
+
+def runtime_configuration_menu_v1(drives: Any, ctx: Any) -> None:
+    """Run the stable Main Menu #5 runtime/episode configuration workbench."""
+    while True:
+        print()
+        print("RUNTIME / EPISODE CONFIGURATION")
+        print("=" * 78)
+        print("  1) Starting drives and developmental age")
+        print("  2) Partial-observability / observation masking")
+        print("  3) WorkingMap <-> Column auto-retrieval")
+        print("  4) Toggle mini-snapshot display")
+        print("  [Enter] Return to Main Menu")
+
+        choice = cca8_cli.read_menu_input_v1()
+        if choice is None:
+            return
+
+        if choice == "":
+            return
+        if choice == "1":
+            configure_drives_and_age_v1(drives, ctx)
+            continue
+        if choice == "2":
+            configure_observation_masking_v1(ctx)
+            continue
+        if choice == "3":
+            configure_mapsurface_autoretrieve_v1(ctx)
+            continue
+        if choice == "4":
+            toggle_mini_snapshot_v1(ctx)
+            continue
+        print("Please choose 1-4 or press Enter to return.")
+
+
+def configure_episode_starting_state_v1(drives: Any, ctx: Any) -> None:
+    """Preserve the historical combined Menu 40 configuration flow.
+
+    The hidden compatibility route still asks the same groups of questions in
+    the same order: observation masking, auto-retrieval, then drives/age. New
+    users should normally use Main Menu #5, where those groups are separate.
+    """
+    print("Selection: Configure episode starting state (legacy combined flow)\n")
+    print("Main Menu #5 now presents these settings as separate, easier-to-read choices.\n")
+    configure_observation_masking_v1(ctx, show_heading=True, blank_toggles_verbose=True)
+    configure_mapsurface_autoretrieve_v1(ctx, show_heading=True)
+    configure_drives_and_age_v1(drives, ctx, show_heading=True)
 
 
 def retired_memory_pipeline_guide_text_v1() -> str:

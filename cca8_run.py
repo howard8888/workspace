@@ -56,18 +56,18 @@ Core runtime:
   cca8_followmom_advisory.py, cca8_followmom_authority.py, cca8_feeding.py, cca8_terrain.py,
   cca8_live_dynamics.py, cca8_navmap_memory.py, cca8_wnm_runtime.py,
   cca8_cognitive_scope.py, cca8_cognitive_scope_menu.py, cca8_reporting.py,
-  cca8_observation_runtime.py, cca8_policy_runtime.py, cca8_session_menu.py,
-  cca8_rcos_menu.py, and cca8_preflight.py.
+  cca8_observation_runtime.py, cca8_policy_runtime.py, cca8_main_menu.py,
+  cca8_session_menu.py, cca8_rcos_menu.py, and cca8_preflight.py.
 - Standard-library imports such as argparse, json, hashlib, os, platform,
   sys, logging, math, datetime, dataclasses, typing, collections, random,
   time, subprocess, shutil, io, contextlib, copy, tempfile, webbrowser,
   xml, and ctypes are included with a normal Python installation.
 
 Optional PyPI packages used by menu features / development workflow:
-- pygount: Menu 33 lines-of-code report.
+- pygount: Main Menu #12 lines-of-code report.
 - pyvis: interactive graph export / display.
 - psutil: optional richer system-memory check during preflight.
-- openai: Menu 48 LLM API setup and hybrid adviser experiments.
+- openai: Main Menu #10 LLM setup and hybrid adviser experiments.
 - pytest: unit-test runner used by --preflight.
 - pytest-cov: optional coverage integration for pytest.
 - pylint: external lint command used during development.
@@ -131,6 +131,7 @@ import cca8_followmom_compare
 import cca8_feeding
 import cca8_terrain
 import cca8_live_dynamics
+import cca8_main_menu
 import cca8_navmap_memory
 import cca8_wnm_runtime
 import cca8_cognitive_scope
@@ -647,7 +648,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.29.0"
+__version__ = "0.30.3"
 __all__ = [
     "main",
     "interactive_loop",
@@ -2424,9 +2425,9 @@ def _cognitive_scope_menu_runtime_v1() -> cca8_cognitive_scope_menu.CognitiveSco
     )
 
 
-def _cognitive_scope_menu_v1(env: Any, world: Any, drives: Any, ctx: Any, policy_rt: Any) -> None:
-    """Open the extracted Cognitive Storage Oscilloscope / System Inspector."""
-    cca8_cognitive_scope_menu.cognitive_scope_menu_v1(
+def _cognitive_scope_menu_v1(env: Any, world: Any, drives: Any, ctx: Any, policy_rt: Any) -> str | None:
+    """Open the inspector and return an optional established read-only handler."""
+    return cca8_cognitive_scope_menu.cognitive_scope_menu_v1(
         env,
         world,
         drives,
@@ -2976,6 +2977,7 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("feeding", "cca8_feeding"),
     ("terrain", "cca8_terrain"),
     ("live_dynamics", "cca8_live_dynamics"),
+    ("main_menu", "cca8_main_menu"),
     ("navmap_memory", "cca8_navmap_memory"),
     ("wnm_runtime", "cca8_wnm_runtime"),
     ("cognitive_scope", "cca8_cognitive_scope"),
@@ -5284,21 +5286,20 @@ def interactive_loop(args: argparse.Namespace) -> None:
     print("[profile] Hardwired memory pipeline: phase7 daily-driver (no options menu needed).")
 
     run_preflight_lite_maybe()  # optional preflight-lite
-    pretty_scroll = True        #to see changes before terminal menu scrolls over screen
+    pretty_scroll = False       # compatibility-routing messages remain quiet by default
+    main_menu_continue_pending = False
 
     # Interactive menu loop  >>>>>>>>>>>>>>>>>>>
     while True:
         try:
+            if main_menu_continue_pending:
+                if not cca8_cli.wait_for_main_menu_continue_v1():
+                    print("\nGoodbye.")
+                    return
+                main_menu_continue_pending = False
+                print()
+
             print(f"\n{cca8_cli.MAIN_MENU_HEADER}")
-
-            if pretty_scroll:
-                temp = input(
-                    "\nPress ENTER to continue and display the CCA8 Main Menu "
-                    "\n(Type * then Enter to disable these pauses for the session) "
-                )
-                if temp == "*":
-                    pretty_scroll = False
-
             choice = input(cca8_cli.MAIN_MENU_PROMPT).strip()
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye.")
@@ -5333,23 +5334,50 @@ def interactive_loop(args: argparse.Namespace) -> None:
         if alias_route_message is not None:
             print(alias_route_message)
 
+        # Any Main Menu selection that eventually returns here should pause once
+        # before the front page is redrawn. Quit exits the loop, so it never
+        # consumes this pending pause.
+        main_menu_continue_pending = True
+
         ckey = displayed_choice #ensure any present or future routed value is in correct form
         routed = cca8_cli.route_menu_number(ckey)
-        semantic_top_level_handlers = {"watch", "scope", "architecture"}
-        if pretty_scroll and ckey != routed and routed not in semantic_top_level_handlers:
+        if (
+            pretty_scroll
+            and ckey != routed
+            and routed not in cca8_main_menu.SEMANTIC_TOP_LEVEL_CHOICES_V1
+        ):
             print(
                 "[[menu numbering auto-compatibility] processed input entry "
                 f"routed to old value: {ckey} → {routed}]\n"
             )
         choice = routed
 
-        # Main Menu #1 is a small navigation shell over the established one-cycle
-        # and multi-cycle handlers. Keep those cycle implementations single-source.
-        if choice == "watch":
-            selected_cycle_handler = _watch_cognition_menu_v1()
-            if selected_cycle_handler is None:
-                continue
-            choice = selected_cycle_handler
+        main_menu_runtime = cca8_main_menu.MainMenuRuntimeV1(
+            watch_menu=_watch_cognition_menu_v1,
+            scope_menu=lambda: _cognitive_scope_menu_v1(env, world, drives, ctx, POLICY_RT),
+            architecture_menu=lambda: _architecture_explanation_menu_v1(POLICY_RT),
+            versions_text=versions_text,
+        )
+        resolved_choice = cca8_main_menu.resolve_top_level_choice_v1(
+            choice,
+            runtime=main_menu_runtime,
+            loaded_path=loaded_src,
+            autosave_path=getattr(args, "autosave", None),
+            exit_save_path=getattr(args, "save", None),
+        )
+        if resolved_choice is None:
+            continue
+        choice = resolved_choice
+
+        if choice == "configure-runtime":
+            cca8_session_menu.runtime_configuration_menu_v1(drives, ctx)
+            loop_helper(args.autosave, world, drives, ctx)
+            continue
+        if choice == "clear-working-map":
+            cleared = cca8_main_menu.clear_working_map_interactive_v1(ctx, reset_working_map=reset_working_world)
+            if cleared:
+                loop_helper(args.autosave, world, drives, ctx)
+            continue
 
         #FIRST MENU SELECTION CODE BLOCK.... WITHIN interactive menu while loop >>>>>> of interactive_menu()
         #----Menu Selection Code Block------------------------
@@ -6268,84 +6296,9 @@ selection. cognitive_cycles, autonomic_ticks, and age_days do not change.
 
         #----Menu Selection Code Block------------------------
         elif choice == "22":
-            # Export and display interactive graph (Pyvis HTML) with options
+            # Historical direct Pyvis route; the interaction flow now lives with the Oscilloscope menu.
             print("Selection: Export and display interactive graph (Pyvis HTML) with options")
-            print('''
-
-Export and display graph of nodes and links with more options (Pyvis HTML)
-Note: the graph opened in your web browser is interactive -- even if you don't show
-       edge labels to save space, put the mouse on them and the labels appear
-Note: the graph HTML file will be saved in your current directory\n
-— Edge labels: draw text on the links, e.g.,'then' or 'initiate_stand'
-    On = label printed on the arrow (and still a tooltip). Off = only tooltip.
-    -->Recommend Y on small graphs, n on larger ones to reduce clutter
-— Node label mode:
-    'id'           → show binding ids only (e.g., b5)
-    'first_pred'   → show first pred:* token (e.g., stand, nurse)
-    'id+first_pred'→ show both (two-line label)
-     -->Recommend id+first_pred if enough space
-— Physics: enable force-directed layout; turn off for very large graphs.
-      (We model the graph as a physical system and then try to achieve a minimal
-       energy state by simulating the movement of the nodes into this minimal state. The result is a
-       graph which many people find easier to read. This option uses Barnes-Hut physics which is an
-       algorithm originally for the N-body problem in astrophysics and which speeds up the layout calculations.
-       Nonetheless, for very large graphs may not be computationally feasible.
-      -->Recommend physics ON unless issues with very large graphs
-
-            ''')
-            # Collect options
-            try:
-                label_mode = input("Node label mode [id / first_pred / id+first_pred] (default: id+first_pred): ").strip().lower()
-            except Exception:
-                label_mode = ""
-            if label_mode not in {"id", "first_pred", "id+first_pred"}:
-                label_mode = "id+first_pred"
-
-            try:
-                el = input("Show edge labels on links? [Y/n]: ").strip().lower()
-            except Exception:
-                el = ""
-            show_edge_labels = not (el in {"n", "no", "0"})
-
-            try:
-                ph = input("Enable physics (force-directed layout)? [Y/n]: ").strip().lower()
-            except Exception:
-                ph = ""
-            physics = not (ph in {"n", "no", "0"})
-
-            default_path = "world_graph.html"
-            try:
-                path = input(f"Save HTML to (default: {default_path}): ").strip() or default_path
-            except Exception:
-                path = default_path
-
-            try:
-                out = world.to_pyvis_html(
-                    path_html=path,
-                    label_mode=label_mode,
-                    show_edge_labels=show_edge_labels,
-                    physics=physics
-                )
-                print(f"Interactive graph written to: {out}")
-                try:
-                    open_now = input("Open in your default browser now? [y/N]: ").strip().lower()
-                except Exception:
-                    open_now = "n"
-                if open_now in ("y", "yes"):
-                    try:
-                        import webbrowser # use the top-level 'sys', 'os'
-                        if sys.platform.startswith("win"):
-                            os.startfile(out)  # type: ignore[attr-defined]
-                        elif sys.platform == "darwin":
-                            os.system(f'open "{out}"')
-                        else:
-                            webbrowser.open(f"file://{out}")
-                        print("(opened in your browser)")
-                    except Exception as e:
-                        print(f"[warn] Could not open automatically: {e}")
-            except Exception as e:
-                print(f"[warn] Could not generate Pyvis HTML: {e}")
-                print("       Tip: install with  pip install pyvis")
+            _open_worldgraph_pyvis_flow_v1(world)
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -7136,7 +7089,7 @@ It reuses the same closed-loop engine as Menu 37, but with a fresh sandbox runti
 Goal:
     fallen -> stand -> follow mom -> find/latch nipple -> suckle -> milk drinking -> rest
 
-This baseline demo disables observation masking and route-loss stress. Menu 49 remains the
+This baseline demo disables observation masking and route-loss stress. Main Menu #8 remains the
 right place for harder A/B/C stress tests.
 """)
 
@@ -7320,10 +7273,7 @@ right place for harder A/B/C stress tests.
                 print()
                 print(f"[workingmap] MapSurface payload dump failed: {e}")
 
-            rawc = input("\nClear WorkingMap now? [y/N]: ").strip().lower()
-            if rawc in ("y", "yes"):
-                reset_working_world(ctx)
-                print("(WorkingMap cleared.)")
+            print("\n[workingmap] Read-only view. To clear WorkingMap, use Main Menu #6 -> Clear the current WorkingMap.")
 
             loop_helper(args.autosave, world, drives, ctx)
 
@@ -7370,7 +7320,7 @@ right place for harder A/B/C stress tests.
 
             if not rows:
                 print("(none) No wm_mapsurface engrams found in column memory yet.")
-                print("Tip: run menu 44 (manual store) or Main Menu #1 option 2 until a stage/zone boundary occurs.")
+                print("Tip: use Main Menu #6 to store a MapSurface, or Main Menu #1 option 2 to reach a stage/zone boundary.")
                 loop_helper(args.autosave, world, drives, ctx)
                 continue
 
@@ -7394,7 +7344,7 @@ right place for harder A/B/C stress tests.
 
                 print(f"  {i:2d}) {eid[:8]}… created={created_at} stage={stage} zone={zone}{sig_txt}{src_txt} {sal_txt}")
 
-            print("\nTip: paste an engram id into menu 27 to inspect payload/meta.")
+            print("\nTip: use Main Menu #2 -> Memory Stores & WorldGraph State -> Inspect one engram.")
             loop_helper(args.autosave, world, drives, ctx)
 
 
@@ -7424,7 +7374,7 @@ right place for harder A/B/C stress tests.
 
             if not info.get("ok"):
                 print("(none) No wm_mapsurface engrams found for retrieval.")
-                print("Tip: use Main Menu #1 option 2 to auto-store keyframes, or menu 44 to store manually.")
+                print("Tip: use Main Menu #1 option 2 to auto-store keyframes, or Main Menu #6 to store manually.")
                 loop_helper(args.autosave, world, drives, ctx)
                 continue
 
@@ -7536,10 +7486,10 @@ right place for harder A/B/C stress tests.
                     f"added_edges={out.get('added_edges')} stored_prior_cues={out.get('stored_prior_cues')}"
                     f"{guard_txt}"
                 )
-                print("Tip: run appropriate menu item (43 currently) to inspect; then run one env step to let observation correct the prior.")
+                print("Tip: use Main Menu #2 -> Current Cognition & Control State -> WorkingMap to inspect; then run one environment step.")
             else:
                 print(f"[wm-retrieve] replaced WorkingMap from engram={raw[:8]}…: entities={out.get('entities')} relations={out.get('relations')}")
-                print("Tip: run appropriate menu item (43 currently) now to inspect the loaded MapSurface; next env step may overwrite parts of it.")
+                print("Tip: use Main Menu #2 -> Current Cognition & Control State -> WorkingMap to inspect the loaded MapSurface.")
 
             loop_helper(args.autosave, world, drives, ctx)
 

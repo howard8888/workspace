@@ -43,7 +43,7 @@ from typing import Any, Callable, DefaultDict
 import cca8_world_graph
 from cca8_controller import Drives, action_center_step
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 ProfileTuple = tuple[str, int]
 
@@ -111,25 +111,15 @@ def _goat_defaults() -> ProfileTuple:
     return ("Mountain Goat", 2)
 
 
-_PROFILE_MENU_PAUSE_ACTIVE = False
 _PROFILE_DIVIDER = "=" * 78
 
-
 def _profile_heading(title: str) -> None:
-    """Print one profile heading and pause only during interactive Profile Menu selection.
-
-    Direct profile calls such as ``--profile chimp`` remain non-interactive.  The
-    pause is enabled transiently by :func:`choose_profile` only for numbered
-    Profile Menu selections 2 through 9.
-    """
+    """Print one profile-selection heading."""
     print()
     print(_PROFILE_DIVIDER)
     print(title)
     print(_PROFILE_DIVIDER)
     print()
-    if _PROFILE_MENU_PAUSE_ACTIVE:
-        input("Please ENTER to continue...")
-        print()
 
 
 def _print_goat_intro() -> None:
@@ -139,18 +129,6 @@ def _print_goat_intro() -> None:
         "This is the operational CCA8 baseline: a goat-level mammalian cognitive architecture.\n"
         "Current development is progressively converting its cognition to NavMap/WNM-centered operation.\n"
     )
-
-
-def _run_interactive_profile_choice(callback: Callable[..., ProfileTuple], *args: Any) -> ProfileTuple:
-    """Run one numbered research-profile callback with the Profile Menu pause enabled."""
-    global _PROFILE_MENU_PAUSE_ACTIVE  # pylint: disable=global-statement
-
-    previous = _PROFILE_MENU_PAUSE_ACTIVE
-    _PROFILE_MENU_PAUSE_ACTIVE = True
-    try:
-        return callback(*args)
-    finally:
-        _PROFILE_MENU_PAUSE_ACTIVE = previous
 
 
 def _print_goat_fallback():
@@ -1405,34 +1383,39 @@ def choose_profile(
             name, k = goat
             break
         if choice == "2":
-            name, k = _run_interactive_profile_choice(operations.chimpanzee, ctx)
+            name, k = operations.chimpanzee(ctx)
             break
         if choice == "3":
-            name, k = _run_interactive_profile_choice(operations.human, ctx)
+            name, k = operations.human(ctx)
             break
         if choice == "4":
-            name, k = _run_interactive_profile_choice(operations.human_multi_brains, ctx, world)
+            name, k = operations.human_multi_brains(ctx, world)
             break
         if choice == "5":
-            name, k = _run_interactive_profile_choice(operations.society_multi_agents, ctx)
+            name, k = operations.society_multi_agents(ctx)
             break
         if choice == "6":
-            name, k = _run_interactive_profile_choice(operations.multi_brains_adv_planning, ctx)
+            name, k = operations.multi_brains_adv_planning(ctx)
             break
         if choice == "7":
-            name, k = _run_interactive_profile_choice(operations.superhuman, ctx)
+            name, k = operations.superhuman(ctx)
             break
         if choice == "8":
             callback = operations.cca11 or profile_cca11_governed_cognitive_plurality
-            name, k = _run_interactive_profile_choice(callback, ctx)
+            name, k = callback(ctx)
             break
         if choice == "9":
             callback = operations.cca12 or profile_cca12_governed_pod
-            name, k = _run_interactive_profile_choice(callback, ctx)
+            name, k = callback(ctx)
             break
-
         # Anything else: prompt again (no silent default)
         print(f"The selection {choice!r} is not valid. Please enter 1–9, 'T', or press Enter for Mountain Goat.\n")
 
     ctx.profile = name
+
+    try:
+        input("Please press ENTER to continue...")
+    except (EOFError, KeyboardInterrupt):
+        print()
+
     return {"name": name, "winners_k": k}

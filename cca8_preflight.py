@@ -61,7 +61,7 @@ from cca8_controller import (
 from cca8_env import HybridEnvironment
 from cca8_features import FactMeta, time_attrs_from_ctx
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 __all__ = [
     "PreflightRuntime",
     "run_llm_operational_preflight_check",
@@ -541,6 +541,15 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
             ("cca8_profiles",    ["ProfileOperations", "choose_profile", "__version__"]),
             ("cca8_guidance",    ["TutorialRuntime", "print_tagging_and_policies_help", "__version__"]),
             (
+                "cca8_main_menu",
+                [
+                    "manual_controls_menu_v1",
+                    "memory_operations_menu_v1",
+                    "worldgraph_workbench_menu_v1",
+                    "__version__",
+                ],
+            ),
+            (
                 "cca8_cognitive_scope",
                 [
                     "COGNITIVE_SCOPE_PORTS_V1",
@@ -591,6 +600,7 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
                 "cca8_session_menu",
                 [
                     "configure_episode_starting_state_v1",
+                    "runtime_configuration_menu_v1",
                     "show_retired_memory_pipeline_guide_v1",
                     "__version__",
                 ],

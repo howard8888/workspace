@@ -276,7 +276,7 @@ def test_scope_menu_defaults_to_compact_view_and_supports_dp_drilldown(monkeypat
     """Main Menu #2 should show the front panel first and open only the requested port."""
     ctx = Ctx()
     _capture_once(ctx)
-    answers = iter(["1", "DP13", "", ""])
+    answers = iter(["1", "1", "DP13", "", "", ""])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
 
     cca8_run._cognitive_scope_menu_v1(
@@ -298,7 +298,7 @@ def test_scope_menu_defaults_to_compact_view_and_supports_dp_drilldown(monkeypat
 
 def test_scope_menu_integrates_architecture_bindings_drives_timekeeping_and_skill_views(monkeypatch, capsys) -> None:
     """Former top-level inspection functions should now live coherently inside Main Menu #2."""
-    answers = iter(["6", "7", "8", "9", "10", ""])
+    answers = iter(["2", "1", "5", "6", "7", "", "3", "2", "", ""])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
     monkeypatch.setattr(cca8_run, "_show_architecture_status_v1", lambda *_args: print("STATUS_SENTINEL"))
     monkeypatch.setattr(cca8_run, "_show_recent_bindings_v1", lambda *_args, **_kwargs: print("BINDINGS_SENTINEL"))
@@ -315,7 +315,8 @@ def test_scope_menu_integrates_architecture_bindings_drives_timekeeping_and_skil
     )
     output = capsys.readouterr().out
 
-    assert "SYSTEM / DATA-STORE INSPECTOR" in output
+    assert "CURRENT COGNITION & CONTROL STATE" in output
+    assert "MEMORY STORES & WORLDGRAPH STATE" in output
     assert "Architecture / memory status" in output
     assert "Recent WorldGraph bindings" in output
     assert "Drives / internal control state" in output

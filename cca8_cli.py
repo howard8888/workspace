@@ -29,7 +29,7 @@ import os
 import sys
 from collections.abc import Callable
 
-__version__ = "0.4.2"
+__version__ = "0.5.3"
 __all__ = [
     "ASCII_LOGOS",
     "MAIN_MENU_HEADER",
@@ -42,6 +42,8 @@ __all__ = [
     "TECH_MANUAL",
     "print_ascii_logo",
     "print_header",
+    "read_menu_input_v1",
+    "wait_for_main_menu_continue_v1",
     "route_menu_alias",
     "route_menu_number",
     "watch_cognition_menu_v1",
@@ -68,95 +70,45 @@ ASCII_LOGOS = {
 }
 
 MAIN_MENU_HEADER = (
-    '    \n'
-    'SCROLL UP TO SEE ANY OF THE DATA SCREENS WHICH MAY HAVE SCROLLED BY QUICKLY\n'
-    '\n'
-    '\n'
-    '\n'
-    '    ============================================================================\n'
-    '                  CCA8 MAIN MENU -- MOUNTAIN GOAT-LIKE SIMULATION\n'
-    '    ============================================================================\n'
-    '\n'
-    '    '
+    "    ============================================================================\n"
+    "                  CCA8 MAIN MENU -- MOUNTAIN GOAT-LIKE SIMULATION\n"
+    "    ============================================================================\n"
 )
 
 MAIN_MENU_PROMPT = (
-    '    Enter a menu number or one of the bracketed text commands.\n'
-    '\n'
-    '    # Quick Start / Overview\n'
-    '    1) Watch Cognition Run [watch, cognition, run]\n'
-    '    2) Cognitive Storage Oscilloscope / System Inspector [scope, oscilloscope, snapshot]\n'
-    '    3) Explanation of the Architecture [architecture, explain, help, docs, overview, tutorial]\n'
-    '\n'
-    '    # Act / Simulate\n'
-    '    9) Instinct step (Action Center) [instinct, act]\n'
-    '    10) Autonomic tick (emit interoceptive cues) [autonomic, tick]\n'
-    '    11) Simulate fall (add posture:fallen and try recovery) [fall, simulate]\n'
-    '\n'
-    '    # Additional Simulation / Environment Tools\n'
-    '    38) Inspect BodyMap (summary from BodyMap helpers) [bodymap, bsnap]\n'
-    '    39) Spatial scene demo (NOW-near + resting-in-shelter?) [spatial, near]\n'
-    '    51) Autonomous newborn survival demo (isolated hard-mode sandbox) [survival, newborn-demo]\n'
-    '\n'
-    '    # Perception & Memory (Cues & Engrams)\n'
-    '    12) Input [sensory] cue [sensory, cue]\n'
-    '    13) Capture scene → tiny engram (signal bridge) [capture, scene]\n'
-    '    14) Resolve engrams on a binding [resolve, engrams]\n'
-    '    15) Inspect engram by id (or binding) [engram, ei]\n'
-    '    16) List all engrams [engrams-all, list-engrams]\n'
-    '    17) Search engrams (by name / cognitive cycle) [search-engrams, find-engrams]\n'
-    '    18) Delete engram by bid or eid [delete-engram, del-engram]\n'
-    '    19) Attach existing engram to a binding [attach-engram, ae]\n'
-    '\n'
-    '    # Graph Inspect / Build / Plan\n'
-    '    20) Inspect binding details [inspect, details]\n'
-    '    21) List predicates [listpredicates, listpreds]\n'
-    '    22) [Add] predicate [add, predicate]\n'
-    '    23) Connect two bindings (src, dst, relation) [connect, link]\n'
-    '    24) Delete edge (source, destn, relation) [delete, rm]\n'
-    '    25) Plan from NOW -> <predicate> [plan]\n'
-    '    26) Planner strategy (toggle BFS ↔ Dijkstra) [planner, strategy]\n'
-    '    27) Export and display interactive graph with options [pyvis, graph]\n'
-    '\n'
-    '    # Save / System\n'
-    '    28) Export snapshot (text only) [export snapshot]\n'
-    '    29) Save session → path [save]\n'
-    '    30) Load session → path [load]\n'
-    '    31) Run preflight now [preflight]\n'
-    '    32) Quit [quit, exit]\n'
-    '    33) Lines of Python code LOC by directory [loc, sloc]\n'
-    '    34) Reset current saved session [reset]\n'
-    '    36) Toggle mini-snapshot after each menu selection [mini, msnap]\n'
-    '\n'
-    '    # Memories\n'
-    '    40) Configure episode starting state (drives + age_days) [config-episode, cfg-epi]\n'
-    '    41) Retired: WorkingMap & WorldGraph settings, toggle RL policy\n'
-    '    42) Configure goat_foraging_04 contextual map-switch evaluation [goat04]\n'
-    '    43) WorkingMap snapshot (last N bindings; optional clear) [wsnap, wmsnap]\n'
-    '    44) Store MapSurface snapshot to Column + WG pointer (dedup vs last) [wstore, wmstore]\n'
-    '    45) List recent wm_mapsurface engrams (Column)\n'
-    '    46) Pick best wm_mapsurface engram for current stage/zone (read-only) [wpick, wpickwm]\n'
-    '    47) Load wm_mapsurface engram into WorkingMap (replace MapSurface) [wload, wmload]\n'
-    '    48) LLM API setup + first demo [llmkey, apikey, openai, llm]\n'
-    '    49) Experiments / Benchmarks (protocol scaffolding) [experiments, bench]\n'
-    '\n'
-    '    # RCOS / Robotics\n'
-    '    50) SimRobotGoat RCOS sandbox [rcos, simgoat, robotgoat]\n'
-    '\n'
-    '        New user suggestion:\n'
-    '      #1 : Watch one or several cognitive cycles -->\n'
-    '      #2 : Inspect what those cycles produced -->\n'
-    '      #3 : Read an explanation of the architecture -->\n'
-    '      #51: Watch the architecture conduct a complete autonomous episode\n'
-    '      SCROLL UP TO SEE ALL OF THE MENU CHOICES\n'
-    '\n'
-    '    Enter Menu Choice: '
+    "    Enter a menu number or one of the bracketed text commands.\n"
+    "\n"
+    "    RUN / UNDERSTAND\n"
+    "     1) Watch Cognition Run [watch]\n"
+    "     2) Cognitive Storage Oscilloscope / System Inspector [scope]\n"
+    "     3) Architecture, Documentation & Tutorial [architecture]\n"
+    "\n"
+    "    OPERATE / CONFIGURE\n"
+    "     4) Manual Inputs & One-Step Controls [control]\n"
+    "     5) Runtime / Episode Configuration [config]\n"
+    "\n"
+    "    MEMORY / PLANNING\n"
+    "     6) Memory Operations: WorkingMap, Columns & Engrams [memory]\n"
+    "     7) WorldGraph Editing & Planning [graph]\n"
+    "\n"
+    "    RESEARCH / INTEGRATION\n"
+    "     8) Experiments & Benchmarks [experiments]\n"
+    "     9) RCOS / Robotics [rcos]\n"
+    "    10) LLM / External Model Integration [llm]\n"
+    "\n"
+    "    SESSION / DEVELOPMENT\n"
+    "    11) Session Save / Load / Reset [session]\n"
+    "    12) Validation & Developer Utilities [developer]\n"
+    "    13) Quit [quit]\n"
+    "\n"
+    "    New users: 1 -> 2 -> 3\n"
+    "    Enter Menu Choice: "
 )
 
 MIN_ALIAS_PREFIX = 3
 
 MENU_ALIASES = {
-    # Quick Start / Overview
+    # Stable top-level Main Menu workbenches.
     "watch": "1",
     "cognition": "1",
     "run": "1",
@@ -170,11 +122,26 @@ MENU_ALIASES = {
     "envloop": "1",
     "envrun": "1",
     "envsteps": "1",
+    "survival": "1",
+    "survival-demo": "1",
+    "newborn-demo": "1",
+    "newborn-survival": "1",
+
     "snapshot": "2",
     "display": "2",
     "scope": "2",
     "oscilloscope": "2",
     "cognitive-scope": "2",
+    "world": "2",
+    "stats": "2",
+    "last": "2",
+    "bindings": "2",
+    "drives": "2",
+    "skills": "2",
+    "timekeeping": "2",
+    "time": "2",
+    "clocks": "2",
+
     "understanding": "3",
     "tagging": "3",
     "help": "3",
@@ -184,30 +151,69 @@ MENU_ALIASES = {
     "overview": "3",
     "tutorial": "3",
     "tour": "3",
-    "world": "4",
-    "stats": "4",
-    "last": "5",
-    "bindings": "5",
-    "drives": "6",
-    "skills": "7",
-    "timekeeping": "8",
-    "time": "8",
-    "clocks": "8",
 
-    # Act / Simulate
-    "instinct": "9",
-    "act": "9",
-    "autonomic": "10",
-    "tick": "10",
-    "fall": "11",
-    "simulate": "11",
+    "control": "4",
+    "controls": "4",
+    "manual": "4",
+    "inputs": "4",
+    "intervene": "4",
+    "instinct": "4",
+    "act": "4",
+    "autonomic": "4",
+    "tick": "4",
+    "fall": "4",
+    "simulate": "4",
+    "sensory": "4",
+    "cue": "4",
 
-    # Perception & Memory
-    "sensory": "12",
-    "cue": "12",
-    "capture": "13",
-    "cap": "13",
-    "scene": "13",
+    "config": "5",
+    "settings": "5",
+    "runtime": "5",
+    "episode-config": "5",
+
+    "memory": "6",
+    "memories": "6",
+    "memory-ops": "6",
+    "capture": "6",
+    "cap": "6",
+    "scene": "6",
+
+    "graph": "7",
+    "worldgraph": "7",
+    "planning": "7",
+    "graph-workbench": "7",
+
+    "experiments": "8",
+    "experiment": "8",
+    "bench": "8",
+    "benchmark": "8",
+
+    "rcos": "9",
+    "robotics": "9",
+    "simgoat": "9",
+    "robotgoat": "9",
+    "simrobotgoat": "9",
+
+    "llm": "10",
+    "openai": "10",
+    "llmkey": "10",
+    "apikey": "10",
+    "external-model": "10",
+
+    "session": "11",
+    "sessions": "11",
+    "persistence": "11",
+
+    "developer": "12",
+    "validation": "12",
+    "utilities": "12",
+    "tools": "12",
+    "about": "12",
+
+    "quit": "13",
+    "exit": "13",
+
+    # Non-conflicting historical direct commands retained for compatibility.
     "resolve": "14",
     "engrams": "14",
     "engram": "15",
@@ -226,7 +232,6 @@ MENU_ALIASES = {
     "attach-engram": "19",
     "ae": "19",
 
-    # Graph Inspect / Build / Plan
     "inspect": "20",
     "details": "20",
     "id": "20",
@@ -246,19 +251,15 @@ MENU_ALIASES = {
     "dijkstra": "26",
     "bfs": "26",
     "pyvis": "27",
-    "graph": "27",
     "viz": "27",
     "html": "27",
     "interactive": "27",
     "export and display": "27",
 
-    # Save / System / Help
     "export snapshot": "28",
     "save": "29",
     "load": "30",
     "preflight": "31",
-    "quit": "32",
-    "exit": "32",
     "loc": "33",
     "sloc": "33",
     "pygount": "33",
@@ -266,7 +267,6 @@ MENU_ALIASES = {
     "mini": "36",
     "msnap": "36",
 
-    # Memories
     "bodymap": "38",
     "bsnap": "38",
     "spatial": "39",
@@ -275,6 +275,7 @@ MENU_ALIASES = {
     "cfg-epi": "40",
     "retired": "41",
     "future": "42",
+    "goat04": "42",
     "wsnap": "43",
     "wm-snapshot": "43",
     "wmsnap": "43",
@@ -285,94 +286,99 @@ MENU_ALIASES = {
     "wpickwm": "46",
     "wload": "47",
     "wmload": "47",
-    "experiments": "49",
-    "experiment": "49",
-    "bench": "49",
-    "benchmark": "49",
-    "rcos": "50",
-    "simgoat": "50",
-    "robotgoat": "50",
-    "simrobotgoat": "50",
-    "survival": "51",
-    "survival-demo": "51",
-    "newborn-demo": "51",
-    "newborn-survival": "51",
 
-    # Keep letter shortcuts working too.
+    # Single-letter historical shortcuts remain direct.
     "s": "s",
     "l": "l",
     "t": "t",
     "d": "d",
     "r": "r",
-    "llmkey": "k",
-    "apikey": "k",
-    "openai": "k",
-    "llm": "k",
 }
 
 MENU_NUMBER_COMPATIBILITY = {
-    # Quick Start / Overview
-    "1": "watch",  # Watch Cognition Run submenu.
-    "2": "scope",  # Cognitive Storage Oscilloscope / System Inspector.
-    "3": "architecture",  # Explanation of the Architecture.
-    "4": "1",  # World stats
-    "5": "7",  # Recent bindings (last 5)
-    "6": "d",  # Drives & tags (letter branch)
-    "7": "13",  # Skill ledger
-    "8": "26",  # Historical direct Timekeeping Status compatibility route.
+    # Stable canonical Main Menu numbers.
+    "1": "watch",
+    "2": "scope",
+    "3": "architecture",
+    "4": "manual",
+    "5": "config",
+    "6": "memory",
+    "7": "graph-menu",
+    "8": "experiments-menu",
+    "9": "rcos",
+    "10": "llm",
+    "11": "session",
+    "12": "developer",
+    "13": "quit",
 
-    # Act / Simulate
-    "9": "12",  # Instinct step
-    "10": "14",  # Autonomic tick
-    "11": "18",  # Simulate fall
-
-    # Perception & Memory
-    "12": "11",  # Input sensory cue
-    "13": "24",  # Capture scene → engram
-    "14": "6",  # Resolve engrams on a binding
+    # Historical direct numbers 14-51 remain available but are hidden.
+    "14": "6",   # Resolve engrams on a binding
     "15": "27",  # Inspect engram by id
     "16": "28",  # List all engrams
     "17": "29",  # Search engrams
     "18": "30",  # Delete engram by id
     "19": "31",  # Attach existing engram
-
-    # Graph Inspect / Build / Plan
     "20": "10",  # Inspect binding details
-    "21": "2",  # List predicates
-    "22": "3",  # Add predicate
-    "23": "4",  # Connect two bindings
+    "21": "2",   # List predicates
+    "22": "3",   # Add predicate
+    "23": "4",   # Connect two bindings
     "24": "15",  # Delete edge
-    "25": "5",  # Plan from NOW -> <predicate>
-    "26": "25",  # Planner strategy (toggle)
-    "27": "22",  # Export interactive graph
-
-    # Save / System / Help
-    "28": "16",  # Export snapshot (text)
-    "29": "s",  # Save session
-    "30": "l",  # Load session
-    "31": "9",  # Run preflight now
-    "32": "8",  # Quit
-    "33": "33",  # Lines of Count
-    "34": "r",  # Reset current saved session
-    "35": "35",  # Environment simulation
+    "25": "5",   # Plan from NOW -> predicate
+    "26": "25",  # Planner strategy
+    "27": "22",  # Interactive graph
+    "28": "16",  # Export snapshot text
+    "29": "s",   # Save session
+    "30": "l",   # Load session
+    "31": "9",   # Full preflight
+    "32": "8",   # Historical quit number
+    "33": "33",  # LOC report
+    "34": "r",   # Reset session
+    "35": "35",  # One cognitive cycle
     "36": "36",  # Mini-snapshot toggle
-    "37": "37",  # Environment loop
-    "38": "38",  # Inspect BodyMap
-    "39": "39",  # Spatial / near demo
-    "40": "40",  # Configure episode starting state
-    "41": "41",  # Retired memory/RL settings
-    "42": "42",  # Future usage
-    "43": "43",  # WorkingMap snapshot
-    "44": "44",  # Store MapSurface snapshot
-    "45": "45",  # List recent wm_mapsurface engrams
-    "46": "46",  # Pick wm_mapsurface
-    "47": "47",  # Load wm_mapsurface
-    "48": "k",  # Configure OpenAI / LLM API key
-    "49": "49",  # Experiments / Benchmarks
-    "50": "50",  # SimRobotGoat RCOS sandbox
-    "51": "51",  # Autonomous newborn survival demo
+    "37": "37",  # Several cognitive cycles
+    "38": "38",  # BodyMap
+    "39": "39",  # Spatial scene
+    "40": "40",  # Legacy combined runtime configuration
+    "41": "41",  # Retired memory/RL guide
+    "42": "42",  # goat_foraging_04 configuration
+    "43": "43",  # WorkingMap read-only snapshot
+    "44": "44",  # Store MapSurface
+    "45": "45",  # List MapSurface engrams
+    "46": "46",  # Pick MapSurface engram
+    "47": "47",  # Load MapSurface engram
+    "48": "k",   # LLM/OpenAI console
+    "49": "49",  # Experiments
+    "50": "50",  # RCOS sandbox
+    "51": "51",  # Autonomous newborn demo
 }
 
+
+
+def read_menu_input_v1(prompt: str = "Choose: ") -> str | None:
+    """Read one stripped menu response without propagating terminal interruptions.
+
+    ``None`` means the prompt was interrupted or the input provider failed. A
+    blank line remains the empty string so each caller can apply its own
+    cancel/default semantics. Keeping this boundary in the CLI module gives all
+    interactive submenus one consistent terminal-input contract.
+    """
+    try:
+        return input(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
+
+
+def wait_for_main_menu_continue_v1() -> bool:
+    """Pause before the Main Menu is redrawn after one completed selection.
+
+    Returns ``True`` after ordinary user input. A terminal interruption or input
+    failure returns ``False`` so the runner can end the interactive session
+    cleanly rather than attempting to redraw another menu.
+    """
+    return read_menu_input_v1("Please press ENTER to continue...") is not None
 
 
 def menu_selection_banner(selection: str) -> str:
@@ -388,29 +394,28 @@ def menu_selection_banner(selection: str) -> str:
 
 
 def watch_cognition_menu_v1() -> str | None:
-    """Return the established one-cycle or multi-cycle handler selected by the user.
+    """Return one established cognition-run demonstration handler.
 
-    Main Menu #1 is intentionally a navigation shell. The actual cognitive-cycle
-    implementations remain in the runner's historical handlers 35 and 37, keeping
-    the execution path single-source while presenting a compact top-level menu.
+    Main Menu #1 is intentionally a navigation shell. The actual one-cycle,
+    multi-cycle, and isolated autonomous-episode implementations remain in the
+    runner's historical handlers 35, 37, and 51.
     """
     print("Selection: Watch Cognition Run\n")
     print("Choose how you would like to watch the cognitive architecture operate:")
     print("  1) Watch one cognitive cycle slowly (verbose teaching mode)")
     print("  2) Watch several cognitive cycles (compact closed-loop timeline)")
+    print("  3) Watch a complete autonomous newborn survival episode (isolated sandbox)")
     print("  [Enter] Return to Main Menu")
-    try:
-        pick = input("Choose: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return None
-    except Exception:
+    pick = read_menu_input_v1()
+    if pick is None:
         return None
 
     if pick == "1":
         return "35"
     if pick == "2":
         return "37"
+    if pick == "3":
+        return "51"
     print("(cancelled)")
     return None
 

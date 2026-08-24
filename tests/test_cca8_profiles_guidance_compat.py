@@ -79,6 +79,36 @@ def test_profile_chooser_resolves_runner_callbacks_at_call_time(monkeypatch: pyt
     assert ctx.profile == "Compatibility Chimp"
 
 
+def test_research_profile_selection_has_only_final_continue_pause(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Choice 6 should pause once only after the dry-run profile section has completed."""
+    prompts: list[str] = []
+
+    def choose_profile_then_continue(prompt: str = "") -> str:
+        prompts.append(prompt)
+
+        if len(prompts) == 1:
+            return "6"
+
+        if len(prompts) == 2:
+            assert prompt == "Please press ENTER to continue..."
+            return ""
+
+        raise AssertionError("Research profile selection requested more than one final continuation pause.")
+
+    monkeypatch.setattr(builtins, "input", choose_profile_then_continue)
+    ctx = cca8_run.Ctx()
+
+    result = cca8_run.choose_profile(ctx, cca8_run.cca8_world_graph.WorldGraph())
+    output = capsys.readouterr().out
+
+    assert result == {"name": "Mountain Goat", "winners_k": 2}
+    assert len(prompts) == 2
+    assert "PROFILE WILL BE SET TO MOUNTAIN GOAT-LIKE BRAIN SIMULATION" in output
+
+
 def test_profile_chooser_prompt_advertises_profiles_one_through_nine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
