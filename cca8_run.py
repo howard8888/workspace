@@ -5282,10 +5282,9 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Startup notices (print here so they appear as part of the session boot block).
     # This keeps the output grouped: [io] → [boot] → [planner]/[profile] → [preflight-lite].
     apply_hardwired_profile_phase7(ctx, world)
-    print_startup_notices(world)
-    print("[profile] Hardwired memory pipeline: phase7 daily-driver (no options menu needed).")
+    #print_startup_notices(world)
 
-    run_preflight_lite_maybe()  # optional preflight-lite
+    #run_preflight_lite_maybe()  # optional preflight-lite
     pretty_scroll = False       # compatibility-routing messages remain quiet by default
     main_menu_continue_pending = False
 
@@ -6900,100 +6899,129 @@ Attach an existing engram id (eid) to a binding id (bid).
         elif choice == "35":
             # Verbose teaching mode: one closed-loop cycle using the same engine as Menu 37.
             print("Selection: Run 1 Cognitive Cycle (verbose teaching mode)\n")
-            print("""What is a cognitive cycle?
---------------------------
+            print("""What is a cognitive cycle? (page 1 of 4)
+-----------------------------------------
 
-A cognitive cycle is one complete perceive-update-decide-act loop between an agent
-(for example, a goat, chimpanzee, human, or robot) and its environment.
+A cognitive cycle ("cog cycle", "cycle") is one complete
+perceive-update-decide-act loop between an agent (for example, a goat,
+chimpanzee, human, or robot) and its environment.
 
-The agent's brain or control system is simulated using the CCA8 cognitive architecture.
-CCA8 receives evidence from the environment, updates its internal state, selects an action,
-and then begins the cycle again.
+(Technical note: CCA8 cognitive cycles are recurrently linked, i.e., results of
+earlier computations may feed into later computations. Also, not every cognitive
+cycle necessarily produces an external action.
 
-At a high level, this cycle will:
+In CCA8, "update" is a first-class cognitive step. Observations do not simply
+pass downstream toward action selection -- they revise a persistent internal
+model of the world. This update is broader than conventional robotic state
+estimation and also extends beyond the primarily predictive world models
+commonly discussed in AI. It maintains identity, evidence status, uncertainty,
+continuity, relationships, and other cognitively meaningful structure.)\n""")
+            input("Press Enter for page 2 of 4...\n\n")
 
-  1) --> Let the simulated or real environment report what the agent is sensing now -->
-  2) Convert that evidence into current internal maps and compare it with what was expected -->
+            print("""How CCA8 implements the cycle (page 2 of 4)
+--------------------------------------------
+
+The agent's brain or control system is represented by the CCA8 cognitive
+architecture. CCA8 receives evidence from the environment ("perceive"), updates
+its internal representations of SELF and the world ("update"), selects an
+appropriate response ("decide"), and dispatches that result ("act"). The result
+may be an external action, an internal feedback result for later reprocessing,
+or an explicit null external output. CCA8 then begins the next cognitive cycle.
+
+CCA8 is map-first. Its internal model is organized primarily through Navigation
+Maps ("NavMaps"). A NavMap is more than a geometric map -- it can represent SELF
+and other entities, their locations and relationships, identity and continuity,
+evidence status, and uncertainty. New evidence updates these representations,
+which then inform subsequent cognition and behavior.
+
+At a high level, one cognitive cycle will:
+  1) --> Let the simulated environment (or the real world in robotics)
+          report what the agent is sensing now -->
+  2) Update internal NavMaps using that evidence and compare the resulting
+        state with what was expected -->
   3) Record any mismatch as a prediction-error or residual signal -->
-  4) Let the Action Center select and dispatch this cycle's behavior, called a policy --> REPEAT
+  4) Select a behavioral primitive, let the Navigation Module apply it to the
+        current Working Navigation Map, and dispatch the resulting action,
+        feedback, or null external output -->
+     REPEAT
 
-  Note: In the CCA literature, "Navigation Module" means "Action Center," and
-  "Primitive" means "Policy."
+Action_n is selected and dispatched during Cognitive Cycle_n. Its consequences
+are observed later as part of Observation_(n+1).\n""")
+            input("Press Enter for page 3 of 4...\n\n")
 
-Predictions help CCA8 interpret noisy or incomplete sensory evidence. When the
-incoming pattern closely matches a known NavMap, CCA8 may treat it as the same
-map with updated details. However, strong, persistent, or safety-critical
-differences must not be forced to conform to the prediction; they may trigger
-an alternative or new NavMap interpretation.
+            print("""How to read this terminal output, i.e., demonstration (page 3 of 4)
+--------------------------------------------------------------------
 
-The output selected from the current observation is dispatched before this cognitive cycle
-closes. The environment/body transition then produces later sensory evidence, which is
-buffered and processed as the input to the next cognitive cycle.
-""")
-            input("Press Enter to continue reading...\n\n")
+This demonstration uses short bracketed labels:
 
-            print("""To make it easier to read the information about the cog cycle, note this
-key being used:
         [teach]       explanation for the human reader
-        [env...]      information from the simulated (or real) environment
-        [navmap...]   map-processing diagnostics
-        [controller]  policy-selection or action information
+        [env...]      evidence or events from the simulated environment
+        [navmap...]   NavMap update, matching, or comparison diagnostics
+        [controller]  primitive/policy-selection or action information
         [cycle]       compact end-of-cycle summary
 
-In the CCA literature, 'controller'===Navigation Module -- this is where the mechanics of
-the 'policy'==='primitive' acts on the Working Navigation Map.
+These labels organize terminal output. They are to help you understand what is
+happening. They are not supposed to be names of separate CCA8 modules.
 
-The term 'cycle' refers to a 'cognitive cycle' of information going through the CCA8-generated
-architecture, i.e., sensory, processing and output, and then another cognitive cycle starts.
+Terminology Note
+----------------
+In the published CCA literature, primitive-selection machinery chooses a
+Working Primitive, and the Navigation Module applies it to the current Working
+Navigation Map. In the current Python implementation, the corresponding runtime
+behavior is often called a "policy," and the selection/dispatch machinery is
+often called the "Action Center." The [controller] label covers diagnostics from
+this path but note that "controller" is not the published name of a separate CCA module.
 
-***Tip: If this is the first time you are seeing this architecture, you should make some pen and
-paper notes to become familiar with and consolidate the basic terms and functioning of the
-architecture. Consider reading some of the literature on the subject as well.***
+During the first cycle there may be no previous action, expectation, or outcome,
+so some fields may say "missing" or "incomplete." This is normal.
 
-During the first cycle, there may be no previous action or prediction, so some diagnostic
-fields may say "missing" or "incomplete." This is normal.\n""")
-            input("Press Enter to continue reading...\n\n")
+On a first run, you should follow:
+    observation -> NavMap update -> primitive/policy -> dispatched result
+                -> later outcome
 
-            print("""Optional discussion about matching navigation maps:
--If you have read some of the literature on the Cognitive Causal Architecture then you are aware it
-uses NavMaps (i.e., map-like basic data structures) in its core processing. Sensory information (as
-well as intermediate results) are mapped onto NavMaps and a new sensory NavMap is matched against
-stored NavMaps. There are three types of matches that occur:
-Very close match
-    → interpret the observation using an existing NavMap
-    e.g., sensory image of tree will be matched to other pre-existing trees usually; the small differences among
-    the leaves and branches will be ignored (although if many such sensory inputs there is finer assortment of
-    NavMaps stored on the subject).
-Clearly poor match
-    → treat it as novel and form a new NavMap candidate
-    e.g., have never seen an automobile before -- a new NavMap will be created; it will not be forced matched as
-    a type of tree, for example.
-Middle region
-    → preserve uncertainty and gather more evidence
-    e.g., sensory image of a large bushy shrub -- do we just perceive it as a tree perhaps under different lighting
-    or different angles, or is it a totally different match and we should create a new NavMap for it?
+At each stage you should ask:
+  1) What information exists?
+  2) Which structure currently has authority?
+  3) What caused the next computation or action?\n""")
+            input("Press Enter for page 4 of 4...\n\n")
 
-There is ongoing development of the CCA8's NavMap learning and context-management system. With regard to matching:
-    -close and unambiguous  → reuse/update an existing NavMap
-    -close but ambiguous    → preserve several hypotheses or inspect further
-    -poor match             → create a new NavMap candidate
-    -safety-critical contradiction → immediately reconsider the current context
+            print("""Optional detail: How NavMaps are matched (page 4 of 4)
+-------------------------------------------------------
 
-Optional discussion: Current threshold cutoff values:
-    -exact content signature
-        → reuse_exact
-    -best score >= 0.85
-    -and best - second >= 0.05
-        → commit to the best existing interpretation
-    -best score >= 0.85
-    -but best - second < 0.05
-        → ambiguous
-    -best score < 0.85
-        → unknown / novel
+Incoming sensory evidence and cognitively meaningful intermediate results are
+represented in map-like form and compared with stored NavMaps. Matching is not
+simply yes/no:
+  - close and unambiguous --> reuse and update an existing NavMap
+  - close but ambiguous   --> preserve several hypotheses or inspect further
+  - clearly poor match    --> create a new NavMap candidate
+  - safety-critical contradiction
+                           --> immediately reconsider the current context
 
-***The output below may scroll down quickly. After computations are completed and terminal output has stopped,
-   SCROLL upward to be able to read all the text.***\n""")
-            input("Press Enter to begin the cognitive cycle...")
+For example, another view of a familiar tree may update an existing tree
+NavMap. A never-before-seen automobile may require a new candidate. A large
+bushy shrub may remain ambiguous until more evidence is available.
+
+Predictions can help CCA8 interpret noisy or incomplete evidence. However,
+strong, persistent, or safety-critical differences must not be forced to fit an
+expectation, but they may instead trigger an alternative or new NavMap
+interpretation.
+
+In this demonstration, cutoffs for similarity scores obtained between
+incoming and stored NavMap fragments:
+  - exact content signature
+        --> reuse_exact
+  - best score >= 0.85 and lead over second-best >= 0.05
+        --> commit to the best existing interpretation
+  - best score >= 0.85 and lead over second-best < 0.05
+        --> ambiguous
+  - best score < 0.85
+        --> unknown / novel
+Here, "lead" means the best score minus the second-best score. These cutoffs are
+arbitrary implementation defaults, not universal cognitive constants.
+
+***The output below may scroll quickly. After it stops, SCROLL upward to read
+   the complete cognitive-cycle trace.***\n""")
+            input("Press Enter to begin the demonstration cognitive cycle...")
             print('\n\nSTART COGNITIVE CYCLE')
             print('=====================\n')
 
@@ -7011,7 +7039,6 @@ Optional discussion: Current threshold cutoff values:
                 print(f"[env-loop] error while running 1 verbose closed-loop step: {e}")
 
             loop_helper(args.autosave, world, drives, ctx)
-
 
         #----Menu Selection Code Block------------------------
         elif choice == "36":

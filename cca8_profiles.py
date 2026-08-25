@@ -127,7 +127,6 @@ def _print_goat_intro() -> None:
     _profile_heading("MOUNTAIN GOAT-LIKE BRAIN SIMULATION")
     print(
         "This is the operational CCA8 baseline: a goat-level mammalian cognitive architecture.\n"
-        "Current development is progressively converting its cognition to NavMap/WNM-centered operation.\n"
     )
 
 
@@ -521,10 +520,9 @@ CCA11_PROFILE_NARRATIVE = r"""
 Research status
 ---------------
 CCA11 is a future architectural research profile.  This selection records the
-intended design direction.  It does not claim that the present CCA8 software
-already implements CCA11.
+intended design direction.
 
-CCA11 should be built only after the goat-level CCA8, primate-like CCA9, and
+CCA11 will be built out only after the goat-level CCA8, primate-like CCA9, and
 human-like CCA10 mechanisms are sufficiently explicit and testable.  The
 present runner therefore prints the research design and then returns safely to
 the operational Mountain Goat baseline.
@@ -874,8 +872,7 @@ cognitive diversity inside one inspectable and accountable mind.
 CCA12_PROFILE_NARRATIVE = r"""
 Research status
 ---------------
-CCA12 is a future federated cognitive-architecture research profile.  It does
-not claim that the present CCA8 software already implements a CCA12 pod.
+CCA12 is a future federated cognitive-architecture research profile.
 
 The present runner records the design direction and then returns safely to the
 operational Mountain Goat baseline.
