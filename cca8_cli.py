@@ -29,7 +29,7 @@ import os
 import sys
 from collections.abc import Callable
 
-__version__ = "0.5.3"
+__version__ = "0.5.4"
 __all__ = [
     "ASCII_LOGOS",
     "MAIN_MENU_HEADER",
@@ -394,17 +394,18 @@ def menu_selection_banner(selection: str) -> str:
 
 
 def watch_cognition_menu_v1() -> str | None:
-    """Return one established cognition-run demonstration handler.
+    """Return one legacy demonstration or the explicit new-runtime route.
 
-    Main Menu #1 is intentionally a navigation shell. The actual one-cycle,
-    multi-cycle, and isolated autonomous-episode implementations remain in the
-    runner's historical handlers 35, 37, and 51.
+    Main Menu #1 remains a navigation shell. Options 1-3 retain the established
+    legacy handlers 35, 37, and 51. Option 4 returns a semantic key that the
+    runner handles through a lazily imported, isolated ``nca8_*`` session.
     """
     print("Selection: Watch Cognition Run\n")
     print("Choose how you would like to watch the cognitive architecture operate:")
-    print("  1) Watch one cognitive cycle slowly (verbose teaching mode)")
-    print("  2) Watch several cognitive cycles (compact closed-loop timeline)")
-    print("  3) Watch a complete autonomous newborn survival episode (isolated sandbox)")
+    print("  1) Watch one cognitive cycle slowly (verbose teaching mode; legacy runtime)")
+    print("  2) Watch several cognitive cycles (compact closed-loop timeline; legacy runtime)")
+    print("  3) Watch a complete autonomous newborn survival episode (isolated legacy sandbox)")
+    print("  4) Open the new Architecture-v09.3 experimental runtime (NCA8 Phase 1A)")
     print("  [Enter] Return to Main Menu")
     pick = read_menu_input_v1()
     if pick is None:
@@ -416,6 +417,8 @@ def watch_cognition_menu_v1() -> str | None:
         return "37"
     if pick == "3":
         return "51"
+    if pick == "4":
+        return "nca8-runtime"
     print("(cancelled)")
     return None
 

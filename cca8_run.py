@@ -648,7 +648,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.30.4"
+__version__ = "0.30.5"
 __all__ = [
     "main",
     "interactive_loop",
@@ -2996,6 +2996,10 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("teaching", "cca8_teaching"),
     ("predictive", "cca8_predictive"),
     ("test_fixtures", "cca8_test_fixtures"),
+    ("nca8_adapters", "nca8_adapters"),
+    ("nca8_menu", "nca8_menu"),
+    ("nca8_runtime", "nca8_runtime"),
+    ("nca8_trace", "nca8_trace"),
 )
 
 
@@ -5196,6 +5200,10 @@ def interactive_loop(args: argparse.Namespace) -> None:
     # Stage-1 RCOS sandbox handle (lazy-init from menu 50 so we do not touch normal CCA8 flows unless requested).
     sim_robot_goat_hal: Optional[SimRobotGoatHAL] = None
 
+    # Architecture-v09.3 experimental runtime handle.  Keep this typed as Any so the normal legacy runner can start
+    # without importing any nca8 module; the explicit Watch Cognition submenu constructs the session lazily.
+    nca8_session: Optional[Any] = None
+
     POLICY_RT = PolicyRuntime(CATALOG_GATES)
     POLICY_RT.refresh_loaded(ctx)
     loaded_ok = False
@@ -5367,6 +5375,16 @@ def interactive_loop(args: argparse.Namespace) -> None:
         if resolved_choice is None:
             continue
         choice = resolved_choice
+
+        if choice == "nca8-runtime":
+            # Import only after explicit user selection.  No legacy world, drives, Ctx, PolicyRuntime, or autosave
+            # object is passed into the new runtime; this is the composition-root firewall between the two brains.
+            try:
+                from nca8_menu import run_nca8_experimental_menu_v1
+                nca8_session = run_nca8_experimental_menu_v1(nca8_session)
+            except Exception as exc:
+                print(f"[nca8:error] experimental runtime unavailable: {type(exc).__name__}: {exc}")
+            continue
 
         if choice == "configure-runtime":
             cca8_session_menu.runtime_configuration_menu_v1(drives, ctx)

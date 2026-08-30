@@ -43,7 +43,7 @@ def test_main_menu_has_thirteen_clear_top_level_choices() -> None:
 
 @pytest.mark.parametrize(
     ("pick", "expected_handler"),
-    (("1", "35"), ("2", "37"), ("3", "51"), ("", None)),
+    (("1", "35"), ("2", "37"), ("3", "51"), ("4", "nca8-runtime"), ("", None)),
 )
 def test_watch_cognition_submenu_routes_to_existing_cycle_handlers(
     monkeypatch: pytest.MonkeyPatch,
@@ -51,7 +51,7 @@ def test_watch_cognition_submenu_routes_to_existing_cycle_handlers(
     pick: str,
     expected_handler: str | None,
 ) -> None:
-    """Main Menu #1 should reuse, rather than duplicate, the established cycle handlers."""
+    """Main Menu #1 should preserve legacy handlers and expose the explicit NCA8 route."""
     monkeypatch.setattr(builtins, "input", lambda _prompt="": pick)
 
     result = cca8_run._watch_cognition_menu_v1()  # pylint: disable=protected-access
@@ -61,6 +61,7 @@ def test_watch_cognition_submenu_routes_to_existing_cycle_handlers(
     assert "one cognitive cycle slowly" in output
     assert "several cognitive cycles" in output
     assert "complete autonomous newborn survival episode" in output
+    assert "new Architecture-v09.3 experimental runtime" in output
     assert result == expected_handler
 
 

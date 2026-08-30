@@ -40,6 +40,10 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "standup_compare": "cca8_standup_compare",
     "rcos_menu": "cca8_rcos_menu",
     "session_menu": "cca8_session_menu",
+    "nca8_adapters": "nca8_adapters",
+    "nca8_menu": "nca8_menu",
+    "nca8_runtime": "nca8_runtime",
+    "nca8_trace": "nca8_trace",
 }
 
 
