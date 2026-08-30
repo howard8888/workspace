@@ -41,8 +41,14 @@ def test_session_cycle_executes_all_six_phases_in_order() -> None:
     result = session.run_cognitive_cycle()
 
     assert result.scheduler.phases == tuple(CyclePhase)
-    assert result.scheduler.frozen_result_ids == ("observation_ingress:1",)
-    assert result.scheduler.applied_result_ids == ("observation_ingress:1",)
+    assert result.scheduler.frozen_result_ids == (
+        "body_sensory:1",
+        "observation_ingress:1",
+    )
+    assert result.scheduler.applied_result_ids == (
+        "body_sensory:1",
+        "observation_ingress:1",
+    )
     assert result.commitment.committed_phase is CyclePhase.PROJECT_DISPATCH
 
 

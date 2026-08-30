@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Null-commitment, buffering, trace, and replay tests for Phase 1B."""
+"""Phase-1C representation, null commitment, buffering, trace, and replay tests."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from nca8_runtime import NCA8_NO_ACTION, Nca8SessionConfigV1, Nca8SessionV1
 
 
 def test_null_cycle_has_no_focal_operation_pnm_or_task_action() -> None:
-    """The empty architecture should be explicit rather than fabricating cognition."""
+    """Body representation must not fabricate executive cognition or an action."""
     session = Nca8SessionV1()
 
     result = session.run_cognitive_cycle()
@@ -24,6 +24,25 @@ def test_null_cycle_has_no_focal_operation_pnm_or_task_action() -> None:
     assert result.commitment.task_action is None
     assert result.pnm_created is False
     assert result.commitment.committed_phase is CyclePhase.PROJECT_DISPATCH
+    assert result.posture_support_state.posture.value == "fallen"
+    assert result.body_map_state.posture.value == "fallen"
+    assert result.posture_support_candidate is not None
+
+
+def test_body_candidate_is_published_before_phase_d_but_not_selected() -> None:
+    """BodyMap may publish a map-state candidate without becoming Attention or WNM."""
+    session = Nca8SessionV1()
+
+    result = session.run_cognitive_cycle()
+    lines = session.trace_lines()
+
+    candidate_index = next(index for index, line in enumerate(lines) if "candidate published" in line)
+    phase_d_index = next(index for index, line in enumerate(lines) if "Phase_D FOCAL_COMMITMENT" in line)
+    assert candidate_index < phase_d_index
+    assert result.posture_support_candidate is not None
+    assert result.posture_support_candidate.authority == "attention_candidate_only"
+    assert result.posture_support_candidate.as_dict()["attention_selected"] is False
+    assert result.body_map_state.as_dict()["is_wnm"] is False
 
 
 def test_next_observation_is_buffered_but_not_applied_in_the_same_cycle() -> None:

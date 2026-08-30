@@ -21,10 +21,13 @@ NCA8_FILES = tuple(sorted(ROOT.glob("nca8_*.py")))
 
 _ALLOWED_CCA8_IMPORTS: dict[str, frozenset[str]] = {
     "nca8_adapters.py": frozenset({"cca8_env", "cca8_navpatch"}),
+    "nca8_body.py": frozenset(),
     "nca8_contracts.py": frozenset(),
+    "nca8_maps.py": frozenset({"cca8_navmap_kernel"}),
     "nca8_menu.py": frozenset({"cca8_cli"}),
     "nca8_runtime.py": frozenset(),
     "nca8_scheduler.py": frozenset(),
+    "nca8_sensory.py": frozenset(),
     "nca8_trace.py": frozenset(),
 }
 
@@ -67,13 +70,16 @@ def _import_roots_v1(tree: ast.AST) -> set[str]:
 
 
 def test_flat_nca8_module_set_is_explicit_and_complete() -> None:
-    """Phase 1B should add only the two working timing modules that were approved."""
+    """Phase 1C should add only the three working representation modules approved."""
     assert tuple(path.name for path in NCA8_FILES) == (
         "nca8_adapters.py",
+        "nca8_body.py",
         "nca8_contracts.py",
+        "nca8_maps.py",
         "nca8_menu.py",
         "nca8_runtime.py",
         "nca8_scheduler.py",
+        "nca8_sensory.py",
         "nca8_trace.py",
     )
 
@@ -100,6 +106,63 @@ def test_nca8_code_never_reads_environment_state_or_private_state() -> None:
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
                 if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
                     assert node.args[1].value not in {"state", "_state"}, f"{path.name}:{node.lineno}"
+
+
+def test_nca8_cognition_never_reads_hidden_stage_milestone_or_oracle_fields() -> None:
+    """Phase-1C cognition may read filtered posture tokens, not task answers or stage labels."""
+    forbidden = {
+        "scenario_stage",
+        "milestones",
+        "oracle_policy",
+        "final_score",
+        "hidden_benchmark_context",
+        "search_progress",
+        "suckle_progress",
+        "milk_progress",
+    }
+    cognitive_files = tuple(
+        path for path in NCA8_FILES if path.name not in {"nca8_adapters.py", "nca8_menu.py"}
+    )
+
+    for path in cognitive_files:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute):
+                assert node.attr not in forbidden, f"{path.name}:{node.lineno}"
+            if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+                assert node.slice.value not in forbidden, f"{path.name}:{node.lineno}"
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
+                if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                    assert node.args[1].value not in forbidden, f"{path.name}:{node.lineno}"
+
+
+def test_phase1c_representation_code_contains_no_standup_task_shortcut() -> None:
+    """Fallen representation must not secretly encode the Phase-1D task decision."""
+    representation_files = (
+        ROOT / "nca8_body.py",
+        ROOT / "nca8_maps.py",
+        ROOT / "nca8_runtime.py",
+        ROOT / "nca8_sensory.py",
+    )
+
+    for path in representation_files:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        docstring_nodes: set[int] = set()
+        for owner in ast.walk(tree):
+            if isinstance(owner, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                if owner.body and isinstance(owner.body[0], ast.Expr):
+                    value = owner.body[0].value
+                    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                        docstring_nodes.add(id(value))
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                assert "stand_up" not in node.id.lower(), f"{path.name}:{node.lineno}"
+            if isinstance(node, ast.Attribute):
+                assert "stand_up" not in node.attr.lower(), f"{path.name}:{node.lineno}"
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstring_nodes:
+                assert "stand_up" not in node.value.lower(), f"{path.name}:{node.lineno}"
+                assert "policy:stand_up" not in node.value.lower(), f"{path.name}:{node.lineno}"
 
 
 def test_importing_legacy_runner_does_not_import_nca8_runtime_modules() -> None:

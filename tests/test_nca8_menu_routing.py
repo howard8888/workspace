@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Focused routing and terminal-boundary tests for NCA8 Phase 1B."""
+"""Focused routing and terminal-boundary tests for NCA8 Phase 1C."""
 
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ def test_opening_and_leaving_nca8_menu_does_not_construct_a_session(
     output = capsys.readouterr().out
     assert result is None
     assert "NCA8 -- NEW ARCHITECTURE-v09.3 EXPERIMENTAL RUNTIME" in output
-    assert "deterministic Phase-A-to-F cognitive-cycle shell" in output
-    assert "no NavMap, Attention, WNM, Navigation" in output
+    assert "first body/NavMap representation" in output
+    assert "No Attention selection, WNM, Navigation" in output
 
 
 def test_status_is_read_only_and_does_not_construct_a_session(
@@ -48,7 +48,7 @@ def test_cognitive_cycle_choice_lazily_creates_and_returns_the_isolated_session(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The first executable operation should run all phases and emit a null action."""
+    """The first executable operation should update representation and emit a null action."""
     responses = iter(("3", ""))
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
 
@@ -58,8 +58,10 @@ def test_cognitive_cycle_choice_lazily_creates_and_returns_the_isolated_session(
     assert isinstance(result, Nca8SessionV1)
     assert result.status().cognitive_cycles == 1
     assert f"input=Observation_1 output=Action_1:{NCA8_NO_ACTION} next_input=Observation_2" in output
-    assert "Phase A-F executed" in output
-    assert "no focal operation, PNM, or task action" in output
+    assert "[nca8:representation]" in output
+    assert "posture=fallen" in output
+    assert "support=inadequate" in output
+    assert "no Attention selection, WNM, Navigation" in output
 
 
 def test_nca8_menu_does_not_consume_the_shared_main_menu_pause(

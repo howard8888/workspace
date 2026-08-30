@@ -12,7 +12,7 @@ environment's God's-eye ``EnvState``.  This module is the only initial
 It performs three jobs:
 
 * construct a private ``HybridEnvironment`` for each new-runtime session;
-* expose only ``reset`` and explicit null-action advancement through Phase 1B;
+* expose only ``reset`` and explicit null-action advancement through Phase 1C;
 * convert ``EnvObservation`` into a defensively copied, recursively immutable,
   positively whitelisted observation packet.
 
@@ -33,7 +33,7 @@ from typing import Any, TypeAlias
 from cca8_env import EnvConfig, EnvObservation, HybridEnvironment
 from cca8_navpatch import CELL_BLOCKED, CELL_GOAL, CELL_HAZARD, CELL_TRAVERSABLE, CELL_UNKNOWN
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __all__ = [
     "NCA8_SCAFFOLD_LEDGER_V1",
     "Nca8EnvironmentBridgeV1",
@@ -130,15 +130,22 @@ NCA8_SCAFFOLD_LEDGER_V1: tuple[Nca8ScaffoldLedgerEntryV1, ...] = (
     Nca8ScaffoldLedgerEntryV1(
         source_field="EnvObservation.raw_sensors",
         cognitive_meaning="bounded numeric receptor-like channels",
-        first_phase="1A transport; 1B timing only; first interpreted use in 1C",
+        first_phase="1A transport; 1B/1C timing and transport only",
         replacement_target="modality-specific sensory services",
         status="temporary explicit scaffold",
     ),
     Nca8ScaffoldLedgerEntryV1(
-        source_field="EnvObservation.predicates",
-        cognitive_meaning="selected interpreted perception tokens",
-        first_phase="1A transport; 1B timing only; first map-state use in 1C",
-        replacement_target="owned sensory/NavMap-state derivation",
+        source_field="EnvObservation.predicates[posture:fallen|posture:standing]",
+        cognitive_meaning="pre-recognized posture configuration selecting canonical SELF-ground geometry",
+        first_phase="1C body-sensory interpretation and POSTURE-SUPPORT NavMapState update",
+        replacement_target="vestibular/proprioceptive/contact matching in the owning body-sensory circuit",
+        status="temporary explicit scaffold",
+    ),
+    Nca8ScaffoldLedgerEntryV1(
+        source_field="EnvObservation.predicates[other allowed tokens]",
+        cognitive_meaning="selected interpreted perception tokens not yet given NCA8 cognitive authority",
+        first_phase="1A transport; 1B/1C timing and transport only",
+        replacement_target="owning sensory and association circuit derivation",
         status="temporary explicit scaffold",
     ),
     Nca8ScaffoldLedgerEntryV1(
@@ -151,7 +158,7 @@ NCA8_SCAFFOLD_LEDGER_V1: tuple[Nca8ScaffoldLedgerEntryV1, ...] = (
     Nca8ScaffoldLedgerEntryV1(
         source_field="EnvObservation.nav_patches/surface_grid",
         cognitive_meaning="bounded current geometry without goal/stage labels",
-        first_phase="1A transport; 1B timing only; first decoded map use in 1C",
+        first_phase="1A transport; 1B/1C timing and transport only",
         replacement_target="new sensory and NavMap-state contracts",
         status="temporary explicit scaffold",
     ),
@@ -444,8 +451,8 @@ class Nca8ObservationV1:
 
     The record contains only copied whitelist products.  It retains no reference
     to the source ``EnvObservation`` and offers ``as_dict`` only as a newly
-    allocated diagnostic/export view.  Phase 1B times and applies only its
-    ingress identity/summary; cognitive interpretation begins in Phase 1C.
+    allocated diagnostic/export view.  Phase 1C permits only the explicitly
+    ledgered posture tokens to enter the first body-sensory interpretation.
     """
 
     raw_sensors: Mapping[str, Any]

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Isolated Architecture-v09.3 runtime with a deterministic cognitive cycle.
+"""Isolated Architecture-v09.3 runtime with first body/NavMap representation.
 
-Phase 1A established a second state-isolated brain inside the existing CCA8
-application.  Phase 1B adds the first genuine runtime function: every
-``CognitiveCycle_n`` now processes ``Observation_n`` through the explicit
-Phase-A-to-F scheduler, freezes logically eligible circuit results before the
-commitment boundary, commits an honest null focal result, and buffers
-``Observation_(n+1)`` without processing it until the following cycle.
+Phase 1A established a second state-isolated brain.  Phase 1B installed the
+deterministic Phase-A-to-F commitment boundary.  Phase 1C now gives that cycle
+its first meaningful cognitive content: an explicit posture predicate scaffold
+is interpreted by an NCA8-owned body-sensory circuit, mapped to canonical
+SELF-ground geometry, stored as one transient POSTURE-SUPPORT NavMap state, and
+copied into a separate protected BodyMap state.
 
-No NavMap, Attention, WNM, Navigation primitive, PNM, BodyMap cognition, SEC,
-WorldIndex, or durable learning exists yet.  The cycle is nevertheless a real
-cognitive-cycle shell because observation ingress is staged, frozen, and
-applied under deterministic timing contracts rather than merely passed through
-an environment smoke test.
+When current evidence says SELF is fallen with inadequate support, BodyMap
+publishes one bounded POSTURE-SUPPORT candidate for future Attention.  There is
+still no Attention selection, WNM, Navigation arbitration, primitive, PNM, task
+action, SEC, WorldIndex, or durable learning.  The cycle therefore continues to
+commit an honest ``Action_n:NO_ACTION`` after doing real representational work.
 
 Numbering contract
 ------------------
@@ -30,7 +30,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from nca8_adapters import Nca8EnvironmentBridgeV1, Nca8EnvironmentStepV1, Nca8ObservationV1, create_environment_bridge_v1
+from nca8_adapters import (
+    Nca8EnvironmentBridgeV1,
+    Nca8EnvironmentStepV1,
+    Nca8ObservationV1,
+    create_environment_bridge_v1,
+)
+from nca8_body import BodyMapStateV1, Nca8BodyRuntimeV1, Nca8BodyUpdateV1, PostureSupportCandidateV1
 from nca8_contracts import (
     CircuitResultV1,
     CircuitTimingV1,
@@ -39,9 +45,11 @@ from nca8_contracts import (
     LogicalAvailabilityV1,
 )
 from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, SchedulerCycleSnapshotV1
+from nca8_maps import DurableNavMapV1, Nca8MapLibraryV1, NavMapStateV1, create_posture_support_map_library_v1
+from nca8_sensory import Nca8BodySensoryApplicationV1, Nca8BodySensoryModuleV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -55,7 +63,7 @@ __all__ = [
 ]
 
 NCA8_NO_ACTION = "NO_ACTION"
-_PHASE_1B_NULL_REASON = "phase_1b_has_no_focal_cognitive_operation"
+_PHASE_1C_NULL_REASON = "phase_1c_has_body_representation_but_no_attention_or_navigation"
 _OBSERVATION_INGRESS_CIRCUIT = "observation_ingress"
 
 PhaseEHookV1: TypeAlias = Callable[[CycleCommitmentV1], None]
@@ -90,7 +98,7 @@ class Nca8SessionConfigV1:
 
 @dataclass(frozen=True, slots=True)
 class Nca8SessionStatusV1:
-    """Read-only lifecycle and cycle status for the Phase-1B session."""
+    """Read-only lifecycle, scheduler, and first body-state status."""
 
     lifecycle_generation: int
     seed: int
@@ -100,6 +108,12 @@ class Nca8SessionStatusV1:
     pending_observation_number: int
     pending_circuit_results: int
     latched_events: int
+    posture_support_map_revision: int
+    current_map_state_count: int
+    current_posture: str | None
+    current_support: str | None
+    body_map_posture: str | None
+    posture_support_candidate_id: str | None
     trace_retained: int
     trace_capacity: int
 
@@ -119,6 +133,12 @@ class Nca8SessionStatusV1:
             "pending_observation_number": self.pending_observation_number,
             "pending_circuit_results": self.pending_circuit_results,
             "latched_events": self.latched_events,
+            "posture_support_map_revision": self.posture_support_map_revision,
+            "current_map_state_count": self.current_map_state_count,
+            "current_posture": self.current_posture,
+            "current_support": self.current_support,
+            "body_map_posture": self.body_map_posture,
+            "posture_support_candidate_id": self.posture_support_candidate_id,
             "trace_retained": self.trace_retained,
             "trace_capacity": self.trace_capacity,
         }
@@ -134,6 +154,9 @@ class Nca8CognitiveRuntimeCycleV1:
     output: str
     commitment: CycleCommitmentV1
     scheduler: SchedulerCycleSnapshotV1
+    posture_support_state: NavMapStateV1
+    body_map_state: BodyMapStateV1
+    posture_support_candidate: PostureSupportCandidateV1 | None
 
     def as_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-safe runtime-cycle snapshot."""
@@ -144,12 +167,19 @@ class Nca8CognitiveRuntimeCycleV1:
             "output": self.output,
             "commitment": self.commitment.as_dict(),
             "scheduler": self.scheduler.as_dict(),
+            "posture_support_state": self.posture_support_state.as_dict(),
+            "body_map_state": self.body_map_state.as_dict(),
+            "posture_support_candidate": (
+                self.posture_support_candidate.as_dict()
+                if self.posture_support_candidate is not None
+                else None
+            ),
         }
 
 
 @dataclass(frozen=True, slots=True)
 class Nca8CognitiveCycleResultV1:
-    """Complete result of one Phase-1B cognitive cycle and world boundary."""
+    """Complete result of one Phase-1C cognitive cycle and world boundary."""
 
     cycle_id: int
     observation_number: int
@@ -162,6 +192,9 @@ class Nca8CognitiveCycleResultV1:
     environment_step: int
     commitment: CycleCommitmentV1
     scheduler: SchedulerCycleSnapshotV1
+    posture_support_state: NavMapStateV1
+    body_map_state: BodyMapStateV1
+    posture_support_candidate: PostureSupportCandidateV1 | None
 
     @property
     def pnm_created(self) -> bool:
@@ -183,6 +216,13 @@ class Nca8CognitiveCycleResultV1:
             "pnm_created": self.pnm_created,
             "commitment": self.commitment.as_dict(),
             "scheduler": self.scheduler.as_dict(),
+            "posture_support_state": self.posture_support_state.as_dict(),
+            "body_map_state": self.body_map_state.as_dict(),
+            "posture_support_candidate": (
+                self.posture_support_candidate.as_dict()
+                if self.posture_support_candidate is not None
+                else None
+            ),
         }
 
 
@@ -231,13 +271,14 @@ def _observation_ingress_result_v1(
 
 
 class Nca8CognitiveRuntimeV1:
-    """Execute all six deterministic phases without yet selecting a task.
+    """Execute all six phases and own the first body/NavMap state pathway.
 
     The runtime owns no environment.  It consumes exactly one already-filtered
     ``Observation_n`` and may invoke a Phase-E boundary hook supplied by the
     episode runner.  That hook can advance the private world but cannot return
     ``Observation_(n+1)`` into this runtime, preventing same-cycle processing of
-    action consequences.
+    action consequences.  Body representation is updated only from results that
+    crossed the scheduler's Phase-B freeze and were applied in Phase C.
     """
 
     def __init__(
@@ -245,18 +286,40 @@ class Nca8CognitiveRuntimeV1:
         *,
         trace: Nca8TraceBufferV1,
         scheduler: Nca8DeterministicSchedulerV1,
+        map_library: Nca8MapLibraryV1 | None = None,
+        body_sensory: Nca8BodySensoryModuleV1 | None = None,
+        body_runtime: Nca8BodyRuntimeV1 | None = None,
         poll_sources: Sequence[CircuitPollSourceV1] = (),
     ) -> None:
         if not isinstance(trace, Nca8TraceBufferV1):
             raise TypeError("trace must be an Nca8TraceBufferV1")
         if not isinstance(scheduler, Nca8DeterministicSchedulerV1):
             raise TypeError("scheduler must be an Nca8DeterministicSchedulerV1")
+        if map_library is None:
+            map_library = body_sensory.map_library if body_sensory is not None else create_posture_support_map_library_v1()
+        if not isinstance(map_library, Nca8MapLibraryV1):
+            raise TypeError("map_library must be an Nca8MapLibraryV1")
+        if body_sensory is None:
+            body_sensory = Nca8BodySensoryModuleV1(map_library)
+        if not isinstance(body_sensory, Nca8BodySensoryModuleV1):
+            raise TypeError("body_sensory must be an Nca8BodySensoryModuleV1")
+        if body_sensory.map_library is not map_library:
+            raise ValueError("body_sensory and cognitive runtime must share one owned map library")
+        if body_runtime is None:
+            body_runtime = Nca8BodyRuntimeV1()
+        if not isinstance(body_runtime, Nca8BodyRuntimeV1):
+            raise TypeError("body_runtime must be an Nca8BodyRuntimeV1")
         self._trace = trace
         self._scheduler = scheduler
+        self._map_library = map_library
+        self._body_sensory = body_sensory
+        self._body_runtime = body_runtime
         self._poll_sources = tuple(poll_sources)
         self._cognitive_cycles = 0
         self._last_applied_observation_number: int | None = None
         self._last_commitment: CycleCommitmentV1 | None = None
+        self._last_body_sensory_application: Nca8BodySensoryApplicationV1 | None = None
+        self._last_body_update: Nca8BodyUpdateV1 | None = None
 
     @property
     def cognitive_cycles(self) -> int:
@@ -277,6 +340,36 @@ class Nca8CognitiveRuntimeV1:
     def scheduler(self) -> Nca8DeterministicSchedulerV1:
         """Return the owned scheduler for read-only diagnostics and tests."""
         return self._scheduler
+
+    @property
+    def map_library(self) -> Nca8MapLibraryV1:
+        """Return the owned durable/current map service for diagnostics and tests."""
+        return self._map_library
+
+    @property
+    def body_sensory(self) -> Nca8BodySensoryModuleV1:
+        """Return the owning body-sensory circuit."""
+        return self._body_sensory
+
+    @property
+    def body_runtime(self) -> Nca8BodyRuntimeV1:
+        """Return the protected BodyMap runtime."""
+        return self._body_runtime
+
+    @property
+    def posture_support_state(self) -> NavMapStateV1 | None:
+        """Return the currently owned POSTURE-SUPPORT NavMap state."""
+        return self._body_sensory.current_state
+
+    @property
+    def body_map_state(self) -> BodyMapStateV1 | None:
+        """Return the current protected BodyMap state."""
+        return self._body_runtime.current_state
+
+    @property
+    def posture_support_candidate(self) -> PostureSupportCandidateV1 | None:
+        """Return the current body-published candidate for future Attention."""
+        return self._body_runtime.posture_support_candidate
 
     def run_cycle(
         self,
@@ -314,28 +407,52 @@ class Nca8CognitiveRuntimeV1:
                 raise RuntimeError("observation ingress was polled for the wrong cycle")
             return (observation_result,)
 
+        def poll_body_sensory(requested_cycle: int) -> tuple[CircuitResultV1, ...]:
+            if requested_cycle != cycle_id:
+                raise RuntimeError("body-sensory circuit was polled for the wrong cycle")
+            result = self._body_sensory.poll_observation(
+                observation,
+                cycle_id=cycle_id,
+                observation_number=observation_number,
+            )
+            return (result,)
+
         poll_sources = (
             CircuitPollSourceV1(
                 circuit_id=_OBSERVATION_INGRESS_CIRCUIT,
                 poll=poll_observation_ingress,
+            ),
+            CircuitPollSourceV1(
+                circuit_id=self._body_sensory.circuit_id,
+                poll=poll_body_sensory,
             ),
             *self._poll_sources,
         )
         self._scheduler.phase_a_poll_and_stage(cycle_id, poll_sources, self._trace)
         frozen = self._scheduler.phase_b_freeze_eligible(cycle_id, self._trace)
         applied = self._scheduler.phase_c_apply_frozen(cycle_id, self._trace)
-        self._apply_phase_c_results(cycle_id, observation_number, applied)
+        sensory_application, body_update = self._apply_phase_c_results(
+            cycle_id,
+            observation_number,
+            applied,
+        )
 
         self._scheduler.enter_runtime_phase(cycle_id, CyclePhase.FOCAL_COMMITMENT)
         self._trace.append(
             "runtime",
-            f"{CyclePhase.FOCAL_COMMITMENT.display_name} completed without a focal operation",
+            f"{CyclePhase.FOCAL_COMMITMENT.display_name} completed without Attention or a focal operation",
             cycle_id=cycle_id,
             phase=CyclePhase.FOCAL_COMMITMENT.name,
             details={
                 "applied_result_count": len(applied),
+                "attention_selection": None,
+                "candidate_id": (
+                    body_update.posture_support_candidate.candidate_id
+                    if body_update.posture_support_candidate is not None
+                    else None
+                ),
                 "focal_operation": None,
-                "reason": _PHASE_1B_NULL_REASON,
+                "reason": _PHASE_1C_NULL_REASON,
             },
         )
 
@@ -374,6 +491,9 @@ class Nca8CognitiveRuntimeV1:
             output=NCA8_NO_ACTION,
             commitment=commitment,
             scheduler=scheduler_snapshot,
+            posture_support_state=sensory_application.map_state,
+            body_map_state=body_update.body_state,
+            posture_support_candidate=body_update.posture_support_candidate,
         )
 
     def _apply_phase_c_results(
@@ -381,8 +501,8 @@ class Nca8CognitiveRuntimeV1:
         cycle_id: int,
         observation_number: int,
         applied: Sequence[CircuitResultV1],
-    ) -> None:
-        """Apply the Phase-1B observation-ingress result without inventing cognition."""
+    ) -> tuple[Nca8BodySensoryApplicationV1, Nca8BodyUpdateV1]:
+        """Apply observation identity, body sensory state, and BodyMap in Phase C."""
         ingress_results = [result for result in applied if result.source_circuit == _OBSERVATION_INGRESS_CIRCUIT]
         if len(ingress_results) != 1:
             raise RuntimeError("Phase C requires exactly one eligible observation-ingress result")
@@ -401,6 +521,97 @@ class Nca8CognitiveRuntimeV1:
                 "result_id": ingress_results[0].result_id,
             },
         )
+
+        body_results = [result for result in applied if result.source_circuit == self._body_sensory.circuit_id]
+        if len(body_results) != 1:
+            raise RuntimeError("Phase C requires exactly one eligible body-sensory result")
+        sensory_application = self._body_sensory.apply_result(body_results[0], cycle_id=cycle_id)
+        map_state = sensory_application.map_state
+        self._trace.append(
+            "sensory",
+            "posture predicate scaffold interpreted as current SELF-ground evidence",
+            cycle_id=cycle_id,
+            phase=CyclePhase.UPDATE_OUTCOMES.name,
+            details={
+                "geometry_profile": sensory_application.sample.geometry_profile_id,
+                "observation_number": observation_number,
+                "posture": map_state.posture.value,
+                "reason": sensory_application.sample.reason,
+                "result_id": sensory_application.result_id,
+                "scaffold_source": "EnvObservation.predicates",
+            },
+        )
+        self._trace.append(
+            "maps",
+            "POSTURE-SUPPORT NavMapState updated without durable map revision",
+            cycle_id=cycle_id,
+            phase=CyclePhase.UPDATE_OUTCOMES.name,
+            details={
+                "activation": map_state.activation,
+                "change_count": map_state.configuration_change_count,
+                "contact": map_state.contact.value,
+                "durable_map": f"{map_state.source_map_ref.map_id}@r{map_state.source_map_ref.revision}",
+                "posture": map_state.posture.value,
+                "refresh_count": map_state.equivalent_refresh_count,
+                "state_id": map_state.state_id,
+                "support": map_state.support.value,
+                "update_kind": sensory_application.update_kind,
+            },
+        )
+
+        body_update = self._body_runtime.update_from_map_state(map_state)
+        body_state = body_update.body_state
+        self._trace.append(
+            "body",
+            "BodyMapState updated from current POSTURE-SUPPORT evidence",
+            cycle_id=cycle_id,
+            phase=CyclePhase.UPDATE_OUTCOMES.name,
+            details={
+                "authority": body_state.authority,
+                "candidate_event": body_update.candidate_event,
+                "contact": body_state.contact.value,
+                "is_wnm": False,
+                "posture": body_state.posture.value,
+                "state_id": body_state.state_id,
+                "support": body_state.support.value,
+                "update_kind": body_update.body_update_kind,
+            },
+        )
+        candidate = body_update.posture_support_candidate
+        if candidate is not None:
+            self._trace.append(
+                "body",
+                "POSTURE-SUPPORT map-state candidate published for future Attention",
+                cycle_id=cycle_id,
+                phase=CyclePhase.UPDATE_OUTCOMES.name,
+                details={
+                    "attention_selected": False,
+                    "authority": candidate.authority,
+                    "candidate_id": candidate.candidate_id,
+                    "posture": candidate.source_map_state.posture.value,
+                    "reason": candidate.reason,
+                    "source_state_id": candidate.source_map_state.state_id,
+                    "support": candidate.source_map_state.support.value,
+                },
+            )
+        else:
+            self._trace.append(
+                "body",
+                "no POSTURE-SUPPORT candidate published",
+                cycle_id=cycle_id,
+                phase=CyclePhase.UPDATE_OUTCOMES.name,
+                details={
+                    "attention_selected": False,
+                    "candidate_event": body_update.candidate_event,
+                    "posture": body_state.posture.value,
+                    "reason": "candidate_requires_current_fallen_and_inadequate_support",
+                    "support": body_state.support.value,
+                },
+            )
+
+        self._last_body_sensory_application = sensory_application
+        self._last_body_update = body_update
+        return sensory_application, body_update
 
 
 class Nca8EpisodeRunnerV1:
@@ -508,6 +719,9 @@ class Nca8EpisodeRunnerV1:
             environment_step=boundary_result.step_index,
             commitment=runtime_result.commitment,
             scheduler=runtime_result.scheduler,
+            posture_support_state=runtime_result.posture_support_state,
+            body_map_state=runtime_result.body_map_state,
+            posture_support_candidate=runtime_result.posture_support_candidate,
         )
 
 
@@ -521,6 +735,9 @@ class Nca8SessionV1:
         self._rng: random.Random
         self._trace: Nca8TraceBufferV1
         self._scheduler: Nca8DeterministicSchedulerV1
+        self._map_library: Nca8MapLibraryV1
+        self._body_sensory: Nca8BodySensoryModuleV1
+        self._body_runtime: Nca8BodyRuntimeV1
         self._cognitive_runtime: Nca8CognitiveRuntimeV1
         self._episode_runner: Nca8EpisodeRunnerV1
         self.reset()
@@ -535,6 +752,26 @@ class Nca8SessionV1:
         """Return the observation buffered for the next cognitive cycle."""
         return self._episode_runner.pending_observation
 
+    @property
+    def durable_posture_support_map(self) -> DurableNavMapV1:
+        """Return the immutable developmental POSTURE-SUPPORT NavMap revision."""
+        return self._map_library.durable_map()
+
+    @property
+    def posture_support_state(self) -> NavMapStateV1 | None:
+        """Return the current transient POSTURE-SUPPORT NavMap state."""
+        return self._body_sensory.current_state
+
+    @property
+    def body_map_state(self) -> BodyMapStateV1 | None:
+        """Return the current protected BodyMap state."""
+        return self._body_runtime.current_state
+
+    @property
+    def posture_support_candidate(self) -> PostureSupportCandidateV1 | None:
+        """Return the body-published candidate for future Attention."""
+        return self._body_runtime.posture_support_candidate
+
     def reset(self) -> Nca8SessionStatusV1:
         """Atomically replace all NCA8 mutable state with a fresh isolated episode."""
         new_rng = random.Random(self._config.seed)
@@ -545,9 +782,15 @@ class Nca8SessionV1:
             staged_result_capacity=self._config.staged_result_capacity,
             event_latch_capacity_per_source=self._config.event_latch_capacity_per_source,
         )
+        new_map_library = create_posture_support_map_library_v1()
+        new_body_sensory = Nca8BodySensoryModuleV1(new_map_library)
+        new_body_runtime = Nca8BodyRuntimeV1()
         new_runtime = Nca8CognitiveRuntimeV1(
             trace=new_trace,
             scheduler=new_scheduler,
+            map_library=new_map_library,
+            body_sensory=new_body_sensory,
+            body_runtime=new_body_runtime,
         )
         first_observation_number = 1
         new_episode_runner = Nca8EpisodeRunnerV1(
@@ -561,8 +804,12 @@ class Nca8SessionV1:
 
         new_trace.append(
             "session",
-            "isolated Phase-1B session reset",
+            "isolated Phase-1C session reset",
             details={
+                "durable_posture_support_map": (
+                    f"{new_map_library.posture_support_ref.map_id}@r"
+                    f"{new_map_library.posture_support_ref.revision}"
+                ),
                 "episode_index": reset_result.episode_index,
                 "generation": next_generation,
                 "pending_observation_number": first_observation_number,
@@ -582,6 +829,9 @@ class Nca8SessionV1:
         self._environment_bridge = new_bridge
         self._trace = new_trace
         self._scheduler = new_scheduler
+        self._map_library = new_map_library
+        self._body_sensory = new_body_sensory
+        self._body_runtime = new_body_runtime
         self._cognitive_runtime = new_runtime
         self._episode_runner = new_episode_runner
         self._lifecycle_generation = next_generation
@@ -591,6 +841,9 @@ class Nca8SessionV1:
         """Return a read-only status snapshot without exposing owned objects."""
         pending_results = self._scheduler.pending_results_snapshot()
         latched_results = self._scheduler.latched_results_snapshot()
+        map_state = self._body_sensory.current_state
+        body_state = self._body_runtime.current_state
+        candidate = self._body_runtime.posture_support_candidate
         return Nca8SessionStatusV1(
             lifecycle_generation=self._lifecycle_generation,
             seed=self._config.seed,
@@ -600,6 +853,12 @@ class Nca8SessionV1:
             pending_observation_number=self._episode_runner.pending_observation_number,
             pending_circuit_results=len(pending_results),
             latched_events=len(latched_results),
+            posture_support_map_revision=self._map_library.posture_support_ref.revision,
+            current_map_state_count=self._map_library.current_state_count,
+            current_posture=map_state.posture.value if map_state is not None else None,
+            current_support=map_state.support.value if map_state is not None else None,
+            body_map_posture=body_state.posture.value if body_state is not None else None,
+            posture_support_candidate_id=candidate.candidate_id if candidate is not None else None,
             trace_retained=self._trace.retained_count,
             trace_capacity=self._trace.capacity,
         )
