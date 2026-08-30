@@ -6,13 +6,13 @@ Purpose
 -------
 The Architecture-v09.3 runtime may share the established physical-world
 simulation, but it must not import legacy cognitive conclusions or read the
-environment's God's-eye ``EnvState``.  This module is the only Phase-1A
+environment's God's-eye ``EnvState``.  This module is the only initial
 ``nca8_*`` module allowed to import :mod:`cca8_env`.
 
 It performs three jobs:
 
 * construct a private ``HybridEnvironment`` for each new-runtime session;
-* expose only ``reset`` and explicit null-action advancement to Phase 1A;
+* expose only ``reset`` and explicit null-action advancement through Phase 1B;
 * convert ``EnvObservation`` into a defensively copied, recursively immutable,
   positively whitelisted observation packet.
 
@@ -33,7 +33,7 @@ from typing import Any, TypeAlias
 from cca8_env import EnvConfig, EnvObservation, HybridEnvironment
 from cca8_navpatch import CELL_BLOCKED, CELL_GOAL, CELL_HAZARD, CELL_TRAVERSABLE, CELL_UNKNOWN
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "NCA8_SCAFFOLD_LEDGER_V1",
     "Nca8EnvironmentBridgeV1",
@@ -130,35 +130,35 @@ NCA8_SCAFFOLD_LEDGER_V1: tuple[Nca8ScaffoldLedgerEntryV1, ...] = (
     Nca8ScaffoldLedgerEntryV1(
         source_field="EnvObservation.raw_sensors",
         cognitive_meaning="bounded numeric receptor-like channels",
-        first_phase="1A transport only; first interpreted use in 1C",
+        first_phase="1A transport; 1B timing only; first interpreted use in 1C",
         replacement_target="modality-specific sensory services",
         status="temporary explicit scaffold",
     ),
     Nca8ScaffoldLedgerEntryV1(
         source_field="EnvObservation.predicates",
         cognitive_meaning="selected interpreted perception tokens",
-        first_phase="1A transport only; first map-state use in 1C",
+        first_phase="1A transport; 1B timing only; first map-state use in 1C",
         replacement_target="owned sensory/NavMap-state derivation",
         status="temporary explicit scaffold",
     ),
     Nca8ScaffoldLedgerEntryV1(
         source_field="EnvObservation.cues",
         cognitive_meaning="selected salient sensory cues",
-        first_phase="1A transport only; later sensory/association use",
+        first_phase="1A transport; 1B timing only; later sensory/association use",
         replacement_target="local sensory matching and activation",
         status="temporary explicit scaffold",
     ),
     Nca8ScaffoldLedgerEntryV1(
         source_field="EnvObservation.nav_patches/surface_grid",
         cognitive_meaning="bounded current geometry without goal/stage labels",
-        first_phase="1A transport only; first decoded map use in 1C",
+        first_phase="1A transport; 1B timing only; first decoded map use in 1C",
         replacement_target="new sensory and NavMap-state contracts",
         status="temporary explicit scaffold",
     ),
     Nca8ScaffoldLedgerEntryV1(
         source_field="env_meta.lower_motor_feedback_v1",
         cognitive_meaning="compact support, slip, progress, and error feedback",
-        first_phase="1A transport only; later BodyMap/outcome use",
+        first_phase="1A transport; 1B timing only; later BodyMap/outcome use",
         replacement_target="HAL/lower-action status contract",
         status="temporary explicit scaffold",
     ),
@@ -411,7 +411,7 @@ def _sanitize_lower_motor_feedback_v1(value: Any) -> dict[str, Any] | None:
 
 
 def _sanitize_env_meta_v1(value: Any) -> dict[str, Any]:
-    """Return the positive metadata whitelist for Phase 1A."""
+    """Return the positive metadata whitelist for the initial NCA8 runtime."""
     if not isinstance(value, Mapping):
         return {}
 
@@ -444,8 +444,8 @@ class Nca8ObservationV1:
 
     The record contains only copied whitelist products.  It retains no reference
     to the source ``EnvObservation`` and offers ``as_dict`` only as a newly
-    allocated diagnostic/export view.  Phase 1A transports and summarizes this
-    packet but does not yet interpret it as cognition.
+    allocated diagnostic/export view.  Phase 1B times and applies only its
+    ingress identity/summary; cognitive interpretation begins in Phase 1C.
     """
 
     raw_sensors: Mapping[str, Any]
@@ -532,7 +532,7 @@ class Nca8EnvironmentResetV1:
 
 @dataclass(frozen=True, slots=True)
 class Nca8EnvironmentStepV1:
-    """Result of applying Phase 1A's explicit null action to the environment."""
+    """Result of advancing the environment with the current explicit null output."""
 
     observation: Nca8ObservationV1
     reward: float
@@ -577,9 +577,9 @@ class Nca8EnvironmentBridgeV1:  # pylint: disable=too-few-public-methods
     def apply_no_action(self) -> Nca8EnvironmentStepV1:
         """Advance the private environment with an explicit null task output.
 
-        Phase 1A has no Attention, WNM, Navigation, primitive, PNM, BodyMap
-        cognition, SEC, or WorldIndex.  Passing ``None`` is therefore the only
-        honest environment action at this stage.
+        Through Phase 1B there is no Attention, WNM, Navigation primitive, PNM,
+        BodyMap cognition, SEC, or WorldIndex.  Passing ``None`` is therefore
+        the only honest physical-boundary input at this stage.
         """
         observation, reward, done, info = self._environment.apply_action(None, ctx=None)
         raw_episode = info.get("episode_index") if isinstance(info, Mapping) else None

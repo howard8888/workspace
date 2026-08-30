@@ -41,8 +41,10 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "rcos_menu": "cca8_rcos_menu",
     "session_menu": "cca8_session_menu",
     "nca8_adapters": "nca8_adapters",
+    "nca8_contracts": "nca8_contracts",
     "nca8_menu": "nca8_menu",
     "nca8_runtime": "nca8_runtime",
+    "nca8_scheduler": "nca8_scheduler",
     "nca8_trace": "nca8_trace",
 }
 

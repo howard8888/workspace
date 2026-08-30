@@ -21,8 +21,10 @@ NCA8_FILES = tuple(sorted(ROOT.glob("nca8_*.py")))
 
 _ALLOWED_CCA8_IMPORTS: dict[str, frozenset[str]] = {
     "nca8_adapters.py": frozenset({"cca8_env", "cca8_navpatch"}),
+    "nca8_contracts.py": frozenset(),
     "nca8_menu.py": frozenset({"cca8_cli"}),
     "nca8_runtime.py": frozenset(),
+    "nca8_scheduler.py": frozenset(),
     "nca8_trace.py": frozenset(),
 }
 
@@ -65,11 +67,13 @@ def _import_roots_v1(tree: ast.AST) -> set[str]:
 
 
 def test_flat_nca8_module_set_is_explicit_and_complete() -> None:
-    """Phase 1A should create only the four working flat modules that were approved."""
+    """Phase 1B should add only the two working timing modules that were approved."""
     assert tuple(path.name for path in NCA8_FILES) == (
         "nca8_adapters.py",
+        "nca8_contracts.py",
         "nca8_menu.py",
         "nca8_runtime.py",
+        "nca8_scheduler.py",
         "nca8_trace.py",
     )
 

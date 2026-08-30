@@ -1,49 +1,53 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Isolated Architecture-v09.3 runtime shell for the new CCA8 implementation.
+"""Isolated Architecture-v09.3 runtime with a deterministic cognitive cycle.
 
-Phase 1A scope
---------------
-This module proves that the existing CCA8 application can host a second brain
-without sharing mutable cognitive state or consulting legacy cognitive
-conclusions.  ``Nca8SessionV1`` owns its own environment bridge, random-number
-generator, pending whitelisted observation, trace buffer, and lifecycle.
+Phase 1A established a second state-isolated brain inside the existing CCA8
+application.  Phase 1B adds the first genuine runtime function: every
+``CognitiveCycle_n`` now processes ``Observation_n`` through the explicit
+Phase-A-to-F scheduler, freezes logically eligible circuit results before the
+commitment boundary, commits an honest null focal result, and buffers
+``Observation_(n+1)`` without processing it until the following cycle.
 
-This is intentionally *not yet cognition*.  There is no Attention, WNM,
-Navigation, primitive selection, PNM, BodyMap cognition, SEC, WorldIndex, or
-learning in Phase 1A.  The sole executable operation is a clearly labelled null
-smoke cycle that accepts ``Observation_n``, commits ``Action_n=NO_ACTION``,
-advances the private physical environment, and buffers ``Observation_(n+1)``
-for the next numbered cycle.
+No NavMap, Attention, WNM, Navigation primitive, PNM, BodyMap cognition, SEC,
+WorldIndex, or durable learning exists yet.  The cycle is nevertheless a real
+cognitive-cycle shell because observation ingress is staged, frozen, and
+applied under deterministic timing contracts rather than merely passed through
+an environment smoke test.
 
 Numbering contract
 ------------------
-Logical event numbering is one-based and synchronized at the commitment
-boundary.  Cycle ``n`` consumes ``Observation_n`` and commits ``Action_n``.
-The environment's later consequence is returned as ``Observation_(n+1)`` and
-is buffered for Cycle ``n+1``.  The environment may retain its own internal
-zero-based step counter, but that implementation detail is not used as the
-agent-visible observation number.
-
-Dependency boundary
--------------------
-The module imports only the standard library and other ``nca8_*`` modules.  It
-does not import ``cca8_run``, ``Ctx``, the legacy controller, PolicyRuntime,
-WorkingMap, WorldGraph, legacy WNM/prediction modules, or domain policies.
+Cycle ``n`` consumes ``Observation_n`` and commits ``Action_n``.  The physical
+boundary later returns ``Observation_(n+1)``, which is held for Cycle ``n+1``.
+The environment's own step counter remains separate low-level provenance and
+cannot shift the user-facing cycle/observation/action numbering.
 """
 
 from __future__ import annotations
 
 import random
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import TypeAlias
 
-from nca8_adapters import Nca8EnvironmentBridgeV1, Nca8ObservationV1, create_environment_bridge_v1
+from nca8_adapters import Nca8EnvironmentBridgeV1, Nca8EnvironmentStepV1, Nca8ObservationV1, create_environment_bridge_v1
+from nca8_contracts import (
+    CircuitResultV1,
+    CircuitTimingV1,
+    CycleCommitmentV1,
+    CyclePhase,
+    LogicalAvailabilityV1,
+)
+from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, SchedulerCycleSnapshotV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __all__ = [
     "NCA8_NO_ACTION",
-    "Nca8NullSmokeResultV1",
+    "Nca8CognitiveCycleResultV1",
+    "Nca8CognitiveRuntimeCycleV1",
+    "Nca8CognitiveRuntimeV1",
+    "Nca8EpisodeRunnerV1",
     "Nca8SessionConfigV1",
     "Nca8SessionStatusV1",
     "Nca8SessionV1",
@@ -51,15 +55,21 @@ __all__ = [
 ]
 
 NCA8_NO_ACTION = "NO_ACTION"
+_PHASE_1B_NULL_REASON = "phase_1b_has_no_focal_cognitive_operation"
+_OBSERVATION_INGRESS_CIRCUIT = "observation_ingress"
+
+PhaseEHookV1: TypeAlias = Callable[[CycleCommitmentV1], None]
 
 
 @dataclass(frozen=True, slots=True)
 class Nca8SessionConfigV1:
-    """Immutable engineering configuration for one isolated new-runtime session."""
+    """Immutable engineering configuration for one isolated NCA8 session."""
 
     seed: int = 0
     scenario_name: str = "newborn_goat_first_hour"
     trace_capacity: int = 64
+    staged_result_capacity: int = 64
+    event_latch_capacity_per_source: int = 4
 
     def __post_init__(self) -> None:
         if isinstance(self.seed, bool) or not isinstance(self.seed, int):
@@ -68,22 +78,35 @@ class Nca8SessionConfigV1:
             raise ValueError("scenario_name must not be blank")
         if len(self.scenario_name.strip()) > 120:
             raise ValueError("scenario_name exceeds the 120-character limit")
-        if isinstance(self.trace_capacity, bool) or not isinstance(self.trace_capacity, int) or self.trace_capacity <= 0:
-            raise ValueError("trace_capacity must be a positive integer")
+        for field_name in (
+            "trace_capacity",
+            "staged_result_capacity",
+            "event_latch_capacity_per_source",
+        ):
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{field_name} must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
 class Nca8SessionStatusV1:
-    """Read-only status surface for the Phase-1A session shell."""
+    """Read-only lifecycle and cycle status for the Phase-1B session."""
 
     lifecycle_generation: int
     seed: int
     scenario_name: str
     environment_episode_index: int
-    null_smoke_cycles: int
+    cognitive_cycles: int
     pending_observation_number: int
+    pending_circuit_results: int
+    latched_events: int
     trace_retained: int
     trace_capacity: int
+
+    @property
+    def null_smoke_cycles(self) -> int:
+        """Compatibility alias for the superseded Phase-1A status name."""
+        return self.cognitive_cycles
 
     def as_dict(self) -> dict[str, int | str | None]:
         """Return a newly allocated scalar status dictionary."""
@@ -92,24 +115,75 @@ class Nca8SessionStatusV1:
             "seed": self.seed,
             "scenario_name": self.scenario_name,
             "environment_episode_index": self.environment_episode_index,
-            "null_smoke_cycles": self.null_smoke_cycles,
+            "cognitive_cycles": self.cognitive_cycles,
             "pending_observation_number": self.pending_observation_number,
+            "pending_circuit_results": self.pending_circuit_results,
+            "latched_events": self.latched_events,
             "trace_retained": self.trace_retained,
             "trace_capacity": self.trace_capacity,
         }
 
 
 @dataclass(frozen=True, slots=True)
-class Nca8NullSmokeResultV1:
-    """Immutable result of one explicit no-cognition Phase-1A smoke cycle."""
+class Nca8CognitiveRuntimeCycleV1:
+    """Result returned by the cognitive runtime before episode buffering."""
+
+    cycle_id: int
+    observation_number: int
+    action_number: int
+    output: str
+    commitment: CycleCommitmentV1
+    scheduler: SchedulerCycleSnapshotV1
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-safe runtime-cycle snapshot."""
+        return {
+            "cycle_id": self.cycle_id,
+            "observation_number": self.observation_number,
+            "action_number": self.action_number,
+            "output": self.output,
+            "commitment": self.commitment.as_dict(),
+            "scheduler": self.scheduler.as_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Nca8CognitiveCycleResultV1:
+    """Complete result of one Phase-1B cognitive cycle and world boundary."""
 
     cycle_id: int
     observation_number: int
     action_number: int
     next_observation_number: int
     output: str
+    environment_action: str | None
     reward: float
     done: bool
+    environment_step: int
+    commitment: CycleCommitmentV1
+    scheduler: SchedulerCycleSnapshotV1
+
+    @property
+    def pnm_created(self) -> bool:
+        """Return whether Phase E created a PNM; always false in Phase 1B."""
+        return self.commitment.pnm_id is not None
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-safe complete-cycle snapshot."""
+        return {
+            "cycle_id": self.cycle_id,
+            "observation_number": self.observation_number,
+            "action_number": self.action_number,
+            "next_observation_number": self.next_observation_number,
+            "output": self.output,
+            "environment_action": self.environment_action,
+            "reward": self.reward,
+            "done": self.done,
+            "environment_step": self.environment_step,
+            "pnm_created": self.pnm_created,
+            "commitment": self.commitment.as_dict(),
+            "scheduler": self.scheduler.as_dict(),
+        }
 
 
 def _observation_trace_details_v1(
@@ -117,28 +191,328 @@ def _observation_trace_details_v1(
     *,
     observation_number: int,
 ) -> dict[str, str | int | float | bool | None]:
-    """Return a trace summary using NCA8 logical numbering, not raw environment steps.
-
-    ``Nca8ObservationV1.step_index`` remains available inside the environment
-    adapter as a diagnostic of the physical simulator.  The runtime trace uses
-    the one-based observation number governed by the cognitive-cycle contract,
-    preventing a zero-based environment detail from creating an apparent
-    off-by-one relationship among Cycle_n, Observation_n, and Action_n.
-    """
+    """Return bounded observation details using NCA8's logical numbering."""
     details = observation.compact_summary()
-    details.pop("step_index", None)
+    environment_step = details.pop("step_index", None)
     details["observation_number"] = observation_number
+    details["environment_step"] = environment_step
     return details
 
 
-class Nca8SessionV1:
-    """Own all mutable state for one isolated Architecture-v09.3 experiment.
+def _observation_ingress_result_v1(
+    observation: Nca8ObservationV1,
+    *,
+    cycle_id: int,
+    observation_number: int,
+) -> CircuitResultV1:
+    """Create the sole Phase-1B owning result from the buffered observation.
 
-    Construction performs one fresh reset so the session immediately owns a
-    private environment and one buffered agent-visible observation.  ``reset``
-    replaces the environment bridge, RNG, trace buffer, and pending observation
-    rather than mutating any legacy CCA8 runtime object.
+    This is an engineering ingress result, not a sensory NavMap or BodyMap
+    interpretation.  It carries only the observation identity and bounded
+    counts required to prove staging, availability, freezing, and application.
     """
+    payload = _observation_trace_details_v1(
+        observation,
+        observation_number=observation_number,
+    )
+    return CircuitResultV1.from_mapping(
+        result_id=f"observation_ingress:{observation_number}",
+        source_circuit=_OBSERVATION_INGRESS_CIRCUIT,
+        source_sequence=observation_number,
+        timing=CircuitTimingV1.for_availability(
+            sampled_event_cycle=cycle_id,
+            availability=LogicalAvailabilityV1.THIS_CYCLE,
+            last_supported_cycle=cycle_id,
+            expires_after_cycle=cycle_id,
+        ),
+        payload=payload,
+        event_latch=False,
+    )
+
+
+class Nca8CognitiveRuntimeV1:
+    """Execute all six deterministic phases without yet selecting a task.
+
+    The runtime owns no environment.  It consumes exactly one already-filtered
+    ``Observation_n`` and may invoke a Phase-E boundary hook supplied by the
+    episode runner.  That hook can advance the private world but cannot return
+    ``Observation_(n+1)`` into this runtime, preventing same-cycle processing of
+    action consequences.
+    """
+
+    def __init__(
+        self,
+        *,
+        trace: Nca8TraceBufferV1,
+        scheduler: Nca8DeterministicSchedulerV1,
+        poll_sources: Sequence[CircuitPollSourceV1] = (),
+    ) -> None:
+        if not isinstance(trace, Nca8TraceBufferV1):
+            raise TypeError("trace must be an Nca8TraceBufferV1")
+        if not isinstance(scheduler, Nca8DeterministicSchedulerV1):
+            raise TypeError("scheduler must be an Nca8DeterministicSchedulerV1")
+        self._trace = trace
+        self._scheduler = scheduler
+        self._poll_sources = tuple(poll_sources)
+        self._cognitive_cycles = 0
+        self._last_applied_observation_number: int | None = None
+        self._last_commitment: CycleCommitmentV1 | None = None
+
+    @property
+    def cognitive_cycles(self) -> int:
+        """Return the number of fully completed Phase-A-to-F cycles."""
+        return self._cognitive_cycles
+
+    @property
+    def last_applied_observation_number(self) -> int | None:
+        """Return the latest observation actually applied during Phase C."""
+        return self._last_applied_observation_number
+
+    @property
+    def last_commitment(self) -> CycleCommitmentV1 | None:
+        """Return the immutable most recent Phase-E commitment."""
+        return self._last_commitment
+
+    @property
+    def scheduler(self) -> Nca8DeterministicSchedulerV1:
+        """Return the owned scheduler for read-only diagnostics and tests."""
+        return self._scheduler
+
+    def run_cycle(
+        self,
+        observation: Nca8ObservationV1,
+        *,
+        observation_number: int,
+        phase_e_hook: PhaseEHookV1 | None = None,
+    ) -> Nca8CognitiveRuntimeCycleV1:
+        """Run one complete deterministic cognitive cycle around ``Observation_n``."""
+        cycle_id = self._cognitive_cycles + 1
+        if observation_number != cycle_id:
+            raise RuntimeError(
+                "NCA8 numbering invariant violated: "
+                f"CognitiveCycle_{cycle_id} cannot consume Observation_{observation_number}"
+            )
+
+        self._trace.append(
+            "cycle",
+            f"CognitiveCycle_{cycle_id} opened with Observation_{observation_number}",
+            cycle_id=cycle_id,
+            details=_observation_trace_details_v1(
+                observation,
+                observation_number=observation_number,
+            ),
+        )
+
+        observation_result = _observation_ingress_result_v1(
+            observation,
+            cycle_id=cycle_id,
+            observation_number=observation_number,
+        )
+
+        def poll_observation_ingress(requested_cycle: int) -> tuple[CircuitResultV1, ...]:
+            if requested_cycle != cycle_id:
+                raise RuntimeError("observation ingress was polled for the wrong cycle")
+            return (observation_result,)
+
+        poll_sources = (
+            CircuitPollSourceV1(
+                circuit_id=_OBSERVATION_INGRESS_CIRCUIT,
+                poll=poll_observation_ingress,
+            ),
+            *self._poll_sources,
+        )
+        self._scheduler.phase_a_poll_and_stage(cycle_id, poll_sources, self._trace)
+        frozen = self._scheduler.phase_b_freeze_eligible(cycle_id, self._trace)
+        applied = self._scheduler.phase_c_apply_frozen(cycle_id, self._trace)
+        self._apply_phase_c_results(cycle_id, observation_number, applied)
+
+        self._scheduler.enter_runtime_phase(cycle_id, CyclePhase.FOCAL_COMMITMENT)
+        self._trace.append(
+            "runtime",
+            f"{CyclePhase.FOCAL_COMMITMENT.display_name} completed without a focal operation",
+            cycle_id=cycle_id,
+            phase=CyclePhase.FOCAL_COMMITMENT.name,
+            details={
+                "applied_result_count": len(applied),
+                "focal_operation": None,
+                "reason": _PHASE_1B_NULL_REASON,
+            },
+        )
+
+        self._scheduler.enter_runtime_phase(cycle_id, CyclePhase.PROJECT_DISPATCH)
+        commitment = CycleCommitmentV1(
+            cycle_id=cycle_id,
+            observation_number=observation_number,
+            eligible_result_ids=tuple(result.result_id for result in frozen),
+            applied_result_ids=tuple(result.result_id for result in applied),
+            focal_operation_id=None,
+            pnm_id=None,
+            task_action=None,
+        )
+        self._trace.append(
+            "runtime",
+            f"{CyclePhase.PROJECT_DISPATCH.display_name} committed no PNM or task action",
+            cycle_id=cycle_id,
+            phase=CyclePhase.PROJECT_DISPATCH.name,
+            details={
+                "action_number": cycle_id,
+                "focal_operation": None,
+                "pnm": None,
+                "task_action": None,
+            },
+        )
+        if phase_e_hook is not None:
+            phase_e_hook(commitment)
+
+        scheduler_snapshot = self._scheduler.phase_f_finish(cycle_id, self._trace)
+        self._cognitive_cycles = cycle_id
+        self._last_commitment = commitment
+        return Nca8CognitiveRuntimeCycleV1(
+            cycle_id=cycle_id,
+            observation_number=observation_number,
+            action_number=cycle_id,
+            output=NCA8_NO_ACTION,
+            commitment=commitment,
+            scheduler=scheduler_snapshot,
+        )
+
+    def _apply_phase_c_results(
+        self,
+        cycle_id: int,
+        observation_number: int,
+        applied: Sequence[CircuitResultV1],
+    ) -> None:
+        """Apply the Phase-1B observation-ingress result without inventing cognition."""
+        ingress_results = [result for result in applied if result.source_circuit == _OBSERVATION_INGRESS_CIRCUIT]
+        if len(ingress_results) != 1:
+            raise RuntimeError("Phase C requires exactly one eligible observation-ingress result")
+        ingress_payload = ingress_results[0].payload_dict()
+        payload_number = ingress_payload.get("observation_number")
+        if payload_number != observation_number:
+            raise RuntimeError("applied observation-ingress result does not match the cycle input")
+        self._last_applied_observation_number = observation_number
+        self._trace.append(
+            "runtime",
+            f"Observation_{observation_number} became the applied Phase-C cycle input",
+            cycle_id=cycle_id,
+            phase=CyclePhase.UPDATE_OUTCOMES.name,
+            details={
+                "observation_number": observation_number,
+                "result_id": ingress_results[0].result_id,
+            },
+        )
+
+
+class Nca8EpisodeRunnerV1:
+    """Coordinate one private environment with one NCA8 cognitive runtime.
+
+    ``Observation_(n+1)`` may be produced at the Phase-E physical boundary, but
+    the callback stores it only in this episode runner.  The cognitive runtime
+    receives no reference to that new observation.  It becomes an input only
+    when the next explicit call begins ``CognitiveCycle_(n+1)``.
+    """
+
+    def __init__(
+        self,
+        *,
+        environment_bridge: Nca8EnvironmentBridgeV1,
+        cognitive_runtime: Nca8CognitiveRuntimeV1,
+        trace: Nca8TraceBufferV1,
+        initial_observation: Nca8ObservationV1,
+        initial_observation_number: int = 1,
+    ) -> None:
+        self._environment_bridge = environment_bridge
+        self._cognitive_runtime = cognitive_runtime
+        self._trace = trace
+        self._pending_observation = initial_observation
+        self._pending_observation_number = initial_observation_number
+
+    @property
+    def pending_observation(self) -> Nca8ObservationV1:
+        """Return the immutable observation waiting for the next cycle."""
+        return self._pending_observation
+
+    @property
+    def pending_observation_number(self) -> int:
+        """Return the logical number of the observation waiting for processing."""
+        return self._pending_observation_number
+
+    def run_cycle(self) -> Nca8CognitiveCycleResultV1:
+        """Run one cycle, advance the world with no task token, and buffer the next observation."""
+        current_observation = self._pending_observation
+        observation_number = self._pending_observation_number
+        boundary_result: Nca8EnvironmentStepV1 | None = None
+
+        def phase_e_boundary(commitment: CycleCommitmentV1) -> None:
+            nonlocal boundary_result
+            if not commitment.is_null:
+                raise RuntimeError("Phase 1B can dispatch only a null commitment")
+            step_result = self._environment_bridge.apply_no_action()
+            boundary_result = step_result
+            self._trace.append(
+                "environment",
+                f"Action_{commitment.cycle_id}:{NCA8_NO_ACTION} advanced the private environment with no task token",
+                cycle_id=commitment.cycle_id,
+                phase=CyclePhase.PROJECT_DISPATCH.name,
+                details={
+                    "action": None,
+                    "action_number": commitment.cycle_id,
+                    "done": step_result.done,
+                    "environment_step": step_result.step_index,
+                    "reward": step_result.reward,
+                },
+            )
+
+        runtime_result = self._cognitive_runtime.run_cycle(
+            current_observation,
+            observation_number=observation_number,
+            phase_e_hook=phase_e_boundary,
+        )
+        if boundary_result is None:
+            raise RuntimeError("Phase E completed without advancing the private environment boundary")
+
+        next_observation_number = runtime_result.cycle_id + 1
+        self._pending_observation = boundary_result.observation
+        self._pending_observation_number = next_observation_number
+        next_details = _observation_trace_details_v1(
+            boundary_result.observation,
+            observation_number=next_observation_number,
+        )
+        next_details["next_cycle_id"] = next_observation_number
+        self._trace.append(
+            "firewall",
+            f"Observation_{next_observation_number} buffered for CognitiveCycle_{next_observation_number} without same-cycle processing",
+            cycle_id=runtime_result.cycle_id,
+            details=next_details,
+        )
+        self._trace.append(
+            "cycle",
+            f"CognitiveCycle_{runtime_result.cycle_id} closed",
+            cycle_id=runtime_result.cycle_id,
+            details={
+                "input": f"Observation_{runtime_result.observation_number}",
+                "next_input": f"Observation_{next_observation_number}",
+                "output": f"Action_{runtime_result.action_number}:{NCA8_NO_ACTION}",
+            },
+        )
+
+        return Nca8CognitiveCycleResultV1(
+            cycle_id=runtime_result.cycle_id,
+            observation_number=runtime_result.observation_number,
+            action_number=runtime_result.action_number,
+            next_observation_number=next_observation_number,
+            output=runtime_result.output,
+            environment_action=None,
+            reward=boundary_result.reward,
+            done=boundary_result.done,
+            environment_step=boundary_result.step_index,
+            commitment=runtime_result.commitment,
+            scheduler=runtime_result.scheduler,
+        )
+
+
+class Nca8SessionV1:
+    """Own every mutable object for one isolated Architecture-v09.3 experiment."""
 
     def __init__(self, config: Nca8SessionConfigV1 | None = None) -> None:
         self._config = config or Nca8SessionConfigV1()
@@ -146,9 +520,9 @@ class Nca8SessionV1:
         self._environment_bridge: Nca8EnvironmentBridgeV1
         self._rng: random.Random
         self._trace: Nca8TraceBufferV1
-        self._pending_observation: Nca8ObservationV1
-        self._pending_observation_number: int
-        self._null_smoke_cycles = 0
+        self._scheduler: Nca8DeterministicSchedulerV1
+        self._cognitive_runtime: Nca8CognitiveRuntimeV1
+        self._episode_runner: Nca8EpisodeRunnerV1
         self.reset()
 
     @property
@@ -158,36 +532,46 @@ class Nca8SessionV1:
 
     @property
     def pending_observation(self) -> Nca8ObservationV1:
-        """Return the recursively immutable observation buffered for later use."""
-        return self._pending_observation
+        """Return the observation buffered for the next cognitive cycle."""
+        return self._episode_runner.pending_observation
 
     def reset(self) -> Nca8SessionStatusV1:
-        """Replace all Phase-1A mutable state with a fresh isolated episode.
-
-        New objects are constructed and reset before being installed on the
-        session.  If environment construction fails, the previously functioning
-        session remains intact rather than becoming half-reset.
-        """
+        """Atomically replace all NCA8 mutable state with a fresh isolated episode."""
         new_rng = random.Random(self._config.seed)
         new_bridge = create_environment_bridge_v1(scenario_name=self._config.scenario_name)
         reset_result = new_bridge.reset(seed=self._config.seed)
         new_trace = Nca8TraceBufferV1(capacity=self._config.trace_capacity)
-        next_generation = self._lifecycle_generation + 1
+        new_scheduler = Nca8DeterministicSchedulerV1(
+            staged_result_capacity=self._config.staged_result_capacity,
+            event_latch_capacity_per_source=self._config.event_latch_capacity_per_source,
+        )
+        new_runtime = Nca8CognitiveRuntimeV1(
+            trace=new_trace,
+            scheduler=new_scheduler,
+        )
         first_observation_number = 1
+        new_episode_runner = Nca8EpisodeRunnerV1(
+            environment_bridge=new_bridge,
+            cognitive_runtime=new_runtime,
+            trace=new_trace,
+            initial_observation=reset_result.observation,
+            initial_observation_number=first_observation_number,
+        )
+        next_generation = self._lifecycle_generation + 1
 
         new_trace.append(
             "session",
-            "isolated Phase-1A session reset",
+            "isolated Phase-1B session reset",
             details={
-                "generation": next_generation,
-                "seed": self._config.seed,
                 "episode_index": reset_result.episode_index,
+                "generation": next_generation,
                 "pending_observation_number": first_observation_number,
+                "seed": self._config.seed,
             },
         )
         new_trace.append(
             "firewall",
-            f"Observation_{first_observation_number} buffered as the first cycle input",
+            f"Observation_{first_observation_number} buffered as the first cognitive-cycle input",
             details=_observation_trace_details_v1(
                 reset_result.observation,
                 observation_number=first_observation_number,
@@ -197,105 +581,36 @@ class Nca8SessionV1:
         self._rng = new_rng
         self._environment_bridge = new_bridge
         self._trace = new_trace
-        self._pending_observation = reset_result.observation
-        self._pending_observation_number = first_observation_number
-        self._null_smoke_cycles = 0
+        self._scheduler = new_scheduler
+        self._cognitive_runtime = new_runtime
+        self._episode_runner = new_episode_runner
         self._lifecycle_generation = next_generation
         return self.status()
 
     def status(self) -> Nca8SessionStatusV1:
         """Return a read-only status snapshot without exposing owned objects."""
+        pending_results = self._scheduler.pending_results_snapshot()
+        latched_results = self._scheduler.latched_results_snapshot()
         return Nca8SessionStatusV1(
             lifecycle_generation=self._lifecycle_generation,
             seed=self._config.seed,
             scenario_name=self._config.scenario_name,
             environment_episode_index=self._environment_bridge.episode_index,
-            null_smoke_cycles=self._null_smoke_cycles,
-            pending_observation_number=self._pending_observation_number,
+            cognitive_cycles=self._cognitive_runtime.cognitive_cycles,
+            pending_observation_number=self._episode_runner.pending_observation_number,
+            pending_circuit_results=len(pending_results),
+            latched_events=len(latched_results),
             trace_retained=self._trace.retained_count,
             trace_capacity=self._trace.capacity,
         )
 
-    def run_null_smoke_cycle(self) -> Nca8NullSmokeResultV1:
-        """Exercise the isolated observation/action boundary with ``NO_ACTION``.
+    def run_cognitive_cycle(self) -> Nca8CognitiveCycleResultV1:
+        """Execute one full Phase-A-to-F cycle and buffer the next observation."""
+        return self._episode_runner.run_cycle()
 
-        The method does not claim that a full Architecture-v09.3 cognitive cycle
-        occurred.  It simply proves this causal shell:
-
-        ``Observation_n -> Action_n=NO_ACTION -> private environment -> buffered Observation_(n+1)``.
-
-        The logical numbering invariant is checked on every call: smoke Cycle_n
-        consumes Observation_n and commits Action_n.  The returned observation
-        is labelled Observation_(n+1) for the following cycle.
-        """
-        current_observation = self._pending_observation
-        cycle_id = self._null_smoke_cycles + 1
-        observation_number = self._pending_observation_number
-        action_number = cycle_id
-        if observation_number != cycle_id:
-            raise RuntimeError(
-                "NCA8 numbering invariant violated: "
-                f"Cycle_{cycle_id} cannot consume Observation_{observation_number}"
-            )
-
-        current_details = _observation_trace_details_v1(
-            current_observation,
-            observation_number=observation_number,
-        )
-        current_details["cycle_id"] = cycle_id
-        self._trace.append(
-            "smoke",
-            f"Observation_{observation_number} accepted for SmokeCycle_{cycle_id}",
-            details=current_details,
-        )
-        self._trace.append(
-            "smoke",
-            f"Action_{action_number} committed as {NCA8_NO_ACTION}",
-            details={
-                "action_number": action_number,
-                "cycle_id": cycle_id,
-                "reason": "phase_1a_has_no_cognitive_authority",
-            },
-        )
-
-        environment_result = self._environment_bridge.apply_no_action()
-        next_observation_number = cycle_id + 1
-        self._pending_observation = environment_result.observation
-        self._pending_observation_number = next_observation_number
-        self._null_smoke_cycles = cycle_id
-
-        self._trace.append(
-            "environment",
-            f"Action_{action_number} applied to the private environment",
-            details={
-                "action_number": action_number,
-                "cycle_id": cycle_id,
-                "action": None,
-                "reward": environment_result.reward,
-                "done": environment_result.done,
-                "environment_step": environment_result.step_index,
-            },
-        )
-        next_details = _observation_trace_details_v1(
-            environment_result.observation,
-            observation_number=next_observation_number,
-        )
-        next_details["next_cycle_id"] = next_observation_number
-        self._trace.append(
-            "smoke",
-            f"Observation_{next_observation_number} buffered for SmokeCycle_{next_observation_number}",
-            details=next_details,
-        )
-
-        return Nca8NullSmokeResultV1(
-            cycle_id=cycle_id,
-            observation_number=observation_number,
-            action_number=action_number,
-            next_observation_number=next_observation_number,
-            output=NCA8_NO_ACTION,
-            reward=environment_result.reward,
-            done=environment_result.done,
-        )
+    def run_null_smoke_cycle(self) -> Nca8CognitiveCycleResultV1:
+        """Compatibility alias for the Phase-1A method; use ``run_cognitive_cycle``."""
+        return self.run_cognitive_cycle()
 
     def trace_snapshot(self) -> tuple[Nca8TraceEventV1, ...]:
         """Return immutable retained trace events in causal order."""
@@ -308,3 +623,7 @@ class Nca8SessionV1:
     def trace_json_safe(self) -> list[dict[str, object]]:
         """Return a newly allocated JSON-safe trace export."""
         return self._trace.as_json_safe()
+
+    def trace_canonical_bytes(self) -> bytes:
+        """Return byte-stable canonical trace JSON for deterministic replay tests."""
+        return self._trace.as_canonical_json_bytes()

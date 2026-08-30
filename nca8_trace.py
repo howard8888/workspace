@@ -5,28 +5,31 @@
 Purpose
 -------
 The ``nca8_*`` modules implement the experimental Architecture-v09.3 runtime
-beside the established ``cca8_*`` runtime.  This module provides the new
-runtime's first diagnostic boundary: deterministic, bounded, immutable trace
-events that can be rendered for a human or exported as JSON-safe dictionaries.
+beside the established ``cca8_*`` runtime.  This module provides deterministic,
+bounded, immutable trace events that can be rendered for a human or exported in
+canonical JSON form.
 
 Authority boundary
 ------------------
 Trace records are observations about execution.  They are never read back as
 cognitive evidence, never select an action, and never mutate the environment.
-The trace uses logical sequence numbers rather than wall-clock timestamps so a
-fresh session with the same inputs produces directly comparable output.
+Logical sequence numbers, optional cognitive-cycle numbers, and optional phase
+labels replace wall-clock timestamps so identical runs can be compared byte for
+byte.
 """
 
 from __future__ import annotations
 
+import json
+import math
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TypeAlias
 
-#pylint: disable=unnecessary-comprehension
+# pylint: disable=unnecessary-comprehension
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "Nca8TraceBufferV1",
     "Nca8TraceEventV1",
@@ -38,17 +41,14 @@ TraceScalarV1: TypeAlias = str | int | float | bool | None
 
 _MAX_CHANNEL_LENGTH = 40
 _MAX_MESSAGE_LENGTH = 240
+_MAX_PHASE_LENGTH = 40
 _MAX_DETAIL_COUNT = 16
 _MAX_DETAIL_KEY_LENGTH = 60
 _MAX_DETAIL_STRING_LENGTH = 200
 
 
 def _bounded_text(value: str, *, maximum: int, field_name: str) -> str:
-    """Return one non-empty bounded string or raise ``ValueError``.
-
-    Trace text is deliberately bounded because a trace event should summarize a
-    causal boundary rather than become an unbounded dump of cognitive state.
-    """
+    """Return one non-empty bounded string or raise ``ValueError``."""
     normalized = value.strip()
     if not normalized:
         raise ValueError(f"{field_name} must not be blank")
@@ -59,7 +59,11 @@ def _bounded_text(value: str, *, maximum: int, field_name: str) -> str:
 
 def _normalize_trace_scalar(value: TraceScalarV1) -> TraceScalarV1:
     """Return a JSON-safe scalar suitable for deterministic trace details."""
-    if value is None or isinstance(value, (bool, int, float)):
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("trace detail floats must be finite")
         return value
     if isinstance(value, str):
         if len(value) > _MAX_DETAIL_STRING_LENGTH:
@@ -74,23 +78,16 @@ def _normalize_trace_scalar(value: TraceScalarV1) -> TraceScalarV1:
 class Nca8TraceEventV1:
     """One immutable engineering trace event from the new runtime.
 
-    Attributes
-    ----------
-    sequence:
-        Monotonic logical sequence inside one trace-buffer lifetime.
-    channel:
-        Small subsystem label such as ``session``, ``smoke``, or
-        ``environment``.
-    message:
-        Human-readable event description.
-    details:
-        Deterministically ordered scalar key/value details.  Rich observations
-        and mutable runtime objects are intentionally excluded.
+    ``cycle_id`` and ``phase`` are optional because lifecycle and firewall
+    events also occur outside a cognitive cycle.  When present, they make the
+    causal location explicit in JSON without relying on prose parsing.
     """
 
     sequence: int
     channel: str
     message: str
+    cycle_id: int | None = None
+    phase: str | None = None
     details: tuple[tuple[str, TraceScalarV1], ...] = ()
 
     def as_dict(self) -> dict[str, object]:
@@ -99,6 +96,8 @@ class Nca8TraceEventV1:
             "sequence": self.sequence,
             "channel": self.channel,
             "message": self.message,
+            "cycle_id": self.cycle_id,
+            "phase": self.phase,
             "details": {key: value for key, value in self.details},
         }
 
@@ -114,7 +113,7 @@ class Nca8TraceEventV1:
 class Nca8TraceBufferV1:
     """Own a bounded sequence of immutable new-runtime trace events.
 
-    This service is mutable only in the engineering sense that it appends and
+    The service is mutable only in the engineering sense that it appends and
     evicts trace events.  It has no cognitive authority.  ``capacity`` bounds
     retained history, while ``total_appended`` records how many events were
     emitted since the last clear even when old events have been evicted.
@@ -154,13 +153,15 @@ class Nca8TraceBufferV1:
         channel: str,
         message: str,
         *,
+        cycle_id: int | None = None,
+        phase: str | None = None,
         details: Mapping[str, TraceScalarV1] | None = None,
     ) -> Nca8TraceEventV1:
         """Create, retain, and return one validated immutable trace event.
 
         Detail keys are sorted so caller dictionary insertion order cannot alter
-        rendered output or JSON export.  The method rejects non-scalar values;
-        callers should summarize rich state instead of placing it in the trace.
+        rendered output or JSON export.  Rich observations and mutable runtime
+        objects are intentionally excluded.
         """
         normalized_channel = _bounded_text(
             channel,
@@ -172,6 +173,17 @@ class Nca8TraceBufferV1:
             maximum=_MAX_MESSAGE_LENGTH,
             field_name="trace message",
         )
+
+        if cycle_id is not None:
+            if isinstance(cycle_id, bool) or not isinstance(cycle_id, int) or cycle_id <= 0:
+                raise ValueError("trace cycle_id must be a positive integer or None")
+        normalized_phase = None
+        if phase is not None:
+            normalized_phase = _bounded_text(
+                phase,
+                maximum=_MAX_PHASE_LENGTH,
+                field_name="trace phase",
+            )
 
         raw_details = details or {}
         if len(raw_details) > _MAX_DETAIL_COUNT:
@@ -190,6 +202,8 @@ class Nca8TraceBufferV1:
             sequence=self._next_sequence,
             channel=normalized_channel,
             message=normalized_message,
+            cycle_id=cycle_id,
+            phase=normalized_phase,
             details=tuple(normalized_details),
         )
         self._next_sequence += 1
@@ -208,3 +222,13 @@ class Nca8TraceBufferV1:
     def as_json_safe(self) -> list[dict[str, object]]:
         """Return retained events as newly allocated JSON-safe dictionaries."""
         return [event.as_dict() for event in self._events]
+
+    def as_canonical_json_bytes(self) -> bytes:
+        """Return byte-stable canonical JSON for deterministic replay checks."""
+        text = json.dumps(
+            self.as_json_safe(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return text.encode("utf-8")

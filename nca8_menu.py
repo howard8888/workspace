@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Experimental terminal menu for the isolated new CCA8 runtime shell.
+"""Experimental terminal menu for the isolated new CCA8 runtime.
 
-The module is imported lazily only after the user explicitly chooses the new
-runtime from Main Menu #1.  It receives and returns only ``Nca8SessionV1``; the
-legacy world, drives, Ctx, PolicyRuntime, WorkingMap, WorldGraph, and autosave
-path never cross this composition boundary.
+The module is imported lazily only after the user explicitly chooses NCA8 from
+Main Menu #1.  It receives and returns only ``Nca8SessionV1``; the legacy world,
+drives, Ctx, PolicyRuntime, WorkingMap, WorldGraph, and autosave path never
+cross this composition boundary.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 import cca8_cli
 from nca8_runtime import NCA8_NO_ACTION, Nca8SessionV1
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -28,8 +28,10 @@ def _print_status_v1(session: Nca8SessionV1 | None) -> None:
         "[nca8:status] "
         f"generation={status.lifecycle_generation} "
         f"episode={status.environment_episode_index} "
-        f"smoke_cycles={status.null_smoke_cycles} "
+        f"cognitive_cycles={status.cognitive_cycles} "
         f"pending=Observation_{status.pending_observation_number} "
+        f"circuit_results={status.pending_circuit_results} "
+        f"latched_events={status.latched_events} "
         f"trace={status.trace_retained}/{status.trace_capacity}"
     )
 
@@ -43,7 +45,7 @@ def _ensure_session_v1(session: Nca8SessionV1 | None) -> Nca8SessionV1:
 
 
 def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV1 | None:
-    """Run the bounded Phase-1A submenu and return its process-local session.
+    """Run the bounded Phase-1B submenu and return its process-local session.
 
     Merely opening the menu does not construct a session.  Runtime exceptions
     are caught here, reported with an ``nca8`` prefix, and leave the established
@@ -55,12 +57,13 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print()
         print("NCA8 -- NEW ARCHITECTURE-v09.3 EXPERIMENTAL RUNTIME")
         print(cca8_cli.MENU_RESPONSE_DIVIDER)
-        print("Phase 1A is an isolated runtime shell, not yet a cognitive implementation.")
-        print("No Attention, WNM, Navigation, primitive, PNM, BodyMap cognition, SEC, or WorldIndex is active.")
+        print("Phase 1B runs a deterministic Phase-A-to-F cognitive-cycle shell.")
+        print("Observation ingress is timed and applied; no NavMap, Attention, WNM, Navigation, primitive,")
+        print("PNM, BodyMap cognition, SEC, WorldIndex, or durable learning is active yet.")
         print()
         print("  1) Show isolated-session status")
         print("  2) Create/reset the isolated session")
-        print("  3) Run one explicit null smoke cycle")
+        print("  3) Run one deterministic null cognitive cycle")
         print("  4) Show the compact NCA8 trace")
         print("  [Enter] Return to Main Menu")
 
@@ -85,15 +88,17 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
 
             if choice == "3":
                 session = _ensure_session_v1(session)
-                result = session.run_null_smoke_cycle()
+                result = session.run_cognitive_cycle()
                 print(
-                    "[nca8:smoke] "
-                    f"smoke_cycle={result.cycle_id} "
+                    "[nca8:cycle] "
+                    f"cognitive_cycle={result.cycle_id} "
                     f"input=Observation_{result.observation_number} "
                     f"output=Action_{result.action_number}:{NCA8_NO_ACTION} "
                     f"next_input=Observation_{result.next_observation_number}"
                 )
-                print("[nca8:smoke] This exercised only the isolated physical boundary; no cognition was simulated.")
+                print(
+                    "[nca8:cycle] Phase A-F executed; no focal operation, PNM, or task action was created."
+                )
                 continue
 
             if choice == "4":
