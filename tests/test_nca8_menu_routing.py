@@ -56,7 +56,7 @@ def test_null_smoke_choice_lazily_creates_and_returns_the_isolated_session(
     output = capsys.readouterr().out
     assert isinstance(result, Nca8SessionV1)
     assert result.status().null_smoke_cycles == 1
-    assert f"output={NCA8_NO_ACTION}" in output
+    assert f"input=Observation_1 output=Action_1:{NCA8_NO_ACTION} next_input=Observation_2" in output
     assert "no cognition was simulated" in output
 
 

@@ -12,8 +12,18 @@ generator, pending whitelisted observation, trace buffer, and lifecycle.
 This is intentionally *not yet cognition*.  There is no Attention, WNM,
 Navigation, primitive selection, PNM, BodyMap cognition, SEC, WorldIndex, or
 learning in Phase 1A.  The sole executable operation is a clearly labelled null
-smoke cycle that accepts ``Observation_n``, emits ``NO_ACTION``, advances the
-private physical environment, and buffers ``Observation_(n+1)`` for later work.
+smoke cycle that accepts ``Observation_n``, commits ``Action_n=NO_ACTION``,
+advances the private physical environment, and buffers ``Observation_(n+1)``
+for the next numbered cycle.
+
+Numbering contract
+------------------
+Logical event numbering is one-based and synchronized at the commitment
+boundary.  Cycle ``n`` consumes ``Observation_n`` and commits ``Action_n``.
+The environment's later consequence is returned as ``Observation_(n+1)`` and
+is buffered for Cycle ``n+1``.  The environment may retain its own internal
+zero-based step counter, but that implementation detail is not used as the
+agent-visible observation number.
 
 Dependency boundary
 -------------------
@@ -30,7 +40,7 @@ from dataclasses import dataclass
 from nca8_adapters import Nca8EnvironmentBridgeV1, Nca8ObservationV1, create_environment_bridge_v1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8NullSmokeResultV1",
@@ -71,7 +81,7 @@ class Nca8SessionStatusV1:
     scenario_name: str
     environment_episode_index: int
     null_smoke_cycles: int
-    pending_observation_step: int | None
+    pending_observation_number: int
     trace_retained: int
     trace_capacity: int
 
@@ -83,7 +93,7 @@ class Nca8SessionStatusV1:
             "scenario_name": self.scenario_name,
             "environment_episode_index": self.environment_episode_index,
             "null_smoke_cycles": self.null_smoke_cycles,
-            "pending_observation_step": self.pending_observation_step,
+            "pending_observation_number": self.pending_observation_number,
             "trace_retained": self.trace_retained,
             "trace_capacity": self.trace_capacity,
         }
@@ -94,11 +104,31 @@ class Nca8NullSmokeResultV1:
     """Immutable result of one explicit no-cognition Phase-1A smoke cycle."""
 
     cycle_id: int
+    observation_number: int
+    action_number: int
+    next_observation_number: int
     output: str
-    observation_step: int | None
-    next_observation_step: int | None
     reward: float
     done: bool
+
+
+def _observation_trace_details_v1(
+    observation: Nca8ObservationV1,
+    *,
+    observation_number: int,
+) -> dict[str, str | int | float | bool | None]:
+    """Return a trace summary using NCA8 logical numbering, not raw environment steps.
+
+    ``Nca8ObservationV1.step_index`` remains available inside the environment
+    adapter as a diagnostic of the physical simulator.  The runtime trace uses
+    the one-based observation number governed by the cognitive-cycle contract,
+    preventing a zero-based environment detail from creating an apparent
+    off-by-one relationship among Cycle_n, Observation_n, and Action_n.
+    """
+    details = observation.compact_summary()
+    details.pop("step_index", None)
+    details["observation_number"] = observation_number
+    return details
 
 
 class Nca8SessionV1:
@@ -117,6 +147,7 @@ class Nca8SessionV1:
         self._rng: random.Random
         self._trace: Nca8TraceBufferV1
         self._pending_observation: Nca8ObservationV1
+        self._pending_observation_number: int
         self._null_smoke_cycles = 0
         self.reset()
 
@@ -142,6 +173,7 @@ class Nca8SessionV1:
         reset_result = new_bridge.reset(seed=self._config.seed)
         new_trace = Nca8TraceBufferV1(capacity=self._config.trace_capacity)
         next_generation = self._lifecycle_generation + 1
+        first_observation_number = 1
 
         new_trace.append(
             "session",
@@ -150,19 +182,23 @@ class Nca8SessionV1:
                 "generation": next_generation,
                 "seed": self._config.seed,
                 "episode_index": reset_result.episode_index,
-                "observation_step": reset_result.observation.step_index,
+                "pending_observation_number": first_observation_number,
             },
         )
         new_trace.append(
             "firewall",
-            "agent-visible observation buffered",
-            details=reset_result.observation.compact_summary(),
+            f"Observation_{first_observation_number} buffered as the first cycle input",
+            details=_observation_trace_details_v1(
+                reset_result.observation,
+                observation_number=first_observation_number,
+            ),
         )
 
         self._rng = new_rng
         self._environment_bridge = new_bridge
         self._trace = new_trace
         self._pending_observation = reset_result.observation
+        self._pending_observation_number = first_observation_number
         self._null_smoke_cycles = 0
         self._lifecycle_generation = next_generation
         return self.status()
@@ -175,7 +211,7 @@ class Nca8SessionV1:
             scenario_name=self._config.scenario_name,
             environment_episode_index=self._environment_bridge.episode_index,
             null_smoke_cycles=self._null_smoke_cycles,
-            pending_observation_step=self._pending_observation.step_index,
+            pending_observation_number=self._pending_observation_number,
             trace_retained=self._trace.retained_count,
             trace_capacity=self._trace.capacity,
         )
@@ -186,35 +222,53 @@ class Nca8SessionV1:
         The method does not claim that a full Architecture-v09.3 cognitive cycle
         occurred.  It simply proves this causal shell:
 
-        ``Observation_n -> explicit NO_ACTION -> private environment -> buffered Observation_(n+1)``.
+        ``Observation_n -> Action_n=NO_ACTION -> private environment -> buffered Observation_(n+1)``.
+
+        The logical numbering invariant is checked on every call: smoke Cycle_n
+        consumes Observation_n and commits Action_n.  The returned observation
+        is labelled Observation_(n+1) for the following cycle.
         """
         current_observation = self._pending_observation
         cycle_id = self._null_smoke_cycles + 1
+        observation_number = self._pending_observation_number
+        action_number = cycle_id
+        if observation_number != cycle_id:
+            raise RuntimeError(
+                "NCA8 numbering invariant violated: "
+                f"Cycle_{cycle_id} cannot consume Observation_{observation_number}"
+            )
 
-        current_details = current_observation.compact_summary()
+        current_details = _observation_trace_details_v1(
+            current_observation,
+            observation_number=observation_number,
+        )
         current_details["cycle_id"] = cycle_id
         self._trace.append(
             "smoke",
-            "Observation_n accepted by the isolated runtime shell",
+            f"Observation_{observation_number} accepted for SmokeCycle_{cycle_id}",
             details=current_details,
         )
         self._trace.append(
             "smoke",
-            NCA8_NO_ACTION,
+            f"Action_{action_number} committed as {NCA8_NO_ACTION}",
             details={
+                "action_number": action_number,
                 "cycle_id": cycle_id,
                 "reason": "phase_1a_has_no_cognitive_authority",
             },
         )
 
         environment_result = self._environment_bridge.apply_no_action()
+        next_observation_number = cycle_id + 1
         self._pending_observation = environment_result.observation
+        self._pending_observation_number = next_observation_number
         self._null_smoke_cycles = cycle_id
 
         self._trace.append(
             "environment",
-            "explicit null task output applied to private environment",
+            f"Action_{action_number} applied to the private environment",
             details={
+                "action_number": action_number,
                 "cycle_id": cycle_id,
                 "action": None,
                 "reward": environment_result.reward,
@@ -222,19 +276,23 @@ class Nca8SessionV1:
                 "environment_step": environment_result.step_index,
             },
         )
-        next_details = environment_result.observation.compact_summary()
-        next_details["cycle_id"] = cycle_id
+        next_details = _observation_trace_details_v1(
+            environment_result.observation,
+            observation_number=next_observation_number,
+        )
+        next_details["next_cycle_id"] = next_observation_number
         self._trace.append(
             "smoke",
-            "Observation_(n+1) buffered for a later operation",
+            f"Observation_{next_observation_number} buffered for SmokeCycle_{next_observation_number}",
             details=next_details,
         )
 
         return Nca8NullSmokeResultV1(
             cycle_id=cycle_id,
+            observation_number=observation_number,
+            action_number=action_number,
+            next_observation_number=next_observation_number,
             output=NCA8_NO_ACTION,
-            observation_step=current_observation.step_index,
-            next_observation_step=environment_result.observation.step_index,
             reward=environment_result.reward,
             done=environment_result.done,
         )

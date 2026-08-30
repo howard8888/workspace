@@ -35,9 +35,9 @@ def test_advancing_one_session_does_not_advance_the_other() -> None:
 
     assert result.output == NCA8_NO_ACTION
     assert first.status().null_smoke_cycles == 1
-    assert first.status().pending_observation_step == 1
+    assert first.status().pending_observation_number == 2
     assert second.status().null_smoke_cycles == 0
-    assert second.status().pending_observation_step == 0
+    assert second.status().pending_observation_number == 1
     assert second._environment_bridge.episode_index == 1  # pylint: disable=protected-access
 
 
@@ -54,7 +54,7 @@ def test_reset_replaces_owned_objects_and_clears_only_the_new_session() -> None:
 
     assert status.lifecycle_generation == 2
     assert status.null_smoke_cycles == 0
-    assert status.pending_observation_step == 0
+    assert status.pending_observation_number == 1
     assert session._environment_bridge is not old_bridge  # pylint: disable=protected-access
     assert session._environment_bridge._environment is not old_environment  # pylint: disable=protected-access
     assert session._rng is not old_rng  # pylint: disable=protected-access
@@ -63,19 +63,34 @@ def test_reset_replaces_owned_objects_and_clears_only_the_new_session() -> None:
 
 
 def test_null_smoke_cycle_preserves_observation_action_ordering() -> None:
-    """Phase 1A should buffer the later observation without claiming cognition."""
+    """Cycle_n should consume Observation_n and commit Action_n before Observation_(n+1)."""
     session = Nca8SessionV1()
 
     result = session.run_null_smoke_cycle()
     lines = session.trace_lines()
 
-    assert result.observation_step == 0
-    assert result.next_observation_step == 1
+    assert result.cycle_id == 1
+    assert result.observation_number == 1
+    assert result.action_number == 1
+    assert result.next_observation_number == 2
     assert result.output == NCA8_NO_ACTION
-    assert "Observation_n accepted" in lines[-4]
-    assert NCA8_NO_ACTION in lines[-3]
-    assert "null task output applied" in lines[-2]
-    assert "Observation_(n+1) buffered" in lines[-1]
+    assert "Observation_1 accepted for SmokeCycle_1" in lines[-4]
+    assert "Action_1 committed as NO_ACTION" in lines[-3]
+    assert "Action_1 applied" in lines[-2]
+    assert "Observation_2 buffered for SmokeCycle_2" in lines[-1]
+
+
+def test_event_numbers_remain_synchronized_across_multiple_smoke_cycles() -> None:
+    """Logical observation/action numbering must never drift one behind the cycle."""
+    session = Nca8SessionV1()
+
+    for expected_number in range(1, 5):
+        result = session.run_null_smoke_cycle()
+        assert result.cycle_id == expected_number
+        assert result.observation_number == expected_number
+        assert result.action_number == expected_number
+        assert result.next_observation_number == expected_number + 1
+        assert session.status().pending_observation_number == expected_number + 1
 
 
 def test_new_runtime_never_touches_an_unrelated_legacy_autosave_file(tmp_path: Path) -> None:

@@ -13,7 +13,7 @@ from __future__ import annotations
 import cca8_cli
 from nca8_runtime import NCA8_NO_ACTION, Nca8SessionV1
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -29,7 +29,7 @@ def _print_status_v1(session: Nca8SessionV1 | None) -> None:
         f"generation={status.lifecycle_generation} "
         f"episode={status.environment_episode_index} "
         f"smoke_cycles={status.null_smoke_cycles} "
-        f"pending_observation_step={status.pending_observation_step} "
+        f"pending=Observation_{status.pending_observation_number} "
         f"trace={status.trace_retained}/{status.trace_capacity}"
     )
 
@@ -88,8 +88,10 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
                 result = session.run_null_smoke_cycle()
                 print(
                     "[nca8:smoke] "
-                    f"cycle={result.cycle_id} output={NCA8_NO_ACTION} "
-                    f"Observation_{result.observation_step} -> Observation_{result.next_observation_step}"
+                    f"smoke_cycle={result.cycle_id} "
+                    f"input=Observation_{result.observation_number} "
+                    f"output=Action_{result.action_number}:{NCA8_NO_ACTION} "
+                    f"next_input=Observation_{result.next_observation_number}"
                 )
                 print("[nca8:smoke] This exercised only the isolated physical boundary; no cognition was simulated.")
                 continue
