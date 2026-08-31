@@ -12,7 +12,7 @@ environment's God's-eye ``EnvState``.  This module is the only initial
 It performs three jobs:
 
 * construct a private ``HybridEnvironment`` for each new-runtime session;
-* expose only ``reset`` and explicit null-action advancement through Phase 1C;
+* expose reset plus explicit task-action advancement through the shared physical boundary;
 * convert ``EnvObservation`` into a defensively copied, recursively immutable,
   positively whitelisted observation packet.
 
@@ -33,7 +33,9 @@ from typing import Any, TypeAlias
 from cca8_env import EnvConfig, EnvObservation, HybridEnvironment
 from cca8_navpatch import CELL_BLOCKED, CELL_GOAL, CELL_HAZARD, CELL_TRAVERSABLE, CELL_UNKNOWN
 
-__version__ = "0.1.2"
+from nca8_primitives import TaskActionKindV1, TaskActionV1
+
+__version__ = "0.2.0"
 __all__ = [
     "NCA8_SCAFFOLD_LEDGER_V1",
     "Nca8EnvironmentBridgeV1",
@@ -42,6 +44,7 @@ __all__ = [
     "Nca8ObservationV1",
     "Nca8ScaffoldLedgerEntryV1",
     "adapt_env_observation_v1",
+    "environment_token_for_task_action_v1",
     "create_environment_bridge_v1",
     "__version__",
 ]
@@ -528,6 +531,28 @@ def adapt_env_observation_v1(observation: EnvObservation) -> Nca8ObservationV1:
     )
 
 
+_TASK_ACTION_TO_ENVIRONMENT_TOKEN_V1: dict[TaskActionKindV1, str | None] = {
+    TaskActionKindV1.STAND_UP: "policy:stand_up",
+    TaskActionKindV1.NO_ACTION: None,
+}
+
+
+def environment_token_for_task_action_v1(task_action: TaskActionV1 | None) -> str | None:
+    """Map one internal task action onto the shared physical-world vocabulary.
+
+    The environment token is a compatibility seam only.  NCA8 cognition never
+    treats ``policy:stand_up`` as its primitive or internal action identity.
+    """
+    if task_action is None:
+        return None
+    if not isinstance(task_action, TaskActionV1):
+        raise TypeError("task_action must be a TaskActionV1 or None")
+    try:
+        return _TASK_ACTION_TO_ENVIRONMENT_TOKEN_V1[task_action.kind]
+    except KeyError as exc:  # pragma: no cover - enum additions require an explicit adapter update
+        raise ValueError(f"unsupported NCA8 task action kind: {task_action.kind.value}") from exc
+
+
 @dataclass(frozen=True, slots=True)
 class Nca8EnvironmentResetV1:
     """Result of resetting one private new-runtime environment episode."""
@@ -539,13 +564,14 @@ class Nca8EnvironmentResetV1:
 
 @dataclass(frozen=True, slots=True)
 class Nca8EnvironmentStepV1:
-    """Result of advancing the environment with the current explicit null output."""
+    """Result of applying one explicit NCA8 task output to the private world."""
 
     observation: Nca8ObservationV1
     reward: float
     done: bool
     episode_index: int
     step_index: int
+    environment_action: str | None
 
 
 class Nca8EnvironmentBridgeV1:  # pylint: disable=too-few-public-methods
@@ -581,17 +607,23 @@ class Nca8EnvironmentBridgeV1:  # pylint: disable=too-few-public-methods
             scenario_name=scenario_name,
         )
 
-    def apply_no_action(self) -> Nca8EnvironmentStepV1:
-        """Advance the private environment with an explicit null task output.
+    def apply_task_action(self, task_action: TaskActionV1 | None) -> Nca8EnvironmentStepV1:
+        """Translate and apply one authorized task action exactly once.
 
-        Through Phase 1B there is no Attention, WNM, Navigation primitive, PNM,
-        BodyMap cognition, SEC, or WorldIndex.  Passing ``None`` is therefore
-        the only honest physical-boundary input at this stage.
+        ``None`` or ``TaskActionKindV1.NO_ACTION`` advances the environment with
+        an explicit null task token.  Non-null task actions must already have
+        crossed Attention, Navigation, PNM, and BodyMap authorization; this
+        bridge performs no cognitive selection or safety substitution.
         """
-        observation, reward, done, info = self._environment.apply_action(None, ctx=None)
+        environment_action = environment_token_for_task_action_v1(task_action)
+        observation, reward, done, info = self._environment.apply_action(environment_action, ctx=None)
         raw_episode = info.get("episode_index") if isinstance(info, Mapping) else None
         raw_step = info.get("step_index") if isinstance(info, Mapping) else None
-        episode_index = raw_episode if isinstance(raw_episode, int) and not isinstance(raw_episode, bool) else self.episode_index
+        episode_index = (
+            raw_episode
+            if isinstance(raw_episode, int) and not isinstance(raw_episode, bool)
+            else self.episode_index
+        )
         step_index = raw_step if isinstance(raw_step, int) and not isinstance(raw_step, bool) else -1
         return Nca8EnvironmentStepV1(
             observation=adapt_env_observation_v1(observation),
@@ -599,7 +631,13 @@ class Nca8EnvironmentBridgeV1:  # pylint: disable=too-few-public-methods
             done=bool(done),
             episode_index=episode_index,
             step_index=step_index,
+            environment_action=environment_action,
         )
+
+    def apply_no_action(self) -> Nca8EnvironmentStepV1:
+        """Compatibility helper that advances the world with no task action."""
+        return self.apply_task_action(None)
+
 
 
 def create_environment_bridge_v1(

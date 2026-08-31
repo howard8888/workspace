@@ -26,6 +26,10 @@ def test_two_sessions_own_distinct_mutable_runtime_objects() -> None:
     assert first._map_library is not second._map_library  # pylint: disable=protected-access
     assert first._body_sensory is not second._body_sensory  # pylint: disable=protected-access
     assert first._body_runtime is not second._body_runtime  # pylint: disable=protected-access
+    assert first._attention is not second._attention  # pylint: disable=protected-access
+    assert first._navigation is not second._navigation  # pylint: disable=protected-access
+    assert first._prediction is not second._prediction  # pylint: disable=protected-access
+    assert first._primitives is not second._primitives  # pylint: disable=protected-access
     assert first._cognitive_runtime is not second._cognitive_runtime  # pylint: disable=protected-access
     assert first._episode_runner is not second._episode_runner  # pylint: disable=protected-access
     assert first.pending_observation is not second.pending_observation
@@ -39,7 +43,7 @@ def test_advancing_one_session_does_not_advance_the_other() -> None:
 
     result = first.run_cognitive_cycle()
 
-    assert result.output == NCA8_NO_ACTION
+    assert result.output == "STAND_UP"
     assert first.status().cognitive_cycles == 1
     assert first.status().pending_observation_number == 2
     assert second.status().cognitive_cycles == 0
@@ -59,6 +63,10 @@ def test_reset_replaces_owned_objects_and_clears_only_the_new_session() -> None:
     old_map_library = session._map_library  # pylint: disable=protected-access
     old_body_sensory = session._body_sensory  # pylint: disable=protected-access
     old_body_runtime = session._body_runtime  # pylint: disable=protected-access
+    old_attention = session._attention  # pylint: disable=protected-access
+    old_navigation = session._navigation  # pylint: disable=protected-access
+    old_prediction = session._prediction  # pylint: disable=protected-access
+    old_primitives = session._primitives  # pylint: disable=protected-access
     old_runtime = session._cognitive_runtime  # pylint: disable=protected-access
     old_episode_runner = session._episode_runner  # pylint: disable=protected-access
 
@@ -79,6 +87,10 @@ def test_reset_replaces_owned_objects_and_clears_only_the_new_session() -> None:
     assert session._map_library is not old_map_library  # pylint: disable=protected-access
     assert session._body_sensory is not old_body_sensory  # pylint: disable=protected-access
     assert session._body_runtime is not old_body_runtime  # pylint: disable=protected-access
+    assert session._attention is not old_attention  # pylint: disable=protected-access
+    assert session._navigation is not old_navigation  # pylint: disable=protected-access
+    assert session._prediction is not old_prediction  # pylint: disable=protected-access
+    assert session._primitives is not old_primitives  # pylint: disable=protected-access
     assert session._cognitive_runtime is not old_runtime  # pylint: disable=protected-access
     assert session._episode_runner is not old_episode_runner  # pylint: disable=protected-access
     assert session.trace_lines()[0].startswith("[nca8:session]")
@@ -95,10 +107,10 @@ def test_cognitive_cycle_preserves_observation_action_ordering() -> None:
     assert result.observation_number == 1
     assert result.action_number == 1
     assert result.next_observation_number == 2
-    assert result.output == NCA8_NO_ACTION
+    assert result.output == "STAND_UP"
 
     opened_index = next(index for index, line in enumerate(lines) if "CognitiveCycle_1 opened with Observation_1" in line)
-    action_index = next(index for index, line in enumerate(lines) if "Action_1:NO_ACTION advanced" in line)
+    action_index = next(index for index, line in enumerate(lines) if "Action_1:STAND_UP crossed" in line)
     buffered_index = next(index for index, line in enumerate(lines) if "Observation_2 buffered for CognitiveCycle_2" in line)
     closed_index = next(index for index, line in enumerate(lines) if "CognitiveCycle_1 closed" in line)
 

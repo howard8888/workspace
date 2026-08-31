@@ -26,7 +26,7 @@ from typing import Mapping, TypeAlias
 
 # pylint: disable=duplicate-code
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "CircuitResultV1",
     "CircuitTimingV1",
@@ -341,7 +341,6 @@ class CircuitResultV1:
     def payload_dict(self) -> dict[str, ContractScalarV1]:
         """Return a newly allocated scalar payload dictionary."""
         return dict(self.payload)
-        #return {key: value for key, value in self.payload}
 
     def as_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-safe representation."""
@@ -359,19 +358,24 @@ class CircuitResultV1:
 class CycleCommitmentV1:
     """Immutable Phase-E commitment record for one logical cognitive cycle.
 
-    Phase 1B creates a real commitment boundary but no focal operation.  The
-    current record therefore honestly contains ``None`` for focal operation,
-    PNM, and task action.  Later phases may populate those fields only when the
-    corresponding subsystem exists and has causal authority.
+    The record exposes the complete authority chain when focal cognition occurs:
+    Attention selection, source-linked WNM, selected primitive/application, PNM,
+    task action, and optional action envelope. A monitoring/null cycle retains
+    ``None`` for fields whose owning subsystem created no corresponding result.
     """
 
     cycle_id: int
     observation_number: int
     eligible_result_ids: tuple[str, ...]
     applied_result_ids: tuple[str, ...]
+    attention_selection_id: str | None = None
+    wnm_id: str | None = None
+    selected_primitive_id: str | None = None
     focal_operation_id: str | None = None
     pnm_id: str | None = None
     task_action: str | None = None
+    task_action_id: str | None = None
+    action_envelope_id: str | None = None
     committed_phase: CyclePhase = CyclePhase.PROJECT_DISPATCH
 
     def __post_init__(self) -> None:
@@ -393,14 +397,31 @@ class CycleCommitmentV1:
         object.__setattr__(self, "eligible_result_ids", eligible)
         object.__setattr__(self, "applied_result_ids", applied)
 
-        for field_name in ("focal_operation_id", "pnm_id", "task_action"):
+        for field_name in (
+            "attention_selection_id",
+            "wnm_id",
+            "selected_primitive_id",
+            "focal_operation_id",
+            "pnm_id",
+            "task_action",
+            "task_action_id",
+            "action_envelope_id",
+        ):
             value = getattr(self, field_name)
             if value is not None:
                 object.__setattr__(self, field_name, _bounded_identifier(value, field_name=field_name))
+        if self.wnm_id is not None and self.attention_selection_id is None:
+            raise ValueError("WNM requires an Attention selection")
+        if self.selected_primitive_id is not None and self.wnm_id is None:
+            raise ValueError("selected primitive requires a WNM")
+        if self.focal_operation_id is not None and self.selected_primitive_id is None:
+            raise ValueError("focal operation requires a selected primitive")
         if self.focal_operation_id is None and (self.pnm_id is not None or self.task_action is not None):
             raise ValueError("PNM or task action requires a focal operation")
-        if self.pnm_id is not None and self.focal_operation_id is None:
-            raise ValueError("PNM requires a focal operation")
+        if self.task_action_id is not None and self.task_action is None:
+            raise ValueError("task_action_id requires a non-null task action")
+        if self.action_envelope_id is not None and self.task_action_id is None:
+            raise ValueError("action envelope requires a task action")
 
     @property
     def is_null(self) -> bool:
@@ -414,9 +435,14 @@ class CycleCommitmentV1:
             "observation_number": self.observation_number,
             "eligible_result_ids": list(self.eligible_result_ids),
             "applied_result_ids": list(self.applied_result_ids),
+            "attention_selection_id": self.attention_selection_id,
+            "wnm_id": self.wnm_id,
+            "selected_primitive_id": self.selected_primitive_id,
             "focal_operation_id": self.focal_operation_id,
             "pnm_id": self.pnm_id,
             "task_action": self.task_action,
+            "task_action_id": self.task_action_id,
+            "action_envelope_id": self.action_envelope_id,
             "committed_phase": self.committed_phase.name,
             "is_null": self.is_null,
         }

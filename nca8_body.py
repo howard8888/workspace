@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Protected current BodyMap state and POSTURE-SUPPORT candidate for Phase 1C.
+"""Protected BodyMap state and task-to-body action handoff for NCA8.
 
 Purpose
 -------
-The body-sensory circuit owns the current POSTURE-SUPPORT NavMap state.  This
-module maintains a separate egocentric BodyMap state derived from that current
-body evidence.  When SELF is currently fallen with inadequate support, BodyMap
-publishes one bounded POSTURE-SUPPORT map-state candidate for future Attention.
+The body-sensory circuit owns the current POSTURE-SUPPORT NavMap state. This
+module maintains a separate egocentric BodyMap state derived from that evidence,
+publishes one bounded POSTURE-SUPPORT candidate when focal escalation is needed,
+and maps an already selected task action into a body-relative target, protected
+action envelope, and lower-action request.
 
 Authority boundary
 ------------------
-BodyMap has current sensorimotor/body authority only.  Its candidate is an
-Attention input, not an Attention selection, WNM, primitive recommendation, PNM,
-or task action.  BodyMap itself never becomes WNM and cannot invent ``STAND_UP``
-or any other cognitive task in Phase 1C.
+BodyMap owns current body/peripersonal state, protected safety, and task-to-body
+mapping. Its candidate is an Attention input, not an Attention selection. It may
+authorize or reject a task selected by Navigation, but it never becomes WNM and
+never invents ``STAND_UP`` or any other cognitive task on its own.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from enum import Enum
 
 from nca8_maps import (
     DurableNavMapRefV1,
@@ -29,13 +31,25 @@ from nca8_maps import (
     NavMapStateV1,
 )
 
+from nca8_primitives import (
+    ActionEnvelopeRequestV1,
+    PrimitiveApplicationV1,
+    TaskActionKindV1,
+    TaskActionV1,
+)
+
 # Small validation helpers intentionally remain local so this module stays
 # comprehensible without a generic state-management framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
+    "AuthorizedActionEnvelopeV1",
+    "BodyActionHandoffV1",
     "BodyMapStateV1",
+    "BodyTaskTargetV1",
+    "EnvelopeStatusV1",
+    "LowerActionRequestV1",
     "Nca8BodyRuntimeV1",
     "Nca8BodyUpdateV1",
     "PostureSupportCandidateV1",
@@ -206,6 +220,41 @@ class PostureSupportCandidateV1:
         """Return the fixed nonexecutive status of this candidate."""
         return "attention_candidate_only"
 
+    @property
+    def protected_safety_rank(self) -> int:
+        """Return the visible protected-body urgency component for Attention."""
+        return 100
+
+    @property
+    def new_task_need_rank(self) -> int:
+        """Return the visible need for a new focal body-support task."""
+        return 100
+
+    @property
+    def prediction_or_envelope_failure_rank(self) -> int:
+        """Return the current failure-escalation component; none in the first candidate."""
+        return 0
+
+    @property
+    def novelty_or_ambiguity_rank(self) -> int:
+        """Return the current novelty/ambiguity component; none for recognized fallen posture."""
+        return 0
+
+    @property
+    def current_task_persistence_rank(self) -> int:
+        """Return the current task-persistence component; Gate A starts a new task."""
+        return 0
+
+    @property
+    def activation_rank(self) -> int:
+        """Return bounded source activation as an inspectable Attention component."""
+        return max(0, min(100, int(round(self.source_map_state.activation * 100.0))))
+
+    @property
+    def stable_tie_key(self) -> str:
+        """Return the deterministic candidate tie key."""
+        return self.candidate_id
+
     def as_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-safe candidate description."""
         return {
@@ -214,6 +263,13 @@ class PostureSupportCandidateV1:
             "published_cycle": self.published_cycle,
             "reason": self.reason,
             "authority": self.authority,
+            "protected_safety_rank": self.protected_safety_rank,
+            "new_task_need_rank": self.new_task_need_rank,
+            "prediction_or_envelope_failure_rank": self.prediction_or_envelope_failure_rank,
+            "novelty_or_ambiguity_rank": self.novelty_or_ambiguity_rank,
+            "current_task_persistence_rank": self.current_task_persistence_rank,
+            "activation_rank": self.activation_rank,
+            "stable_tie_key": self.stable_tie_key,
             "attention_selected": False,
             "is_wnm": False,
             "primitive_id": None,
@@ -255,13 +311,205 @@ class Nca8BodyUpdateV1:
         }
 
 
-class Nca8BodyRuntimeV1:
-    """Own current BodyMap state and the single bounded candidate slot."""
+class EnvelopeStatusV1(str, Enum):
+    """Lifecycle of one BodyMap-authorized task envelope."""
 
-    def __init__(self) -> None:
+    AUTHORIZED = "authorized"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    REJECTED = "rejected"
+
+
+@dataclass(frozen=True, slots=True)
+class BodyTaskTargetV1:
+    """One body-relative target derived from a Navigation-authorized task action."""
+
+    target_id: str
+    task_action_id: str
+    source_application_id: str
+    created_cycle: int
+    body_frame: str
+    target_relations: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for field_name in ("target_id", "task_action_id", "source_application_id", "body_frame"):
+            object.__setattr__(
+                self,
+                field_name,
+                _bounded_identifier(getattr(self, field_name), field_name=field_name),
+            )
+        _positive_int(self.created_cycle, field_name="created_cycle")
+        if not self.target_relations:
+            raise ValueError("BodyMap task target requires target_relations")
+        if len(set(self.target_relations)) != len(self.target_relations):
+            raise ValueError("BodyMap task target relations must be unique")
+        for relation in self.target_relations:
+            _bounded_identifier(relation, field_name="target relation")
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-safe task-target snapshot."""
+        return {
+            "target_id": self.target_id,
+            "task_action_id": self.task_action_id,
+            "source_application_id": self.source_application_id,
+            "created_cycle": self.created_cycle,
+            "body_frame": self.body_frame,
+            "target_relations": list(self.target_relations),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorizedActionEnvelopeV1:
+    """BodyMap authorization for bounded lower execution of one selected task."""
+
+    envelope_id: str
+    task_action_id: str
+    source_application_id: str
+    authorized_cycle: int
+    expires_after_cycle: int
+    permitted_resources: tuple[str, ...]
+    local_bounds: tuple[str, ...]
+    safety_constraints: tuple[str, ...]
+    continuation_conditions: tuple[str, ...]
+    completion_conditions: tuple[str, ...]
+    escalation_conditions: tuple[str, ...]
+    status: EnvelopeStatusV1
+    status_reason: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("envelope_id", "task_action_id", "source_application_id", "status_reason"):
+            object.__setattr__(
+                self,
+                field_name,
+                _bounded_identifier(getattr(self, field_name), field_name=field_name),
+            )
+        authorized = _positive_int(self.authorized_cycle, field_name="authorized_cycle")
+        expiry = _positive_int(self.expires_after_cycle, field_name="expires_after_cycle")
+        if expiry < authorized:
+            raise ValueError("envelope expiry cannot precede authorization")
+        for field_name in (
+            "permitted_resources",
+            "local_bounds",
+            "safety_constraints",
+            "continuation_conditions",
+            "completion_conditions",
+            "escalation_conditions",
+        ):
+            values = getattr(self, field_name)
+            if len(set(values)) != len(values):
+                raise ValueError(f"{field_name} must contain unique values")
+            for item in values:
+                _bounded_identifier(item, field_name=field_name.replace("_", " "))
+        if not isinstance(self.status, EnvelopeStatusV1):
+            raise TypeError("status must be an EnvelopeStatusV1")
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-safe action-envelope snapshot."""
+        return {
+            "envelope_id": self.envelope_id,
+            "task_action_id": self.task_action_id,
+            "source_application_id": self.source_application_id,
+            "authorized_cycle": self.authorized_cycle,
+            "expires_after_cycle": self.expires_after_cycle,
+            "permitted_resources": list(self.permitted_resources),
+            "local_bounds": list(self.local_bounds),
+            "safety_constraints": list(self.safety_constraints),
+            "continuation_conditions": list(self.continuation_conditions),
+            "completion_conditions": list(self.completion_conditions),
+            "escalation_conditions": list(self.escalation_conditions),
+            "status": self.status.value,
+            "status_reason": self.status_reason,
+            "may_create_new_task": False,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class LowerActionRequestV1:
+    """Minimal body-relative request passed toward the lower physical boundary."""
+
+    request_id: str
+    task_action: TaskActionV1
+    target_id: str
+    envelope_id: str
+    created_cycle: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "request_id", _bounded_identifier(self.request_id, field_name="request_id"))
+        if not isinstance(self.task_action, TaskActionV1):
+            raise TypeError("task_action must be a TaskActionV1")
+        object.__setattr__(self, "target_id", _bounded_identifier(self.target_id, field_name="target_id"))
+        object.__setattr__(self, "envelope_id", _bounded_identifier(self.envelope_id, field_name="envelope_id"))
+        cycle = _positive_int(self.created_cycle, field_name="created_cycle")
+        if self.task_action.action_number != cycle:
+            raise ValueError("lower-action request cycle must match TaskAction_n")
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-safe lower-action request."""
+        return {
+            "request_id": self.request_id,
+            "task_action": self.task_action.as_dict(),
+            "target_id": self.target_id,
+            "envelope_id": self.envelope_id,
+            "created_cycle": self.created_cycle,
+            "detailed_movement_delegated": True,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BodyActionHandoffV1:
+    """Complete BodyMap authorization result for one selected application."""
+
+    handoff_id: str
+    cycle_id: int
+    authorized: bool
+    reason: str
+    task_target: BodyTaskTargetV1 | None
+    envelope: AuthorizedActionEnvelopeV1 | None
+    lower_request: LowerActionRequestV1 | None
+    pnm_id: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "handoff_id", _bounded_identifier(self.handoff_id, field_name="handoff_id"))
+        _positive_int(self.cycle_id, field_name="cycle_id")
+        if not isinstance(self.authorized, bool):
+            raise TypeError("authorized must be Boolean")
+        object.__setattr__(self, "reason", _bounded_identifier(self.reason, field_name="reason"))
+        object.__setattr__(self, "pnm_id", _bounded_identifier(self.pnm_id, field_name="pnm_id"))
+        components = (self.task_target, self.envelope, self.lower_request)
+        if self.authorized and any(component is None for component in components):
+            raise ValueError("authorized BodyMap handoff requires target, envelope, and lower request")
+        if not self.authorized and any(component is not None for component in components):
+            raise ValueError("rejected BodyMap handoff must not expose executable components")
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-safe BodyMap handoff."""
+        return {
+            "handoff_id": self.handoff_id,
+            "cycle_id": self.cycle_id,
+            "authorized": self.authorized,
+            "reason": self.reason,
+            "task_target": self.task_target.as_dict() if self.task_target is not None else None,
+            "envelope": self.envelope.as_dict() if self.envelope is not None else None,
+            "lower_request": self.lower_request.as_dict() if self.lower_request is not None else None,
+            "pnm_id": self.pnm_id,
+        }
+
+
+class Nca8BodyRuntimeV1:
+    """Own current BodyMap state, candidate publication, and task-to-body handoff."""
+
+    def __init__(self, *, action_handoff_enabled: bool = True) -> None:
+        if not isinstance(action_handoff_enabled, bool):
+            raise TypeError("action_handoff_enabled must be Boolean")
+        self._action_handoff_enabled = action_handoff_enabled
         self._current_state: BodyMapStateV1 | None = None
         self._posture_support_candidate: PostureSupportCandidateV1 | None = None
         self._last_update: Nca8BodyUpdateV1 | None = None
+        self._current_task_target: BodyTaskTargetV1 | None = None
+        self._current_envelope: AuthorizedActionEnvelopeV1 | None = None
+        self._current_lower_request: LowerActionRequestV1 | None = None
+        self._last_handoff: BodyActionHandoffV1 | None = None
 
     @property
     def current_state(self) -> BodyMapStateV1 | None:
@@ -277,6 +525,31 @@ class Nca8BodyRuntimeV1:
     def last_update(self) -> Nca8BodyUpdateV1 | None:
         """Return the most recent immutable BodyMap update."""
         return self._last_update
+
+    @property
+    def action_handoff_enabled(self) -> bool:
+        """Return whether BodyMap task-to-body handoff is enabled for ablation."""
+        return self._action_handoff_enabled
+
+    @property
+    def current_task_target(self) -> BodyTaskTargetV1 | None:
+        """Return the current body-relative task target, when authorized."""
+        return self._current_task_target
+
+    @property
+    def current_envelope(self) -> AuthorizedActionEnvelopeV1 | None:
+        """Return the current bounded action envelope, when present."""
+        return self._current_envelope
+
+    @property
+    def current_lower_request(self) -> LowerActionRequestV1 | None:
+        """Return the latest lower-action request authorized by BodyMap."""
+        return self._current_lower_request
+
+    @property
+    def last_handoff(self) -> BodyActionHandoffV1 | None:
+        """Return the most recent BodyMap task authorization result."""
+        return self._last_handoff
 
     def update_from_map_state(self, map_state: NavMapStateV1) -> Nca8BodyUpdateV1:
         """Update current body state and publish/clear the bounded candidate.
@@ -358,3 +631,134 @@ class Nca8BodyRuntimeV1:
         self._posture_support_candidate = next_candidate
         self._last_update = update
         return update
+
+    def reconcile_envelope_from_current_state(self) -> AuthorizedActionEnvelopeV1 | None:
+        """Update the current envelope status from later current body evidence.
+
+        This method cannot choose a new task.  It only closes or retains the
+        envelope previously authorized from a Navigation-selected application.
+        """
+        envelope = self._current_envelope
+        state = self._current_state
+        if envelope is None or state is None or envelope.status is not EnvelopeStatusV1.AUTHORIZED:
+            return envelope
+        if not state.evidence_current:
+            return envelope
+        if state.posture is Nca8PostureStateV1.STANDING and state.support is Nca8SupportStateV1.STABLE:
+            envelope = replace(
+                envelope,
+                status=EnvelopeStatusV1.COMPLETED,
+                status_reason="later_body_evidence_reports_upright_stable_support",
+            )
+        elif state.posture is Nca8PostureStateV1.FALLEN and state.support is Nca8SupportStateV1.INADEQUATE:
+            envelope = replace(
+                envelope,
+                status=EnvelopeStatusV1.FAILED,
+                status_reason="later_body_evidence_reports_fallen_inadequate_support",
+            )
+        self._current_envelope = envelope
+        return envelope
+
+    def authorize_application(
+        self,
+        application: PrimitiveApplicationV1,
+        *,
+        pnm_id: str,
+    ) -> BodyActionHandoffV1:
+        """Map one selected task action to a protected body-relative request.
+
+        BodyMap validates the currently represented body state and may reject
+        the handoff.  It never substitutes another task or invokes a legacy
+        controller when authorization is unavailable.
+        """
+        if not isinstance(application, PrimitiveApplicationV1):
+            raise TypeError("application must be a PrimitiveApplicationV1")
+        pnm_ref = _bounded_identifier(pnm_id, field_name="pnm_id")
+        cycle = application.cycle_id
+        state = self._current_state
+        reason = "authorized_current_fallen_body_recovery"
+        authorized = True
+        if not self._action_handoff_enabled:
+            authorized = False
+            reason = "bodymap_action_handoff_ablation_disabled"
+        elif state is None:
+            authorized = False
+            reason = "bodymap_current_state_missing"
+        elif not state.evidence_current:
+            authorized = False
+            reason = "bodymap_current_evidence_not_supported"
+        elif application.task_action.kind is not TaskActionKindV1.STAND_UP:
+            authorized = False
+            reason = "bodymap_gate_a_supports_only_stand_up"
+        elif state.posture is not Nca8PostureStateV1.FALLEN:
+            authorized = False
+            reason = "bodymap_current_posture_is_not_fallen"
+        elif state.support is not Nca8SupportStateV1.INADEQUATE:
+            authorized = False
+            reason = "bodymap_current_support_is_not_inadequate"
+        elif application.envelope_request is None:
+            authorized = False
+            reason = "primitive_application_has_no_envelope_request"
+
+        if not authorized:
+            handoff = BodyActionHandoffV1(
+                handoff_id=f"body_handoff:{cycle}",
+                cycle_id=cycle,
+                authorized=False,
+                reason=reason,
+                task_target=None,
+                envelope=None,
+                lower_request=None,
+                pnm_id=pnm_ref,
+            )
+            self._last_handoff = handoff
+            return handoff
+
+        envelope_request = application.envelope_request
+        if not isinstance(envelope_request, ActionEnvelopeRequestV1):  # pragma: no cover - guarded above
+            raise RuntimeError("authorized application lost its action-envelope request")
+        task_target = BodyTaskTargetV1(
+            target_id=f"body_target:stand_up:{cycle}",
+            task_action_id=application.task_action.task_action_id,
+            source_application_id=application.application_id,
+            created_cycle=cycle,
+            body_frame="self_ground_egocentric_v1",
+            target_relations=application.task_action.action_relevant_relations,
+        )
+        envelope = AuthorizedActionEnvelopeV1(
+            envelope_id=f"authorized_envelope:stand_up:{cycle}",
+            task_action_id=application.task_action.task_action_id,
+            source_application_id=application.application_id,
+            authorized_cycle=cycle,
+            expires_after_cycle=cycle + 2,
+            permitted_resources=envelope_request.permitted_resources,
+            local_bounds=envelope_request.local_bounds,
+            safety_constraints=envelope_request.safety_constraints,
+            continuation_conditions=envelope_request.continuation_conditions,
+            completion_conditions=envelope_request.completion_conditions,
+            escalation_conditions=envelope_request.escalation_conditions,
+            status=EnvelopeStatusV1.AUTHORIZED,
+            status_reason=reason,
+        )
+        lower_request = LowerActionRequestV1(
+            request_id=f"lower_action_request:stand_up:{cycle}",
+            task_action=application.task_action,
+            target_id=task_target.target_id,
+            envelope_id=envelope.envelope_id,
+            created_cycle=cycle,
+        )
+        handoff = BodyActionHandoffV1(
+            handoff_id=f"body_handoff:{cycle}",
+            cycle_id=cycle,
+            authorized=True,
+            reason=reason,
+            task_target=task_target,
+            envelope=envelope,
+            lower_request=lower_request,
+            pnm_id=pnm_ref,
+        )
+        self._current_task_target = task_target
+        self._current_envelope = envelope
+        self._current_lower_request = lower_request
+        self._last_handoff = handoff
+        return handoff

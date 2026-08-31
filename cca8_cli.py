@@ -29,7 +29,7 @@ import os
 import sys
 from collections.abc import Callable
 
-__version__ = "0.5.6"
+__version__ = "0.5.7"
 __all__ = [
     "ASCII_LOGOS",
     "MAIN_MENU_HEADER",
@@ -405,7 +405,7 @@ def watch_cognition_menu_v1() -> str | None:
     print("  1) Watch one cognitive cycle slowly (verbose teaching mode; legacy runtime)")
     print("  2) Watch several cognitive cycles (compact closed-loop timeline; legacy runtime)")
     print("  3) Watch a complete autonomous newborn survival episode (isolated legacy sandbox)")
-    print("  4) Open the new Architecture-v09.3 experimental runtime (NCA8 Phase 1C)")
+    print("  4) Open the new Architecture-v09.3 experimental runtime (NCA8 Phase 1D / Gate A)")
     print("  [Enter] Return to Main Menu")
     pick = read_menu_input_v1()
     if pick is None:

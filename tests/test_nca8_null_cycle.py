@@ -11,8 +11,8 @@ from nca8_runtime import NCA8_NO_ACTION, Nca8SessionConfigV1, Nca8SessionV1
 
 
 def test_null_cycle_has_no_focal_operation_pnm_or_task_action() -> None:
-    """Body representation must not fabricate executive cognition or an action."""
-    session = Nca8SessionV1()
+    """Attention ablation should preserve representation but prevent focal action."""
+    session = Nca8SessionV1(Nca8SessionConfigV1(attention_enabled=False))
 
     result = session.run_cognitive_cycle()
 
@@ -31,17 +31,18 @@ def test_null_cycle_has_no_focal_operation_pnm_or_task_action() -> None:
 
 def test_body_candidate_is_published_before_phase_d_but_not_selected() -> None:
     """BodyMap may publish a map-state candidate without becoming Attention or WNM."""
-    session = Nca8SessionV1()
+    session = Nca8SessionV1(Nca8SessionConfigV1(attention_enabled=False))
 
     result = session.run_cognitive_cycle()
     lines = session.trace_lines()
 
     candidate_index = next(index for index, line in enumerate(lines) if "candidate published" in line)
-    phase_d_index = next(index for index, line in enumerate(lines) if "Phase_D FOCAL_COMMITMENT" in line)
-    assert candidate_index < phase_d_index
+    attention_index = next(index for index, line in enumerate(lines) if "Attention released" in line)
+    assert candidate_index < attention_index
     assert result.posture_support_candidate is not None
     assert result.posture_support_candidate.authority == "attention_candidate_only"
-    assert result.posture_support_candidate.as_dict()["attention_selected"] is False
+    assert result.attention_selection.disposition.value == "release"
+    assert result.wnm is None
     assert result.body_map_state.as_dict()["is_wnm"] is False
 
 
@@ -64,12 +65,12 @@ def test_next_observation_is_buffered_but_not_applied_in_the_same_cycle() -> Non
 
 def test_phase_e_boundary_precedes_phase_f_and_next_observation_buffering() -> None:
     """The world boundary occurs after commitment and new evidence is not applied retroactively."""
-    session = Nca8SessionV1()
+    session = Nca8SessionV1(Nca8SessionConfigV1(attention_enabled=False))
     session.run_cognitive_cycle()
     lines = session.trace_lines()
 
     phase_e = next(index for index, line in enumerate(lines) if "Phase_E PROJECT_DISPATCH" in line)
-    environment = next(index for index, line in enumerate(lines) if "Action_1:NO_ACTION advanced" in line)
+    environment = next(index for index, line in enumerate(lines) if "Action_1:NO_ACTION crossed" in line)
     phase_f = next(index for index, line in enumerate(lines) if "Phase_F LEARNING_SCHEDULE" in line)
     buffered = next(index for index, line in enumerate(lines) if "Observation_2 buffered" in line)
 

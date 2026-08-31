@@ -23,8 +23,11 @@ _ALLOWED_CCA8_IMPORTS: dict[str, frozenset[str]] = {
     "nca8_adapters.py": frozenset({"cca8_env", "cca8_navpatch"}),
     "nca8_body.py": frozenset(),
     "nca8_contracts.py": frozenset(),
+    "nca8_executive.py": frozenset(),
     "nca8_maps.py": frozenset({"cca8_navmap_kernel"}),
     "nca8_menu.py": frozenset({"cca8_cli"}),
+    "nca8_prediction.py": frozenset(),
+    "nca8_primitives.py": frozenset(),
     "nca8_runtime.py": frozenset(),
     "nca8_scheduler.py": frozenset(),
     "nca8_sensory.py": frozenset(),
@@ -75,8 +78,11 @@ def test_flat_nca8_module_set_is_explicit_and_complete() -> None:
         "nca8_adapters.py",
         "nca8_body.py",
         "nca8_contracts.py",
+        "nca8_executive.py",
         "nca8_maps.py",
         "nca8_menu.py",
+        "nca8_prediction.py",
+        "nca8_primitives.py",
         "nca8_runtime.py",
         "nca8_scheduler.py",
         "nca8_sensory.py",
@@ -136,12 +142,11 @@ def test_nca8_cognition_never_reads_hidden_stage_milestone_or_oracle_fields() ->
                     assert node.args[1].value not in forbidden, f"{path.name}:{node.lineno}"
 
 
-def test_phase1c_representation_code_contains_no_standup_task_shortcut() -> None:
-    """Fallen representation must not secretly encode the Phase-1D task decision."""
+def test_sensory_map_and_attention_code_contain_no_standup_task_shortcut() -> None:
+    """StandUp domain knowledge must stay out of sensory maps and generic Attention."""
     representation_files = (
-        ROOT / "nca8_body.py",
+        ROOT / "nca8_executive.py",
         ROOT / "nca8_maps.py",
-        ROOT / "nca8_runtime.py",
         ROOT / "nca8_sensory.py",
     )
 

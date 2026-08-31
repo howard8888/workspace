@@ -10,7 +10,7 @@ import pytest
 
 import cca8_cli
 import nca8_menu
-from nca8_runtime import NCA8_NO_ACTION, Nca8SessionV1
+from nca8_runtime import Nca8SessionV1
 
 
 def test_opening_and_leaving_nca8_menu_does_not_construct_a_session(
@@ -25,8 +25,8 @@ def test_opening_and_leaving_nca8_menu_does_not_construct_a_session(
     output = capsys.readouterr().out
     assert result is None
     assert "NCA8 -- NEW ARCHITECTURE-v09.3 EXPERIMENTAL RUNTIME" in output
-    assert "first body/NavMap representation" in output
-    assert "No Attention selection, WNM, Navigation" in output
+    assert "first complete new cognitive action path" in output
+    assert "No legacy cognitive authority" in output
 
 
 def test_status_is_read_only_and_does_not_construct_a_session(
@@ -48,7 +48,7 @@ def test_cognitive_cycle_choice_lazily_creates_and_returns_the_isolated_session(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The first executable operation should update representation and emit a null action."""
+    """The first executable operation should run the complete StandUp commitment path."""
     responses = iter(("3", ""))
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
 
@@ -57,11 +57,11 @@ def test_cognitive_cycle_choice_lazily_creates_and_returns_the_isolated_session(
     output = capsys.readouterr().out
     assert isinstance(result, Nca8SessionV1)
     assert result.status().cognitive_cycles == 1
-    assert f"input=Observation_1 output=Action_1:{NCA8_NO_ACTION} next_input=Observation_2" in output
-    assert "[nca8:representation]" in output
-    assert "posture=fallen" in output
-    assert "support=inadequate" in output
-    assert "no Attention selection, WNM, Navigation" in output
+    assert "input=Observation_1 output=Action_1:STAND_UP next_input=Observation_2" in output
+    assert "[nca8:focal]" in output
+    assert "primitive=ip:stand_up" in output
+    assert "task_action=STAND_UP" in output
+    assert "env_action='policy:stand_up'" in output
 
 
 def test_nca8_menu_does_not_consume_the_shared_main_menu_pause(

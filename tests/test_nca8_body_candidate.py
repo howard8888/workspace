@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from nca8_body import Nca8BodyRuntimeV1
 from nca8_maps import Nca8PostureStateV1, create_posture_support_map_library_v1
-from nca8_runtime import NCA8_NO_ACTION, Nca8SessionV1
+from nca8_runtime import Nca8SessionV1
 
 
 def _map_state_v1(profile_id: str, cycle_id: int):
@@ -90,8 +90,8 @@ def test_unknown_body_evidence_clears_candidate_and_preserves_last_support_time(
     assert update.candidate_event == "cleared"
 
 
-def test_full_session_updates_body_representation_but_keeps_null_commitment() -> None:
-    """The integrated Phase-1C cycle should represent fallen posture without StandUp."""
+def test_full_session_updates_body_representation_and_reaches_gate_a_commitment() -> None:
+    """The integrated Phase-1D cycle should represent fallen posture and commit StandUp."""
     session = Nca8SessionV1()
 
     result = session.run_cognitive_cycle()
@@ -99,10 +99,10 @@ def test_full_session_updates_body_representation_but_keeps_null_commitment() ->
     assert result.posture_support_state.posture is Nca8PostureStateV1.FALLEN
     assert result.body_map_state.posture is Nca8PostureStateV1.FALLEN
     assert result.posture_support_candidate is not None
-    assert result.output == NCA8_NO_ACTION
-    assert result.commitment.focal_operation_id is None
-    assert result.commitment.pnm_id is None
-    assert result.commitment.task_action is None
+    assert result.output == "STAND_UP"
+    assert result.commitment.focal_operation_id == "application:stand_up:1"
+    assert result.commitment.pnm_id == "pnm:application:stand_up:1"
+    assert result.commitment.task_action == "STAND_UP"
     assert session.status().current_map_state_count == 1
     assert session.status().posture_support_map_revision == 1
 
