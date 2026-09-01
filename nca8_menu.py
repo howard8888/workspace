@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import cca8_cli
 from nca8_runtime import Nca8SessionV1
+from nca8_trace import render_explanatory_trace_lines_v1
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -66,11 +67,16 @@ def _print_cycle_result_v1(session: Nca8SessionV1) -> None:
         f"wnm={result.wnm.working_id if result.wnm is not None else '(none)'} "
         f"primitive={result.navigation.selected_primitive_id or '(none)'}"
     )
+    body_authorization = (
+        str(result.body_handoff.authorized)
+        if result.body_handoff is not None
+        else "not-required"
+    )
     print(
         "[nca8:prospective] "
         f"pnm={result.pnm.pnm_id if result.pnm is not None else '(none)'} "
         f"task_action={result.task_action or '(none)'} "
-        f"body_authorized={result.body_handoff.authorized if result.body_handoff is not None else False} "
+        f"body_authorization={body_authorization} "
         f"env_action={result.environment_action!r}"
     )
     for outcome in result.prediction_outcomes:
@@ -79,6 +85,21 @@ def _print_cycle_result_v1(session: Nca8SessionV1) -> None:
             f"application={outcome.application_id} status={outcome.status.value} "
             f"evidence_cycle={outcome.evidence_sampled_cycle}"
         )
+
+
+def _fresh_gate_a_session_v1(session: Nca8SessionV1 | None) -> Nca8SessionV1:
+    """Create one brand-new Gate-A session whose first lifecycle generation is one.
+
+    Menu option 5 promises a fresh demonstration rather than an additional reset
+    of whichever session happened to be retained from earlier menu activity. The
+    retained session's immutable configuration is preserved when one exists, but
+    none of its mutable episode state is reused. A newly constructed session has
+    already performed its one required initialization reset, so the caller must
+    use ``run_gate_a(reset_first=False)`` to avoid a misleading second generation.
+    """
+    print("[nca8:session] creating a fresh isolated session")
+    config = session.config if session is not None else None
+    return Nca8SessionV1(config)
 
 
 def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV1 | None:
@@ -100,14 +121,12 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print("  1) Show isolated-session status")
         print("  2) Create/reset the isolated session")
         print("  3) Run one deterministic NCA8 cognitive cycle")
-        print("  4) Show the compact NCA8 trace")
+        print("  4) Show the explanatory NCA8 trace")
         print("  5) Run a fresh bounded Gate-A StandUp demonstration")
         print("  [Enter] Return to Main Menu")
-
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
             return session
-
         try:
             if choice == "1":
                 _print_status_v1(session)
@@ -129,12 +148,12 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
                 if session is None:
                     print("[nca8:trace] no session and therefore no trace")
                     continue
-                lines = session.trace_lines()
+                lines = render_explanatory_trace_lines_v1(session.trace_snapshot())
                 print("\n".join(lines) if lines else "[nca8:trace] empty")
                 continue
             if choice == "5":
-                session = _ensure_session_v1(session)
-                summary = session.run_gate_a(reset_first=True)
+                session = _fresh_gate_a_session_v1(session)
+                summary = session.run_gate_a(reset_first=False)
                 print(
                     "[nca8:gate-a] "
                     f"standing={summary.achieved_standing} cycles={summary.cycles_run} "
