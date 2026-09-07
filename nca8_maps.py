@@ -27,6 +27,7 @@ executive authority.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import TypeAlias
@@ -53,7 +54,7 @@ from nca8_contracts import CircuitValidityV1
 # understandable without another generic validation dependency.
 # pylint: disable=duplicate-code
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "NCA8_POSTURE_SUPPORT_MAP_ID_V1",
     "Nca8ContactStateV1",
@@ -64,6 +65,8 @@ __all__ = [
     "DurableNavMapV1",
     "DurableNavMapRefV1",
     "NavMapStateV1",
+    "SupportObservationV1",
+    "SupportConfigurationV1",
     "PostureSupportEvidenceV1",
     "PostureSupportGeometryProfileV1",
     "PostureSupportSeedV1",
@@ -133,6 +136,187 @@ def _unit_interval(value: float, *, field_name: str) -> float:
     if not 0.0 <= normalized <= 1.0:
         raise ValueError(f"{field_name} must be between 0.0 and 1.0")
     return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class SupportObservationV1:
+    """One measurement packet for the bounded ``posture_support_v1`` test profile.
+
+    This is engineering input, not a universal NM vector. The sole supported
+    frame is ``body_ground_v1``. Body/ground angle is an undirected angle in
+    degrees [0, 90]. Useful loading is normalized limb load-bearing support
+    [0, 1], not mere contact. Destabilization is normalized slip/rotation/collapse
+    magnitude [0, 1], not a success score. Lateral contact is a separate optional
+    observation. Missing quantities remain None; no quantity is inferred here.
+
+    Each session has one support-sensor stream. ``sample_id`` is its positive,
+    strictly increasing integer identity. ``event_cycle`` names the represented
+    event on the NCA8 logical cycle clock (starting at 1), not the arrival cycle
+    or an environment step number. The owning sensory consumer checks ordering
+    and freshness. Neither the sender nor this record chooses a durable source,
+    an owning circuit, a task, or an action.
+    """
+
+    sample_id: int
+    event_cycle: int
+    frame_id: str
+    body_ground_angle_degrees: float | None = None
+    useful_loading: float | None = None
+    destabilization: float | None = None
+    lateral_contact: bool | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("sample_id", "event_cycle"):
+            value = _positive_int(getattr(self, name), field_name=name)
+            if value > 2**63 - 1:
+                raise ValueError(f"{name} exceeds the signed 64-bit bound")
+        if self.frame_id != "body_ground_v1":
+            raise ValueError("support observations require frame_id='body_ground_v1'")
+        for name, upper in (("body_ground_angle_degrees", 90.0), ("useful_loading", 1.0), ("destabilization", 1.0)):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"{name} must be numeric or None")
+            number = float(value)
+            if not math.isfinite(number) or not 0.0 <= number <= upper:
+                raise ValueError(f"{name} must be finite and between 0 and {upper}")
+            object.__setattr__(self, name, number)
+        if self.lateral_contact is not None and not isinstance(self.lateral_contact, bool):
+            raise TypeError("lateral_contact must be Boolean or None")
+
+    @property
+    def has_measurements(self) -> bool:
+        """Distinguish an all-missing sample from observed zero/False values."""
+        return any(value is not None for value in (
+            self.body_ground_angle_degrees, self.useful_loading, self.destabilization, self.lateral_contact,
+        ))
+
+    def as_dict(self) -> dict[str, str | int | float | bool | None]:
+        """Return a detached, finite, JSON-safe packet without authority fields."""
+        return {
+            "schema": "posture_support_v1",
+            "sample_id": self.sample_id,
+            "event_cycle": self.event_cycle,
+            "frame_id": self.frame_id,
+            "body_ground_angle_degrees": self.body_ground_angle_degrees,
+            "useful_loading": self.useful_loading,
+            "destabilization": self.destabilization,
+            "lateral_contact": self.lateral_contact,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SupportConfigurationV1:
+    """Read-only measured companion to the existing A0 POSTURE-SUPPORT configuration.
+
+    The sensory owner replaces one current register after Phase-C admission.
+    This is not another durable NM, another WNM, or input to BodyMap/Navigation.
+    The original A0 configuration continues unchanged. The received sample and
+    any discrepancy remain inspectable even when not accepted as current.
+
+    ``last_supported_event_cycle`` is the last genuinely fresh, non-conflicting
+    measurement event, not a claim of mechanically adequate support. Replays,
+    delayed packets, missing values, and rejected inputs do not refresh it.
+    Source identity comes from the local map library, never from the packet.
+    """
+
+    source_map_ref: DurableNavMapRefV1
+    observation: SupportObservationV1 | None
+    scaffold_posture: Nca8PostureStateV1
+    available_cycle: int
+    applied_cycle: int
+    disposition: str
+    reason: str
+    discrepancy: str | None
+    last_supported_event_cycle: int | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_map_ref, DurableNavMapRefV1):
+            raise TypeError("source_map_ref must be a durable NavMap reference")
+        if self.source_map_ref.map_id != NCA8_POSTURE_SUPPORT_MAP_ID_V1:
+            raise ValueError("the measured companion belongs to POSTURE-SUPPORT only")
+        if self.observation is not None and not isinstance(self.observation, SupportObservationV1):
+            raise TypeError("observation must be SupportObservationV1 or None")
+        if not isinstance(self.scaffold_posture, Nca8PostureStateV1):
+            raise TypeError("scaffold_posture must be Nca8PostureStateV1")
+        available = _positive_int(self.available_cycle, field_name="available_cycle")
+        applied = _positive_int(self.applied_cycle, field_name="applied_cycle")
+        if available > applied:
+            raise ValueError("support configuration cannot be applied before availability")
+        allowed = {"current", "missing", "invalid", "duplicate", "out_of_order", "future", "delayed", "empty", "conflict"}
+        if self.disposition not in allowed:
+            raise ValueError("unknown support-configuration disposition")
+        _bounded_identifier(self.reason, field_name="reason")
+        if self.discrepancy is not None:
+            _bounded_identifier(self.discrepancy, field_name="discrepancy")
+        if self.last_supported_event_cycle is not None:
+            supported = _positive_int(self.last_supported_event_cycle, field_name="last_supported_event_cycle")
+            if supported > applied:
+                raise ValueError("last support cannot follow application")
+        if self.disposition == "current":
+            sample = self.observation
+            if sample is None or not sample.has_measurements or self.discrepancy is not None:
+                raise ValueError("current support evidence needs non-conflicting measurements")
+            if sample.event_cycle != available or available != applied:
+                raise ValueError("current support evidence must describe the current available/applied cycle")
+            if self.last_supported_event_cycle != sample.event_cycle:
+                raise ValueError("current support evidence must retain its actual event time")
+
+    @property
+    def owner_circuit(self) -> str:
+        """Return the local owning circuit, not a sender-controlled claim."""
+        return _POSTURE_SUPPORT_OWNER_V1
+
+    @property
+    def evidence_current(self) -> bool:
+        """Report fresh measurement evidence, never mechanical support adequacy."""
+        return self.disposition == "current"
+
+    @property
+    def behavioral_authority(self) -> bool:
+        """Remain False for every P15-1E-A disposition, including current evidence."""
+        return False
+
+    def trace_details(self) -> dict[str, str | int | float | bool | None]:
+        """Return at most sixteen scalar details for the existing read-only trace."""
+        sample = self.observation
+        return {
+            "source": "EnvObservation.raw_sensors.posture_support_v1",
+            "owner": self.owner_circuit,
+            "durable_map": f"{self.source_map_ref.map_id}@r{self.source_map_ref.revision}",
+            "sample_id": sample.sample_id if sample is not None else None,
+            "event_cycle": sample.event_cycle if sample is not None else None,
+            "available_cycle": self.available_cycle,
+            "applied_cycle": self.applied_cycle,
+            "disposition": self.disposition,
+            "reason": self.reason,
+            "discrepancy": self.discrepancy,
+            "body_ground_angle_degrees": sample.body_ground_angle_degrees if sample is not None else None,
+            "useful_loading": sample.useful_loading if sample is not None else None,
+            "destabilization": sample.destabilization if sample is not None else None,
+            "lateral_contact": sample.lateral_contact if sample is not None else None,
+            "last_supported_event_cycle": self.last_supported_event_cycle,
+            "behavioral_authority": self.behavioral_authority,
+        }
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a detached diagnostic snapshot; no live map is exposed."""
+        return {
+            "schema": "support_configuration_v1",
+            "source_map_ref": self.source_map_ref.as_dict(),
+            "owner_circuit": self.owner_circuit,
+            "observation": self.observation.as_dict() if self.observation is not None else None,
+            "scaffold_posture": self.scaffold_posture.value,
+            "available_cycle": self.available_cycle,
+            "applied_cycle": self.applied_cycle,
+            "disposition": self.disposition,
+            "reason": self.reason,
+            "discrepancy": self.discrepancy,
+            "last_supported_event_cycle": self.last_supported_event_cycle,
+            "evidence_current": self.evidence_current,
+            "behavioral_authority": self.behavioral_authority,
+        }
 
 
 @dataclass(frozen=True, slots=True)

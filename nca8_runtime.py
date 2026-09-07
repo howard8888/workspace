@@ -65,6 +65,7 @@ from nca8_maps import (
     Nca8PostureStateV1,
     Nca8SupportStateV1,
     NavMapStateV1,
+    SupportConfigurationV1,
     create_posture_support_map_library_v1,
 )
 from nca8_prediction import (
@@ -82,7 +83,7 @@ from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, Sc
 from nca8_sensory import Nca8BodySensoryApplicationV1, Nca8BodySensoryModuleV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -105,7 +106,12 @@ PhaseEHookV1: TypeAlias = Callable[["Nca8PhaseEDispatchV1"], None]
 
 @dataclass(frozen=True, slots=True)
 class Nca8SessionConfigV1:
-    """Immutable engineering configuration for one isolated NCA8 session."""
+    """Immutable engineering configuration for one isolated NCA8 session.
+
+    ``support_observation_enabled`` opts into the P15-1E-A read-only measured
+    companion and trace, not enhanced Righting or new behavioral authority.
+    The default preserves A0. Existing menus do not enable the new option.
+    """
 
     seed: int = 0
     scenario_name: str = "newborn_goat_first_hour_benchmark_hard"
@@ -116,6 +122,7 @@ class Nca8SessionConfigV1:
     navigation_enabled: bool = True
     body_action_handoff_enabled: bool = True
     gate_a_max_cycles: int = 10
+    support_observation_enabled: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.seed, bool) or not isinstance(self.seed, int):
@@ -133,7 +140,9 @@ class Nca8SessionConfigV1:
             value = getattr(self, field_name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{field_name} must be a positive integer")
-        for field_name in ("attention_enabled", "navigation_enabled", "body_action_handoff_enabled"):
+        for field_name in (
+            "attention_enabled", "navigation_enabled", "body_action_handoff_enabled", "support_observation_enabled",
+        ):
             if not isinstance(getattr(self, field_name), bool):
                 raise TypeError(f"{field_name} must be Boolean")
 
@@ -868,6 +877,17 @@ class Nca8CognitiveRuntimeV1:
             },
         )
 
+        support_configuration = self._body_sensory.support_configuration
+        if support_configuration is not None:
+            self._trace.append(
+                "support_observation",
+                "The body-sensory owner inspected the support packet in Phase C. "
+                "This configuration is read-only; A0 authority is unchanged.",
+                cycle_id=cycle_id,
+                phase=CyclePhase.UPDATE_OUTCOMES.name,
+                details=support_configuration.trace_details(),
+            )
+
         body_update = self._body_runtime.update_from_map_state(map_state)
         body_state = body_update.body_state
         self._trace.append(
@@ -1115,6 +1135,11 @@ class Nca8SessionV1:
         """Return the current body-published Attention candidate."""
         return self._body_runtime.posture_support_candidate
 
+    @property
+    def support_configuration(self) -> SupportConfigurationV1 | None:
+        """Return the opt-in read-only measured companion; never an operative WNM."""
+        return self._body_sensory.support_configuration
+
     def reset(self) -> Nca8SessionStatusV1:
         """Atomically replace all NCA8 mutable state with a fresh isolated episode."""
         new_rng = random.Random(self._config.seed)
@@ -1126,7 +1151,10 @@ class Nca8SessionV1:
             event_latch_capacity_per_source=self._config.event_latch_capacity_per_source,
         )
         new_map_library = create_posture_support_map_library_v1()
-        new_body_sensory = Nca8BodySensoryModuleV1(new_map_library)
+        new_body_sensory = Nca8BodySensoryModuleV1(
+            new_map_library,
+            support_observation_enabled=self._config.support_observation_enabled,
+        )
         new_body_runtime = Nca8BodyRuntimeV1(
             action_handoff_enabled=self._config.body_action_handoff_enabled,
         )

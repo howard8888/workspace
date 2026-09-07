@@ -16,7 +16,10 @@ It performs three jobs:
 * convert ``EnvObservation`` into a defensively copied, recursively immutable,
   positively whitelisted observation packet.
 
-Unknown fields are discarded.  In particular, scenario stage, milestone lists,
+Unknown outer fields are discarded. The P15-1E-A support packet is stricter:
+unknown fields inside ``raw_sensors["posture_support_v1"]`` reject that packet
+atomically, with a bounded diagnostic reason and no new behavioral authority.
+In particular, scenario stage, milestone lists,
 position/zone labels, goal/stage NavPatch tags, feeding progress counters,
 benchmark answers, scores, and environment state are not available to the new
 runtime through this boundary.
@@ -33,9 +36,10 @@ from typing import Any, TypeAlias
 from cca8_env import EnvConfig, EnvObservation, HybridEnvironment
 from cca8_navpatch import CELL_BLOCKED, CELL_GOAL, CELL_HAZARD, CELL_TRAVERSABLE, CELL_UNKNOWN
 
+from nca8_maps import SupportObservationV1
 from nca8_primitives import TaskActionKindV1, TaskActionV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "NCA8_SCAFFOLD_LEDGER_V1",
     "Nca8EnvironmentBridgeV1",
@@ -136,6 +140,13 @@ NCA8_SCAFFOLD_LEDGER_V1: tuple[Nca8ScaffoldLedgerEntryV1, ...] = (
         first_phase="1A transport; 1B/1C timing and transport only",
         replacement_target="modality-specific sensory services",
         status="temporary explicit scaffold",
+    ),
+    Nca8ScaffoldLedgerEntryV1(
+        source_field="EnvObservation.raw_sensors.posture_support_v1",
+        cognitive_meaning="bounded supplied support measurements; read-only, not action authority",
+        first_phase="P15-1E-A injected observations and owning-sensory configuration",
+        replacement_target="P15-1E-B/C physical support observations and tested configuration dynamics",
+        status="explicit engineering test profile; no production measurement backend yet",
     ),
     Nca8ScaffoldLedgerEntryV1(
         source_field="EnvObservation.predicates[posture:fallen|posture:standing]",
@@ -448,14 +459,53 @@ def _sanitize_env_meta_v1(value: Any) -> dict[str, Any]:
     return out
 
 
+def _adapt_support_observation_v1(raw_sensors: Mapping[str, Any]) -> tuple[SupportObservationV1 | None, str | None]:
+    """Parse only ``EnvObservation.raw_sensors['posture_support_v1']``.
+
+    An absent packet returns (None, None). A present malformed packet is rejected
+    atomically with a bounded reason, without echoing its values. Unknown keys
+    reject the whole packet, unlike the outer legacy whitelist's discard rule.
+    Header fields are mandatory; omitted optional measurements become None.
+    This adapter performs no pose, trajectory, outcome, or action inference.
+    """
+    if "posture_support_v1" not in raw_sensors:
+        return None, None
+    packet = raw_sensors["posture_support_v1"]
+    allowed = {
+        "schema", "sample_id", "event_cycle", "frame_id",
+        "body_ground_angle_degrees", "useful_loading", "destabilization", "lateral_contact",
+    }
+    required = {"schema", "sample_id", "event_cycle", "frame_id"}
+    if not isinstance(packet, Mapping):
+        return None, "invalid_support_packet"
+    if len(packet) > len(allowed) or any(key not in allowed for key in packet):
+        return None, "unknown_support_fields"
+    if not required.issubset(packet) or packet["schema"] != "posture_support_v1":
+        return None, "invalid_support_header"
+    try:
+        sample = SupportObservationV1(
+            sample_id=packet["sample_id"],
+            event_cycle=packet["event_cycle"],
+            frame_id=packet["frame_id"],
+            body_ground_angle_degrees=packet.get("body_ground_angle_degrees"),
+            useful_loading=packet.get("useful_loading"),
+            destabilization=packet.get("destabilization"),
+            lateral_contact=packet.get("lateral_contact"),
+        )
+    except (TypeError, ValueError, OverflowError):
+        return None, "invalid_support_values"
+    return sample, None
+
+
 @dataclass(frozen=True, slots=True)
 class Nca8ObservationV1:
     """Recursively immutable agent-visible packet owned by the new runtime.
 
     The record contains only copied whitelist products.  It retains no reference
     to the source ``EnvObservation`` and offers ``as_dict`` only as a newly
-    allocated diagnostic/export view.  Phase 1C permits only the explicitly
-    ledgered posture tokens to enter the first body-sensory interpretation.
+    allocated diagnostic/export view. Phase 1C posture tokens retain A0 authority.
+    P15-1E-A also admits one typed support packet (or a bounded rejection reason)
+    for an opt-in read-only consumer. It is not added to the generic raw channels.
     """
 
     raw_sensors: Mapping[str, Any]
@@ -464,6 +514,8 @@ class Nca8ObservationV1:
     nav_patches: tuple[Mapping[str, Any], ...]
     env_meta: Mapping[str, Any]
     surface_grid: Mapping[str, Any]
+    support_observation: SupportObservationV1 | None = None
+    support_observation_error: str | None = None
 
     @property
     def step_index(self) -> int | None:
@@ -473,7 +525,7 @@ class Nca8ObservationV1:
 
     def as_dict(self) -> dict[str, Any]:
         """Return a newly allocated JSON-safe diagnostic representation."""
-        return {
+        out = {
             "raw_sensors": _thaw_json_v1(self.raw_sensors),
             "predicates": list(self.predicates),
             "cues": list(self.cues),
@@ -481,6 +533,10 @@ class Nca8ObservationV1:
             "env_meta": _thaw_json_v1(self.env_meta),
             "surface_grid": _thaw_json_v1(self.surface_grid),
         }
+        if self.support_observation is not None or self.support_observation_error is not None:
+            out["support_observation"] = self.support_observation.as_dict() if self.support_observation is not None else None
+            out["support_observation_error"] = self.support_observation_error
+        return out
 
     def compact_summary(self) -> dict[str, JsonScalarV1]:
         """Return bounded scalar counts suitable for the engineering trace."""
@@ -507,6 +563,8 @@ def adapt_env_observation_v1(observation: EnvObservation) -> Nca8ObservationV1:
         if number is not None:
             raw_out[key] = number
 
+    support_observation, support_error = _adapt_support_observation_v1(raw_source)
+
     predicates = _safe_token_tuple(observation.predicates, _ALLOWED_PREDICATES)
     cues = _safe_token_tuple(observation.cues, _ALLOWED_CUES)
 
@@ -528,6 +586,8 @@ def adapt_env_observation_v1(observation: EnvObservation) -> Nca8ObservationV1:
         nav_patches=tuple(nav_patches),
         env_meta=_freeze_json_v1(env_meta),
         surface_grid=_freeze_json_v1(surface_grid),
+        support_observation=support_observation,
+        support_observation_error=support_error,
     )
 
 

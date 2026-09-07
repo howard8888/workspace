@@ -25,7 +25,7 @@ PNM, produce a task action, or revise durable NavMap content.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from nca8_adapters import Nca8ObservationV1
 from nca8_contracts import CircuitResultV1, CircuitTimingV1, LogicalAvailabilityV1
@@ -34,13 +34,15 @@ from nca8_maps import (
     Nca8PostureStateV1,
     NavMapStateV1,
     PostureSupportEvidenceV1,
+    SupportConfigurationV1,
+    SupportObservationV1,
 )
 
 # Small validation helpers intentionally remain local to keep this vertical
 # slice readable without a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "NCA8_BODY_SENSORY_CIRCUIT_ID_V1",
     "Nca8BodySensoryApplicationV1",
@@ -88,6 +90,8 @@ class Nca8BodySensorySampleV1:
     geometry_profile_id: str | None
     scaffold_tokens: tuple[str, ...]
     reason: str
+    support_observation: SupportObservationV1 | None = None
+    support_observation_error: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "result_id", _bounded_identifier(self.result_id, field_name="result_id"))
@@ -109,13 +113,20 @@ class Nca8BodySensorySampleV1:
         object.__setattr__(self, "scaffold_tokens", tokens)
         object.__setattr__(self, "reason", _bounded_identifier(self.reason, field_name="reason"))
 
+        if self.support_observation is not None and not isinstance(self.support_observation, SupportObservationV1):
+            raise TypeError("support_observation must be SupportObservationV1 or None")
+        if self.support_observation_error is not None:
+            _bounded_identifier(self.support_observation_error, field_name="support_observation_error")
+            if self.support_observation is not None:
+                raise ValueError("rejected support input cannot also carry an accepted packet")
+
         clear = self.posture in (Nca8PostureStateV1.FALLEN, Nca8PostureStateV1.STANDING)
         if clear != (self.geometry_profile_id is not None):
             raise ValueError("only clear posture scaffold input may select one geometry profile")
 
     def as_dict(self) -> dict[str, object]:
         """Return a JSON-safe scaffold interpretation."""
-        return {
+        out: dict[str, object] = {
             "result_id": self.result_id,
             "observation_number": self.observation_number,
             "sampled_event_cycle": self.sampled_event_cycle,
@@ -124,6 +135,10 @@ class Nca8BodySensorySampleV1:
             "scaffold_tokens": list(self.scaffold_tokens),
             "reason": self.reason,
         }
+        if self.support_observation is not None or self.support_observation_error is not None:
+            out["support_observation"] = self.support_observation.as_dict() if self.support_observation is not None else None
+            out["support_observation_error"] = self.support_observation_error
+        return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,15 +188,25 @@ class Nca8BodySensoryModuleV1:
     The module is polled during Phase A.  It publishes one immutable
     ``CircuitResultV1`` whose declared availability is ``THIS_CYCLE``.  During
     Phase C, only the scheduler-applied result can update the owned current map
-    state.  Durable map revision is intentionally unavailable here.
+    state. Durable map revision is intentionally unavailable here.
+
+    P15-1E-A optionally stages an independent support packet alongside the A0
+    scaffold. Its measured configuration is a separate read-only companion,
+    never passed to BodyMap, Attention, Navigation, prediction, or learning.
+    Reset is replacement of this session-owned module, including its watermark.
     """
 
-    def __init__(self, map_library: Nca8MapLibraryV1) -> None:
+    def __init__(self, map_library: Nca8MapLibraryV1, *, support_observation_enabled: bool = False) -> None:
         if not isinstance(map_library, Nca8MapLibraryV1):
             raise TypeError("map_library must be an Nca8MapLibraryV1")
+        if not isinstance(support_observation_enabled, bool):
+            raise TypeError("support_observation_enabled must be Boolean")
         self._map_library = map_library
         self._pending_samples: dict[str, Nca8BodySensorySampleV1] = {}
         self._last_application: Nca8BodySensoryApplicationV1 | None = None
+        self._support_observation_enabled = support_observation_enabled
+        self._support_configuration: SupportConfigurationV1 | None = None
+        self._last_support_observation: SupportObservationV1 | None = None
 
     @property
     def circuit_id(self) -> str:
@@ -208,6 +233,92 @@ class Nca8BodySensoryModuleV1:
         """Return the latest immutable Phase-C sensory application."""
         return self._last_application
 
+    @property
+    def support_configuration(self) -> SupportConfigurationV1 | None:
+        """Return the latest read-only companion, or None before use/when disabled."""
+        return self._support_configuration
+
+    def _support_discrepancy(self, sample: Nca8BodySensorySampleV1) -> str | None:
+        """Compare only contemporaneous pose evidence within the declared test profile.
+
+        Angles <=15 degrees are near-horizontal; angles >=75 are near-upright.
+        These conservative diagnostic bands are engineering choices, not action
+        thresholds or biology. Intermediate poses remain non-diagnostic. Loading
+        and contact never manufacture a posture. Different event times are not
+        compared as though simultaneous.
+        """
+        measured = sample.support_observation
+        if measured is None or measured.event_cycle != sample.sampled_event_cycle:
+            return None
+        if sample.posture is Nca8PostureStateV1.AMBIGUOUS:
+            return "ambiguous_posture_scaffold"
+        angle = measured.body_ground_angle_degrees
+        if angle is None:
+            return None
+        if sample.posture is Nca8PostureStateV1.STANDING and angle <= 15.0:
+            return "standing_scaffold_vs_near_horizontal_measurement"
+        if sample.posture is Nca8PostureStateV1.FALLEN and angle >= 75.0:
+            return "fallen_scaffold_vs_near_upright_measurement"
+        return None
+
+    def _apply_support_observation(
+        self,
+        sample: Nca8BodySensorySampleV1,
+        result: CircuitResultV1,
+        *,
+        cycle_id: int,
+    ) -> None:
+        """Replace only the read-only measured register after owning Phase-C admission.
+
+        One monotonic sample watermark prevents old identities becoming fresh
+        again, including after missing/invalid input. Structurally valid ordered
+        delayed, empty, or conflicting samples advance that watermark but do not
+        refresh genuine support. Future-dated input is rejected against receipt
+        time, not laundered by delayed application. No history or trend is built.
+        """
+        measured = sample.support_observation
+        previous = self._last_support_observation
+        current = self._support_configuration
+        supported = current.last_supported_event_cycle if current is not None else None
+        discrepancy = self._support_discrepancy(sample)
+
+        if sample.support_observation_error is not None:
+            disposition, reason = "invalid", sample.support_observation_error
+        elif measured is None:
+            disposition, reason = "missing", "support_packet_absent"
+        elif measured.event_cycle > sample.sampled_event_cycle:
+            disposition, reason = "future", "support_event_after_receipt"
+        elif previous is not None and measured.sample_id == previous.sample_id:
+            if measured == previous:
+                disposition, reason = "duplicate", "sample_already_seen"
+            else:
+                disposition, reason = "invalid", "sample_identity_reused_with_changed_content"
+        elif previous is not None and (measured.sample_id < previous.sample_id or measured.event_cycle <= previous.event_cycle):
+            disposition, reason = "out_of_order", "sample_identity_or_event_not_increasing"
+        else:
+            self._last_support_observation = measured
+            if measured.event_cycle < cycle_id:
+                disposition, reason = "delayed", "historical_measurement_not_current"
+            elif not measured.has_measurements:
+                disposition, reason = "empty", "all_measurements_missing"
+            elif discrepancy is not None:
+                disposition, reason = "conflict", "measurement_and_scaffold_disagree"
+            else:
+                disposition, reason = "current", "distinct_current_measurement"
+                supported = measured.event_cycle
+
+        self._support_configuration = SupportConfigurationV1(
+            source_map_ref=self._map_library.posture_support_ref,
+            observation=measured,
+            scaffold_posture=sample.posture,
+            available_cycle=result.timing.available_cycle,
+            applied_cycle=cycle_id,
+            disposition=disposition,
+            reason=reason,
+            discrepancy=discrepancy,
+            last_supported_event_cycle=supported,
+        )
+
     def poll_observation(
         self,
         observation: Nca8ObservationV1,
@@ -217,9 +328,10 @@ class Nca8BodySensoryModuleV1:
     ) -> CircuitResultV1:
         """Interpret one filtered observation and publish a timed circuit result.
 
-        Only the explicitly allowed posture predicate tokens are read.  No
-        metadata, stage, milestone, policy, WorldGraph, or legacy BodyMap field
-        participates in this interpretation.
+        A0 reads only explicitly allowed posture predicate tokens. The opt-in
+        support packet is staged separately without changing that interpretation.
+        No metadata, stage, milestone, policy, WorldGraph, or legacy BodyMap field
+        participates. Current measured configuration cannot change before Phase C.
         """
         if not isinstance(observation, Nca8ObservationV1):
             raise TypeError("observation must be an Nca8ObservationV1")
@@ -229,6 +341,12 @@ class Nca8BodySensoryModuleV1:
             raise ValueError("body-sensory polling requires Observation_n in CognitiveCycle_n")
 
         sample = self._sample_from_predicates(observation.predicates, cycle_id=cycle)
+        if self._support_observation_enabled:
+            sample = replace(
+                sample,
+                support_observation=observation.support_observation,
+                support_observation_error=observation.support_observation_error,
+            )
         if sample.result_id in self._pending_samples:
             raise ValueError(f"body-sensory result already pending: {sample.result_id!r}")
         if len(self._pending_samples) >= _MAX_PENDING_SAMPLES:
@@ -348,6 +466,8 @@ class Nca8BodySensoryModuleV1:
             map_state=map_state,
             update_kind=update_kind,
         )
+        if self._support_observation_enabled:
+            self._apply_support_observation(sample, result, cycle_id=cycle)
         del self._pending_samples[result.result_id]
         self._last_application = application
         return application
