@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import cca8_cli
 from nca8_runtime import Nca8SessionV1
-from nca8_trace import render_explanatory_trace_lines_v1
+from nca8_trace import render_flow_trace_lines_v1
 
-__version__ = "0.6.0"
+__version__ = "0.7.2"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -166,7 +166,20 @@ you can inspect it or run another cycle manually.
 With the same starting state, sensory inputs, seed, and logical timing, this
 NCA8 implementation is designed to produce the same result again."""
 
-_TRACE_EXPLANATION_V1 = """This shows the explanatory trace currently saved for this NCA8 session.
+_TRACE_EXPLANATION_V1 = """This shows the saved trace as narrated text and a cycle-by-cycle flowchart.
+Read each cycle's boxes from top to bottom. Numbered explanations and technical
+details follow that cycle's diagram, in the same record order.
+
+Parts-first diagrams name CCA8 components and show INPUT, DO and OUTPUT.
+Representations have bracketed outlines; software services and temporary
+scaffolds have dashed outlines. Python implementation details are below the
+main diagram. Arrows between boxes show record order, not signal wiring;
+follow the named input source and output destination for the data path.
+
+Phase C is shown as C1 (apply input and update current representations) followed by C2 (resolve
+earlier-operation outcomes using the updated evidence). These are display
+subsections of the existing Phase C, not additional scheduler phases.
+Unnumbered context notes explain the source code; they are not trace events.
 
 It shows session setup and the cognitive-cycle entries that are still retained
 since the session was created or reset.
@@ -174,6 +187,9 @@ since the session was created or reset.
 After option 3, it shows the retained entries from all the cycles you have run
 in that session, not just the last cycle. After option 5, it shows the retained
 entries from the fresh Gate-A StandUp demonstration.
+
+The flowchart shows retained execution, not a proposed architecture.
+Missing records and unknown events stay visible; no missing steps are invented.
 
 A fixed entry limit prevents the trace from growing indefinitely. Oldest entries
 are discarded when the limit is exceeded, so a long session may no longer show
@@ -324,7 +340,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print("  1) Show session status for the current isolated NCA8 session")
         print("  2) Create or reset the current isolated NCA8 session")
         print("  3) Advance the current NCA8 session by exactly one cognitive cycle")
-        print("  4) Show the explanatory trace for the current NCA8 session")
+        print("  4) Show the explanatory trace for the current NCA8 session (text + flowchart)")
         print("  5) Start fresh and automatically run the complete Gate-A StandUp demonstration")
         print("  [Enter] Return to Main Menu")
         choice = cca8_cli.read_menu_input_v1()
@@ -356,7 +372,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
                     continue
                 status = session.status()
                 print(f"Trace entries retained: {status.trace_retained} / {status.trace_capacity}")
-                lines = render_explanatory_trace_lines_v1(session.trace_snapshot())
+                lines = render_flow_trace_lines_v1(session.trace_snapshot())
                 print("\n".join(lines) if lines else "[nca8:trace] empty")
                 continue
             if choice == "5":

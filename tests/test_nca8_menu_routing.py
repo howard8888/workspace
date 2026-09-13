@@ -11,7 +11,7 @@ import pytest
 import cca8_cli
 import nca8_menu
 from nca8_runtime import Nca8SessionConfigV1, Nca8SessionV1
-from nca8_trace import render_explanatory_trace_lines_v1
+from nca8_trace import render_flow_trace_lines_v1
 
 
 def test_opening_and_leaving_nca8_menu_does_not_construct_a_session(
@@ -97,7 +97,7 @@ def test_all_five_menu_labels_explain_their_scope(
         "1) Show session status for the current isolated NCA8 session",
         "2) Create or reset the current isolated NCA8 session",
         "3) Advance the current NCA8 session by exactly one cognitive cycle",
-        "4) Show the explanatory trace for the current NCA8 session",
+        "4) Show the explanatory trace for the current NCA8 session (text + flowchart)",
         "5) Start fresh and automatically run the complete Gate-A StandUp demonstration",
         "[Enter] Return to Main Menu",
     ):
@@ -259,9 +259,11 @@ def test_two_step_choices_then_trace_show_both_cycles_and_do_not_reset(
     assert session.status().lifecycle_generation == 1
     assert session.status().cognitive_cycles == 2
     assert "Only one cognitive cycle is run" in output
-    assert "CognitiveCycle_1 closed after committing Action_1:STAND_UP" in output
-    assert "CognitiveCycle_2 closed after committing Action_2:STAND_UP" in output
-    assert "CognitiveCycle_3 opened" not in output
+    assert "Close CognitiveCycle_1" in output
+    assert "committed output: Action_1:STAND_UP" in output
+    assert "Close CognitiveCycle_2" in output
+    assert "committed output: Action_2:STAND_UP" in output
+    assert "Open CognitiveCycle_3" not in output
     assert "not just the last cycle" in output
     assert "PNM when an action is expected" in output
 
@@ -291,7 +293,7 @@ def test_trace_panel_reports_actual_capacity_and_keeps_only_retained_entries(
     session.run_cognitive_cycle()
     before = session.status()
     trace_before = session.trace_canonical_bytes()
-    expected_lines = render_explanatory_trace_lines_v1(session.trace_snapshot())
+    expected_text = "\n".join(render_flow_trace_lines_v1(session.trace_snapshot()))
     responses = iter(("4", "4", ""))
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
 
@@ -300,10 +302,11 @@ def test_trace_panel_reports_actual_capacity_and_keeps_only_retained_entries(
 
     assert "Trace entries retained: 5 / 5" in output
     assert "oldest entries are discarded" in output.lower() or "oldest entries\nare discarded" in output.lower()
-    for line in expected_lines:
-        assert output.count(line) == 2
-    assert "Fresh isolated Gate-A session generation 1 initialized" not in output
-    assert "CognitiveCycle_1 opened" not in output
+    assert output.count(expected_text) == 2
+    assert "EARLIER RECORDS NOT RETAINED" in output
+    assert "PARTIAL VIEW" in output
+    assert "Session generation 1 initialized" not in output
+    assert "Open CognitiveCycle_1" not in output
     assert session.status() == before
     assert session.trace_canonical_bytes() == trace_before
 
@@ -338,7 +341,7 @@ def test_gate_a_menu_replaces_previous_session_and_matches_direct_trace(
     assert "final_posture=standing final_support=stable outcome=success" in output
     assert "[nca8:support_observation]" not in output
     for cycle in range(1, 7):
-        assert f"CognitiveCycle_{cycle} opened" in output
+        assert f"Open CognitiveCycle_{cycle} with Observation_{cycle}" in output
 
 
 def test_gate_a_limit_display_uses_existing_configuration_without_changing_it(

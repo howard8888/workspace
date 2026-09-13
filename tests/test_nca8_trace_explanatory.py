@@ -78,7 +78,8 @@ def test_fresh_gate_a_menu_demonstration_always_starts_at_generation_one(
     assert result.status().lifecycle_generation == 1
     assert result.config == prior_session.config
     assert result.status().seed == 31
-    assert "Fresh isolated Gate-A session generation 1 initialized" in output
+    assert "Session generation 1 initialized" in output
+    assert "NCA8 GUIDED FLOW TRACE" in output
     assert "generation=1" in output
     assert "generation=2" not in output
 
