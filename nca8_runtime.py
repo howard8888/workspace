@@ -1138,6 +1138,7 @@ class Nca8EpisodeRunnerV1:
         )
         self._report_stop("protection", "protected stop revoked further execution permission", reason)
 
+    #pylint:disable=useless-return
     def _report_stop(self, channel: str, message: str, reason: str) -> None:
         """Report a latched safe stop without allowing a failed logger to undo it."""
         #pylint: disable=useless-return
@@ -1161,6 +1162,8 @@ class Nca8EpisodeRunnerV1:
             # The safe-stop latches and permission revocation precede logging.
             # Preserve the original failure rather than replacing it with a logger error.
             return
+    #pylint:enable=useless-return
+
 
     def run_cycle(self) -> Nca8CognitiveCycleResultV1:
         """Close one core pass, consume its accepted output once and buffer later input.

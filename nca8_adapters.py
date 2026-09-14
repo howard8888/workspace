@@ -39,7 +39,7 @@ from cca8_navpatch import CELL_BLOCKED, CELL_GOAL, CELL_HAZARD, CELL_TRAVERSABLE
 from nca8_maps import SupportObservationV1
 from nca8_primitives import TaskActionKindV1, TaskActionV1
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __all__ = [
     "NCA8_SCAFFOLD_LEDGER_V1",
     "Nca8EnvironmentBridgeV1",
@@ -146,8 +146,8 @@ NCA8_SCAFFOLD_LEDGER_V1: tuple[Nca8ScaffoldLedgerEntryV1, ...] = (
         source_field="EnvObservation.raw_sensors.posture_support_v1",
         cognitive_meaning="bounded supplied support measurements; read-only, not action authority",
         first_phase="P15-1E-A injected observations and owning-sensory configuration",
-        replacement_target="P15-1E-B/C physical support observations and tested configuration dynamics",
-        status="explicit engineering test profile; no production measurement backend yet",
+        replacement_target="P16-1E-C trajectory/source refresh, then P16-1F/1G tested behavioral use",
+        status="opt-in P16-1E-B support_dynamics_v1 world producer or synthetic fixture; read-only consumer",
     ),
     Nca8ScaffoldLedgerEntryV1(
         source_field="EnvObservation.predicates[posture:fallen|posture:standing]",

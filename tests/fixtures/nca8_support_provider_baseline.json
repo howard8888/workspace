@@ -1,0 +1,90 @@
+{
+  "entry_sha": "6df155db28d75c8be53a93e1a2dd3b69d8e6eb03",
+  "description": "Captured from unchanged source before P16-1E-B; SHA-256 of sorted compact JSON or canonical bytes.",
+  "nca8": {
+    "standard": {
+      "config": {},
+      "cycle_results_sha256": "0acc74a64ab25e4277e6e0e58e1ef66af085ec42d384f8567bce2fcb396e8e9c",
+      "next_input_sha256": "61990f925abce63ee84f3fd85897915b2cf7a59c546bb136b48a2d01a81206cc",
+      "trace_sha256": "836ebba4fdddb4a84808ac10c262f10a593813852f2f20f79681eacdba103630",
+      "trace_count": 158
+    },
+    "attention_off": {
+      "config": {
+        "attention_enabled": false
+      },
+      "cycle_results_sha256": "10683a9eb93f3b6c9f8f606edb9d8496f6884975b789d44f269d54149647b99a",
+      "next_input_sha256": "ef24e110e7fef3416c1d7d0b114f6f93017a84b0f6d2273f7e5a07eae029c799",
+      "trace_sha256": "60f074a7d0a223d681c88b05b411ca67c1830aa71babacbd30460156ca1ec1f7",
+      "trace_count": 134
+    },
+    "navigation_off": {
+      "config": {
+        "navigation_enabled": false
+      },
+      "cycle_results_sha256": "9910b132e1a77dccbf4edfa8bf35f1386fd239099085e35d177981b5f19ed0da",
+      "next_input_sha256": "ef24e110e7fef3416c1d7d0b114f6f93017a84b0f6d2273f7e5a07eae029c799",
+      "trace_sha256": "3432a1960da8b3851548ddd534754d01455b5292db8feaab935b26b0753a39b6",
+      "trace_count": 134
+    },
+    "body_veto": {
+      "config": {
+        "body_action_handoff_enabled": false
+      },
+      "cycle_results_sha256": "0b2fd712d580771983c3f15dd149a78d690bfb68d52b690556ac9b9682adcbbf",
+      "next_input_sha256": "ef24e110e7fef3416c1d7d0b114f6f93017a84b0f6d2273f7e5a07eae029c799",
+      "trace_sha256": "2dd96d7aabbe8ff40cf4456ae7b588890b7bceccd1ad56ad2d9cba040061fc84",
+      "trace_count": 158
+    },
+    "support_readonly": {
+      "config": {
+        "support_observation_enabled": true
+      },
+      "cycle_results_sha256": "0acc74a64ab25e4277e6e0e58e1ef66af085ec42d384f8567bce2fcb396e8e9c",
+      "next_input_sha256": "61990f925abce63ee84f3fd85897915b2cf7a59c546bb136b48a2d01a81206cc",
+      "trace_sha256": "61956e5ae69ee90ff4ccbbb8b2b25e41da57d013593519861353abffebce840b",
+      "trace_count": 164
+    }
+  },
+  "legacy_world": {
+    "newborn_goat_first_hour": {
+      "actions": [
+        null,
+        "policy:stand_up",
+        "policy:stand_up",
+        "policy:follow_mom",
+        null,
+        "policy:seek_nipple",
+        "policy:suckle",
+        "policy:rest"
+      ],
+      "observation_sha256": "e3c76344e1c033b2d270926959dd38980c0e294b97d948dc5c6532dcc8f64d33"
+    },
+    "newborn_goat_first_hour_benchmark_hard": {
+      "actions": [
+        null,
+        "policy:stand_up",
+        "policy:stand_up",
+        "policy:follow_mom",
+        null,
+        "policy:seek_nipple",
+        "policy:suckle",
+        "policy:rest"
+      ],
+      "observation_sha256": "e3c76344e1c033b2d270926959dd38980c0e294b97d948dc5c6532dcc8f64d33"
+    },
+    "goat_foraging_04": {
+      "actions": [
+        null,
+        "policy:stand_up",
+        "policy:stand_up",
+        "policy:follow_mom",
+        null,
+        "policy:seek_nipple",
+        "policy:suckle",
+        "policy:rest"
+      ],
+      "observation_sha256": "5c6068d8399e1f7d56f0d9159d2cfeae851bdcd28e81139d558dea16c3426754"
+    }
+  }
+}

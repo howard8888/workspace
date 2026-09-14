@@ -16,7 +16,62 @@ Scientific target: `CCA8_High_Level_Architecture_v09.9.docx`. The implementation
 `CCA8_Project_Planning_v16.docx`, selected for the next source update. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-1R-B internal/world/input separation
+## NCA8 update: P16-1E-B action-responsive support evidence
+
+Starting checkpoint: clean `6df155d` (`cog cycle improvements`), with the accepted P16-1R-B boundary refactor intact.
+Planning v16 §17, §21 and §37 govern this provider-only slice. It also carries the two deferred text fixes: current Phase E
+ends with **HAND OFF**, and the menu distinguishes internal acceptance from the outer world call after closure.
+Historical traces keep their old dispatch heading; no canonical events are rewritten for these wording changes.
+
+### What is implemented, and what is not
+
+`cca8_support_world.py` supplies a small, deterministic **world-side physical surrogate** inside the existing `HybridEnvironment`.
+Two explicitly opt-in scenarios, `posture_support_recovery_v1` and `posture_support_disturbed_v1`, start with the same body.
+The second applies stronger external surface disturbance. A received StandUp command changes limb loading, unwanted sliding
+and body/ground angle; null output advances time without lifting. A disturbance can defeat the very same command.
+These equations are disclosed engineering approximations, not validated goat mechanics or a learned motor controller.
+
+The physical body supplies the existing `raw_sensors["posture_support_v1"]` packet. No new packet schema is introduced.
+The unchanged whitelist, typed observation and optional Phase-C sensory consumer receive it through the real separated
+handoff/world/input path. The numerical companion stays **read-only with `behavioral_authority=False`**. A0 still chooses
+from the coarse posture scaffold; P16-1E-C trajectory/continuity/source refresh and P16-1F/1G richer Righting remain separate.
+There is no durable learning, new Emotion effect, hidden milestone driver or default promotion in this update.
+
+Old newborn/legacy defaults do not emit the new packet or use the support dynamics. The usual menu option 5 still runs the
+retained Gate A: six cycles, five StandUp commands, 158 records. The existing thirteen flat `nca8_*` files remain the cognitive
+and boundary implementation; the added `cca8_support_world` is an external provider registered in `--about`.
+
+### Run the bounded provider experiment
+
+Use the dedicated review script from the repository root; it does not change menu state or install dependencies:
+
+```bat
+python scripts\run_nca8_support_evidence.py
+python scripts\run_nca8_support_evidence.py --case recovery --trace
+python scripts\run_nca8_support_evidence.py --case disturbed --trace
+```
+
+The default command runs three fresh six-cycle cases: recovery, sustained disturbance and Navigation-disabled no-action control.
+`--cycles` accepts 1–10. Commands are selected by the actual runtime, not a script of expected actions. Each row distinguishes
+**processed input** from the **next pending observation**. The last pending sample is not yet current cognitive evidence.
+The optional trace is saved-event inspection only. This is a provider experiment, not the retained newborn benchmark or an A99 pass.
+
+Profile `support_dynamics_v1` uses a 0 < dt <= 1 second integration step (default 1). Angle is in [0, 90] degrees; useful loading
+is the modeled limb-supported body-weight fraction; destabilization is normalized unwanted sliding/collapse speed; lateral contact
+is a Boolean angle-threshold approximation, not a contact fraction. Repeated observe calls preserve sample identity. World step 0
+maps to sample/event 1; step n maps to sample/event n+1 under the declared one-world-step-per-cycle harness. No clock value
+supplies a progress or success answer. Longer-lived/differently timed sensor streams need their own later contract.
+
+The coarse `standing` label is derived from physical angle >= 75 degrees, not used to manufacture the measurements.
+It does not establish activity-relative support adequacy or dwell. The old A0 standing-to-stable interpretation remains a known
+scaffold, especially after null output allows loading to decay. The reviewed profile and limitations are in `docs/P16_1E_B_REVIEW.md`.
+
+Validation includes provider equations/interventions, unchanged default fingerprints, once-only boundary timing, independent
+sessions, read-only noninterference, duplicate/invalid/missing input and no automatic retry after uncertain execution.
+`tests/fixtures/nca8_support_provider_baseline.json` was captured from the unmodified `6df155d` source before this patch.
+No historical fixture, planner, architecture, To-Do document or cognitive runtime algorithm is changed.
+
+## Previous checkpoint: P16-1R-B internal/world/input separation
 
 This slice starts from clean `6ef4fd9` (`updates to cog cycle`), preserving the accepted P16-1R-A trace work and corrected
 parent-menu label. Planning v16 §28 and §36.1 govern this bounded update. No support physics, trajectory-sensitive Righting,

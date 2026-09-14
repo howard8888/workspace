@@ -51,7 +51,7 @@ from typing import TypeAlias
 
 # pylint: disable=unnecessary-comprehension
 
-__version__ = "0.8.0"
+__version__ = "0.8.1"
 __all__ = [
     "Nca8TraceBufferV1",
     "Nca8TraceEventV1",
@@ -2108,6 +2108,9 @@ def _flow_render_cycle_v1(
     sections = {_flow_section_v1(event) for event in events}
     previous: Nca8TraceEventV1 | None = None
     phase_e_seen = False
+    separated_cycle = context.settings.get("boundary_protocol") == "p16_1r_b_v1" or any(
+        _details_v1(event).get("boundary_protocol") == "p16_1r_b_v1" for event in events
+    )
     for group in _flow_groups_v1(events):
         notes: list[str] = []
         section = _flow_section_v1(group[0])
@@ -2121,7 +2124,10 @@ def _flow_render_cycle_v1(
             lines.extend(("", "       |  retained order; context note below is not an event", "       v", ""))
             lines.extend(box)
             explanation_lines.extend(c2_notes)
-        lines.extend(_flow_wrap_v1(_flow_group_title_v1(section), width))
+        group_title = _flow_group_title_v1(section)
+        if section == "PROJECT_DISPATCH" and separated_cycle:
+            group_title = "PHASE E - PREDICT, CHECK THE BODY, COMMIT AND HAND OFF"
+        lines.extend(_flow_wrap_v1(group_title, width))
         lines.append("-" * width)
         if section == "PROJECT_DISPATCH":
             phase_e_seen = True
@@ -2176,7 +2182,7 @@ def _flow_render_cycle_v1(
             notes.append("")
             context.remember(event)
             previous = event
-        explanation_lines.extend(_flow_wrap_v1(_flow_group_title_v1(section), width))
+        explanation_lines.extend(_flow_wrap_v1(group_title, width))
         explanation_lines.extend(notes)
     lines.append("")
     lines.extend(_flow_wrap_v1("EXPLANATIONS - same record order, with data below the relevant step.", width))

@@ -146,13 +146,21 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # CCA8 Module Imports
 from cca8_navpatch import GRID_ENCODING_V1, CELL_UNKNOWN, CELL_TRAVERSABLE, CELL_HAZARD, CELL_GOAL
+from cca8_support_world import (
+    SupportWorldProfileV1,
+    SupportWorldStateV1,
+    advance_support_world_v1,
+    support_observation_packet_v1,
+    support_profile_for_scenario_v1,
+    validate_support_dt_v1,
+)
 
 
 # --- Public API index, version, global variables and constants ----------------------------------------
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "EnvState",
     "EnvObservation",
@@ -301,6 +309,10 @@ class EnvState:
     lower_motor_progress_override: Optional[float] = None
     lower_motor_support_override: Optional[bool] = None
 
+    # P16-1E-B: optional immutable physical body, never an agent NavMap.
+    # Only the explicitly selected support-world scenarios use this field.
+    support_world: SupportWorldStateV1 | None = None
+
     def update_zone_from_position(self) -> None:
         """Update safety zone label from the current symbolic position."""
         mapping = {
@@ -356,6 +368,7 @@ class EnvState:
             lower_motor_error_code=self.lower_motor_error_code,
             lower_motor_progress_override=self.lower_motor_progress_override,
             lower_motor_support_override=self.lower_motor_support_override,
+            support_world=self.support_world,  # Immutable snapshot; later steps replace it.
         )
 
 
@@ -411,7 +424,10 @@ class EnvConfig:
     use_llm: bool = False
     use_mdp: bool = False
     # future: seed: Optional[int] = None
-    # future: initial_state overrides
+    # P16-1E-B optional override for a named posture_support_* scenario only.
+    # Ordinary scenario defaults remain unchanged; this is not cognitive context.
+    support_profile: SupportWorldProfileV1 | None = None
+    # future: initial_state overrides for other providers
 
 
 # ---------------------------------------------------------------------------
@@ -1714,6 +1730,12 @@ class PerceptionAdapter: #pylint: disable=too-few-public-methods
         dist = (dx * dx + dy * dy) ** 0.5
         raw["distance_to_mom"] = dist
         raw["kid_temperature"] = env_state.kid_temperature
+        if env_state.support_world is not None:
+            # Measure the physical snapshot, never the posture label or storyboard.
+            # Repeated observe() calls do not advance the sensor stream identity.
+            raw["posture_support_v1"] = support_observation_packet_v1(
+                env_state.support_world, step_index=env_state.step_index,
+            )
 
         # --- posture predicates ---
         if env_state.kid_posture == "standing":
@@ -2224,6 +2246,7 @@ class HybridEnvironment:
         self._state: EnvState = EnvState()
         self._episode_index: int = 0
         self._episode_steps: int = 0
+        self._support_profile: SupportWorldProfileV1 | None = None
 
         # future: physics_backend, robot_backend, llm_backend, mdp_backend
 
@@ -2258,11 +2281,26 @@ class HybridEnvironment:
                 - returns that obs up to CCA8.
 
         Effectively, reset(...) sets up state, lets backends configure it, and
-        produces the first observation of the episode.
+        produces the first observation of the episode. Explicitly named
+        posture_support_recovery_v1 / posture_support_disturbed_v1 scenarios
+        instead use support_dynamics_v1 as the sole physical body updater;
+        the FSM is not reset or stepped in these experiments. Its default
+        use_fsm setting still governs ordinary scenarios. Optional profile
+        overrides apply only at reset and must use those named scenarios.
         """
 
-        if config is not None:
-            self.config = config
+        selected_config = config if config is not None else self.config
+        support_profile = support_profile_for_scenario_v1(selected_config.scenario_name)
+        if selected_config.support_profile is not None:
+            if support_profile is None:
+                raise ValueError("support_profile overrides require a named posture_support_* scenario")
+            if not isinstance(selected_config.support_profile, SupportWorldProfileV1):
+                raise TypeError("support_profile must be SupportWorldProfileV1 or None")
+            support_profile = selected_config.support_profile
+        if support_profile is not None:
+            validate_support_dt_v1(selected_config.dt)
+        self.config = selected_config
+        self._support_profile = support_profile
 
         self._episode_index += 1
         self._episode_steps = 0
@@ -2271,7 +2309,16 @@ class HybridEnvironment:
 
         # Fresh canonical state, then let the FSM backend adjust it for the scenario.
         self._state = EnvState()
-        self._state = self._fsm.reset(self._state, self.config)
+        if self._support_profile is None:
+            self._state = self._fsm.reset(self._state, self.config)
+        else:
+            # Named support scenarios replace the newborn storyboard, not its
+            # labels with a second competing body owner. No milestones run here.
+            self._state.scenario_stage = "support_world"
+            self._state.position = "open_field"
+            self._state.zone = "neutral"
+            self._state.cliff_distance = "far"
+            self._set_support_body_v1(self._support_profile.initial_body)
 
         obs = self._perception.observe(self._state, ctx=None)
         info = {
@@ -2280,7 +2327,24 @@ class HybridEnvironment:
             # NOTE: do not rely on internal EnvState here from CCA8 – this dict is
             # intended for logging/debugging, not as a second observation channel.
         }
+        if self._support_profile is not None:
+            info["support_profile"] = self._support_profile.profile_id
         return obs, info
+
+
+    def _set_support_body_v1(self, body: SupportWorldStateV1) -> None:
+        """Install a physical snapshot and derive only the existing coarse observation labels.
+
+        This is world-side translation, not an NCA8 source/BodyMap update. The
+        two-label posture approximation reports orientation, not stable dwell.
+        Nonzero useful limb loading supplies contact feedback; substantial
+        unwanted sliding supplies the existing slip flag. No cognitive success
+        flag, scenario stage or attempt counter contributes to these values.
+        """
+        self._state.support_world = body
+        self._state.kid_posture = body.posture_label
+        self._state.lower_motor_support_override = body.useful_loading > 0.0
+        self._state.lower_motor_slip_detected = body.destabilization >= 0.60
 
 
     def observe(self, ctx: Any = None) -> EnvObservation:
@@ -2289,12 +2353,15 @@ class HybridEnvironment:
         This method is the sensing half of the explicit CCA8 cognitive-cycle
         contract. A runner may read ``Observation_n`` at the start of
         ``CognitiveCycle_n``, perform cognition, and then call
-        :meth:`apply_action` before that cognitive cycle closes.
+        :meth:`apply_action`. The legacy runner calls before its cycle closes;
+        NCA8's P16-1R-B outer runner calls after its internal cycle closes.
 
         The method does not mutate ``EnvState``, increment environment time, or
         apply a task-level command. The optional ``ctx`` is passed only to the
         perception adapter so current sensor/HAL shaping can remain context-aware.
         """
+        if self._support_profile is None and self.config.scenario_name.startswith("posture_support_"):
+            raise RuntimeError("reset the support scenario before observing it")
         return self._perception.observe(self._state, ctx=ctx)
 
 
@@ -2306,8 +2373,9 @@ class HybridEnvironment:
         """
         Apply the current cognitive-cycle output and advance the environment one tick.
 
-        ``CognitiveCycle_n`` dispatches ``Action_n`` through this method before
-        the cycle closes. The returned observation describes the resulting
+        The caller determines its internal cycle boundary. The legacy path
+        invokes this before closure; NCA8's P16-1R-B outer runner invokes it
+        after closure. The returned observation describes the resulting
         environment state and is intended to become input to a later cognitive
         cycle; callers must not automatically process it as a second sensory
         observation inside the cycle that emitted the action.
@@ -2351,6 +2419,20 @@ class HybridEnvironment:
             6. Return (obs, reward, done, info).
         """
 
+        next_support_body = None
+        if self._support_profile is not None:
+            if self._state.support_world is None:
+                raise RuntimeError("support scenario lost its physical body")
+            if self._episode_steps >= 2**63 - 2:
+                raise OverflowError("support sensor stream identity exhausted")
+            # Validate and calculate before mutating time/counters. This has no
+            # access to ctx, stage, milestones or cognitive representations.
+            next_support_body = advance_support_world_v1(
+                self._state.support_world, action=action, profile=self._support_profile, dt=self.config.dt,
+            )
+        elif self.config.scenario_name.startswith("posture_support_") or self.config.support_profile is not None:
+            raise RuntimeError("reset the support scenario before applying actions")
+
         self._episode_steps += 1
 
         # Advance simple time bookkeeping
@@ -2364,7 +2446,9 @@ class HybridEnvironment:
 
         # Let the FSM backend update discrete state. Future backends (physics,
         # robot, LLM) will also be invoked here with clear field-ownership rules.
-        if self.config.use_fsm:
+        if next_support_body is not None:
+            self._set_support_body_v1(next_support_body)
+        elif self.config.use_fsm:
             self._state = self._fsm.step(self._state, action, ctx)
 
         # For v0, we have no MdpBackend yet: reward=0.0, done=False.
@@ -2372,10 +2456,12 @@ class HybridEnvironment:
         done: bool = False
 
         obs = self._perception.observe(self._state, ctx=ctx)
-        info = {
+        info: Dict[str, Any] = {
             "episode_index": self._episode_index,
             "step_index": self._episode_steps,
         }
+        if self._support_profile is not None:
+            info["support_profile"] = self._support_profile.profile_id
         return obs, reward, done, info
 
 

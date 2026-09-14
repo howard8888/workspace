@@ -14,7 +14,7 @@ import cca8_cli
 from nca8_runtime import Nca8SessionV1
 from nca8_trace import render_flow_trace_lines_v1
 
-__version__ = "0.7.4"
+__version__ = "0.7.5"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -50,10 +50,12 @@ contact -- and checks whether a STAND_UP command is appropriate. The rule is
 simple: a goat currently observed as fallen with inadequate physical support
 may attempt to stand. Missing or out-of-date body evidence cannot permit it.
 
-If BodyMap permits the action, the STAND_UP command is sent to the simulated
-environment. The program also remembers which particular StandUp attempt was
-sent, so that later sensory evidence can be matched back to that attempt.
-Internally this remembered permission is called an Authorized Action Envelope.
+If BodyMap permits the action, the cognitive runtime commits the STAND_UP
+request and hands it to the internal lower-action boundary. After the internal
+cognitive cycle closes, the outer runner sends the accepted request to the
+simulated environment. The Authorized Action Envelope records body permission;
+the separate handoff receipt controls one-time consumption. Neither proves
+execution success. Later sensory evidence can be matched back to the attempt.
 
 The next or a later sensory input -- i.e., later body evidence -- determines
 whether that StandUp attempt succeeded or failed. The STAND_UP command itself
