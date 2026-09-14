@@ -81,6 +81,7 @@ def test_next_cycle_result_cannot_influence_current_phase_d_commitment() -> None
     )
 
     cycle_one = runtime.run_cycle(observation, observation_number=1)
+    runtime.handoff.consume(cycle_one.handoff_receipt)  # Core-only fixture: no world is simulated.
     cycle_two = runtime.run_cycle(observation, observation_number=2)
 
     assert "latency:this" in cycle_one.commitment.eligible_result_ids
@@ -116,6 +117,7 @@ def test_result_available_in_phase_c_misses_the_current_phase_b_freeze() -> None
     )
 
     cycle_one = runtime.run_cycle(observation, observation_number=1)
+    runtime.handoff.consume(cycle_one.handoff_receipt)  # Core-only fixture: no world is simulated.
     cycle_two = runtime.run_cycle(observation, observation_number=2)
 
     assert "late_phase:1" not in cycle_one.commitment.eligible_result_ids
@@ -150,6 +152,7 @@ def test_bounded_event_latch_evicts_oldest_and_preserves_newer_brief_events() ->
     )
 
     cycle_one = runtime.run_cycle(observation, observation_number=1)
+    runtime.handoff.consume(cycle_one.handoff_receipt)  # Core-only fixture: no world is simulated.
     cycle_two = runtime.run_cycle(observation, observation_number=2)
 
     assert cycle_one.scheduler.evicted_latch_result_ids == ("brief:1",)

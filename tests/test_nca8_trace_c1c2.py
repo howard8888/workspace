@@ -72,7 +72,7 @@ def test_c1_c2_are_display_subsections_without_new_scheduler_phases(gate_events)
 
 
 def test_first_cycle_has_an_unnumbered_empty_c2_note(gate_events) -> None:
-    """Initial absence is explained without manufacturing a 147th trace record."""
+    """Initial absence is explained without manufacturing a 159th trace record."""
     text = _text(gate_events)
     first = _cycle(text, 1)
     assert "BEFORE COGNITIVE CYCLE 1\nSession setup and pending input" in text
@@ -83,7 +83,7 @@ def test_first_cycle_has_an_unnumbered_empty_c2_note(gate_events) -> None:
     assert "Record #12 - PART: Attention" in first
     records = [int(number) for number in re.findall(r"^  Record #(\d+) -", text, re.MULTILINE)]
     assert records == [event.sequence for event in gate_events]
-    assert len(records) == 146
+    assert len(records) == 158
     assert "Recorded prediction outcome:" not in first
 
 

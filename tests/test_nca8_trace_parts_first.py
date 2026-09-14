@@ -67,7 +67,7 @@ def _words(text: str) -> str:
     (18, "REPRESENTATION", "Projected NavMap (PNM)"),
     (19, "PART", "BodyMap"),
     (20, "SERVICE", "Cognitive-cycle driver"),
-    (21, "SERVICE", "Lower-action / environment adapter"),
+    (21, "SERVICE", "Internal lower-action handoff"),
 ))
 def test_main_nodes_name_architectural_status_before_software(gate_events, sequence, category, component) -> None:
     """Python class/file names must not masquerade as the system's physical parts catalog."""

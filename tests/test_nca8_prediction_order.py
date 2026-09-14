@@ -20,9 +20,11 @@ def test_trace_proves_pnm_and_body_envelope_exist_before_environment_dispatch() 
     pnm_index = next(index for index, line in enumerate(lines) if "current PNM created before" in line)
     body_index = next(index for index, line in enumerate(lines) if "BodyMap mapped" in line)
     commitment_index = next(index for index, line in enumerate(lines) if "committed Action_1:STAND_UP" in line)
-    dispatch_index = next(index for index, line in enumerate(lines) if "Action_1:STAND_UP crossed" in line)
+    dispatch_index = next(index for index, line in enumerate(lines) if "Action_1:STAND_UP completed the external world step" in line)
 
-    assert navigation_index < pnm_index < body_index < commitment_index < dispatch_index
+    handoff_index = next(index for index, line in enumerate(lines) if "[nca8:handoff]" in line)
+    close_index = next(index for index, line in enumerate(lines) if "CognitiveCycle_1 closed" in line)
+    assert navigation_index < pnm_index < body_index < commitment_index < handoff_index < close_index < dispatch_index
     assert result.pnm.created_cycle == 1
     assert result.pnm.eligible_from_cycle == 2
     assert result.pnm.expected_relations == ("posture:standing", "support:stable")

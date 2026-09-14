@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""P16-1R-A: truthful domains and bridge timing without changing A0 behavior.
+"""Historical P16-1R-A domains plus current semantic noninterference checks.
 
 The tests read immutable trace events through public renderers. Domain is a
 presentation dimension, not a new cognitive field or a revised scheduler phase.
 The frozen fixture was captured from clean HEAD 7dae1dc before this patch; it
-checks complete cycle results, canonical events, and next input independently
-of wording. Do not regenerate it to conceal a change to cognitive behavior.
+checks complete cycle results and next input independently of wording. Keep it
+unchanged. P16-1R-B deliberately versions the canonical trace separately; its
+new live boundary tests are in test_nca8_boundary_separation.py.
 """
 
 from __future__ import annotations
@@ -32,9 +33,14 @@ from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1, render_explanatory_t
 @pytest.fixture(scope="module")
 def gate_events() -> tuple[Nca8TraceEventV1, ...]:
     """Retain one immutable successful trace with the historical record numbering."""
-    session = Nca8SessionV1()
-    session.run_gate_a(reset_first=False)
-    return session.trace_snapshot()
+    fixture = json.loads((Path(__file__).parent / "fixtures" / "nca8_gate_a_pre_1r_b.json").read_text(encoding="utf-8"))
+    return tuple(
+        Nca8TraceEventV1(
+            sequence=event["sequence"], channel=event["channel"], message=event["message"],
+            cycle_id=event["cycle_id"], phase=event["phase"], details=tuple(sorted(event["details"].items())),
+        )
+        for event in fixture["events"]
+    )
 
 
 def _text(events: tuple[Nca8TraceEventV1, ...], *, include_details: bool = True, width: int = 96) -> str:
@@ -211,7 +217,7 @@ _BASELINE = json.loads((Path(__file__).parent / "fixtures" / "nca8_trace_domains
 
 
 @pytest.mark.parametrize("case", _BASELINE["cases"], ids=lambda case: case["name"])
-def test_cycle_and_canonical_results_match_the_unmodified_source(case: dict[str, Any]) -> None:
+def test_cycle_results_match_original_source_and_trace_matches_versioned_boundary(case: dict[str, Any]) -> None:
     """Compare against clean 7dae1dc, not just two runs of the newly patched code."""
     session = Nca8SessionV1(Nca8SessionConfigV1(**case["config"]))
     results = []
@@ -219,10 +225,16 @@ def test_cycle_and_canonical_results_match_the_unmodified_source(case: dict[str,
         results.append(session.run_cognitive_cycle().as_dict())
         render_flow_trace_lines_v1(session.trace_snapshot(), include_details=False)
         render_explanatory_trace_lines_v1(session.trace_snapshot())
-    assert hashlib.sha256(session.trace_canonical_bytes()).hexdigest() == case["canonical_trace_sha256"]
+    protocol = json.loads((Path(__file__).parent / "fixtures" / "nca8_boundary_protocol_v1.json").read_text(encoding="utf-8"))
+    current = next(item for item in protocol["cases"] if item["name"] == case["name"])
+    assert hashlib.sha256(session.trace_canonical_bytes()).hexdigest() == current["canonical_trace_sha256"]
     assert _json_digest(results) == case["cycle_results_sha256"]
     assert _json_digest(session.pending_observation.as_dict()) == case["pending_observation_sha256"]
-    assert session.status().as_dict() == case["status"]
+    status = session.status().as_dict()
+    assert {key: status[key] for key in case["status"] if key != "trace_retained"} == {
+        key: value for key, value in case["status"].items() if key != "trace_retained"
+    }
+    assert status == current["status"]
 
 
 def test_pending_outcomes_and_source_owners_are_unchanged_by_display() -> None:
@@ -245,6 +257,7 @@ def test_pending_outcomes_and_source_owners_are_unchanged_by_display() -> None:
             runtime.map_library.current_map_view(), runtime.map_library.durable_record_signature(), runtime.body_map_state,
             runtime.last_commitment, trace.as_canonical_json_bytes(), result.as_dict(),
         ) == before
+        runtime.handoff.consume(result.handoff_receipt)  # Core-only fixture; renderers did not consume it.
 
 
 def test_menu_trace_displays_domains_without_advancing_the_session(
@@ -259,7 +272,7 @@ def test_menu_trace_displays_domains_without_advancing_the_session(
     assert nca8_menu.run_nca8_experimental_menu_v1(session) is session
     output = capsys.readouterr().out
     assert "Architecture v09.9 is the target" in output
-    assert "Planning v16 P16-1R-A improves the explanation only" in output
-    assert "DOMAIN: MIXED BOUNDARY REPORT" in _words(output)
-    assert "PLANNED TARGET ORDER - NOT EXECUTED" in output
+    assert "Planning v16 P16-1R-B separates" in output
+    assert "DOMAIN: EXTERNAL BODY + WORLD" in _words(output)
+    assert "P16-1R-B REFERENCE ORDER - NOT ADDITIONAL TRACE EVENTS" in output
     assert (session.status(), session.trace_canonical_bytes(), session.pending_observation) == before

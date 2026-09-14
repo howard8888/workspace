@@ -42,7 +42,7 @@ from nca8_primitives import (
 # comprehensible without a generic state-management framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "AuthorizedActionEnvelopeV1",
     "BodyActionHandoffV1",
@@ -550,6 +550,27 @@ class Nca8BodyRuntimeV1:
     def last_handoff(self) -> BodyActionHandoffV1 | None:
         """Return the most recent BodyMap task authorization result."""
         return self._last_handoff
+
+    def revoke_action_permission(self, envelope_id: str, *, reason: str) -> AuthorizedActionEnvelopeV1:
+        """Revoke the named current permission without rewriting action history.
+
+        This is the narrow P16-1R-B cancellation/protected-stop seam. It does not
+        select another task or change current body evidence. CANCELLED describes
+        permission, not proof that a prior physical action did not occur. An
+        unknown/returned world attempt keeps its separate execution disposition.
+        Previously returned handoff/commitment snapshots remain immutable.
+        """
+        target = _bounded_identifier(envelope_id, field_name="envelope_id")
+        why = _bounded_identifier(reason, field_name="reason")
+        envelope = self._current_envelope
+        if envelope is None or envelope.envelope_id != target:
+            raise ValueError("cannot revoke a different or missing action envelope")
+        if envelope.status is EnvelopeStatusV1.AUTHORIZED:
+            envelope = replace(envelope, status=EnvelopeStatusV1.CANCELLED, status_reason=why)
+            self._current_envelope = envelope
+        self._current_lower_request = None
+        self._current_task_target = None
+        return envelope
 
     def update_from_map_state(self, map_state: NavMapStateV1) -> Nca8BodyUpdateV1:
         """Update current body state and publish/clear the bounded candidate.

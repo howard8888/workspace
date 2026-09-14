@@ -180,7 +180,7 @@ def test_status_after_gate_a_reports_current_values_not_the_startup_example(
     assert "Selected primitive: (none)" in output
     assert "Current PNM: (none)" in output
     assert "Last StandUp prediction outcome: success" in output
-    assert "Trace entries retained: 146 / 256" in output
+    assert "Trace entries retained: 158 / 256" in output
     assert session.status() == before
     assert session.trace_canonical_bytes() == trace_before
 

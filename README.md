@@ -16,44 +16,67 @@ Scientific target: `CCA8_High_Level_Architecture_v09.9.docx`. The implementation
 `CCA8_Project_Planning_v16.docx`, selected for the next source update. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-1R-A domain-aware trace (presentation only)
+## NCA8 update: P16-1R-B internal/world/input separation
 
-This slice starts from clean `7dae1dc` (`trace text improvements`). It preserves the twelve-module NCA8 implementation, the
-existing read-only P15-1E-A support-observation seam, all earlier trace/menu work, and the independently selected legacy runtime.
-It adds no cognitive capability, learning rule, Emotion implementation, new scheduler phase, or action authority.
+This slice starts from clean `6ef4fd9` (`updates to cog cycle`), preserving the accepted P16-1R-A trace work and corrected
+parent-menu label. Planning v16 §28 and §36.1 govern this bounded update. No support physics, trajectory-sensitive Righting,
+active learning, Emotion, default promotion or legacy cognitive change is introduced.
 
-NCA8 menu option 4 now displays **DOMAIN** independently of **PART / REPRESENTATION / SERVICE** and the purpose of an integrity
-check. A service may implement cognitive work, runtime bookkeeping, or a boundary call. Cycle and phase headings group stored
-records; they do not assert that every operation belongs inside the cognitive system.
+The core cycle now commits and accepts an immutable output during E. F still reports zero durable changes; scheduler
+housekeeping finishes and the core records internal closure. Only then does the outer serialized runner consume the accepted
+request once, advance the private world, admit/detach its observation and buffer it for later cognition. The action-producing
+Phase-E callback is removed. The core cannot receive that action's future observation through its call stack.
 
-The historical first-cycle tail remains in its original order:
+For a fresh ordinary Gate-A trace, the first-cycle tail now reads:
 
-| Record | Actual A0 responsibility | Domain |
+| Record | Implemented responsibility | Domain |
 |---|---|---|
-| #20 | Commit the permitted action. | Cognitive coordination, implemented by the runtime. |
-| #21 | Report the synchronous bridge call after world advancement and returned-observation adaptation. | Combined lower-action, external-world and input boundaries. |
-| #22 | Report the A0 learning slot's zero durable updates. | Internal learning placeholder; not an active learner. |
-| #23 | Retain/expire scheduler results and events. | Runtime infrastructure. |
-| #24 | Buffer the already-adapted next observation. No second filtering or world step. | Input boundary. |
-| #25 | Record closure, without processing the next observation. | Runtime accounting. |
+| #20 | Commit the permitted action. | Cognitive coordination. |
+| #21 | Accept one immutable request; no world step yet. | Internal lower-action handoff. |
+| #22 | Report zero durable learning changes. | Internal A0 learning placeholder. |
+| #23 | Finish scheduler bookkeeping. | Runtime infrastructure. |
+| #24 | Close the internal cognitive cycle. | Runtime infrastructure. |
+| #25 | Report the returned external world step after one consumption. | External body/world. |
+| #26 | Admit/detach the resulting observation once through the whitelist. | Input boundary. |
+| #27 | Buffer that admitted observation for Cycle 2. | Input boundary. |
 
-These record numbers identify the ordinary retained A0 example, not classification rules: the renderer recognizes event messages,
-not their numeric positions. Truncated and unknown records retain explicit uncertainty. Original messages and detail values remain
-available under each explanation; compact output, event IDs, ordering, and canonical JSON remain unchanged.
+These are actual events in the new protocol, not renamed historical records. Old saved traces retain their original combined
+callback explanation. The runtime marks new boundary events with `boundary_protocol=p16_1r_b_v1`; the canonical serializer
+itself is unchanged, but event order and content deliberately change. A full successful fresh demo has 158 records instead of
+146, while retaining six cognitive cycles, five StandUp commands and later-evidence success. Record numbers are not APIs.
+A real body/world may overlap internal maintenance; this is the explicit serialized simulator protocol, not a global brain clock.
 
-A separate, unnumbered **PLANNED TARGET ORDER - NOT EXECUTED** schematic describes the later P16-1R-B refactor: internal
-commitment/handoff, F reconciliation, scheduler maintenance and internal close; then outer world execution and input admission
-in the serialized simulator. A real body/world may overlap F. P16-1R-A does not perform that refactor or invent #21a/#21b events.
+`nca8_handoff.py` is a called single-slot boundary service, not a cognitive module or generic resource scheduler. It validates
+commitment/PNM/body links, releases the exact accepted receipt after closure, and marks it consumed before the outer effect.
+Copied, stale, foreign and already consumed receipts cannot authorize another use. There are now thirteen flat `nca8_*` files;
+the new service is included in the import firewall and component registry. No new dependency is required.
 
-The new domain tests include pre-patch fingerprints captured from clean `7dae1dc`: full cycle results, canonical events, pending
-input and final status under standard, Attention-off, Navigation-off, body-veto and read-only-support conditions. An intentional
-later behavioral/trace-schema change needs explicit fixture review; do not regenerate the reference to hide a regression.
+### Failure means stop, not retry with an old observation
 
-Validate this candidate against a green local P16-0 baseline, then run the focused trace tests, full pytest, pylint, mypy and
-`python cca8_run.py --preflight`. Open the NCA8 submenu, run option 5, then inspect option 4's #20-#25 tail and planned schematic.
-The code remains a review candidate until the local wall and manual inspection pass; document generation or container evidence
-alone does not authorize the next functional slice.
+Refusal and accepted-but-unconsumed cancellation are not execution. Once a world call may have run, an exception produces
+`unknown` execution, never an automatic retry. A world return followed by missing/malformed input is reported as `returned`
+with no usable next packet, not as a safely unexecuted action. Pending input is cleared, outstanding body permission is revoked,
+and the session requires explicit reset. Historical commitments are not rewritten. The protected-stop seam withholds further
+execution; the current simulator has no continuing actuator and does not claim a confirmed motor stop or physical rollback.
 
+Status now reports actual pending-input availability, reset requirement, receipt disposition and execution status. Menu option 4
+can inspect a stopped trace; option 2 explicitly resets. Option 5 retains its separate, explicitly fresh-demonstration behavior.
+
+The successful session/runner result dictionaries still match the original five-scenario A0 reference. Status adds boundary fields;
+the core-only result adds a ready receipt. Direct core callers must explicitly consume or cancel that receipt before another pass;
+consumption in an injected-observation test is not proof of physical execution. `Nca8PhaseEDispatchV1` remains importable from
+`nca8_runtime`, but the old `phase_e_hook` callback parameter is intentionally no longer supported. Use the outer runner for
+world execution. The private bridge retains its combined compatibility helper outside cognition.
+
+See `docs/P16_1R_B_REVIEW.md` for failure transitions, source/API changes, tests, source fingerprints and local acceptance.
+Preserved evidence: `tests/fixtures/nca8_trace_domains_baseline.json` retains the original pre-1R-A fingerprints;
+`nca8_gate_a_pre_1r_b.json` retains the actual 146-record pre-refactor trace; `nca8_boundary_protocol_v1.json` versions the new
+canonical events without replacing the independent old cycle/input checks. Historical 1R-A rationale remains in
+`docs/P16_1R_A_REVIEW.md` and Git history.
+
+Validate with focused tests, the full pytest/pylint/mypy/preflight wall, and a quick success/null/uncertainty review before accepting
+this slice. Later support-provider and trajectory work remain separate patches. The multi-hour conceptual trace walkthrough is
+deferred until after those separately accepted slices, before persistent activity-relative Righting.
 
 
 # Executive Overview

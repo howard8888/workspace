@@ -1,0 +1,2027 @@
+{
+  "source_commit": "6ef4fd9f25568eb098139582b4b74c323c5da193",
+  "trace_schema": "pre_p16_1r_b",
+  "summary": {
+    "achieved_standing": true,
+    "cycles_run": 6,
+    "stand_up_actions": 5,
+    "final_posture": "standing",
+    "final_support": "stable",
+    "successful_application_id": "application:stand_up:5",
+    "last_outcome_status": "success",
+    "reason": "later_current_body_evidence_confirmed_standing"
+  },
+  "events": [
+    {
+      "sequence": 1,
+      "channel": "session",
+      "message": "isolated Phase-1D Gate-A session reset",
+      "cycle_id": null,
+      "phase": null,
+      "details": {
+        "attention_enabled": true,
+        "body_action_handoff_enabled": true,
+        "durable_posture_support_map": "posture_support@r1",
+        "episode_index": 1,
+        "generation": 1,
+        "navigation_enabled": true,
+        "pending_observation_number": 1,
+        "seed": 0
+      }
+    },
+    {
+      "sequence": 2,
+      "channel": "firewall",
+      "message": "Observation_1 buffered as the first cognitive-cycle input",
+      "cycle_id": null,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 0,
+        "nav_patch_count": 1,
+        "observation_number": 1,
+        "predicate_count": 4,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 3,
+      "channel": "cycle",
+      "message": "CognitiveCycle_1 opened with Observation_1",
+      "cycle_id": 1,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 0,
+        "nav_patch_count": 1,
+        "observation_number": 1,
+        "predicate_count": 4,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 4,
+      "channel": "scheduler",
+      "message": "Phase_A POLL_STAGE completed",
+      "cycle_id": 1,
+      "phase": "POLL_STAGE",
+      "details": {
+        "evicted_latch_count": 0,
+        "poll_source_count": 2,
+        "result_ids": "body_sensory:1,observation_ingress:1",
+        "staged_result_count": 2
+      }
+    },
+    {
+      "sequence": 5,
+      "channel": "scheduler",
+      "message": "Phase_B FREEZE_ELIGIBLE froze the eligible set",
+      "cycle_id": 1,
+      "phase": "FREEZE_ELIGIBLE",
+      "details": {
+        "eligible_result_count": 2,
+        "result_ids": "body_sensory:1,observation_ingress:1"
+      }
+    },
+    {
+      "sequence": 6,
+      "channel": "scheduler",
+      "message": "Phase_C UPDATE_OUTCOMES applied frozen results",
+      "cycle_id": 1,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "applied_result_count": 2,
+        "result_ids": "body_sensory:1,observation_ingress:1"
+      }
+    },
+    {
+      "sequence": 7,
+      "channel": "runtime",
+      "message": "Observation_1 became the applied Phase-C cycle input",
+      "cycle_id": 1,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "observation_number": 1,
+        "result_id": "observation_ingress:1"
+      }
+    },
+    {
+      "sequence": 8,
+      "channel": "sensory",
+      "message": "posture predicate scaffold interpreted as current SELF-ground evidence",
+      "cycle_id": 1,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "geometry_profile": "lateral_ground_profile_v1",
+        "observation_number": 1,
+        "posture": "fallen",
+        "reason": "fallen_posture_predicate_scaffold",
+        "result_id": "body_sensory:1",
+        "scaffold_source": "EnvObservation.predicates"
+      }
+    },
+    {
+      "sequence": 9,
+      "channel": "maps",
+      "message": "POSTURE-SUPPORT NavMapState updated without durable map revision",
+      "cycle_id": 1,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "activation": 1.0,
+        "change_count": 0,
+        "contact": "lateral_ground",
+        "durable_map": "posture_support@r1",
+        "posture": "fallen",
+        "refresh_count": 0,
+        "state_id": "posture_support:current",
+        "support": "inadequate",
+        "update_kind": "created"
+      }
+    },
+    {
+      "sequence": 10,
+      "channel": "body",
+      "message": "BodyMapState updated from current POSTURE-SUPPORT evidence",
+      "cycle_id": 1,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "authority": "protected_current_body_state",
+        "candidate_event": "published",
+        "contact": "lateral_ground",
+        "is_wnm": false,
+        "posture": "fallen",
+        "state_id": "bodymap:self_support:current",
+        "support": "inadequate",
+        "update_kind": "created"
+      }
+    },
+    {
+      "sequence": 11,
+      "channel": "body",
+      "message": "POSTURE-SUPPORT map-state candidate published for Attention",
+      "cycle_id": 1,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "authority": "attention_candidate_only",
+        "candidate_id": "attention_candidate:posture_support",
+        "posture": "fallen",
+        "reason": "current_fallen_posture_with_inadequate_support",
+        "source_state_id": "posture_support:current",
+        "support": "inadequate"
+      }
+    },
+    {
+      "sequence": 12,
+      "channel": "attention",
+      "message": "POSTURE-SUPPORT map-state candidate submitted as an Attention bid",
+      "cycle_id": 1,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "bid_id": "attention_bid:attention_candidate:posture_support:1",
+        "candidate_id": "attention_candidate:posture_support",
+        "new_task_need_rank": 100,
+        "primitive_id": null,
+        "protected_safety_rank": 100,
+        "source_state_id": "posture_support:current"
+      }
+    },
+    {
+      "sequence": 13,
+      "channel": "attention",
+      "message": "Attention switched the primary source map state",
+      "cycle_id": 1,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "disposition": "switch",
+        "primitive_selected": null,
+        "selection_id": "attention_selection:1",
+        "source_state_id": "posture_support:current"
+      }
+    },
+    {
+      "sequence": 14,
+      "channel": "wnm",
+      "message": "source-linked WNM constructed or refreshed from Attention's selected state",
+      "cycle_id": 1,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "context_ref_count": 0,
+        "focus_age": 1,
+        "source_map": "posture_support@r1",
+        "source_state_id": "posture_support:current",
+        "working_id": "wnm:current",
+        "working_relations": "contact:lateral_ground,posture:fallen,support:inadequate"
+      }
+    },
+    {
+      "sequence": 15,
+      "channel": "navigation",
+      "message": "primitive applicability evaluated from the WNM",
+      "cycle_id": 1,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "eligible": true,
+        "fit_rank": 100,
+        "primitive_id": "ip:stand_up",
+        "safety_rank": 100,
+        "vetoes": "(none)"
+      }
+    },
+    {
+      "sequence": 16,
+      "channel": "navigation",
+      "message": "Navigation commitment completed",
+      "cycle_id": 1,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "application_id": "application:stand_up:1",
+        "reason": "selected_by_visible_navigation_components",
+        "selected_primitive_id": "ip:stand_up",
+        "wnm_id": "wnm:current"
+      }
+    },
+    {
+      "sequence": 17,
+      "channel": "runtime",
+      "message": "Phase_D FOCAL_COMMITMENT completed",
+      "cycle_id": 1,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "attention_disposition": "switch",
+        "focal_operation": "application:stand_up:1",
+        "selected_primitive": "ip:stand_up",
+        "wnm": "wnm:current"
+      }
+    },
+    {
+      "sequence": 18,
+      "channel": "pnm",
+      "message": "current PNM created before task-action dispatch",
+      "cycle_id": 1,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "application_id": "application:stand_up:1",
+        "expected_relations": "posture:standing,support:stable",
+        "observation_condition": "next_current_body_support_evidence",
+        "pnm_id": "pnm:application:stand_up:1",
+        "source_wnm_id": "wnm:current"
+      }
+    },
+    {
+      "sequence": 19,
+      "channel": "bodymap",
+      "message": "BodyMap mapped the selected task to a body-relative target and envelope",
+      "cycle_id": 1,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "authorized": true,
+        "body_target": "body_target:stand_up:1",
+        "envelope": "authorized_envelope:stand_up:1",
+        "reason": "authorized_current_fallen_body_recovery",
+        "task_action": "STAND_UP"
+      }
+    },
+    {
+      "sequence": 20,
+      "channel": "runtime",
+      "message": "Phase_E PROJECT_DISPATCH committed Action_1:STAND_UP",
+      "cycle_id": 1,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "action_number": 1,
+        "attention_selection": "attention_selection:1",
+        "envelope": "authorized_envelope:stand_up:1",
+        "pnm": "pnm:application:stand_up:1",
+        "selected_primitive": "ip:stand_up",
+        "task_action": "STAND_UP",
+        "wnm": "wnm:current"
+      }
+    },
+    {
+      "sequence": 21,
+      "channel": "dispatch",
+      "message": "Action_1:STAND_UP crossed the physical environment boundary",
+      "cycle_id": 1,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "action_number": 1,
+        "body_authorized": true,
+        "done": false,
+        "environment_action": "policy:stand_up",
+        "environment_step": 1,
+        "pnm_id": "pnm:application:stand_up:1",
+        "reward": 0.0
+      }
+    },
+    {
+      "sequence": 22,
+      "channel": "learning",
+      "message": "Phase-F durable learning made no changes for initial Gate A",
+      "cycle_id": 1,
+      "phase": "LEARNING_SCHEDULE",
+      "details": {
+        "durable_updates": 0
+      }
+    },
+    {
+      "sequence": 23,
+      "channel": "scheduler",
+      "message": "Phase_F LEARNING_SCHEDULE completed",
+      "cycle_id": 1,
+      "phase": "LEARNING_SCHEDULE",
+      "details": {
+        "latched_result_count": 0,
+        "pending_result_count": 0,
+        "retired_result_count": 0
+      }
+    },
+    {
+      "sequence": 24,
+      "channel": "firewall",
+      "message": "Observation_2 buffered for CognitiveCycle_2 without same-cycle processing",
+      "cycle_id": 1,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 1,
+        "nav_patch_count": 1,
+        "next_cycle_id": 2,
+        "observation_number": 2,
+        "predicate_count": 4,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 25,
+      "channel": "cycle",
+      "message": "CognitiveCycle_1 closed",
+      "cycle_id": 1,
+      "phase": null,
+      "details": {
+        "input": "Observation_1",
+        "next_input": "Observation_2",
+        "output": "Action_1:STAND_UP"
+      }
+    },
+    {
+      "sequence": 26,
+      "channel": "cycle",
+      "message": "CognitiveCycle_2 opened with Observation_2",
+      "cycle_id": 2,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 1,
+        "nav_patch_count": 1,
+        "observation_number": 2,
+        "predicate_count": 4,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 27,
+      "channel": "scheduler",
+      "message": "Phase_A POLL_STAGE completed",
+      "cycle_id": 2,
+      "phase": "POLL_STAGE",
+      "details": {
+        "evicted_latch_count": 0,
+        "poll_source_count": 2,
+        "result_ids": "body_sensory:2,observation_ingress:2",
+        "staged_result_count": 2
+      }
+    },
+    {
+      "sequence": 28,
+      "channel": "scheduler",
+      "message": "Phase_B FREEZE_ELIGIBLE froze the eligible set",
+      "cycle_id": 2,
+      "phase": "FREEZE_ELIGIBLE",
+      "details": {
+        "eligible_result_count": 2,
+        "result_ids": "body_sensory:2,observation_ingress:2"
+      }
+    },
+    {
+      "sequence": 29,
+      "channel": "scheduler",
+      "message": "Phase_C UPDATE_OUTCOMES applied frozen results",
+      "cycle_id": 2,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "applied_result_count": 2,
+        "result_ids": "body_sensory:2,observation_ingress:2"
+      }
+    },
+    {
+      "sequence": 30,
+      "channel": "runtime",
+      "message": "Observation_2 became the applied Phase-C cycle input",
+      "cycle_id": 2,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "observation_number": 2,
+        "result_id": "observation_ingress:2"
+      }
+    },
+    {
+      "sequence": 31,
+      "channel": "sensory",
+      "message": "posture predicate scaffold interpreted as current SELF-ground evidence",
+      "cycle_id": 2,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "geometry_profile": "lateral_ground_profile_v1",
+        "observation_number": 2,
+        "posture": "fallen",
+        "reason": "fallen_posture_predicate_scaffold",
+        "result_id": "body_sensory:2",
+        "scaffold_source": "EnvObservation.predicates"
+      }
+    },
+    {
+      "sequence": 32,
+      "channel": "maps",
+      "message": "POSTURE-SUPPORT NavMapState updated without durable map revision",
+      "cycle_id": 2,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "activation": 1.0,
+        "change_count": 0,
+        "contact": "lateral_ground",
+        "durable_map": "posture_support@r1",
+        "posture": "fallen",
+        "refresh_count": 1,
+        "state_id": "posture_support:current",
+        "support": "inadequate",
+        "update_kind": "refreshed"
+      }
+    },
+    {
+      "sequence": 33,
+      "channel": "body",
+      "message": "BodyMapState updated from current POSTURE-SUPPORT evidence",
+      "cycle_id": 2,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "authority": "protected_current_body_state",
+        "candidate_event": "refreshed",
+        "contact": "lateral_ground",
+        "is_wnm": false,
+        "posture": "fallen",
+        "state_id": "bodymap:self_support:current",
+        "support": "inadequate",
+        "update_kind": "refreshed"
+      }
+    },
+    {
+      "sequence": 34,
+      "channel": "body",
+      "message": "POSTURE-SUPPORT map-state candidate published for Attention",
+      "cycle_id": 2,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "authority": "attention_candidate_only",
+        "candidate_id": "attention_candidate:posture_support",
+        "posture": "fallen",
+        "reason": "current_fallen_posture_with_inadequate_support",
+        "source_state_id": "posture_support:current",
+        "support": "inadequate"
+      }
+    },
+    {
+      "sequence": 35,
+      "channel": "bodymap",
+      "message": "prior authorized action envelope reconciled from later body evidence",
+      "cycle_id": 2,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "envelope_id": "authorized_envelope:stand_up:1",
+        "status": "failed",
+        "status_reason": "later_body_evidence_reports_fallen_inadequate_support"
+      }
+    },
+    {
+      "sequence": 36,
+      "channel": "outcome",
+      "message": "later body evidence evaluated an operation-linked pending prediction",
+      "cycle_id": 2,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "application_id": "application:stand_up:1",
+        "evidence_sampled_cycle": 2,
+        "pnm_id": "pnm:application:stand_up:1",
+        "reason": "later_current_body_evidence_contradicts_upright_stable_expectation",
+        "status": "failure"
+      }
+    },
+    {
+      "sequence": 37,
+      "channel": "attention",
+      "message": "POSTURE-SUPPORT map-state candidate submitted as an Attention bid",
+      "cycle_id": 2,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "bid_id": "attention_bid:attention_candidate:posture_support:2",
+        "candidate_id": "attention_candidate:posture_support",
+        "new_task_need_rank": 100,
+        "primitive_id": null,
+        "protected_safety_rank": 100,
+        "source_state_id": "posture_support:current"
+      }
+    },
+    {
+      "sequence": 38,
+      "channel": "attention",
+      "message": "Attention maintained the primary source map state",
+      "cycle_id": 2,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "disposition": "maintain",
+        "primitive_selected": null,
+        "selection_id": "attention_selection:2",
+        "source_state_id": "posture_support:current"
+      }
+    },
+    {
+      "sequence": 39,
+      "channel": "wnm",
+      "message": "source-linked WNM constructed or refreshed from Attention's selected state",
+      "cycle_id": 2,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "context_ref_count": 0,
+        "focus_age": 2,
+        "source_map": "posture_support@r1",
+        "source_state_id": "posture_support:current",
+        "working_id": "wnm:current",
+        "working_relations": "contact:lateral_ground,posture:fallen,support:inadequate"
+      }
+    },
+    {
+      "sequence": 40,
+      "channel": "navigation",
+      "message": "primitive applicability evaluated from the WNM",
+      "cycle_id": 2,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "eligible": true,
+        "fit_rank": 100,
+        "primitive_id": "ip:stand_up",
+        "safety_rank": 100,
+        "vetoes": "(none)"
+      }
+    },
+    {
+      "sequence": 41,
+      "channel": "navigation",
+      "message": "Navigation commitment completed",
+      "cycle_id": 2,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "application_id": "application:stand_up:2",
+        "reason": "selected_by_visible_navigation_components",
+        "selected_primitive_id": "ip:stand_up",
+        "wnm_id": "wnm:current"
+      }
+    },
+    {
+      "sequence": 42,
+      "channel": "runtime",
+      "message": "Phase_D FOCAL_COMMITMENT completed",
+      "cycle_id": 2,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "attention_disposition": "maintain",
+        "focal_operation": "application:stand_up:2",
+        "selected_primitive": "ip:stand_up",
+        "wnm": "wnm:current"
+      }
+    },
+    {
+      "sequence": 43,
+      "channel": "pnm",
+      "message": "current PNM created before task-action dispatch",
+      "cycle_id": 2,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "application_id": "application:stand_up:2",
+        "expected_relations": "posture:standing,support:stable",
+        "observation_condition": "next_current_body_support_evidence",
+        "pnm_id": "pnm:application:stand_up:2",
+        "source_wnm_id": "wnm:current"
+      }
+    },
+    {
+      "sequence": 44,
+      "channel": "bodymap",
+      "message": "BodyMap mapped the selected task to a body-relative target and envelope",
+      "cycle_id": 2,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "authorized": true,
+        "body_target": "body_target:stand_up:2",
+        "envelope": "authorized_envelope:stand_up:2",
+        "reason": "authorized_current_fallen_body_recovery",
+        "task_action": "STAND_UP"
+      }
+    },
+    {
+      "sequence": 45,
+      "channel": "runtime",
+      "message": "Phase_E PROJECT_DISPATCH committed Action_2:STAND_UP",
+      "cycle_id": 2,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "action_number": 2,
+        "attention_selection": "attention_selection:2",
+        "envelope": "authorized_envelope:stand_up:2",
+        "pnm": "pnm:application:stand_up:2",
+        "selected_primitive": "ip:stand_up",
+        "task_action": "STAND_UP",
+        "wnm": "wnm:current"
+      }
+    },
+    {
+      "sequence": 46,
+      "channel": "dispatch",
+      "message": "Action_2:STAND_UP crossed the physical environment boundary",
+      "cycle_id": 2,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "action_number": 2,
+        "body_authorized": true,
+        "done": false,
+        "environment_action": "policy:stand_up",
+        "environment_step": 2,
+        "pnm_id": "pnm:application:stand_up:2",
+        "reward": 0.0
+      }
+    },
+    {
+      "sequence": 47,
+      "channel": "learning",
+      "message": "Phase-F durable learning made no changes for initial Gate A",
+      "cycle_id": 2,
+      "phase": "LEARNING_SCHEDULE",
+      "details": {
+        "durable_updates": 0
+      }
+    },
+    {
+      "sequence": 48,
+      "channel": "scheduler",
+      "message": "Phase_F LEARNING_SCHEDULE completed",
+      "cycle_id": 2,
+      "phase": "LEARNING_SCHEDULE",
+      "details": {
+        "latched_result_count": 0,
+        "pending_result_count": 0,
+        "retired_result_count": 0
+      }
+    },
+    {
+      "sequence": 49,
+      "channel": "firewall",
+      "message": "Observation_3 buffered for CognitiveCycle_3 without same-cycle processing",
+      "cycle_id": 2,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 2,
+        "nav_patch_count": 1,
+        "next_cycle_id": 3,
+        "observation_number": 3,
+        "predicate_count": 4,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 50,
+      "channel": "cycle",
+      "message": "CognitiveCycle_2 closed",
+      "cycle_id": 2,
+      "phase": null,
+      "details": {
+        "input": "Observation_2",
+        "next_input": "Observation_3",
+        "output": "Action_2:STAND_UP"
+      }
+    },
+    {
+      "sequence": 51,
+      "channel": "cycle",
+      "message": "CognitiveCycle_3 opened with Observation_3",
+      "cycle_id": 3,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 2,
+        "nav_patch_count": 1,
+        "observation_number": 3,
+        "predicate_count": 4,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 52,
+      "channel": "scheduler",
+      "message": "Phase_A POLL_STAGE completed",
+      "cycle_id": 3,
+      "phase": "POLL_STAGE",
+      "details": {
+        "evicted_latch_count": 0,
+        "poll_source_count": 2,
+        "result_ids": "body_sensory:3,observation_ingress:3",
+        "staged_result_count": 2
+      }
+    },
+    {
+      "sequence": 53,
+      "channel": "scheduler",
+      "message": "Phase_B FREEZE_ELIGIBLE froze the eligible set",
+      "cycle_id": 3,
+      "phase": "FREEZE_ELIGIBLE",
+      "details": {
+        "eligible_result_count": 2,
+        "result_ids": "body_sensory:3,observation_ingress:3"
+      }
+    },
+    {
+      "sequence": 54,
+      "channel": "scheduler",
+      "message": "Phase_C UPDATE_OUTCOMES applied frozen results",
+      "cycle_id": 3,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "applied_result_count": 2,
+        "result_ids": "body_sensory:3,observation_ingress:3"
+      }
+    },
+    {
+      "sequence": 55,
+      "channel": "runtime",
+      "message": "Observation_3 became the applied Phase-C cycle input",
+      "cycle_id": 3,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "observation_number": 3,
+        "result_id": "observation_ingress:3"
+      }
+    },
+    {
+      "sequence": 56,
+      "channel": "sensory",
+      "message": "posture predicate scaffold interpreted as current SELF-ground evidence",
+      "cycle_id": 3,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "geometry_profile": "lateral_ground_profile_v1",
+        "observation_number": 3,
+        "posture": "fallen",
+        "reason": "fallen_posture_predicate_scaffold",
+        "result_id": "body_sensory:3",
+        "scaffold_source": "EnvObservation.predicates"
+      }
+    },
+    {
+      "sequence": 57,
+      "channel": "maps",
+      "message": "POSTURE-SUPPORT NavMapState updated without durable map revision",
+      "cycle_id": 3,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "activation": 1.0,
+        "change_count": 0,
+        "contact": "lateral_ground",
+        "durable_map": "posture_support@r1",
+        "posture": "fallen",
+        "refresh_count": 2,
+        "state_id": "posture_support:current",
+        "support": "inadequate",
+        "update_kind": "refreshed"
+      }
+    },
+    {
+      "sequence": 58,
+      "channel": "body",
+      "message": "BodyMapState updated from current POSTURE-SUPPORT evidence",
+      "cycle_id": 3,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "authority": "protected_current_body_state",
+        "candidate_event": "refreshed",
+        "contact": "lateral_ground",
+        "is_wnm": false,
+        "posture": "fallen",
+        "state_id": "bodymap:self_support:current",
+        "support": "inadequate",
+        "update_kind": "refreshed"
+      }
+    },
+    {
+      "sequence": 59,
+      "channel": "body",
+      "message": "POSTURE-SUPPORT map-state candidate published for Attention",
+      "cycle_id": 3,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "authority": "attention_candidate_only",
+        "candidate_id": "attention_candidate:posture_support",
+        "posture": "fallen",
+        "reason": "current_fallen_posture_with_inadequate_support",
+        "source_state_id": "posture_support:current",
+        "support": "inadequate"
+      }
+    },
+    {
+      "sequence": 60,
+      "channel": "bodymap",
+      "message": "prior authorized action envelope reconciled from later body evidence",
+      "cycle_id": 3,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "envelope_id": "authorized_envelope:stand_up:2",
+        "status": "failed",
+        "status_reason": "later_body_evidence_reports_fallen_inadequate_support"
+      }
+    },
+    {
+      "sequence": 61,
+      "channel": "outcome",
+      "message": "later body evidence evaluated an operation-linked pending prediction",
+      "cycle_id": 3,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "application_id": "application:stand_up:2",
+        "evidence_sampled_cycle": 3,
+        "pnm_id": "pnm:application:stand_up:2",
+        "reason": "later_current_body_evidence_contradicts_upright_stable_expectation",
+        "status": "failure"
+      }
+    },
+    {
+      "sequence": 62,
+      "channel": "attention",
+      "message": "POSTURE-SUPPORT map-state candidate submitted as an Attention bid",
+      "cycle_id": 3,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "bid_id": "attention_bid:attention_candidate:posture_support:3",
+        "candidate_id": "attention_candidate:posture_support",
+        "new_task_need_rank": 100,
+        "primitive_id": null,
+        "protected_safety_rank": 100,
+        "source_state_id": "posture_support:current"
+      }
+    },
+    {
+      "sequence": 63,
+      "channel": "attention",
+      "message": "Attention maintained the primary source map state",
+      "cycle_id": 3,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "disposition": "maintain",
+        "primitive_selected": null,
+        "selection_id": "attention_selection:3",
+        "source_state_id": "posture_support:current"
+      }
+    },
+    {
+      "sequence": 64,
+      "channel": "wnm",
+      "message": "source-linked WNM constructed or refreshed from Attention's selected state",
+      "cycle_id": 3,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "context_ref_count": 0,
+        "focus_age": 3,
+        "source_map": "posture_support@r1",
+        "source_state_id": "posture_support:current",
+        "working_id": "wnm:current",
+        "working_relations": "contact:lateral_ground,posture:fallen,support:inadequate"
+      }
+    },
+    {
+      "sequence": 65,
+      "channel": "navigation",
+      "message": "primitive applicability evaluated from the WNM",
+      "cycle_id": 3,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "eligible": true,
+        "fit_rank": 100,
+        "primitive_id": "ip:stand_up",
+        "safety_rank": 100,
+        "vetoes": "(none)"
+      }
+    },
+    {
+      "sequence": 66,
+      "channel": "navigation",
+      "message": "Navigation commitment completed",
+      "cycle_id": 3,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "application_id": "application:stand_up:3",
+        "reason": "selected_by_visible_navigation_components",
+        "selected_primitive_id": "ip:stand_up",
+        "wnm_id": "wnm:current"
+      }
+    },
+    {
+      "sequence": 67,
+      "channel": "runtime",
+      "message": "Phase_D FOCAL_COMMITMENT completed",
+      "cycle_id": 3,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "attention_disposition": "maintain",
+        "focal_operation": "application:stand_up:3",
+        "selected_primitive": "ip:stand_up",
+        "wnm": "wnm:current"
+      }
+    },
+    {
+      "sequence": 68,
+      "channel": "pnm",
+      "message": "current PNM created before task-action dispatch",
+      "cycle_id": 3,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "application_id": "application:stand_up:3",
+        "expected_relations": "posture:standing,support:stable",
+        "observation_condition": "next_current_body_support_evidence",
+        "pnm_id": "pnm:application:stand_up:3",
+        "source_wnm_id": "wnm:current"
+      }
+    },
+    {
+      "sequence": 69,
+      "channel": "bodymap",
+      "message": "BodyMap mapped the selected task to a body-relative target and envelope",
+      "cycle_id": 3,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "authorized": true,
+        "body_target": "body_target:stand_up:3",
+        "envelope": "authorized_envelope:stand_up:3",
+        "reason": "authorized_current_fallen_body_recovery",
+        "task_action": "STAND_UP"
+      }
+    },
+    {
+      "sequence": 70,
+      "channel": "runtime",
+      "message": "Phase_E PROJECT_DISPATCH committed Action_3:STAND_UP",
+      "cycle_id": 3,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "action_number": 3,
+        "attention_selection": "attention_selection:3",
+        "envelope": "authorized_envelope:stand_up:3",
+        "pnm": "pnm:application:stand_up:3",
+        "selected_primitive": "ip:stand_up",
+        "task_action": "STAND_UP",
+        "wnm": "wnm:current"
+      }
+    },
+    {
+      "sequence": 71,
+      "channel": "dispatch",
+      "message": "Action_3:STAND_UP crossed the physical environment boundary",
+      "cycle_id": 3,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "action_number": 3,
+        "body_authorized": true,
+        "done": false,
+        "environment_action": "policy:stand_up",
+        "environment_step": 3,
+        "pnm_id": "pnm:application:stand_up:3",
+        "reward": 0.0
+      }
+    },
+    {
+      "sequence": 72,
+      "channel": "learning",
+      "message": "Phase-F durable learning made no changes for initial Gate A",
+      "cycle_id": 3,
+      "phase": "LEARNING_SCHEDULE",
+      "details": {
+        "durable_updates": 0
+      }
+    },
+    {
+      "sequence": 73,
+      "channel": "scheduler",
+      "message": "Phase_F LEARNING_SCHEDULE completed",
+      "cycle_id": 3,
+      "phase": "LEARNING_SCHEDULE",
+      "details": {
+        "latched_result_count": 0,
+        "pending_result_count": 0,
+        "retired_result_count": 0
+      }
+    },
+    {
+      "sequence": 74,
+      "channel": "firewall",
+      "message": "Observation_4 buffered for CognitiveCycle_4 without same-cycle processing",
+      "cycle_id": 3,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 3,
+        "nav_patch_count": 1,
+        "next_cycle_id": 4,
+        "observation_number": 4,
+        "predicate_count": 4,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 75,
+      "channel": "cycle",
+      "message": "CognitiveCycle_3 closed",
+      "cycle_id": 3,
+      "phase": null,
+      "details": {
+        "input": "Observation_3",
+        "next_input": "Observation_4",
+        "output": "Action_3:STAND_UP"
+      }
+    },
+    {
+      "sequence": 76,
+      "channel": "cycle",
+      "message": "CognitiveCycle_4 opened with Observation_4",
+      "cycle_id": 4,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 3,
+        "nav_patch_count": 1,
+        "observation_number": 4,
+        "predicate_count": 4,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 77,
+      "channel": "scheduler",
+      "message": "Phase_A POLL_STAGE completed",
+      "cycle_id": 4,
+      "phase": "POLL_STAGE",
+      "details": {
+        "evicted_latch_count": 0,
+        "poll_source_count": 2,
+        "result_ids": "body_sensory:4,observation_ingress:4",
+        "staged_result_count": 2
+      }
+    },
+    {
+      "sequence": 78,
+      "channel": "scheduler",
+      "message": "Phase_B FREEZE_ELIGIBLE froze the eligible set",
+      "cycle_id": 4,
+      "phase": "FREEZE_ELIGIBLE",
+      "details": {
+        "eligible_result_count": 2,
+        "result_ids": "body_sensory:4,observation_ingress:4"
+      }
+    },
+    {
+      "sequence": 79,
+      "channel": "scheduler",
+      "message": "Phase_C UPDATE_OUTCOMES applied frozen results",
+      "cycle_id": 4,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "applied_result_count": 2,
+        "result_ids": "body_sensory:4,observation_ingress:4"
+      }
+    },
+    {
+      "sequence": 80,
+      "channel": "runtime",
+      "message": "Observation_4 became the applied Phase-C cycle input",
+      "cycle_id": 4,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "observation_number": 4,
+        "result_id": "observation_ingress:4"
+      }
+    },
+    {
+      "sequence": 81,
+      "channel": "sensory",
+      "message": "posture predicate scaffold interpreted as current SELF-ground evidence",
+      "cycle_id": 4,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "geometry_profile": "lateral_ground_profile_v1",
+        "observation_number": 4,
+        "posture": "fallen",
+        "reason": "fallen_posture_predicate_scaffold",
+        "result_id": "body_sensory:4",
+        "scaffold_source": "EnvObservation.predicates"
+      }
+    },
+    {
+      "sequence": 82,
+      "channel": "maps",
+      "message": "POSTURE-SUPPORT NavMapState updated without durable map revision",
+      "cycle_id": 4,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "activation": 1.0,
+        "change_count": 0,
+        "contact": "lateral_ground",
+        "durable_map": "posture_support@r1",
+        "posture": "fallen",
+        "refresh_count": 3,
+        "state_id": "posture_support:current",
+        "support": "inadequate",
+        "update_kind": "refreshed"
+      }
+    },
+    {
+      "sequence": 83,
+      "channel": "body",
+      "message": "BodyMapState updated from current POSTURE-SUPPORT evidence",
+      "cycle_id": 4,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "authority": "protected_current_body_state",
+        "candidate_event": "refreshed",
+        "contact": "lateral_ground",
+        "is_wnm": false,
+        "posture": "fallen",
+        "state_id": "bodymap:self_support:current",
+        "support": "inadequate",
+        "update_kind": "refreshed"
+      }
+    },
+    {
+      "sequence": 84,
+      "channel": "body",
+      "message": "POSTURE-SUPPORT map-state candidate published for Attention",
+      "cycle_id": 4,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "authority": "attention_candidate_only",
+        "candidate_id": "attention_candidate:posture_support",
+        "posture": "fallen",
+        "reason": "current_fallen_posture_with_inadequate_support",
+        "source_state_id": "posture_support:current",
+        "support": "inadequate"
+      }
+    },
+    {
+      "sequence": 85,
+      "channel": "bodymap",
+      "message": "prior authorized action envelope reconciled from later body evidence",
+      "cycle_id": 4,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "envelope_id": "authorized_envelope:stand_up:3",
+        "status": "failed",
+        "status_reason": "later_body_evidence_reports_fallen_inadequate_support"
+      }
+    },
+    {
+      "sequence": 86,
+      "channel": "outcome",
+      "message": "later body evidence evaluated an operation-linked pending prediction",
+      "cycle_id": 4,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "application_id": "application:stand_up:3",
+        "evidence_sampled_cycle": 4,
+        "pnm_id": "pnm:application:stand_up:3",
+        "reason": "later_current_body_evidence_contradicts_upright_stable_expectation",
+        "status": "failure"
+      }
+    },
+    {
+      "sequence": 87,
+      "channel": "attention",
+      "message": "POSTURE-SUPPORT map-state candidate submitted as an Attention bid",
+      "cycle_id": 4,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "bid_id": "attention_bid:attention_candidate:posture_support:4",
+        "candidate_id": "attention_candidate:posture_support",
+        "new_task_need_rank": 100,
+        "primitive_id": null,
+        "protected_safety_rank": 100,
+        "source_state_id": "posture_support:current"
+      }
+    },
+    {
+      "sequence": 88,
+      "channel": "attention",
+      "message": "Attention maintained the primary source map state",
+      "cycle_id": 4,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "disposition": "maintain",
+        "primitive_selected": null,
+        "selection_id": "attention_selection:4",
+        "source_state_id": "posture_support:current"
+      }
+    },
+    {
+      "sequence": 89,
+      "channel": "wnm",
+      "message": "source-linked WNM constructed or refreshed from Attention's selected state",
+      "cycle_id": 4,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "context_ref_count": 0,
+        "focus_age": 4,
+        "source_map": "posture_support@r1",
+        "source_state_id": "posture_support:current",
+        "working_id": "wnm:current",
+        "working_relations": "contact:lateral_ground,posture:fallen,support:inadequate"
+      }
+    },
+    {
+      "sequence": 90,
+      "channel": "navigation",
+      "message": "primitive applicability evaluated from the WNM",
+      "cycle_id": 4,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "eligible": true,
+        "fit_rank": 100,
+        "primitive_id": "ip:stand_up",
+        "safety_rank": 100,
+        "vetoes": "(none)"
+      }
+    },
+    {
+      "sequence": 91,
+      "channel": "navigation",
+      "message": "Navigation commitment completed",
+      "cycle_id": 4,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "application_id": "application:stand_up:4",
+        "reason": "selected_by_visible_navigation_components",
+        "selected_primitive_id": "ip:stand_up",
+        "wnm_id": "wnm:current"
+      }
+    },
+    {
+      "sequence": 92,
+      "channel": "runtime",
+      "message": "Phase_D FOCAL_COMMITMENT completed",
+      "cycle_id": 4,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "attention_disposition": "maintain",
+        "focal_operation": "application:stand_up:4",
+        "selected_primitive": "ip:stand_up",
+        "wnm": "wnm:current"
+      }
+    },
+    {
+      "sequence": 93,
+      "channel": "pnm",
+      "message": "current PNM created before task-action dispatch",
+      "cycle_id": 4,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "application_id": "application:stand_up:4",
+        "expected_relations": "posture:standing,support:stable",
+        "observation_condition": "next_current_body_support_evidence",
+        "pnm_id": "pnm:application:stand_up:4",
+        "source_wnm_id": "wnm:current"
+      }
+    },
+    {
+      "sequence": 94,
+      "channel": "bodymap",
+      "message": "BodyMap mapped the selected task to a body-relative target and envelope",
+      "cycle_id": 4,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "authorized": true,
+        "body_target": "body_target:stand_up:4",
+        "envelope": "authorized_envelope:stand_up:4",
+        "reason": "authorized_current_fallen_body_recovery",
+        "task_action": "STAND_UP"
+      }
+    },
+    {
+      "sequence": 95,
+      "channel": "runtime",
+      "message": "Phase_E PROJECT_DISPATCH committed Action_4:STAND_UP",
+      "cycle_id": 4,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "action_number": 4,
+        "attention_selection": "attention_selection:4",
+        "envelope": "authorized_envelope:stand_up:4",
+        "pnm": "pnm:application:stand_up:4",
+        "selected_primitive": "ip:stand_up",
+        "task_action": "STAND_UP",
+        "wnm": "wnm:current"
+      }
+    },
+    {
+      "sequence": 96,
+      "channel": "dispatch",
+      "message": "Action_4:STAND_UP crossed the physical environment boundary",
+      "cycle_id": 4,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "action_number": 4,
+        "body_authorized": true,
+        "done": false,
+        "environment_action": "policy:stand_up",
+        "environment_step": 4,
+        "pnm_id": "pnm:application:stand_up:4",
+        "reward": 0.0
+      }
+    },
+    {
+      "sequence": 97,
+      "channel": "learning",
+      "message": "Phase-F durable learning made no changes for initial Gate A",
+      "cycle_id": 4,
+      "phase": "LEARNING_SCHEDULE",
+      "details": {
+        "durable_updates": 0
+      }
+    },
+    {
+      "sequence": 98,
+      "channel": "scheduler",
+      "message": "Phase_F LEARNING_SCHEDULE completed",
+      "cycle_id": 4,
+      "phase": "LEARNING_SCHEDULE",
+      "details": {
+        "latched_result_count": 0,
+        "pending_result_count": 0,
+        "retired_result_count": 0
+      }
+    },
+    {
+      "sequence": 99,
+      "channel": "firewall",
+      "message": "Observation_5 buffered for CognitiveCycle_5 without same-cycle processing",
+      "cycle_id": 4,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 4,
+        "nav_patch_count": 1,
+        "next_cycle_id": 5,
+        "observation_number": 5,
+        "predicate_count": 4,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 100,
+      "channel": "cycle",
+      "message": "CognitiveCycle_4 closed",
+      "cycle_id": 4,
+      "phase": null,
+      "details": {
+        "input": "Observation_4",
+        "next_input": "Observation_5",
+        "output": "Action_4:STAND_UP"
+      }
+    },
+    {
+      "sequence": 101,
+      "channel": "cycle",
+      "message": "CognitiveCycle_5 opened with Observation_5",
+      "cycle_id": 5,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 4,
+        "nav_patch_count": 1,
+        "observation_number": 5,
+        "predicate_count": 4,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 102,
+      "channel": "scheduler",
+      "message": "Phase_A POLL_STAGE completed",
+      "cycle_id": 5,
+      "phase": "POLL_STAGE",
+      "details": {
+        "evicted_latch_count": 0,
+        "poll_source_count": 2,
+        "result_ids": "body_sensory:5,observation_ingress:5",
+        "staged_result_count": 2
+      }
+    },
+    {
+      "sequence": 103,
+      "channel": "scheduler",
+      "message": "Phase_B FREEZE_ELIGIBLE froze the eligible set",
+      "cycle_id": 5,
+      "phase": "FREEZE_ELIGIBLE",
+      "details": {
+        "eligible_result_count": 2,
+        "result_ids": "body_sensory:5,observation_ingress:5"
+      }
+    },
+    {
+      "sequence": 104,
+      "channel": "scheduler",
+      "message": "Phase_C UPDATE_OUTCOMES applied frozen results",
+      "cycle_id": 5,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "applied_result_count": 2,
+        "result_ids": "body_sensory:5,observation_ingress:5"
+      }
+    },
+    {
+      "sequence": 105,
+      "channel": "runtime",
+      "message": "Observation_5 became the applied Phase-C cycle input",
+      "cycle_id": 5,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "observation_number": 5,
+        "result_id": "observation_ingress:5"
+      }
+    },
+    {
+      "sequence": 106,
+      "channel": "sensory",
+      "message": "posture predicate scaffold interpreted as current SELF-ground evidence",
+      "cycle_id": 5,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "geometry_profile": "lateral_ground_profile_v1",
+        "observation_number": 5,
+        "posture": "fallen",
+        "reason": "fallen_posture_predicate_scaffold",
+        "result_id": "body_sensory:5",
+        "scaffold_source": "EnvObservation.predicates"
+      }
+    },
+    {
+      "sequence": 107,
+      "channel": "maps",
+      "message": "POSTURE-SUPPORT NavMapState updated without durable map revision",
+      "cycle_id": 5,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "activation": 1.0,
+        "change_count": 0,
+        "contact": "lateral_ground",
+        "durable_map": "posture_support@r1",
+        "posture": "fallen",
+        "refresh_count": 4,
+        "state_id": "posture_support:current",
+        "support": "inadequate",
+        "update_kind": "refreshed"
+      }
+    },
+    {
+      "sequence": 108,
+      "channel": "body",
+      "message": "BodyMapState updated from current POSTURE-SUPPORT evidence",
+      "cycle_id": 5,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "authority": "protected_current_body_state",
+        "candidate_event": "refreshed",
+        "contact": "lateral_ground",
+        "is_wnm": false,
+        "posture": "fallen",
+        "state_id": "bodymap:self_support:current",
+        "support": "inadequate",
+        "update_kind": "refreshed"
+      }
+    },
+    {
+      "sequence": 109,
+      "channel": "body",
+      "message": "POSTURE-SUPPORT map-state candidate published for Attention",
+      "cycle_id": 5,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "authority": "attention_candidate_only",
+        "candidate_id": "attention_candidate:posture_support",
+        "posture": "fallen",
+        "reason": "current_fallen_posture_with_inadequate_support",
+        "source_state_id": "posture_support:current",
+        "support": "inadequate"
+      }
+    },
+    {
+      "sequence": 110,
+      "channel": "bodymap",
+      "message": "prior authorized action envelope reconciled from later body evidence",
+      "cycle_id": 5,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "envelope_id": "authorized_envelope:stand_up:4",
+        "status": "failed",
+        "status_reason": "later_body_evidence_reports_fallen_inadequate_support"
+      }
+    },
+    {
+      "sequence": 111,
+      "channel": "outcome",
+      "message": "later body evidence evaluated an operation-linked pending prediction",
+      "cycle_id": 5,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "application_id": "application:stand_up:4",
+        "evidence_sampled_cycle": 5,
+        "pnm_id": "pnm:application:stand_up:4",
+        "reason": "later_current_body_evidence_contradicts_upright_stable_expectation",
+        "status": "failure"
+      }
+    },
+    {
+      "sequence": 112,
+      "channel": "attention",
+      "message": "POSTURE-SUPPORT map-state candidate submitted as an Attention bid",
+      "cycle_id": 5,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "bid_id": "attention_bid:attention_candidate:posture_support:5",
+        "candidate_id": "attention_candidate:posture_support",
+        "new_task_need_rank": 100,
+        "primitive_id": null,
+        "protected_safety_rank": 100,
+        "source_state_id": "posture_support:current"
+      }
+    },
+    {
+      "sequence": 113,
+      "channel": "attention",
+      "message": "Attention maintained the primary source map state",
+      "cycle_id": 5,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "disposition": "maintain",
+        "primitive_selected": null,
+        "selection_id": "attention_selection:5",
+        "source_state_id": "posture_support:current"
+      }
+    },
+    {
+      "sequence": 114,
+      "channel": "wnm",
+      "message": "source-linked WNM constructed or refreshed from Attention's selected state",
+      "cycle_id": 5,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "context_ref_count": 0,
+        "focus_age": 5,
+        "source_map": "posture_support@r1",
+        "source_state_id": "posture_support:current",
+        "working_id": "wnm:current",
+        "working_relations": "contact:lateral_ground,posture:fallen,support:inadequate"
+      }
+    },
+    {
+      "sequence": 115,
+      "channel": "navigation",
+      "message": "primitive applicability evaluated from the WNM",
+      "cycle_id": 5,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "eligible": true,
+        "fit_rank": 100,
+        "primitive_id": "ip:stand_up",
+        "safety_rank": 100,
+        "vetoes": "(none)"
+      }
+    },
+    {
+      "sequence": 116,
+      "channel": "navigation",
+      "message": "Navigation commitment completed",
+      "cycle_id": 5,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "application_id": "application:stand_up:5",
+        "reason": "selected_by_visible_navigation_components",
+        "selected_primitive_id": "ip:stand_up",
+        "wnm_id": "wnm:current"
+      }
+    },
+    {
+      "sequence": 117,
+      "channel": "runtime",
+      "message": "Phase_D FOCAL_COMMITMENT completed",
+      "cycle_id": 5,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "attention_disposition": "maintain",
+        "focal_operation": "application:stand_up:5",
+        "selected_primitive": "ip:stand_up",
+        "wnm": "wnm:current"
+      }
+    },
+    {
+      "sequence": 118,
+      "channel": "pnm",
+      "message": "current PNM created before task-action dispatch",
+      "cycle_id": 5,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "application_id": "application:stand_up:5",
+        "expected_relations": "posture:standing,support:stable",
+        "observation_condition": "next_current_body_support_evidence",
+        "pnm_id": "pnm:application:stand_up:5",
+        "source_wnm_id": "wnm:current"
+      }
+    },
+    {
+      "sequence": 119,
+      "channel": "bodymap",
+      "message": "BodyMap mapped the selected task to a body-relative target and envelope",
+      "cycle_id": 5,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "authorized": true,
+        "body_target": "body_target:stand_up:5",
+        "envelope": "authorized_envelope:stand_up:5",
+        "reason": "authorized_current_fallen_body_recovery",
+        "task_action": "STAND_UP"
+      }
+    },
+    {
+      "sequence": 120,
+      "channel": "runtime",
+      "message": "Phase_E PROJECT_DISPATCH committed Action_5:STAND_UP",
+      "cycle_id": 5,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "action_number": 5,
+        "attention_selection": "attention_selection:5",
+        "envelope": "authorized_envelope:stand_up:5",
+        "pnm": "pnm:application:stand_up:5",
+        "selected_primitive": "ip:stand_up",
+        "task_action": "STAND_UP",
+        "wnm": "wnm:current"
+      }
+    },
+    {
+      "sequence": 121,
+      "channel": "dispatch",
+      "message": "Action_5:STAND_UP crossed the physical environment boundary",
+      "cycle_id": 5,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "action_number": 5,
+        "body_authorized": true,
+        "done": false,
+        "environment_action": "policy:stand_up",
+        "environment_step": 5,
+        "pnm_id": "pnm:application:stand_up:5",
+        "reward": 0.0
+      }
+    },
+    {
+      "sequence": 122,
+      "channel": "learning",
+      "message": "Phase-F durable learning made no changes for initial Gate A",
+      "cycle_id": 5,
+      "phase": "LEARNING_SCHEDULE",
+      "details": {
+        "durable_updates": 0
+      }
+    },
+    {
+      "sequence": 123,
+      "channel": "scheduler",
+      "message": "Phase_F LEARNING_SCHEDULE completed",
+      "cycle_id": 5,
+      "phase": "LEARNING_SCHEDULE",
+      "details": {
+        "latched_result_count": 0,
+        "pending_result_count": 0,
+        "retired_result_count": 0
+      }
+    },
+    {
+      "sequence": 124,
+      "channel": "firewall",
+      "message": "Observation_6 buffered for CognitiveCycle_6 without same-cycle processing",
+      "cycle_id": 5,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 5,
+        "nav_patch_count": 1,
+        "next_cycle_id": 6,
+        "observation_number": 6,
+        "predicate_count": 1,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 125,
+      "channel": "cycle",
+      "message": "CognitiveCycle_5 closed",
+      "cycle_id": 5,
+      "phase": null,
+      "details": {
+        "input": "Observation_5",
+        "next_input": "Observation_6",
+        "output": "Action_5:STAND_UP"
+      }
+    },
+    {
+      "sequence": 126,
+      "channel": "cycle",
+      "message": "CognitiveCycle_6 opened with Observation_6",
+      "cycle_id": 6,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 5,
+        "nav_patch_count": 1,
+        "observation_number": 6,
+        "predicate_count": 1,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 127,
+      "channel": "scheduler",
+      "message": "Phase_A POLL_STAGE completed",
+      "cycle_id": 6,
+      "phase": "POLL_STAGE",
+      "details": {
+        "evicted_latch_count": 0,
+        "poll_source_count": 2,
+        "result_ids": "body_sensory:6,observation_ingress:6",
+        "staged_result_count": 2
+      }
+    },
+    {
+      "sequence": 128,
+      "channel": "scheduler",
+      "message": "Phase_B FREEZE_ELIGIBLE froze the eligible set",
+      "cycle_id": 6,
+      "phase": "FREEZE_ELIGIBLE",
+      "details": {
+        "eligible_result_count": 2,
+        "result_ids": "body_sensory:6,observation_ingress:6"
+      }
+    },
+    {
+      "sequence": 129,
+      "channel": "scheduler",
+      "message": "Phase_C UPDATE_OUTCOMES applied frozen results",
+      "cycle_id": 6,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "applied_result_count": 2,
+        "result_ids": "body_sensory:6,observation_ingress:6"
+      }
+    },
+    {
+      "sequence": 130,
+      "channel": "runtime",
+      "message": "Observation_6 became the applied Phase-C cycle input",
+      "cycle_id": 6,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "observation_number": 6,
+        "result_id": "observation_ingress:6"
+      }
+    },
+    {
+      "sequence": 131,
+      "channel": "sensory",
+      "message": "posture predicate scaffold interpreted as current SELF-ground evidence",
+      "cycle_id": 6,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "geometry_profile": "upright_support_profile_v1",
+        "observation_number": 6,
+        "posture": "standing",
+        "reason": "standing_posture_predicate_scaffold",
+        "result_id": "body_sensory:6",
+        "scaffold_source": "EnvObservation.predicates"
+      }
+    },
+    {
+      "sequence": 132,
+      "channel": "maps",
+      "message": "POSTURE-SUPPORT NavMapState updated without durable map revision",
+      "cycle_id": 6,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "activation": 1.0,
+        "change_count": 1,
+        "contact": "foot_ground",
+        "durable_map": "posture_support@r1",
+        "posture": "standing",
+        "refresh_count": 4,
+        "state_id": "posture_support:current",
+        "support": "stable",
+        "update_kind": "changed"
+      }
+    },
+    {
+      "sequence": 133,
+      "channel": "body",
+      "message": "BodyMapState updated from current POSTURE-SUPPORT evidence",
+      "cycle_id": 6,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "authority": "protected_current_body_state",
+        "candidate_event": "cleared",
+        "contact": "foot_ground",
+        "is_wnm": false,
+        "posture": "standing",
+        "state_id": "bodymap:self_support:current",
+        "support": "stable",
+        "update_kind": "changed"
+      }
+    },
+    {
+      "sequence": 134,
+      "channel": "body",
+      "message": "no POSTURE-SUPPORT candidate published",
+      "cycle_id": 6,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "candidate_event": "cleared",
+        "posture": "standing",
+        "support": "stable"
+      }
+    },
+    {
+      "sequence": 135,
+      "channel": "bodymap",
+      "message": "prior authorized action envelope reconciled from later body evidence",
+      "cycle_id": 6,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "envelope_id": "authorized_envelope:stand_up:5",
+        "status": "completed",
+        "status_reason": "later_body_evidence_reports_upright_stable_support"
+      }
+    },
+    {
+      "sequence": 136,
+      "channel": "outcome",
+      "message": "later body evidence evaluated an operation-linked pending prediction",
+      "cycle_id": 6,
+      "phase": "UPDATE_OUTCOMES",
+      "details": {
+        "application_id": "application:stand_up:5",
+        "evidence_sampled_cycle": 6,
+        "pnm_id": "pnm:application:stand_up:5",
+        "reason": "later_current_body_evidence_matches_upright_stable_expectation",
+        "status": "success"
+      }
+    },
+    {
+      "sequence": 137,
+      "channel": "attention",
+      "message": "Attention released the primary source map state",
+      "cycle_id": 6,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "disposition": "release",
+        "primitive_selected": null,
+        "selection_id": "attention_selection:6",
+        "source_state_id": null
+      }
+    },
+    {
+      "sequence": 138,
+      "channel": "wnm",
+      "message": "no WNM exists because Attention released or selected no source",
+      "cycle_id": 6,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "working_id": null
+      }
+    },
+    {
+      "sequence": 139,
+      "channel": "navigation",
+      "message": "Navigation commitment completed",
+      "cycle_id": 6,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "application_id": null,
+        "reason": "no_wnm",
+        "selected_primitive_id": null,
+        "wnm_id": null
+      }
+    },
+    {
+      "sequence": 140,
+      "channel": "runtime",
+      "message": "Phase_D FOCAL_COMMITMENT completed",
+      "cycle_id": 6,
+      "phase": "FOCAL_COMMITMENT",
+      "details": {
+        "attention_disposition": "release",
+        "focal_operation": null,
+        "selected_primitive": null,
+        "wnm": null
+      }
+    },
+    {
+      "sequence": 141,
+      "channel": "runtime",
+      "message": "Phase_E PROJECT_DISPATCH committed Action_6:NO_ACTION",
+      "cycle_id": 6,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "action_number": 6,
+        "attention_selection": "attention_selection:6",
+        "envelope": null,
+        "pnm": null,
+        "selected_primitive": null,
+        "task_action": null,
+        "wnm": null
+      }
+    },
+    {
+      "sequence": 142,
+      "channel": "dispatch",
+      "message": "Action_6:NO_ACTION crossed the physical environment boundary",
+      "cycle_id": 6,
+      "phase": "PROJECT_DISPATCH",
+      "details": {
+        "action_number": 6,
+        "body_authorized": false,
+        "done": false,
+        "environment_action": null,
+        "environment_step": 6,
+        "pnm_id": null,
+        "reward": 0.0
+      }
+    },
+    {
+      "sequence": 143,
+      "channel": "learning",
+      "message": "Phase-F durable learning made no changes for initial Gate A",
+      "cycle_id": 6,
+      "phase": "LEARNING_SCHEDULE",
+      "details": {
+        "durable_updates": 0
+      }
+    },
+    {
+      "sequence": 144,
+      "channel": "scheduler",
+      "message": "Phase_F LEARNING_SCHEDULE completed",
+      "cycle_id": 6,
+      "phase": "LEARNING_SCHEDULE",
+      "details": {
+        "latched_result_count": 0,
+        "pending_result_count": 0,
+        "retired_result_count": 0
+      }
+    },
+    {
+      "sequence": 145,
+      "channel": "firewall",
+      "message": "Observation_7 buffered for CognitiveCycle_7 without same-cycle processing",
+      "cycle_id": 6,
+      "phase": null,
+      "details": {
+        "cue_count": 0,
+        "environment_step": 6,
+        "nav_patch_count": 1,
+        "next_cycle_id": 7,
+        "observation_number": 7,
+        "predicate_count": 1,
+        "raw_sensor_count": 2
+      }
+    },
+    {
+      "sequence": 146,
+      "channel": "cycle",
+      "message": "CognitiveCycle_6 closed",
+      "cycle_id": 6,
+      "phase": null,
+      "details": {
+        "input": "Observation_6",
+        "next_input": "Observation_7",
+        "output": "Action_6:NO_ACTION"
+      }
+    }
+  ]
+}

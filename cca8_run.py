@@ -648,7 +648,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.30.8"
+__version__ = "0.30.9"
 __all__ = [
     "main",
     "interactive_loop",
@@ -3000,6 +3000,7 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("nca8_body", "nca8_body"),
     ("nca8_contracts", "nca8_contracts"),
     ("nca8_executive", "nca8_executive"),
+    ("nca8_handoff", "nca8_handoff"),
     ("nca8_maps", "nca8_maps"),
     ("nca8_menu", "nca8_menu"),
     ("nca8_prediction", "nca8_prediction"),

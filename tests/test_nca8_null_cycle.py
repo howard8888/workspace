@@ -63,18 +63,19 @@ def test_next_observation_is_buffered_but_not_applied_in_the_same_cycle() -> Non
     assert session.status().pending_observation_number == 3
 
 
-def test_phase_e_boundary_precedes_phase_f_and_next_observation_buffering() -> None:
-    """The world boundary occurs after commitment and new evidence is not applied retroactively."""
+def test_internal_handoff_and_close_precede_null_world_and_input_boundaries() -> None:
+    """A null advances time once, after the closed core; no future evidence enters it."""
     session = Nca8SessionV1(Nca8SessionConfigV1(attention_enabled=False))
     session.run_cognitive_cycle()
-    lines = session.trace_lines()
-
-    phase_e = next(index for index, line in enumerate(lines) if "Phase_E PROJECT_DISPATCH" in line)
-    environment = next(index for index, line in enumerate(lines) if "Action_1:NO_ACTION crossed" in line)
-    phase_f = next(index for index, line in enumerate(lines) if "Phase_F LEARNING_SCHEDULE" in line)
-    buffered = next(index for index, line in enumerate(lines) if "Observation_2 buffered" in line)
-
-    assert phase_e < environment < phase_f < buffered
+    events = session.trace_snapshot()
+    phase_e = next(event.sequence for event in events if "Phase_E PROJECT_DISPATCH" in event.message)
+    handoff = next(event.sequence for event in events if event.channel == "handoff")
+    phase_f = next(event.sequence for event in events if "Phase_F LEARNING_SCHEDULE" in event.message)
+    close = next(event.sequence for event in events if event.message == "CognitiveCycle_1 closed")
+    world = next(event.sequence for event in events if event.channel == "dispatch")
+    admitted = next(event.sequence for event in events if event.channel == "input")
+    buffered = next(event.sequence for event in events if "Observation_2 buffered" in event.message)
+    assert phase_e < handoff < phase_f < close < world < admitted < buffered
 
 
 def test_identical_input_and_schedule_produce_byte_equivalent_trace_snapshots() -> None:

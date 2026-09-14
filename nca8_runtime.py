@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Isolated Architecture-v09.3 runtime through Gate-A StandUp.
+"""Isolated A0 runtime with P16-1R-B internal/external domain separation.
 
 Phase 1A established a second state-isolated brain. Phase 1B installed the
 Phase-A-to-F deterministic commitment boundary. Phase 1C added an NCA8-owned
@@ -17,6 +17,14 @@ handoff. The environment adapter alone translates internal ``STAND_UP`` to the
 compatibility token ``policy:stand_up``. Later current body evidence, never the
 command itself, determines success or failure.
 
+P16-1R-B boundary contract
+-------------------------
+E commits and accepts a bounded internal request; F and scheduler maintenance
+finish before the core records closure. Only then does the outer runner consume
+that request once, advance the external world, admit its observation and buffer
+it. A failed or uncertain step latches the runner stopped until explicit reset.
+No action-producing callback or raw world observation enters the core.
+
 Numbering contract
 ------------------
 CognitiveCycle ``n`` consumes ``Observation_n`` and commits ``Action_n``.
@@ -27,9 +35,8 @@ CognitiveCycle ``n+1``.
 from __future__ import annotations
 
 import random
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TypeAlias
 
 from nca8_adapters import (
     Nca8EnvironmentBridgeV1,
@@ -59,6 +66,7 @@ from nca8_executive import (
     NavigationRuntimeV1,
     WorkingNavMapStateV1,
 )
+from nca8_handoff import Nca8HandoffReceiptV1, Nca8InternalHandoffV1, Nca8PhaseEDispatchV1
 from nca8_maps import (
     DurableNavMapV1,
     Nca8MapLibraryV1,
@@ -83,7 +91,7 @@ from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, Sc
 from nca8_sensory import Nca8BodySensoryApplicationV1, Nca8BodySensoryModuleV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -100,9 +108,6 @@ __all__ = [
 
 NCA8_NO_ACTION = "NO_ACTION"
 _OBSERVATION_INGRESS_CIRCUIT = "observation_ingress"
-
-PhaseEHookV1: TypeAlias = Callable[["Nca8PhaseEDispatchV1"], None]
-
 
 @dataclass(frozen=True, slots=True)
 class Nca8SessionConfigV1:
@@ -174,6 +179,11 @@ class Nca8SessionStatusV1:
     current_envelope_status: str | None
     trace_retained: int
     trace_capacity: int
+    pending_input_available: bool
+    reset_required: bool
+    execution_status: str
+    handoff_receipt_id: str | None
+    handoff_disposition: str | None
 
     @property
     def null_smoke_cycles(self) -> int:
@@ -206,35 +216,11 @@ class Nca8SessionStatusV1:
             "current_envelope_status": self.current_envelope_status,
             "trace_retained": self.trace_retained,
             "trace_capacity": self.trace_capacity,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class Nca8PhaseEDispatchV1:
-    """One immutable post-PNM dispatch package passed to the episode runner."""
-
-    commitment: CycleCommitmentV1
-    task_action: TaskActionV1 | None
-    pnm: ProjectedNavMapV1 | None
-    body_handoff: BodyActionHandoffV1 | None
-
-    @property
-    def authorized_task_action(self) -> TaskActionV1 | None:
-        """Return the task action only when BodyMap authorized its handoff."""
-        if self.body_handoff is None or not self.body_handoff.authorized:
-            return None
-        return self.task_action
-
-    def as_dict(self) -> dict[str, object]:
-        """Return a deterministic JSON-safe dispatch snapshot."""
-        return {
-            "commitment": self.commitment.as_dict(),
-            "task_action": self.task_action.as_dict() if self.task_action is not None else None,
-            "pnm": self.pnm.as_dict() if self.pnm is not None else None,
-            "body_handoff": self.body_handoff.as_dict() if self.body_handoff is not None else None,
-            "authorized_task_action": (
-                self.authorized_task_action.as_dict() if self.authorized_task_action is not None else None
-            ),
+            "pending_input_available": self.pending_input_available,
+            "reset_required": self.reset_required,
+            "execution_status": self.execution_status,
+            "handoff_receipt_id": self.handoff_receipt_id,
+            "handoff_disposition": self.handoff_disposition,
         }
 
 
@@ -259,6 +245,7 @@ class Nca8CognitiveRuntimeCycleV1:
     body_handoff: BodyActionHandoffV1 | None
     prediction_outcomes: tuple[PredictionOutcomeV1, ...]
     phase_e_dispatch: Nca8PhaseEDispatchV1
+    handoff_receipt: Nca8HandoffReceiptV1
 
     def as_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-safe runtime-cycle snapshot."""
@@ -282,6 +269,7 @@ class Nca8CognitiveRuntimeCycleV1:
             "body_handoff": self.body_handoff.as_dict() if self.body_handoff is not None else None,
             "prediction_outcomes": [outcome.as_dict() for outcome in self.prediction_outcomes],
             "phase_e_dispatch": self.phase_e_dispatch.as_dict(),
+            "handoff_receipt": self.handoff_receipt.as_dict(),
         }
 
 
@@ -429,6 +417,7 @@ class Nca8CognitiveRuntimeV1:
         prediction: Nca8PredictionRuntimeV1 | None = None,
         primitives: Sequence[PrimitiveRuntimeV1] | None = None,
         poll_sources: Sequence[CircuitPollSourceV1] = (),
+        handoff: Nca8InternalHandoffV1 | None = None,
     ) -> None:
         if not isinstance(trace, Nca8TraceBufferV1):
             raise TypeError("trace must be an Nca8TraceBufferV1")
@@ -451,6 +440,11 @@ class Nca8CognitiveRuntimeV1:
         self._prediction = prediction or Nca8PredictionRuntimeV1()
         self._primitives = tuple(primitives) if primitives is not None else create_gate_a_primitives_v1()
         self._poll_sources = tuple(poll_sources)
+        if handoff is not None and not isinstance(handoff, Nca8InternalHandoffV1):
+            raise TypeError("handoff must be an Nca8InternalHandoffV1")
+        self._handoff = handoff if handoff is not None else Nca8InternalHandoffV1()
+        self._faulted = False
+        self._running = False
         self._cognitive_cycles = 0
         self._last_applied_observation_number: int | None = None
         self._last_commitment: CycleCommitmentV1 | None = None
@@ -528,23 +522,97 @@ class Nca8CognitiveRuntimeV1:
 
     @property
     def last_prediction_outcomes(self) -> tuple[PredictionOutcomeV1, ...]:
-        """Return the outcomes evaluated in the most recent Phase C."""
+        """Return recent comparisons and any later known-nonexecution disposition."""
         return self._last_prediction_outcomes
+
+    @property
+    def handoff(self) -> Nca8InternalHandoffV1:
+        """Return the bounded internal boundary, never an environment callback."""
+        return self._handoff
+
+    @property
+    def reset_required(self) -> bool:
+        """Return whether a partial cycle or execution stop requires a new runtime."""
+        return self._faulted
+
+    def stop_execution(self, *, reason: str, definitely_not_executed: bool, action_number: int) -> None:
+        """Latch this runtime stopped and revoke outstanding body permission.
+
+        The outer driver supplies only an execution disposition, never simulator
+        truth or a new task. An unconsumed serialized request can be cancelled.
+        Only known nonexecution of action_number closes its PNM as NOT_APPLIED; uncertain
+        or returned execution leaves the claim unresolved. Historical commitment
+        and returned handoff snapshots are never rewritten. Reset is explicit.
+        """
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 160:
+            raise ValueError("stop reason must be a nonempty string of at most 160 characters")
+        if not isinstance(definitely_not_executed, bool):
+            raise TypeError("definitely_not_executed must be Boolean")
+        if isinstance(action_number, bool) or not isinstance(action_number, int) or action_number < 0:
+            raise ValueError("stop action_number must be a nonnegative integer")
+        self._faulted = True
+        receipt = self._handoff.receipt
+        if receipt is not None and self._handoff.has_pending_request:
+            self._handoff.cancel(receipt, reason=reason)
+        envelope = self._body_runtime.current_envelope
+        if envelope is not None:
+            self._body_runtime.revoke_action_permission(envelope.envelope_id, reason=reason)
+        commitment = self._last_commitment
+        if (
+            definitely_not_executed and commitment is not None
+            and commitment.cycle_id == action_number and commitment.pnm_id is not None
+        ):
+            pending = self._prediction.pending_snapshot()
+            if any(item.pnm.pnm_id == commitment.pnm_id for item in pending):
+                outcome = self._prediction.mark_not_applied(
+                    commitment.pnm_id, cycle_id=commitment.cycle_id, reason=reason,
+                )
+                self._last_prediction_outcomes = (*self._last_prediction_outcomes, outcome)
 
     def run_cycle(
         self,
         observation: Nca8ObservationV1,
         *,
         observation_number: int,
-        phase_e_hook: PhaseEHookV1 | None = None,
     ) -> Nca8CognitiveRuntimeCycleV1:
-        """Run one complete deterministic cognitive cycle around ``Observation_n``."""
+        """Run A--F, internally accept one output, and close without advancing the world.
+
+        The caller must consume or cancel the returned ready receipt before
+        another pass. Direct core-only tests may consume it without simulating a
+        world, but that is not evidence of physical execution. The former
+        action-producing phase_e_hook is intentionally removed.
+
+        Any exception after processing starts latches the core stopped; a
+        partial pass cannot be retried against the same input. A commitment is
+        retained immediately at E, even if its report, acceptance or F fails.
+        """
+        if self._faulted or self._running:
+            raise RuntimeError("cognitive runtime requires reset or is already running")
+        if self._handoff.has_pending_request:
+            raise RuntimeError("the previous handoff requires consumption or cancellation")
+        if not isinstance(observation, Nca8ObservationV1):
+            raise TypeError("core input must be an admitted Nca8ObservationV1")
         cycle_id = self._cognitive_cycles + 1
-        if observation_number != cycle_id:
+        if isinstance(observation_number, bool) or not isinstance(observation_number, int) or observation_number != cycle_id:
             raise RuntimeError(
                 "NCA8 numbering invariant violated: "
                 f"CognitiveCycle_{cycle_id} cannot consume Observation_{observation_number}"
             )
+        self._running = True
+        try:
+            return self._run_cycle(observation, observation_number=observation_number, cycle_id=cycle_id)
+        except BaseException:
+            self.stop_execution(
+                reason="internal_cycle_failed_before_world_execution", definitely_not_executed=True, action_number=cycle_id,
+            )
+            raise
+        finally:
+            self._running = False
+
+    def _run_cycle(
+        self, observation: Nca8ObservationV1, *, observation_number: int, cycle_id: int,
+    ) -> Nca8CognitiveRuntimeCycleV1:
+        """Perform one guarded internal pass; its only outbound effect is acceptance."""
         self._trace.append(
             "cycle",
             f"CognitiveCycle_{cycle_id} opened with Observation_{observation_number}",
@@ -764,12 +832,15 @@ class Nca8CognitiveRuntimeV1:
             ),
         )
         output = task_action.kind.value if task_action is not None else NCA8_NO_ACTION
+        self._last_commitment = commitment
+        self._last_prediction_outcomes = outcomes
         self._trace.append(
             "runtime",
             f"{CyclePhase.PROJECT_DISPATCH.display_name} committed Action_{cycle_id}:{output}",
             cycle_id=cycle_id,
             phase=CyclePhase.PROJECT_DISPATCH.name,
             details={
+                "boundary_protocol": "p16_1r_b_v1",
                 "action_number": cycle_id,
                 "attention_selection": commitment.attention_selection_id,
                 "envelope": commitment.action_envelope_id,
@@ -785,8 +856,21 @@ class Nca8CognitiveRuntimeV1:
             pnm=pnm,
             body_handoff=body_handoff,
         )
-        if phase_e_hook is not None:
-            phase_e_hook(dispatch)
+        receipt = self._handoff.accept(dispatch)
+        self._trace.append(
+            "handoff",
+            "committed output accepted by internal lower-action boundary",
+            cycle_id=cycle_id,
+            phase=CyclePhase.PROJECT_DISPATCH.name,
+            details={
+                "boundary_protocol": "p16_1r_b_v1", "generation": receipt.generation,
+                "receipt_id": receipt.receipt_id, "disposition": receipt.disposition,
+                "action_number": cycle_id, "task_action": commitment.task_action,
+                "body_authorized": body_handoff.authorized if body_handoff is not None else False,
+                "pnm_id": commitment.pnm_id, "envelope_id": commitment.action_envelope_id,
+                "execution_status": "not_attempted",
+            },
+        )
 
         self._trace.append(
             "learning",
@@ -796,9 +880,17 @@ class Nca8CognitiveRuntimeV1:
             details={"durable_updates": 0},
         )
         scheduler_snapshot = self._scheduler.phase_f_finish(cycle_id, self._trace)
+        self._trace.append(
+            "cycle", f"CognitiveCycle_{cycle_id} closed", cycle_id=cycle_id,
+            details={
+                "boundary_protocol": "p16_1r_b_v1", "generation": receipt.generation,
+                "receipt_id": receipt.receipt_id,
+                "input": f"Observation_{observation_number}", "output": f"Action_{cycle_id}:{output}",
+                "execution_status": "not_attempted", "next_input_available": False,
+            },
+        )
+        receipt = self._handoff.release_after_close(receipt)
         self._cognitive_cycles = cycle_id
-        self._last_commitment = commitment
-        self._last_prediction_outcomes = outcomes
         return Nca8CognitiveRuntimeCycleV1(
             cycle_id=cycle_id,
             observation_number=observation_number,
@@ -817,6 +909,7 @@ class Nca8CognitiveRuntimeV1:
             body_handoff=body_handoff,
             prediction_outcomes=outcomes,
             phase_e_dispatch=dispatch,
+            handoff_receipt=receipt,
         )
 
     def _apply_phase_c_results(
@@ -971,7 +1064,12 @@ class Nca8CognitiveRuntimeV1:
 
 
 class Nca8EpisodeRunnerV1:
-    """Coordinate one private environment with one NCA8 cognitive runtime."""
+    """Coordinate a closed core pass, one outer world step and separate input admission.
+
+    The runner owns transport/execution status, not cognition. Failure latches
+    it stopped until its session is reset. A missing input is never replaced by
+    the previous sample; an unknown world attempt is never blindly retried.
+    """
 
     def __init__(
         self,
@@ -982,83 +1080,121 @@ class Nca8EpisodeRunnerV1:
         initial_observation: Nca8ObservationV1,
         initial_observation_number: int = 1,
     ) -> None:
+        if not isinstance(initial_observation, Nca8ObservationV1):
+            raise TypeError("initial input must be an admitted Nca8ObservationV1")
         self._environment_bridge = environment_bridge
         self._cognitive_runtime = cognitive_runtime
         self._trace = trace
-        self._pending_observation = initial_observation
+        self._pending_observation: Nca8ObservationV1 | None = initial_observation
         self._pending_observation_number = initial_observation_number
+        self._reset_required = False
+        self._running = False
+        self._execution_status = "not_attempted"
+        self._boundary_stage = "ready"
+        self._attempted_action_number = 0
 
     @property
     def pending_observation(self) -> Nca8ObservationV1:
-        """Return the immutable observation waiting for the next cycle."""
+        """Return the waiting immutable input, or raise rather than fabricate stale input."""
+        if self._pending_observation is None:
+            raise RuntimeError("no pending observation; the session must be reset after a boundary failure")
         return self._pending_observation
 
     @property
     def pending_observation_number(self) -> int:
-        """Return the logical number of the next observation."""
+        """Return the next expected input number; availability is reported separately."""
         return self._pending_observation_number
 
-    def run_cycle(self) -> Nca8CognitiveCycleResultV1:
-        """Run one cycle, apply its authorized output once, and buffer later evidence."""
-        current_observation = self._pending_observation
-        observation_number = self._pending_observation_number
-        boundary_result: Nca8EnvironmentStepV1 | None = None
+    @property
+    def has_pending_observation(self) -> bool:
+        """Return actual packet availability, not whether an expected number exists."""
+        return self._pending_observation is not None
 
-        def phase_e_boundary(dispatch: Nca8PhaseEDispatchV1) -> None:
-            nonlocal boundary_result
-            step_result = self._environment_bridge.apply_task_action(dispatch.authorized_task_action)
-            boundary_result = step_result
-            output = dispatch.commitment.task_action or NCA8_NO_ACTION
+    @property
+    def reset_required(self) -> bool:
+        """Return the fail-closed latch, including a fault in the owned core."""
+        return self._reset_required or self._cognitive_runtime.reset_required
+
+    @property
+    def execution_status(self) -> str:
+        """Return not_attempted, unknown or returned for the latest runner attempt."""
+        return self._execution_status
+
+    def stop_for_protection(self, *, reason: str) -> None:
+        """Revoke further execution under a protected stop; do not select another task.
+
+        The current serialized simulator has no continuing motor controller to
+        interrupt. Before its step this withholds execution; after possible
+        execution it revokes future permission without claiming physical rollback
+        or a confirmed actuator stop. This explicit seam needs no second WNM.
+        """
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 160:
+            raise ValueError("protected-stop reason must be a nonempty string of at most 160 characters")
+        self._reset_required = True
+        self._pending_observation = None
+        self._cognitive_runtime.stop_execution(
+            reason=reason, definitely_not_executed=self._execution_status == "not_attempted",
+            action_number=self._attempted_action_number,
+        )
+        self._report_stop("protection", "protected stop revoked further execution permission", reason)
+
+    def _report_stop(self, channel: str, message: str, reason: str) -> None:
+        """Report a latched safe stop without allowing a failed logger to undo it."""
+        #pylint: disable=useless-return
+        runtime = self._cognitive_runtime
+        receipt = runtime.handoff.receipt
+        commitment = runtime.last_commitment
+        try:
             self._trace.append(
-                "dispatch",
-                f"Action_{dispatch.commitment.cycle_id}:{output} crossed the physical environment boundary",
-                cycle_id=dispatch.commitment.cycle_id,
-                phase=CyclePhase.PROJECT_DISPATCH.name,
+                channel, message, cycle_id=self._attempted_action_number or None,
                 details={
-                    "action_number": dispatch.commitment.cycle_id,
-                    "body_authorized": (
-                        dispatch.body_handoff.authorized if dispatch.body_handoff is not None else False
-                    ),
-                    "done": step_result.done,
-                    "environment_action": step_result.environment_action,
-                    "environment_step": step_result.step_index,
-                    "pnm_id": dispatch.commitment.pnm_id,
-                    "reward": step_result.reward,
+                    "boundary_protocol": "p16_1r_b_v1", "generation": runtime.handoff.generation,
+                    "receipt_id": receipt.receipt_id if receipt is not None else None,
+                    "handoff_disposition": receipt.disposition if receipt is not None else None,
+                    "stage": self._boundary_stage, "execution_status": self._execution_status,
+                    "last_commitment_action_number": commitment.cycle_id if commitment is not None else None,
+                    "reason": reason, "reset_required": True, "pending_input_available": False,
+                    "physical_stop_confirmed": False,
                 },
             )
+        except Exception:
+            # The safe-stop latches and permission revocation precede logging.
+            # Preserve the original failure rather than replacing it with a logger error.
+            return
 
-        runtime_result = self._cognitive_runtime.run_cycle(
-            current_observation,
-            observation_number=observation_number,
-            phase_e_hook=phase_e_boundary,
-        )
-        if boundary_result is None:
-            raise RuntimeError("Phase E completed without advancing the private environment boundary")
+    def run_cycle(self) -> Nca8CognitiveCycleResultV1:
+        """Close one core pass, consume its accepted output once and buffer later input.
 
-        next_observation_number = runtime_result.cycle_id + 1
-        self._pending_observation = boundary_result.observation
-        self._pending_observation_number = next_observation_number
-        next_details = _observation_trace_details_v1(
-            boundary_result.observation,
-            observation_number=next_observation_number,
-        )
-        next_details["next_cycle_id"] = next_observation_number
-        self._trace.append(
-            "firewall",
-            f"Observation_{next_observation_number} buffered for CognitiveCycle_{next_observation_number} without same-cycle processing",
-            cycle_id=runtime_result.cycle_id,
-            details=next_details,
-        )
-        self._trace.append(
-            "cycle",
-            f"CognitiveCycle_{runtime_result.cycle_id} closed",
-            cycle_id=runtime_result.cycle_id,
-            details={
-                "input": f"Observation_{runtime_result.observation_number}",
-                "next_input": f"Observation_{next_observation_number}",
-                "output": f"Action_{runtime_result.action_number}:{runtime_result.output}",
-            },
-        )
+        No world call occurs before successful internal closure. Any failure
+        clears pending input, revokes remaining body permission, records execution
+        uncertainty where applicable, and requires explicit reset. The public
+        successful result retains its previous semantic dictionary for comparison.
+        """
+        if self.reset_required or self._running:
+            raise RuntimeError("episode runner requires reset or is already running")
+        current_observation = self.pending_observation
+        observation_number = self._pending_observation_number
+        self._pending_observation = None
+        self._running = True
+        self._execution_status = "not_attempted"
+        self._boundary_stage = "internal_cycle"
+        self._attempted_action_number = observation_number
+        try:
+            runtime_result = self._cognitive_runtime.run_cycle(current_observation, observation_number=observation_number)
+            self._pending_observation_number = runtime_result.cycle_id + 1
+            boundary_result = self._advance_after_close(runtime_result)
+        except BaseException as exc:
+            self._reset_required = True
+            self._pending_observation = None
+            self._cognitive_runtime.stop_execution(
+                reason="runner_boundary_failed", definitely_not_executed=self._execution_status == "not_attempted",
+                action_number=observation_number,
+            )
+            self._report_stop("boundary_failure", "runner stopped after boundary failure", type(exc).__name__[:160])
+            raise
+        finally:
+            self._running = False
+        next_observation_number = self._pending_observation_number
         return Nca8CognitiveCycleResultV1(
             cycle_id=runtime_result.cycle_id,
             observation_number=runtime_result.observation_number,
@@ -1084,8 +1220,62 @@ class Nca8EpisodeRunnerV1:
         )
 
 
+    def _advance_after_close(self, runtime_result: Nca8CognitiveRuntimeCycleV1) -> Nca8EnvironmentStepV1:
+        """Consume one ready receipt, record external return, then admit and buffer input."""
+        if self.reset_required:
+            raise RuntimeError("protected stop or earlier failure prevents world execution")
+        self._boundary_stage = "consume_handoff"
+        receipt = runtime_result.handoff_receipt
+        task_action = self._cognitive_runtime.handoff.consume(receipt)
+        if self.reset_required:
+            raise RuntimeError("protected stop after consumption prevents world execution")
+        self._boundary_stage = "external_world"
+        self._execution_status = "unknown"
+        advance = self._environment_bridge.advance_task_action(task_action)
+        self._execution_status = "returned"
+        self._trace.append(
+            "dispatch", f"Action_{runtime_result.action_number}:{runtime_result.output} completed the external world step",
+            cycle_id=runtime_result.cycle_id,
+            details={
+                "boundary_protocol": "p16_1r_b_v1", "generation": receipt.generation,
+                "receipt_id": receipt.receipt_id, "action_number": runtime_result.action_number,
+                "body_authorized": runtime_result.body_handoff.authorized if runtime_result.body_handoff is not None else False,
+                "pnm_id": runtime_result.commitment.pnm_id,
+                "done": advance.done, "environment_action": advance.environment_action,
+                "environment_step": advance.step_index, "reward": advance.reward, "execution_status": "returned",
+            },
+        )
+        if self.reset_required:
+            raise RuntimeError("protected stop after possible execution requires reset")
+        self._boundary_stage = "input_admission"
+        boundary_result = self._environment_bridge.admit_observation(advance)
+        if not isinstance(boundary_result.observation, Nca8ObservationV1):
+            raise TypeError("input admission did not return an Nca8ObservationV1")
+        next_number = runtime_result.cycle_id + 1
+        details = _observation_trace_details_v1(boundary_result.observation, observation_number=next_number)
+        details.update({
+            "boundary_protocol": "p16_1r_b_v1", "generation": receipt.generation,
+            "receipt_id": receipt.receipt_id, "next_cycle_id": next_number,
+        })
+        self._trace.append(
+            "input", f"Observation_{next_number} admitted and detached at the input boundary",
+            cycle_id=runtime_result.cycle_id, details=details,
+        )
+        if self.reset_required:
+            raise RuntimeError("protected stop during input admission requires reset")
+        self._boundary_stage = "input_buffering"
+        self._pending_observation = boundary_result.observation
+        self._trace.append(
+            "firewall",
+            f"Observation_{next_number} buffered for CognitiveCycle_{next_number} without same-cycle processing",
+            cycle_id=runtime_result.cycle_id, details=details,
+        )
+        self._boundary_stage = "ready"
+        return boundary_result
+
+
 class Nca8SessionV1:
-    """Own every mutable object for one isolated Architecture-v09.3 experiment."""
+    """Own every mutable object for one isolated A0/P16-1R-B experiment."""
 
     def __init__(self, config: Nca8SessionConfigV1 | None = None) -> None:
         self._config = config or Nca8SessionConfigV1()
@@ -1162,6 +1352,8 @@ class Nca8SessionV1:
         new_navigation = NavigationRuntimeV1(enabled=self._config.navigation_enabled)
         new_prediction = Nca8PredictionRuntimeV1()
         new_primitives = create_gate_a_primitives_v1()
+        next_generation = self._lifecycle_generation + 1
+        new_handoff = Nca8InternalHandoffV1(generation=next_generation)
         new_runtime = Nca8CognitiveRuntimeV1(
             trace=new_trace,
             scheduler=new_scheduler,
@@ -1172,6 +1364,7 @@ class Nca8SessionV1:
             navigation=new_navigation,
             prediction=new_prediction,
             primitives=new_primitives,
+            handoff=new_handoff,
         )
         new_episode_runner = Nca8EpisodeRunnerV1(
             environment_bridge=new_bridge,
@@ -1180,11 +1373,11 @@ class Nca8SessionV1:
             initial_observation=reset_result.observation,
             initial_observation_number=1,
         )
-        next_generation = self._lifecycle_generation + 1
         new_trace.append(
             "session",
             "isolated Phase-1D Gate-A session reset",
             details={
+                "boundary_protocol": "p16_1r_b_v1",
                 "attention_enabled": self._config.attention_enabled,
                 "body_action_handoff_enabled": self._config.body_action_handoff_enabled,
                 "durable_posture_support_map": (
@@ -1229,6 +1422,7 @@ class Nca8SessionV1:
         outcomes = self._prediction.outcome_history()
         last_commitment = self._cognitive_runtime.last_commitment
         envelope = self._body_runtime.current_envelope
+        receipt = self._cognitive_runtime.handoff.receipt
         return Nca8SessionStatusV1(
             lifecycle_generation=self._lifecycle_generation,
             seed=self._config.seed,
@@ -1255,12 +1449,26 @@ class Nca8SessionV1:
             current_envelope_status=envelope.status.value if envelope is not None else None,
             trace_retained=self._trace.retained_count,
             trace_capacity=self._trace.capacity,
+            pending_input_available=self._episode_runner.has_pending_observation,
+            reset_required=self._episode_runner.reset_required,
+            execution_status=self._episode_runner.execution_status,
+            handoff_receipt_id=receipt.receipt_id if receipt is not None else None,
+            handoff_disposition=receipt.disposition if receipt is not None else None,
         )
 
     def run_cognitive_cycle(self) -> Nca8CognitiveCycleResultV1:
         """Execute one full Gate-A-capable cognitive cycle and buffer later evidence."""
         return self._episode_runner.run_cycle()
 
+
+    def stop_for_protection(self, *, reason: str) -> None:
+        """Revoke further permission without selecting a task or claiming physical rollback.
+
+        This narrow diagnostic/lower-safety seam latches the serialized session
+        stopped until reset. Automatic hazard detection and continuous motor
+        interruption belong to later slices and are not simulated here.
+        """
+        self._episode_runner.stop_for_protection(reason=reason)
 
     def run_null_smoke_cycle(self) -> Nca8CognitiveCycleResultV1:
         """Compatibility alias for the old Phase-1A method."""

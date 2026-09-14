@@ -110,11 +110,11 @@ def test_cognitive_cycle_preserves_observation_action_ordering() -> None:
     assert result.output == "STAND_UP"
 
     opened_index = next(index for index, line in enumerate(lines) if "CognitiveCycle_1 opened with Observation_1" in line)
-    action_index = next(index for index, line in enumerate(lines) if "Action_1:STAND_UP crossed" in line)
+    action_index = next(index for index, line in enumerate(lines) if "Action_1:STAND_UP completed the external world step" in line)
     buffered_index = next(index for index, line in enumerate(lines) if "Observation_2 buffered for CognitiveCycle_2" in line)
     closed_index = next(index for index, line in enumerate(lines) if "CognitiveCycle_1 closed" in line)
 
-    assert opened_index < action_index < buffered_index < closed_index
+    assert opened_index < closed_index < action_index < buffered_index
 
 
 def test_event_numbers_remain_synchronized_across_multiple_cognitive_cycles() -> None:

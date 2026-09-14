@@ -24,6 +24,7 @@ _ALLOWED_CCA8_IMPORTS: dict[str, frozenset[str]] = {
     "nca8_body.py": frozenset(),
     "nca8_contracts.py": frozenset(),
     "nca8_executive.py": frozenset(),
+    "nca8_handoff.py": frozenset(),
     "nca8_maps.py": frozenset({"cca8_navmap_kernel"}),
     "nca8_menu.py": frozenset({"cca8_cli"}),
     "nca8_prediction.py": frozenset(),
@@ -73,12 +74,13 @@ def _import_roots_v1(tree: ast.AST) -> set[str]:
 
 
 def test_flat_nca8_module_set_is_explicit_and_complete() -> None:
-    """Phase 1C should add only the three working representation modules approved."""
+    """The explicit manifest includes the called P16-1R-B handoff service, not future modules."""
     assert tuple(path.name for path in NCA8_FILES) == (
         "nca8_adapters.py",
         "nca8_body.py",
         "nca8_contracts.py",
         "nca8_executive.py",
+        "nca8_handoff.py",
         "nca8_maps.py",
         "nca8_menu.py",
         "nca8_prediction.py",

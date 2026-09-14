@@ -39,12 +39,13 @@ from cca8_navpatch import CELL_BLOCKED, CELL_GOAL, CELL_HAZARD, CELL_TRAVERSABLE
 from nca8_maps import SupportObservationV1
 from nca8_primitives import TaskActionKindV1, TaskActionV1
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "NCA8_SCAFFOLD_LEDGER_V1",
     "Nca8EnvironmentBridgeV1",
     "Nca8EnvironmentResetV1",
     "Nca8EnvironmentStepV1",
+    "Nca8EnvironmentAdvanceV1",
     "Nca8ObservationV1",
     "Nca8ScaffoldLedgerEntryV1",
     "adapt_env_observation_v1",
@@ -634,6 +635,22 @@ class Nca8EnvironmentStepV1:
     environment_action: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class Nca8EnvironmentAdvanceV1:
+    """World-side receipt before input admission; never a cognitive observation.
+
+    Reward and done belong only to the outer evaluator/runner. The raw packet
+    stays privately in the bridge until admission. Identity of this receipt,
+    rather than its printable fields, controls the one permitted admission.
+    """
+
+    reward: float
+    done: bool
+    episode_index: int
+    step_index: int
+    environment_action: str | None
+
+
 class Nca8EnvironmentBridgeV1:  # pylint: disable=too-few-public-methods
     """Own one private ``HybridEnvironment`` behind a narrow physical boundary.
 
@@ -648,6 +665,10 @@ class Nca8EnvironmentBridgeV1:  # pylint: disable=too-few-public-methods
             raise ValueError("scenario_name must be a non-empty bounded string")
         self._scenario_name = normalized_scenario
         self._environment = HybridEnvironment(config=EnvConfig(scenario_name=normalized_scenario))
+        self._pending_advance: Nca8EnvironmentAdvanceV1 | None = None
+        self._pending_raw_observation: object = None
+        self._boundary_faulted = False
+        self._advancing = False
 
     @property
     def episode_index(self) -> int:
@@ -655,44 +676,119 @@ class Nca8EnvironmentBridgeV1:  # pylint: disable=too-few-public-methods
         return int(self._environment.episode_index)
 
     def reset(self, *, seed: int | None = None) -> Nca8EnvironmentResetV1:
-        """Reset the private episode and return only its whitelisted observation."""
-        observation, info = self._environment.reset(seed=seed)
-        raw_episode = info.get("episode_index") if isinstance(info, Mapping) else None
-        episode_index = raw_episode if isinstance(raw_episode, int) and not isinstance(raw_episode, bool) else self.episode_index
-        raw_scenario = info.get("scenario_name") if isinstance(info, Mapping) else None
-        scenario_name = _safe_text(raw_scenario, maximum=120) or self._scenario_name
-        return Nca8EnvironmentResetV1(
-            observation=adapt_env_observation_v1(observation),
-            episode_index=episode_index,
-            scenario_name=scenario_name,
-        )
+        """Explicitly reset the world and admit its initial packet, or remain stopped.
+
+        Reset invalidates a pending world receipt before touching the backend.
+        A failed reset cannot make an old packet admissible. Reentrant reset
+        during world execution/admission is rejected, rather than changing the
+        world underneath an outstanding operation.
+        """
+        if self._advancing:
+            raise RuntimeError("cannot reset during world execution or input admission")
+        self._pending_advance = None
+        self._pending_raw_observation = None
+        self._boundary_faulted = True
+        self._advancing = True
+        try:
+            observation, info = self._environment.reset(seed=seed)
+            if not isinstance(observation, EnvObservation):
+                raise TypeError("world reset returned a missing or malformed EnvObservation")
+            raw_episode = info.get("episode_index") if isinstance(info, Mapping) else None
+            episode_index = raw_episode if isinstance(raw_episode, int) and not isinstance(raw_episode, bool) else self.episode_index
+            raw_scenario = info.get("scenario_name") if isinstance(info, Mapping) else None
+            scenario_name = _safe_text(raw_scenario, maximum=120) or self._scenario_name
+            admitted = adapt_env_observation_v1(observation)
+            result = Nca8EnvironmentResetV1(
+                observation=admitted, episode_index=episode_index, scenario_name=scenario_name,
+            )
+            self._boundary_faulted = False
+            return result
+        finally:
+            self._advancing = False
+
+    def advance_task_action(self, task_action: TaskActionV1 | None) -> Nca8EnvironmentAdvanceV1:
+        """Advance the private world once without admitting its resulting observation.
+
+        The outer serialized driver calls this only after internal cycle closure
+        and one-time handoff consumption. None means a null time step, not a
+        fabricated movement. The raw returned packet remains private here.
+
+        An exception may follow a physical side effect. Latch the bridge stopped
+        until reset and never retry automatically. A returned receipt confirms
+        that the call returned, not that the task succeeded. A second advance
+        before the first packet's admission is rejected without another step.
+        """
+        if self._boundary_faulted or self._advancing:
+            raise RuntimeError("environment boundary requires reset or is already advancing")
+        if self._pending_advance is not None:
+            raise RuntimeError("the previous world result still requires input admission")
+        environment_action = environment_token_for_task_action_v1(task_action)
+        self._advancing = True
+        try:
+            observation, reward, done, info = self._environment.apply_action(environment_action, ctx=None)
+            raw_episode = info.get("episode_index") if isinstance(info, Mapping) else None
+            raw_step = info.get("step_index") if isinstance(info, Mapping) else None
+            episode_index = (
+                raw_episode
+                if isinstance(raw_episode, int) and not isinstance(raw_episode, bool)
+                else self.episode_index
+            )
+            step_index = raw_step if isinstance(raw_step, int) and not isinstance(raw_step, bool) else -1
+            advance = Nca8EnvironmentAdvanceV1(
+                reward=float(reward), done=bool(done), episode_index=episode_index,
+                step_index=step_index, environment_action=environment_action,
+            )
+            self._pending_raw_observation = observation
+            self._pending_advance = advance
+            return advance
+        except BaseException:
+            self._boundary_faulted = True
+            raise
+        finally:
+            self._advancing = False
+
+    def admit_observation(self, advance: Nca8EnvironmentAdvanceV1) -> Nca8EnvironmentStepV1:
+        """Admit/detach the exact pending world packet once through the existing whitelist.
+
+        This input-boundary operation never advances time. A lost or malformed
+        outer packet stops the bridge; it is not replaced with the previous
+        observation. Invalid optional support content retains the existing
+        packet-level rejection reason and does not acquire behavioral authority.
+        Foreign, copied or already consumed receipts are rejected before reading
+        a packet. Raw EnvObservation never leaves this bridge.
+        """
+        if self._boundary_faulted or self._advancing:
+            raise RuntimeError("environment boundary requires reset or is already busy")
+        if advance is not self._pending_advance or not isinstance(advance, Nca8EnvironmentAdvanceV1):
+            raise RuntimeError("foreign, stale or copied world receipt")
+        raw = self._pending_raw_observation
+        self._pending_raw_observation = None
+        self._pending_advance = None
+        self._advancing = True
+        try:
+            if not isinstance(raw, EnvObservation):
+                raise TypeError("world step returned a missing or malformed EnvObservation")
+            observation = adapt_env_observation_v1(raw)
+            return Nca8EnvironmentStepV1(
+                observation=observation, reward=advance.reward, done=advance.done,
+                episode_index=advance.episode_index, step_index=advance.step_index,
+                environment_action=advance.environment_action,
+            )
+        except BaseException:
+            self._boundary_faulted = True
+            raise
+        finally:
+            self._advancing = False
 
     def apply_task_action(self, task_action: TaskActionV1 | None) -> Nca8EnvironmentStepV1:
-        """Translate and apply one authorized task action exactly once.
+        """Compatibility outer service: world advancement followed by separate admission.
 
-        ``None`` or ``TaskActionKindV1.NO_ACTION`` advances the environment with
-        an explicit null task token.  Non-null task actions must already have
-        crossed Attention, Navigation, PNM, and BodyMap authorization; this
-        bridge performs no cognitive selection or safety substitution.
+        NCA8's core never calls this method. The P16-1R-B runner uses the two
+        explicit operations to trace their actual domain boundaries. This helper
+        retains the old return type for isolated adapter clients, with the same
+        no-retry/fault behavior. It performs no task selection or safety rescue.
         """
-        environment_action = environment_token_for_task_action_v1(task_action)
-        observation, reward, done, info = self._environment.apply_action(environment_action, ctx=None)
-        raw_episode = info.get("episode_index") if isinstance(info, Mapping) else None
-        raw_step = info.get("step_index") if isinstance(info, Mapping) else None
-        episode_index = (
-            raw_episode
-            if isinstance(raw_episode, int) and not isinstance(raw_episode, bool)
-            else self.episode_index
-        )
-        step_index = raw_step if isinstance(raw_step, int) and not isinstance(raw_step, bool) else -1
-        return Nca8EnvironmentStepV1(
-            observation=adapt_env_observation_v1(observation),
-            reward=float(reward),
-            done=bool(done),
-            episode_index=episode_index,
-            step_index=step_index,
-            environment_action=environment_action,
-        )
+        return self.admit_observation(self.advance_task_action(task_action))
 
     def apply_no_action(self) -> Nca8EnvironmentStepV1:
         """Compatibility helper that advances the world with no task action."""

@@ -347,7 +347,9 @@ def test_read_only_trace_demonstrates_same_pose_different_measurements() -> None
         run_results = []
         for cycle, (loading, instability) in enumerate(values, start=1):
             observation = _observation(_packet(cycle, cycle, useful_loading=loading, destabilization=instability))
-            run_results.append(runtime.run_cycle(observation, observation_number=cycle).as_dict())
+            result = runtime.run_cycle(observation, observation_number=cycle)
+            run_results.append(result.as_dict())
+            runtime.handoff.consume(result.handoff_receipt)  # Synthetic input test, not physical execution.
         events = tuple(event for event in trace.snapshot() if event.channel == "support_observation")
         assert len(events) == 2
         assert all(event.phase == CyclePhase.UPDATE_OUTCOMES.name for event in events)
@@ -367,9 +369,11 @@ def test_rendering_and_trace_eviction_cannot_affect_cognition_or_measured_suppor
     second, large = _runtime(capacity=256)
     for cycle in range(1, 5):
         observation = _observation(_packet(cycle, cycle))
-        assert first.run_cycle(observation, observation_number=cycle).as_dict() == second.run_cycle(
-            observation, observation_number=cycle,
-        ).as_dict()
+        first_result = first.run_cycle(observation, observation_number=cycle)
+        second_result = second.run_cycle(observation, observation_number=cycle)
+        assert first_result.as_dict() == second_result.as_dict()
+        first.handoff.consume(first_result.handoff_receipt)
+        second.handoff.consume(second_result.handoff_receipt)
         before = large.as_canonical_json_bytes()
         assert render_explanatory_trace_lines_v1(large.snapshot()) == render_explanatory_trace_lines_v1(large.snapshot())
         assert large.as_canonical_json_bytes() == before
@@ -404,8 +408,10 @@ def test_measured_path_is_byte_deterministic_and_independent_of_packet_key_order
     for cycle in range(1, 4):
         packet = _packet(cycle, cycle, useful_loading=cycle / 4)
         reversed_packet = dict(reversed(tuple(packet.items())))
-        first.run_cycle(_observation(packet), observation_number=cycle)
-        second.run_cycle(_observation(reversed_packet), observation_number=cycle)
+        first_result = first.run_cycle(_observation(packet), observation_number=cycle)
+        second_result = second.run_cycle(_observation(reversed_packet), observation_number=cycle)
+        first.handoff.consume(first_result.handoff_receipt)
+        second.handoff.consume(second_result.handoff_receipt)
         assert first_trace.as_canonical_json_bytes() == second_trace.as_canonical_json_bytes()
         assert first.body_sensory.support_configuration == second.body_sensory.support_configuration
 

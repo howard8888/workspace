@@ -14,13 +14,14 @@ import cca8_cli
 from nca8_runtime import Nca8SessionV1
 from nca8_trace import render_flow_trace_lines_v1
 
-__version__ = "0.7.3"
+__version__ = "0.7.4"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
 _INTRODUCTION_V1 = """Current checkpoint: A0 / retained Gate A.
 Architecture v09.9 is the target; it is not yet fully implemented.
-Planning v16 P16-1R-A improves the explanation only; A0 behavior is unchanged.
+Planning v16 P16-1R-B separates internal handoff and cycle closure from the
+external world step and returning-input admission. Gate-A decisions are unchanged.
 
 This demonstration runs a short sequence of NCA8 cognitive cycles for the
 newborn goat's StandUp task. A fixed maximum number of cycles prevents the
@@ -83,8 +84,9 @@ Seed
 
 Cognitive cycles completed / pending observation
   A cycle processes available input, updates representations, chooses an action
-  or NO_ACTION, and saves the next observation. The pending observation is that
-  next sensory input waiting to be processed, not evidence already used.
+  or NO_ACTION, accepts its handoff, and closes. The outer driver then advances
+  the world and admits the next observation. Pending input is not evidence
+  already used; a failed boundary can leave no pending observation.
 
 Attention / last Attention decision
   Attention chooses the NM configuration to focus on, not the primitive action.
@@ -158,8 +160,10 @@ One cognitive cycle:
   4. lets Navigation select a task-level primitive when appropriate;
   5. creates a PNM when an action is expected;
   6. lets BodyMap map and check the proposed body action;
-  7. sends the permitted action, or NO_ACTION, to the simulated environment; and
-  8. saves the resulting sensory observation for the next cognitive cycle.
+  7. commits and accepts the permitted action, or NO_ACTION, internally;
+  8. completes Phase F, scheduler housekeeping and internal cycle closure;
+  9. advances the external simulated world once through the outer driver; and
+ 10. admits and buffers the resulting observation for the next cognitive cycle.
 
 Only one cognitive cycle is run. The session is then left in its new state so
 you can inspect it or run another cycle manually.
@@ -193,11 +197,13 @@ The numbered flowchart shows retained execution, not a proposed architecture.
 DOMAIN labels distinguish cognition, runtime infrastructure, the lower-action
 boundary, the external body/world and the input boundary. A cycle/phase heading
 only groups recorded labels; it does not make the simulator part of cognition.
-The current dispatch report includes world execution and input adaptation;
-the later buffering record stores the already-adapted observation, without
-filtering again. This display does not move the actual environment call.
+The internal cycle now ends after handoff, Phase F and scheduler housekeeping.
+Separate outer records show the world step, input admission and buffering.
+The world call really occurs after internal closure; this is not a display-only
+reordering. Input admission filters once; later buffering does not filter again.
 
-A separate unnumbered target-order schematic is marked PLANNED, NOT EXECUTED.
+An unnumbered reference schematic is not an additional set of trace events.
+Older saved traces keep their historical combined-boundary explanation.
 Missing records and unknown events stay visible; no missing steps are invented.
 
 A fixed entry limit prevents the trace from growing indefinitely. Oldest entries
@@ -253,7 +259,13 @@ def _print_status_v1(session: Nca8SessionV1 | None, *, include_key: bool = True)
         print(f"Environment run: {status.environment_episode_index}")
         print(f"Reproducibility seed: {status.seed}")
         print(f"Cognitive cycles completed: {status.cognitive_cycles}")
-        print(f"Next sensory input waiting to be processed: Observation_{status.pending_observation_number}")
+        if status.pending_input_available:
+            print(f"Next sensory input waiting to be processed: Observation_{status.pending_observation_number}")
+        else:
+            print(f"No next sensory input is available (expected Observation_{status.pending_observation_number}).")
+        print(f"Internal handoff: {status.handoff_disposition or '(none yet)'}; receipt: {status.handoff_receipt_id or '(none)'}")
+        print(f"Latest external execution: {status.execution_status} (not a task-success verdict)")
+        print(f"Reset required before further cycles: {'yes' if status.reset_required else 'no'}")
         print()
         print(f"Attention: {'enabled' if config.attention_enabled else 'disabled'}")
         print(f"Navigation: {'enabled' if config.navigation_enabled else 'disabled'}")
@@ -401,3 +413,5 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
             print("Please choose 1, 2, 3, 4, or 5; or press Enter to return.")
         except Exception as exc:  # pragma: no cover - defensive interactive boundary
             print(f"[nca8:error] {type(exc).__name__}: {exc}")
+            if session is not None and session.status().reset_required:
+                print("[nca8:stopped] No automatic retry or stale input. Inspect option 4; use option 2 to reset explicitly.")

@@ -181,7 +181,8 @@ def test_missing_and_conflicting_posture_evidence_never_becomes_fabricated_stand
     assert "posture:ambiguous" not in text
     assert "posture = standing" not in text
     assert "Cross the environment boundary and advance the world" not in text
-    assert "closing record not retained" in text
+    assert "Close CognitiveCycle_1 before external execution" in text
+    assert not any(event.channel == "dispatch" for event in trace.snapshot())
 
 
 def test_optional_support_companion_is_visible_without_behavioral_authority() -> None:
@@ -386,7 +387,7 @@ def test_menu_four_repeated_rendering_is_read_only_and_matches_public_flow_rende
     assert nca8_menu.run_nca8_experimental_menu_v1(session) is session
     output = capsys.readouterr().out
     assert output.count(expected) == 2
-    assert "Trace entries retained: 146 / 256" in output
+    assert "Trace entries retained: 158 / 256" in output
     assert "(text + flowchart)" in output
     assert "COGNITIVE CYCLE 7\n" not in output
     assert session.status() == before
@@ -418,9 +419,10 @@ def test_arrival_is_not_eligibility_when_an_extra_result_is_for_a_later_cycle() 
 
 def test_gap_at_a_cycle_boundary_is_reported(gate_events) -> None:
     """A missing opening event between otherwise retained cycles must not disappear in grouping."""
-    events = tuple(event for event in gate_events if event.sequence != 26)
+    opening = next(event.sequence for event in gate_events if event.message == "CognitiveCycle_2 opened with Observation_2")
+    events = tuple(event for event in gate_events if event.sequence != opening)
     text = _flat(_text(events))
-    assert "GAP: records #26-#26 are absent between these groups" in text
+    assert f"GAP: records #{opening}-#{opening} are absent between these groups" in text
     assert "PARTIAL VIEW: opening record not retained" in text
     assert "Open CognitiveCycle_2" not in text
 

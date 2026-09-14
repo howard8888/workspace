@@ -51,7 +51,7 @@ from typing import TypeAlias
 
 # pylint: disable=unnecessary-comprehension
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     "Nca8TraceBufferV1",
     "Nca8TraceEventV1",
@@ -201,6 +201,12 @@ def _explain_firewall_v1(event: Nca8TraceEventV1) -> str | None:
     if observation_number is None or next_cycle_id is None:
         return None
     prior_action = f"Action_{event.cycle_id}" if event.cycle_id is not None else "the preceding action"
+    if details.get("boundary_protocol") == "p16_1r_b_v1":
+        return (
+            f"The already-adapted Observation_{observation_number} was buffered for CognitiveCycle_{next_cycle_id}. "
+            "The separately recorded input-admission operation applied the whitelist after internal closure and the "
+            f"external world step. Buffering does not filter again and cannot influence {prior_action}."
+        )
     return (
         f"The already-adapted Observation_{observation_number} was buffered for CognitiveCycle_{next_cycle_id}. "
         "In the A0 source path, the synchronous bridge applied the whitelist before the dispatch record; "
@@ -220,6 +226,12 @@ def _explain_cycle_v1(event: Nca8TraceEventV1) -> str | None:
         return None
     details = _details_v1(event)
     output = _detail_str_v1(details, "output")
+    if details.get("boundary_protocol") == "p16_1r_b_v1":
+        return (
+            f"{event.message} after committing {output or 'the recorded output'} and completing F/housekeeping. "
+            "The internal request is ready for outer consumption; the world has not yet advanced for this action "
+            "and no next observation has been admitted. Closure is not physical success."
+        )
     next_input = _detail_str_v1(details, "next_input")
     if output is None or next_input is None:
         return f"{event.message}."
@@ -487,7 +499,11 @@ def _explain_pnm_v1(event: Nca8TraceEventV1) -> str | None:
 
 def _explain_dispatch_v1(event: Nca8TraceEventV1) -> str | None:
     """Explain the physical boundary and distinguish NO_ACTION from rejection."""
-    if not event.message.startswith("Action_") or "physical environment boundary" not in event.message:
+    separated = dict(event.details).get("boundary_protocol") == "p16_1r_b_v1"
+    if not event.message.startswith("Action_") or not (
+        "physical environment boundary" in event.message
+        or (separated and event.message.endswith("completed the external world step"))
+    ):
         return None
     details = _details_v1(event)
     environment_action = _detail_str_v1(details, "environment_action")
@@ -496,8 +512,14 @@ def _explain_dispatch_v1(event: Nca8TraceEventV1) -> str | None:
         "observation before this dispatch record is emitted. The later buffering record does not filter again. "
         "No separate internal handoff receipt or world-step timestamp is recorded here."
     )
+    if separated:
+        boundary_note = (
+            " The outer runner consumed the internal receipt once after F and internal closure. "
+            "The world call has returned, but its observation has not yet been admitted. "
+            "Input admission and buffering are separate later operations. This receipt is not proof of task success."
+        )
     if ":NO_ACTION" in event.message:
-        action_label = event.message.split(" crossed", maxsplit=1)[0]
+        action_label = event.message.split(" crossed", maxsplit=1)[0].split(" completed", maxsplit=1)[0]
         body_authorized = details.get("body_authorized") is True
         pnm_id = _detail_str_v1(details, "pnm_id")
         if pnm_id is not None and not body_authorized:
@@ -517,11 +539,39 @@ def _explain_dispatch_v1(event: Nca8TraceEventV1) -> str | None:
             "still belong to the next cognitive cycle."
         ) + boundary_note
     environment_text = f" as environment token '{environment_action}'" if environment_action is not None else ""
-    action_label = event.message.split(" crossed", maxsplit=1)[0]
+    action_label = event.message.split(" crossed", maxsplit=1)[0].split(" completed", maxsplit=1)[0]
     return (
         f"{action_label} crossed the physical environment boundary only after BodyMap authorized its action envelope. "
         f"The adapter emitted it{environment_text}; any resulting observation belongs to the next cognitive cycle."
     ) + boundary_note
+
+
+def _explain_boundary_v1(event: Nca8TraceEventV1) -> str | None:
+    """Explain the new protocol's actual handoff, admission and stop records."""
+    details = _details_v1(event)
+    if details.get("boundary_protocol") != "p16_1r_b_v1":
+        return None
+    if event.channel == "handoff" and event.message == "committed output accepted by internal lower-action boundary":
+        return (
+            "The lower-action boundary accepted the immutable committed output, without executing it. "
+            "F, scheduler housekeeping and internal closure must finish before the outer runner consumes it once."
+        )
+    if event.channel == "input" and event.message.endswith("admitted and detached at the input boundary"):
+        return (
+            f"{event.message}. The existing positive whitelist made an NCA8-owned packet after external execution. "
+            "This is input admission, not sensory interpretation or another world step. Buffering follows separately."
+        )
+    if (event.channel, event.message) in {
+        ("boundary_failure", "runner stopped after boundary failure"),
+        ("protection", "protected stop revoked further execution permission"),
+    }:
+        return (
+            f"{event.message}. Execution status: {details.get('execution_status', 'not recorded')}; "
+            f"stage: {details.get('stage', 'not recorded')}. No stale input or automatic retry is supplied. "
+            "The original commitment remains historical; revoked permission does not roll back physical effects. "
+            "Explicit reset is required."
+        )
+    return None
 
 
 def _explain_learning_v1(event: Nca8TraceEventV1) -> str | None:
@@ -540,6 +590,10 @@ _EXPLANATION_BUILDERS: Mapping[str, ExplanationBuilderV1] = {
     "bodymap": _explain_bodymap_v1,
     "cycle": _explain_cycle_v1,
     "dispatch": _explain_dispatch_v1,
+    "handoff": _explain_boundary_v1,
+    "input": _explain_boundary_v1,
+    "boundary_failure": _explain_boundary_v1,
+    "protection": _explain_boundary_v1,
     "firewall": _explain_firewall_v1,
     "learning": _explain_learning_v1,
     "maps": _explain_maps_v1,
@@ -644,6 +698,10 @@ _FLOW_MODULES_V1 = {
     "pnm": "nca8_prediction.py",
     "outcome": "nca8_prediction.py",
     "dispatch": "nca8_runtime.py / nca8_adapters.py",
+    "handoff": "nca8_handoff.py / nca8_runtime.py",
+    "input": "nca8_adapters.py / nca8_runtime.py",
+    "boundary_failure": "nca8_runtime.py / nca8_handoff.py",
+    "protection": "nca8_runtime.py / nca8_body.py",
     "learning": "nca8_runtime.py",
     "support_observation": "nca8_sensory.py",
 }
@@ -780,6 +838,10 @@ def _flow_input_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> Fl
                     "SOURCE CONTRACT: Nca8EnvironmentBridgeV1.reset calls adapt_env_observation_v1 before "
                     "the initial buffering record. This record reports the already-adapted reset packet."
                     if first else
+                    "SOURCE CONTRACT: the outer runner called Nca8EnvironmentBridgeV1.admit_observation after "
+                    "the separate world-step report. That input operation called adapt_env_observation_v1 once. "
+                    "This record stores the already-adapted packet after internal cognitive-cycle closure."
+                    if details.get("boundary_protocol") == "p16_1r_b_v1" else
                     "SOURCE CONTRACT: Nca8EnvironmentBridgeV1.apply_task_action advances the environment and calls "
                     "adapt_env_observation_v1 before the dispatch record is emitted. After the core returns, the runner "
                     "assigns that already-adapted packet to its pending-input buffer and emits this record."
@@ -791,7 +853,7 @@ def _flow_input_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> Fl
                 f"Environment step: {_flow_value_v1(details, 'environment_step')} (world advances since reset, not a cycle "
                 "or environment-run number). " + (
                     "The first observation is supplied by reset, before the first action."
-                    if first else "This input cannot change the action already committed in the cycle just ending."
+                    if first else "This input cannot change the already committed action of its originating cycle."
                 ),
             ),
             incoming=f"[Already-adapted {observation_label}] from the bridge -> pending-input assignment",
@@ -1425,7 +1487,11 @@ def _flow_action_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Fl
                     "The output is now fixed. NO_ACTION still permits the environment to advance; it does not stop simulated time.",
                 ),
                 incoming="[Navigation decision] + any BodyMap handoff disposition",
-                outgoing=f"[Action_{action_number}:NO_ACTION] -> environment adapter; simulated time still advances",
+                outgoing=(
+                f"[Action_{action_number}:NO_ACTION] -> internal acceptance; outer world may advance time after close"
+                if details.get("boundary_protocol") == "p16_1r_b_v1" else
+                f"[Action_{action_number}:NO_ACTION] -> environment adapter; simulated time still advances"
+            ),
             )
         return FlowStepV1(
             title=f"Commit Action_{action_number}:{task}",
@@ -1435,7 +1501,11 @@ def _flow_action_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Fl
                 f"PNM reference: {_flow_value_v1(details, 'pnm')}; permission envelope: {_flow_value_v1(details, 'envelope')}.",
             ),
             incoming="[Navigation application] + [PNM reference] + [BodyMap handoff result]",
-            outgoing=f"[Fixed Action_{action_number}:{task}] -> environment adapter; dispatch is reported separately",
+            outgoing=(
+                f"[Fixed Action_{action_number}:{task}] -> internal lower-action acceptance; no world step yet"
+                if details.get("boundary_protocol") == "p16_1r_b_v1" else
+                f"[Fixed Action_{action_number}:{task}] -> environment adapter; dispatch is reported separately"
+            ),
         )
     if event.channel == "dispatch" and event.message.startswith("Action_") and event.message.endswith("physical environment boundary"):
         token = _detail_str_v1(details, "environment_action")
@@ -1525,6 +1595,99 @@ def _flow_finish_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> F
     return None
 
 
+def _flow_boundary_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> FlowStepV1 | None:
+    """Describe actual P16-1R-B boundaries; no historical ID is reinterpreted."""
+    details = _details_v1(event)
+    if details.get("boundary_protocol") != "p16_1r_b_v1":
+        return None
+    receipt = _flow_value_v1(details, "receipt_id")
+    if event.channel == "handoff" and event.message == "committed output accepted by internal lower-action boundary":
+        return FlowStepV1(
+            title="Accept the committed output at the internal lower-action boundary; do not execute it",
+            incoming=f"[Immutable Action_{_flow_value_v1(details, 'action_number')}] with its permitted body request or null output",
+            outgoing=f"[Receipt {receipt}: accepted] -> wait for F, housekeeping and internal closure; no world step yet",
+            explanations=(
+                "Nca8InternalHandoffV1.accept validates action, PNM, application and BodyMap links before filling one slot. "
+                "Null output also uses a receipt so the outer driver may advance time once without a movement token.",
+                "Acceptance is not execution or success. release_after_close makes the exact receipt ready only after "
+                "the core finishes. consume marks it used before the outer side effect; copies and duplicate use are rejected.",
+                f"Recorded receipt: {receipt}; generation {_flow_value_v1(details, 'generation')}; "
+                f"disposition {_flow_value_v1(details, 'disposition')}.",
+            ),
+        )
+    if event.channel == "cycle" and event.message == f"CognitiveCycle_{event.cycle_id} closed":
+        return FlowStepV1(
+            title=f"Close CognitiveCycle_{event.cycle_id} before external execution",
+            incoming=f"Committed output {_flow_value_v1(details, 'output')}; completed F and scheduler housekeeping",
+            outgoing=f"[Receipt {receipt}] -> ready for one outer consumption; no next observation available yet",
+            explanations=(
+                f"Input: {_flow_value_v1(details, 'input')} -> committed output: {_flow_value_v1(details, 'output')}. "
+                "The next observation is not available at this internal boundary.",
+                "The core records internal closure after F and scheduler completion, then releases the accepted receipt. "
+                "It has not called the environment and cannot receive the next observation through a Phase-E callback.",
+                "This is runtime accounting, not another cognitive operation or world step. The next external/input "
+                "events are attributed to the originating cycle but are outside its internal processing.",
+                "Later execution failure does not erase this closure or rewrite the earlier commitment. "
+                "A closure record alone does not establish successful external consumption or input arrival.",
+            ),
+        )
+    if event.channel == "dispatch" and event.message.startswith("Action_") and event.message.endswith("completed the external world step"):
+        token = _flow_value_v1(details, "environment_action")
+        return FlowStepV1(
+            title="Report the returned external world step after one outer consumption",
+            incoming=f"[Ready receipt {receipt}] -> consume once -> external world token {token}",
+            outgoing=f"[World step {_flow_value_v1(details, 'environment_step')} returned] -> private raw packet awaits input admission",
+            explanations=(
+                "Nca8EpisodeRunnerV1 consumes the exact ready receipt after the core returns. "
+                "Nca8EnvironmentBridgeV1.advance_task_action translates the permitted request and advances its private world once. "
+                "No raw observation, reward or done result enters the closed cognitive call.",
+                f"Environment step after dispatch: {_flow_value_v1(details, 'environment_step')}. "
+                "Returned means the external call returned, not that the task succeeded. "
+                "A null token advances time without an additional movement command.",
+                "The raw packet remains private in the bridge. admit_observation subsequently filters and detaches it; "
+                "that input operation and the later buffer assignment have their own actual records.",
+            ),
+        )
+    if event.channel == "input" and event.message == (
+        f"Observation_{details.get('observation_number')} admitted and detached at the input boundary"
+    ):
+        number = _flow_value_v1(details, "observation_number")
+        return FlowStepV1(
+            title=f"Admit and detach Observation_{number} through the positive whitelist",
+            incoming=f"[Private raw world packet] associated with receipt {receipt} -> input adapter",
+            outgoing=f"[NCA8-owned Observation_{number}] -> pending-input assignment; not sensory interpretation",
+            explanations=(
+                "Nca8EnvironmentBridgeV1.admit_observation consumes the exact world receipt once and calls the existing "
+                "adapt_env_observation_v1. Raw EnvObservation stays outside cognition. This operation does not advance time.",
+                "A missing or malformed outer packet stops the session rather than copying the old observation. "
+                "An invalid optional support packet keeps its existing bounded rejection status and no behavioral authority.",
+                _flow_observation_counts_v1(details),
+                "Admission occurs after the internal cycle closed. Only a later eligible cognitive cycle can interpret the packet.",
+            ),
+        )
+    if (event.channel, event.message) in {
+        ("boundary_failure", "runner stopped after boundary failure"),
+        ("protection", "protected stop revoked further execution permission"),
+    }:
+        return FlowStepV1(
+            title=event.message.capitalize(),
+            incoming=f"[Receipt {receipt}] / stage {_flow_value_v1(details, 'stage')}; reason {_flow_value_v1(details, 'reason')}",
+            outgoing=f"[Execution {_flow_value_v1(details, 'execution_status')}; handoff {_flow_value_v1(details, 'handoff_disposition')}] "
+            "-> stopped; no pending input, no automatic retry; explicit reset required",
+            explanations=(
+                "A refusal or cancelled unconsumed serialized request is not execution. Once a world call may have "
+                "run, an exception is recorded as unknown execution; it must not produce an automatic second attempt.",
+                "A returned world call followed by failed admission is different: execution returned, but no usable next "
+                "observation is available. The old packet is never reintroduced as new evidence.",
+                "Outstanding BodyMap permission is revoked without changing the immutable command or current sensory facts. "
+                "Only known nonexecution marks the corresponding pending claim NOT_APPLIED; unknown/returned attempts stay unresolved.",
+                "This serialized simulator supplies no continuing actuator to stop. Protected stopping withholds further "
+                "execution; it is not proof of physical rollback, a confirmed motor stop or selection of another task.",
+            ),
+        )
+    return None
+
+
 _FLOW_BUILDERS_V1: Mapping[str, Callable[[Nca8TraceEventV1, _FlowContextV1], FlowStepV1 | None]] = {
     "session": _flow_input_step_v1,
     "firewall": _flow_input_step_v1,
@@ -1551,7 +1714,9 @@ def _flow_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> FlowStepV
     Unknown messages do not inherit a guessed component or mechanism from their
     channel. Software names are attached later, underneath the numbered explanation.
     """
-    step: FlowStepV1 | None = None
+    step = _flow_boundary_step_v1(event, context)
+    if step is not None:
+        return step
     if event.channel == "runtime":
         for runtime_builder in (_flow_representation_step_v1, _flow_focal_step_v1, _flow_action_step_v1):
             step = runtime_builder(event, context)
@@ -1595,6 +1760,10 @@ def _flow_component_v1(event: Nca8TraceEventV1) -> tuple[str, str]:
         "pnm": ("REPRESENTATION", "Projected NavMap (PNM) - held by prediction service"),
         "outcome": ("SERVICE", "A0 prediction evaluation"),
         "dispatch": ("SERVICE", "Lower-action / environment adapter"),
+        "handoff": ("SERVICE", "Internal lower-action handoff"),
+        "input": ("SERVICE", "Observation admission adapter"),
+        "boundary_failure": ("SERVICE", "Boundary failure and safe-stop accounting"),
+        "protection": ("SERVICE", "Protected execution stop"),
         "learning": ("SERVICE", "A0 learning slot - no durable learning"),
         "support_observation": ("SERVICE", "Read-only support-observation companion"),
     }
@@ -1607,9 +1776,19 @@ def _flow_domain_v1(event: Nca8TraceEventV1) -> str:
     Call only after ``_flow_step_v1`` recognizes the message. Channel or phase
     alone cannot classify an unknown event. The return value is presentation
     metadata: it is neither written to the event nor used by any runtime owner.
-    A SERVICE can implement cognition or infrastructure, and the current
-    dispatch report spans several domains without recording separate subevents.
+    A SERVICE can implement cognition or infrastructure. Historical combined
+    dispatch reports keep their mixed-domain meaning; the versioned new protocol
+    records internal handoff, external return and input admission separately.
     """
+    if dict(event.details).get("boundary_protocol") == "p16_1r_b_v1":
+        if event.channel == "dispatch":
+            return "EXTERNAL BODY + WORLD (after internal cognitive-cycle closure)"
+        if event.channel == "input":
+            return "CCA8 INPUT BOUNDARY (admission and detachment, not interpretation)"
+        if event.channel in {"handoff", "protection"}:
+            return "CCA8 LOWER-ACTION / EMBODIMENT BOUNDARY"
+        if event.channel == "boundary_failure":
+            return "CCA8 RUNTIME INFRASTRUCTURE (external/input/core failure accounting)"
     if event.channel == "dispatch":
         return (
             "MIXED BOUNDARY REPORT: CCA8 LOWER-ACTION / EMBODIMENT BOUNDARY -> "
@@ -1650,6 +1829,23 @@ def _flow_target_note_v1(width: int) -> list[str]:
         lines.extend(_flow_wrap_v1(paragraph, width))
     lines.extend(("=" * width, ""))
     return lines
+
+def _flow_separated_note_v1(width: int) -> list[str]:
+    """Show the marked protocol's reference order, not fictional missing events."""
+    lines: list[str] = []
+    for paragraph in (
+        "P16-1R-B REFERENCE ORDER - NOT ADDITIONAL TRACE EVENTS",
+        "A retained protocol marker identifies the separated driver. The numbered records below remain the execution evidence.",
+        "  INTERNAL: commit -> accept handoff -> F -> scheduler -> close",
+        "  EXTERNAL: consume once -> world step returns",
+        "  INPUT: admit / detach -> buffer -> next eligible cycle",
+        "Failures can stop this sequence; a missing record never proves completion. No elapsed times are invented. "
+        "Real body/world evolution may overlap F; this is the serialized simulator's order, not a global biological clock.",
+    ):
+        lines.extend(_flow_wrap_v1(paragraph, width))
+    lines.extend(("=" * width, ""))
+    return lines
+
 
 def _flow_part_box_v1(title: str, rows: Sequence[str], width: int, *, kind: str) -> list[str]:
     """Draw one event with a category-specific outline and labeled information ports.
@@ -1740,6 +1936,15 @@ def _flow_section_v1(event: Nca8TraceEventV1) -> str:
         and dict(event.details).get("status") == "not_applied"
     ):
         return "NOT_APPLIED"
+    if dict(event.details).get("boundary_protocol") == "p16_1r_b_v1":
+        if event.channel == "dispatch":
+            return "EXTERNAL_WORLD"
+        if event.channel == "input":
+            return "ADMISSION"
+        if event.channel == "boundary_failure":
+            return "BOUNDARY_FAILURE"
+        if event.channel == "protection":
+            return "PROTECTED_STOP"
     if event.phase == "UPDATE_OUTCOMES":
         return _flow_c_section_v1(event)
     if event.phase is not None:
@@ -1765,6 +1970,10 @@ def _flow_group_title_v1(section: str) -> str:
         "CLOSE": "CLOSE THE CYCLE",
         "SETUP": "SESSION INITIALIZATION",
         "BUFFER": "INPUT BOUNDARY AND PENDING OBSERVATION",
+        "EXTERNAL_WORLD": "OUTSIDE THE INTERNAL COGNITIVE CYCLE - EXTERNAL BODY / WORLD",
+        "ADMISSION": "CCA8 INPUT BOUNDARY - ADMIT LATER INPUT AFTER INTERNAL CLOSURE",
+        "BOUNDARY_FAILURE": "BOUNDARY FAILURE - STOPPED; EXECUTION AND INPUT STATUS REMAIN EXPLICIT",
+        "PROTECTED_STOP": "PROTECTED STOP - REVOKE PERMISSION WITHOUT REWRITING THE COMMITMENT",
         "OTHER": "OTHER RETAINED EVENTS",
         "NOT_APPLIED": "OUTCOME AT THIS POINT - THE TASK WAS NOT SENT",
     }
@@ -2019,9 +2228,9 @@ def render_flow_trace_lines_v1(
     The current not-applied outcome's misleading Phase-C metadata is displayed
     with a warning at its recorded position, not fixed in the canonical trace.
     DOMAIN is independent of the component category and stored phase. The
-    current dispatch report covers a combined boundary call; input buffering
-    does not repeat the earlier adapter work. The unnumbered planned-order
-    schematic is not evidence that P16-1R-B has run. Original messages remain
+    historical dispatch report covers a combined boundary call. P16-1R-B records
+    identify real separated handoff, external and input operations by protocol.
+    Neither reference schematic invents missing execution evidence. Original messages remain
     available with the technical details. This is an implementation view, not
     certification of architectural validity.
     """
@@ -2053,9 +2262,8 @@ def render_flow_trace_lines_v1(
         "It distinguishes CCA8 cognition, the lower-action/embodiment boundary, external body/world, input boundary "
         "and supporting runtime infrastructure. A cognitive SERVICE is not the same thing as scheduler housekeeping.",
         "Cycle and phase headings group existing records by their stored labels; they are NOT cognitive-system walls. "
-        "A0's dispatch record reports a combined callback after external world evolution and input adaptation. "
-        "The subsequent firewall record buffers the already-adapted packet. No separate handoff/world/input "
-        "records are invented, and F is not moved ahead of that historical callback.",
+        "P16-1R-B explicitly records internal handoff and closure, then separate external-world and input events. "
+        "Historical combined callbacks retain their mixed-domain explanation; no missing handoff/world/input event is invented.",
         "INPUT/OUTPUT name the implemented information routes. Downward arrows BETWEEN boxes show retained "
         "execution order, not proof that every adjacent step caused the next. In particular, the outcome check "
         "does not generate BodyMap's source nomination. Follow the named input source, not just the previous box.",
@@ -2073,7 +2281,8 @@ def render_flow_trace_lines_v1(
     ):
         lines.extend(_flow_wrap_v1(paragraph, width))
         lines.append("")
-    lines.extend(_flow_target_note_v1(width))
+    separated = any(dict(event.details).get("boundary_protocol") == "p16_1r_b_v1" for event in snapshot)
+    lines.extend(_flow_separated_note_v1(width) if separated else _flow_target_note_v1(width))
     if snapshot[0].sequence != 1:
         lines.extend(_flow_wrap_v1(
             f"EARLIER RECORDS NOT RETAINED: this view starts at record #{snapshot[0].sequence}. "
