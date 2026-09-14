@@ -32,6 +32,7 @@ _ALLOWED_CCA8_IMPORTS: dict[str, frozenset[str]] = {
     "nca8_runtime.py": frozenset(),
     "nca8_scheduler.py": frozenset(),
     "nca8_sensory.py": frozenset(),
+    "nca8_support_dynamics.py": frozenset(),
     "nca8_trace.py": frozenset(),
 }
 
@@ -74,7 +75,7 @@ def _import_roots_v1(tree: ast.AST) -> set[str]:
 
 
 def test_flat_nca8_module_set_is_explicit_and_complete() -> None:
-    """The explicit manifest includes the called P16-1R-B handoff service, not future modules."""
+    """The manifest includes called boundary and owner-local support services, not future brain modules."""
     assert tuple(path.name for path in NCA8_FILES) == (
         "nca8_adapters.py",
         "nca8_body.py",
@@ -88,6 +89,7 @@ def test_flat_nca8_module_set_is_explicit_and_complete() -> None:
         "nca8_runtime.py",
         "nca8_scheduler.py",
         "nca8_sensory.py",
+        "nca8_support_dynamics.py",
         "nca8_trace.py",
     )
 

@@ -22,11 +22,12 @@ branches in these generic services.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol, Sequence
 
 from nca8_maps import NavMapStateV1
+from nca8_support_dynamics import SupportDynamicsV1
 
 #pylint: disable=unnecessary-ellipsis
 
@@ -37,7 +38,7 @@ if TYPE_CHECKING:
 # a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "AttentionBidV1",
     "AttentionCandidateV1",
@@ -350,7 +351,10 @@ class WorkingNavMapStateV1:
 
     The record copies only minimum-sufficient active relation labels and bounded
     context references.  It never writes transformed content back to the durable
-    source map or its current sensory state.
+    source map or its current sensory state. The optional P16-1E-C support facet
+    is actual bounded working content from the same source, not renderer data.
+    It is not added to working_relations and is omitted from the A0 primitive's
+    argument view. Old immutable WNM snapshots do not refresh themselves.
     """
 
     working_id: str
@@ -361,6 +365,7 @@ class WorkingNavMapStateV1:
     created_cycle: int
     refreshed_cycle: int
     focus_age: int
+    support_dynamics: SupportDynamicsV1 | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -402,10 +407,19 @@ class WorkingNavMapStateV1:
             raise ValueError("focus_age must equal the inclusive source-linked focus duration")
         if self.primary_source_state.applied_cycle != refreshed:
             raise ValueError("WNM must refresh from a source state applied in the current cycle")
+        dynamics = self.support_dynamics
+        if dynamics is not None:
+            if not isinstance(dynamics, SupportDynamicsV1):
+                raise TypeError("support_dynamics must be SupportDynamicsV1 or None")
+            configuration = dynamics.configuration
+            if configuration.source_map_ref != self.primary_source_state.source_map_ref:
+                raise ValueError("measured working content must belong to the selected source revision")
+            if configuration.applied_cycle != refreshed or configuration.owner_circuit != self.primary_source_state.owner_circuit:
+                raise ValueError("measured working content must be refreshed from this cycle's selected source owner")
 
     def as_dict(self) -> dict[str, object]:
-        """Return a deterministic JSON-safe WNM snapshot."""
-        return {
+        """Return a deterministic snapshot; omit the optional facet for historical A0 compatibility."""
+        out: dict[str, object] = {
             "working_id": self.working_id,
             "primary_source_state_id": self.primary_source_state.state_id,
             "primary_source_map_ref": self.primary_source_state.source_map_ref.as_dict(),
@@ -418,6 +432,9 @@ class WorkingNavMapStateV1:
             "automatic_writeback": False,
             "authority": "navigation_owned_working_state",
         }
+        if self.support_dynamics is not None:
+            out["support_dynamics"] = self.support_dynamics.as_dict()
+        return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -600,8 +617,16 @@ class NavigationRuntimeV1:
         """Return the most recent immutable Navigation result."""
         return self._last_decision
 
-    def update_wnm(self, selection: AttentionSelectionV1) -> WorkingNavMapStateV1 | None:
-        """Construct, refresh, or release the one WNM from Attention's result."""
+    def update_wnm(
+        self, selection: AttentionSelectionV1, *, support_dynamics: SupportDynamicsV1 | None = None,
+    ) -> WorkingNavMapStateV1 | None:
+        """Refresh one selected source, including optional read-only measured content.
+
+        The source owner supplies an already applied immutable facet. Its source,
+        owner and application cycle must agree with the chosen WNM. A missing
+        facet clears older content rather than reusing a stale working snapshot.
+        Release creates no WNM even if nonfocal source dynamics continue updating.
+        """
         if not isinstance(selection, AttentionSelectionV1):
             raise TypeError("selection must be an AttentionSelectionV1")
         if selection.disposition is AttentionDispositionV1.RELEASE:
@@ -630,6 +655,7 @@ class NavigationRuntimeV1:
             created_cycle=created_cycle,
             refreshed_cycle=selection.cycle_id,
             focus_age=selection.cycle_id - created_cycle + 1,
+            support_dynamics=replace(support_dynamics) if support_dynamics is not None else None,
         )
         self._current_wnm = next_wnm
         return next_wnm
@@ -655,12 +681,16 @@ class NavigationRuntimeV1:
             self._last_decision = decision
             return decision
 
+        # P16-1E-C grants representation, not richer selector authority. The
+        # argument view is not stored or selected as another WNM. Both primitive
+        # queries and apply() receive only the pre-existing A0 content.
+        primitive_view = replace(wnm, support_dynamics=None) if wnm.support_dynamics is not None else wnm
         primitive_ids = [primitive.primitive_id for primitive in primitives]
         if len(set(primitive_ids)) != len(primitive_ids):
             raise ValueError("primitive IDs must be unique")
         ordered_primitives = tuple(sorted(primitives, key=lambda item: item.primitive_id))
         records = tuple(
-            primitive.evaluate_applicability(wnm, cycle_id=cycle)
+            primitive.evaluate_applicability(primitive_view, cycle_id=cycle)
             for primitive in ordered_primitives
         )
         eligible = tuple(record for record in records if record.eligible)
@@ -679,7 +709,7 @@ class NavigationRuntimeV1:
         winner_record = sorted(eligible, key=lambda item: item.deterministic_sort_key())[0]
         by_id = {primitive.primitive_id: primitive for primitive in ordered_primitives}
         winner = by_id[winner_record.primitive_id]
-        application = winner.apply(wnm, winner_record, cycle_id=cycle)
+        application = winner.apply(primitive_view, winner_record, cycle_id=cycle)
         decision = NavigationDecisionV1(
             decision_id=f"navigation_decision:{cycle}",
             cycle_id=cycle,

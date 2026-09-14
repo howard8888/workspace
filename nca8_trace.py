@@ -51,7 +51,7 @@ from typing import TypeAlias
 
 # pylint: disable=unnecessary-comprehension
 
-__version__ = "0.8.1"
+__version__ = "0.9.0"
 __all__ = [
     "Nca8TraceBufferV1",
     "Nca8TraceEventV1",
@@ -584,6 +584,23 @@ def _explain_learning_v1(event: Nca8TraceEventV1) -> str | None:
     )
 
 
+def _explain_support_dynamics_v1(event: Nca8TraceEventV1) -> str | None:
+    """Explain the two explicitly read-only source/working events, never infer missing data."""
+    if _details_v1(event).get("behavioral_authority") is not False:
+        return None
+    if event.channel == "support_dynamics" and event.message == "body-sensory owner updated local support trends and bounded continuity":
+        return (
+            "The body-sensory owner updated its bounded measured-support facet. Rates require two distinct comparable "
+            "events; held evidence retains its old time and supplies no fresh rate. No learning or action permission is created."
+        )
+    if event.channel == "wnm_support" and event.message == "selected WNM refreshed its read-only measured support facet":
+        return (
+            "Navigation copied this cycle's selected-source support facet into the same WNM. "
+            "The A0 primitive receives a view without that facet; measured trends do not yet choose an action."
+        )
+    return None
+
+
 _EXPLANATION_BUILDERS: Mapping[str, ExplanationBuilderV1] = {
     "attention": _explain_attention_v1,
     "body": _explain_body_v1,
@@ -605,6 +622,8 @@ _EXPLANATION_BUILDERS: Mapping[str, ExplanationBuilderV1] = {
     "sensory": _explain_sensory_v1,
     "session": _explain_session_v1,
     "wnm": _explain_wnm_v1,
+    "support_dynamics": _explain_support_dynamics_v1,
+    "wnm_support": _explain_support_dynamics_v1,
 }
 
 
@@ -704,6 +723,8 @@ _FLOW_MODULES_V1 = {
     "protection": "nca8_runtime.py / nca8_body.py",
     "learning": "nca8_runtime.py",
     "support_observation": "nca8_sensory.py",
+    "support_dynamics": "nca8_sensory.py / nca8_support_dynamics.py",
+    "wnm_support": "nca8_executive.py / nca8_runtime.py",
 }
 _FLOW_REASON_TEXT_V1 = {
     "bodymap_action_handoff_ablation_disabled": "The body-to-environment handoff mechanism is disabled for this experiment.",
@@ -1595,6 +1616,55 @@ def _flow_finish_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> F
     return None
 
 
+def _flow_support_dynamics_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> FlowStepV1 | None:
+    """Render already computed, recorded source/working content; do not calculate a trajectory."""
+    explanation = _explain_support_dynamics_v1(event)
+    if explanation is None:
+        return None
+    details = _details_v1(event)
+    source = _flow_value_v1(details, "source_map")
+    status = _flow_value_v1(details, "continuity")
+    sample = _flow_value_v1(details, "reference_sample")
+    age = _flow_value_v1(details, "evidence_age")
+    rates = (
+        f"Measured rates per event-cycle: angle={_flow_value_v1(details, 'angle_rate')} degrees; "
+        f"loading={_flow_value_v1(details, 'loading_rate')}; destabilization={_flow_value_v1(details, 'destabilization_rate')}."
+    )
+    timing = (
+        f"Reference sample={sample}, event={_flow_value_v1(details, 'reference_event')}, age={age}; "
+        f"previous sample={_flow_value_v1(details, 'previous_sample')}; pair interval={_flow_value_v1(details, 'pair_interval')}. "
+        "An absent rate is unknown, not zero; approximately stable describes change, not safe support."
+    )
+    directions = f"Recorded directions (angle, loading, destabilization): {_flow_value_v1(details, 'trends')}."
+    if event.channel == "support_dynamics":
+        return FlowStepV1(
+            title="Update source-local measured trends and bounded continuity; no action authority",
+            incoming=f"[Applied support configuration] from body-sensory owner of {source}; "
+                     f"input disposition={_flow_value_v1(details, 'input_disposition')}",
+            outgoing=f"[Measured support facet: {status}; reference sample={sample}, age={age}] -> source owner; "
+                     "available for the same source's WNM only if Attention selects it",
+            explanations=(
+                explanation, timing, rates, directions,
+                f"Profile={_flow_value_v1(details, 'profile_id')}; reason={_flow_value_v1(details, 'reason')}.",
+                "This is a finite-difference/continuity approximation, not SEC, durable learning or a progress/dwell judgment. "
+                "No missing quantity is inferred from a posture label; held values are not extrapolated.",
+            ),
+        )
+    return FlowStepV1(
+        title="Refresh the selected WNM's read-only measured support facet",
+        incoming=f"[Selected source {source}] -> its facet applied in cycle {_flow_value_v1(details, 'applied_cycle')}",
+        outgoing=f"[WNM {_flow_value_v1(details, 'working_id')}: {status}; sample={sample}, age={age}] -> "
+                 "read-only working content; excluded from primitive queries and application",
+        explanations=(
+            explanation, timing, rates, directions,
+            f"Actual WNM refreshed cycle={_flow_value_v1(details, 'refreshed_cycle')}. "
+            "No old working copy is reused as new evidence. Its source, owner and applied-cycle links are checked.",
+            "This is another report about the same WNM, not a second focal map. Source dynamics continue after "
+            "focal release, but no working facet is then created. The existing BodyMap and outcome checks remain coarse A0.",
+        ),
+    )
+
+
 def _flow_boundary_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> FlowStepV1 | None:
     """Describe actual P16-1R-B boundaries; no historical ID is reinterpreted."""
     details = _details_v1(event)
@@ -1705,6 +1775,8 @@ _FLOW_BUILDERS_V1: Mapping[str, Callable[[Nca8TraceEventV1, _FlowContextV1], Flo
     "dispatch": _flow_action_step_v1,
     "learning": _flow_finish_step_v1,
     "support_observation": _flow_finish_step_v1,
+    "support_dynamics": _flow_support_dynamics_step_v1,
+    "wnm_support": _flow_support_dynamics_step_v1,
 }
 
 
@@ -1766,6 +1838,8 @@ def _flow_component_v1(event: Nca8TraceEventV1) -> tuple[str, str]:
         "protection": ("SERVICE", "Protected execution stop"),
         "learning": ("SERVICE", "A0 learning slot - no durable learning"),
         "support_observation": ("SERVICE", "Read-only support-observation companion"),
+        "support_dynamics": ("SERVICE", "Body-sensory local support dynamics"),
+        "wnm_support": ("REPRESENTATION", "Same WNM - read-only measured support facet"),
     }
     return components[event.channel]
 
@@ -1924,6 +1998,8 @@ def _flow_c_section_v1(event: Nca8TraceEventV1) -> str:
         event.channel == "support_observation" and event.message == _FLOW_SUPPORT_MESSAGE_V1
         and details.get("behavioral_authority") is False
     ):
+        return _FLOW_C1_V1
+    if event.channel == "support_dynamics" and _explain_support_dynamics_v1(event) is not None:
         return _FLOW_C1_V1
     return "UPDATE_OUTCOMES"
 

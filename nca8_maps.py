@@ -54,7 +54,7 @@ from nca8_contracts import CircuitValidityV1
 # understandable without another generic validation dependency.
 # pylint: disable=duplicate-code
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "NCA8_POSTURE_SUPPORT_MAP_ID_V1",
     "Nca8ContactStateV1",
@@ -211,9 +211,11 @@ class SupportConfigurationV1:
     """Read-only measured companion to the existing A0 POSTURE-SUPPORT configuration.
 
     The sensory owner replaces one current register after Phase-C admission.
-    This is not another durable NM, another WNM, or input to BodyMap/Navigation.
-    The original A0 configuration continues unchanged. The received sample and
-    any discrepancy remain inspectable even when not accepted as current.
+    This is not another durable NM or another WNM. The original A0 configuration
+    still supplies BodyMap and primitive decisions. P16-1E-C may use this register
+    in a source-local dynamics facet copied into read-only WNM content, without
+    granting it behavioral authority. The received sample and any discrepancy
+    remain inspectable even when not accepted as current.
 
     ``last_supported_event_cycle`` is the last genuinely fresh, non-conflicting
     measurement event, not a claim of mechanically adequate support. Replays,

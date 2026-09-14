@@ -89,9 +89,10 @@ from nca8_primitives import (
 )
 from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, SchedulerCycleSnapshotV1
 from nca8_sensory import Nca8BodySensoryApplicationV1, Nca8BodySensoryModuleV1
+from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -116,6 +117,9 @@ class Nca8SessionConfigV1:
     ``support_observation_enabled`` opts into the P15-1E-A read-only measured
     companion and trace, not enhanced Righting or new behavioral authority.
     The default preserves A0. Existing menus do not enable the new option.
+    ``support_dynamics_enabled`` independently opts into P16-1E-C's source-local
+    trend/continuity facet and read-only WNM refresh. It requires support input
+    consumption; neither option grants behavioral or durable-learning authority.
     """
 
     seed: int = 0
@@ -128,6 +132,7 @@ class Nca8SessionConfigV1:
     body_action_handoff_enabled: bool = True
     gate_a_max_cycles: int = 10
     support_observation_enabled: bool = False
+    support_dynamics_enabled: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.seed, bool) or not isinstance(self.seed, int):
@@ -147,9 +152,12 @@ class Nca8SessionConfigV1:
                 raise ValueError(f"{field_name} must be a positive integer")
         for field_name in (
             "attention_enabled", "navigation_enabled", "body_action_handoff_enabled", "support_observation_enabled",
+            "support_dynamics_enabled",
         ):
             if not isinstance(getattr(self, field_name), bool):
                 raise TypeError(f"{field_name} must be Boolean")
+        if self.support_dynamics_enabled and not self.support_observation_enabled:
+            raise ValueError("support dynamics require support_observation_enabled=True")
 
 
 @dataclass(frozen=True, slots=True)
@@ -698,7 +706,7 @@ class Nca8CognitiveRuntimeV1:
                 ),
             },
         )
-        wnm = self._navigation.update_wnm(selection)
+        wnm = self._navigation.update_wnm(selection, support_dynamics=self._body_sensory.support_dynamics)
         if wnm is not None:
             self._trace.append(
                 "wnm",
@@ -724,6 +732,19 @@ class Nca8CognitiveRuntimeV1:
                 cycle_id=cycle_id,
                 phase=CyclePhase.FOCAL_COMMITMENT.name,
                 details={"working_id": None},
+            )
+
+        if wnm is not None and wnm.support_dynamics is not None:
+            dynamics_details = wnm.support_dynamics.trace_details()
+            # Keep the existing sixteen-detail trace bound. Source reasons and
+            # input dispositions were recorded in C; this event reports the copy.
+            del dynamics_details["reason"]
+            del dynamics_details["input_disposition"]
+            dynamics_details["working_id"] = wnm.working_id
+            dynamics_details["refreshed_cycle"] = wnm.refreshed_cycle
+            self._trace.append(
+                "wnm_support", "selected WNM refreshed its read-only measured support facet",
+                cycle_id=cycle_id, phase=CyclePhase.FOCAL_COMMITMENT.name, details=dynamics_details,
             )
 
         navigation = self._navigation.commit(wnm, self._primitives, cycle_id=cycle_id)
@@ -979,6 +1000,13 @@ class Nca8CognitiveRuntimeV1:
                 cycle_id=cycle_id,
                 phase=CyclePhase.UPDATE_OUTCOMES.name,
                 details=support_configuration.trace_details(),
+            )
+
+        dynamics = self._body_sensory.support_dynamics
+        if dynamics is not None:
+            self._trace.append(
+                "support_dynamics", "body-sensory owner updated local support trends and bounded continuity",
+                cycle_id=cycle_id, phase=CyclePhase.UPDATE_OUTCOMES.name, details=dynamics.trace_details(),
             )
 
         body_update = self._body_runtime.update_from_map_state(map_state)
@@ -1333,6 +1361,11 @@ class Nca8SessionV1:
         """Return the opt-in read-only measured companion; never an operative WNM."""
         return self._body_sensory.support_configuration
 
+    @property
+    def support_dynamics(self) -> SupportDynamicsV1 | None:
+        """Return the optional source-owned dynamics facet, not a second WNM or action input."""
+        return self._body_sensory.support_dynamics
+
     def reset(self) -> Nca8SessionStatusV1:
         """Atomically replace all NCA8 mutable state with a fresh isolated episode."""
         new_rng = random.Random(self._config.seed)
@@ -1347,6 +1380,7 @@ class Nca8SessionV1:
         new_body_sensory = Nca8BodySensoryModuleV1(
             new_map_library,
             support_observation_enabled=self._config.support_observation_enabled,
+            support_dynamics_enabled=self._config.support_dynamics_enabled,
         )
         new_body_runtime = Nca8BodyRuntimeV1(
             action_handoff_enabled=self._config.body_action_handoff_enabled,

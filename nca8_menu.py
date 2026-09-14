@@ -14,7 +14,7 @@ import cca8_cli
 from nca8_runtime import Nca8SessionV1
 from nca8_trace import render_flow_trace_lines_v1
 
-__version__ = "0.7.5"
+__version__ = "0.7.6"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -273,6 +273,8 @@ def _print_status_v1(session: Nca8SessionV1 | None, *, include_key: bool = True)
         print(f"Navigation: {'enabled' if config.navigation_enabled else 'disabled'}")
         print(f"Body-to-environment action handoff: {'enabled' if config.body_action_handoff_enabled else 'disabled'}")
         print(f"Read-only support measurements: {'enabled' if config.support_observation_enabled else 'disabled'}")
+        if config.support_dynamics_enabled:
+            print("Read-only source dynamics / WNM facet: enabled (no action authority)")
         print()
         print(f"Durable innate POSTURE-SUPPORT NavMap: posture_support@r{status.posture_support_map_revision}")
         print(f"Current posture: {status.current_posture or '(not yet processed)'}")

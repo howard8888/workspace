@@ -16,7 +16,62 @@ Scientific target: `CCA8_High_Level_Architecture_v09.9.docx`. The implementation
 `CCA8_Project_Planning_v16.docx`, selected for the next source update. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-1E-B action-responsive support evidence
+## NCA8 update: P16-1E-C source-local trends, continuity and read-only WNM refresh
+
+Starting checkpoint: clean `47bbd5937c0ed2815ed65d7946069915edd077d9` (`more cog cycle updates`), including accepted 1R-B and
+1E-B. Planning v16 §§21–22 and §37 govern this representation-only slice. The physical provider, wire schema, body checks,
+PNM, coarse action selector, internal/world/input order, learning status and default menu behavior are unchanged.
+
+The body-sensory owner can now use `nca8_support_dynamics.py` to maintain a bounded measured facet of the same
+POSTURE-SUPPORT source. Two distinct, compatible current samples provide angle/loading/destabilization finite differences
+using their actual positive **event-cycle interval**, not sample count, polling time or a posture label. Missing quantities
+remain unknown. Contact remains Boolean; there is no invented contact fraction, learned SEC, overall progress score or
+supported-dwell conclusion.
+
+The named `support_trend_v1` profile uses deadbands of 1 degree/event-cycle and 0.02 normalized units/event-cycle for
+loading/destabilization, a maximum pair interval of two, and held-evidence age at most two cycles. Approximately stable means
+a small measured change, not safe or adequate support. These are explicit engineering defaults, not biological constants.
+The profile is distinct from the unchanged world-side `support_dynamics_v1` physical surrogate.
+
+Missing, duplicate, delayed or empty optional support input can retain an explicitly aged previous measurement briefly.
+Holding supplies no new rate and never advances its original support time. Expired, invalid, contradictory, future,
+out-of-order or frame-incompatible history cannot manufacture a trend. Partial fresh samples stay partial rather than
+silently borrowing an older value for a missing quantity. Loss of the complete outer observation remains a 1R-B transport
+failure; it is not treated as an ordinary missing optional support field.
+
+When Attention maintains or selects that source, Navigation refreshes a real `support_dynamics` section in the same immutable
+WNM. Source, owner, revision and application cycle must agree. Older WNM snapshots remain unchanged; a missing facet clears
+old working content, and a released source does not produce another WNM. The source may continue updating while nonfocal.
+**The A0 primitive's applicability and application argument views omit this facet.** Actual measured working content therefore
+does not yet choose or modify an action. BodyMap and prediction keep their existing inputs; all durable revisions remain unchanged.
+
+Both session flags default false. `support_dynamics_enabled=True` requires `support_observation_enabled=True`.
+The accepted 1E-B review command, without the new flag, remains the provider-only comparator:
+
+```bat
+python scripts\run_nca8_support_evidence.py
+python scripts\run_nca8_support_evidence.py --dynamics
+python scripts\run_nca8_support_evidence.py --continuity-demo
+python scripts\run_nca8_support_evidence.py --dynamics --case recovery --cycles 2 --trace
+```
+
+`--dynamics` adds source/working references, event age and measured rates to the same recovery, disturbed and no-action cases.
+`--continuity-demo` runs only an explicitly synthetic sensory-owner control: missing input, duplicates, expiry, invalid frame
+and resumed samples. It performs no world execution or action selection. New `support_dynamics` (C1) and `wnm_support` (D)
+records report actual implemented work; the renderer does not compute trends or fabricate missing events.
+
+Ordinary menu Gate A still has six cycles, five StandUp commands and 158 canonical records. With dynamics enabled, the
+six-cycle physical review cases have 163 recovery, 180 disturbed and 152 no-action records; event counts are not cognitive
+capacity or learning evidence. There are now fourteen flat `nca8_*` files, including the registered owner-local helper,
+not fourteen biological modules.
+
+See `docs/P16_1E_C_REVIEW.md` for the policy matrix, exact source baseline, tests, local validation and rollback.
+The new pre-edit fingerprint fixture preserves eight conditions. With the option off, all prior result/input/source/trace
+hashes match. With it on, only the named read-only WNM section and its two trace channels are new. No historical fixture or
+Architecture/Planner/To-Do document is rewritten. After local GO, review the richer traces before P16-1F grants behavioral
+authority; neither A99 nor richer Righting is complete at this checkpoint.
+
+## Previous checkpoint: P16-1E-B action-responsive support evidence
 
 Starting checkpoint: clean `6df155d` (`cog cycle improvements`), with the accepted P16-1R-B boundary refactor intact.
 Planning v16 §17, §21 and §37 govern this provider-only slice. It also carries the two deferred text fixes: current Phase E

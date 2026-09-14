@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from nca8_adapters import Nca8ObservationV1
+from nca8_support_dynamics import SupportDynamicsTrackerV1, SupportDynamicsV1
 from nca8_contracts import CircuitResultV1, CircuitTimingV1, LogicalAvailabilityV1
 from nca8_maps import (
     Nca8MapLibraryV1,
@@ -42,7 +43,7 @@ from nca8_maps import (
 # slice readable without a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "NCA8_BODY_SENSORY_CIRCUIT_ID_V1",
     "Nca8BodySensoryApplicationV1",
@@ -191,16 +192,24 @@ class Nca8BodySensoryModuleV1:
     state. Durable map revision is intentionally unavailable here.
 
     P15-1E-A optionally stages an independent support packet alongside the A0
-    scaffold. Its measured configuration is a separate read-only companion,
-    never passed to BodyMap, Attention, Navigation, prediction, or learning.
-    Reset is replacement of this session-owned module, including its watermark.
+    scaffold. Its measured configuration remains a separate read-only companion.
+    P16-1E-C optionally adds a local dynamics facet for source-linked WNM refresh;
+    no measured value reaches BodyMap, Attention ranking, primitive selection,
+    prediction or learning. Reset replaces this owner, watermark and history.
     """
 
-    def __init__(self, map_library: Nca8MapLibraryV1, *, support_observation_enabled: bool = False) -> None:
+    def __init__(
+        self, map_library: Nca8MapLibraryV1, *, support_observation_enabled: bool = False, support_dynamics_enabled: bool = False,
+    ) -> None:
         if not isinstance(map_library, Nca8MapLibraryV1):
             raise TypeError("map_library must be an Nca8MapLibraryV1")
         if not isinstance(support_observation_enabled, bool):
             raise TypeError("support_observation_enabled must be Boolean")
+        if not isinstance(support_dynamics_enabled, bool):
+            raise TypeError("support_dynamics_enabled must be Boolean")
+        if support_dynamics_enabled and not support_observation_enabled:
+            raise ValueError("support dynamics require the measured-observation consumer")
+        self._support_dynamics = SupportDynamicsTrackerV1() if support_dynamics_enabled else None
         self._map_library = map_library
         self._pending_samples: dict[str, Nca8BodySensorySampleV1] = {}
         self._last_application: Nca8BodySensoryApplicationV1 | None = None
@@ -238,6 +247,11 @@ class Nca8BodySensoryModuleV1:
         """Return the latest read-only companion, or None before use/when disabled."""
         return self._support_configuration
 
+    @property
+    def support_dynamics(self) -> SupportDynamicsV1 | None:
+        """Return the optional immutable source facet; no call here updates or ages it."""
+        return self._support_dynamics.current if self._support_dynamics is not None else None
+
     def _support_discrepancy(self, sample: Nca8BodySensorySampleV1) -> str | None:
         """Compare only contemporaneous pose evidence within the declared test profile.
 
@@ -274,7 +288,9 @@ class Nca8BodySensoryModuleV1:
         again, including after missing/invalid input. Structurally valid ordered
         delayed, empty, or conflicting samples advance that watermark but do not
         refresh genuine support. Future-dated input is rejected against receipt
-        time, not laundered by delayed application. No history or trend is built.
+        time, not laundered by delayed application. When separately enabled,
+        the P16-1E-C owner-local helper consumes this disposition to maintain a
+        bounded history; rejected data never becomes a fresh trend endpoint.
         """
         measured = sample.support_observation
         previous = self._last_support_observation
@@ -318,6 +334,8 @@ class Nca8BodySensoryModuleV1:
             discrepancy=discrepancy,
             last_supported_event_cycle=supported,
         )
+        if self._support_dynamics is not None:
+            self._support_dynamics.update(self._support_configuration)
 
     def poll_observation(
         self,
