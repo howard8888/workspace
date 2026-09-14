@@ -61,7 +61,7 @@ def test_watch_cognition_submenu_routes_to_existing_cycle_handlers(
     assert "one cognitive cycle slowly" in output
     assert "several cognitive cycles" in output
     assert "complete autonomous newborn survival episode" in output
-    assert "new Architecture-v09.3 experimental runtime" in output
+    assert "new Architecture experimental runtime" in output
     assert "NCA8 Phase 1D / Gate A" in output
     assert result == expected_handler
 

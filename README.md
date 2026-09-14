@@ -12,7 +12,48 @@ Requires Python 3.13
 Please contact hschneidermd [at] alum [dot] mit [dot] edu for inquiries about additional software modules, related
  materials, or ongoing development.
 
-Architecture and migration authority: `CCA8_Project_Planning_v13.pdf`. The local source tree, tests, and traces remain authoritative for what actually runs.
+Scientific target: `CCA8_High_Level_Architecture_v09.9.docx`. The implementation programme is
+`CCA8_Project_Planning_v16.docx`, selected for the next source update. The local source tree, fresh tests and traces determine
+what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
+
+## NCA8 update: P16-1R-A domain-aware trace (presentation only)
+
+This slice starts from clean `7dae1dc` (`trace text improvements`). It preserves the twelve-module NCA8 implementation, the
+existing read-only P15-1E-A support-observation seam, all earlier trace/menu work, and the independently selected legacy runtime.
+It adds no cognitive capability, learning rule, Emotion implementation, new scheduler phase, or action authority.
+
+NCA8 menu option 4 now displays **DOMAIN** independently of **PART / REPRESENTATION / SERVICE** and the purpose of an integrity
+check. A service may implement cognitive work, runtime bookkeeping, or a boundary call. Cycle and phase headings group stored
+records; they do not assert that every operation belongs inside the cognitive system.
+
+The historical first-cycle tail remains in its original order:
+
+| Record | Actual A0 responsibility | Domain |
+|---|---|---|
+| #20 | Commit the permitted action. | Cognitive coordination, implemented by the runtime. |
+| #21 | Report the synchronous bridge call after world advancement and returned-observation adaptation. | Combined lower-action, external-world and input boundaries. |
+| #22 | Report the A0 learning slot's zero durable updates. | Internal learning placeholder; not an active learner. |
+| #23 | Retain/expire scheduler results and events. | Runtime infrastructure. |
+| #24 | Buffer the already-adapted next observation. No second filtering or world step. | Input boundary. |
+| #25 | Record closure, without processing the next observation. | Runtime accounting. |
+
+These record numbers identify the ordinary retained A0 example, not classification rules: the renderer recognizes event messages,
+not their numeric positions. Truncated and unknown records retain explicit uncertainty. Original messages and detail values remain
+available under each explanation; compact output, event IDs, ordering, and canonical JSON remain unchanged.
+
+A separate, unnumbered **PLANNED TARGET ORDER - NOT EXECUTED** schematic describes the later P16-1R-B refactor: internal
+commitment/handoff, F reconciliation, scheduler maintenance and internal close; then outer world execution and input admission
+in the serialized simulator. A real body/world may overlap F. P16-1R-A does not perform that refactor or invent #21a/#21b events.
+
+The new domain tests include pre-patch fingerprints captured from clean `7dae1dc`: full cycle results, canonical events, pending
+input and final status under standard, Attention-off, Navigation-off, body-veto and read-only-support conditions. An intentional
+later behavioral/trace-schema change needs explicit fixture review; do not regenerate the reference to hide a regression.
+
+Validate this candidate against a green local P16-0 baseline, then run the focused trace tests, full pytest, pylint, mypy and
+`python cca8_run.py --preflight`. Open the NCA8 submenu, run option 5, then inspect option 4's #20-#25 tail and planned schematic.
+The code remains a review candidate until the local wall and manual inspection pass; document generation or container evidence
+alone does not authorize the next functional slice.
+
 
 
 # Executive Overview

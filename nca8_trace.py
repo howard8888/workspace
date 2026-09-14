@@ -4,7 +4,8 @@
 
 Purpose
 -------
-The ``nca8_*`` modules implement the experimental Architecture-v09.3 runtime
+The ``nca8_*`` modules implement the retained A0 runtime on the migration path
+toward Architecture v09.9, governed by Planning v16. They run
 beside the established ``cca8_*`` runtime. This module provides deterministic,
 bounded, immutable trace events that can be rendered for a human or exported in
 canonical JSON form.
@@ -29,6 +30,12 @@ C1 (current-input updates) and C2 (earlier-operation outcomes) are display
 subsections of the existing UPDATE_OUTCOMES phase, not new scheduler phases.
 Source-code mechanism descriptions are labeled separately from event data;
 the renderer never executes the described geometry or outcome computations.
+
+P16-1R-A adds a separate DOMAIN label to each recognized flow step. A software
+service may implement cognitive work, runtime bookkeeping, or a boundary call;
+its category alone does not identify its architectural domain. Historical event
+order and canonical bytes are unchanged. The target-order note is unnumbered
+and explicitly planned: no handoff/world/input refactor is performed here.
 """
 
 from __future__ import annotations
@@ -44,7 +51,7 @@ from typing import TypeAlias
 
 # pylint: disable=unnecessary-comprehension
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "Nca8TraceBufferV1",
     "Nca8TraceEventV1",
@@ -182,8 +189,9 @@ def _explain_firewall_v1(event: Nca8TraceEventV1) -> str | None:
     """Explain observation admission and next-cycle buffering boundaries."""
     if event.message == "Observation_1 buffered as the first cognitive-cycle input":
         return (
-            "Observation_1 passed the NCA8 observation whitelist and was buffered as the external input for "
-            "CognitiveCycle_1. No sensory interpretation or current-state update has occurred yet."
+            "The already-adapted Observation_1 was buffered as the external input for CognitiveCycle_1. "
+            "In the A0 source path, the reset bridge applied the observation whitelist before this record. "
+            "Buffering does not repeat filtering or interpret sensory content."
         )
     if "buffered for CognitiveCycle_" not in event.message:
         return None
@@ -194,8 +202,10 @@ def _explain_firewall_v1(event: Nca8TraceEventV1) -> str | None:
         return None
     prior_action = f"Action_{event.cycle_id}" if event.cycle_id is not None else "the preceding action"
     return (
-        f"Observation_{observation_number} passed the NCA8 observation whitelist and was buffered for "
-        f"CognitiveCycle_{next_cycle_id}. It cannot influence {prior_action}, which was already committed."
+        f"The already-adapted Observation_{observation_number} was buffered for CognitiveCycle_{next_cycle_id}. "
+        "In the A0 source path, the synchronous bridge applied the whitelist before the dispatch record; "
+        "this record reports pending-input assignment, not another filtering pass. "
+        f"It cannot influence {prior_action}, which was already committed."
     )
 
 
@@ -252,8 +262,8 @@ def _explain_scheduler_v1(event: Nca8TraceEventV1) -> str | None:
         )
     if event.message == "Phase_F LEARNING_SCHEDULE completed":
         return (
-            "Phase F completed bounded learning and scheduler bookkeeping. The pending, latched, and retired counts "
-            "show what, if anything, remains available after this cognitive cycle."
+            "Phase F completed scheduler housekeeping. The pending, latched, and retired counts describe "
+            "scheduler results and events, not learned changes. The separate learning record reports the A0 slot."
         )
     return None
 
@@ -481,6 +491,11 @@ def _explain_dispatch_v1(event: Nca8TraceEventV1) -> str | None:
         return None
     details = _details_v1(event)
     environment_action = _detail_str_v1(details, "environment_action")
+    boundary_note = (
+        " Source contract: the current synchronous bridge advances the external world and adapts its returned "
+        "observation before this dispatch record is emitted. The later buffering record does not filter again. "
+        "No separate internal handoff receipt or world-step timestamp is recorded here."
+    )
     if ":NO_ACTION" in event.message:
         action_label = event.message.split(" crossed", maxsplit=1)[0]
         body_authorized = details.get("body_authorized") is True
@@ -490,23 +505,23 @@ def _explain_dispatch_v1(event: Nca8TraceEventV1) -> str | None:
                 f"{action_label} completed the environment boundary without emitting a task action because BodyMap "
                 "rejected the selected task's action envelope. This was a blocked handoff, not the absence of a "
                 "proposed task."
-            )
+            ) + boundary_note
         return (
             f"{action_label} completed the environment boundary with no task action emitted. No BodyMap authorization "
             "was required because there was no task to authorize."
-        )
+        ) + boundary_note
     body_authorized = details.get("body_authorized") is True
     if not body_authorized:
         return (
             f"{event.message}, but no authorized body task was available for the adapter to emit. Later evidence will "
             "still belong to the next cognitive cycle."
-        )
+        ) + boundary_note
     environment_text = f" as environment token '{environment_action}'" if environment_action is not None else ""
     action_label = event.message.split(" crossed", maxsplit=1)[0]
     return (
         f"{action_label} crossed the physical environment boundary only after BodyMap authorized its action envelope. "
         f"The adapter emitted it{environment_text}; any resulting observation belongs to the next cognitive cycle."
-    )
+    ) + boundary_note
 
 
 def _explain_learning_v1(event: Nca8TraceEventV1) -> str | None:
@@ -601,7 +616,7 @@ _FLOW_PHASE_TITLES_V1 = {
     "UPDATE_OUTCOMES": "PHASE C - INPUT UPDATES AND EARLIER OUTCOMES",
     "FOCAL_COMMITMENT": "PHASE D - CHOOSE THE FOCAL SOURCE AND OPERATION",
     "PROJECT_DISPATCH": "PHASE E - PREDICT, CHECK THE BODY, COMMIT AND DISPATCH",
-    "LEARNING_SCHEDULE": "PHASE F - FINISH LEARNING AND SCHEDULER BOOKKEEPING",
+    "LEARNING_SCHEDULE": "PHASE F - FINISH THE A0 LEARNING SLOT AND SCHEDULER BOOKKEEPING",
 }
 _FLOW_SUPPORT_MESSAGE_V1 = (
     "The body-sensory owner inspected the support packet in Phase C. "
@@ -758,11 +773,20 @@ def _flow_input_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> Fl
         target = "1" if first else str(next_cycle)
         observation_label = f"Observation_{number}" if number is not None else "the observation"
         return FlowStepV1(
-            title=f"Filter and buffer {observation_label} for CognitiveCycle_{target}",
+            title=f"Buffer already-adapted {observation_label} for CognitiveCycle_{target}",
             explanations=(
-                f"External observation -> whitelist -> NCA8-owned packet -> pending input for CognitiveCycle_{target}.",
-                "Only permitted information was copied through the input boundary. The packet may already contain "
-                "environment-side preprocessing. Buffering it is not NCA8 sensory interpretation or a map update.",
+                f"Already-adapted NCA8-owned packet -> pending input for CognitiveCycle_{target}.",
+                (
+                    "SOURCE CONTRACT: Nca8EnvironmentBridgeV1.reset calls adapt_env_observation_v1 before "
+                    "the initial buffering record. This record reports the already-adapted reset packet."
+                    if first else
+                    "SOURCE CONTRACT: Nca8EnvironmentBridgeV1.apply_task_action advances the environment and calls "
+                    "adapt_env_observation_v1 before the dispatch record is emitted. After the core returns, the runner "
+                    "assigns that already-adapted packet to its pending-input buffer and emits this record."
+                ),
+                "This is not another filtering pass. Buffering is input-boundary work, not sensory interpretation, "
+                "a current-map update, or an additional world step. The source contract does not reconstruct any "
+                "missing earlier event or timestamp.",
                 _flow_observation_counts_v1(details),
                 f"Environment step: {_flow_value_v1(details, 'environment_step')} (world advances since reset, not a cycle "
                 "or environment-run number). " + (
@@ -770,7 +794,7 @@ def _flow_input_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> Fl
                     if first else "This input cannot change the action already committed in the cycle just ending."
                 ),
             ),
-            incoming="Environment observation -> positive-whitelist adapter",
+            incoming=f"[Already-adapted {observation_label}] from the bridge -> pending-input assignment",
             outgoing=f"[NCA8-owned {observation_label}] -> pending-input buffer for CognitiveCycle_{target}",
         )
     if event.channel == "cycle" and event.cycle_id is not None:
@@ -797,6 +821,9 @@ def _flow_input_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> Fl
                 explanations=(
                     f"Input: {_flow_value_v1(details, 'input')} -> committed output: {_flow_value_v1(details, 'output')} "
                     f"-> next input waiting: {_flow_value_v1(details, 'next_input')}.",
+                    "This is runtime accounting, not another cognitive operation or world step. In the current A0 "
+                    "source path, this closure record follows F, scheduler housekeeping and next-input buffering. "
+                    "The planned target moves internal closure before the outer world/input work; that refactor has not occurred.",
                     "Closing this cycle does not process the next observation. Displaying this chart does not advance the session.",
                 ),
                 incoming=f"Committed output {_flow_value_v1(details, 'output')}; pending input {_flow_value_v1(details, 'next_input')}",
@@ -1424,20 +1451,30 @@ def _flow_action_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Fl
         else:
             emission = "The environment-action token is not recorded; no emission is inferred."
         return FlowStepV1(
-            title="Cross the environment boundary and advance the world",
+            title="Report the completed combined boundary call; do not step the world again",
             explanations=(
                 emission,
+                "SOURCE CONTRACT: Nca8EpisodeRunnerV1's Phase-E callback calls "
+                "Nca8EnvironmentBridgeV1.apply_task_action. The bridge translates the permitted request, "
+                "advances the external environment, and calls adapt_env_observation_v1 on the returned observation. "
+                "Only after that call returns does the callback append this dispatch record.",
+                "This is a combined report across the lower-action/embodiment, external body/world and input domains. "
+                "The external simulation is not cognition merely because Python calls it inside Phase E. "
+                "There are no separate observed sub-records or substep timestamps; internal handoff acceptance is not "
+                "yet a distinct receipt. Rendering this record performs none of those operations.",
                 f"Environment step after dispatch: {_flow_value_v1(details, 'environment_step')}. "
                 "The resulting observation is for the next cognitive cycle, not the action already committed. "
-                "The later buffering record marks when it is stored as pending input.",
+                "The later buffering record marks when the already-adapted packet is stored as pending input. "
+                "It is not the time of whitelist filtering, and this dispatch report does not establish task success.",
             ),
             incoming=(
                 f"Cycle driver -> [Action_{_flow_value_v1(details, 'action_number')}] with "
                 f"body authorization {_flow_value_v1(details, 'body_authorized')}"
             ),
             outgoing=(
-                f"[Environment token {_flow_value_v1(details, 'environment_action')}] -> simulated world; "
-                f"world step {_flow_value_v1(details, 'environment_step')} returns a next observation, not current-cycle evidence"
+                f"[Environment token {_flow_value_v1(details, 'environment_action')}] -> external world; "
+                f"world step {_flow_value_v1(details, 'environment_step')} returned an already-adapted next observation; "
+                "later buffering only, not current-cycle evidence"
             ),
         )
     return None
@@ -1453,6 +1490,9 @@ def _flow_finish_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> F
                 f"Durable updates recorded: {_flow_value_v1(details, 'durable_updates')}. "
                 "In initial Gate A this slot makes no durable map, primitive, or memory-learning changes. "
                 "Current-configuration updates earlier in the cycle are not durable learning.",
+                "TARGET DISTINCTION: Architecture v09.9 keeps F as a regular learning-reconciliation opportunity, "
+                "not the only permitted learning time or another focal WNM operation. This A0 record remains a "
+                "zero-update placeholder; it does not demonstrate the planned local learners or Emotion influences.",
             ),
             incoming="End-of-cycle bookkeeping slot; no durable-learning implementation runs in A0",
             outgoing=(
@@ -1560,6 +1600,56 @@ def _flow_component_v1(event: Nca8TraceEventV1) -> tuple[str, str]:
     }
     return components[event.channel]
 
+
+def _flow_domain_v1(event: Nca8TraceEventV1) -> str:
+    """Name the domain of an already recognized source-code operation.
+
+    Call only after ``_flow_step_v1`` recognizes the message. Channel or phase
+    alone cannot classify an unknown event. The return value is presentation
+    metadata: it is neither written to the event nor used by any runtime owner.
+    A SERVICE can implement cognition or infrastructure, and the current
+    dispatch report spans several domains without recording separate subevents.
+    """
+    if event.channel == "dispatch":
+        return (
+            "MIXED BOUNDARY REPORT: CCA8 LOWER-ACTION / EMBODIMENT BOUNDARY -> "
+            "EXTERNAL BODY + WORLD -> CCA8 INPUT BOUNDARY"
+        )
+    if event.channel == "firewall":
+        return "CCA8 INPUT BOUNDARY (admitted-packet buffering)"
+    if event.channel in ("session", "cycle", "scheduler"):
+        return "CCA8 RUNTIME INFRASTRUCTURE (not a cognitive operation)"
+    if event.channel == "runtime" and not event.message.startswith("Phase_E PROJECT_DISPATCH committed Action_"):
+        return "CCA8 RUNTIME INFRASTRUCTURE (identity or summary bookkeeping)"
+    return "CCA8 COGNITION (implemented function or declared A0 approximation)"
+
+
+def _flow_target_note_v1(width: int) -> list[str]:
+    """Draw the planned boundary order without fabricating a recorded event.
+
+    This constant schematic describes P16-1R-B, not the call order in A0 and
+    not a simulated replay. It has no sequence number, observed time, or live
+    state. Keeping it outside the recorded diagrams also keeps partial traces
+    from acquiring imagined opening, handoff, world-step, or closure records.
+    """
+    lines: list[str] = []
+    for paragraph in (
+        "PLANNED TARGET ORDER - NOT EXECUTED (P16-1R-B)",
+        "Unnumbered architecture schematic, separate from the recorded flow:",
+        "  CCA8 COGNITION: E commits the permitted action",
+        "    -> LOWER-ACTION / EMBODIMENT BOUNDARY: internal handoff",
+        "    -> CCA8 COGNITION: F learning reconciliation",
+        "    -> RUNTIME INFRASTRUCTURE: housekeeping; internal close",
+        "  EXTERNAL BODY + WORLD: outer runner consumes once",
+        "    -> INPUT BOUNDARY: admit / detach / buffer observation",
+        "    -> next eligible cognitive cycle",
+        "This is the planned serialized simulator driver. A real body/world may begin evolving at handoff "
+        "and overlap F. Future evidence cannot justify the earlier decision. The current A0 callback still "
+        "steps the world and adapts input before F; its buffering and closure records remain in their original order.",
+    ):
+        lines.extend(_flow_wrap_v1(paragraph, width))
+    lines.extend(("=" * width, ""))
+    return lines
 
 def _flow_part_box_v1(title: str, rows: Sequence[str], width: int, *, kind: str) -> list[str]:
     """Draw one event with a category-specific outline and labeled information ports.
@@ -1703,6 +1793,7 @@ def _flow_technical_v1(event: Nca8TraceEventV1, width: int) -> list[str]:
         f"Technical record #{event.sequence}: channel={event.channel}; stored phase={event.phase or '(outside phases)'}",
         width, indent="    ",
     )
+    lines.extend(_flow_wrap_v1(f"Original message: {event.message}", width, indent="      "))
     detail_text = "; ".join(f"{key}={value!r}" for key, value in event.details)
     if detail_text:
         lines.extend(_flow_wrap_v1(detail_text, width, indent="      "))
@@ -1733,6 +1824,10 @@ def _flow_cycle_heading_v1(events: Sequence[Nca8TraceEventV1], width: int) -> li
         sections.add("UPDATE_OUTCOMES")
     missing = [title.split(" - ", 1)[0] for key, title in _FLOW_PHASE_TITLES_V1.items() if key not in sections]
     lines = ["", "=" * width, f"COGNITIVE CYCLE {cycle_id}", "=" * width]
+    lines.extend(_flow_wrap_v1(
+        "TRACE GROUP: stored cycle_id associates these records; it does not put every operation inside cognition. "
+        "Use DOMAIN for architectural location and the stored phase for the current software schedule.", width,
+    ))
     lines.extend(_flow_wrap_v1(f"Retained records #{events[0].sequence}-#{events[-1].sequence}.", width))
     if not opening or not closing or missing:
         lines.extend(_flow_wrap_v1(
@@ -1785,6 +1880,9 @@ def _flow_render_cycle_v1(
     data wiring. This avoids implying that, for example, a prediction evaluation
     directly created the next Attention bid just because those events are adjacent.
     Unknown events, missing records and misleading phase labels stay visible.
+    DOMAIN identifies architectural location independently of the part/service
+    category and stored cycle/phase grouping. Mixed boundary calls remain one
+    historical event, with no artificial sub-records or chronology changes.
     """
     lines = _flow_cycle_heading_v1(events, width)
     lines.append("")
@@ -1806,7 +1904,7 @@ def _flow_render_cycle_v1(
         section = _flow_section_v1(group[0])
         contiguous = previous is not None and group[0].sequence == previous.sequence + 1
         if (
-            section == "FOCAL_COMMITMENT" and contiguous and previous is not None
+            section == "FOCAL_COMMITMENT" and contiguous and previous is not None #pylint: disable=too-many-boolean-expressions
             and _flow_section_v1(previous) == _FLOW_C1_V1
             and _FLOW_C2_V1 not in sections and "UPDATE_OUTCOMES" not in sections
         ):
@@ -1850,7 +1948,8 @@ def _flow_render_cycle_v1(
             else:
                 kind, component = _flow_component_v1(event)
             label = f"{kind}: {component}"
-            rows = (f"INPUT: {step.incoming}", f"DO: {step.title}", f"OUTPUT: {step.outgoing}")
+            domain = "UNCLASSIFIED - no domain inferred from channel or phase" if untranslated else _flow_domain_v1(event)
+            rows = (f"DOMAIN: {domain}", f"INPUT: {step.incoming}", f"DO: {step.title}", f"OUTPUT: {step.outgoing}")
             lines.extend(_flow_part_box_v1(f"[#{event.sequence}] {label}", rows, width, kind=kind))
             notes.extend(_flow_wrap_v1(f"Record #{event.sequence} - {label}", width, indent="  "))
             for paragraph in rows:
@@ -1919,7 +2018,12 @@ def render_flow_trace_lines_v1(
     Rendering performs no cognitive steps and neither mutates nor caches input.
     The current not-applied outcome's misleading Phase-C metadata is displayed
     with a warning at its recorded position, not fixed in the canonical trace.
-    This is an implementation view, not certification of architectural validity.
+    DOMAIN is independent of the component category and stored phase. The
+    current dispatch report covers a combined boundary call; input buffering
+    does not repeat the earlier adapter work. The unnumbered planned-order
+    schematic is not evidence that P16-1R-B has run. Original messages remain
+    available with the technical details. This is an implementation view, not
+    certification of architectural validity.
     """
     if isinstance(width, bool) or not isinstance(width, int) or not 60 <= width <= 140:
         raise ValueError("flow trace width must be an integer from 60 to 140")
@@ -1945,6 +2049,13 @@ def render_flow_trace_lines_v1(
         "StandUp IP and BodyMap. POSTURE-SUPPORT, WNM and PNM are representations. A0 body-sensory processing "
         "and prediction evaluation are software services, not newly invented architectural modules. "
         "Repeated part names show repeated operations of the same session component, not extra parts.",
+        "DOMAIN is separate from PART/REPRESENTATION/SERVICE and from an INTEGRITY CHECK's purpose. "
+        "It distinguishes CCA8 cognition, the lower-action/embodiment boundary, external body/world, input boundary "
+        "and supporting runtime infrastructure. A cognitive SERVICE is not the same thing as scheduler housekeeping.",
+        "Cycle and phase headings group existing records by their stored labels; they are NOT cognitive-system walls. "
+        "A0's dispatch record reports a combined callback after external world evolution and input adaptation. "
+        "The subsequent firewall record buffers the already-adapted packet. No separate handoff/world/input "
+        "records are invented, and F is not moved ahead of that historical callback.",
         "INPUT/OUTPUT name the implemented information routes. Downward arrows BETWEEN boxes show retained "
         "execution order, not proof that every adjacent step caused the next. In particular, the outcome check "
         "does not generate BodyMap's source nomination. Follow the named input source, not just the previous box.",
@@ -1955,13 +2066,14 @@ def render_flow_trace_lines_v1(
         "A service may perform necessary cognitive work without establishing an additional architectural part. "
         "Several records can describe one completed call; record numbers are not extra processing steps.",
         "This is the current A0 implementation, not the full scientific target. SEC, WorldIndex, general sensory/ANM "
-        "learning and LP induction are not active in this Gate-A path. The chart does not invent those steps, "
+        "learning, Emotion and LP induction are not active in this Gate-A path. The chart does not invent those steps, "
         "detailed motor execution, or a separate outcome-only focal cycle.",
         "Record numbers identify the existing diagnostic events. Boxes and wrapped lines do not consume trace "
         "capacity. A missing record is not proof that an event never happened. Predictions are not observations.",
     ):
         lines.extend(_flow_wrap_v1(paragraph, width))
         lines.append("")
+    lines.extend(_flow_target_note_v1(width))
     if snapshot[0].sequence != 1:
         lines.extend(_flow_wrap_v1(
             f"EARLIER RECORDS NOT RETAINED: this view starts at record #{snapshot[0].sequence}. "

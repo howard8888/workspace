@@ -25,9 +25,9 @@ def test_opening_and_leaving_nca8_menu_does_not_construct_a_session(
 
     output = capsys.readouterr().out
     assert result is None
-    assert "NCA8 -- ARCHITECTURE-v09.6 EXPERIMENTAL MIGRATION RUNTIME" in output
+    assert "NCA8 -- ARCHITECTURE-v09.9 EXPERIMENTAL MIGRATION RUNTIME" in output
     assert "Current checkpoint: A0 / retained Gate A." in output
-    assert "Architecture v09.6 is the target; it is not yet fully implemented." in output
+    assert "Architecture v09.9 is the target; it is not yet fully implemented." in output
     assert "controller does not choose, replace, or rescue the NCA8 action" in output
     assert "not a complete geometric coordinate transformation" in output
 

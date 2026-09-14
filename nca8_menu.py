@@ -14,12 +14,13 @@ import cca8_cli
 from nca8_runtime import Nca8SessionV1
 from nca8_trace import render_flow_trace_lines_v1
 
-__version__ = "0.7.2"
+__version__ = "0.7.3"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
 _INTRODUCTION_V1 = """Current checkpoint: A0 / retained Gate A.
-Architecture v09.6 is the target; it is not yet fully implemented.
+Architecture v09.9 is the target; it is not yet fully implemented.
+Planning v16 P16-1R-A improves the explanation only; A0 behavior is unchanged.
 
 This demonstration runs a short sequence of NCA8 cognitive cycles for the
 newborn goat's StandUp task. A fixed maximum number of cycles prevents the
@@ -188,7 +189,15 @@ After option 3, it shows the retained entries from all the cycles you have run
 in that session, not just the last cycle. After option 5, it shows the retained
 entries from the fresh Gate-A StandUp demonstration.
 
-The flowchart shows retained execution, not a proposed architecture.
+The numbered flowchart shows retained execution, not a proposed architecture.
+DOMAIN labels distinguish cognition, runtime infrastructure, the lower-action
+boundary, the external body/world and the input boundary. A cycle/phase heading
+only groups recorded labels; it does not make the simulator part of cognition.
+The current dispatch report includes world execution and input adaptation;
+the later buffering record stores the already-adapted observation, without
+filtering again. This display does not move the actual environment call.
+
+A separate unnumbered target-order schematic is marked PLANNED, NOT EXECUTED.
 Missing records and unknown events stay visible; no missing steps are invented.
 
 A fixed entry limit prevents the trace from growing indefinitely. Oldest entries
@@ -333,7 +342,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
     """
     while True:
         print()
-        print("NCA8 -- ARCHITECTURE-v09.6 EXPERIMENTAL MIGRATION RUNTIME")
+        print("NCA8 -- ARCHITECTURE-v09.9 EXPERIMENTAL MIGRATION RUNTIME")
         print(cca8_cli.MENU_RESPONSE_DIVIDER)
         print(_INTRODUCTION_V1)
         print()
