@@ -5,6 +5,19 @@ Scientific authority: accepted CCA8 Architecture v10.1.
 Implementation authority: Planning v18, explicitly adopted in the current request.
 Entry HEAD: e93c1192fe4095346b0c2c828606254bfac6055f (main).
 
+## Later checkpoint: H1 committed; H2 requested
+
+The issue-time review wording below is historical. Howard subsequently reported
+all local H1 checks green, supplied the passing manual output, and committed/pushed
+H1 as 1fc768a0c415fc5086e8aa27698ed88b17535059. His next explicit request authorizes
+preparation of P18-H2 together with the omitted component-registry correction.
+The original H1 commit is preserved; no commit is amended or replayed.
+
+The registry corrections described below are applied in that forward H2 update,
+not retroactively claimed to have been in the original H1 commit. The H2 provider
+now uses the shared motor messages. See P18_H2_REVIEW.md for its implementation,
+small API/timing refinements, tests and remaining local acceptance requirements.
+
 ## 1. Authority and exact source
 
 Howard supplied an empty Windows git status, main/origin/main at e93c119, and
@@ -42,8 +55,10 @@ supply its functional constraints. The inspected source seams are:
 - nca8_runtime: the separated cognitive runtime and external episode runner.
 - cca8_support_world: advance_support_world_v1 and support_observation_packet_v1.
 
-None of these implementations is changed in H1. Their old None, policy:stand_up,
-posture_support_v1, event_cycle, receipt and registry meanings stay intact.
+None of these implementations was changed in the original H1 commit. Their old
+None, policy:stand_up, posture_support_v1, event_cycle and receipt meanings stay
+intact. The forward H2 correction lists both H1 production modules in the diagnostic
+component registry; the H2 motor provider is an explicit separate mode.
 
 Only immutable contracts and pure validation/projection helpers are implemented.
 There is no installed executor, motor/body provider, Righting transform, learner,
@@ -78,8 +93,9 @@ finite issue/expiry interval. Descriptive records and their JSON exports cannot
 install a target, reconstruct a receipt, grant live permission or select a task.
 
 Each type has a concrete consumer in H2 (command/feedback), H3 (body target), H4
-(committed target/local report/directive), or H6 (detached focal evidence). No new
-actor is added to the host component or behavioral-primitive registry at H1.
+(committed target/local report/directive), or H6 (detached focal evidence). The two
+production modules are listed in the host diagnostic component registry, but H1 adds
+no new runtime actor and no behavioral primitive.
 
 ## 4. Target semantics and bounds
 
@@ -225,7 +241,9 @@ finite missing-feedback rule applies, not the no-contact interpretation.
 
 H1: strict type/range/Boolean checks; fixed anchors; JSON detachment; event/availability
 ordering; wrong stream/generation/revision rejection; local achievement versus support;
-no source/world/RNG mutation; unchanged imports, old fixtures, runtime and registry.
+no source/world/RNG mutation; unchanged actor startup and old fixtures. The H2
+correction lists the two new production modules. Neutral messages may now be
+imported by the physical provider without constructing a new actor.
 H2: independent fixed commands and passive/motor-off/no-surface controls.
 H3: mirrored bodies, constrained increments, wrong targets and missing capability.
 H4: fixed-target execution, angular perturbation of +6 degrees at a fixed tick,
@@ -242,3 +260,33 @@ Record target error, contact/loading, maximum tilt/destabilization, cancellation
 expiry reasons, command/update counts, elapsed time and task/evidence correspondence.
 No successful curve alone establishes prediction, learning, biological uniqueness or
 A99. The intended ordering remains H1 -> H2 -> H3 -> H4 -> H5 -> H6-A -> H6-B -> 1G.
+
+
+## 10. H2 implementation refinements, 19 September 2026
+
+The numerical physical laws and nominal values in section 5 are unchanged.
+MotorWorldV1 is an ordinary class added to cca8_support_world.py; the existing v1
+functions are retained. HybridEnvironment.reset_motor/step_motor/observe_motor
+select the new experiment explicitly, without changing normal reset/step or
+posture_support_v1. No new general simulator, interface layer or event bus is added.
+
+The profile fixes dt for the instance. Nominal dt remains 0.05 seconds; explicitly
+selected 0 < dt <= 0.05 variants support resolution tests without hidden substeps.
+A maximum of sixteen sorted nonoverlapping physical intervals supplies external
+angular forcing, surface removal and/or whole-acquisition dropout. Surface removal
+applies at the beginning of the named interval, so the previous geometry's loading
+is recomputed under that physical surface condition before gravity is integrated.
+
+Commands at k act during [k,k+1); acquisition is at k+1 and nominal availability
+at k+2, exactly as section 6 specifies. Constant delay may explicitly be 0-16 ticks.
+A reset reading is immediately available. The provider returns only due records;
+observe_motor rereads the latest delivered record without new time or identity.
+At most sixteen future readings remain staged between updates. A dropped acquisition
+does not erase earlier in-flight evidence; explicit channel loss produces None.
+
+Unavailable motors suppress only their commanded drive. Gravity and external
+forcing remain, and neutral extension is retained by the stated actuator model.
+The destabilization formula uses the declared pre-saturation angular-rate proxy,
+not an invented measured velocity. These limitations remain explicit in H2.
+The phase demonstrates physical response to supplied drives, not target following,
+Righting, learning, or the complete prediction-action hierarchy.

@@ -146,7 +146,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # CCA8 Module Imports
 from cca8_navpatch import GRID_ENCODING_V1, CELL_UNKNOWN, CELL_TRAVERSABLE, CELL_HAZARD, CELL_GOAL
+from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1
 from cca8_support_world import (
+    MotorBodyStateV1,
+    MotorWorldProfileV1,
+    MotorWorldV1,
     SupportWorldProfileV1,
     SupportWorldStateV1,
     advance_support_world_v1,
@@ -160,7 +164,7 @@ from cca8_support_world import (
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     "EnvState",
     "EnvObservation",
@@ -2247,6 +2251,8 @@ class HybridEnvironment:
         self._episode_index: int = 0
         self._episode_steps: int = 0
         self._support_profile: SupportWorldProfileV1 | None = None
+        self._motor_world: MotorWorldV1 | None = None
+        self._motor_generation: int = 0
 
         # future: physics_backend, robot_backend, llm_backend, mdp_backend
 
@@ -2301,6 +2307,7 @@ class HybridEnvironment:
             validate_support_dt_v1(selected_config.dt)
         self.config = selected_config
         self._support_profile = support_profile
+        self._motor_world = None  # Explicit normal reset ends any prior motor-mode experiment.
 
         self._episode_index += 1
         self._episode_steps = 0
@@ -2332,6 +2339,74 @@ class HybridEnvironment:
         return obs, info
 
 
+    def reset_motor(self, *, stream_id: str, profile: MotorWorldProfileV1 | None = None) -> MotorFeedbackV1:
+        """Start an opt-in command-driven body experiment and return reset sensing.
+
+        This explicit entry selects motor mode instead of the FSM or support-v1
+        scenario. The normal EnvConfig and old reset/step APIs keep their meaning.
+        Only step_motor advances this mode; it has no ctx, reward, task target or
+        cognitive-state input. The supplied profile fixes its independent physical
+        dt, rather than silently reusing the normal scenario's config.dt.
+
+        Validate/build the replacement before changing this environment. Each
+        successful motor reset increments its own generation, including after a
+        switch through a normal scenario. Pending deliveries/old commands cannot
+        carry over. No simulator is created merely by importing this module.
+        """
+        stream = MotorStreamRefV1(stream_id, self._motor_generation + 1)
+        world = MotorWorldV1(stream, profile)
+        self._motor_world = world
+        self._motor_generation = stream.generation
+        self._support_profile = None
+        self._episode_index += 1
+        self._episode_steps = 0
+        self._state = EnvState()
+        return world.observe()
+
+    def step_motor(self, command: MotorCommandV1 | None = None) -> tuple[MotorFeedbackV1, ...]:
+        """Apply one low-level interval and return only newly due sensor events.
+
+        An empty tuple means no new report was delivered, not no ground contact.
+        The physical body can advance while its newest report remains in transit.
+        Wrong-mode/invalid commands are rejected before body/time changes. Fixed
+        command tests exercise physical response only; no target executor runs.
+        """
+        if self._motor_world is None:
+            raise RuntimeError("call reset_motor before step_motor")
+        delivered = self._motor_world.step(command)
+        self._episode_steps = self._motor_world.tick
+        return delivered
+
+    def observe_motor(self) -> MotorFeedbackV1:
+        """Reread the latest eligible motor event without advancing or resampling.
+
+        The original event and availability times remain unchanged. The reading
+        may be older than the current physical body; callers must not treat a
+        cached report during delay/dropout as new confirmation.
+        """
+        if self._motor_world is None:
+            raise RuntimeError("call reset_motor before observe_motor")
+        return self._motor_world.observe()
+
+    @property
+    def motor_body(self) -> MotorBodyStateV1:
+        """Return actual motor-mode coordinates for external inspection only.
+
+        This deliberately separate property is not an agent observation. The
+        ordinary EnvState's storyboard fields do not describe this body.
+        """
+        if self._motor_world is None:
+            raise RuntimeError("motor body is available only after reset_motor")
+        return self._motor_world.body
+
+    @property
+    def motor_elapsed_seconds(self) -> float:
+        """Return elapsed simulation time in the explicitly selected motor mode."""
+        if self._motor_world is None:
+            raise RuntimeError("motor time is available only after reset_motor")
+        return self._motor_world.elapsed_seconds
+
+
     def _set_support_body_v1(self, body: SupportWorldStateV1) -> None:
         """Install a physical snapshot and derive only the existing coarse observation labels.
 
@@ -2360,6 +2435,8 @@ class HybridEnvironment:
         apply a task-level command. The optional ``ctx`` is passed only to the
         perception adapter so current sensor/HAL shaping can remain context-aware.
         """
+        if self._motor_world is not None:
+            raise RuntimeError("motor mode uses observe_motor, not the legacy observation path")
         if self._support_profile is None and self.config.scenario_name.startswith("posture_support_"):
             raise RuntimeError("reset the support scenario before observing it")
         return self._perception.observe(self._state, ctx=ctx)
@@ -2418,6 +2495,11 @@ class HybridEnvironment:
 
             6. Return (obs, reward, done, info).
         """
+
+        if self._motor_world is not None:
+            raise RuntimeError("motor mode uses step_motor; task-token stepping is not supported")
+        if isinstance(action, MotorCommandV1):
+            raise ValueError("motor commands require reset_motor and step_motor")
 
         next_support_body = None
         if self._support_profile is not None:
@@ -2491,6 +2573,8 @@ class HybridEnvironment:
             This is exposed for debugging / unit tests. CCA8 should not use
             this in normal operation; it should rely solely on EnvObservation.
         """
+        if self._motor_world is not None:
+            raise RuntimeError("motor mode has no legacy EnvState; use motor_body for external inspection")
         return self._state
 
     @property

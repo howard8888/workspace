@@ -459,11 +459,11 @@ def test_produced_packet_transport_variants_preserve_existing_rejection_semantic
 
 
 def test_support_packet_and_world_profile_never_import_cognitive_answers() -> None:
-    """The physical kernel has only standard-library imports and no task/source/current-map input."""
+    """Only the neutral motor-message module is added; no task/source/current-map input."""
     tree = ast.parse((ROOT / "cca8_support_world.py").read_text(encoding="utf-8"))
     imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
     imports.update(alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names)
-    assert imports <= {"__future__", "dataclasses", "math"}
+    assert imports <= {"__future__", "dataclasses", "math", "cca8_motor_contracts"}
     assert set(inspect.signature(advance_support_world_v1).parameters) == {"body", "action", "profile", "dt"}
     assert set(inspect.signature(support_observation_packet_v1).parameters) == {"body", "step_index"}
     world, _ = _world()

@@ -26,9 +26,11 @@ constructed by normal CCA8 or NCA8 startup. No motor command is dispatched.
 - tests/test_nca8_import_firewall.py: exactly the new NCA8 contract module and
   its one neutral import are added to the existing explicit manifest.
 
-Both new modules begin at version 0.1.0. Existing component versions are unchanged.
-The host registry remains 61 components / 8 registered behavioral primitives;
-those are host counts, not an implemented SMP inventory.
+Both new modules begin at version 0.1.0. The original H1 commit omitted them from
+--about, which incorrectly left that report at 61. They are ordinary production
+project modules, not external add-ons. The forward H2 correction includes both,
+bringing the report to 63 components / 8 registered behavioral primitives. It
+starts no new actor and does not imply an implemented SMP inventory.
 
 ## Important distinctions demonstrated
 
@@ -63,10 +65,13 @@ make an expired target current again. There is no live-permission deserializer.
 
 ## Deliberate exclusions and preservation
 
-No existing runtime, BodyMap, primitive, handoff, scheduler, adapter, source,
-world provider, README, component registry, interpreter configuration or dependency
-file is edited. The old posture_support_v1 schema, binary policy:stand_up/None
-provider, A0 fixtures and independent legacy runtime are unchanged.
+The original H1 patch edited no existing runtime, BodyMap, primitive, handoff,
+scheduler, adapter, source, world provider, README, interpreter configuration or
+dependency file. The forward H2 update separately corrects the diagnostic registry
+and adds its explicitly requested physical experiment. It does not change the old
+posture_support_v1 schema, binary policy:stand_up/None provider, A0 fixtures or
+independent legacy behavior. Loading shared message definitions is not starting a
+new cognitive or motor actor.
 
 H1 does not implement the proposed physical equations, finite physical driver,
 BodyMap transform, target executor, local predictor, Righting IP/PNM changes,
@@ -124,3 +129,17 @@ After local GO, commit this bounded contract slice. The next implementation is
 P18-H2, the additive command-driven physical provider, under the reviewed numerical
 profile. H3 BodyMap, H4 execution/feedback, H5 Righting preview and H6 integration
 remain separate patches. A99 also still requires P16-1G.
+
+
+## Subsequent local acceptance and forward correction
+
+Howard reported the complete local wall green after the review-script mypy fix:
+preflight 1818/1818 units, 101/101 architecture probes, 5/5 hardware checks,
+system fitness PASS, and all eight inspection blocks correct. He then committed
+and pushed H1 as 1fc768a0c415fc5086e8aa27698ed88b17535059, with a clean tree.
+These are user-reported Windows results, not a new review-host certification.
+
+The component-report omission is repaired in the next H2 commit, as requested.
+The fixed negative example for numeric contact uses MotorFeedbackV1.from_dict
+on a malformed packet; it remains in the committed H1 script and is not reapplied.
+H1 is complete at its own scope. H2 remains a separate physical-provider slice.

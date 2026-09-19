@@ -11,6 +11,7 @@ import cca8_run
 # pylint: disable=protected-access
 
 REQUIRED_COMPONENTS: dict[str, str] = {
+    "motor_contracts": "cca8_motor_contracts",
     "context": "cca8_context",
     "cli": "cca8_cli",
     "preflight": "cca8_preflight",
@@ -43,6 +44,7 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "nca8_adapters": "nca8_adapters",
     "nca8_body": "nca8_body",
     "nca8_contracts": "nca8_contracts",
+    "nca8_sensorimotor_contracts": "nca8_sensorimotor_contracts",
     "nca8_executive": "nca8_executive",
     "nca8_maps": "nca8_maps",
     "nca8_menu": "nca8_menu",

@@ -468,13 +468,15 @@ def test_contract_import_does_not_start_a_runtime_or_change_rng() -> None:
     assert completed.returncode == 0, completed.stderr
 
 
-def test_h1_does_not_change_component_registry_or_default_actor_imports() -> None:
+def test_h1_registers_production_contract_modules_without_starting_new_actors() -> None:
     script = (
         "import sys,cca8_run; "
-        "assert not ({'cca8_motor_contracts','nca8_sensorimotor_contracts'} & set(sys.modules)); "
-        "assert len(cca8_run._cca8_component_rows())==61; "
-        "assert len(cca8_run.PRIMITIVES)==8; "
-        "assert not any('sensorimotor' in name for _,name in cca8_run._CCA8_COMPONENT_REGISTRY)"
+        "assert not any(name.startswith('nca8_') for name in sys.modules); "
+        "registry=dict(cca8_run._CCA8_COMPONENT_REGISTRY); "
+        "assert registry['motor_contracts']=='cca8_motor_contracts'; "
+        "assert registry['nca8_sensorimotor_contracts']=='nca8_sensorimotor_contracts'; "
+        "assert len(cca8_run._cca8_component_rows())==63; "
+        "assert len(cca8_run.PRIMITIVES)==8"
     )
     completed = subprocess.run([sys.executable, "-c", script], cwd=ROOT, capture_output=True, text=True, check=False)
     assert completed.returncode == 0, completed.stderr

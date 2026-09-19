@@ -12,11 +12,47 @@ Requires Python 3.13
 Please contact hschneidermd [at] alum [dot] mit [dot] edu for inquiries about additional software modules, related
  materials, or ongoing development.
 
-Scientific target: `CCA8_High_Level_Architecture_v09.9.docx`. The implementation programme is
-`CCA8_Project_Planning_v16.docx`, selected for the next source update. The local source tree, fresh tests and traces determine
+Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopted implementation programme is
+`CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-1E-C source-local trends, continuity and read-only WNM refresh
+## NCA8 update: P18-H2 command-driven body simulator
+
+This update starts from committed P18-H1 at `1fc768a0c415fc5086e8aa27698ed88b17535059`.
+It also repairs the omitted component-report entries for `cca8_motor_contracts.py` and
+`nca8_sensorimotor_contracts.py`. Both are normal versioned production modules; `--about` now reports
+**63 components and 8 registered behavioral primitives**. No H1 history needs to be amended.
+
+The existing `cca8_support_world.py` now includes a small `MotorWorldV1` simulator. Supplied signed
+orientation and extension drives produce finite physical movement; contact, useful loading and
+an instability proxy are calculated from the resulting geometry. It has no task target, Righting
+instruction, PNM, reward, success criterion or learned controller. Initial tilt is +30 degrees from
+upright and aggregate extension is 0.40; the aggregate actuator is not a particular goat limb.
+
+`HybridEnvironment.reset_motor(...)` explicitly selects this experiment. `step_motor(...)` advances
+one physical interval and returns only newly available readings. `observe_motor()` rereads the latest
+delivered reading, retaining its original time and identity. Nominal dt is 0.05 simulation seconds:
+a command issued at tick k acts during [k,k+1), is sensed at k+1 and is delivered at k+2. These are
+engineering values, not biological timing measurements. A cached reading is not fresh confirmation.
+
+The physical tests include independent/neutral/opposite drives, mirrored bodies, external angular
+forcing at a fixed physical time, absent support, blocked motors, saturation, sensor delay/dropout,
+missing channels, reset isolation and rejected cross-mode commands. The old FSM scenarios,
+support_dynamics_v1, posture_support_v1, coarse StandUp path and default menus remain unchanged.
+
+Run the permanent command-line inspection from the repository root:
+
+    python scripts\review_nca8_motor_world.py
+
+This uses actual simulated movement, but all drives are supplied by the test, not chosen by the goat.
+H3 will compute BodyMap targets; H4 will follow them and correct from feedback. H2 supplies their
+physical command/sensing path and does not claim either mechanism, learning, or A99 completion.
+The normal interactive runner has no new H2 menu item at this stage.
+
+See `docs/P18_H2_REVIEW.md` for the public methods, equations, limits and validation status.
+The earlier H1 inspection remains available as `python scripts\review_nca8_motor_contracts.py`.
+
+## Previous checkpoint: P16-1E-C source-local trends, continuity and read-only WNM refresh
 
 Starting checkpoint: clean `47bbd5937c0ed2815ed65d7946069915edd077d9` (`more cog cycle updates`), including accepted 1R-B and
 1E-B. Planning v16 §§21–22 and §37 govern this representation-only slice. The physical provider, wire schema, body checks,

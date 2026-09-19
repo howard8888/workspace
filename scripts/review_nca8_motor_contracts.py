@@ -139,7 +139,7 @@ def main() -> int:
     _reject("Boolean tilt", lambda: replace(observed, body_tilt_degrees=True))
     numeric_contact_packet = observed.as_dict()
     numeric_contact_packet["support_contact"] = 0
-    _reject("numeric contact", lambda: MotorFeedbackV1.from_dict(numeric_contact_packet))   
+    _reject("numeric contact", lambda: MotorFeedbackV1.from_dict(numeric_contact_packet))
     #_reject("numeric contact", lambda: replace(observed, support_contact=0))
     _reject("availability before event", lambda: replace(observed, event_tick=3, available_tick=2))
     _reject("duplicate command", lambda: command.validate_for_update(stream=stream, now_tick=1, previous_command_id=1))
