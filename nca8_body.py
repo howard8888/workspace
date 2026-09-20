@@ -16,12 +16,19 @@ BodyMap owns current body/peripersonal state, protected safety, and task-to-body
 mapping. Its candidate is an Attention input, not an Attention selection. It may
 authorize or reject a task selected by Navigation, but it never becomes WNM and
 never invents ``STAND_UP`` or any other cognitive task on its own.
+
+P18-H3 adds an opt-in local motor-target helper in nca8_body_targets.py. Its
+current sensor basis is separate from the existing coarse A0 state. Configuring
+it does not enable motor execution or change the A0 authorization path.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
+
+from cca8_motor_contracts import MotorStreamRefV1
+from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetMapperV1
 
 from nca8_maps import (
     DurableNavMapRefV1,
@@ -42,7 +49,7 @@ from nca8_primitives import (
 # comprehensible without a generic state-management framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "AuthorizedActionEnvelopeV1",
     "BodyActionHandoffV1",
@@ -510,6 +517,39 @@ class Nca8BodyRuntimeV1:
         self._current_envelope: AuthorizedActionEnvelopeV1 | None = None
         self._current_lower_request: LowerActionRequestV1 | None = None
         self._last_handoff: BodyActionHandoffV1 | None = None
+        self._motor_targets: BodyTargetMapperV1 | None = None
+
+    @property
+    def motor_targets(self) -> BodyTargetMapperV1 | None:
+        """Return the explicitly configured H3 local mapping helper, or None.
+
+        This is part of the same BodyMap owner, not a second cortical source.
+        Existing A0 calls never configure or consume it. The helper produces
+        proposed/reserved body targets only; H4 adds their motor execution.
+        """
+        return self._motor_targets
+
+    def configure_motor_targets(
+        self, stream: MotorStreamRefV1, capabilities: tuple[BodyAxisCapabilityV1, ...], *,
+        tick_seconds: float = 0.05, maximum_feedback_age: int = 2,
+    ) -> BodyTargetMapperV1:
+        """Configure one H3 body stream using explicitly supplied capabilities.
+
+        The caller admits canonical MotorFeedbackV1 readings to the returned
+        helper. No environment or private body state is accessed here. The
+        existing BodyMap ablation also disables target formation. Reconfiguration
+        is rejected rather than silently dropping resource reservations; a reset
+        constructs a fresh owning BodyMap with a fresh stream generation. No A0
+        fields, action envelope, handoff, current WNM or learner are modified.
+        """
+        if self._motor_targets is not None:
+            raise ValueError("motor targets already configured; reset the owning BodyMap for a new stream")
+        mapper = BodyTargetMapperV1(
+            stream, capabilities, tick_seconds=tick_seconds,
+            maximum_feedback_age=maximum_feedback_age, enabled=self._action_handoff_enabled,
+        )
+        self._motor_targets = mapper
+        return mapper
 
     @property
     def current_state(self) -> BodyMapStateV1 | None:

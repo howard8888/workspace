@@ -16,12 +16,40 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P18-H2 command-driven body simulator
+## NCA8 update: P18-H3 BodyMap target formation
 
-This update starts from committed P18-H1 at `1fc768a0c415fc5086e8aa27698ed88b17535059`.
+Starting from committed H2 at `2c7994b2e6b9bafd19837cdcac603194506d2a5f`, BodyMap can now
+turn a supplied task requirement and current motor-sensor reading into bounded body-relative targets.
+The new normal Python module `nca8_body_targets.py` holds these calculations and two-resource bookkeeping;
+the existing `nca8_body.py` owns its optional helper. Neither file issues a motor command in H3.
+`--about` now lists **64 production components and 8 registered behavioral primitives**.
+
+The same supplied requirement (tilt toward zero, extension toward 0.60) yields an orientation offset
+of -12 degrees from a +30-degree body and +12 degrees from a -30-degree body. A smaller capability
+narrows the increment. Missing tilt/support or an absent capability withholds only the affected target.
+Extension can be a valid attempt without established contact; its target does not prove useful support.
+
+One local sensor record retains its original event/availability times; a reread is not new evidence.
+Targets keep their original body anchor. Proposals occupy no resource until explicitly reserved on
+the BodyMap side, and reservations are not installed motor executions. Compatible targets share one
+task/envelope/execution. Cancellation, fixed-band local refinement and finite expiry cannot silently
+renew permission, overwrite a focal WNM basis, or create a new task.
+
+Run the permanent interim inspection:
+
+    python scripts\review_nca8_body_targets.py
+
+The ten blocks exercise actual BodyMap mapping from supplied tasks and sensor fixtures, with zero motor
+commands. H2 physics, the existing A0 StandUp path and default menus remain unchanged. Automatic target
+following and rapid corrective control remain **P18-H4**. See `docs/P18_H3_REVIEW.md` for exact methods,
+bounds, evidence requirements and validation limits. The previous H1/H2 inspections remain available.
+
+## Previous checkpoint: P18-H2 command-driven body simulator
+
+That update started from committed P18-H1 at `1fc768a0c415fc5086e8aa27698ed88b17535059`.
 It also repairs the omitted component-report entries for `cca8_motor_contracts.py` and
-`nca8_sensorimotor_contracts.py`. Both are normal versioned production modules; `--about` now reports
-**63 components and 8 registered behavioral primitives**. No H1 history needs to be amended.
+`nca8_sensorimotor_contracts.py`. Both are normal versioned production modules; at the H2 checkpoint `--about` reported
+**63 components and 8 registered behavioral primitives** (the current H3 count is above). No H1 history needs to be amended.
 
 The existing `cca8_support_world.py` now includes a small `MotorWorldV1` simulator. Supplied signed
 orientation and extension drives produce finite physical movement; contact, useful loading and
@@ -45,7 +73,7 @@ Run the permanent command-line inspection from the repository root:
     python scripts\review_nca8_motor_world.py
 
 This uses actual simulated movement, but all drives are supplied by the test, not chosen by the goat.
-H3 will compute BodyMap targets; H4 will follow them and correct from feedback. H2 supplies their
+H3 now computes BodyMap targets in its separate experiment; H4 will follow them and correct from feedback. H2 supplies their
 physical command/sensing path and does not claim either mechanism, learning, or A99 completion.
 The normal interactive runner has no new H2 menu item at this stage.
 

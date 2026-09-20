@@ -5,7 +5,16 @@ Scientific authority: accepted CCA8 Architecture v10.1.
 Implementation authority: Planning v18, explicitly adopted in the current request.
 Entry HEAD: e93c1192fe4095346b0c2c828606254bfac6055f (main).
 
-## Later checkpoint: H1 committed; H2 requested
+## Current checkpoint: H2 committed; H3 requested
+
+Howard supplied a clean checkout at 2c7994b2e6b9bafd19837cdcac603194506d2a5f,
+with main/origin/main equal, and explicitly requested P18-H3. The preceding local
+H2 wall and manual inspections passed. The H1 registry correction is already in
+that H2 commit; it must not be reapplied. The original historical design/status
+sections below are preserved. New section 11 records H3's bounded implementation
+choices; docs/P18_H3_REVIEW.md describes the delivered candidate and its limits.
+
+## Historical checkpoint: H1 committed; H2 requested
 
 The issue-time review wording below is historical. Howard subsequently reported
 all local H1 checks green, supplied the passing manual output, and committed/pushed
@@ -290,3 +299,40 @@ The destabilization formula uses the declared pre-saturation angular-rate proxy,
 not an invented measured velocity. These limitations remain explicit in H2.
 The phase demonstrates physical response to supplied drives, not target following,
 Righting, learning, or the complete prediction-action hierarchy.
+
+
+## 11. H3 implementation decisions, 19 September 2026
+
+The physical equations, H1 messages, eight-tick maximum lease and nominal target
+parameters remain unchanged. BodyMap owns an opt-in helper implemented in the
+normal Python module nca8_body_targets.py. It maps supplied absolute planar
+orientation/aggregate-extension requirements by subtracting the current measured
+coordinate and limiting the result to the capability range, maximum step and
+nominal rate/time budget. This is a partial target, not a full task solution.
+
+Orientation requires available tilt, contact=True and positive measured loading.
+Contradictory contact/loading or missing support withholds that axis. Extension
+can still be proposed from its own available coordinate without prior contact;
+no contact or load is fabricated. The default local freshness bound is two ticks
+from acquisition. A new partial sample does not backfill its missing channels,
+and a duplicate cannot refresh its event time. This mapping profile is an H3
+engineering choice, not a biological threshold or full dynamic-safety guarantee.
+
+One supplied capability binds to each family; an absent family is withheld. At
+most two BodyMap-side reservations share one task/application/envelope/execution.
+Proposals do not reserve resources and reservations do not install an executor.
+H4/H6 still check the real handoff and current feedback before movement. No new
+autonomous selector or generic event/resource framework is added.
+
+Local refinement keeps the original anchor and expiry and stays within the original
+endpoint tolerance band and capability/excursion bounds. That band cannot ratchet.
+A changed endpoint receives a new revision at a distinct later local tick; no-op
+refinement renews nothing. Cancellation releases only the named axis. Queries
+exclude an expired lease even before explicit expiry housekeeping. Diagnostic
+records cannot restore a target. These are tested H3 interface behaviors, not
+implemented H4 execution or learned BodyMap calibration.
+
+The new module is registered, yielding 64 components with the existing eight
+behavioral primitives. All prior NCA8 production modules except the small BodyMap
+ownership addition remain unchanged. The H3 review uses supplied task/sensor
+fixtures, issues no motor commands, and needs its own local validation/manual GO.

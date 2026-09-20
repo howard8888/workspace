@@ -21,7 +21,8 @@ NCA8_FILES = tuple(sorted(ROOT.glob("nca8_*.py")))
 
 _ALLOWED_CCA8_IMPORTS: dict[str, frozenset[str]] = {
     "nca8_adapters.py": frozenset({"cca8_env", "cca8_navpatch"}),
-    "nca8_body.py": frozenset(),
+    "nca8_body.py": frozenset({"cca8_motor_contracts"}),
+    "nca8_body_targets.py": frozenset({"cca8_motor_contracts"}),
     "nca8_contracts.py": frozenset(),
     "nca8_executive.py": frozenset(),
     "nca8_handoff.py": frozenset(),
@@ -80,6 +81,7 @@ def test_flat_nca8_module_set_is_explicit_and_complete() -> None:
     assert tuple(path.name for path in NCA8_FILES) == (
         "nca8_adapters.py",
         "nca8_body.py",
+        "nca8_body_targets.py",
         "nca8_contracts.py",
         "nca8_executive.py",
         "nca8_handoff.py",
