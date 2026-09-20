@@ -29,6 +29,7 @@ from dataclasses import dataclass, replace
 
 from nca8_adapters import Nca8ObservationV1
 from nca8_outcome_attention import RightingOutcomeAttentionV1
+from nca8_learning import RightingLearningHookV1
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1
 from nca8_support_dynamics import SupportDynamicsTrackerV1, SupportDynamicsV1
@@ -47,7 +48,7 @@ from nca8_maps import (
 # slice readable without a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "NCA8_BODY_SENSORY_CIRCUIT_ID_V1",
     "Nca8BodySensoryApplicationV1",
@@ -227,6 +228,7 @@ class Nca8BodySensoryModuleV1:
         self._motor_tick_seconds: float | None = None
         self._motor_context: tuple[str, str, int] | None = None
         self._outcome_attention: RightingOutcomeAttentionV1 | None = None
+        self._learning_hook: RightingLearningHookV1 | None = None
 
 
     @property
@@ -572,6 +574,23 @@ class Nca8BodySensoryModuleV1:
         if self._outcome_attention is not None or self._motor_stream is not None:
             raise RuntimeError("configure source relevance once before motor-source admission")
         self._outcome_attention = RightingOutcomeAttentionV1(stream, self.map_library.posture_support_ref)
+
+    @property
+    def learning_hook(self) -> RightingLearningHookV1 | None:
+        """Read this source's optional eligibility-only consequence hook.
+
+        It is not a central learner or another world model. Earlier source-A
+        participation remains addressable while another source is focal; current
+        source availability does not silently renew or revoke its short lifetime.
+        """
+        return self._learning_hook
+
+    def configure_learning_hook(self, stream: MotorStreamRefV1, *, diagnostic_capacity: int = 32) -> None:
+        """Configure once before sensing; no durable rule or actuator runs here."""
+        if self._learning_hook is not None or self._motor_stream is not None:
+            raise RuntimeError("configure source learning hook once before motor-source admission")
+        self._learning_hook = RightingLearningHookV1(stream, self.map_library.posture_support_ref,
+                                                   diagnostic_capacity=diagnostic_capacity)
 
     def retain_motor_context(self, task_id: str, context_id: str, *, cycle_id: int, expires_at_tick: int) -> None:
         """Accept one bounded selected-task continuation request, not source facts.

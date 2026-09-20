@@ -22,7 +22,7 @@ from nca8_righting import RightingApplicationV1
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_trace import Nca8TraceEventV1
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "IntegratedRightingExperimentV1", "run_integrated_righting_v1", "render_integrated_righting_v1",
     "run_hierarchy_review_menu_v1", "focal_hierarchy_lines_v1", "lower_hierarchy_lines_v1", "__version__",
@@ -190,7 +190,7 @@ def render_integrated_righting_v1(result: IntegratedRightingExperimentV1, *, det
 
 def run_hierarchy_review_menu_v1(
     *, qualification_menu: Callable[[], None] | None = None, outcome_menu: Callable[[], None] | None = None,
-    outcome_attention_menu: Callable[[], None] | None = None,
+    outcome_attention_menu: Callable[[], None] | None = None, learning_menu: Callable[[], None] | None = None,
 ) -> None:
     """Inspect fresh finite H6-A runs without changing the retained A0/menu session.
 
@@ -202,7 +202,8 @@ def run_hierarchy_review_menu_v1(
     the original four H6-A routes remain available. A separate optional callback
     adds the 1G-A outcome review at option 6 without reversing renderer imports.
     The optional 1G-B source/interpretation review uses option 7. Its callback
-    likewise avoids importing a renderer consumer here. The full inspector is separate.
+    likewise avoids importing a renderer consumer here. Option 8 supplies the
+    separate 1G-C eligibility/F/ledger review. The full inspector is separate.
     """
     if qualification_menu is not None and not callable(qualification_menu):
         raise TypeError("qualification_menu must be callable or None")
@@ -210,6 +211,8 @@ def run_hierarchy_review_menu_v1(
         raise TypeError("outcome_menu must be callable or None")
     if outcome_attention_menu is not None and not callable(outcome_attention_menu):
         raise TypeError("outcome_attention_menu must be callable or None")
+    if learning_menu is not None and not callable(learning_menu):
+        raise TypeError("learning_menu must be callable or None")
     while True:
         print("\nP18-H6-A -- INTEGRATED RIGHTING REVIEW")
         print(cca8_cli.MENU_RESPONSE_DIVIDER)
@@ -223,6 +226,8 @@ def run_hierarchy_review_menu_v1(
             print("  6) Task progress, supported completion and PNM correspondence (P16-1G-A)")
         if outcome_attention_menu is not None:
             print("  7) Task mismatch, Attention and one focal interpretation (P16-1G-B)")
+        if learning_menu is not None:
+            print("  8) Called no-learning hook, Phase F and L01-L25 inventory (P16-1G-C)")
         print("  [Enter] Return to NCA8 menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
@@ -236,8 +241,13 @@ def run_hierarchy_review_menu_v1(
         if choice == "7" and outcome_attention_menu is not None:
             outcome_attention_menu()
             continue
+        if choice == "8" and learning_menu is not None:
+            learning_menu()
+            continue
         if choice not in {"1", "2", "3", "4"}:
             last_choice = 7 if outcome_attention_menu is not None else 6 if outcome_menu is not None else 5 if qualification_menu is not None else 4
+            if learning_menu is not None:
+                last_choice = 8
             print(f"Choose 1-{last_choice}, or press Enter to return.")
             continue
         case = "disturbed" if choice in {"2", "4"} else "nominal"

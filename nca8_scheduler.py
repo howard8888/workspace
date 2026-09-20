@@ -25,7 +25,7 @@ from nca8_trace import Nca8TraceBufferV1
 
 # pylint: disable=duplicate-code
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "CircuitPollFunctionV1",
     "CircuitPollSourceV1",
@@ -387,9 +387,23 @@ class Nca8DeterministicSchedulerV1:
         self,
         cycle_id: int,
         trace: Nca8TraceBufferV1,
+        *,
+        reconcile: Callable[[], None] | None = None,
     ) -> SchedulerCycleSnapshotV1:
-        """Retire invalid/expired pending results and close the logical cycle."""
+        """Enter F, run optional due-owner reconciliation, then retire and close.
+
+        The callback receives no new external input and supplies no task decision.
+        The composing runtime owns its bounded work; the scheduler knows nothing
+        about learner inventories or update rules. A callback failure leaves the
+        cycle unclosed, so its owner must stop/reset rather than retry the callback.
+        Existing callers without reconciliation retain identical phase and trace
+        behavior. Invalid callbacks are rejected before entering F.
+        """
+        if reconcile is not None and not callable(reconcile):
+            raise TypeError("F reconciliation must be callable or None")
         self._enter_phase(cycle_id, CyclePhase.LEARNING_SCHEDULE)
+        if reconcile is not None:
+            reconcile()
         retired_ids = self._retire_after_cycle(cycle_id)
         self._cycle_retired_ids = retired_ids
         pending = self.pending_results_snapshot()

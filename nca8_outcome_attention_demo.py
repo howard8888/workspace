@@ -10,6 +10,9 @@ outcome route changes its focal source and single demanding allocation there.
 No outcome, task winner or causal diagnosis is supplied by the observer.
 """
 
+#pylint: disable=too-many-boolean-expressions
+#pylint: disable=duplicate-code
+
 from __future__ import annotations
 
 from collections import Counter
@@ -24,10 +27,10 @@ from nca8_hierarchy_demo import focal_hierarchy_lines_v1, lower_hierarchy_lines_
 from nca8_righting_demo import competing_preview_bid_v1
 from nca8_sensorimotor import SensorimotorStepV1
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "OUTCOME_ATTENTION_CASES_V1", "RightingOutcomeAttentionExperimentV1", "run_outcome_attention_v1",
-    "render_outcome_attention_summary_v1", "render_outcome_attention_v1", "run_outcome_attention_menu_v1", "__version__",
+    "outcome_attention_owner_limits_v1", "outcome_attention_review_bids_v1", "render_outcome_attention_summary_v1", "render_outcome_attention_v1", "run_outcome_attention_menu_v1", "__version__",
 ]
 OUTCOME_ATTENTION_CASES_V1 = (
     "competing_on", "competing_off", "maintain_on", "maintain_off", "protected_competitor",
@@ -44,6 +47,37 @@ _LIMITS = {
     "outcome_dwell_samples": 3, "outcome_recent_feedback": 16, "outcome_staged_intervals": 16, "outcome_command_ticks": 16,
     "attention_pending_requests": 8, "attention_previous_endpoint": 1, "attention_dependency": 1, "attention_dispositions": 32,
 }
+
+
+def outcome_attention_owner_limits_v1() -> dict[str, int]:
+    """Return detached observer bounds for extensions, never mutable owner limits.
+
+    The no-learning review adds its own temporary-record limits while preserving
+    these qualified H4/H6/1G-A/B counts. Reading this contract runs no experiment.
+    """
+    return dict(_LIMITS)
+
+
+def outcome_attention_review_bids_v1(case: str, *, cycle: int, tick: int) -> tuple[AttentionBidV1, ...]:
+    """Supply the shared competing-source fixture, not a cognitive relevance policy.
+
+    Competing cases admit B at ticks12/16, maintain cases at16, and the protected
+    case over12..24. Other named experiment families have no supplied competitor.
+    The caller validates its experiment name; this helper validates the clock and
+    returns fresh immutable bids without running a trial or reading physical state.
+    """
+    if not isinstance(case, str) or not case:
+        raise ValueError("review case must be nonempty text")
+    if (isinstance(cycle, bool) or not isinstance(cycle, int) or not 1 <= cycle <= 81
+            or isinstance(tick, bool) or not isinstance(tick, int) or not 0 <= tick <= 80):
+        raise ValueError("review bid requires a finite focal/physical clock")
+    compete = (case.startswith("competing") and tick in (12, 16)
+               or case.startswith("maintain") and tick == 16
+               or case == "protected_competitor" and 12 <= tick <= 24)
+    if not compete:
+        return ()
+    return (replace(competing_preview_bid_v1(cycle), novelty_or_ambiguity_rank=10,
+                    protected_safety_rank=int(case == "protected_competitor")),)
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,13 +186,7 @@ def run_outcome_attention_v1(case: str = "competing_on", *, trace_capacity: int 
             peaks[name] = max(peaks.get(name, 0), value)
 
     for cycle in range(1, 21):
-        compete = (case.startswith("competing") and trial.tick in (12, 16)
-                   or case.startswith("maintain") and trial.tick == 16
-                   or case == "protected_competitor" and 12 <= trial.tick <= 24)
-        bids: tuple[AttentionBidV1, ...] = ()
-        if compete:
-            bids = (replace(competing_preview_bid_v1(cycle), novelty_or_ambiguity_rank=10,
-                            protected_safety_rank=int(case == "protected_competitor")),)
+        bids = outcome_attention_review_bids_v1(case, cycle=cycle, tick=trial.tick)
         focal = trial.focal_step(competing_bids=bids)
         record_peaks()
         lower: list[SensorimotorStepV1] = []

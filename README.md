@@ -16,17 +16,115 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-1G-B task-outcome relevance and one focal allocation
+## NCA8 update: P16-1G-C called no-learning hook, Phase F and coverage
+
+P16-1G-B was accepted, validated locally and committed as `8ebff4a`. The new
+opt-in **righting_no_learning_v1** profile adds actual bounded participation and
+teaching admission, **not durable learning**. Its implementation and A99 remain
+pending the local validation wall and manual acceptance. Legacy/default routing,
+physical equations, task criteria, prediction tolerances and all existing task,
+request and motor budgets are unchanged.
+
+Use **NCA8 menu 8 -> integrated review 8**. The current inventory is **78 production
+components and 8 host behavioral primitives**. `nca8_learning.py` implements a
+small extension owned by the existing POSTURE-SUPPORT sensory owner.
+`nca8_learning_demo.py` inspects shared experiments; `nca8_learning_registry.py`
+contains the complete read-only L01-L25 inventory. The latter is inspected only
+on demand; neither the cognitive core nor F imports or executes its 25 rows.
+All earlier H4/H6-A/H6-B/1G-A/1G-B profiles retain their disabled-hook behavior and
+complete experiment exports. Enablement requires `task_learning_hook_enabled=True`
+and the existing task-outcome consumer; no new default actor is enabled.
+
+An actual selected Righting application supplies its original source, sample,
+operation, context, PNM and authorized-target meaning. The source-side consequence
+recipient retains at most **eight participants**. A participant created in focal
+cycle c expires **before F in c+4**, whether its source is focal, available or not.
+This four-focal-cycle engineering profile is independent of the physical prediction
+window, Attention-request lifetime, target lease and diagnostic history. Faster
+focal polling therefore consumes eligibility sooner in physical time; no timer is
+silently enlarged to make delayed evidence pass. Overflow refuses the whole batch.
+
+The regular scheduler F boundary now has an optional typed reconciliation callback.
+When the hook is enabled, the scheduler enters F before invoking it, and completes
+housekeeping/closure only afterward. A failed callback leaves the cycle unclosed;
+the core revokes the hook and stops rather than installing the accepted request.
+Existing calls without a callback preserve their original ordering and behavior.
+The just-issued action has no new physical outcome in F. Its source participation
+is separate from earlier C2 outcomes and from any interpretation actually performed
+at the current D opportunity.
+
+A valid corresponding known forecast relation can receive **accepted_no_update**.
+That means evidence was admitted to this narrow recipient; it does not mean a
+parameter changed, the agent caused the result, or a learning rule was acquired.
+Wrong source/generation/operation, changed original registration, replayed/newly
+retimestamped evidence and invalid event windows are rejected before mutation.
+Duplicate results cannot renew eligibility. Missing, interrupted, not-applied,
+expired and uncertain execution receive explicit no-update dispositions. Material
+narrowing leaves incompatible relations unevaluable; compatible relations retain
+their original meaning.
+
+An actual 1G-B request creates a dependency on its actual focal interpretation.
+The F hook does not perform that interpretation, change Attention or select a task.
+A resolved result can release eligible earlier evidence; unresolved current
+relevance remains pending until independently expired. In the explicit Attention-off
+control, the hook conservatively defers mismatches instead of inventing the absent
+interpretation route. This no-learning admission rule does not redefine 1G-B's
+significance policy. Prediction-comparison-off creates no teaching eligibility.
+Causal action credit remains uncertain even when the evidence is admitted.
+
+Fourteen fixed live cases retain 80 physical updates / 4 seconds. Nominal and
+competing hook-on/off pairs keep 1G-B Attention enabled in both, and compare complete
+commitments, commands and body trajectories. The expected no-learning result is
+unchanged behavior, not an improvement score. Other cases cover protected delay,
+unresolved interpretation, missing sensing, material narrowing, total veto,
+assistance, faster focal cadence, delayed feedback and separate Attention/comparison
+controls. The nominal near-12-degree boundary is not retuned into task success.
+
+A **separate canonical replay fixture** selects an actual Righting application,
+installs its actual authorized targets, then supplies labelled execution and
+endpoint records to the real C2/D/E/F path without advancing a physical world.
+Source B is focal and source A's current input/activation is unavailable when A's
+earlier evidence is delivered. A still-eligible original A recipient accepts it;
+a faster-focal variant expires the same eligibility while its prediction claim is
+still pending and rejects the later contribution. This tests recipient independence
+from focal/current access, not a completed general P16-3A Ready/offload system.
+The fixture is not presented as observed physical recovery.
+
+The full Appendix-I inventory preserves all 25 canonical names, intended owners,
+depths, change/input contracts, timing, modulation, promotion phases and controls.
+Only L12 reports the partial source-side eligibility seam; its durable rule remains
+unimplemented. All other rows are documentation contracts with no runtime learner.
+The **18 Working / 5 contract-permitted / 2 lower-contract** counts describe future
+C99 minima, not current learning maturity. Fixed SMP competence is not learned L10;
+fixed protection is not adaptive L25. No acquired LP or Emotion learner is added.
+
+    python scripts\review_nca8_hierarchy.py --learning-hook
+    python scripts\review_nca8_hierarchy.py --learning-hook nominal_on --detail
+    python scripts\review_nca8_hierarchy.py --learning-hook competing_on
+    python scripts\review_nca8_hierarchy.py --learning-hook unresolved_current
+    python scripts\review_nca8_hierarchy.py --learning-routing
+    python scripts\review_nca8_hierarchy.py --learning-ledger --detail
+
+`--learning-hook`, `--learning-routing` and `--learning-ledger` are mutually exclusive
+with each other and the retained experiment selectors. JSON export and menu/detail
+inspection remain read-only. Diagnostic retention (at most 32 dispositions) does
+not control eligibility, outcome claims, cognition, movement or RNG. Every F report
+states zero durable updates, zero already-effective/due durable changes and zero
+ledger rows executed. A99 can be reviewed only after this slice's local acceptance
+and reconciliation with the retained hierarchy/outcome evidence; no gate or default
+promotion follows merely from a new component count.
+
+## Previous checkpoint: P16-1G-B task-outcome relevance and one focal allocation
 
 Howard approved **GO-OUTCOME-POLICY** on 20 September 2026: local detection,
 source-mediated escalation, one demanding interpretation opportunity and a later
 eligible dependent response, with protected lower control continuing. The opt-in
 **righting_outcome_attention_v1** implementation follows that policy. Policy
-approval is not implementation acceptance; the new slice requires its local wall
-and manual review. P16-1G-A and P18-H6-B are accepted earlier checkpoints.
+approval was followed by local validation and implementation acceptance at
+`8ebff4a`. P16-1G-A and P18-H6-B are accepted earlier checkpoints.
 
-Use **NCA8 menu 8 -> integrated review 7** for the shared experiments. The current
-inventory is **75 production components and 8 host behavioral primitives**.
+Use **NCA8 menu 8 -> integrated review 7** for the shared experiments. The 1G-B
+checkpoint inventory was **75 production components and 8 host behavioral primitives**.
 `nca8_outcome_attention.py` is an extension owned by the existing POSTURE-SUPPORT
 sensory owner, not an Evaluator, CompareOutcome IP, new world model or learner.
 `nca8_outcome_attention_demo.py` is an external inspection harness. Existing H4,
@@ -99,7 +197,8 @@ mutually exclusive selectors. Opening menus performs no trial. All renderers use
 already computed results; changing retention/detail cannot change the body,
 source, request, selected operation or RNG. The same-source selection/interpretation
 path is an initial domain-specific profile, not a universal extra-cycle rule.
-**P16-1G-C, A99, broad ambiguity/Ready/learning and default promotion remain open.**
+**At the 1G-B checkpoint, 1G-C and A99 remained open; see the current section above.**
+Broad ambiguity/Ready/learning and default promotion remain open.
 No physics, task criteria, prediction tolerance, lower competence, task budget,
 dependency, lint/type configuration or durable parameter is changed by this slice.
 

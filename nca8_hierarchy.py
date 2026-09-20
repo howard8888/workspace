@@ -18,7 +18,9 @@ The separately enabled P16-1G-A profile adds task dwell and original endpoint
 correspondence in the same core/driver; the retained H6 profiles are unchanged.
 The opt-in 1G-B source route adds one demanding interpretation before a later
 response reconsideration. Protected lower execution still respects its original
-lease. No profile calls the legacy/A0 provider; the 1G-C learning hook is future work.
+lease. The opt-in 1G-C source-owned hook maintains bounded eligibility and
+reconciles available evidence at F, with zero durable updates. No profile calls
+the legacy/A0 provider, and the learning inventory is never executed as a loop.
 """
 
 from __future__ import annotations
@@ -39,13 +41,14 @@ from nca8_outcomes import (
 )
 from nca8_righting import RightingApplicationV1, RightingContextV1
 from nca8_outcome_attention import RightingMismatchRequestV1
+from nca8_learning import LearningPhaseFReportV1
 from nca8_runtime import Nca8RightingPreviewSessionV1, RightingPreviewResultV1
 from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, SchedulerCycleSnapshotV1
 from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, SensorimotorProfileV1, SensorimotorStepV1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -80,6 +83,7 @@ class IntegratedRightingCycleV1:
     claim_registration: RightingClaimRegistrationV1 | None = None
     outcome_requests_created: tuple[RightingMismatchRequestV1, ...] = ()
     outcome_requests_pending: tuple[RightingMismatchRequestV1, ...] = ()
+    learning_report: LearningPhaseFReportV1 | None = None
 
     @property
     def status(self) -> str:
@@ -108,6 +112,7 @@ class IntegratedRightingCycleV1:
             **({"outcome_requests_created": [item.as_dict() for item in self.outcome_requests_created],
                 "outcome_requests_pending": [item.as_dict() for item in self.outcome_requests_pending]}
                if self.calculation.outcome_allocation is not None else {}),
+            **({"learning_reconciliation": self.learning_report.as_dict()} if self.learning_report is not None else {}),
         }
 
 
@@ -128,15 +133,19 @@ class IntegratedRightingCoreV1:
         handoff_enabled: bool = True, trace_capacity: int = 256,
         orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True,
         task_outcomes_enabled: bool = False, task_prediction_comparison_enabled: bool = True,
-        task_outcome_attention_enabled: bool = False,
+        task_outcome_attention_enabled: bool = False, task_learning_hook_enabled: bool = False,
+        learning_diagnostic_capacity: int = 32,
     ) -> None:
         _bounded_count(trace_capacity, "trace_capacity", 1, 4096)
         if not all(isinstance(flag, bool) for flag in (
-            task_outcomes_enabled, task_prediction_comparison_enabled, task_outcome_attention_enabled,
+            task_outcomes_enabled, task_prediction_comparison_enabled, task_outcome_attention_enabled, task_learning_hook_enabled,
         )):
             raise TypeError("task outcome options must be Boolean")
         if task_outcome_attention_enabled and not task_outcomes_enabled:
             raise ValueError("task-outcome Attention requires the 1G-A correspondence consumer")
+        if task_learning_hook_enabled and not task_outcomes_enabled:
+            raise ValueError("the no-learning hook requires the 1G-A correspondence consumer")
+        _bounded_count(learning_diagnostic_capacity, "learning_diagnostic_capacity", 1, 32)
         self.outcomes = RightingOutcomeRuntimeV1(stream, compare_predictions=task_prediction_comparison_enabled) if task_outcomes_enabled else None
         self.cognition = Nca8RightingPreviewSessionV1(
             stream, context=context, capabilities=capabilities,
@@ -144,6 +153,8 @@ class IntegratedRightingCoreV1:
             orientation_mapping_sign=orientation_mapping_sign, task_pnm_consumer_enabled=task_pnm_consumer_enabled,
             outcome_attention_enabled=task_outcome_attention_enabled,
         )
+        if task_learning_hook_enabled:
+            self.cognition.sensory.configure_learning_hook(stream, diagnostic_capacity=learning_diagnostic_capacity)
         self.handoff = Nca8InternalHandoffV1(generation=stream.generation, enabled=handoff_enabled)
         self.scheduler = Nca8DeterministicSchedulerV1()
         self.trace = Nca8TraceBufferV1(trace_capacity)
@@ -171,6 +182,9 @@ class IntegratedRightingCoreV1:
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("core stop requires a nonempty reason")
         self._fault = reason[:100]
+        hook = self.cognition.sensory.learning_hook
+        if hook is not None:
+            hook.close()
         if self.outcomes is not None:
             self.outcomes.reject_uninstalled()
         receipt = self.handoff.receipt
@@ -369,15 +383,42 @@ class IntegratedRightingCoreV1:
         accepted = self.handoff.accept(Nca8PhaseEDispatchV1(commitment, None, projection.pnm if projection else None, None, motor))
         self.trace.append("hierarchy_handoff", "target handoff accepted; not yet released or installed", cycle_id=cycle,
                           phase=CyclePhase.PROJECT_DISPATCH.name, details={"receipt": accepted.receipt_id})
-        self.trace.append("hierarchy_learning", "F reconciliation: no durable learner or new physical outcome", cycle_id=cycle,
-                          phase=CyclePhase.LEARNING_SCHEDULE.name, details={"durable_learning_updates": 0})
-        schedule = self.scheduler.phase_f_finish(cycle, self.trace)
+        hook = self.cognition.sensory.learning_hook
+        learning_report: LearningPhaseFReportV1 | None = None
+
+        def reconcile_learning() -> None:
+            """Visit the one source-side participant while the scheduler is actually in F."""
+            nonlocal learning_report
+            if hook is not None:
+                learning_report = hook.reconcile(
+                    cycle_id=cycle, cutoff_tick=tick, registration=claim_registration,
+                    context=application.task.context if isinstance(application, RightingApplicationV1) else None,
+                    outcomes=claim_outcomes, requests=created_requests,
+                    interpretation=allocation.interpretation if allocation is not None and allocation.kind == "interpretation" else None,
+                    comparison_enabled=self.outcomes.compare_predictions if self.outcomes is not None else False,
+                    attention_enabled=outcome_owner is not None,
+                )
+                self.trace.append("hierarchy_learning_hook", "F reconciled source participation; eligibility only, no durable update",
+                                  cycle_id=cycle, phase=CyclePhase.LEARNING_SCHEDULE.name,
+                                  details={"recipient": learning_report.recipient_id, "participants": len(learning_report.pending),
+                                           "offered_outcomes": learning_report.offered_outcomes,
+                                           "dispositions": ",".join(item.status for item in learning_report.dispositions),
+                                           "durable_learning_updates": 0, "ledger_rows_executed": 0})
+            self.trace.append("hierarchy_learning", "F reconciliation: no durable learner or new physical outcome", cycle_id=cycle,
+                              phase=CyclePhase.LEARNING_SCHEDULE.name, details={"durable_learning_updates": 0})
+
+        if hook is None:
+            # Preserve the retained empty-F trace and original scheduler call.
+            reconcile_learning()
+            schedule = self.scheduler.phase_f_finish(cycle, self.trace)
+        else:
+            schedule = self.scheduler.phase_f_finish(cycle, self.trace, reconcile=reconcile_learning)
         self.trace.append("hierarchy_close", "focal core closed; physical work may now be attempted", cycle_id=cycle,
                           details={"cutoff_tick": tick})
         ready = self.handoff.release_after_close(accepted)
         result = IntegratedRightingCycleV1(
             calculation, commitment, ready, reservations, schedule, reports, events, task_outcome, claim_outcomes, claim_registration,
-            created_requests, () if outcome_owner is None else outcome_owner.pending(),
+            created_requests, () if outcome_owner is None else outcome_owner.pending(), learning_report,
         )
         self.last_result = result
         return result
@@ -410,7 +451,8 @@ class IntegratedRightingTrialV1:
         orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True,
         focal_only_feedback_from_tick: int | None = None,
         task_outcomes_enabled: bool = False, task_prediction_comparison_enabled: bool = True,
-        task_outcome_attention_enabled: bool = False,
+        task_outcome_attention_enabled: bool = False, task_learning_hook_enabled: bool = False,
+        learning_diagnostic_capacity: int = 32,
     ) -> None:
         profile = MotorWorldProfileV1() if physical_profile is None else physical_profile
         if not isinstance(profile, MotorWorldProfileV1) or profile.dt_seconds != 0.05:
@@ -418,11 +460,16 @@ class IntegratedRightingTrialV1:
         if focal_only_feedback_from_tick is not None:
             _bounded_count(focal_only_feedback_from_tick, "focal_only_feedback_from_tick", 0, 80)
         if not all(isinstance(flag, bool) for flag in (
-            task_outcomes_enabled, task_prediction_comparison_enabled, task_outcome_attention_enabled,
+            task_outcomes_enabled, task_prediction_comparison_enabled, task_outcome_attention_enabled, task_learning_hook_enabled,
         )):
             raise TypeError("task outcome options must be Boolean")
         if task_outcome_attention_enabled and not task_outcomes_enabled:
             raise ValueError("task-outcome Attention requires the 1G-A correspondence consumer")
+        if task_learning_hook_enabled and not task_outcomes_enabled:
+            raise ValueError("the no-learning hook requires the 1G-A correspondence consumer")
+        _bounded_count(learning_diagnostic_capacity, "learning_diagnostic_capacity", 1, 32)
+        self._task_learning_hook_enabled = task_learning_hook_enabled
+        self._learning_diagnostic_capacity = learning_diagnostic_capacity
         self._task_outcomes_enabled = task_outcomes_enabled
         self._task_outcome_attention_enabled = task_outcome_attention_enabled
         self._task_prediction_comparison_enabled = task_prediction_comparison_enabled
@@ -452,6 +499,7 @@ class IntegratedRightingTrialV1:
             orientation_mapping_sign=self._orientation_mapping_sign, task_pnm_consumer_enabled=self._task_pnm_consumer_enabled,
             task_outcomes_enabled=self._task_outcomes_enabled, task_prediction_comparison_enabled=self._task_prediction_comparison_enabled,
             task_outcome_attention_enabled=self._task_outcome_attention_enabled,
+            task_learning_hook_enabled=self._task_learning_hook_enabled, learning_diagnostic_capacity=self._learning_diagnostic_capacity,
         )
         self.controller = SensorimotorExecutorV1(
             self.core.cognition.mapper, profile=self._control_profile, installation_source=self.core.handoff,
@@ -510,6 +558,7 @@ class IntegratedRightingTrialV1:
             **({"outcome_staged_intervals": len(self._outcome_intervals), **self.core.outcomes.retained_counts()}
                if self.core.outcomes is not None else {}),
             **(cognition.sensory.outcome_attention.retained_counts() if cognition.sensory.outcome_attention is not None else {}),
+            **(cognition.sensory.learning_hook.retained_counts() if cognition.sensory.learning_hook is not None else {}),
         }
 
     def snapshot(self) -> dict[str, object]:
@@ -532,6 +581,8 @@ class IntegratedRightingTrialV1:
             "wnm_count": int(self.core.cognition.navigation.current_wnm is not None),
             "current_task_pnm_count": int(self.core.cognition.prediction.current_support_preview is not None),
             "task_success_established": task is not None and task.status == "completed", "durable_learning_updates": 0,
+            **({"learning_participation": [item.as_dict() for item in self.core.cognition.sensory.learning_hook.pending()]}
+               if self.core.cognition.sensory.learning_hook is not None else {}),
             **({"task_outcomes_profile": "righting_outcomes_v1",
                 "task_assessment": self.core.outcomes.last_assessment.as_dict() if self.core.outcomes.last_assessment is not None else None,
                 "pending_claims": [item.as_dict() for item in self.core.outcomes.pending()],

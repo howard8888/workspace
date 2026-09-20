@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Review shared H6-A/B and P16-1G-A/B experiments; print evidence without writing files."""
+"""Review shared H6-A/B and P16-1G-A/B/C experiments; print evidence without writing files."""
 
 from __future__ import annotations
 
@@ -21,6 +21,11 @@ from nca8_hierarchy_qualification import (
     run_hierarchy_qualification_group_v1, run_hierarchy_qualification_v1,
 )
 
+from nca8_learning_demo import (
+    LEARNING_HOOK_CASES_V1, render_learning_hook_summary_v1, render_learning_hook_v1, render_learning_routing_fixture_v1,
+    run_learning_hook_v1, run_learning_routing_fixture_v1,
+)
+from nca8_learning_registry import learning_capabilities_v1, render_learning_ledger_v1
 from nca8_outcome_attention_demo import (
     OUTCOME_ATTENTION_CASES_V1, render_outcome_attention_summary_v1, render_outcome_attention_v1, run_outcome_attention_v1,
 )
@@ -41,9 +46,39 @@ def main(argv: Sequence[str] | None = None) -> int:
                            help="run the separate opt-in P16-1G-A task outcome profile")
     selection.add_argument("--outcome-attention", nargs="?", const="all", choices=("all", *OUTCOME_ATTENTION_CASES_V1),
                            help="run the approved opt-in P16-1G-B mismatch and single-focal-allocation profile")
+    selection.add_argument("--learning-hook", nargs="?", const="all", choices=("all", *LEARNING_HOOK_CASES_V1),
+                           help="run the independent P16-1G-C no-learning eligibility and F profile")
+    selection.add_argument("--learning-routing", action="store_true", help="inspect original-recipient/expiry canonical replay fixtures")
+    selection.add_argument("--learning-ledger", action="store_true", help="inspect L01-L25 contracts and actual maturity; no trials")
     parser.add_argument("--detail", action="store_true", help="show each local drive and observed report")
     parser.add_argument("--json", action="store_true", help="print a detached finite observer export")
     args = parser.parse_args(argv)
+    if args.learning_ledger:
+        if args.json:
+            print(json.dumps([item.as_dict() for item in learning_capabilities_v1()], sort_keys=True, allow_nan=False))
+        else:
+            print(render_learning_ledger_v1(detail=args.detail))
+        return 0
+    if args.learning_routing:
+        routing_records = tuple(run_learning_routing_fixture_v1(expired=expired) for expired in (False, True))
+        if args.json:
+            print(json.dumps({"evidence_kind": "canonical_replay_no_world_steps",
+                              "fixtures": [[item.as_dict() for item in records] for records in routing_records]},
+                             sort_keys=True, allow_nan=False))
+        else:
+            print("\n\n".join(render_learning_routing_fixture_v1(records) for records in routing_records))
+        return 0
+    if args.learning_hook is not None:
+        learning_cases = LEARNING_HOOK_CASES_V1 if args.learning_hook == "all" else (args.learning_hook,)
+        learning_records = tuple(run_learning_hook_v1(case) for case in learning_cases)
+        if args.json:
+            print(json.dumps([item.as_dict() for item in learning_records], sort_keys=True, allow_nan=False))
+        else:
+            print(render_learning_hook_summary_v1(learning_records))
+            if args.learning_hook != "all" or args.detail:
+                print("\n\n".join(render_learning_hook_v1(item, detail=args.detail) for item in learning_records))
+        return int(any(item.bound_violations or not item.metrics()["durable_source_unchanged"]
+                       or not item.fixed_configuration_unchanged for item in learning_records))
     if args.outcome_attention is not None:
         attention_cases = OUTCOME_ATTENTION_CASES_V1 if args.outcome_attention == "all" else (args.outcome_attention,)
         attention_records = tuple(run_outcome_attention_v1(case) for case in attention_cases)
