@@ -363,12 +363,12 @@ def test_registry_reports_all_production_modules_without_registering_an_smp_as_a
     import cca8_run
     import nca8_body_targets
     import nca8_sensorimotor
-    assert cca8_run.__version__ == "0.30.15"
-    assert nca8_body_targets.__version__ == "0.2.0"
-    assert nca8_sensorimotor.__version__ == demo.__version__ == "0.1.0"
-    assert nca8_menu.__version__ == "0.9.0"
+    assert cca8_run.__version__ == "0.30.16"
+    assert nca8_body_targets.__version__ == "0.3.0"
+    assert nca8_sensorimotor.__version__ == demo.__version__ == "0.2.0"
+    assert nca8_menu.__version__ == "0.10.0"
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_sensorimotor"] == "nca8_sensorimotor"
     assert registry["nca8_sensorimotor_demo"] == "nca8_sensorimotor_demo"
-    assert len(cca8_run._cca8_component_rows()) == 68
+    assert len(cca8_run._cca8_component_rows()) == 70
     assert len(cca8_run.PRIMITIVES) == 8

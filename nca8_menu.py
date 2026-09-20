@@ -13,10 +13,11 @@ from __future__ import annotations
 import cca8_cli
 from nca8_runtime import Nca8SessionV1
 from nca8_trace import render_flow_trace_lines_v1
+from nca8_hierarchy_demo import run_hierarchy_review_menu_v1
 from nca8_righting_demo import run_righting_preview_review_v1
 from nca8_sensorimotor_demo import run_sensorimotor_review_menu_v1
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -25,6 +26,8 @@ Accepted Architecture v10.1 and Planning v18 govern new work.
 Options 1-5 retain Gate A; option 6 reviews P18-H4 supplied-target motor control.
 H4 is not yet integrated Righting or a new default cognitive runtime.
 Option 7 runs the H5 relational Righting preview without installing targets or moving a body.
+Option 8 runs the separate H6-A integrated hierarchy with finite targets and actual local movement.
+H6-B qualification and P16-1G task outcomes remain open.
 Planning v16 P16-1R-B separates internal handoff and cycle closure from the
 external world step and returning-input admission. Gate-A decisions are unchanged.
 
@@ -374,6 +377,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print("  5) Start fresh and automatically run the complete Gate-A StandUp demonstration")
         print("  6) Review supplied-target movement and fast local feedback (P18-H4)")
         print("  7) Review relational Righting and sparse PNM preview (P18-H5; no movement)")
+        print("  8) Review integrated Righting and persistent motor execution (P18-H6-A)")
         print("  [Enter] Return to Main Menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
@@ -427,7 +431,10 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
             if choice == "7":
                 run_righting_preview_review_v1()
                 continue
-            print("Please choose 1, 2, 3, 4, 5, 6, or 7; or press Enter to return.")
+            if choice == "8":
+                run_hierarchy_review_menu_v1()
+                continue
+            print("Please choose 1, 2, 3, 4, 5, 6, 7, or 8; or press Enter to return.")
         except Exception as exc:  # pragma: no cover - defensive interactive boundary
             print(f"[nca8:error] {type(exc).__name__}: {exc}")
             if session is not None and session.status().reset_required:

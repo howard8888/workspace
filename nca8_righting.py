@@ -37,7 +37,7 @@ from nca8_primitives import (
 )
 from nca8_sensorimotor_contracts import TargetOriginV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "RightingActivityV1", "RightingContextV1", "RightingTaskV1", "RightingApplicationV1", "RightingIPV1", "__version__",
 ]
@@ -116,8 +116,8 @@ class RightingTaskV1:
                 raise ValueError("task counters must be nonnegative integers")
         if self.started_cycle < 1 or self.last_cycle < self.started_cycle or self.applications > 20:
             raise ValueError("task counters violate the finite opportunity profile")
-        if self.status not in {"active", "budget_exhausted"}:
-            raise ValueError("H5 tasks are active or budget-exhausted, never observed successful")
+        if self.status not in {"active", "budget_exhausted", "cancelled"}:
+            raise ValueError("tasks are active, budget-exhausted or explicitly cancelled, never observed successful")
 
     def as_dict(self) -> dict[str, object]:
         """Report task persistence separately from current local or physical success."""
@@ -238,9 +238,20 @@ class RightingIPV1:
             self._task = None
         elif self._task is not None:
             exhausted = cycle_id - self._task.started_cycle >= 20 or at_tick - self._task.started_tick >= 80
-            status = "budget_exhausted" if exhausted or self._task.status == "budget_exhausted" else self._task.status
+            status = "budget_exhausted" if exhausted and self._task.status == "active" else self._task.status
             self._task = replace(self._task, last_cycle=cycle_id, status=status)
         self._context, self._cycle, self._tick = context, cycle_id, at_tick
+
+    def cancel_task(self) -> RightingTaskV1 | None:
+        """Record explicit cancellation without rewriting applications or claiming success.
+
+        This does not itself stop an actuator. The integrated owner separately
+        revokes lower authority before another physical update. The same context
+        cannot automatically restart a cancelled task; a new context is explicit.
+        """
+        if self._task is not None and self._task.status == "active":
+            self._task = replace(self._task, status="cancelled")
+        return self._task
 
     def source_status(self, source: MotorSupportConfigurationV1 | None) -> str:
         """Assess current support need, without selecting this task or creating PNM.
@@ -250,8 +261,8 @@ class RightingIPV1:
         missing signed tilt can still permit a separately supported extension.
         REST is not automatically safe: actual contact and instability matter.
         """
-        if self._task is not None and self._task.status == "budget_exhausted":
-            return "budget_exhausted"
+        if self._task is not None and self._task.status in {"budget_exhausted", "cancelled"}:
+            return self._task.status
         if self._task is None and self._tick > 2**63 - 81:
             return "time_budget_unrepresentable"
         if source is None or not source.current or source.feedback is None:

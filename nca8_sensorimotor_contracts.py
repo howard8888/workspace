@@ -22,16 +22,18 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import Enum
+from typing import Protocol
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "BodyRelativeTargetV1",
     "CommittedBodyTargetV1",
     "FocalMotorEvidenceV1",
     "LocalTargetDispositionV1",
     "LocalTargetReportV1",
+    "MotorInstallationSourceV1",
     "SensorimotorTargetKindV1",
     "TargetDirectiveV1",
     "TargetOriginV1",
@@ -432,3 +434,18 @@ class LocalTargetReportV1:
             "establishes_task_success": False,
             "establishes_action_causation": False,
         }
+
+
+class MotorInstallationSourceV1(Protocol): # pylint: disable=too-few-public-methods
+    """Narrow lower reader of a consumed cognitive handoff, not a task selector.
+
+    The owning handoff must reject a claim before closure/consumption and every
+    second claim. Returned original target objects identify the authorized
+    BodyMap reservations; reconstructing their serialized descriptions grants
+    no rights. The executor sees neither WNM, PNM nor the physical provider.
+    A Protocol declares this seam; it does not implement or grant permission.
+    """
+
+    def claim_motor_targets(self) -> tuple[CommittedBodyTargetV1, ...]:
+        """Spend the current installation grant once and return its original targets."""
+        ... # pylint: disable=unnecessary-ellipsis

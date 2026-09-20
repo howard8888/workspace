@@ -1,0 +1,491 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""P18-H6-A: selected Righting, finite target installation and returning sensing.
+
+IntegratedRightingCoreV1 owns only focal cognition and an internal handoff. It
+uses the existing A-F scheduler and H5 source/selection/projection stages; it
+never calls a physical provider. IntegratedRightingTrialV1 is the separate
+synchronous outer driver. It consumes the closed handoff once, installs H3
+targets in H4, and calls H2 once per lower tick. Four 0.05-second updates form
+the nominal interval between focal opportunities. These are engineering units,
+not neural timing claims. There are no threads, RNG calls or durable learners.
+
+A task outlives a target. Every new target envelope has its own authorization;
+no-new-output preserves only existing finite rights. PNM, target, local report
+and physical evidence retain distinct roles. H6-A reports current adequacy and
+local results, not supported task dwell, task-PNM verdicts or causal credit.
+Those remain P16-1G. This opt-in path never calls the legacy/A0 action provider.
+"""
+
+from __future__ import annotations
+
+from collections import deque
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1, admit_motor_feedback_batch_v1
+from cca8_support_world import MotorBodyStateV1, MotorWorldProfileV1, MotorWorldV1
+from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetReservationV1
+from nca8_contracts import CircuitResultV1, CircuitTimingV1, CycleCommitmentV1, CyclePhase
+from nca8_executive import AttentionBidV1
+from nca8_handoff import Nca8HandoffReceiptV1, Nca8InternalHandoffV1, Nca8MotorEnvelopeV1, Nca8PhaseEDispatchV1
+from nca8_righting import RightingApplicationV1, RightingContextV1
+from nca8_runtime import Nca8RightingPreviewSessionV1, RightingPreviewResultV1
+from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, SchedulerCycleSnapshotV1
+from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, SensorimotorProfileV1, SensorimotorStepV1
+from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1
+from nca8_trace import Nca8TraceBufferV1
+
+__version__ = "0.1.0"
+__all__ = [
+    "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
+]
+
+
+def _bounded_count(value: int, name: str, minimum: int, maximum: int) -> int:
+    """Validate caller-supplied finite budgets without coercing Boolean values."""
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be an integer in [{minimum}, {maximum}]")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class IntegratedRightingCycleV1:
+    """One closed focal decision, before outer installation or later body movement.
+
+    calculation is the shared preauthorization computation, not another cognitive
+    cycle or another WNM. receipt is the historical ready snapshot at closure.
+    Later consumption/installation is reported separately by the outer owner.
+    Every retained object is immutable; as_dict() grants no restorable rights.
+    """
+
+    calculation: RightingPreviewResultV1
+    commitment: CycleCommitmentV1
+    receipt: Nca8HandoffReceiptV1
+    reservations: tuple[BodyTargetReservationV1, ...]
+    scheduler: SchedulerCycleSnapshotV1
+    local_reports: tuple[LocalTargetReportV1, ...]
+    local_events: tuple[LocalControlEventV1, ...]
+
+    @property
+    def status(self) -> str:
+        """Separate safe pending/refusal/local reporting from task completion."""
+        if self.reservations:
+            proposal = self.calculation.proposal
+            return "partial_authorization" if proposal is not None and proposal.withheld else "authorized_pending_execution"
+        if self.calculation.proposal is not None:
+            return "refused_no_usable_target"
+        return self.calculation.source_status
+
+    def as_dict(self) -> dict[str, object]:
+        """Export the complete causal linkage, without interpreting a task outcome."""
+        return {
+            "preauthorization_calculation": self.calculation.as_dict(), "commitment": self.commitment.as_dict(),
+            "core_closed_receipt": self.receipt.as_dict(), "dispatch": self.receipt.dispatch.as_dict(),
+            "scheduler": self.scheduler.as_dict(), "status": self.status,
+            "earlier_local_reports": [item.as_dict() for item in self.local_reports],
+            "earlier_local_events": [item.as_dict() for item in self.local_events],
+            "task_completion": "not_established_H6A", "durable_learning_updates": 0,
+        }
+
+
+class IntegratedRightingCoreV1:
+    """Run one actual A-F focal core with no environment or local-executor call.
+
+    The immutable feedback sidecar is bound to one scheduler ingress result.
+    Its result timing describes publication of the focal summary, not the
+    physical acquisition: original event/availability ticks remain in the typed
+    evidence and payload. Future sensing cannot replace that frozen sidecar.
+    Exceptions after processing starts stop this core; reset creates fresh owners.
+    """
+
+    def __init__(
+        self, stream: MotorStreamRefV1, *, context: RightingContextV1 | None = None,
+        capabilities: tuple[BodyAxisCapabilityV1, ...] | None = None,
+        righting_enabled: bool = True, influence_enabled: bool = True,
+        handoff_enabled: bool = True, trace_capacity: int = 256,
+    ) -> None:
+        _bounded_count(trace_capacity, "trace_capacity", 1, 4096)
+        self.cognition = Nca8RightingPreviewSessionV1(
+            stream, context=context, capabilities=capabilities,
+            righting_enabled=righting_enabled, influence_enabled=influence_enabled,
+        )
+        self.handoff = Nca8InternalHandoffV1(generation=stream.generation, enabled=handoff_enabled)
+        self.scheduler = Nca8DeterministicSchedulerV1()
+        self.trace = Nca8TraceBufferV1(trace_capacity)
+        self.last_result: IntegratedRightingCycleV1 | None = None
+        self.last_commitment: CycleCommitmentV1 | None = None
+        self._running = False
+        self._fault: str | None = None
+
+    @property
+    def running(self) -> bool:
+        """Expose only the boundary guard, never a physical clock."""
+        return self._running
+
+    @property
+    def fault(self) -> str | None:
+        """Return the sticky stop reason; diagnostic reads do not clear it."""
+        return self._fault
+
+    def stop(self, reason: str) -> None:
+        """Invalidate future focal use without changing a past commitment or body.
+
+        The outer owner must separately stop lower execution. An accepted but
+        unreleased receipt is cancelled; a consumed receipt cannot be retried.
+        """
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("core stop requires a nonempty reason")
+        self._fault = reason[:100]
+        receipt = self.handoff.receipt
+        if receipt is not None and receipt.disposition in {"accepted", "ready"}:
+            self.handoff.cancel(receipt, reason=self._fault)
+
+    def run_cycle(
+        self, feedback: MotorFeedbackV1 | None, *, cutoff_tick: int,
+        context: RightingContextV1 | None = None, competing_bids: Sequence[AttentionBidV1] = (),
+        local_reports: tuple[LocalTargetReportV1, ...] = (), local_events: tuple[LocalControlEventV1, ...] = (),
+    ) -> IntegratedRightingCycleV1:
+        """Freeze one eligible summary, choose/project/authorize, finish F and close.
+
+        A returned receipt is ready, not consumed. The caller must explicitly
+        consume or cancel it before another focal pass. No lower tick runs here.
+        Significant local events are read with original identity; this is not the
+        deferred task-PNM mismatch-to-Attention route or a learned outcome hook.
+        """
+        if self._running or self._fault is not None or self.handoff.has_pending_request:
+            raise RuntimeError("core is running, stopped, or has an unconsumed handoff")
+        _bounded_count(cutoff_tick, "cutoff_tick", 0, 2**63 - 9)
+        if self.last_result is not None and cutoff_tick <= self.last_result.calculation.cutoff_tick:
+            raise ValueError("a new focal opportunity requires a later physical cutoff")
+        if not isinstance(local_reports, tuple) or len(local_reports) > 2 or any(
+            not isinstance(item, LocalTargetReportV1) for item in local_reports
+        ):
+            raise TypeError("supply at most two immutable local reports")
+        if not isinstance(local_events, tuple) or len(local_events) > 4 or any(
+            not isinstance(item, LocalControlEventV1) for item in local_events
+        ):
+            raise TypeError("supply at most four immutable local events")
+        if any(item.reported_tick > cutoff_tick or item.committed_target.target.origin.stream != self.cognition.stream
+               for item in local_reports):
+            raise ValueError("local reports are future or foreign")
+        if any(item.noticed_tick > cutoff_tick for item in local_events):
+            raise ValueError("local events have not occurred at this cutoff")
+        self._running = True
+        try:
+            return self._run_cycle(
+                feedback, tick=cutoff_tick, context=context, competing_bids=competing_bids, reports=local_reports, events=local_events,
+            )
+        except BaseException:
+            self.stop("internal_hierarchy_cycle_failed_no_world_call")
+            raise
+        finally:
+            self._running = False
+
+    def _run_cycle(
+        self, feedback: MotorFeedbackV1 | None, *, tick: int, context: RightingContextV1 | None,
+        competing_bids: Sequence[AttentionBidV1], reports: tuple[LocalTargetReportV1, ...],
+        events: tuple[LocalControlEventV1, ...],
+    ) -> IntegratedRightingCycleV1:
+        """Implement the guarded C/D/E owner stages between real scheduler boundaries."""
+        cycle = self.scheduler.last_completed_cycle + 1
+        evidence = None if feedback is None else FocalMotorEvidenceV1(feedback, cycle, tick)
+        if feedback is not None:
+            feedback.validate_available(stream=self.cognition.stream, at_tick=tick)
+        ingress = CircuitResultV1.from_mapping(
+            result_id=f"motor_summary:{cycle}", source_circuit="motor_summary_ingress", source_sequence=cycle,
+            timing=CircuitTimingV1(cycle, cycle, expires_after_cycle=cycle),
+            payload={
+                "cutoff_tick": tick, "sample_id": feedback.sample_id if feedback is not None else None,
+                "physical_event_tick": feedback.event_tick if feedback is not None else None,
+                "physical_available_tick": feedback.available_tick if feedback is not None else None,
+            },
+        )
+        self.trace.append("hierarchy_cycle", "focal core opened; physical time is held", cycle_id=cycle,
+                          details={"cutoff_tick": tick})
+        self.scheduler.phase_a_poll_and_stage(cycle, (CircuitPollSourceV1("motor_summary_ingress", lambda _cycle: (ingress,)),), self.trace)
+        frozen = self.scheduler.phase_b_freeze_eligible(cycle, self.trace)
+        applied = self.scheduler.phase_c_apply_frozen(cycle, self.trace)
+        if tuple(item.result_id for item in applied) != (ingress.result_id,):
+            raise RuntimeError("the frozen summary sidecar lost its ingress association")
+        next_context = self.cognition.context if context is None else context
+        changed_context = next_context != self.cognition.context
+        prepared = self.cognition.prepare_source(
+            evidence.feedback if evidence is not None else None,
+            cutoff_tick=tick, context=context, competing_bids=competing_bids,
+        )
+        self.cognition.mapper.expire(at_tick=tick)
+        self.trace.append(
+            "hierarchy_source", "one POSTURE-SUPPORT source updated from eligible physical evidence", cycle_id=cycle,
+            phase=CyclePhase.UPDATE_OUTCOMES.name,
+            details={**ingress.payload_dict(), "source_status": prepared.source_status, "owner": "body_sensory",
+                     "earlier_local_results": len(reports), "earlier_local_events": len(events)},
+        )
+        for event in events:
+            self.trace.append("hierarchy_local_event", "earlier local warning read; task interpretation deferred", cycle_id=cycle,
+                              phase=CyclePhase.UPDATE_OUTCOMES.name,
+                              details={"number": event.number, "reason": event.reason, "sample_id": event.sample_id,
+                                       "event_tick": event.event_tick, "noticed_tick": event.noticed_tick})
+        self.scheduler.enter_runtime_phase(cycle, CyclePhase.FOCAL_COMMITMENT)
+        selected = self.cognition.select_prepared(prepared)
+        application = selected.navigation.application
+        if application is not None and not isinstance(application, RightingApplicationV1):
+            raise TypeError("this integrated profile has no non-Righting task consumer")
+        self.trace.append(
+            "hierarchy_selection", "Attention selected the source; Navigation selected the task", cycle_id=cycle,
+            phase=CyclePhase.FOCAL_COMMITMENT.name,
+            details={"attention": selected.attention.disposition.value, "primitive": selected.navigation.selected_primitive_id,
+                     "task_id": selected.task.task_id if selected.task is not None else None,
+                     "strategy": application.strategy if isinstance(application, RightingApplicationV1) else None},
+        )
+        self.scheduler.enter_runtime_phase(cycle, CyclePhase.PROJECT_DISPATCH)
+        calculation = self.cognition.project_selected(selected, replace_existing=True)
+        proposal = calculation.proposal
+        reservations: tuple[BodyTargetReservationV1, ...] = ()
+        if proposal is not None and proposal.bindings:
+            reservations = self.cognition.mapper.reserve(proposal, execution_id=f"motor_execution:{self.cognition.stream.generation}:{cycle}",
+                                                        at_tick=tick)
+        projection = application.projection if isinstance(application, RightingApplicationV1) else None
+        origin = reservations[0].current.target.origin if reservations else None
+        terminal_task = calculation.task is not None and calculation.task.status != "active"
+        motor = Nca8MotorEnvelopeV1(
+            self.cognition.stream, tick, projection, tuple(item.current for item in reservations),
+            tuple(item.current for item in proposal.replaces) if proposal is not None and reservations else (), changed_context or terminal_task,
+        )
+        decision = calculation.navigation
+        commitment = CycleCommitmentV1(
+            cycle, cycle, tuple(item.result_id for item in frozen), tuple(item.result_id for item in applied),
+            calculation.attention.selection_id, decision.wnm.working_id if decision.wnm is not None else None,
+            decision.selected_primitive_id, application.application_id if application is not None else None,
+            projection.pnm.pnm_id if projection is not None else None,
+            "RESTORE_VIABLE_SUPPORT" if reservations else None,
+            origin.application_id if origin is not None else None, origin.envelope_id if origin is not None else None,
+        )
+        self.last_commitment = commitment
+        self.trace.append("hierarchy_commit", "sparse task PNM and finite target payload committed before movement", cycle_id=cycle,
+                          phase=CyclePhase.PROJECT_DISPATCH.name,
+                          details={"pnm": commitment.pnm_id, "envelope": commitment.action_envelope_id,
+                                   "directive": motor.directive, "target_count": len(reservations), "cutoff_tick": tick})
+        accepted = self.handoff.accept(Nca8PhaseEDispatchV1(commitment, None, projection.pnm if projection else None, None, motor))
+        self.trace.append("hierarchy_handoff", "target handoff accepted; not yet released or installed", cycle_id=cycle,
+                          phase=CyclePhase.PROJECT_DISPATCH.name, details={"receipt": accepted.receipt_id})
+        self.trace.append("hierarchy_learning", "F reconciliation: no durable learner or new physical outcome", cycle_id=cycle,
+                          phase=CyclePhase.LEARNING_SCHEDULE.name, details={"durable_learning_updates": 0})
+        schedule = self.scheduler.phase_f_finish(cycle, self.trace)
+        self.trace.append("hierarchy_close", "focal core closed; physical work may now be attempted", cycle_id=cycle,
+                          details={"cutoff_tick": tick})
+        ready = self.handoff.release_after_close(accepted)
+        result = IntegratedRightingCycleV1(calculation, commitment, ready, reservations, schedule, reports, events)
+        self.last_result = result
+        return result
+
+
+class IntegratedRightingTrialV1:
+    """Own the external timebase, isolated H2 plant and one H4 executor.
+
+    Construction senses the reset body but performs no focal selection or motor
+    installation. focal_step() runs/consumes one core result without moving;
+    advance_lower() advances exactly one interval without selecting a task;
+    step() combines one focal call and four lower intervals. Inspecting pauses
+    this synchronous surrogate. Public physical snapshots are observer-only.
+    Faults stop both owners; reset revokes them before replacing the generation.
+    """
+
+    def __init__(
+        self, physical_profile: MotorWorldProfileV1 | None = None, *, stream_id: str = "h6_reference_body",
+        context: RightingContextV1 | None = None, capabilities: tuple[BodyAxisCapabilityV1, ...] | None = None,
+        control_profile: SensorimotorProfileV1 | None = None, righting_enabled: bool = True,
+        influence_enabled: bool = True, handoff_enabled: bool = True, trace_capacity: int = 256,
+    ) -> None:
+        profile = MotorWorldProfileV1() if physical_profile is None else physical_profile
+        if not isinstance(profile, MotorWorldProfileV1) or profile.dt_seconds != 0.05:
+            raise ValueError("H6-A requires the declared 0.05-second physical profile")
+        self._world = MotorWorldV1(MotorStreamRefV1(stream_id, 1), profile)
+        self._context, self._capabilities, self._control_profile = context, capabilities, control_profile
+        self._righting_enabled, self._influence_enabled, self._handoff_enabled = righting_enabled, influence_enabled, handoff_enabled
+        self._trace_capacity = trace_capacity
+        self._busy = False
+        self.core: IntegratedRightingCoreV1
+        self.controller: SensorimotorExecutorV1
+        self._latest_feedback: MotorFeedbackV1
+        self._fault: str | None = None
+        self._consumptions = 0
+        self._history: deque[IntegratedRightingCycleV1] = deque(maxlen=8)
+        self._initialize(self._world.observe())
+
+    def _initialize(self, feedback: MotorFeedbackV1) -> None:
+        """Create fresh cognitive/target owners; never reload old execution rights."""
+        self.core = IntegratedRightingCoreV1(
+            feedback.stream, context=self._context, capabilities=self._capabilities, righting_enabled=self._righting_enabled,
+            influence_enabled=self._influence_enabled, handoff_enabled=self._handoff_enabled, trace_capacity=self._trace_capacity,
+        )
+        self.controller = SensorimotorExecutorV1(
+            self.core.cognition.mapper, profile=self._control_profile, installation_source=self.core.handoff,
+        )
+        self._latest_feedback = MotorFeedbackV1.from_dict(feedback.as_dict())
+        self._fault, self._consumptions = None, 0
+        self._history.clear()
+
+    @property
+    def tick(self) -> int:
+        """Read the one external physical boundary index without advancing it."""
+        return self._world.tick
+
+    @property
+    def latest_feedback(self) -> MotorFeedbackV1:
+        """Return the last delivered acquisition, possibly old; do not refresh it."""
+        return self._latest_feedback
+
+    @property
+    def observer_body(self) -> MotorBodyStateV1:
+        """Expose actual H2 coordinates to external tests only, never the core."""
+        return self._world.body
+
+    @property
+    def stopped(self) -> bool:
+        """Report a sticky runtime failure; a terminal task alone does not stop time."""
+        return self._fault is not None or self.core.fault is not None or self.controller.fault is not None
+
+    def history(self) -> tuple[IntegratedRightingCycleV1, ...]:
+        """Read at most eight closed focal records, not an unbounded motor movie."""
+        return tuple(self._history)
+
+    def snapshot(self) -> dict[str, object]:
+        """Read bounded task/source/execution status, without stepping or learning."""
+        task = self.core.cognition.righting.task
+        receipt = self.core.handoff.receipt
+        return {
+            "profile": "integrated_righting_v1", "stream": self._world.stream.as_dict(),
+            "tick": self.tick, "elapsed_seconds": self.tick * 0.05, "focal_cycles": self.core.scheduler.last_completed_cycle,
+            "handoff_consumptions": self._consumptions, "installation_count": self.controller.installation_count,
+            "task": task.as_dict() if task is not None else None,
+            "handoff": receipt.as_dict() if receipt is not None else None,
+            "latest_feedback": self._latest_feedback.as_dict(), "controller": self.controller.snapshot(),
+            "fault": self._fault, "stopped": self.stopped, "retained_focal_records": len(self._history),
+            "pending_sensor_count": self._world.pending_feedback_count,
+            "durable_map_count": self.core.cognition.maps.durable_map_count,
+            "wnm_count": int(self.core.cognition.navigation.current_wnm is not None),
+            "current_task_pnm_count": int(self.core.cognition.prediction.current_support_preview is not None),
+            "task_success_established": False, "durable_learning_updates": 0,
+        }
+
+    def _require_idle(self) -> None:
+        """Reject re-entry, unconsumed core output and foreign time before any effect."""
+        if self._busy or self.stopped or self.core.running:
+            raise RuntimeError("hierarchy trial is busy or stopped; no automatic retry")
+        if self.tick != self.controller.next_tick or self._world.stream != self.core.cognition.stream:
+            raise RuntimeError("world and lower owner no longer share time/generation")
+
+    def _stop(self, reason: str) -> None:
+        """Stop future dispatch after a boundary fault; never undo possible movement."""
+        self._fault = reason
+        self.core.stop(reason)
+        self.controller.abort(reason, at_tick=self.controller.next_tick)
+
+    def focal_step(
+        self, *, context: RightingContextV1 | None = None, competing_bids: Sequence[AttentionBidV1] = (),
+    ) -> IntegratedRightingCycleV1:
+        """Run one focal opportunity and consume/install once, with zero world steps."""
+        self._require_idle()
+        if self.core.last_result is not None and self.tick <= self.core.last_result.calculation.cutoff_tick:
+            raise ValueError("advance physical time before the next focal opportunity")
+        self._busy = True
+        try:
+            result = self.core.run_cycle(
+                self._latest_feedback, cutoff_tick=self.tick, context=context, competing_bids=competing_bids,
+                local_reports=self.controller.reports, local_events=self.controller.events,
+            )
+            motor = self.core.handoff.consume_motor(result.receipt)
+            self._consumptions += 1
+            self.core.trace.append("hierarchy_consumed", "outer driver consumed the closed handoff once", cycle_id=result.commitment.cycle_id,
+                                   details={"tick": self.tick, "directive": motor.directive, "receipt": result.receipt.receipt_id})
+            if result.reservations:
+                self.controller.install_authorized(result.reservations, at_tick=self.tick)
+                self.core.trace.append("hierarchy_installed", "authorized targets installed once; no physical step yet",
+                                       cycle_id=result.commitment.cycle_id,
+                                       details={"tick": self.tick, "execution": result.reservations[0].current.execution_id,
+                                                "installation_count": self.controller.installation_count})
+            elif motor.cancel_previous:
+                self.controller.cancel_execution(at_tick=self.tick)
+                self.core.trace.append("hierarchy_cancel", "explicit context/terminal-task revocation stopped earlier lower execution",
+                                       cycle_id=result.commitment.cycle_id, details={"tick": self.tick})
+            if result.local_events:
+                self.controller.acknowledge_events(result.local_events[-1].number)
+            self._history.append(result)
+            return result
+        except BaseException:
+            self._stop("focal_or_installation_fault_no_automatic_retry")
+            raise
+        finally:
+            self._busy = False
+
+    def advance_lower(self) -> SensorimotorStepV1:
+        """Compute one bounded local drive, move H2 once, then stage due sensing.
+
+        Sensing returned by the physical call cannot influence the command that
+        caused it. It may affect the next lower update and the next eligible
+        focal summary. A call/admission exception is execution uncertainty;
+        neither the command nor the old cognitive receipt is retried.
+        """
+        self._require_idle()
+        if self.core.handoff.has_pending_request:
+            raise RuntimeError("consume or cancel the closed focal output before lower execution")
+        self._busy = True
+        try:
+            tick = self.tick
+            result = self.controller.step(self._latest_feedback, at_tick=tick)
+            command = result.command
+            self.core.trace.append(
+                "hierarchy_lower", "local feedback produced a bounded drive; not a new focal decision",
+                details={"tick": tick, "orientation_drive": command.orientation_drive if command is not None else 0.0,
+                         "extension_drive": command.extension_drive if command is not None else 0.0,
+                         "feedback_sample": result.feedback.sample_id if result.feedback is not None else None,
+                         "significant_events_added": result.significant_events_added},
+            )
+            delivered = self._world.step(command)
+            if self.tick != tick + 1:
+                raise RuntimeError("physical provider did not advance exactly one interval")
+            self._latest_feedback = admit_motor_feedback_batch_v1(
+                delivered, self._latest_feedback, stream=self.core.cognition.stream, at_tick=self.tick,
+            )
+            self.core.trace.append(
+                "hierarchy_input", "physical interval completed; due sensing staged for later consumers",
+                details={"tick": self.tick, "sample_id": self._latest_feedback.sample_id,
+                         "event_tick": self._latest_feedback.event_tick, "available_tick": self._latest_feedback.available_tick,
+                         "tilt": self._latest_feedback.body_tilt_degrees, "extension": self._latest_feedback.support_extension},
+            )
+            return result
+        except BaseException:
+            self._stop("lower_or_physical_admission_fault_effects_unresolved")
+            raise
+        finally:
+            self._busy = False
+
+    def step(self, *, context: RightingContextV1 | None = None) -> tuple[IntegratedRightingCycleV1, tuple[SensorimotorStepV1, ...]]:
+        """Run one nominal focal opportunity followed by four lower physical updates."""
+        result = self.focal_step(context=context)
+        return result, tuple(self.advance_lower() for _ in range(4))
+
+    def cancel(self) -> None:
+        """Explicitly cancel the current task and its execution before another tick.
+
+        Already achieved local results and realized physical consequences remain.
+        A new context, not a repeated sample, is required to start another task.
+        This stop is not a new demanding task and does not create a fresh PNM.
+        """
+        self._require_idle()
+        if self.core.handoff.has_pending_request:
+            raise RuntimeError("resolve the pending focal handoff before cancellation")
+        self.controller.cancel_execution(at_tick=self.tick)
+        self.core.cognition.righting.cancel_task()
+        self.core.cognition.sensory.clear_motor_context()
+        self.core.trace.append("hierarchy_cancel", "explicit task and execution cancellation; no success claim",
+                               details={"tick": self.tick})
+
+    def reset(self) -> None:
+        """Revoke old owners and replace all current evidence/rights in a new generation."""
+        if self._busy or self.core.running:
+            raise RuntimeError("cannot reset during focal or physical work")
+        self.core.stop("generation_reset")
+        self.controller.abort("generation_reset", at_tick=self.controller.next_tick)
+        self._initialize(self._world.reset())

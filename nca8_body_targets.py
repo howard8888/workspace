@@ -32,7 +32,7 @@ from nca8_sensorimotor_contracts import (
     TargetOriginV1,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "BodyAxisCapabilityV1",
     "BodyMovementRequestV1",
@@ -233,11 +233,18 @@ class BodyTargetProposalV1:
     created_tick: int
     bindings: tuple[BodyTargetBindingV1, ...]
     withheld: tuple[tuple[SensorimotorTargetKindV1, str], ...]
+    replaces: tuple[BodyTargetReservationV1, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.request, BodyMovementRequestV1):
             raise TypeError("proposal requires BodyMovementRequestV1")
         _index(self.created_tick, "created_tick")
+        if not isinstance(self.replaces, tuple) or len(self.replaces) > 2:
+            raise ValueError("replacement must name at most two original reservations")
+        if any(not isinstance(item, BodyTargetReservationV1) for item in self.replaces):
+            raise TypeError("replacement entries must be BodyMap reservations")
+        if len({item.current.target.kind for item in self.replaces}) != len(self.replaces):
+            raise ValueError("replacement resources must be distinct")
         if not isinstance(self.bindings, tuple) or not isinstance(self.withheld, tuple):
             raise TypeError("proposal entries must be immutable tuples")
         kinds: list[SensorimotorTargetKindV1] = []
@@ -267,6 +274,7 @@ class BodyTargetProposalV1:
             "bindings": [binding.as_dict() for binding in self.bindings],
             "withheld": [{"kind": kind.value, "reason": reason} for kind, reason in self.withheld],
             "status": "proposed", "motor_execution": False,
+            **({"replaces": [item.current.as_dict() for item in self.replaces]} if self.replaces else {}),
         }
 
 
@@ -547,7 +555,9 @@ class BodyTargetMapperV1:
         )
         return BodyTargetBindingV1(target, capability)
 
-    def propose(self, request: BodyMovementRequestV1, *, at_tick: int) -> BodyTargetProposalV1:
+    def propose(
+        self, request: BodyMovementRequestV1, *, at_tick: int, replace_existing: bool = False,
+    ) -> BodyTargetProposalV1:
         """Map the supplied requirement; keep one pending proposal, occupy no resource.
 
         Refusal is per axis: missing tilt need not suppress a usable extension.
@@ -555,6 +565,10 @@ class BodyTargetMapperV1:
         does not arbitrate between tasks. Each accepted target retains the same
         supplied origin. Narrowing is visible by comparing request and endpoint.
         A new proposal invalidates only the earlier unreserved proposal.
+        H6 can explicitly propose replacement of the whole current envelope.
+        The old resources stay reserved until reserve() atomically accepts usable
+        new targets against that exact captured set. A refusal never cancels it.
+        This parameter is not task selection or motor installation permission.
         """
         tick = self._check_tick(at_tick)
         if not isinstance(request, BodyMovementRequestV1):
@@ -563,11 +577,15 @@ class BodyTargetMapperV1:
             raise ValueError("task request has the wrong body stream or generation")
         if tick > _MAX_INDEX - request.lease_ticks:
             raise ValueError("insufficient tick range for this target lease")
+        if not isinstance(replace_existing, bool):
+            raise TypeError("replace_existing must be Boolean")
         number = _index(self._proposal_number + 1, "proposal number", 1)
         feedback = self._current_feedback(tick)
         live = self.reservations(at_tick=tick)
-        occupied = {item.current.target.kind for item in live}
-        foreign_origin = any(item.current.target.origin != request.origin for item in live)
+        replacing = live if replace_existing else ()
+        continuing = () if replace_existing else live
+        occupied = {item.current.target.kind for item in continuing}
+        foreign_origin = any(item.current.target.origin != request.origin for item in continuing)
         bindings: list[BodyTargetBindingV1] = []
         withheld: list[tuple[SensorimotorTargetKindV1, str]] = []
         for kind, goal in (
@@ -598,7 +616,7 @@ class BodyTargetMapperV1:
                 if feedback is None:
                     raise RuntimeError("accepted mapping lost its current feedback")
                 bindings.append(self._make_binding(request, kind, goal, feedback=feedback, number=number))
-        proposal = BodyTargetProposalV1(request, tick, tuple(bindings), tuple(withheld))
+        proposal = BodyTargetProposalV1(request, tick, tuple(bindings), tuple(withheld), replacing)
         self._pending = proposal
         self._proposal_number = number
         self._last_tick = tick
@@ -623,6 +641,12 @@ class BodyTargetMapperV1:
             raise ValueError("proposal has no usable target to reserve")
         feedback = self._current_feedback(tick)
         live = self.reservations(at_tick=tick)
+        if proposal.replaces:
+            if len(live) != len(proposal.replaces) or any(old is not current for old, current in zip(proposal.replaces, live)):
+                raise ValueError("replacement no longer names the exact current reservation set")
+            if tick != proposal.created_tick:
+                raise ValueError("replacement must be committed at its reviewed boundary")
+            live = ()
         if any(item.current.target.origin != proposal.request.origin or item.current.execution_id != execution for item in live):
             raise ValueError("resources belong to another task, envelope or execution")
         occupied = {item.current.target.kind for item in live}

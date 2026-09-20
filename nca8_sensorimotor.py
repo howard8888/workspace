@@ -23,9 +23,11 @@ from dataclasses import dataclass, field
 
 from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1
 from nca8_body_targets import BodyTargetMapperV1, BodyTargetReservationV1
-from nca8_sensorimotor_contracts import LocalTargetDispositionV1, LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
+from nca8_sensorimotor_contracts import (
+    LocalTargetDispositionV1, LocalTargetReportV1, MotorInstallationSourceV1, SensorimotorTargetKindV1, TargetOriginV1,
+)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "LocalMotorPredictionV1", "LocalPredictionComparisonV1", "LocalControlEventV1",
     "SensorimotorProfileV1", "SensorimotorStepV1", "SensorimotorExecutorV1", "__version__",
@@ -237,8 +239,10 @@ class SensorimotorExecutorV1:
 
     The H4 fixture has one single-use installation slot and one executor owner
     per BodyMap generation. install() is an explicit test-harness authorization,
-    not a cognitive receipt or a result of Navigation. H6 must connect its own
-    accepted handoff. A second install attempt is rejected even after completion.
+    not a cognitive receipt or a result of Navigation. A second fixture install
+    is rejected even after completion. H6 instead binds one installation_source
+    and uses install_authorized() for each separately consumed focal envelope.
+    Fixture and integrated installation modes cannot be mixed.
     H3 cancellation and explicit refinement remain authoritative before each
     drive; a copied reservation cannot restore permission.
 
@@ -250,12 +254,17 @@ class SensorimotorExecutorV1:
 
     def __init__(
         self, mapper: BodyTargetMapperV1, *, profile: SensorimotorProfileV1 | None = None, start_tick: int = 0,
+        installation_source: MotorInstallationSourceV1 | None = None,
     ) -> None:
         if not isinstance(mapper, BodyTargetMapperV1):
             raise TypeError("mapper must be the owning BodyTargetMapperV1")
         if profile is not None and not isinstance(profile, SensorimotorProfileV1):
             raise TypeError("profile must be SensorimotorProfileV1 or None")
         self._next_tick = _tick(start_tick, "start_tick")
+        if installation_source is not None and not callable(getattr(installation_source, "claim_motor_targets", None)):
+            raise TypeError("installation_source must expose the narrow consumed-handoff reader")
+        self._installation_source = installation_source
+        self._last_replaced_reports: tuple[LocalTargetReportV1, ...] = ()
         self._mapper = mapper
         self._profile = profile if profile is not None else SensorimotorProfileV1()
         self._owner = object()
@@ -315,6 +324,9 @@ class SensorimotorExecutorV1:
             "pending_prediction_counts": {kind.value: len(item.predictions) for kind, item in self._pursuits.items()},
             "trace_retained": len(self._trace), "trace_capacity": self._profile.trace_capacity,
             "durable_learning_updates": 0, "restores_live_authority": False,
+            **({"installation_mode": "consumed_handoff",
+                "last_replaced_reports": [item.as_dict() for item in self._last_replaced_reports]}
+               if self._installation_source is not None else {}),
         }
 
     def _require_tick(self, at_tick: int) -> int:
@@ -337,9 +349,18 @@ class SensorimotorExecutorV1:
         merely decoding an H1 committed-target description never invokes install.
         """
         tick = self._require_tick(at_tick)
+        if self._installation_source is not None:
+            raise ValueError("integrated executors cannot use fixture installation")
         if self._installation_attempted:
             raise ValueError("this executor's installation slot was already consumed")
         self._installation_attempted = True
+        self._pursuits = self._prepare_installation(reservations, tick)
+        self._installation_count = 1
+
+    def _prepare_installation(
+        self, reservations: tuple[BodyTargetReservationV1, ...], tick: int,
+    ) -> dict[SensorimotorTargetKindV1, _Pursuit]:
+        """Validate original BodyMap ownership before changing local pursuits."""
         if not isinstance(reservations, tuple) or not 1 <= len(reservations) <= 2:
             raise ValueError("install requires one or two original BodyMap reservations")
         prepared: dict[SensorimotorTargetKindV1, _Pursuit] = {}
@@ -356,8 +377,64 @@ class SensorimotorExecutorV1:
             execution, origin = committed.execution_id, target.origin
             report = LocalTargetReportV1(committed, LocalTargetDispositionV1.PENDING, tick, "installed_supplied_target")
             prepared[target.kind] = _Pursuit(reservation, report)
-        self._pursuits = prepared
-        self._installation_count = 1
+        return prepared
+
+    @property
+    def last_replaced_reports(self) -> tuple[LocalTargetReportV1, ...]:
+        """Return at most two prior local results, without rewriting an old commitment."""
+        return self._last_replaced_reports
+
+    def install_authorized(self, reservations: tuple[BodyTargetReservationV1, ...], *, at_tick: int) -> None:
+        """Install one newly consumed focal envelope through the bound handoff reader.
+
+        The grant is spent before target/ownership validation. Failure stops this
+        executor and cannot be retried. Successful replacement keeps prior local
+        results separately, retains issued-command history for in-transit sensing,
+        and starts fresh finite targets only under this new focal authorization.
+        No PNM, task choice or physical provider is read here. Historical steps
+        retain their original predictions; unresolved replaced forecasts are not
+        reclassified as successful observations.
+        """
+        tick = self._require_tick(at_tick)
+        if self._installation_source is None:
+            raise ValueError("fixture executors have no cognitive installation source")
+        try:
+            authorized = self._installation_source.claim_motor_targets()
+            self._installation_attempted = True
+            prepared = self._prepare_installation(reservations, tick)
+            if len(authorized) != len(reservations) or any(
+                target is not reservation.current for target, reservation in zip(authorized, reservations)
+            ):
+                raise ValueError("installation does not carry the original consumed target objects")
+            previous: list[LocalTargetReportV1] = []
+            for pursuit in self._pursuits.values():
+                if pursuit.report.disposition not in _TERMINAL:
+                    self._report(pursuit, LocalTargetDispositionV1.INTERRUPTED, tick, "replaced_by_focal_authorization", None)
+                previous.append(pursuit.report)
+            self._last_replaced_reports = tuple(previous)
+            self._pursuits = prepared
+            self._installation_count += 1
+        except (TypeError, ValueError, RuntimeError, OverflowError):
+            self.abort("authorized_installation_failed_no_retry", at_tick=tick)
+            raise
+
+    def cancel_execution(self, *, at_tick: int) -> tuple[LocalTargetReportV1, ...]:
+        """Revoke this execution explicitly; neutral drive does not freeze the world.
+
+        Terminal local results remain terminal. Expired or already superseded
+        BodyMap reservations cannot be revived. This protected stop needs no new
+        task selection and does not itself cancel a persistent cognitive task.
+        """
+        tick = self._require_tick(at_tick)
+        for pursuit in self._pursuits.values():
+            try:
+                self._mapper.cancel(pursuit.reservation, at_tick=tick)
+            except ValueError:
+                pass  # Already expired/revoked: cancellation cannot restore it.
+            if pursuit.report.disposition not in _TERMINAL:
+                self._report(pursuit, LocalTargetDispositionV1.CANCELLED, tick, "explicit_execution_cancel", None)
+            pursuit.predictions.clear()
+        return self.reports
 
     def replace_target(self, reservation: BodyTargetReservationV1, *, at_tick: int) -> None:
         """Accept an explicit current H3 refinement without renewing original permission.

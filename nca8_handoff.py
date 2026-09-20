@@ -18,13 +18,87 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from cca8_motor_contracts import MotorStreamRefV1
 from nca8_body import AuthorizedActionEnvelopeV1, BodyActionHandoffV1, BodyTaskTargetV1, EnvelopeStatusV1, LowerActionRequestV1
 from nca8_contracts import CycleCommitmentV1
-from nca8_prediction import ProjectedNavMapV1
+from nca8_prediction import ProjectedNavMapV1, SupportPreviewV1
 from nca8_primitives import TaskActionV1
+from nca8_sensorimotor_contracts import CommittedBodyTargetV1
 
-__version__ = "0.1.0"
-__all__ = ["Nca8PhaseEDispatchV1", "Nca8HandoffReceiptV1", "Nca8InternalHandoffV1", "__version__"]
+__version__ = "0.2.0"
+__all__ = ["Nca8PhaseEDispatchV1", "Nca8HandoffReceiptV1", "Nca8InternalHandoffV1", "Nca8MotorEnvelopeV1", "__version__"]
+
+
+@dataclass(frozen=True, slots=True)
+class Nca8MotorEnvelopeV1:
+    """H6's immutable target payload, separate from A0's coarse task transport.
+
+    The original sparse preview retains its preauthorization meaning. This
+    envelope links it to actual finite BodyMap targets without rewriting it or
+    claiming movement. A targets-empty envelope means no new task output unless
+    cancel_previous explicitly revokes the old execution (for a context change or terminal task).
+    The lower installation reader receives only targets, never this projection.
+    """
+
+    stream: MotorStreamRefV1
+    cutoff_tick: int
+    projection: SupportPreviewV1 | None
+    targets: tuple[CommittedBodyTargetV1, ...] = ()
+    replaces: tuple[CommittedBodyTargetV1, ...] = ()
+    cancel_previous: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.stream, MotorStreamRefV1):
+            raise TypeError("motor envelope requires a body stream")
+        if isinstance(self.cutoff_tick, bool) or not isinstance(self.cutoff_tick, int) or not 0 <= self.cutoff_tick < 2**63 - 1:
+            raise ValueError("motor envelope requires a finite cutoff tick")
+        if not isinstance(self.cancel_previous, bool):
+            raise TypeError("cancel_previous must be Boolean")
+        if self.projection is not None and not isinstance(self.projection, SupportPreviewV1):
+            raise TypeError("motor projection must be a SupportPreviewV1")
+        for group in (self.targets, self.replaces):
+            if not isinstance(group, tuple) or len(group) > 2 or any(not isinstance(item, CommittedBodyTargetV1) for item in group):
+                raise TypeError("motor envelope target groups must contain at most two typed targets")
+            if len({item.target.kind for item in group}) != len(group):
+                raise ValueError("motor envelope cannot duplicate a resource")
+            if any(item.target.origin.stream != self.stream for item in group):
+                raise ValueError("motor targets belong to a different stream/generation")
+        if self.replaces and not self.targets:
+            raise ValueError("replacement requires a new authorized target payload")
+        if self.targets and self.projection is None:
+            raise ValueError("motor targets require the prior sparse task projection")
+        if self.projection is not None:
+            basis = self.projection.basis
+            if basis.stream != self.stream or basis.cutoff_tick != self.cutoff_tick:
+                raise ValueError("projection belongs to another stream or focal cutoff")
+            for item in self.targets:
+                origin = item.target.origin
+                if (origin.task_id, origin.application_id) != (self.projection.task_id, self.projection.pnm.application_id):
+                    raise ValueError("target does not belong to the projected task application")
+                if item.target.basis != basis.feedback or item.committed_tick != self.cutoff_tick:
+                    raise ValueError("target must preserve the current authorized body evidence and time")
+            if self.targets and any(
+                item.execution_id != self.targets[0].execution_id or item.target.origin != self.targets[0].target.origin
+                for item in self.targets
+            ):
+                raise ValueError("both target axes must share one execution/envelope")
+
+    @property
+    def directive(self) -> str:
+        """Describe installation, explicit revocation, or lease-limited continuation."""
+        if self.targets:
+            return "replace" if self.replaces else "install"
+        return "cancel" if self.cancel_previous else "no_new_task_output"
+
+    def as_dict(self) -> dict[str, object]:
+        """Export commitment, not live permission or a completed task verdict."""
+        return {
+            "stream": self.stream.as_dict(), "cutoff_tick": self.cutoff_tick, "directive": self.directive,
+            "original_preview": self.projection.as_dict() if self.projection is not None else None,
+            "targets": [item.as_dict() for item in self.targets], "replaces": [item.as_dict() for item in self.replaces],
+            "cancel_previous": self.cancel_previous, "physical_execution_established": False,
+            "task_pnm_correspondence": "deferred_to_P16_1G", "durable_learning_updates": 0,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +113,7 @@ class Nca8PhaseEDispatchV1:
     task_action: TaskActionV1 | None
     pnm: ProjectedNavMapV1 | None
     body_handoff: BodyActionHandoffV1 | None
+    motor: Nca8MotorEnvelopeV1 | None = None
 
     @property
     def authorized_task_action(self) -> TaskActionV1 | None:
@@ -51,6 +126,7 @@ class Nca8PhaseEDispatchV1:
         """Return a deterministic JSON-safe dispatch snapshot."""
         return {
             "commitment": self.commitment.as_dict(),
+            **({"motor": self.motor.as_dict()} if self.motor is not None else {}),
             "task_action": self.task_action.as_dict() if self.task_action is not None else None,
             "pnm": self.pnm.as_dict() if self.pnm is not None else None,
             "body_handoff": self.body_handoff.as_dict() if self.body_handoff is not None else None,
@@ -108,6 +184,23 @@ def _validate_dispatch(dispatch: Nca8PhaseEDispatchV1) -> None:
             raise ValueError("handoff PNM does not match the immutable commitment")
     elif commitment.pnm_id is not None:
         raise ValueError("handoff is missing its committed PNM")
+    if dispatch.motor is not None:
+        motor = dispatch.motor
+        if not isinstance(motor, Nca8MotorEnvelopeV1):
+            raise TypeError("motor handoff requires a typed Nca8MotorEnvelopeV1")
+        if action is not None or body is not None:
+            raise ValueError("enhanced motor handoff cannot mix in an A0 task/body fallback")
+        if (motor.projection.pnm if motor.projection is not None else None) != pnm:
+            raise ValueError("motor projection and commitment must name the same PNM")
+        if motor.targets:
+            origin = motor.targets[0].target.origin
+            if (commitment.task_action, commitment.task_action_id, commitment.action_envelope_id) != (
+                "RESTORE_VIABLE_SUPPORT", origin.application_id, origin.envelope_id,
+            ):
+                raise ValueError("motor targets do not match the committed task/envelope")
+        elif any(value is not None for value in (commitment.task_action, commitment.task_action_id, commitment.action_envelope_id)):
+            raise ValueError("a no-new-target handoff cannot claim a committed movement")
+        return
     if body is not None:
         if not isinstance(body, BodyActionHandoffV1):
             raise TypeError("handoff body result must be a BodyActionHandoffV1")
@@ -164,6 +257,7 @@ class Nca8InternalHandoffV1:
         self._enabled = enabled
         self._receipt: Nca8HandoffReceiptV1 | None = None
         self._last_action_number = 0
+        self._motor_installation_claimed = False
 
     @property
     def generation(self) -> int:
@@ -188,11 +282,14 @@ class Nca8InternalHandoffV1:
         caller must abort the cycle rather than invent a substitute body action.
         """
         _validate_dispatch(dispatch)
+        if dispatch.motor is not None and dispatch.motor.stream.generation != self._generation:
+            raise ValueError("motor handoff belongs to another generation")
         if self.has_pending_request:
             raise RuntimeError("the previous handoff still requires consumption or cancellation")
         if dispatch.commitment.cycle_id != self._last_action_number + 1:
             raise RuntimeError("handoff action number must be the next unaccepted number")
         self._last_action_number = dispatch.commitment.cycle_id
+        self._motor_installation_claimed = False
         disposition = "accepted" if self._enabled else "refused"
         reason = "awaiting_internal_cycle_close" if self._enabled else "internal_handoff_disabled"
         self._receipt = Nca8HandoffReceiptV1(self._generation, dispatch, disposition, reason)
@@ -219,8 +316,40 @@ class Nca8InternalHandoffV1:
         receipt ready again; the outer driver reports uncertainty and stops.
         """
         self._require(receipt, "ready")
+        if receipt.dispatch.motor is not None:
+            raise TypeError("enhanced targets require consume_motor, never the A0 token consumer")
         self._receipt = replace(receipt, disposition="consumed", reason="claimed_once_by_outer_driver")
         return receipt.dispatch.authorized_task_action
+
+    def consume_motor(self, receipt: Nca8HandoffReceiptV1) -> Nca8MotorEnvelopeV1:
+        """Consume one ready enhanced handoff before the outer installation attempt.
+
+        No motor is called here. Several later local increments use the resulting
+        execution, never this receipt again. A null envelope does not renew or
+        implicitly cancel a live target. A0 callers retain consume() unchanged.
+        """
+        self._require(receipt, "ready")
+        motor = receipt.dispatch.motor
+        if motor is None:
+            raise TypeError("A0 handoffs require their original consume method")
+        self._receipt = replace(receipt, disposition="consumed", reason="claimed_once_by_outer_motor_driver")
+        return motor
+
+    def claim_motor_targets(self) -> tuple[CommittedBodyTargetV1, ...]:
+        """Spend the consumed envelope's single lower-installation grant.
+
+        This is the narrow MotorInstallationSourceV1 interface. Only the current
+        owner-held consumed receipt can supply targets. No copied receipt,
+        reconstructed target, early call or second attempt creates another grant.
+        Installation failure leaves the grant spent; reset is then required.
+        """
+        receipt = self._receipt
+        if receipt is None or receipt.disposition != "consumed" or receipt.dispatch.motor is None:
+            raise RuntimeError("motor installation requires a consumed closed-cycle handoff")
+        if self._motor_installation_claimed or not receipt.dispatch.motor.targets:
+            raise RuntimeError("this handoff has no unclaimed motor installation")
+        self._motor_installation_claimed = True
+        return receipt.dispatch.motor.targets
 
     def cancel(self, receipt: Nca8HandoffReceiptV1, *, reason: str) -> Nca8HandoffReceiptV1:
         """Cancel an unconsumed serialized request, without claiming that it moved."""

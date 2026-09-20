@@ -404,4 +404,4 @@ def test_unknown_choice_still_returns_to_menu_without_constructing_a_session(
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
 
     assert nca8_menu.run_nca8_experimental_menu_v1(None) is None
-    assert "Please choose 1, 2, 3, 4, 5, 6, or 7; or press Enter to return." in capsys.readouterr().out
+    assert "Please choose 1, 2, 3, 4, 5, 6, 7, or 8; or press Enter to return." in capsys.readouterr().out

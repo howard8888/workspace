@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 import cca8_cli
-from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1
+from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, admit_motor_feedback_batch_v1
 from cca8_support_world import MotorBodyStateV1, MotorWorldPerturbationV1, MotorWorldProfileV1, MotorWorldV1
 from nca8_body import Nca8BodyRuntimeV1
 from nca8_body_targets import (
@@ -29,7 +29,7 @@ from nca8_body_targets import (
 from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, SensorimotorProfileV1, SensorimotorStepV1
 from nca8_sensorimotor_contracts import LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "SensorimotorTrialV1", "SensorimotorExperimentV1", "run_sensorimotor_experiment_v1",
     "render_sensorimotor_experiment_v1", "run_sensorimotor_review_v1", "run_sensorimotor_review_menu_v1", "__version__",
@@ -174,23 +174,9 @@ class SensorimotorTrialV1:
         a fault, not a fresh confirmation. This external admission runs after
         physical evolution and never re-enters the just-completed control step.
         """
-        if not isinstance(delivered, tuple) or len(delivered) > 16:
-            raise TypeError("physical provider must return a bounded sensor tuple")
-        latest = self._latest_feedback
-        for feedback in delivered:
-            if not isinstance(feedback, MotorFeedbackV1):
-                raise TypeError("physical provider returned a malformed sensor reading")
-            feedback.validate_available(stream=latest.stream, at_tick=self.world.tick)
-            if feedback.sample_id == latest.sample_id:
-                if feedback != latest:
-                    raise ValueError("a sensor identity was reused for changed content")
-            elif feedback.sample_id < latest.sample_id and feedback.event_tick < latest.event_tick:
-                continue
-            elif feedback.sample_id <= latest.sample_id or feedback.event_tick <= latest.event_tick:
-                raise ValueError("returned sensor identities and event times disagree")
-            else:
-                latest = feedback
-        self._latest_feedback = latest
+        self._latest_feedback = admit_motor_feedback_batch_v1(
+            delivered, self._latest_feedback, stream=self.world.stream, at_tick=self.world.tick,
+        )
 
     def advance_open_loop(self, command: MotorCommandV1 | None) -> SensorimotorStepV1:
         """Replay one explicitly supplied comparator command, without feedback control.

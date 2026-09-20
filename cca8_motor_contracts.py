@@ -26,7 +26,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "MOTOR_COMMAND_SCHEMA_V1",
     "MOTOR_FEEDBACK_SCHEMA_V1",
@@ -34,6 +34,7 @@ __all__ = [
     "MotorCommandV1",
     "MotorFeedbackV1",
     "MotorStreamRefV1",
+    "admit_motor_feedback_batch_v1",
     "__version__",
 ]
 
@@ -319,3 +320,37 @@ class MotorFeedbackV1:
             useful_loading=_optional_number(packet["useful_loading"], "useful_loading", 0.0, 1.0),
             destabilization=_optional_number(packet["destabilization"], "destabilization", 0.0, 1.0),
         )
+
+
+def admit_motor_feedback_batch_v1(
+    delivered: tuple[MotorFeedbackV1, ...], previous: MotorFeedbackV1, *, stream: MotorStreamRefV1, at_tick: int,
+) -> MotorFeedbackV1:
+    """Validate/detach one bounded delivered batch without resampling a physical event.
+
+    H4 and H6 share this input boundary. Delayed older acquisitions cannot replace
+    newer current evidence. A repeated identity must have identical content;
+    inconsistent identity/time ordering or future/foreign input raises before
+    replacing anything. Empty delivery preserves the old record and its old age,
+    not fresh support. The caller owns stop-on-fault policy after a physical call.
+    This helper neither reads a world nor supplies missing channels from a PNM.
+    """
+    if not isinstance(previous, MotorFeedbackV1):
+        raise TypeError("previous feedback must be MotorFeedbackV1")
+    previous.validate_available(stream=stream, at_tick=at_tick)
+    if not isinstance(delivered, tuple) or len(delivered) > 16:
+        raise TypeError("physical provider must return a bounded sensor tuple")
+    latest = previous
+    for feedback in delivered:
+        if not isinstance(feedback, MotorFeedbackV1):
+            raise TypeError("physical provider returned a malformed sensor reading")
+        feedback.validate_available(stream=stream, at_tick=at_tick)
+        if feedback.sample_id == latest.sample_id:
+            if feedback != latest:
+                raise ValueError("a sensor identity was reused for changed content")
+        elif feedback.sample_id < latest.sample_id and feedback.event_tick < latest.event_tick:
+            continue
+        elif feedback.sample_id <= latest.sample_id or feedback.event_tick <= latest.event_tick:
+            raise ValueError("returned sensor identities and event times disagree")
+        else:
+            latest = feedback
+    return MotorFeedbackV1.from_dict(latest.as_dict())

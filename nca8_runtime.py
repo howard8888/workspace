@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import random
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetProposalV1, nominal_body_capabilities_v1
@@ -97,7 +97,7 @@ from nca8_sensory import Nca8BodySensoryApplicationV1, Nca8BodySensoryModuleV1
 from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -111,6 +111,7 @@ __all__ = [
     "Nca8SessionV1",
     "Nca8RightingPreviewSessionV1",
     "RightingPreviewResultV1",
+    "RightingSourceOpportunityV1",
     "__version__",
 ]
 
@@ -1623,6 +1624,24 @@ class RightingPreviewResultV1:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class RightingSourceOpportunityV1:
+    """One prepared source sample for the shared H5/H6 C-to-D boundary.
+
+    This owner-local working record holds no new source or permission. Its
+    immutable references keep the cutoff and source basis fixed while selection
+    and projection occur. It is consumed only by the session that prepared it.
+    """
+
+    cycle_id: int
+    cutoff_tick: int
+    source: NavMapStateV1
+    context: RightingContextV1
+    source_status: str
+    persistence_rank: int
+    competing_bids: tuple[AttentionBidV1, ...]
+
+
 class Nca8RightingPreviewSessionV1:
     """Isolated, no-dispatch H5 composition of existing source and focal owners.
 
@@ -1673,6 +1692,8 @@ class Nca8RightingPreviewSessionV1:
         self._cycle = 0
         self._cutoff = -1
         self._last_result: RightingPreviewResultV1 | None = None
+        self._prepared: RightingSourceOpportunityV1 | None = None
+        self._selected: RightingPreviewResultV1 | None = None
 
     @property
     def last_result(self) -> RightingPreviewResultV1 | None:
@@ -1683,14 +1704,27 @@ class Nca8RightingPreviewSessionV1:
         self, feedback: MotorFeedbackV1 | None, *, cutoff_tick: int,
         context: RightingContextV1 | None = None, competing_bids: Sequence[AttentionBidV1] = (),
     ) -> RightingPreviewResultV1:
-        """Consume one eligible source opportunity and compute at most one preview.
+        """Run the unchanged no-dispatch H5 review through its three shared stages.
 
-        Explicit missing input is not silent reuse. Physical identity and age
-        remain those of the acquisition even when it is reread. The body mapper
-        sees the same immutable event, but no body resource is reserved. Selected
-        task influence reaches the sensory owner and can affect a later Attention
-        decision; an unselected/ineligible task cannot create that influence.
+        H6 uses these same source/selection/projection calculations between real
+        scheduler C, D and E boundaries. This convenience method still reserves
+        no resource, issues no handoff and invokes no lower or physical actor.
         """
+        opportunity = self.prepare_source(feedback, cutoff_tick=cutoff_tick, context=context, competing_bids=competing_bids)
+        return self.project_selected(self.select_prepared(opportunity))
+
+    def prepare_source(
+        self, feedback: MotorFeedbackV1 | None, *, cutoff_tick: int,
+        context: RightingContextV1 | None = None, competing_bids: Sequence[AttentionBidV1] = (),
+    ) -> RightingSourceOpportunityV1:
+        """Apply eligible source/body evidence in C; do not choose a task or move.
+
+        Preparation ages the existing task and validates context and candidate
+        identity. A second preparation cannot bypass the incomplete opportunity.
+        Core callers stop on partial-stage faults rather than retrying them.
+        """
+        if self._prepared is not None:
+            raise RuntimeError("a prepared Righting opportunity still requires completion")
         cycle = self._cycle + 1
         if isinstance(cutoff_tick, bool) or not isinstance(cutoff_tick, int) or not self._cutoff < cutoff_tick < 2**63 - 1:
             raise ValueError("preview cutoffs must increase")
@@ -1719,20 +1753,48 @@ class Nca8RightingPreviewSessionV1:
         if status != "support_needed" or next_context != self.context or not self.influence_enabled:
             self.sensory.clear_motor_context()
         persistence = self.sensory.motor_context_rank(task.task_id if task is not None else None, next_context.context_id)
-        bids = list(competing_bids)
-        if status == "support_needed":
+        opportunity = RightingSourceOpportunityV1(cycle, cutoff_tick, source, next_context, status, persistence, tuple(competing_bids))
+        self._prepared = opportunity
+        return opportunity
+
+    def select_prepared(self, opportunity: RightingSourceOpportunityV1) -> RightingPreviewResultV1:
+        """Use the actual Attention and Navigation owners in D, once per source basis."""
+        if not isinstance(opportunity, RightingSourceOpportunityV1) or opportunity is not self._prepared or self._selected is not None:
+            raise ValueError("selection requires this owner's current unselected opportunity")
+        cycle, source = opportunity.cycle_id, opportunity.source
+        bids = list(opportunity.competing_bids)
+        if opportunity.source_status == "support_needed":
             bids.append(AttentionBidV1(
                 f"support_bid:{cycle}", "source:posture_support", source, "body_sensory", cycle,
-                0, 20, 0, 0, persistence, 20, ("activity_relative_support_need",), False, "source:posture_support",
+                0, 20, 0, 0, opportunity.persistence_rank, 20,
+                ("activity_relative_support_need",), False, "source:posture_support",
             ))
         selection = self.attention.select(bids, current_wnm=self.navigation.current_wnm, cycle_id=cycle)
         working = self.navigation.update_wnm(selection)
         decision = self.navigation.commit(working, self._primitives, cycle_id=cycle)
-        application = decision.application
+        result = RightingPreviewResultV1(
+            cycle, opportunity.cutoff_tick, source, selection, decision, None, self.righting.task,
+            opportunity.source_status, opportunity.persistence_rank,
+        )
+        self._selected = result
+        return result
+
+    def project_selected(self, selected: RightingPreviewResultV1, *, replace_existing: bool = False) -> RightingPreviewResultV1:
+        """Adopt sparse PNM and propose protected targets in E, without installation.
+
+        Explicit replacement belongs to H6's newly selected application. It
+        cannot renew an old target or alter past commitments; even this proposal
+        needs a later reservation and consumed handoff before motor installation.
+        """
+        opportunity = self._prepared
+        if not isinstance(selected, RightingPreviewResultV1) or selected is not self._selected or opportunity is None:
+            raise ValueError("projection requires this owner's current selected opportunity")
+        cycle, cutoff_tick, next_context = opportunity.cycle_id, opportunity.cutoff_tick, opportunity.context
+        application = selected.navigation.application
         proposal: BodyTargetProposalV1 | None = None
         if isinstance(application, RightingApplicationV1):
             self.prediction.adopt_support_preview(application.projection)
-            proposal = self.mapper.propose(application.contribution, at_tick=cutoff_tick)
+            proposal = self.mapper.propose(application.contribution, at_tick=cutoff_tick, replace_existing=replace_existing)
             if self.influence_enabled:
                 expiry = min(cutoff_tick + 8, application.task.started_tick + 80)
                 self.sensory.retain_motor_context(
@@ -1740,8 +1802,7 @@ class Nca8RightingPreviewSessionV1:
                 )
         else:
             self.prediction.adopt_support_preview(None)
-        result = RightingPreviewResultV1(
-            cycle, cutoff_tick, source, selection, decision, proposal, self.righting.task, status, persistence,
-        )
+        result = replace(selected, proposal=proposal)
         self._cycle, self._cutoff, self.context, self._last_result = cycle, cutoff_tick, next_context, result
+        self._prepared, self._selected = None, None
         return result

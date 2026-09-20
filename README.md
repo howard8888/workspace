@@ -16,12 +16,70 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P18-H5 relational Righting and sparse preview
+## NCA8 update: P18-H6-A integrated hierarchy and persistent execution
+
+The opt-in enhanced path now connects actual source sensing, Attention, Navigation,
+Righting, sparse task PNM, protected BodyMap targets, H4 local execution and the
+H2 command-driven body. **Local target achievement is not Righting completion.**
+The default runtime and the independently selectable A0/legacy comparators remain
+unchanged. The current inventory is **70 production components and 8 host behavioral
+primitives**; these are not counts of NCA8 task IPs or lower capabilities.
+
+`nca8_hierarchy.py` contains the focal core and its separate synchronous outer driver.
+The core uses the existing A-F scheduler and the same source/selection/projection
+calculations as the retained H5 preview. E accepts an immutable rich target payload;
+F and core closure finish before the outer driver consumes that handoff and installs
+the targets. One installation can drive several local updates. The H4 fixture's
+single-use `install()` API remains separate from integrated `install_authorized()`.
+
+One Righting task persists across samples and separately authorized target envelopes.
+A newly selected contribution can explicitly replace the old envelope; this does not
+replay its receipt or silently renew its lease. No new task output leaves only existing
+finite rights in force. Explicit cancellation, context change, task-budget exit,
+target expiry and local interruption remain distinct. No active target means neutral
+drive, not frozen gravity. Task and target budgets are enforced without a success flag.
+
+The reference driver advances four 0.05-second lower updates per nominal focal
+interval. Local sensing guides rapid correction. The next focal opportunity receives
+a detached summary of that same physical event, with its original identity and time;
+it never rewrites the earlier frozen source or PNM basis. Exceptions with uncertain
+physical effects stop future dispatch without retrying a command or receipt. Reset
+revokes the old generation and creates fresh body, source, handoff and executor owners.
+
+Use **NCA8 menu option 8** for nominal/disturbed compact or detailed reviews. The
+permanent developer entry calls the same experiment functions:
+
+    python scripts\review_nca8_hierarchy.py
+    python scripts\review_nca8_hierarchy.py --case disturbed --detail
+    python scripts\review_nca8_hierarchy.py --case both --json
+
+Each review performs 80 physical updates (4.00 simulation seconds), with 20 nominal
+focal intervals and a final nonmoving read of the exhausted task. The disturbed
+profile applies a fixed external perturbation during interval [8, 9), independent
+of task choice. The trace distinguishes its physical event, later availability,
+local correction and subsequent source admission. Opening a review menu or rendering
+more detail does not advance a retained session or change decisions.
+
+The nominal and disturbed runs demonstrate actual target-dependent movement, but
+**do not establish completed Righting**. In these profiles, H4's one-degree local
+orientation tolerance permits local attainment just above the strict 12-degree
+activity criterion. The task exits at its unchanged finite budget; no threshold is
+relaxed to print success. An early extension target is also achieved while the same
+Righting task still needs further support contributions.
+
+H6-A retains at most eight focal diagnostic records in a live trial, two active local
+pursuits and four significant local events; trace capacity is explicit. Full task
+dwell, task-PNM correspondence, mismatch-to-Attention and the called no-learning hook
+remain P16-1G. H6-B still owns the complete hierarchy ablation qualification and menu
+handover. No durable learning, A99 closure, default promotion or biological validation
+is claimed. Phase delivery/validation notes stay outside the repository.
+
+## Previous checkpoint: P18-H5 relational Righting and sparse preview
 
 Accepted Architecture v10.1 and Planning v18 govern this opt-in update. H4 remains
 unchanged. **This slice computes and reviews a selected Righting contribution; it
 neither installs a target nor moves a body.** The default runtime stays unchanged.
-The current inventory is **68 production components and 8 host behavioral primitives**;
+At H5 the inventory was **68 production components and 8 host behavioral primitives**;
 `ip:righting` is supplied to the isolated NCA8 task repertoire, not registered as a
 new legacy behavior or an additional SMP.
 
@@ -123,7 +181,8 @@ An observed local target achievement names its sensor event. Pursuit then stops;
 passive tilt can drift afterward. It is not a claim of stable holding, successful
 Righting, biological validity, SEC learning or an acquired LP. Reference focal
 markers do not call the cognitive runtime. H5 above adds the selected Righting preview;
-H6 later integrates actual focal task selection and repeated authorized contributions.
+H6-A above integrates actual focal task selection and repeated authorized contributions;
+H6-B qualification remains separate.
 Phase-specific delivery and validation notes are distributed separately, not installed under `docs/`.
 The module docstrings and permanent review programs describe the implemented behavior.
 All previous H1-H3 review scripts and the H2 physical equations remain unchanged.
