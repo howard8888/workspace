@@ -2,14 +2,16 @@
 # -*- coding: utf-8 -*-
 """Finite integrated Righting review, shared by the menu and developer script.
 
-Only nominal and fixed-time disturbed runs belong to this H6-A entry. It does
-not claim H6-B ablation qualification or P16-1G task completion. Profile labels
+The retained H6-A entry still runs nominal and fixed-time disturbed examples.
+Its menu also opens H6-B controls, implemented in the shared qualification harness.
+Neither entry claims P16-1G task completion. Profile labels
 and final actual body coordinates are external observer information, never
 cognitive inputs. Rendering retained immutable results does not rerun cognition.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import cca8_cli
@@ -20,10 +22,10 @@ from nca8_righting import RightingApplicationV1
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_trace import Nca8TraceEventV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "IntegratedRightingExperimentV1", "run_integrated_righting_v1", "render_integrated_righting_v1",
-    "run_hierarchy_review_menu_v1", "__version__",
+    "run_hierarchy_review_menu_v1", "focal_hierarchy_lines_v1", "lower_hierarchy_lines_v1", "__version__",
 ]
 
 
@@ -84,7 +86,7 @@ def _value(value: float | None) -> str:
     return "unknown" if value is None else f"{value:.4f}"
 
 
-def _focal_lines(result: IntegratedRightingCycleV1) -> list[str]:
+def focal_hierarchy_lines_v1(result: IntegratedRightingCycleV1) -> list[str]:
     """Describe one real C/D/E/F result; do not compute a replacement decision."""
     calc = result.calculation
     support = calc.source.motor_support
@@ -121,6 +123,41 @@ def _focal_lines(result: IntegratedRightingCycleV1) -> list[str]:
     return lines
 
 
+def lower_hierarchy_lines_v1(lower: tuple[SensorimotorStepV1, ...], *, detail: bool = False) -> list[str]:
+    """Describe a retained local interval without rerunning control or changing state.
+
+    H6-A and H6-B use this same formatter. Empty intervals are valid for a final
+    focal-only read; a command and an observed result retain separate meanings.
+    """
+    if not lower:
+        return []
+    lines: list[str] = []
+    if detail:
+        for step in lower:
+            command = step.command
+            orientation = command.orientation_drive if command is not None else 0.0
+            extension = command.extension_drive if command is not None else 0.0
+            sample = step.feedback.sample_id if step.feedback is not None else None
+            lines.append(f"    LOWER tick={step.tick:02d} sample={sample} drives=({orientation:+.4f}, {extension:+.4f})")
+            for report in step.reports:
+                lines.append(f"      {report.committed_target.target.kind.value}: {report.disposition.value}; {report.reason}")
+            for comparison in step.comparisons:
+                if comparison.unexpected:
+                    lines.append(f"      LOCAL MISMATCH event={comparison.feedback.event_tick}, "
+                                 f"available={comparison.feedback.available_tick}, residual={_value(comparison.residual)}")
+    else:
+        commands = ", ".join(
+            f"({step.command.orientation_drive:+.2f},{step.command.extension_drive:+.2f})" if step.command else "(0,0)"
+            for step in lower
+        )
+        outcomes = ", ".join(f"{item.committed_target.target.kind.value}:{item.disposition.value}" for item in lower[-1].reports)
+        lines.append(f"    LOWER ticks {lower[0].tick}-{lower[-1].tick}: drives {commands}; {outcomes or 'no active target'}")
+        corrections = [step.tick for step in lower if any(item.reason == "bounded_anomalous_correction" for item in step.reports)]
+        if corrections:
+            lines.append(f"    LOCAL bounded anomalous correction at tick(s) {corrections}, before the next focal call.")
+    return lines
+
+
 def render_integrated_righting_v1(result: IntegratedRightingExperimentV1, *, detail: bool = False) -> str:
     """Render immutable results only; local achievement never becomes task success."""
     if not isinstance(result, IntegratedRightingExperimentV1) or not isinstance(detail, bool):
@@ -133,33 +170,11 @@ def render_integrated_righting_v1(result: IntegratedRightingExperimentV1, *, det
         "",
     ]
     for focal, lower in result.intervals:
-        lines.extend(_focal_lines(focal))
-        if detail:
-            for step in lower:
-                command = step.command
-                orientation = command.orientation_drive if command is not None else 0.0
-                extension = command.extension_drive if command is not None else 0.0
-                sample = step.feedback.sample_id if step.feedback is not None else None
-                lines.append(f"    LOWER tick={step.tick:02d} sample={sample} drives=({orientation:+.4f}, {extension:+.4f})")
-                for report in step.reports:
-                    lines.append(f"      {report.committed_target.target.kind.value}: {report.disposition.value}; {report.reason}")
-                for comparison in step.comparisons:
-                    if comparison.unexpected:
-                        lines.append(f"      LOCAL MISMATCH event={comparison.feedback.event_tick}, "
-                                     f"available={comparison.feedback.available_tick}, residual={_value(comparison.residual)}")
-        else:
-            commands = ", ".join(
-                f"({step.command.orientation_drive:+.2f},{step.command.extension_drive:+.2f})" if step.command else "(0,0)"
-                for step in lower
-            )
-            outcomes = ", ".join(f"{item.committed_target.target.kind.value}:{item.disposition.value}" for item in lower[-1].reports)
-            lines.append(f"    LOWER ticks {lower[0].tick}-{lower[-1].tick}: drives {commands}; {outcomes or 'no active target'}")
-            corrections = [step.tick for step in lower if any(item.reason == "bounded_anomalous_correction" for item in step.reports)]
-            if corrections:
-                lines.append(f"    LOCAL bounded anomalous correction at tick(s) {corrections}, before the next focal call.")
+        lines.extend(focal_hierarchy_lines_v1(focal))
+        lines.extend(lower_hierarchy_lines_v1(lower, detail=detail))
         lines.append("    H2 physical consequences become eligible source evidence at the following focal boundary.")
         lines.append("")
-    lines.extend(_focal_lines(result.final_cycle))
+    lines.extend(focal_hierarchy_lines_v1(result.final_cycle))
     lines.extend([
         "",
         f"FINAL: 80 physical updates / 4.00 s; 21 closed focal reads; {result.installation_count} target installations.",
@@ -168,18 +183,23 @@ def render_integrated_righting_v1(result: IntegratedRightingExperimentV1, *, det
         f"Task exit={result.final_cycle.status}; task completion NOT established; durable learning updates=0.",
         "The local 1-degree target tolerance is wider than the strict 12-degree task boundary.",
         "Near-boundary local attainment does not waive that task criterion or extend the task budget.",
-        "H6-A integration review complete. H6-B qualification and P16-1G outcomes remain pending.",
+        "H6-A integration review complete. H6-B controls are available separately; P16-1G outcomes remain pending.",
     ])
     return "\n".join(lines)
 
 
-def run_hierarchy_review_menu_v1() -> None:
+def run_hierarchy_review_menu_v1(*, qualification_menu: Callable[[], None] | None = None) -> None:
     """Inspect fresh finite H6-A runs without changing the retained A0/menu session.
 
     Merely opening this submenu creates no trial. Both presentation modes call
     the same experiment; more detail never changes the dynamics or decision.
-    Full H6-B ablation/inspector qualification is intentionally not claimed here.
+    The host may supply the H6-B menu callback for option 5. This keeps the
+    shared renderer independent of its qualification consumer, without a reverse
+    import or a second loop. Opening that submenu runs no trial. With no callback,
+    the original four H6-A routes remain available. The full inspector is separate.
     """
+    if qualification_menu is not None and not callable(qualification_menu):
+        raise TypeError("qualification_menu must be callable or None")
     while True:
         print("\nP18-H6-A -- INTEGRATED RIGHTING REVIEW")
         print(cca8_cli.MENU_RESPONSE_DIVIDER)
@@ -187,12 +207,17 @@ def run_hierarchy_review_menu_v1() -> None:
         print("  2) Fixed-time disturbed run (compact)")
         print("  3) Nominal integrated run (local detail)")
         print("  4) Fixed-time disturbed run (local detail)")
+        if qualification_menu is not None:
+            print("  5) Hierarchy qualification and controlled comparisons (P18-H6-B)")
         print("  [Enter] Return to NCA8 menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
             return
+        if choice == "5" and qualification_menu is not None:
+            qualification_menu()
+            continue
         if choice not in {"1", "2", "3", "4"}:
-            print("Choose 1-4, or press Enter to return.")
+            print(f"Choose 1-{5 if qualification_menu is not None else 4}, or press Enter to return.")
             continue
         case = "disturbed" if choice in {"2", "4"} else "nominal"
         print(render_integrated_righting_v1(run_integrated_righting_v1(case), detail=choice in {"3", "4"}))

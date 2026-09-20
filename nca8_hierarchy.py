@@ -36,7 +36,7 @@ from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, Senso
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -104,11 +104,13 @@ class IntegratedRightingCoreV1:
         capabilities: tuple[BodyAxisCapabilityV1, ...] | None = None,
         righting_enabled: bool = True, influence_enabled: bool = True,
         handoff_enabled: bool = True, trace_capacity: int = 256,
+        orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True,
     ) -> None:
         _bounded_count(trace_capacity, "trace_capacity", 1, 4096)
         self.cognition = Nca8RightingPreviewSessionV1(
             stream, context=context, capabilities=capabilities,
             righting_enabled=righting_enabled, influence_enabled=influence_enabled,
+            orientation_mapping_sign=orientation_mapping_sign, task_pnm_consumer_enabled=task_pnm_consumer_enabled,
         )
         self.handoff = Nca8InternalHandoffV1(generation=stream.generation, enabled=handoff_enabled)
         self.scheduler = Nca8DeterministicSchedulerV1()
@@ -240,6 +242,13 @@ class IntegratedRightingCoreV1:
         )
         self.scheduler.enter_runtime_phase(cycle, CyclePhase.PROJECT_DISPATCH)
         calculation = self.cognition.project_selected(selected, replace_existing=True)
+        self.trace.append(
+            "hierarchy_pnm_consumer", "Prediction registration is separate from the deferred task-outcome consumer",
+            cycle_id=cycle, phase=CyclePhase.PROJECT_DISPATCH.name,
+            details={"enabled": self.cognition.task_pnm_consumer_enabled,
+                     "registered": self.cognition.prediction.current_support_preview is not None,
+                     "consumer": "adopt_support_preview", "task_outcomes": "deferred_to_P16_1G"},
+        )
         proposal = calculation.proposal
         reservations: tuple[BodyTargetReservationV1, ...] = ()
         if proposal is not None and proposal.bindings:
@@ -289,6 +298,14 @@ class IntegratedRightingTrialV1:
     step() combines one focal call and four lower intervals. Inspecting pauses
     this synchronous surrogate. Public physical snapshots are observer-only.
     Faults stop both owners; reset revokes them before replacing the generation.
+
+    H6-B may select a fixed tick after which local control receives only the
+    last focal acquisition. The cortical source still receives every latest
+    eligible focal summary. The lower reader retains the original acquisition
+    time and all freshness/lease checks; this is loss of the fast route, not
+    permission to pretend an old sample is fresh or to disable protection.
+    By default no such route restriction exists. No experiment label enters
+    the task, target executor or physical provider as a hidden answer.
     """
 
     def __init__(
@@ -296,10 +313,17 @@ class IntegratedRightingTrialV1:
         context: RightingContextV1 | None = None, capabilities: tuple[BodyAxisCapabilityV1, ...] | None = None,
         control_profile: SensorimotorProfileV1 | None = None, righting_enabled: bool = True,
         influence_enabled: bool = True, handoff_enabled: bool = True, trace_capacity: int = 256,
+        orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True,
+        focal_only_feedback_from_tick: int | None = None,
     ) -> None:
         profile = MotorWorldProfileV1() if physical_profile is None else physical_profile
         if not isinstance(profile, MotorWorldProfileV1) or profile.dt_seconds != 0.05:
             raise ValueError("H6-A requires the declared 0.05-second physical profile")
+        if focal_only_feedback_from_tick is not None:
+            _bounded_count(focal_only_feedback_from_tick, "focal_only_feedback_from_tick", 0, 80)
+        self._focal_only_feedback_from_tick = focal_only_feedback_from_tick
+        self._orientation_mapping_sign = orientation_mapping_sign
+        self._task_pnm_consumer_enabled = task_pnm_consumer_enabled
         self._world = MotorWorldV1(MotorStreamRefV1(stream_id, 1), profile)
         self._context, self._capabilities, self._control_profile = context, capabilities, control_profile
         self._righting_enabled, self._influence_enabled, self._handoff_enabled = righting_enabled, influence_enabled, handoff_enabled
@@ -308,6 +332,7 @@ class IntegratedRightingTrialV1:
         self.core: IntegratedRightingCoreV1
         self.controller: SensorimotorExecutorV1
         self._latest_feedback: MotorFeedbackV1
+        self._focal_feedback: MotorFeedbackV1
         self._fault: str | None = None
         self._consumptions = 0
         self._history: deque[IntegratedRightingCycleV1] = deque(maxlen=8)
@@ -318,11 +343,13 @@ class IntegratedRightingTrialV1:
         self.core = IntegratedRightingCoreV1(
             feedback.stream, context=self._context, capabilities=self._capabilities, righting_enabled=self._righting_enabled,
             influence_enabled=self._influence_enabled, handoff_enabled=self._handoff_enabled, trace_capacity=self._trace_capacity,
+            orientation_mapping_sign=self._orientation_mapping_sign, task_pnm_consumer_enabled=self._task_pnm_consumer_enabled,
         )
         self.controller = SensorimotorExecutorV1(
             self.core.cognition.mapper, profile=self._control_profile, installation_source=self.core.handoff,
         )
         self._latest_feedback = MotorFeedbackV1.from_dict(feedback.as_dict())
+        self._focal_feedback = self._latest_feedback
         self._fault, self._consumptions = None, 0
         self._history.clear()
 
@@ -330,6 +357,11 @@ class IntegratedRightingTrialV1:
     def tick(self) -> int:
         """Read the one external physical boundary index without advancing it."""
         return self._world.tick
+
+    @property
+    def handoff_consumptions(self) -> int:
+        """Read the actual consume count, independently of diagnostics or installations."""
+        return self._consumptions
 
     @property
     def latest_feedback(self) -> MotorFeedbackV1:
@@ -350,6 +382,24 @@ class IntegratedRightingTrialV1:
         """Read at most eight closed focal records, not an unbounded motor movie."""
         return tuple(self._history)
 
+    def retained_counts(self) -> dict[str, int]:
+        """Read owner storage bounds independently of trace rendering or task choice.
+
+        Qualification samples these counts after each focal and lower step. A
+        result may keep a larger finite observer export outside the live agent;
+        that export is not an additional WNM, current PNM or cognitive memory.
+        """
+        cognition = self.core.cognition
+        return {
+            "durable_maps": cognition.maps.durable_map_count, "current_source_states": cognition.maps.current_state_count,
+            "wnm": int(cognition.navigation.current_wnm is not None),
+            "current_pnm": int(cognition.prediction.current_support_preview is not None),
+            "righting_applications": len(cognition.righting.history()), "past_previews": len(cognition.prediction.preview_history()),
+            "focal_records": len(self._history), "focal_trace": self.core.trace.retained_count,
+            "pending_sensor_deliveries": self._world.pending_feedback_count,
+            **cognition.mapper.retained_counts(), **self.controller.retained_counts(),
+        }
+
     def snapshot(self) -> dict[str, object]:
         """Read bounded task/source/execution status, without stepping or learning."""
         task = self.core.cognition.righting.task
@@ -363,6 +413,9 @@ class IntegratedRightingTrialV1:
             "latest_feedback": self._latest_feedback.as_dict(), "controller": self.controller.snapshot(),
             "fault": self._fault, "stopped": self.stopped, "retained_focal_records": len(self._history),
             "pending_sensor_count": self._world.pending_feedback_count,
+            "task_pnm_registration_enabled": self._task_pnm_consumer_enabled,
+            "focal_only_feedback_from_tick": self._focal_only_feedback_from_tick,
+            "orientation_mapping_sign": self._orientation_mapping_sign,
             "durable_map_count": self.core.cognition.maps.durable_map_count,
             "wnm_count": int(self.core.cognition.navigation.current_wnm is not None),
             "current_task_pnm_count": int(self.core.cognition.prediction.current_support_preview is not None),
@@ -411,6 +464,7 @@ class IntegratedRightingTrialV1:
                                        cycle_id=result.commitment.cycle_id, details={"tick": self.tick})
             if result.local_events:
                 self.controller.acknowledge_events(result.local_events[-1].number)
+            self._focal_feedback = self._latest_feedback
             self._history.append(result)
             return result
         except BaseException:
@@ -433,7 +487,9 @@ class IntegratedRightingTrialV1:
         self._busy = True
         try:
             tick = self.tick
-            result = self.controller.step(self._latest_feedback, at_tick=tick)
+            cutoff = self._focal_only_feedback_from_tick
+            feedback = self._focal_feedback if cutoff is not None and tick >= cutoff else self._latest_feedback
+            result = self.controller.step(feedback, at_tick=tick)
             command = result.command
             self.core.trace.append(
                 "hierarchy_lower", "local feedback produced a bounded drive; not a new focal decision",
@@ -461,10 +517,22 @@ class IntegratedRightingTrialV1:
         finally:
             self._busy = False
 
-    def step(self, *, context: RightingContextV1 | None = None) -> tuple[IntegratedRightingCycleV1, tuple[SensorimotorStepV1, ...]]:
-        """Run one nominal focal opportunity followed by four lower physical updates."""
+    def step(
+        self, *, context: RightingContextV1 | None = None, local_updates: int = 4,
+    ) -> tuple[IntegratedRightingCycleV1, tuple[SensorimotorStepV1, ...]]:
+        """Run one focal opportunity followed by 1, 4 or 8 physical updates.
+
+        Four remains the unchanged nominal cadence. This explicit H6-B control
+        varies only the next focal opportunity, not lower dt, feedback timing,
+        target leases or either task budget. The outer experiment must keep a
+        fixed total physical horizon. Invalid cadence is rejected before any
+        focal work or side effect; faster polling does not grant a larger budget.
+        """
+        _bounded_count(local_updates, "local_updates", 1, 8)
+        if local_updates not in (1, 4, 8):
+            raise ValueError("supported focal cadences are 1, 4 or 8 lower updates")
         result = self.focal_step(context=context)
-        return result, tuple(self.advance_lower() for _ in range(4))
+        return result, tuple(self.advance_lower() for _ in range(local_updates))
 
     def cancel(self) -> None:
         """Explicitly cancel the current task and its execution before another tick.

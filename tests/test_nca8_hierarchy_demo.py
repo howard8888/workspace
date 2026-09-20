@@ -61,7 +61,7 @@ def test_readonly_render_export_and_trace_retention_do_not_change_computation(ca
     detailed = demo.render_integrated_righting_v1(result, detail=True)
     assert "task completion NOT established" in compact
     assert "durable learning updates=0" in compact
-    assert "H6-B qualification and P16-1G outcomes remain pending" in compact
+    assert "H6-B controls are available separately; P16-1G outcomes remain pending" in compact
     assert "CORE CLOSED" in compact and "consumed ONCE" in compact
     assert detailed.count("    LOWER tick=") == 80
     assert json.dumps(result.as_dict(), sort_keys=True) == before
@@ -107,11 +107,11 @@ def test_nca8_route_eight_preserves_retained_a0_session(monkeypatch):
     retained = Nca8SessionV1()
     before, trace = retained.status(), retained.trace_snapshot()
     calls = []
-    monkeypatch.setattr(nca8_menu, "run_hierarchy_review_menu_v1", lambda: calls.append("H6-A"))
+    monkeypatch.setattr(nca8_menu, "run_hierarchy_review_menu_v1", lambda **options: calls.append(options))
     answers = iter(("8", ""))
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
     assert nca8_menu.run_nca8_experimental_menu_v1(retained) is retained
-    assert calls == ["H6-A"]
+    assert calls == [{"qualification_menu": nca8_menu.run_hierarchy_qualification_menu_v1}]
     assert retained.status() == before and retained.trace_snapshot() == trace
 
 
@@ -141,8 +141,8 @@ def test_registry_versions_include_real_modules_and_preserve_legacy_count():
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_hierarchy"] == "nca8_hierarchy"
     assert registry["nca8_hierarchy_demo"] == "nca8_hierarchy_demo"
-    assert cca8_run.__version__ == "0.30.16"
-    assert nca8_hierarchy.__version__ == demo.__version__ == "0.1.0"
+    assert cca8_run.__version__ == "0.30.17"
+    assert nca8_hierarchy.__version__ == demo.__version__ == "0.2.0"
     assert cca8_motor_contracts.__version__ == nca8_handoff.__version__ == nca8_sensorimotor_contracts.__version__ == "0.2.0"
-    assert len(cca8_run._cca8_component_rows()) == 70
+    assert len(cca8_run._cca8_component_rows()) == 71
     assert len(cca8_run.PRIMITIVES) == 8

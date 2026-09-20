@@ -16,13 +16,94 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P18-H6-A integrated hierarchy and persistent execution
+## NCA8 update: P18-H6-B hierarchy qualification and menu handover
+
+The opt-in hierarchy now has **17 fixed qualification profiles**, using the same
+H6-A focal core, BodyMap, H4 executor and H2 plant. `nca8_hierarchy_qualification.py`
+is an external review harness, not a second cognitive loop or a new brain part.
+The current inventory is **71 production components and 8 host behavioral primitives**.
+Legacy/A0 defaults, H2 physics, H4 control constants, task criteria and task budgets
+are unchanged. The retained nominal/disturbed H6-A trajectories remain the reference.
+
+Open **NCA8 menu 8 -> integrated review 5** for qualification. The submenu offers
+all-profile summaries, mapping, feedback, prediction, cadence, assistance and
+Righting-on/off comparisons, plus one-profile compact/detailed causal timelines.
+It also exposes the original H4 fixed-target/open-loop controls as explicitly
+lower-only experiments. Opening a menu, printing a result or changing trace
+retention does not change an unrelated live session or motor behavior.
+
+The permanent script calls those same experiment and rendering functions:
+
+    python scripts\review_nca8_hierarchy.py --qualify
+    python scripts\review_nca8_hierarchy.py --qualify mapping
+    python scripts\review_nca8_hierarchy.py --qualify feedback
+    python scripts\review_nca8_hierarchy.py --qualify prediction
+    python scripts\review_nca8_hierarchy.py --qualify cadence
+    python scripts\review_nca8_hierarchy.py --qualify assistance
+    python scripts\review_nca8_hierarchy.py --profile fast_feedback_off --detail
+    python scripts\review_nca8_hierarchy.py --qualify --json
+
+Without the new flags it still runs the two retained H6-A examples. `--case`,
+`--qualify` and `--profile` are mutually exclusive. JSON is a finite observer export,
+not Save/Load or restored actuator permission. The script returns nonzero for
+measured owner-bound violations or an execution error; a disclosed null scientific
+contrast does not become a fabricated software failure or a success claim.
+
+### What each control changes
+
+| Control | Changed mechanism | Preserved scope / interpretation |
+| --- | --- | --- |
+| Righting off | Supplied Righting organization disabled | Current sensing, BodyMap/lower competence and passive physics remain; no fallback task. |
+| Mapping reversed | Orientation mapping sign is -1 instead of +1 | Same task request, sensed basis, extension capability and safety bounds; not a reversed motor or altered sensor. |
+| Orientation unavailable | One BodyMap/SMP capability omitted | Task projection and compatible extension remain; refusal is explicit. |
+| Fast feedback off | From tick 8, the lower reader receives only the last focal acquisition | Same initial target and physical prefix; original event time and freshness limits remain. Focal sensing still works. |
+| Delayed / missing sensing | Four-tick delivery delay, or acquisitions dropped from interval 8 onward | Delay affects both readers. Already in-flight reports can arrive; missing input is not a no-contact observation. |
+| Local prediction consumer off | H4 discrepancy protection disabled | Reactive target tracking, valid feedback and in-flight command accounting remain. A final endpoint can coincide despite earlier drive differences. |
+| Task-PNM consumer off | Only `Prediction.adopt_support_preview` registration disabled | IP projection generation and required handoff linkage remain. This is not removal of all prediction. |
+| Cadence K=1/4/8 | Time of the next focal call | Lower dt, forcing, 80-tick horizon and both task limits remain fixed. |
+| Assistance on/off | External -40 degrees/s during [8,20), versus no assistance | Matched tilt30/extension0.9 bodies and no Righting in either run; no invented agent command or action credit. |
+
+### Interpret the qualification at its actual depth
+
+The task-PNM control currently has a **null motor effect**: the registered preview
+has no task-outcome consumer in H6-A/H6-B. The sparse projection still exists in
+the selected application and protected handoff. This experiment distinguishes an
+implemented registration dependency from predictive information that changes
+behavior; it does **not** demonstrate that task prediction is either useful or
+unnecessary. Execution-sensitive task-PNM correspondence remains P16-1G.
+
+Every full qualification uses **80 physical updates / 4.00 simulation seconds**.
+K=1/4/8 therefore produces 81/21/11 closed focal reads, including the final read.
+The task still has at most 20 focal opportunities: K=1 may exhaust that cap at
+tick 20, not tick 80. Reports show both that budget effect and a common tick-16
+pre-cap physical observation; later differences cannot be attributed only to
+polling latency. Faster polling does not silently buy a larger task budget.
+
+Reports separate actual observer coordinates from the last delivered sensor
+acquisition, list event-to-local-correction delay, count nonneutral commands and
+installations, and report absolute normalized drive-time as a cost proxy, **not
+physical energy**. Functional owner-count peaks are sampled after each focal and
+lower boundary: one durable/current source, zero-or-one WNM/current registered PNM,
+eight task-application/preview/focal-history records, two body resources/pursuits,
+four command records/predictions per axis/significant events, and sixteen staged
+sensor reports. Diagnostic trace retention is independently configurable.
+
+The known near-boundary local-tolerance/task-criterion mismatch is retained. A
+source can also report current adequacy after external help without a Righting
+command or a supported task-completion verdict. H6-B supplies the controls and
+review dossier; acceptance still requires the local wall and manual review.
+Full task dwell, progress/mismatch interpretation, outcome-to-Attention and the
+no-learning participation hook remain P16-1G. No durable learner, A99 closure,
+default promotion, general robotics safety or biological validation is claimed.
+Phase instructions, logs and the qualification dossier stay outside the repository.
+
+## Previous checkpoint: P18-H6-A integrated hierarchy and persistent execution
 
 The opt-in enhanced path now connects actual source sensing, Attention, Navigation,
 Righting, sparse task PNM, protected BodyMap targets, H4 local execution and the
 H2 command-driven body. **Local target achievement is not Righting completion.**
 The default runtime and the independently selectable A0/legacy comparators remain
-unchanged. The current inventory is **70 production components and 8 host behavioral
+unchanged. At the H6-A checkpoint the inventory was **70 production components and 8 host behavioral
 primitives**; these are not counts of NCA8 task IPs or lower capabilities.
 
 `nca8_hierarchy.py` contains the focal core and its separate synchronous outer driver.
@@ -70,8 +151,8 @@ Righting task still needs further support contributions.
 H6-A retains at most eight focal diagnostic records in a live trial, two active local
 pursuits and four significant local events; trace capacity is explicit. Full task
 dwell, task-PNM correspondence, mismatch-to-Attention and the called no-learning hook
-remain P16-1G. H6-B still owns the complete hierarchy ablation qualification and menu
-handover. No durable learning, A99 closure, default promotion or biological validation
+remain P16-1G. The H6-B section above adds the hierarchy qualification controls and menu
+handover without changing this retained reference experiment. No durable learning, A99 closure, default promotion or biological validation
 is claimed. Phase delivery/validation notes stay outside the repository.
 
 ## Previous checkpoint: P18-H5 relational Righting and sparse preview

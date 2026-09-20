@@ -97,7 +97,7 @@ from nca8_sensory import Nca8BodySensoryApplicationV1, Nca8BodySensoryModuleV1
 from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -1656,6 +1656,12 @@ class Nca8RightingPreviewSessionV1:
     it has to win through the same selectors. This is a transparent small-repertoire
     baseline, not scalable candidate recruitment. Reset means a fresh session with
     a new body stream generation, never restoration of a diagnostic record.
+
+    H6-B can disable only the existing Prediction registration consumer. The IP
+    still forms its sparse projection, and handoff origin checks still require
+    that original projection. No substantive task-PNM outcome consumer exists
+    here: it remains P16-1G. This control must not be presented as removal of all
+    prediction or as evidence that task prediction is unnecessary biologically.
     """
 
     def __init__(
@@ -1663,6 +1669,7 @@ class Nca8RightingPreviewSessionV1:
         capabilities: tuple[BodyAxisCapabilityV1, ...] | None = None,
         influence_enabled: bool = True, righting_enabled: bool = True,
         additional_primitives: Sequence[PrimitiveRuntimeV1] = (),
+        orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("preview requires a MotorStreamRefV1")
@@ -1673,6 +1680,9 @@ class Nca8RightingPreviewSessionV1:
             raise TypeError("context must be RightingContextV1")
         if len(additional_primitives) > 7:
             raise ValueError("preview repertoire is limited to eight task candidates")
+        if not isinstance(task_pnm_consumer_enabled, bool):
+            raise TypeError("task_pnm_consumer_enabled must be Boolean")
+        self.task_pnm_consumer_enabled = task_pnm_consumer_enabled
         self.righting = RightingIPV1(enabled=righting_enabled)
         self._primitives = (self.righting, *additional_primitives)
         if len({item.primitive_id for item in self._primitives}) != len(self._primitives):
@@ -1688,6 +1698,7 @@ class Nca8RightingPreviewSessionV1:
         self.body = Nca8BodyRuntimeV1()
         self.mapper = self.body.configure_motor_targets(
             stream, nominal_body_capabilities_v1() if capabilities is None else capabilities,
+            orientation_mapping_sign=orientation_mapping_sign,
         )
         self._cycle = 0
         self._cutoff = -1
@@ -1793,14 +1804,15 @@ class Nca8RightingPreviewSessionV1:
         application = selected.navigation.application
         proposal: BodyTargetProposalV1 | None = None
         if isinstance(application, RightingApplicationV1):
-            self.prediction.adopt_support_preview(application.projection)
+            if self.task_pnm_consumer_enabled:
+                self.prediction.adopt_support_preview(application.projection)
             proposal = self.mapper.propose(application.contribution, at_tick=cutoff_tick, replace_existing=replace_existing)
             if self.influence_enabled:
                 expiry = min(cutoff_tick + 8, application.task.started_tick + 80)
                 self.sensory.retain_motor_context(
                     application.task.task_id, next_context.context_id, cycle_id=cycle, expires_at_tick=expiry,
                 )
-        else:
+        elif self.task_pnm_consumer_enabled:
             self.prediction.adopt_support_preview(None)
         result = replace(selected, proposal=proposal)
         self._cycle, self._cutoff, self.context, self._last_result = cycle, cutoff_tick, next_context, result

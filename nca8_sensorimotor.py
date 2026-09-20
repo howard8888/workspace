@@ -27,7 +27,7 @@ from nca8_sensorimotor_contracts import (
     LocalTargetDispositionV1, LocalTargetReportV1, MotorInstallationSourceV1, SensorimotorTargetKindV1, TargetOriginV1,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "LocalMotorPredictionV1", "LocalPredictionComparisonV1", "LocalControlEventV1",
     "SensorimotorProfileV1", "SensorimotorStepV1", "SensorimotorExecutorV1", "__version__",
@@ -312,6 +312,20 @@ class SensorimotorExecutorV1:
     def trace_snapshot(self) -> tuple[SensorimotorStepV1, ...]:
         """Return a read-only bounded local timeline; omitted rows affect no control."""
         return tuple(self._trace)
+
+    def retained_counts(self) -> dict[str, int]:
+        """Count fixed local storage without advancing or clearing any control.
+
+        These are observer diagnostics, not an input to target selection. There
+        are at most two pursuits, four commands, four unresolved events and four
+        pending predictions per pursuit. Trace capacity is independently bounded.
+        """
+        return {
+            "lower_pursuits": len(self._pursuits), "lower_command_history": len(self._commands),
+            "lower_events": len(self._events), "lower_trace": len(self._trace),
+            "lower_predictions_per_axis": max((len(item.predictions) for item in self._pursuits.values()), default=0),
+            "lower_replaced_reports": len(self._last_replaced_reports),
+        }
 
     def snapshot(self) -> dict[str, object]:
         """Export current ownership, results and finite buffers, without live rights."""

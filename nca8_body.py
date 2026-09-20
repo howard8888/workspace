@@ -49,7 +49,7 @@ from nca8_primitives import (
 # comprehensible without a generic state-management framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __all__ = [
     "AuthorizedActionEnvelopeV1",
     "BodyActionHandoffV1",
@@ -531,7 +531,7 @@ class Nca8BodyRuntimeV1:
 
     def configure_motor_targets(
         self, stream: MotorStreamRefV1, capabilities: tuple[BodyAxisCapabilityV1, ...], *,
-        tick_seconds: float = 0.05, maximum_feedback_age: int = 2,
+        tick_seconds: float = 0.05, maximum_feedback_age: int = 2, orientation_mapping_sign: int = 1,
     ) -> BodyTargetMapperV1:
         """Configure one H3 body stream using explicitly supplied capabilities.
 
@@ -541,12 +541,15 @@ class Nca8BodyRuntimeV1:
         is rejected rather than silently dropping resource reservations; a reset
         constructs a fresh owning BodyMap with a fresh stream generation. No A0
         fields, action envelope, handoff, current WNM or learner are modified.
+        The optional -1 orientation mapping sign is an explicitly selected H6-B
+        calibration-fault control; +1 preserves the normal body transformation.
         """
         if self._motor_targets is not None:
             raise ValueError("motor targets already configured; reset the owning BodyMap for a new stream")
         mapper = BodyTargetMapperV1(
             stream, capabilities, tick_seconds=tick_seconds,
             maximum_feedback_age=maximum_feedback_age, enabled=self._action_handoff_enabled,
+            orientation_mapping_sign=orientation_mapping_sign,
         )
         self._motor_targets = mapper
         return mapper

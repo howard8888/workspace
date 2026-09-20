@@ -32,7 +32,7 @@ from nca8_sensorimotor_contracts import (
     TargetOriginV1,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "BodyAxisCapabilityV1",
     "BodyMovementRequestV1",
@@ -351,11 +351,17 @@ class BodyTargetMapperV1:
     contact is different from already having it. This is a disclosed H3 mapping
     precondition, not a stability theorem. H4 must check ongoing permission and
     protection before issuing each motor command. H3 itself issues none.
+
+    orientation_mapping_sign defaults to +1. The explicit -1 qualification
+    setting reverses only the mapped orientation increment, not the sensed pose,
+    task request, extension, capability or motor sign. It is a calibration-fault
+    control, not a learned parameter or a normal recovery policy. Original
+    coordinate, excursion, rate, resource and lease checks remain in force.
     """
 
     def __init__(
         self, stream: MotorStreamRefV1, capabilities: tuple[BodyAxisCapabilityV1, ...], *,
-        tick_seconds: float = 0.05, maximum_feedback_age: int = 2, enabled: bool = True,
+        tick_seconds: float = 0.05, maximum_feedback_age: int = 2, enabled: bool = True, orientation_mapping_sign: int = 1,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("stream must be MotorStreamRefV1")
@@ -376,6 +382,11 @@ class BodyTargetMapperV1:
         _index(maximum_feedback_age, "maximum_feedback_age", 0, 2)
         if not isinstance(enabled, bool):
             raise TypeError("enabled must be Boolean")
+        if isinstance(orientation_mapping_sign, bool) or not isinstance(orientation_mapping_sign, int):
+            raise TypeError("orientation_mapping_sign must be +1 or -1, not Boolean")
+        if orientation_mapping_sign not in (-1, 1):
+            raise ValueError("orientation_mapping_sign must be +1 or -1")
+        self._orientation_mapping_sign = orientation_mapping_sign
         self._stream = stream
         self._capabilities = axes
         self._tick_seconds = interval
@@ -388,6 +399,16 @@ class BodyTargetMapperV1:
         self._pending: BodyTargetProposalV1 | None = None
         self._reservations: dict[SensorimotorTargetKindV1, BodyTargetReservationV1] = {}
         self._executor_owner: object | None = None
+
+    def retained_counts(self) -> dict[str, int]:
+        """Count owned records without expiring, refreshing or granting any right.
+
+        These diagnostic counts include an old sensor record and reserved records
+        awaiting normal expiry processing. They measure storage, not currentness.
+        The fixed limits are one sensor, one unreserved proposal and two resources.
+        """
+        return {"body_sensor_records": int(self._feedback is not None),
+                "body_pending_proposals": int(self._pending is not None), "body_reserved_records": len(self._reservations)}
 
     @property
     def stream(self) -> MotorStreamRefV1:
@@ -547,6 +568,11 @@ class BodyTargetMapperV1:
         travel_budget = capability.maximum_rate * self._tick_seconds * request.lease_ticks
         maximum_step = min(capability.maximum_step, travel_budget)
         offset = max(-maximum_step, min(maximum_step, bounded_goal - coordinate))
+        if kind is SensorimotorTargetKindV1.ORIENTATION_ADJUST and self._orientation_mapping_sign == -1:
+            # Explicit H6-B mapping fault: preserve the request and sensor basis,
+            # reverse only the computed orientation adjustment inside normal limits.
+            endpoint = max(capability.minimum_coordinate, min(capability.maximum_coordinate, coordinate - offset))
+            offset = endpoint - coordinate
         target = BodyRelativeTargetV1(
             target_id=f"body_target:{kind.value}:{number}", revision=1, origin=request.origin, kind=kind,
             basis=feedback, offset=offset, tolerance=capability.tolerance,
