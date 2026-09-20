@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 # a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "AttentionBidV1",
     "AttentionCandidateV1",
@@ -604,6 +604,7 @@ class NavigationRuntimeV1:
         self._enabled = enabled
         self._current_wnm: WorkingNavMapStateV1 | None = None
         self._last_decision: NavigationDecisionV1 | None = None
+        self._focal_hold_cycle = 0
 
     @property
     def enabled(self) -> bool:
@@ -663,6 +664,25 @@ class NavigationRuntimeV1:
         self._current_wnm = next_wnm
         return next_wnm
 
+    def record_focal_hold(self, wnm: WorkingNavMapStateV1, *, cycle_id: int, reason: str) -> NavigationDecisionV1:
+        """Record a nonprimitive allocation without secretly evaluating a task.
+
+        The approved domain coordinator supplies the reason after establishing
+        this very WNM. A demanding interpretation, or its unresolved dependency,
+        excludes a simultaneous ordinary primitive application. This service
+        does not interpret the outcome itself and names no domain or primitive.
+        The hold cannot later be relabelled as a new task in the same opportunity.
+        """
+        cycle = _positive_int(cycle_id, field_name="cycle_id")
+        if not isinstance(wnm, WorkingNavMapStateV1) or wnm is not self._current_wnm or wnm.refreshed_cycle != cycle:
+            raise ValueError("focal hold requires Navigation's current source-linked WNM")
+        if self._last_decision is not None and self._last_decision.cycle_id >= cycle:
+            raise ValueError("one Navigation allocation is permitted per focal opportunity")
+        decision = NavigationDecisionV1(f"navigation_decision:{cycle}", cycle, wnm, (), None, reason)
+        self._focal_hold_cycle = cycle
+        self._last_decision = decision
+        return decision
+
     def commit(
         self,
         wnm: WorkingNavMapStateV1 | None,
@@ -670,8 +690,10 @@ class NavigationRuntimeV1:
         *,
         cycle_id: int,
     ) -> NavigationDecisionV1:
-        """Evaluate all primitives and deterministically apply zero or one winner."""
+        """Evaluate all primitives unless this opportunity was allocated elsewhere."""
         cycle = _positive_int(cycle_id, field_name="cycle_id")
+        if cycle <= self._focal_hold_cycle:
+            raise ValueError("a focal hold cannot also execute an ordinary primitive")
         if wnm is None or not self._enabled:
             decision = NavigationDecisionV1(
                 decision_id=f"navigation_decision:{cycle}",

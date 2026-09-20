@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Review shared H6-A, H6-B or P16-1G-A experiments; print evidence without writing files."""
+"""Review shared H6-A/B and P16-1G-A/B experiments; print evidence without writing files."""
 
 from __future__ import annotations
 
@@ -21,6 +21,9 @@ from nca8_hierarchy_qualification import (
     run_hierarchy_qualification_group_v1, run_hierarchy_qualification_v1,
 )
 
+from nca8_outcome_attention_demo import (
+    OUTCOME_ATTENTION_CASES_V1, render_outcome_attention_summary_v1, render_outcome_attention_v1, run_outcome_attention_v1,
+)
 from nca8_outcomes_demo import (
     RIGHTING_OUTCOME_CASES_V1, render_righting_outcome_summary_v1, render_righting_outcome_v1, run_righting_outcome_v1,
 )
@@ -36,9 +39,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     selection.add_argument("--profile", choices=HIERARCHY_QUALIFICATION_CASES_V1, help="inspect one H6-B profile")
     selection.add_argument("--outcomes", nargs="?", const="all", choices=("all", *RIGHTING_OUTCOME_CASES_V1),
                            help="run the separate opt-in P16-1G-A task outcome profile")
+    selection.add_argument("--outcome-attention", nargs="?", const="all", choices=("all", *OUTCOME_ATTENTION_CASES_V1),
+                           help="run the approved opt-in P16-1G-B mismatch and single-focal-allocation profile")
     parser.add_argument("--detail", action="store_true", help="show each local drive and observed report")
     parser.add_argument("--json", action="store_true", help="print a detached finite observer export")
     args = parser.parse_args(argv)
+    if args.outcome_attention is not None:
+        attention_cases = OUTCOME_ATTENTION_CASES_V1 if args.outcome_attention == "all" else (args.outcome_attention,)
+        attention_records = tuple(run_outcome_attention_v1(case) for case in attention_cases)
+        if args.json:
+            print(json.dumps([item.as_dict() for item in attention_records], sort_keys=True, allow_nan=False))
+        else:
+            print(render_outcome_attention_summary_v1(attention_records))
+            if args.outcome_attention != "all" or args.detail:
+                print("\n\n".join(render_outcome_attention_v1(item, detail=args.detail) for item in attention_records))
+        return int(any(item.bound_violations for item in attention_records))
     if args.outcomes is not None:
         selected_cases = RIGHTING_OUTCOME_CASES_V1 if args.outcomes == "all" else (args.outcomes,)
         outcome_records = tuple(run_righting_outcome_v1(case) for case in selected_cases)

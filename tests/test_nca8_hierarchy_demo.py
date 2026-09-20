@@ -112,7 +112,8 @@ def test_nca8_route_eight_preserves_retained_a0_session(monkeypatch):
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(answers))
     assert nca8_menu.run_nca8_experimental_menu_v1(retained) is retained
     assert calls == [{"qualification_menu": nca8_menu.run_hierarchy_qualification_menu_v1,
-                      "outcome_menu": nca8_menu.run_righting_outcome_menu_v1}]
+                      "outcome_menu": nca8_menu.run_righting_outcome_menu_v1,
+                      "outcome_attention_menu": nca8_menu.run_outcome_attention_menu_v1}]
     assert retained.status() == before and retained.trace_snapshot() == trace
 
 
@@ -142,8 +143,8 @@ def test_registry_versions_include_real_modules_and_preserve_legacy_count():
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_hierarchy"] == "nca8_hierarchy"
     assert registry["nca8_hierarchy_demo"] == "nca8_hierarchy_demo"
-    assert cca8_run.__version__ == "0.30.18"
-    assert nca8_hierarchy.__version__ == demo.__version__ == "0.3.0"
+    assert cca8_run.__version__ == "0.30.19"
+    assert nca8_hierarchy.__version__ == demo.__version__ == "0.4.0"
     assert cca8_motor_contracts.__version__ == nca8_handoff.__version__ == nca8_sensorimotor_contracts.__version__ == "0.2.0"
-    assert len(cca8_run._cca8_component_rows()) == 73
+    assert len(cca8_run._cca8_component_rows()) == 75
     assert len(cca8_run.PRIMITIVES) == 8

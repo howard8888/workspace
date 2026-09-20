@@ -16,7 +16,9 @@ and physical evidence retain distinct roles. H6-A reports current adequacy and
 local results, not supported task dwell, task-PNM verdicts or causal credit.
 The separately enabled P16-1G-A profile adds task dwell and original endpoint
 correspondence in the same core/driver; the retained H6 profiles are unchanged.
-No profile calls the legacy/A0 action provider. 1G-B/C remain unimplemented.
+The opt-in 1G-B source route adds one demanding interpretation before a later
+response reconsideration. Protected lower execution still respects its original
+lease. No profile calls the legacy/A0 provider; the 1G-C learning hook is future work.
 """
 
 from __future__ import annotations
@@ -36,13 +38,14 @@ from nca8_outcomes import (
     RightingTaskAssessmentV1,
 )
 from nca8_righting import RightingApplicationV1, RightingContextV1
+from nca8_outcome_attention import RightingMismatchRequestV1
 from nca8_runtime import Nca8RightingPreviewSessionV1, RightingPreviewResultV1
 from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, SchedulerCycleSnapshotV1
 from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, SensorimotorProfileV1, SensorimotorStepV1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -75,6 +78,8 @@ class IntegratedRightingCycleV1:
     task_outcome: RightingTaskAssessmentV1 | None = None
     claim_outcomes: tuple[RightingClaimOutcomeV1, ...] = ()
     claim_registration: RightingClaimRegistrationV1 | None = None
+    outcome_requests_created: tuple[RightingMismatchRequestV1, ...] = ()
+    outcome_requests_pending: tuple[RightingMismatchRequestV1, ...] = ()
 
     @property
     def status(self) -> str:
@@ -100,6 +105,9 @@ class IntegratedRightingCycleV1:
                 "claim_outcomes": [item.as_dict() for item in self.claim_outcomes],
                 "claim_registration": self.claim_registration.as_dict() if self.claim_registration is not None else None}
                if self.task_outcome is not None else {}),
+            **({"outcome_requests_created": [item.as_dict() for item in self.outcome_requests_created],
+                "outcome_requests_pending": [item.as_dict() for item in self.outcome_requests_pending]}
+               if self.calculation.outcome_allocation is not None else {}),
         }
 
 
@@ -120,15 +128,21 @@ class IntegratedRightingCoreV1:
         handoff_enabled: bool = True, trace_capacity: int = 256,
         orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True,
         task_outcomes_enabled: bool = False, task_prediction_comparison_enabled: bool = True,
+        task_outcome_attention_enabled: bool = False,
     ) -> None:
         _bounded_count(trace_capacity, "trace_capacity", 1, 4096)
-        if not isinstance(task_outcomes_enabled, bool) or not isinstance(task_prediction_comparison_enabled, bool):
+        if not all(isinstance(flag, bool) for flag in (
+            task_outcomes_enabled, task_prediction_comparison_enabled, task_outcome_attention_enabled,
+        )):
             raise TypeError("task outcome options must be Boolean")
+        if task_outcome_attention_enabled and not task_outcomes_enabled:
+            raise ValueError("task-outcome Attention requires the 1G-A correspondence consumer")
         self.outcomes = RightingOutcomeRuntimeV1(stream, compare_predictions=task_prediction_comparison_enabled) if task_outcomes_enabled else None
         self.cognition = Nca8RightingPreviewSessionV1(
             stream, context=context, capabilities=capabilities,
             righting_enabled=righting_enabled, influence_enabled=influence_enabled,
             orientation_mapping_sign=orientation_mapping_sign, task_pnm_consumer_enabled=task_pnm_consumer_enabled,
+            outcome_attention_enabled=task_outcome_attention_enabled,
         )
         self.handoff = Nca8InternalHandoffV1(generation=stream.generation, enabled=handoff_enabled)
         self.scheduler = Nca8DeterministicSchedulerV1()
@@ -263,6 +277,16 @@ class IntegratedRightingCoreV1:
                                            "command_intervals": claim.command_intervals})
             if task_outcome.completion_supported and task_outcome.task_id is not None:
                 prepared = self.cognition.complete_prepared_task(prepared, task_outcome.supported_samples, task_id=task_outcome.task_id)
+        outcome_owner = self.cognition.sensory.outcome_attention
+        created_requests = () if outcome_owner is None else outcome_owner.admit(
+            claim_outcomes, prepared.source, self.cognition.righting.task, prepared.context, cutoff_tick=tick,
+        )
+        for request in created_requests:
+            self.trace.append("hierarchy_outcome_request", "task-PNM discrepancy changed a source request, not a task decision",
+                              cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
+                              details={"request_id": request.request_id, "pnm_id": request.outcome.registration.preview.pnm.pnm_id,
+                                       "significance": request.significance, "relations": ",".join(request.relations),
+                                       "admitted_tick": tick, "expires_at_tick": request.expires_at_tick})
         self.cognition.mapper.expire(at_tick=tick)
         self.trace.append(
             "hierarchy_source", "one POSTURE-SUPPORT source updated from eligible physical evidence", cycle_id=cycle,
@@ -277,11 +301,23 @@ class IntegratedRightingCoreV1:
                                        "event_tick": event.event_tick, "noticed_tick": event.noticed_tick})
         self.scheduler.enter_runtime_phase(cycle, CyclePhase.FOCAL_COMMITMENT)
         selected = self.cognition.select_prepared(prepared)
+        allocation = selected.outcome_allocation
+        if allocation is not None:
+            interpretation = allocation.interpretation
+            self.trace.append("hierarchy_outcome_allocation", "single focal allocation; dependent response cannot share interpretation",
+                              cycle_id=cycle, phase=CyclePhase.FOCAL_COMMITMENT.name,
+                              details={"kind": allocation.kind,
+                                       "request_id": interpretation.request.request_id if interpretation is not None else None,
+                                       "interpretation_status": interpretation.status if interpretation is not None else None,
+                                       "interpretation_cycle": interpretation.cycle_id if interpretation is not None else None,
+                                       "outcome_rank": selected.outcome_source_bid.prediction_or_envelope_failure_rank
+                                       if selected.outcome_source_bid is not None else 0})
         application = selected.navigation.application
         if application is not None and not isinstance(application, RightingApplicationV1):
             raise TypeError("this integrated profile has no non-Righting task consumer")
         self.trace.append(
-            "hierarchy_selection", "Attention selected the source; Navigation selected the task", cycle_id=cycle,
+            "hierarchy_selection", ("Attention selected the source; Navigation recorded the single focal allocation" if allocation is not None
+                                    else "Attention selected the source; Navigation selected the task"), cycle_id=cycle,
             phase=CyclePhase.FOCAL_COMMITMENT.name,
             details={"attention": selected.attention.disposition.value, "primitive": selected.navigation.selected_primitive_id,
                      "task_id": selected.task.task_id if selected.task is not None else None,
@@ -341,6 +377,7 @@ class IntegratedRightingCoreV1:
         ready = self.handoff.release_after_close(accepted)
         result = IntegratedRightingCycleV1(
             calculation, commitment, ready, reservations, schedule, reports, events, task_outcome, claim_outcomes, claim_registration,
+            created_requests, () if outcome_owner is None else outcome_owner.pending(),
         )
         self.last_result = result
         return result
@@ -373,15 +410,21 @@ class IntegratedRightingTrialV1:
         orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True,
         focal_only_feedback_from_tick: int | None = None,
         task_outcomes_enabled: bool = False, task_prediction_comparison_enabled: bool = True,
+        task_outcome_attention_enabled: bool = False,
     ) -> None:
         profile = MotorWorldProfileV1() if physical_profile is None else physical_profile
         if not isinstance(profile, MotorWorldProfileV1) or profile.dt_seconds != 0.05:
             raise ValueError("H6-A requires the declared 0.05-second physical profile")
         if focal_only_feedback_from_tick is not None:
             _bounded_count(focal_only_feedback_from_tick, "focal_only_feedback_from_tick", 0, 80)
-        if not isinstance(task_outcomes_enabled, bool) or not isinstance(task_prediction_comparison_enabled, bool):
+        if not all(isinstance(flag, bool) for flag in (
+            task_outcomes_enabled, task_prediction_comparison_enabled, task_outcome_attention_enabled,
+        )):
             raise TypeError("task outcome options must be Boolean")
+        if task_outcome_attention_enabled and not task_outcomes_enabled:
+            raise ValueError("task-outcome Attention requires the 1G-A correspondence consumer")
         self._task_outcomes_enabled = task_outcomes_enabled
+        self._task_outcome_attention_enabled = task_outcome_attention_enabled
         self._task_prediction_comparison_enabled = task_prediction_comparison_enabled
         self._outcome_intervals: list[RightingIntervalEvidenceV1] = []
         self._focal_only_feedback_from_tick = focal_only_feedback_from_tick
@@ -408,6 +451,7 @@ class IntegratedRightingTrialV1:
             influence_enabled=self._influence_enabled, handoff_enabled=self._handoff_enabled, trace_capacity=self._trace_capacity,
             orientation_mapping_sign=self._orientation_mapping_sign, task_pnm_consumer_enabled=self._task_pnm_consumer_enabled,
             task_outcomes_enabled=self._task_outcomes_enabled, task_prediction_comparison_enabled=self._task_prediction_comparison_enabled,
+            task_outcome_attention_enabled=self._task_outcome_attention_enabled,
         )
         self.controller = SensorimotorExecutorV1(
             self.core.cognition.mapper, profile=self._control_profile, installation_source=self.core.handoff,
@@ -465,6 +509,7 @@ class IntegratedRightingTrialV1:
             **cognition.mapper.retained_counts(), **self.controller.retained_counts(),
             **({"outcome_staged_intervals": len(self._outcome_intervals), **self.core.outcomes.retained_counts()}
                if self.core.outcomes is not None else {}),
+            **(cognition.sensory.outcome_attention.retained_counts() if cognition.sensory.outcome_attention is not None else {}),
         }
 
     def snapshot(self) -> dict[str, object]:

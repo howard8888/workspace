@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from nca8_adapters import Nca8ObservationV1
+from nca8_outcome_attention import RightingOutcomeAttentionV1
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1
 from nca8_support_dynamics import SupportDynamicsTrackerV1, SupportDynamicsV1
@@ -46,7 +47,7 @@ from nca8_maps import (
 # slice readable without a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "NCA8_BODY_SENSORY_CIRCUIT_ID_V1",
     "Nca8BodySensoryApplicationV1",
@@ -225,6 +226,7 @@ class Nca8BodySensoryModuleV1:
         self._motor_cutoff = -1
         self._motor_tick_seconds: float | None = None
         self._motor_context: tuple[str, str, int] | None = None
+        self._outcome_attention: RightingOutcomeAttentionV1 | None = None
 
 
     @property
@@ -550,6 +552,26 @@ class Nca8BodySensoryModuleV1:
         if feedback is not None:
             self._motor_watermark = feedback
         return result
+
+    @property
+    def outcome_attention(self) -> RightingOutcomeAttentionV1 | None:
+        """Read the optional source-owned relevance/interpretation extension.
+
+        The extension stores no separate sensory world. Its requests reference
+        original task outcomes; interpretation may run only when this source is
+        actually selected as WNM. Ordinary A0/H5/H6/1G-A construct no extension.
+        """
+        return self._outcome_attention
+
+    def configure_outcome_attention(self, stream: MotorStreamRefV1) -> None:
+        """Create the explicitly approved 1G-B source extension once, before sensing.
+
+        A new generation needs a new sensory owner. This method performs no
+        selection, comparison, interpretation, motor action or learned update.
+        """
+        if self._outcome_attention is not None or self._motor_stream is not None:
+            raise RuntimeError("configure source relevance once before motor-source admission")
+        self._outcome_attention = RightingOutcomeAttentionV1(stream, self.map_library.posture_support_ref)
 
     def retain_motor_context(self, task_id: str, context_id: str, *, cycle_id: int, expires_at_tick: int) -> None:
         """Accept one bounded selected-task continuation request, not source facts.

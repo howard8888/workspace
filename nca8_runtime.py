@@ -42,6 +42,7 @@ from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetProposalV1, nominal_body_capabilities_v1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1
 from nca8_righting import RightingApplicationV1, RightingContextV1, RightingIPV1, RightingTaskV1
+from nca8_outcome_attention import RightingFocalAllocationV1
 
 from nca8_adapters import (
     Nca8EnvironmentBridgeV1,
@@ -97,7 +98,7 @@ from nca8_sensory import Nca8BodySensoryApplicationV1, Nca8BodySensoryModuleV1
 from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -1611,6 +1612,8 @@ class RightingPreviewResultV1:
     task: RightingTaskV1 | None
     source_status: str
     persistence_rank: int
+    outcome_allocation: RightingFocalAllocationV1 | None = None
+    outcome_source_bid: AttentionBidV1 | None = None
 
     def as_dict(self) -> dict[str, object]:
         """Return a detached review record; exporting never replays the calculation."""
@@ -1621,6 +1624,9 @@ class RightingPreviewResultV1:
             "task": self.task.as_dict() if self.task is not None else None,
             "source_status": self.source_status, "persistence_rank": self.persistence_rank,
             "motor_dispatches": 0, "target_installations": 0, "durable_learning_updates": 0,
+            **({"outcome_attention": {"allocation": self.outcome_allocation.as_dict(),
+                                     "source_bid": self.outcome_source_bid.as_dict() if self.outcome_source_bid is not None else None}}
+               if self.outcome_allocation is not None else {}),
         }
 
 
@@ -1669,7 +1675,7 @@ class Nca8RightingPreviewSessionV1:
         capabilities: tuple[BodyAxisCapabilityV1, ...] | None = None,
         influence_enabled: bool = True, righting_enabled: bool = True,
         additional_primitives: Sequence[PrimitiveRuntimeV1] = (),
-        orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True,
+        orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True, outcome_attention_enabled: bool = False,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("preview requires a MotorStreamRefV1")
@@ -1692,6 +1698,10 @@ class Nca8RightingPreviewSessionV1:
         self.influence_enabled = influence_enabled
         self.maps = create_posture_support_map_library_v1()
         self.sensory = Nca8BodySensoryModuleV1(self.maps)
+        if not isinstance(outcome_attention_enabled, bool):
+            raise TypeError("outcome_attention_enabled must be Boolean")
+        if outcome_attention_enabled:
+            self.sensory.configure_outcome_attention(stream)
         self.attention = AttentionRuntimeV1()
         self.navigation = NavigationRuntimeV1(motor_preview_enabled=True)
         self.prediction = Nca8PredictionRuntimeV1()
@@ -1794,18 +1804,33 @@ class Nca8RightingPreviewSessionV1:
             raise ValueError("selection requires this owner's current unselected opportunity")
         cycle, source = opportunity.cycle_id, opportunity.source
         bids = list(opportunity.competing_bids)
+        source_bid = None
         if opportunity.source_status == "support_needed":
-            bids.append(AttentionBidV1(
+            source_bid = AttentionBidV1(
                 f"support_bid:{cycle}", "source:posture_support", source, "body_sensory", cycle,
                 0, 20, 0, 0, opportunity.persistence_rank, 20,
                 ("activity_relative_support_need",), False, "source:posture_support",
-            ))
+            )
+        outcome_owner = self.sensory.outcome_attention
+        if outcome_owner is not None:
+            source_bid = outcome_owner.contribute_bid(source_bid)
+        if source_bid is not None:
+            bids.append(source_bid)
         selection = self.attention.select(bids, current_wnm=self.navigation.current_wnm, cycle_id=cycle)
         working = self.navigation.update_wnm(selection)
-        decision = self.navigation.commit(working, self._primitives, cycle_id=cycle)
+        allocation = None
+        if outcome_owner is not None:
+            allocation = (outcome_owner.allocate(working, cycle_id=cycle) if self.navigation.enabled
+                          else RightingFocalAllocationV1("navigation_disabled"))
+        if allocation is not None and not allocation.permits_primitive_selection:
+            if working is None:
+                raise RuntimeError("a nonprimitive focal allocation requires the selected source")
+            decision = self.navigation.record_focal_hold(working, cycle_id=cycle, reason=allocation.kind)
+        else:
+            decision = self.navigation.commit(working, self._primitives, cycle_id=cycle)
         result = RightingPreviewResultV1(
             cycle, opportunity.cutoff_tick, source, selection, decision, None, self.righting.task,
-            opportunity.source_status, opportunity.persistence_rank,
+            opportunity.source_status, opportunity.persistence_rank, allocation, source_bid if outcome_owner is not None else None,
         )
         self._selected = result
         return result

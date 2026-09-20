@@ -16,13 +16,100 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-1G-A task evidence and execution-sensitive correspondence
+## NCA8 update: P16-1G-B task-outcome relevance and one focal allocation
+
+Howard approved **GO-OUTCOME-POLICY** on 20 September 2026: local detection,
+source-mediated escalation, one demanding interpretation opportunity and a later
+eligible dependent response, with protected lower control continuing. The opt-in
+**righting_outcome_attention_v1** implementation follows that policy. Policy
+approval is not implementation acceptance; the new slice requires its local wall
+and manual review. P16-1G-A and P18-H6-B are accepted earlier checkpoints.
+
+Use **NCA8 menu 8 -> integrated review 7** for the shared experiments. The current
+inventory is **75 production components and 8 host behavioral primitives**.
+`nca8_outcome_attention.py` is an extension owned by the existing POSTURE-SUPPORT
+sensory owner, not an Evaluator, CompareOutcome IP, new world model or learner.
+`nca8_outcome_attention_demo.py` is an external inspection harness. Existing H4,
+H6-A, H6-B and 1G-A experiment profiles retain their prior behavior and exports;
+new authority requires `task_outcome_attention_enabled=True` and the 1G-A
+correspondence consumer. Legacy/default routing is unchanged.
+
+C2 retains 1G-A's original execution-sensitive endpoint results. A compatible,
+observed contradiction of expected contact or an expected supported activity
+relation can create a request. Two consecutive, distinct executed outcomes that
+contradict the same compatible relation can also create a request while current
+task support remains inadequate. A duplicate is not a second outcome. Publisher
+gaps, matched/unknown outcomes or a different relation break that streak. Missing,
+unevaluable, unexecuted or accurately predicted adverse evidence does not become
+an invented prediction failure. These are fixed engineering significance rules,
+not learned relevance or a complete theory of biological surprise.
+
+The source owner changes only the existing outcome rank (40), retaining ordinary
+body need, protected safety, novelty and continuation priorities separately.
+Attention still selects the source, including a legitimate same-source maintain.
+Navigation establishes that source's WNM; the domain allocation then performs one
+interpretation **instead of** ordinary primitive arbitration/application. The
+result distinguishes still-relevant support discrepancy, corrected historical
+discrepancy and unresolved current relevance, preserving unknown causation.
+No new Righting application, PNM or target is created in that interpretation slot.
+
+A resolved interpretation permits ordinary response reconsideration only at a
+later eligible opportunity, using current evidence, the original task budget and
+fresh BodyMap permission. It does not select a primitive or automatically retry.
+An unresolved interpretation defers its dependent response within its original
+request lifetime; it does not stop other sources, sensory maintenance or protected
+lower processing. Newer relevant interpretation can supersede that dependency
+explicitly. With no new task output, an existing target continues only inside its
+unchanged lease and protection. Physical time still advances with neutral drives
+when no target is active. No extra demanding work is bought by the final read at
+the original 20-opportunity / 80-tick task limit.
+
+Live bounds are **eight pending requests**, **eight local ticks from first eligible
+C2 admission without renewal**, one previous endpoint, one dependent interpretation
+and 32 diagnostic dispositions. Request expiry is separate from claim expiry,
+sensory age, task budget and motor lease. Overflow refuses the whole relevance
+batch; the core stops rather than silently discarding work. Historical results and
+current-opportunity interpretation counts are separately reported. Diagnostics and
+JSON exports cannot restore permissions or influence the policy.
+
+The twelve fixed profiles use the existing 80-step / 4-second physical horizon.
+The primary competing on/off pair has identical physical history, current source,
+earlier task-PNM outcome and local warnings through tick16. Source B wins at16
+with the route off; the route on selects POSTURE-SUPPORT and interprets contact
+loss at event12 as historical because current event15 shows restored contact.
+A separate pair demonstrates maintain rather than switch. Source B is an explicit
+controlled candidate fixture, not a newly implemented visual/maternal domain.
+A stronger protected candidate still wins and the old request expires. Other cases
+cover nominal recovery, a blocked motor, missing feedback, unresolved current
+relevance and external assistance. The assisted on/off pair has identical commands
+and physical trajectories despite different focal work; that null motor effect is
+reported, not manufactured into a success advantage. Nominal task completion is
+still not established at the unchanged near-12-degree boundary.
+
+    python scripts\review_nca8_hierarchy.py --outcome-attention
+    python scripts\review_nca8_hierarchy.py --outcome-attention competing_on --detail
+    python scripts\review_nca8_hierarchy.py --outcome-attention competing_off
+    python scripts\review_nca8_hierarchy.py --outcome-attention maintain_on
+    python scripts\review_nca8_hierarchy.py --outcome-attention protected_competitor
+    python scripts\review_nca8_hierarchy.py --outcome-attention unresolved_current
+    python scripts\review_nca8_hierarchy.py --outcome-attention assisted_on --json
+
+`--outcome-attention`, `--outcomes`, `--qualify`, `--profile` and `--case` are
+mutually exclusive selectors. Opening menus performs no trial. All renderers use
+already computed results; changing retention/detail cannot change the body,
+source, request, selected operation or RNG. The same-source selection/interpretation
+path is an initial domain-specific profile, not a universal extra-cycle rule.
+**P16-1G-C, A99, broad ambiguity/Ready/learning and default promotion remain open.**
+No physics, task criteria, prediction tolerance, lower competence, task budget,
+dependency, lint/type configuration or durable parameter is changed by this slice.
+
+## Previous checkpoint: P16-1G-A task evidence and execution-sensitive correspondence
 
 The new **righting_outcomes_v1** profile adds progress, supported task completion and
 original sparse-PNM correspondence to the existing integrated hierarchy. Enable it
 through **NCA8 menu 8 -> integrated review 6**. The ordinary H6-A examples and all
 17 H6-B qualification profiles retain their earlier, outcome-disabled behavior.
-The current inventory is **73 production components and 8 host behavioral primitives**.
+The inventory at the 1G-A checkpoint was **73 production components and 8 host behavioral primitives**.
 `nca8_outcomes.py` is a bounded domain-local evidence service, not a new task selector,
 world model, general evaluator or learner; `nca8_outcomes_demo.py` is its external
 review harness. Both reuse the existing source, Righting, BodyMap, SMP and H2 world.
