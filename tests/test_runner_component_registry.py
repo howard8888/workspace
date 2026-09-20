@@ -45,6 +45,8 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "nca8_body": "nca8_body",
     "nca8_body_targets": "nca8_body_targets",
     "nca8_contracts": "nca8_contracts",
+    "nca8_sensorimotor": "nca8_sensorimotor",
+    "nca8_sensorimotor_demo": "nca8_sensorimotor_demo",
     "nca8_sensorimotor_contracts": "nca8_sensorimotor_contracts",
     "nca8_executive": "nca8_executive",
     "nca8_maps": "nca8_maps",

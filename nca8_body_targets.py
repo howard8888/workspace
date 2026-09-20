@@ -32,7 +32,7 @@ from nca8_sensorimotor_contracts import (
     TargetOriginV1,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "BodyAxisCapabilityV1",
     "BodyMovementRequestV1",
@@ -379,6 +379,7 @@ class BodyTargetMapperV1:
         self._proposal_number = 0
         self._pending: BodyTargetProposalV1 | None = None
         self._reservations: dict[SensorimotorTargetKindV1, BodyTargetReservationV1] = {}
+        self._executor_owner: object | None = None
 
     @property
     def stream(self) -> MotorStreamRefV1:
@@ -389,6 +390,44 @@ class BodyTargetMapperV1:
     def capabilities(self) -> tuple[BodyAxisCapabilityV1, ...]:
         """Return the fixed capability declarations in canonical family order."""
         return tuple(self._capabilities[kind] for kind in SensorimotorTargetKindV1 if kind in self._capabilities)
+
+    @property
+    def tick_seconds(self) -> float:
+        """Return the declared local interval; this property runs no clock."""
+        return self._tick_seconds
+
+    def claim_executor_slot(self, owner: object) -> None:
+        """Attach one local executor owner to this body generation, without movement.
+
+        H4 supplies a private owner token, not a serialized ID or target record.
+        A second executor cannot attach to the same mapper and independently
+        dispatch its reservations. This is one local ownership slot, not a
+        global registry or cognitive handoff. Reset uses a fresh mapper.
+        """
+        if owner is None:
+            raise TypeError("executor owner cannot be None")
+        if self._executor_owner is not None:
+            raise ValueError("this BodyMap already has a local executor owner")
+        self._executor_owner = owner
+
+    def current_feedback(self, *, at_tick: int) -> MotorFeedbackV1 | None:
+        """Return the eligible immutable local reading, never a prediction or new event.
+
+        This is the typed H4 reader for the existing H3 currentness calculation.
+        It does not refresh a timestamp, alter the focal source, or backfill an
+        unavailable channel. A returned reading may be a still-valid reread.
+        """
+        return self._current_feedback(self._check_tick(at_tick))
+
+    def execution_refusal(self, reservation: BodyTargetReservationV1, *, at_tick: int) -> str | None:
+        """Check current ownership plus the existing per-axis evidence constraints.
+
+        H4 calls this before pursuit. Revocation/revision/expiry raises through
+        validate_reservation; an unavailable coordinate, support or capability
+        returns the same reason used by H3. No command or target change occurs.
+        """
+        self.validate_reservation(reservation, at_tick=at_tick)
+        return self._axis_refusal(reservation.current.target.kind, self.current_feedback(at_tick=at_tick))
 
     def _check_tick(self, at_tick: int) -> int:
         """Reject time reversal without advancing an external or internal clock."""

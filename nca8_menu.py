@@ -13,13 +13,16 @@ from __future__ import annotations
 import cca8_cli
 from nca8_runtime import Nca8SessionV1
 from nca8_trace import render_flow_trace_lines_v1
+from nca8_sensorimotor_demo import run_sensorimotor_review_menu_v1
 
-__version__ = "0.7.6"
+__version__ = "0.8.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
 _INTRODUCTION_V1 = """Current checkpoint: A0 / retained Gate A.
-Architecture v09.9 is the target; it is not yet fully implemented.
+Accepted Architecture v10.1 and Planning v18 govern new work.
+Options 1-5 retain Gate A; option 6 reviews P18-H4 supplied-target motor control.
+H4 is not yet integrated Righting or a new default cognitive runtime.
 Planning v16 P16-1R-B separates internal handoff and cycle closure from the
 external world step and returning-input admission. Gate-A decisions are unchanged.
 
@@ -358,7 +361,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
     """
     while True:
         print()
-        print("NCA8 -- ARCHITECTURE-v09.9 EXPERIMENTAL MIGRATION RUNTIME")
+        print("NCA8 -- EXPERIMENTAL RUNTIME / HIERARCHICAL MOTOR REVIEW")
         print(cca8_cli.MENU_RESPONSE_DIVIDER)
         print(_INTRODUCTION_V1)
         print()
@@ -367,6 +370,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print("  3) Advance the current NCA8 session by exactly one cognitive cycle")
         print("  4) Show the explanatory trace for the current NCA8 session (text + flowchart)")
         print("  5) Start fresh and automatically run the complete Gate-A StandUp demonstration")
+        print("  6) Review supplied-target movement and fast local feedback (P18-H4)")
         print("  [Enter] Return to Main Menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
@@ -414,7 +418,10 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
                 )
                 print(f"[nca8:gate-a] reason={summary.reason}")
                 continue
-            print("Please choose 1, 2, 3, 4, or 5; or press Enter to return.")
+            if choice == "6":
+                run_sensorimotor_review_menu_v1()
+                continue
+            print("Please choose 1, 2, 3, 4, 5, or 6; or press Enter to return.")
         except Exception as exc:  # pragma: no cover - defensive interactive boundary
             print(f"[nca8:error] {type(exc).__name__}: {exc}")
             if session is not None and session.status().reset_required:

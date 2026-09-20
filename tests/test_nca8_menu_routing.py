@@ -25,9 +25,9 @@ def test_opening_and_leaving_nca8_menu_does_not_construct_a_session(
 
     output = capsys.readouterr().out
     assert result is None
-    assert "NCA8 -- ARCHITECTURE-v09.9 EXPERIMENTAL MIGRATION RUNTIME" in output
+    assert "NCA8 -- EXPERIMENTAL RUNTIME / HIERARCHICAL MOTOR REVIEW" in output
     assert "Current checkpoint: A0 / retained Gate A." in output
-    assert "Architecture v09.9 is the target; it is not yet fully implemented." in output
+    assert "Accepted Architecture v10.1 and Planning v18 govern new work." in output
     assert "controller does not choose, replace, or rescue the NCA8 action" in output
     assert "not a complete geometric coordinate transformation" in output
 
@@ -404,4 +404,4 @@ def test_unknown_choice_still_returns_to_menu_without_constructing_a_session(
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
 
     assert nca8_menu.run_nca8_experimental_menu_v1(None) is None
-    assert "Please choose 1, 2, 3, 4, or 5; or press Enter to return." in capsys.readouterr().out
+    assert "Please choose 1, 2, 3, 4, 5, or 6; or press Enter to return." in capsys.readouterr().out

@@ -271,7 +271,7 @@ def test_menu_trace_displays_domains_without_advancing_the_session(
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
     assert nca8_menu.run_nca8_experimental_menu_v1(session) is session
     output = capsys.readouterr().out
-    assert "Architecture v09.9 is the target" in output
+    assert "Accepted Architecture v10.1 and Planning v18 govern new work" in output
     assert "Planning v16 P16-1R-B separates" in output
     assert "DOMAIN: EXTERNAL BODY + WORLD" in _words(output)
     assert "P16-1R-B REFERENCE ORDER - NOT ADDITIONAL TRACE EVENTS" in output
