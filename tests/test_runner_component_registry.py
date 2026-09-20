@@ -48,6 +48,8 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "nca8_hierarchy": "nca8_hierarchy",
     "nca8_hierarchy_demo": "nca8_hierarchy_demo",
     "nca8_hierarchy_qualification": "nca8_hierarchy_qualification",
+    "nca8_outcomes": "nca8_outcomes",
+    "nca8_outcomes_demo": "nca8_outcomes_demo",
     "nca8_righting": "nca8_righting",
     "nca8_righting_demo": "nca8_righting_demo",
     "nca8_sensorimotor": "nca8_sensorimotor",

@@ -15,10 +15,11 @@ from nca8_runtime import Nca8SessionV1
 from nca8_trace import render_flow_trace_lines_v1
 from nca8_hierarchy_demo import run_hierarchy_review_menu_v1
 from nca8_hierarchy_qualification import run_hierarchy_qualification_menu_v1
+from nca8_outcomes_demo import run_righting_outcome_menu_v1
 from nca8_righting_demo import run_righting_preview_review_v1
 from nca8_sensorimotor_demo import run_sensorimotor_review_menu_v1
 
-__version__ = "0.10.1"
+__version__ = "0.11.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -433,7 +434,9 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
                 run_righting_preview_review_v1()
                 continue
             if choice == "8":
-                run_hierarchy_review_menu_v1(qualification_menu=run_hierarchy_qualification_menu_v1)
+                run_hierarchy_review_menu_v1(
+                    qualification_menu=run_hierarchy_qualification_menu_v1, outcome_menu=run_righting_outcome_menu_v1,
+                )
                 continue
             print("Please choose 1, 2, 3, 4, 5, 6, 7, or 8; or press Enter to return.")
         except Exception as exc:  # pragma: no cover - defensive interactive boundary

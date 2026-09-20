@@ -14,6 +14,8 @@ supported crouch permits 40 degrees, .45 and .20; requested rest permits any
 planar tilt, observed contact and destabilization <= .15, with no minimum useful
 actuator load. These are synthetic functional fixtures, not goat physiology.
 Current adequacy is not supported dwell, task success or action causation.
+The opt-in P16-1G-A owner can now submit a checked three-sample completion proof;
+the standalone preview still never supplies one or claims task completion.
 
 The continuation budget is 20 focal opportunities and 80 local ticks from first
 selection, including opportunities when another source wins. Missing input does
@@ -27,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import Enum
 
-from cca8_motor_contracts import MotorStreamRefV1
+from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from nca8_body_targets import BodyMovementRequestV1
 from nca8_executive import WorkingNavMapStateV1
 from nca8_maps import DurableNavMapRefV1, MotorSupportConfigurationV1
@@ -37,9 +39,10 @@ from nca8_primitives import (
 )
 from nca8_sensorimotor_contracts import TargetOriginV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
-    "RightingActivityV1", "RightingContextV1", "RightingTaskV1", "RightingApplicationV1", "RightingIPV1", "__version__",
+    "RightingActivityV1", "RightingContextV1", "RightingTaskV1", "RightingApplicationV1", "RightingIPV1",
+    "righting_support_adequacy_v1", "__version__",
 ]
 
 
@@ -89,6 +92,30 @@ class RightingContextV1:
         }
 
 
+def righting_support_adequacy_v1(feedback: MotorFeedbackV1 | None, context: RightingContextV1) -> bool | None:
+    """Check the unchanged activity criterion from measurements, never a target or label.
+
+    None denotes an unknown required relation. A known inadequate relation can
+    coexist with another unknown relation; this deliberately conservative whole
+    requirement test then returns None rather than fabricating complete evidence.
+    Currentness and distinct-sample dwell are the caller's separate responsibilities.
+    """
+    if not isinstance(context, RightingContextV1):
+        raise TypeError("adequacy requires RightingContextV1")
+    if feedback is not None and not isinstance(feedback, MotorFeedbackV1):
+        raise TypeError("adequacy requires motor feedback or None")
+    if feedback is None or feedback.support_contact is None or feedback.useful_loading is None or feedback.destabilization is None:
+        return None
+    maximum_tilt, minimum_load, maximum_instability = context.criterion
+    if context.activity is not RightingActivityV1.REST and feedback.body_tilt_degrees is None:
+        return None
+    orientation_ok = context.activity is RightingActivityV1.REST or (
+        feedback.body_tilt_degrees is not None and abs(feedback.body_tilt_degrees) <= maximum_tilt
+    )
+    return bool(orientation_ok and feedback.support_contact and feedback.useful_loading >= minimum_load
+                and feedback.destabilization <= maximum_instability)
+
+
 @dataclass(frozen=True, slots=True)
 class RightingTaskV1:
     """One continuing need across applications; no actuator rights are stored here."""
@@ -102,6 +129,7 @@ class RightingTaskV1:
     last_cycle: int
     applications: int
     status: str = "active"
+    completion_samples: tuple[MotorFeedbackV1, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.task_id, str) or not 1 <= len(self.task_id) <= 120:
@@ -116,8 +144,14 @@ class RightingTaskV1:
                 raise ValueError("task counters must be nonnegative integers")
         if self.started_cycle < 1 or self.last_cycle < self.started_cycle or self.applications > 20:
             raise ValueError("task counters violate the finite opportunity profile")
-        if self.status not in {"active", "budget_exhausted", "cancelled"}:
-            raise ValueError("tasks are active, budget-exhausted or explicitly cancelled, never observed successful")
+        if self.status not in {"active", "budget_exhausted", "cancelled", "completed"}:
+            raise ValueError("unsupported Righting task lifecycle status")
+        if not isinstance(self.completion_samples, tuple):
+            raise TypeError("completion samples must be an immutable tuple")
+        if self.status == "completed":
+            _validate_completion_samples(self.completion_samples, self)
+        elif self.completion_samples:
+            raise ValueError("only a completed task can retain completion evidence")
 
     def as_dict(self) -> dict[str, object]:
         """Report task persistence separately from current local or physical success."""
@@ -126,8 +160,24 @@ class RightingTaskV1:
             "stream": self.stream.as_dict(), "started_cycle": self.started_cycle, "started_tick": self.started_tick,
             "last_cycle": self.last_cycle, "focal_opportunities": self.last_cycle - self.started_cycle + 1,
             "applications": self.applications, "status": self.status, "expires_at_tick": self.started_tick + 80,
-            "maximum_focal_opportunities": 20, "task_success_established": False,
+            "maximum_focal_opportunities": 20, "task_success_established": self.status == "completed",
+            **({"completion_samples": [item.as_dict() for item in self.completion_samples]} if self.completion_samples else {}),
         }
+
+
+def _validate_completion_samples(samples: tuple[MotorFeedbackV1, ...], task: RightingTaskV1) -> None:
+    """Validate the retained three-sample proof independently of an outcome label."""
+    if len(samples) != 3 or any(not isinstance(item, MotorFeedbackV1) for item in samples):
+        raise ValueError("completion requires three immutable sensed samples")
+    if any(item.stream != task.stream or item.event_tick < task.started_tick for item in samples):
+        raise ValueError("completion evidence belongs to another task stream or time")
+    if any(right.sample_id <= left.sample_id or not 0 < right.event_tick - left.event_tick <= 8
+           for left, right in zip(samples, samples[1:])):
+        raise ValueError("completion requires distinct ordered samples without an excessive physical gap")
+    if samples[-1].event_tick - samples[0].event_tick < 8:
+        raise ValueError("completion evidence must span at least eight local ticks")
+    if any(righting_support_adequacy_v1(item, task.context) is not True for item in samples):
+        raise ValueError("completion evidence does not satisfy the original activity requirement")
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +303,36 @@ class RightingIPV1:
             self._task = replace(self._task, status="cancelled")
         return self._task
 
+    def complete_supported_task(
+        self, source: MotorSupportConfigurationV1, samples: tuple[MotorFeedbackV1, ...], *, task_id: str,
+    ) -> RightingTaskV1:
+        """Accept current supported completion for this task, without granting motor rights.
+
+        The 1G-A evidence owner must additionally have checked intervening reports
+        for contradictions. Recheck stream, source, fixed context, current cutoff,
+        the latest actual acquisition and the three-sample physical-time proof.
+        Evidence available at the exact terminal budget boundary can close the
+        earlier task; later evidence cannot revive an expired or cancelled task.
+        This changes only the task lifecycle. The integrated handoff separately
+        revokes remaining lower execution after core closure.
+        """
+        task = self._task
+        if task is None or task.task_id != task_id or task.status not in {"active", "budget_exhausted"}:
+            raise ValueError("completion does not name a live or just-expiring task")
+        if self._tick > task.started_tick + 80 or self._cycle - task.started_cycle > 20:
+            raise ValueError("completion evidence arrived after the task budget boundary")
+        if not isinstance(source, MotorSupportConfigurationV1) or not source.current or source.feedback is None:
+            raise ValueError("supported completion requires a current source")
+        if source.stream != task.stream or source.source_map_ref != task.source_map_ref or source.cutoff_tick != self._tick:
+            raise ValueError("completion source differs from the current task basis")
+        if source.applied_cycle != self._cycle:
+            raise ValueError("completion source differs from the current task basis")
+        _validate_completion_samples(samples, task)
+        if samples[-1] != source.feedback or any(item.available_tick > self._tick for item in samples):
+            raise ValueError("completion requires the current available last acquisition")
+        self._task = replace(task, status="completed", completion_samples=samples)
+        return self._task
+
     def source_status(self, source: MotorSupportConfigurationV1 | None) -> str:
         """Assess current support need, without selecting this task or creating PNM.
 
@@ -261,7 +341,7 @@ class RightingIPV1:
         missing signed tilt can still permit a separately supported extension.
         REST is not automatically safe: actual contact and instability matter.
         """
-        if self._task is not None and self._task.status in {"budget_exhausted", "cancelled"}:
+        if self._task is not None and self._task.status in {"budget_exhausted", "cancelled", "completed"}:
             return self._task.status
         if self._task is None and self._tick > 2**63 - 81:
             return "time_budget_unrepresentable"

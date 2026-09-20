@@ -97,7 +97,7 @@ from nca8_sensory import Nca8BodySensoryApplicationV1, Nca8BodySensoryModuleV1
 from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 
-__version__ = "0.9.1"
+__version__ = "0.10.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -1767,6 +1767,26 @@ class Nca8RightingPreviewSessionV1:
         opportunity = RightingSourceOpportunityV1(cycle, cutoff_tick, source, next_context, status, persistence, tuple(competing_bids))
         self._prepared = opportunity
         return opportunity
+
+    def complete_prepared_task(
+        self, opportunity: RightingSourceOpportunityV1, samples: tuple[MotorFeedbackV1, ...], *, task_id: str,
+    ) -> RightingSourceOpportunityV1:
+        """Reconcile 1G-A supported completion before D, using this exact prepared source.
+
+        The evidence service supplies a bounded proof, not a selected operation.
+        Righting rechecks its original task, criterion and latest acquisition.
+        Completion releases only task persistence; the integrated handoff must
+        separately revoke lower rights. H5 previews never call this method.
+        """
+        if opportunity is not self._prepared or self._selected is not None:
+            raise ValueError("completion requires the current unselected source opportunity")
+        source = opportunity.source.motor_support
+        if source is None:
+            raise ValueError("completion requires measured support")
+        self.righting.complete_supported_task(source, samples, task_id=task_id)
+        self.sensory.clear_motor_context()
+        self._prepared = replace(opportunity, source_status="completed", persistence_rank=0)
+        return self._prepared
 
     def select_prepared(self, opportunity: RightingSourceOpportunityV1) -> RightingPreviewResultV1:
         """Use the actual Attention and Navigation owners in D, once per source basis."""

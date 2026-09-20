@@ -16,12 +16,99 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P18-H6-B hierarchy qualification and menu handover
+## NCA8 update: P16-1G-A task evidence and execution-sensitive correspondence
+
+The new **righting_outcomes_v1** profile adds progress, supported task completion and
+original sparse-PNM correspondence to the existing integrated hierarchy. Enable it
+through **NCA8 menu 8 -> integrated review 6**. The ordinary H6-A examples and all
+17 H6-B qualification profiles retain their earlier, outcome-disabled behavior.
+The current inventory is **73 production components and 8 host behavioral primitives**.
+`nca8_outcomes.py` is a bounded domain-local evidence service, not a new task selector,
+world model, general evaluator or learner; `nca8_outcomes_demo.py` is its external
+review harness. Both reuse the existing source, Righting, BodyMap, SMP and H2 world.
+
+At frozen C2 admission, the evidence service reads normally returned motor-interval
+records and canonical sensed events. A returned command is an execution opportunity,
+not proof of physical displacement. It compares separate unmet tilt, loading and
+instability relations: progress, regression, mixed change, stall and unknown remain
+distinct. Stall needs comparable observations and an actual nonneutral command in
+the measured interval. Missing reports cannot prove stall or prediction failure.
+
+Supported completion requires **three distinct eligible focal acquisitions spanning
+at least eight local ticks / 0.40 simulation seconds**, with no supported gap over
+eight ticks or intervening inadequate/unknown delivered support. Intermediate local
+reports can invalidate continuity but do not count as extra focal samples. Cached
+reads never add dwell. Righting rechecks its original task, context, source and
+latest evidence before changing its lifecycle to completed; the ordinary closed
+handoff then cancels remaining lower pursuit. Completion is historical task evidence,
+not permanent physical stability or indefinite actuator permission.
+
+Before handoff, the original task forecast is retained alongside the actual authorized
+BodyMap endpoints. Materially narrowed or withheld coordinates and their coupled
+support predictions are marked unevaluable; an unchanged coordinate can still be
+compared. A total veto is **not_applied**, not an executed failure. No prediction is
+rewritten to fit a narrower target or later observation. The nested original preview
+keeps its original preview-only status; the enclosing execution/correspondence record
+supplies the later disposition rather than mutating that historical object.
+
+This first endpoint profile requires the acquisition at the original cutoff plus
+forecast horizon. It accepts availability through endpoint plus eight ticks, then
+expires unresolved when that evidence is absent. Early partial movement cannot fail
+an endpoint forecast. A replacement at the horizon preserves the earlier delayed
+claim; cancellation before it is interrupted/cancelled, not observed failure.
+Normally returned commands, uncertain physical calls, observed geometry and causal
+credit are separate. Forecast residual tolerances are fixed reference-profile values:
+1 degree, .02 extension, .10 loading, .10 instability, and exact Boolean contact.
+They do not relax the original task's strict 12-degree mobility criterion.
+
+The 11 fixed review cases include the original nominal/disturbed runs, support loss,
+missing feedback, blocked orientation, a two-degree BodyMap step bound, full veto,
+external assistance, assisted/no-task and assisted/endpoint-comparison-off controls,
+and a task-context change. Every case advances the unchanged H2 body through 80
+physical intervals / 4 seconds, including after task completion, with a final
+non-actuating evidence read. No physics, task criterion, lower tolerance, task budget,
+dependency, legacy default or learned parameter is changed.
+
+    python scripts\review_nca8_hierarchy.py --outcomes
+    python scripts\review_nca8_hierarchy.py --outcomes nominal --detail
+    python scripts\review_nca8_hierarchy.py --outcomes assisted
+    python scripts\review_nca8_hierarchy.py --outcomes support_loss
+    python scripts\review_nca8_hierarchy.py --outcomes feedback_missing
+    python scripts\review_nca8_hierarchy.py --outcomes narrowed
+    python scripts\review_nca8_hierarchy.py --outcomes veto
+    python scripts\review_nca8_hierarchy.py --outcomes assisted_comparison_off
+    python scripts\review_nca8_hierarchy.py --outcomes --json
+
+`--outcomes`, `--case`, `--qualify` and `--profile` are mutually exclusive. Opening
+menus, rendering compact/detail output, exporting JSON and changing trace retention
+are read-only. No renderer resolves a claim or restores an execution permission.
+Live owner bounds are eight unresolved claims, 32 terminal correspondence records,
+16 staged returned intervals, 16 recent feedback references, 16 recent command ticks,
+one installed two-target basis and three supported focal samples. Trace and terminal
+history truncation do not silently evict a pending claim or create new confirmation.
+Overflow is explicit before another physical interval.
+
+In the declared nominal run, useful early progress is followed by stall near the
+unchanged sensed 12.0146-degree boundary: the task still exhausts its budget rather
+than being called successful. The assisted case supplies a positive completion proof
+from sensed events 23/27/31 at cutoff32, without claiming agent causation. Its no-task
+partner cannot acquire a task-completion label. Disabling only endpoint comparison
+leaves assisted task dwell and all motor commands unchanged: mismatch-to-Attention
+is deliberately not implemented here. At the 80-tick physical horizon, a last claim
+whose event80 report would arrive at81 remains pending; time is not extended to clear it.
+
+P16-1G-B / **GO-OUTCOME-POLICY**, the P16-1G-C no-learning participation/F hook, and
+**A99 remain open**. This slice does not enable rich causal interpretation, a new
+Attention route, a durable learner, general asynchronous endpoint interpolation,
+NCA8 default promotion or real-robot safety claims. Local validation and manual review
+remain required before accepting this update. Phase instructions and logs are external.
+
+## Previous checkpoint: P18-H6-B hierarchy qualification and menu handover
 
 The opt-in hierarchy now has **17 fixed qualification profiles**, using the same
 H6-A focal core, BodyMap, H4 executor and H2 plant. `nca8_hierarchy_qualification.py`
 is an external review harness, not a second cognitive loop or a new brain part.
-The current inventory is **71 production components and 8 host behavioral primitives**.
+At the H6-B checkpoint the inventory was **71 production components and 8 host behavioral primitives**.
 Legacy/A0 defaults, H2 physics, H4 control constants, task criteria and task budgets
 are unchanged. The retained nominal/disturbed H6-A trajectories remain the reference.
 

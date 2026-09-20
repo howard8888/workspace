@@ -14,7 +14,9 @@ A task outlives a target. Every new target envelope has its own authorization;
 no-new-output preserves only existing finite rights. PNM, target, local report
 and physical evidence retain distinct roles. H6-A reports current adequacy and
 local results, not supported task dwell, task-PNM verdicts or causal credit.
-Those remain P16-1G. This opt-in path never calls the legacy/A0 action provider.
+The separately enabled P16-1G-A profile adds task dwell and original endpoint
+correspondence in the same core/driver; the retained H6 profiles are unchanged.
+No profile calls the legacy/A0 action provider. 1G-B/C remain unimplemented.
 """
 
 from __future__ import annotations
@@ -29,6 +31,10 @@ from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetReservationV1
 from nca8_contracts import CircuitResultV1, CircuitTimingV1, CycleCommitmentV1, CyclePhase
 from nca8_executive import AttentionBidV1
 from nca8_handoff import Nca8HandoffReceiptV1, Nca8InternalHandoffV1, Nca8MotorEnvelopeV1, Nca8PhaseEDispatchV1
+from nca8_outcomes import (
+    RightingClaimOutcomeV1, RightingClaimRegistrationV1, RightingIntervalEvidenceV1, RightingOutcomeRuntimeV1,
+    RightingTaskAssessmentV1,
+)
 from nca8_righting import RightingApplicationV1, RightingContextV1
 from nca8_runtime import Nca8RightingPreviewSessionV1, RightingPreviewResultV1
 from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, SchedulerCycleSnapshotV1
@@ -36,7 +42,7 @@ from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, Senso
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -66,6 +72,9 @@ class IntegratedRightingCycleV1:
     scheduler: SchedulerCycleSnapshotV1
     local_reports: tuple[LocalTargetReportV1, ...]
     local_events: tuple[LocalControlEventV1, ...]
+    task_outcome: RightingTaskAssessmentV1 | None = None
+    claim_outcomes: tuple[RightingClaimOutcomeV1, ...] = ()
+    claim_registration: RightingClaimRegistrationV1 | None = None
 
     @property
     def status(self) -> str:
@@ -85,7 +94,12 @@ class IntegratedRightingCycleV1:
             "scheduler": self.scheduler.as_dict(), "status": self.status,
             "earlier_local_reports": [item.as_dict() for item in self.local_reports],
             "earlier_local_events": [item.as_dict() for item in self.local_events],
-            "task_completion": "not_established_H6A", "durable_learning_updates": 0,
+            "task_completion": self.task_outcome.status if self.task_outcome is not None else "not_established_H6A",
+            "durable_learning_updates": 0,
+            **({"task_outcome": self.task_outcome.as_dict(),
+                "claim_outcomes": [item.as_dict() for item in self.claim_outcomes],
+                "claim_registration": self.claim_registration.as_dict() if self.claim_registration is not None else None}
+               if self.task_outcome is not None else {}),
         }
 
 
@@ -105,8 +119,12 @@ class IntegratedRightingCoreV1:
         righting_enabled: bool = True, influence_enabled: bool = True,
         handoff_enabled: bool = True, trace_capacity: int = 256,
         orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True,
+        task_outcomes_enabled: bool = False, task_prediction_comparison_enabled: bool = True,
     ) -> None:
         _bounded_count(trace_capacity, "trace_capacity", 1, 4096)
+        if not isinstance(task_outcomes_enabled, bool) or not isinstance(task_prediction_comparison_enabled, bool):
+            raise TypeError("task outcome options must be Boolean")
+        self.outcomes = RightingOutcomeRuntimeV1(stream, compare_predictions=task_prediction_comparison_enabled) if task_outcomes_enabled else None
         self.cognition = Nca8RightingPreviewSessionV1(
             stream, context=context, capabilities=capabilities,
             righting_enabled=righting_enabled, influence_enabled=influence_enabled,
@@ -139,6 +157,8 @@ class IntegratedRightingCoreV1:
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("core stop requires a nonempty reason")
         self._fault = reason[:100]
+        if self.outcomes is not None:
+            self.outcomes.reject_uninstalled()
         receipt = self.handoff.receipt
         if receipt is not None and receipt.disposition in {"accepted", "ready"}:
             self.handoff.cancel(receipt, reason=self._fault)
@@ -147,6 +167,7 @@ class IntegratedRightingCoreV1:
         self, feedback: MotorFeedbackV1 | None, *, cutoff_tick: int,
         context: RightingContextV1 | None = None, competing_bids: Sequence[AttentionBidV1] = (),
         local_reports: tuple[LocalTargetReportV1, ...] = (), local_events: tuple[LocalControlEventV1, ...] = (),
+        outcome_intervals: tuple[RightingIntervalEvidenceV1, ...] = (),
     ) -> IntegratedRightingCycleV1:
         """Freeze one eligible summary, choose/project/authorize, finish F and close.
 
@@ -173,10 +194,15 @@ class IntegratedRightingCoreV1:
             raise ValueError("local reports are future or foreign")
         if any(item.noticed_tick > cutoff_tick for item in local_events):
             raise ValueError("local events have not occurred at this cutoff")
+        if not isinstance(outcome_intervals, tuple) or len(outcome_intervals) > 16:
+            raise ValueError("outcome input must be a bounded immutable interval batch")
+        if self.outcomes is None and outcome_intervals:
+            raise ValueError("outcome input requires the explicit 1G-A profile")
         self._running = True
         try:
             return self._run_cycle(
                 feedback, tick=cutoff_tick, context=context, competing_bids=competing_bids, reports=local_reports, events=local_events,
+                outcome_intervals=outcome_intervals,
             )
         except BaseException:
             self.stop("internal_hierarchy_cycle_failed_no_world_call")
@@ -187,7 +213,7 @@ class IntegratedRightingCoreV1:
     def _run_cycle(
         self, feedback: MotorFeedbackV1 | None, *, tick: int, context: RightingContextV1 | None,
         competing_bids: Sequence[AttentionBidV1], reports: tuple[LocalTargetReportV1, ...],
-        events: tuple[LocalControlEventV1, ...],
+        events: tuple[LocalControlEventV1, ...], outcome_intervals: tuple[RightingIntervalEvidenceV1, ...],
     ) -> IntegratedRightingCycleV1:
         """Implement the guarded C/D/E owner stages between real scheduler boundaries."""
         cycle = self.scheduler.last_completed_cycle + 1
@@ -201,6 +227,9 @@ class IntegratedRightingCoreV1:
                 "cutoff_tick": tick, "sample_id": feedback.sample_id if feedback is not None else None,
                 "physical_event_tick": feedback.event_tick if feedback is not None else None,
                 "physical_available_tick": feedback.available_tick if feedback is not None else None,
+                **({"outcome_interval_count": len(outcome_intervals),
+                    "outcome_last_interval_tick": outcome_intervals[-1].tick if outcome_intervals else None}
+                   if self.outcomes is not None else {}),
             },
         )
         self.trace.append("hierarchy_cycle", "focal core opened; physical time is held", cycle_id=cycle,
@@ -210,12 +239,30 @@ class IntegratedRightingCoreV1:
         applied = self.scheduler.phase_c_apply_frozen(cycle, self.trace)
         if tuple(item.result_id for item in applied) != (ingress.result_id,):
             raise RuntimeError("the frozen summary sidecar lost its ingress association")
+        claim_outcomes = () if self.outcomes is None else self.outcomes.consume_intervals(outcome_intervals, cutoff_tick=tick)
         next_context = self.cognition.context if context is None else context
         changed_context = next_context != self.cognition.context
         prepared = self.cognition.prepare_source(
             evidence.feedback if evidence is not None else None,
             cutoff_tick=tick, context=context, competing_bids=competing_bids,
         )
+        task_outcome = None if self.outcomes is None else self.outcomes.assess_task(
+            self.cognition.righting.task, prepared.source.motor_support, prepared.context, cutoff_tick=tick,
+        )
+        if task_outcome is not None:
+            self.trace.append("hierarchy_task_outcome", "task evidence and original PNM correspondence, not causal interpretation",
+                              cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
+                              details={"task_id": task_outcome.task_id, "status": task_outcome.status,
+                                       "supported_samples": len(task_outcome.supported_samples), "resolved_claims": len(claim_outcomes),
+                                       "event_tick": task_outcome.feedback.event_tick if task_outcome.feedback is not None else None})
+            for claim in claim_outcomes:
+                self.trace.append("hierarchy_claim_outcome", "original endpoint claim resolved once; no causal learning credit",
+                                  cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
+                                  details={"pnm_id": claim.registration.preview.pnm.pnm_id, "status": claim.status,
+                                           "event_tick": claim.evidence.event_tick if claim.evidence is not None else None,
+                                           "command_intervals": claim.command_intervals})
+            if task_outcome.completion_supported and task_outcome.task_id is not None:
+                prepared = self.cognition.complete_prepared_task(prepared, task_outcome.supported_samples, task_id=task_outcome.task_id)
         self.cognition.mapper.expire(at_tick=tick)
         self.trace.append(
             "hierarchy_source", "one POSTURE-SUPPORT source updated from eligible physical evidence", cycle_id=cycle,
@@ -247,13 +294,21 @@ class IntegratedRightingCoreV1:
             cycle_id=cycle, phase=CyclePhase.PROJECT_DISPATCH.name,
             details={"enabled": self.cognition.task_pnm_consumer_enabled,
                      "registered": self.cognition.prediction.current_support_preview is not None,
-                     "consumer": "adopt_support_preview", "task_outcomes": "deferred_to_P16_1G"},
+                     "consumer": "adopt_support_preview", "task_outcomes": "P16_1G_A" if self.outcomes is not None else "deferred_to_P16_1G"},
         )
         proposal = calculation.proposal
         reservations: tuple[BodyTargetReservationV1, ...] = ()
         if proposal is not None and proposal.bindings:
             reservations = self.cognition.mapper.reserve(proposal, execution_id=f"motor_execution:{self.cognition.stream.generation}:{cycle}",
                                                         at_tick=tick)
+        claim_registration = None
+        if self.outcomes is not None and isinstance(application, RightingApplicationV1) and proposal is not None:
+            claim_registration = self.outcomes.register(application, proposal, tuple(item.current for item in reservations))
+            self.trace.append("hierarchy_claim", "original forecast reconciled with authorized meaning before handoff", cycle_id=cycle,
+                              phase=CyclePhase.PROJECT_DISPATCH.name,
+                              details={"pnm_id": claim_registration.preview.pnm.pnm_id, "endpoint_event_tick": claim_registration.due_tick,
+                                       "compatible": ",".join(claim_registration.compatible_relations),
+                                       "unevaluable": ",".join(claim_registration.unevaluable_relations), "target_count": len(reservations)})
         projection = application.projection if isinstance(application, RightingApplicationV1) else None
         origin = reservations[0].current.target.origin if reservations else None
         terminal_task = calculation.task is not None and calculation.task.status != "active"
@@ -284,7 +339,9 @@ class IntegratedRightingCoreV1:
         self.trace.append("hierarchy_close", "focal core closed; physical work may now be attempted", cycle_id=cycle,
                           details={"cutoff_tick": tick})
         ready = self.handoff.release_after_close(accepted)
-        result = IntegratedRightingCycleV1(calculation, commitment, ready, reservations, schedule, reports, events)
+        result = IntegratedRightingCycleV1(
+            calculation, commitment, ready, reservations, schedule, reports, events, task_outcome, claim_outcomes, claim_registration,
+        )
         self.last_result = result
         return result
 
@@ -315,12 +372,18 @@ class IntegratedRightingTrialV1:
         influence_enabled: bool = True, handoff_enabled: bool = True, trace_capacity: int = 256,
         orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True,
         focal_only_feedback_from_tick: int | None = None,
+        task_outcomes_enabled: bool = False, task_prediction_comparison_enabled: bool = True,
     ) -> None:
         profile = MotorWorldProfileV1() if physical_profile is None else physical_profile
         if not isinstance(profile, MotorWorldProfileV1) or profile.dt_seconds != 0.05:
             raise ValueError("H6-A requires the declared 0.05-second physical profile")
         if focal_only_feedback_from_tick is not None:
             _bounded_count(focal_only_feedback_from_tick, "focal_only_feedback_from_tick", 0, 80)
+        if not isinstance(task_outcomes_enabled, bool) or not isinstance(task_prediction_comparison_enabled, bool):
+            raise TypeError("task outcome options must be Boolean")
+        self._task_outcomes_enabled = task_outcomes_enabled
+        self._task_prediction_comparison_enabled = task_prediction_comparison_enabled
+        self._outcome_intervals: list[RightingIntervalEvidenceV1] = []
         self._focal_only_feedback_from_tick = focal_only_feedback_from_tick
         self._orientation_mapping_sign = orientation_mapping_sign
         self._task_pnm_consumer_enabled = task_pnm_consumer_enabled
@@ -344,6 +407,7 @@ class IntegratedRightingTrialV1:
             feedback.stream, context=self._context, capabilities=self._capabilities, righting_enabled=self._righting_enabled,
             influence_enabled=self._influence_enabled, handoff_enabled=self._handoff_enabled, trace_capacity=self._trace_capacity,
             orientation_mapping_sign=self._orientation_mapping_sign, task_pnm_consumer_enabled=self._task_pnm_consumer_enabled,
+            task_outcomes_enabled=self._task_outcomes_enabled, task_prediction_comparison_enabled=self._task_prediction_comparison_enabled,
         )
         self.controller = SensorimotorExecutorV1(
             self.core.cognition.mapper, profile=self._control_profile, installation_source=self.core.handoff,
@@ -352,6 +416,7 @@ class IntegratedRightingTrialV1:
         self._focal_feedback = self._latest_feedback
         self._fault, self._consumptions = None, 0
         self._history.clear()
+        self._outcome_intervals.clear()
 
     @property
     def tick(self) -> int:
@@ -398,6 +463,8 @@ class IntegratedRightingTrialV1:
             "focal_records": len(self._history), "focal_trace": self.core.trace.retained_count,
             "pending_sensor_deliveries": self._world.pending_feedback_count,
             **cognition.mapper.retained_counts(), **self.controller.retained_counts(),
+            **({"outcome_staged_intervals": len(self._outcome_intervals), **self.core.outcomes.retained_counts()}
+               if self.core.outcomes is not None else {}),
         }
 
     def snapshot(self) -> dict[str, object]:
@@ -419,7 +486,12 @@ class IntegratedRightingTrialV1:
             "durable_map_count": self.core.cognition.maps.durable_map_count,
             "wnm_count": int(self.core.cognition.navigation.current_wnm is not None),
             "current_task_pnm_count": int(self.core.cognition.prediction.current_support_preview is not None),
-            "task_success_established": False, "durable_learning_updates": 0,
+            "task_success_established": task is not None and task.status == "completed", "durable_learning_updates": 0,
+            **({"task_outcomes_profile": "righting_outcomes_v1",
+                "task_assessment": self.core.outcomes.last_assessment.as_dict() if self.core.outcomes.last_assessment is not None else None,
+                "pending_claims": [item.as_dict() for item in self.core.outcomes.pending()],
+                "outcome_history": [item.as_dict() for item in self.core.outcomes.history()]}
+               if self.core.outcomes is not None else {}),
         }
 
     def _require_idle(self) -> None:
@@ -447,19 +519,25 @@ class IntegratedRightingTrialV1:
             result = self.core.run_cycle(
                 self._latest_feedback, cutoff_tick=self.tick, context=context, competing_bids=competing_bids,
                 local_reports=self.controller.reports, local_events=self.controller.events,
+                outcome_intervals=tuple(self._outcome_intervals),
             )
+            self._outcome_intervals.clear()
             motor = self.core.handoff.consume_motor(result.receipt)
             self._consumptions += 1
             self.core.trace.append("hierarchy_consumed", "outer driver consumed the closed handoff once", cycle_id=result.commitment.cycle_id,
                                    details={"tick": self.tick, "directive": motor.directive, "receipt": result.receipt.receipt_id})
             if result.reservations:
                 self.controller.install_authorized(result.reservations, at_tick=self.tick)
+                if self.core.outcomes is not None and result.claim_registration is not None:
+                    self.core.outcomes.installed(result.claim_registration, at_tick=self.tick)
                 self.core.trace.append("hierarchy_installed", "authorized targets installed once; no physical step yet",
                                        cycle_id=result.commitment.cycle_id,
                                        details={"tick": self.tick, "execution": result.reservations[0].current.execution_id,
                                                 "installation_count": self.controller.installation_count})
             elif motor.cancel_previous:
                 self.controller.cancel_execution(at_tick=self.tick)
+                if self.core.outcomes is not None:
+                    self.core.outcomes.end_execution(at_tick=self.tick)
                 self.core.trace.append("hierarchy_cancel", "explicit context/terminal-task revocation stopped earlier lower execution",
                                        cycle_id=result.commitment.cycle_id, details={"tick": self.tick})
             if result.local_events:
@@ -468,6 +546,8 @@ class IntegratedRightingTrialV1:
             self._history.append(result)
             return result
         except BaseException:
+            if self.core.outcomes is not None:
+                self.core.outcomes.end_execution(at_tick=self.tick, reason="not_applied")
             self._stop("focal_or_installation_fault_no_automatic_retry")
             raise
         finally:
@@ -484,6 +564,9 @@ class IntegratedRightingTrialV1:
         self._require_idle()
         if self.core.handoff.has_pending_request:
             raise RuntimeError("consume or cancel the closed focal output before lower execution")
+        if self.core.outcomes is not None and len(self._outcome_intervals) >= 16:
+            self._stop("outcome_ingress_overflow_before_physical_step")
+            raise OverflowError("sixteen lower intervals await focal outcome admission; physical time was not advanced")
         self._busy = True
         try:
             tick = self.tick
@@ -504,6 +587,8 @@ class IntegratedRightingTrialV1:
             self._latest_feedback = admit_motor_feedback_batch_v1(
                 delivered, self._latest_feedback, stream=self.core.cognition.stream, at_tick=self.tick,
             )
+            if self.core.outcomes is not None:
+                self._outcome_intervals.append(RightingIntervalEvidenceV1(tick, command, result.reports, delivered))
             self.core.trace.append(
                 "hierarchy_input", "physical interval completed; due sensing staged for later consumers",
                 details={"tick": self.tick, "sample_id": self._latest_feedback.sample_id,
@@ -512,6 +597,8 @@ class IntegratedRightingTrialV1:
             )
             return result
         except BaseException:
+            if self.core.outcomes is not None:
+                self.core.outcomes.end_execution(at_tick=self.tick, reason="execution_unknown")
             self._stop("lower_or_physical_admission_fault_effects_unresolved")
             raise
         finally:
@@ -545,6 +632,8 @@ class IntegratedRightingTrialV1:
         if self.core.handoff.has_pending_request:
             raise RuntimeError("resolve the pending focal handoff before cancellation")
         self.controller.cancel_execution(at_tick=self.tick)
+        if self.core.outcomes is not None:
+            self.core.outcomes.end_execution(at_tick=self.tick)
         self.core.cognition.righting.cancel_task()
         self.core.cognition.sensory.clear_motor_context()
         self.core.trace.append("hierarchy_cancel", "explicit task and execution cancellation; no success claim",
