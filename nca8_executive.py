@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 # a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "AttentionBidV1",
     "AttentionCandidateV1",
@@ -595,9 +595,12 @@ class AttentionRuntimeV1:
 class NavigationRuntimeV1:
     """Own the zero-or-one WNM and select/apply one focal primitive."""
 
-    def __init__(self, *, enabled: bool = True) -> None:
+    def __init__(self, *, enabled: bool = True, motor_preview_enabled: bool = False) -> None:
         if not isinstance(enabled, bool):
             raise TypeError("enabled must be Boolean")
+        if not isinstance(motor_preview_enabled, bool):
+            raise TypeError("motor_preview_enabled must be Boolean")
+        self._motor_preview_enabled = motor_preview_enabled
         self._enabled = enabled
         self._current_wnm: WorkingNavMapStateV1 | None = None
         self._last_decision: NavigationDecisionV1 | None = None
@@ -685,6 +688,13 @@ class NavigationRuntimeV1:
         # argument view is not stored or selected as another WNM. Both primitive
         # queries and apply() receive only the pre-existing A0 content.
         primitive_view = replace(wnm, support_dynamics=None) if wnm.support_dynamics is not None else wnm
+        # H5 explicitly admits the enhanced facet only to an opt-in preview
+        # selector. A0 continues to receive no motor/support-dynamics authority.
+        if not self._motor_preview_enabled and primitive_view.primary_source_state.motor_support is not None:
+            primitive_view = replace(
+                primitive_view, primary_source_state=replace(primitive_view.primary_source_state, motor_support=None),
+            )
+
         primitive_ids = [primitive.primitive_id for primitive in primitives]
         if len(set(primitive_ids)) != len(primitive_ids):
             raise ValueError("primitive IDs must be unique")

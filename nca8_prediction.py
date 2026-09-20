@@ -20,23 +20,25 @@ the physical environment.  It compares only a later NCA8-owned current
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Sequence
 
-from nca8_maps import Nca8PostureStateV1, Nca8SupportStateV1, NavMapStateV1
+from nca8_maps import MotorSupportConfigurationV1, Nca8PostureStateV1, Nca8SupportStateV1, NavMapStateV1
 from nca8_primitives import PrimitiveApplicationV1
 
 # Small validators intentionally remain local for readable standalone modules.
 # pylint: disable=duplicate-code
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "Nca8PredictionRuntimeV1",
     "PendingPredictionTraceV1",
     "PredictionOutcomeStatusV1",
     "PredictionOutcomeV1",
     "ProjectedNavMapV1",
+    "SupportPreviewV1",
     "__version__",
 ]
 
@@ -160,6 +162,77 @@ class ProjectedNavMapV1:
 
 
 @dataclass(frozen=True, slots=True)
+class SupportPreviewV1:
+    """Sparse unexecuted task PNM with fixed planar source anchors.
+
+    The wrapped ``pnm`` is one prospective representation, not a second PNM.
+    This record retains only the originating measured support facet and bounded
+    expectations; it never copies a durable map or invokes the physical plant.
+    Expected coordinates/loading are conditional reference-model predictions,
+    not observations or guaranteed BodyMap endpoints. ``None`` preserves an
+    unknown/unpredicted channel. The physical horizon is separate from the old
+    PNM's focal-cycle metadata. No executed prediction obligation is armed here.
+    """
+
+    pnm: ProjectedNavMapV1
+    basis: MotorSupportConfigurationV1
+    task_id: str
+    context_id: str
+    horizon_ticks: int
+    predicted_tilt: float | None
+    predicted_extension: float | None
+    predicted_loading: float | None
+    predicted_destabilization: float | None
+    expected_contact: bool | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.pnm, ProjectedNavMapV1) or not isinstance(self.basis, MotorSupportConfigurationV1):
+            raise TypeError("support preview requires one PNM and its source basis")
+        if not self.basis.current or self.pnm.created_cycle != self.basis.applied_cycle:
+            raise ValueError("support preview requires its current originating source")
+        for name in ("task_id", "context_id"):
+            object.__setattr__(self, name, _bounded_identifier(getattr(self, name), field_name=name, maximum=120))
+        if isinstance(self.horizon_ticks, bool) or not isinstance(self.horizon_ticks, int) or not 1 <= self.horizon_ticks <= 8:
+            raise ValueError("preview horizon must be one to eight lower ticks")
+        for name, lower, upper in (
+            ("predicted_tilt", -90.0, 90.0), ("predicted_extension", 0.0, 1.0),
+            ("predicted_loading", 0.0, 1.0), ("predicted_destabilization", 0.0, 1.0),
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise TypeError("prospective values must be numbers or None")
+                if not math.isfinite(value) or not lower <= value <= upper:
+                    raise ValueError("prospective value outside its represented range")
+        observed = self.basis.feedback
+        for predicted_name, observed_name in (
+            ("predicted_tilt", "body_tilt_degrees"), ("predicted_extension", "support_extension"),
+            ("predicted_loading", "useful_loading"), ("predicted_destabilization", "destabilization"),
+        ):
+            if getattr(self, predicted_name) is not None and (observed is None or getattr(observed, observed_name) is None):
+                raise ValueError("this reference preview cannot manufacture an absent source coordinate")
+        if self.expected_contact is not None and not isinstance(self.expected_contact, bool):
+            raise TypeError("expected_contact must be Boolean or None")
+        if self.expected_contact is True:
+            feedback = self.basis.feedback
+            if feedback is None or feedback.support_contact is not True:
+                raise ValueError("this preview can retain observed contact, not invent a supporting surface")
+
+    def as_dict(self) -> dict[str, object]:
+        """Export the immutable old claim, not a live reference to the next source."""
+        return {
+            "pnm": self.pnm.as_dict(), "status": "preview_not_dispatched", "task_id": self.task_id,
+            "context_id": self.context_id, "basis": self.basis.as_dict(),
+            "observation_ticks": [self.basis.cutoff_tick + 1, self.basis.cutoff_tick + self.horizon_ticks],
+            "predicted_tilt": self.predicted_tilt, "predicted_extension": self.predicted_extension,
+            "predicted_loading": self.predicted_loading, "predicted_destabilization": self.predicted_destabilization,
+            "expected_contact": self.expected_contact, "model": "righting_linear_preview_v1",
+            "uncertainty": "conditional_unvalidated_reference_model", "executed_obligation": False,
+            "motor_authority": False, "establishes_task_success": False,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PendingPredictionTraceV1:
     """One bounded operation-linked expectation awaiting matching evidence."""
 
@@ -279,11 +352,16 @@ class Nca8PredictionRuntimeV1:
         self._current: PendingPredictionTraceV1 | None = None
         self._pending: list[PendingPredictionTraceV1] = []
         self._outcome_history: list[PredictionOutcomeV1] = []
+        self._preview: SupportPreviewV1 | None = None
+        self._preview_history: list[SupportPreviewV1] = []
+        self._last_preview_cycle = 0
 
     @property
     def current_pnm(self) -> ProjectedNavMapV1 | None:
-        """Return the current PNM, when one application awaits evidence."""
-        return self._current.pnm if self._current is not None else None
+        """Return the one current executed claim or explicitly unexecuted preview."""
+        if self._current is not None:
+            return self._current.pnm
+        return self._preview.pnm if self._preview is not None else None
 
     @property
     def current_trace(self) -> PendingPredictionTraceV1 | None:
@@ -310,6 +388,8 @@ class Nca8PredictionRuntimeV1:
         """Create one PNM before dispatch and preserve any displaced expectation."""
         if not isinstance(application, PrimitiveApplicationV1):
             raise TypeError("application must be a PrimitiveApplicationV1")
+        if self._preview is not None:
+            raise ValueError("release the unexecuted preview before arming an executed prediction")
         expiry_window = _positive_int(expiry_cycles, field_name="expiry_cycles")
         if self._current is not None:
             if len(self._pending) >= self._pending_capacity:
@@ -467,3 +547,34 @@ class Nca8PredictionRuntimeV1:
         self._outcome_history.append(outcome)
         if len(self._outcome_history) > _MAX_OUTCOME_HISTORY:
             del self._outcome_history[:-_MAX_OUTCOME_HISTORY]
+
+
+    @property
+    def current_support_preview(self) -> SupportPreviewV1 | None:
+        """Return the one current unexecuted prospective record, if any."""
+        return self._preview
+
+    def preview_history(self) -> tuple[SupportPreviewV1, ...]:
+        """Return at most eight immutable superseded previews, not pending outcomes."""
+        return tuple(self._preview_history)
+
+    def adopt_support_preview(self, preview: SupportPreviewV1 | None) -> None:
+        """Display/retain one task preview without fabricating an executed claim.
+
+        A null focal selection clears the current preview. Displaced forecasts
+        retain their original meaning in an eight-record diagnostic history;
+        trimming it changes no task budget, learned parameter or action permission.
+        Mixing live executed obligations and this no-dispatch review is refused.
+        """
+        if preview is not None and not isinstance(preview, SupportPreviewV1):
+            raise TypeError("preview must be SupportPreviewV1 or None")
+        if self._current is not None or self._pending:
+            raise ValueError("cannot mix unexecuted previews with pending executed claims")
+        if preview is not None and preview.pnm.created_cycle <= self._last_preview_cycle:
+            raise ValueError("a new preview must follow the current preview")
+        if self._preview is not None:
+            self._preview_history.append(self._preview)
+            del self._preview_history[:-8]
+        self._preview = preview
+        if preview is not None:
+            self._last_preview_cycle = preview.pnm.created_cycle

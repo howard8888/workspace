@@ -28,7 +28,7 @@ executive authority.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import TypeAlias
 
@@ -49,12 +49,14 @@ from cca8_navmap_kernel import (
     body_state_evidence,
 )
 from nca8_contracts import CircuitValidityV1
+from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
+from nca8_sensorimotor_contracts import FocalMotorEvidenceV1
 
 # Small validation helpers intentionally remain local so this module is
 # understandable without another generic validation dependency.
 # pylint: disable=duplicate-code
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 __all__ = [
     "NCA8_POSTURE_SUPPORT_MAP_ID_V1",
     "Nca8ContactStateV1",
@@ -65,6 +67,7 @@ __all__ = [
     "DurableNavMapV1",
     "DurableNavMapRefV1",
     "NavMapStateV1",
+    "MotorSupportConfigurationV1",
     "SupportObservationV1",
     "SupportConfigurationV1",
     "PostureSupportEvidenceV1",
@@ -433,6 +436,108 @@ class PostureSupportEvidenceV1:
 
 
 @dataclass(frozen=True, slots=True)
+class MotorSupportConfigurationV1:
+    """One enhanced facet of POSTURE-SUPPORT, not another map or body sensor.
+
+    ``evidence`` references the H1 physical acquisition at its eligible focal
+    boundary. Local ticks are never converted into the old v1 event-cycle unit.
+    ``previous`` is at most one comparable acquisition, not a remembered scene.
+    Rates use actual elapsed simulation time; first/missing/stale/repeated/gapped
+    samples have unknown rates, never invented zeros. The age limit is two local
+    ticks and the maximum comparable pair span is eight ticks in this profile.
+    These are engineering bounds, not neural timing or an outcome/dwell rule.
+    BODY, GRAVITY and SUPPORT_SURFACE are roles at the declared planar resolution;
+    naming the surface role does not assert that contact or useful support exists.
+    """
+
+    source_map_ref: NavMapRefV1
+    stream: MotorStreamRefV1
+    evidence: FocalMotorEvidenceV1 | None
+    previous: MotorFeedbackV1 | None
+    applied_cycle: int
+    cutoff_tick: int
+    tick_seconds: float = 0.05
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_map_ref, NavMapRefV1) or not isinstance(self.stream, MotorStreamRefV1):
+            raise TypeError("motor source requires map and stream references")
+        _positive_int(self.applied_cycle, field_name="applied_cycle")
+        if isinstance(self.cutoff_tick, bool) or not isinstance(self.cutoff_tick, int) or not 0 <= self.cutoff_tick < 2**63 - 1:
+            raise ValueError("cutoff_tick must be a bounded nonnegative integer")
+        if isinstance(self.tick_seconds, bool) or not isinstance(self.tick_seconds, (int, float)):
+            raise TypeError("tick_seconds must be numeric")
+        if not math.isfinite(self.tick_seconds) or not 0.0 < self.tick_seconds <= 1.0:
+            raise ValueError("tick_seconds must be finite and in (0,1]")
+        if self.evidence is not None:
+            if not isinstance(self.evidence, FocalMotorEvidenceV1):
+                raise TypeError("evidence must be FocalMotorEvidenceV1 or None")
+            if self.evidence.focal_cycle != self.applied_cycle or self.evidence.cutoff_tick != self.cutoff_tick:
+                raise ValueError("motor source must use its actual focal admission boundary")
+            self.evidence.feedback.validate_available(stream=self.stream, at_tick=self.cutoff_tick)
+        if self.previous is not None:
+            if not isinstance(self.previous, MotorFeedbackV1) or not self.current:
+                raise ValueError("a comparable reference requires current motor evidence")
+            current = self.feedback
+            if current is None:  # defensive narrowing; current above already requires it
+                raise ValueError("current acquisition missing")
+            self.previous.validate_available(stream=self.stream, at_tick=self.cutoff_tick)
+            if self.previous.sample_id >= current.sample_id or not 0 < current.event_tick - self.previous.event_tick <= 8:
+                raise ValueError("motor rate reference must be an earlier comparable acquisition")
+            if any(rate is not None and not math.isfinite(rate) for rate in self.rates):
+                raise ValueError("motor source time resolution produces a nonfinite rate")
+
+    @property
+    def feedback(self) -> MotorFeedbackV1 | None:
+        """Return the original acquisition, not a newly sampled sensor report."""
+        return self.evidence.feedback if self.evidence is not None else None
+
+    @property
+    def current(self) -> bool:
+        """Return freshness only; an absent individual channel remains absent."""
+        feedback = self.feedback
+        return feedback is not None and self.cutoff_tick - feedback.event_tick <= 2
+
+    @property
+    def rates(self) -> tuple[float | None, float | None, float | None]:
+        """Return absolute-tilt, useful-load and destabilization rates per second."""
+        feedback, previous = self.feedback, self.previous
+        if not self.current or feedback is None or previous is None:
+            return None, None, None
+        seconds = (feedback.event_tick - previous.event_tick) * self.tick_seconds
+        values: list[float | None] = []
+        for name in ("body_tilt_degrees", "useful_loading", "destabilization"):
+            old, new = getattr(previous, name), getattr(feedback, name)
+            if old is None or new is None:
+                values.append(None)
+            else:
+                difference = abs(new) - abs(old) if name == "body_tilt_degrees" else new - old
+                values.append(difference / seconds)
+        return values[0], values[1], values[2]
+
+    def content_key(self) -> tuple[object, ...]:
+        """Describe current relation content without treating a new ID as new learning."""
+        feedback = self.feedback
+        measured = () if feedback is None else (
+            feedback.body_tilt_degrees, feedback.support_extension, feedback.support_contact,
+            feedback.useful_loading, feedback.destabilization,
+        )
+        return (self.current, measured, self.rates)
+
+    def as_dict(self) -> dict[str, object]:
+        """Export one coherent source facet with explicit physical and focal times."""
+        tilt_rate, load_rate, instability_rate = self.rates
+        return {
+            "source_map_ref": self.source_map_ref.as_dict(), "owner_circuit": "body_sensory",
+            "roles": ["BODY", "GRAVITY", "SUPPORT_SURFACE"], "applied_cycle": self.applied_cycle,
+            "cutoff_tick": self.cutoff_tick, "tick_seconds": self.tick_seconds, "current": self.current,
+            "evidence": self.evidence.as_dict() if self.evidence is not None else None,
+            "previous_sample_id": self.previous.sample_id if self.previous is not None else None,
+            "absolute_tilt_rate": tilt_rate, "loading_rate": load_rate, "destabilization_rate": instability_rate,
+            "independent_sensor_event": False, "durable_update": False,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class NavMapStateV1:
     """Transient active configuration of one immutable durable NavMap revision.
 
@@ -460,6 +565,7 @@ class NavMapStateV1:
     update_count: int
     equivalent_refresh_count: int
     configuration_change_count: int
+    motor_support: MotorSupportConfigurationV1 | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "state_id", _bounded_identifier(self.state_id, field_name="state_id"))
@@ -514,6 +620,14 @@ class NavMapStateV1:
                 raise ValueError(f"{field_name} must be a non-negative integer")
         if self.equivalent_refresh_count + self.configuration_change_count > update_count - 1:
             raise ValueError("refresh/change counts cannot exceed prior state updates")
+        if self.motor_support is not None:
+            if not isinstance(self.motor_support, MotorSupportConfigurationV1):
+                raise TypeError("motor_support must be MotorSupportConfigurationV1 or None")
+            if self.motor_support.source_map_ref != self.source_map_ref or self.motor_support.applied_cycle != applied:
+                raise ValueError("motor facet must belong to this source and focal update")
+            if self.owner_circuit != "body_sensory":
+                raise ValueError("motor source facet must remain with its sensory owner")
+
 
     def semantic_key(self) -> tuple[object, ...]:
         """Return timing-independent current content used to detect refreshes."""
@@ -528,7 +642,7 @@ class NavMapStateV1:
             self.activation,
             self.evidence_current,
             self.validity,
-        )
+        ) + ((self.motor_support.content_key(),) if self.motor_support is not None else ())
 
     def as_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-safe current-state representation."""
@@ -551,6 +665,7 @@ class NavMapStateV1:
             "update_count": self.update_count,
             "equivalent_refresh_count": self.equivalent_refresh_count,
             "configuration_change_count": self.configuration_change_count,
+            **({"motor_support": self.motor_support.as_dict()} if self.motor_support is not None else {}),
         }
 
 
@@ -968,6 +1083,45 @@ class Nca8MapLibraryV1:
                 configuration_change_count=existing.configuration_change_count + int(not same_content),
             )
 
+        self._current_states[NCA8_POSTURE_SUPPORT_MAP_ID_V1] = candidate
+        return candidate
+
+
+    def update_motor_current_state(self, configuration: MotorSupportConfigurationV1) -> NavMapStateV1:
+        """Publish the enhanced facet in the existing current-source slot.
+
+        The legacy coarse profile is deliberately UNKNOWN, not inferred from a
+        desired task or selected by a posture label. Its cycle fields describe
+        publication of that UNKNOWN compatibility slot, not a physical event.
+        Only the enhanced facet carries the measured physical times and geometry.
+        No v1 support packet or durable seed is changed. The caller is the source
+        owner and supplies an already validated, eligible focal projection.
+        """
+        if not isinstance(configuration, MotorSupportConfigurationV1):
+            raise TypeError("configuration must be MotorSupportConfigurationV1")
+        if configuration.source_map_ref != self.posture_support_ref:
+            raise ValueError("motor facet must reference this POSTURE-SUPPORT source")
+        previous = self.current_state()
+        cycle = configuration.applied_cycle
+        if previous is not None and cycle <= previous.applied_cycle:
+            raise ValueError("source publication cycles must increase")
+        candidate = NavMapStateV1(
+            state_id=_POSTURE_SUPPORT_STATE_ID_V1, source_map_ref=self.posture_support_ref,
+            owner_circuit=_POSTURE_SUPPORT_OWNER_V1, posture=Nca8PostureStateV1.UNKNOWN,
+            support=Nca8SupportStateV1.UNKNOWN, contact=Nca8ContactStateV1.UNKNOWN,
+            active_element_ids=(), active_relation_labels=("body:measured_planar", "support:measured_relations"),
+            activation=1.0 if configuration.current else 0.0, evidence_current=False,
+            sampled_event_cycle=cycle, available_cycle=cycle, applied_cycle=cycle, last_supported_cycle=None,
+            validity=CircuitValidityV1.VALID, update_count=1, equivalent_refresh_count=0,
+            configuration_change_count=0, motor_support=configuration,
+        )
+        if previous is not None:
+            equal = previous.semantic_key() == candidate.semantic_key()
+            candidate = replace(
+                candidate, update_count=previous.update_count + 1,
+                equivalent_refresh_count=previous.equivalent_refresh_count + int(equal),
+                configuration_change_count=previous.configuration_change_count + int(not equal),
+            )
         self._current_states[NCA8_POSTURE_SUPPORT_MAP_ID_V1] = candidate
         return candidate
 

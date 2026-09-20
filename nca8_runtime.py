@@ -38,6 +38,11 @@ import random
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
+from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetProposalV1, nominal_body_capabilities_v1
+from nca8_sensorimotor_contracts import FocalMotorEvidenceV1
+from nca8_righting import RightingApplicationV1, RightingContextV1, RightingIPV1, RightingTaskV1
+
 from nca8_adapters import (
     Nca8EnvironmentBridgeV1,
     Nca8EnvironmentStepV1,
@@ -92,7 +97,7 @@ from nca8_sensory import Nca8BodySensoryApplicationV1, Nca8BodySensoryModuleV1
 from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -104,6 +109,8 @@ __all__ = [
     "Nca8SessionConfigV1",
     "Nca8SessionStatusV1",
     "Nca8SessionV1",
+    "Nca8RightingPreviewSessionV1",
+    "RightingPreviewResultV1",
     "__version__",
 ]
 
@@ -1583,3 +1590,158 @@ class Nca8SessionV1:
     def trace_canonical_bytes(self) -> bytes:
         """Return byte-stable canonical trace JSON for replay tests."""
         return self._trace.as_canonical_json_bytes()
+
+
+@dataclass(frozen=True, slots=True)
+class RightingPreviewResultV1:
+    """One H5 source/selection/PNM/BodyMap calculation, with no motor dispatch.
+
+    This is not the A0 A-F cycle result or a fake execution receipt. It records
+    one focal preview opportunity using the real existing selectors. H6 will
+    integrate scheduled acquisition, handoff and repeated lower execution.
+    """
+
+    cycle_id: int
+    cutoff_tick: int
+    source: NavMapStateV1
+    attention: AttentionSelectionV1
+    navigation: NavigationDecisionV1
+    proposal: BodyTargetProposalV1 | None
+    task: RightingTaskV1 | None
+    source_status: str
+    persistence_rank: int
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a detached review record; exporting never replays the calculation."""
+        return {
+            "cycle_id": self.cycle_id, "cutoff_tick": self.cutoff_tick, "source": self.source.as_dict(),
+            "attention": self.attention.as_dict(), "navigation": self.navigation.as_dict(),
+            "body_proposal": self.proposal.as_dict() if self.proposal is not None else None,
+            "task": self.task.as_dict() if self.task is not None else None,
+            "source_status": self.source_status, "persistence_rank": self.persistence_rank,
+            "motor_dispatches": 0, "target_installations": 0, "durable_learning_updates": 0,
+        }
+
+
+class Nca8RightingPreviewSessionV1:
+    """Isolated, no-dispatch H5 composition of existing source and focal owners.
+
+    Input is canonical admitted/replayed motor sensing, not a private world or
+    evaluator label. Each call publishes the enhanced facet of one continuing
+    POSTURE-SUPPORT source, asks Attention to select one source, and passes a
+    bounded supplied repertoire to the existing Navigation selector. The selected
+    Righting application is consumed by Prediction and H3 BodyMap. No H4 executor
+    or H2 world is constructed. Existing A0 sessions and defaults remain unchanged.
+
+    A controlled competing bid or additional primitive can be supplied in tests;
+    it has to win through the same selectors. This is a transparent small-repertoire
+    baseline, not scalable candidate recruitment. Reset means a fresh session with
+    a new body stream generation, never restoration of a diagnostic record.
+    """
+
+    def __init__(
+        self, stream: MotorStreamRefV1, *, context: RightingContextV1 | None = None,
+        capabilities: tuple[BodyAxisCapabilityV1, ...] | None = None,
+        influence_enabled: bool = True, righting_enabled: bool = True,
+        additional_primitives: Sequence[PrimitiveRuntimeV1] = (),
+    ) -> None:
+        if not isinstance(stream, MotorStreamRefV1):
+            raise TypeError("preview requires a MotorStreamRefV1")
+        if not isinstance(influence_enabled, bool):
+            raise TypeError("influence_enabled must be Boolean")
+        selected_context = RightingContextV1() if context is None else context
+        if not isinstance(selected_context, RightingContextV1):
+            raise TypeError("context must be RightingContextV1")
+        if len(additional_primitives) > 7:
+            raise ValueError("preview repertoire is limited to eight task candidates")
+        self.righting = RightingIPV1(enabled=righting_enabled)
+        self._primitives = (self.righting, *additional_primitives)
+        if len({item.primitive_id for item in self._primitives}) != len(self._primitives):
+            raise ValueError("task candidate IDs must be distinct")
+        self.stream = stream
+        self.context = selected_context
+        self.influence_enabled = influence_enabled
+        self.maps = create_posture_support_map_library_v1()
+        self.sensory = Nca8BodySensoryModuleV1(self.maps)
+        self.attention = AttentionRuntimeV1()
+        self.navigation = NavigationRuntimeV1(motor_preview_enabled=True)
+        self.prediction = Nca8PredictionRuntimeV1()
+        self.body = Nca8BodyRuntimeV1()
+        self.mapper = self.body.configure_motor_targets(
+            stream, nominal_body_capabilities_v1() if capabilities is None else capabilities,
+        )
+        self._cycle = 0
+        self._cutoff = -1
+        self._last_result: RightingPreviewResultV1 | None = None
+
+    @property
+    def last_result(self) -> RightingPreviewResultV1 | None:
+        """Return the retained result without advancing any source or clock."""
+        return self._last_result
+
+    def preview(
+        self, feedback: MotorFeedbackV1 | None, *, cutoff_tick: int,
+        context: RightingContextV1 | None = None, competing_bids: Sequence[AttentionBidV1] = (),
+    ) -> RightingPreviewResultV1:
+        """Consume one eligible source opportunity and compute at most one preview.
+
+        Explicit missing input is not silent reuse. Physical identity and age
+        remain those of the acquisition even when it is reread. The body mapper
+        sees the same immutable event, but no body resource is reserved. Selected
+        task influence reaches the sensory owner and can affect a later Attention
+        decision; an unselected/ineligible task cannot create that influence.
+        """
+        cycle = self._cycle + 1
+        if isinstance(cutoff_tick, bool) or not isinstance(cutoff_tick, int) or not self._cutoff < cutoff_tick < 2**63 - 1:
+            raise ValueError("preview cutoffs must increase")
+        next_context = self.context if context is None else context
+        if not isinstance(next_context, RightingContextV1):
+            raise TypeError("context must be RightingContextV1")
+        if next_context.context_id == self.context.context_id and next_context != self.context:
+            raise ValueError("changed criterion requires a new context ID")
+        if len(competing_bids) > 7:
+            raise ValueError("at most seven additional source candidates are permitted")
+        for bid in competing_bids:
+            if not isinstance(bid, AttentionBidV1) or bid.cycle_id != cycle:
+                raise ValueError("competing source bids must belong to this focal opportunity")
+            if bid.source_map_state.source_map_ref == self.maps.posture_support_ref:
+                raise ValueError("a competing source must not impersonate POSTURE-SUPPORT")
+        if len({bid.candidate_id for bid in competing_bids}) != len(competing_bids):
+            raise ValueError("competing source IDs must be distinct")
+        evidence = None if feedback is None else FocalMotorEvidenceV1(feedback, cycle, cutoff_tick)
+        source = self.sensory.apply_motor_evidence(
+            evidence, stream=self.stream, cycle_id=cycle, cutoff_tick=cutoff_tick,
+        )
+        self.righting.prepare_opportunity(cycle_id=cycle, at_tick=cutoff_tick, context=next_context)
+        self.mapper.update_feedback(feedback, at_tick=cutoff_tick)
+        status = self.righting.source_status(source.motor_support)
+        task = self.righting.task
+        if status != "support_needed" or next_context != self.context or not self.influence_enabled:
+            self.sensory.clear_motor_context()
+        persistence = self.sensory.motor_context_rank(task.task_id if task is not None else None, next_context.context_id)
+        bids = list(competing_bids)
+        if status == "support_needed":
+            bids.append(AttentionBidV1(
+                f"support_bid:{cycle}", "source:posture_support", source, "body_sensory", cycle,
+                0, 20, 0, 0, persistence, 20, ("activity_relative_support_need",), False, "source:posture_support",
+            ))
+        selection = self.attention.select(bids, current_wnm=self.navigation.current_wnm, cycle_id=cycle)
+        working = self.navigation.update_wnm(selection)
+        decision = self.navigation.commit(working, self._primitives, cycle_id=cycle)
+        application = decision.application
+        proposal: BodyTargetProposalV1 | None = None
+        if isinstance(application, RightingApplicationV1):
+            self.prediction.adopt_support_preview(application.projection)
+            proposal = self.mapper.propose(application.contribution, at_tick=cutoff_tick)
+            if self.influence_enabled:
+                expiry = min(cutoff_tick + 8, application.task.started_tick + 80)
+                self.sensory.retain_motor_context(
+                    application.task.task_id, next_context.context_id, cycle_id=cycle, expires_at_tick=expiry,
+                )
+        else:
+            self.prediction.adopt_support_preview(None)
+        result = RightingPreviewResultV1(
+            cycle, cutoff_tick, source, selection, decision, proposal, self.righting.task, status, persistence,
+        )
+        self._cycle, self._cutoff, self.context, self._last_result = cycle, cutoff_tick, next_context, result
+        return result

@@ -16,6 +16,65 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P18-H5 relational Righting and sparse preview
+
+Accepted Architecture v10.1 and Planning v18 govern this opt-in update. H4 remains
+unchanged. **This slice computes and reviews a selected Righting contribution; it
+neither installs a target nor moves a body.** The default runtime stays unchanged.
+The current inventory is **68 production components and 8 host behavioral primitives**;
+`ip:righting` is supplied to the isolated NCA8 task repertoire, not registered as a
+new legacy behavior or an additional SMP.
+
+`nca8_righting.py` implements the inherited task operation using current eligible
+POSTURE-SUPPORT relations. `Nca8RightingPreviewSessionV1` in `nca8_runtime.py`
+uses the existing sensory owner, Attention and Navigation selectors, Prediction,
+and H3 BodyMap. `nca8_righting_demo.py` supplies explicit replay fixtures, shared
+with **NCA8 menu option 7** and this permanent command-line inspection:
+
+    python scripts\review_nca8_righting.py
+
+The same measured pose with improving versus deteriorating support produces a
+different contribution, sparse task PNM and body target/refusal. The operation
+uses no private physical simulator or scenario label. First samples can support
+a conservative contribution without fabricated zero rates. Unknown directional
+geometry need not suppress a separately supported extension. Predicted contact
+is only retained conditionally from observed contact, never manufactured.
+Inadequate current stability can justify a limited extension attempt even during
+requested rest; that does not force a resting body upright or guarantee support.
+
+The enhanced motor facet occupies the same continuing POSTURE-SUPPORT source.
+The old coarse profile is explicitly UNKNOWN in these previews, not regenerated
+from a posture token. Its compatibility cycle fields describe publication only;
+the facet retains original sensor event/availability ticks. A0 and the existing
+`posture_support_v1` schema/dynamics remain unchanged. The opt-in Navigation path
+admits this facet; the default A0 argument restriction is retained.
+
+The fixed `righting_preview_v1` activity criteria are engineering fixtures:
+mobility (absolute tilt <=12 degrees, load >=.75, destabilization <=.15), supported
+crouch (40 degrees, .45, .20), and requested rest (observed contact and
+instability <=.15 without forced upright posture/minimum actuator loading).
+Current adequacy is not supported dwell, task success or action causation.
+`righting_linear_preview_v1` is a small conditional reference prediction, not
+validated biomechanics or a learned SEC model. Coefficients and assumptions are
+stated beside the computation in `nca8_righting.py`.
+
+One task retains its original criterion over changing samples, bounded by 20
+focal opportunities and 80 local ticks. Context changes explicitly supersede it;
+missing samples and losing focal selection do not reset its budget. An
+owner-mediated continuation request can change Attention priority with sensing
+held fixed and a controlled competing source. That effect does not refresh
+measurements or bypass Attention. At most eight old application descriptions and
+eight unexecuted previews are retained; the current PNM is unique. Old anchors do
+not drift when current sensing changes. No preview enters the executed-outcome
+queue, and no durable learning occurs.
+
+H3 consumes the actual task contribution and may narrow/refuse it under current
+body evidence and capability. H5 records the proposed meaning and resulting
+body targets without reserving resources. H6 will integrate accepted handoff,
+local execution and new physical evidence. Full task dwell, mismatch routing
+and learning reconciliation remain P16-1G; A99 is still open. No phase-specific
+Markdown review files are created or required by this source update.
+
 ## NCA8 update: P18-H4 supplied-target movement and rapid local feedback
 
 Starting from committed H3 at `5ac7c4e85a61a7f78fe984d2aece281f6685ce2c`, the new
@@ -23,7 +82,7 @@ Starting from committed H3 at `5ac7c4e85a61a7f78fe984d2aece281f6685ce2c`, the ne
 from current local sensing. The existing H2 body simulator computes the physical
 consequences. The ordinary `nca8_sensorimotor_demo.py` module owns disposable
 experiments shared by the NCA8 menu and permanent command-line review.
-`--about` now lists **66 production components and 8 registered behavioral primitives**.
+At H4 acceptance, `--about` listed **66 production components and 8 registered behavioral primitives**; the current H5 count is above.
 These two new modules are not two new task-level behavioral primitives.
 
 Open the existing NCA8 menu and choose **6) Review supplied-target movement and fast
@@ -63,7 +122,7 @@ no uncertain command is retried. Reset creates a new physical/control generation
 An observed local target achievement names its sensor event. Pursuit then stops;
 passive tilt can drift afterward. It is not a claim of stable holding, successful
 Righting, biological validity, SEC learning or an acquired LP. Reference focal
-markers do not call the cognitive runtime. H5 adds the selected Righting preview;
+markers do not call the cognitive runtime. H5 above adds the selected Righting preview;
 H6 later integrates actual focal task selection and repeated authorized contributions.
 Phase-specific delivery and validation notes are distributed separately, not installed under `docs/`.
 The module docstrings and permanent review programs describe the implemented behavior.
@@ -103,7 +162,7 @@ review script for the methods, bounds and evidence requirements. The previous H1
 That update started from committed P18-H1 at `1fc768a0c415fc5086e8aa27698ed88b17535059`.
 It also repairs the omitted component-report entries for `cca8_motor_contracts.py` and
 `nca8_sensorimotor_contracts.py`. Both are normal versioned production modules; at the H2 checkpoint `--about` reported
-**63 components and 8 registered behavioral primitives** (the current H4 count is above). No H1 history needs to be amended.
+**63 components and 8 registered behavioral primitives** (the current H5 count is above). No H1 history needs to be amended.
 
 The existing `cca8_support_world.py` now includes a small `MotorWorldV1` simulator. Supplied signed
 orientation and extension drives produce finite physical movement; contact, useful loading and

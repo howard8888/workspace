@@ -28,10 +28,13 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from nca8_adapters import Nca8ObservationV1
+from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
+from nca8_sensorimotor_contracts import FocalMotorEvidenceV1
 from nca8_support_dynamics import SupportDynamicsTrackerV1, SupportDynamicsV1
 from nca8_contracts import CircuitResultV1, CircuitTimingV1, LogicalAvailabilityV1
 from nca8_maps import (
     Nca8MapLibraryV1,
+    MotorSupportConfigurationV1,
     Nca8PostureStateV1,
     NavMapStateV1,
     PostureSupportEvidenceV1,
@@ -43,7 +46,7 @@ from nca8_maps import (
 # slice readable without a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "NCA8_BODY_SENSORY_CIRCUIT_ID_V1",
     "Nca8BodySensoryApplicationV1",
@@ -216,6 +219,13 @@ class Nca8BodySensoryModuleV1:
         self._support_observation_enabled = support_observation_enabled
         self._support_configuration: SupportConfigurationV1 | None = None
         self._last_support_observation: SupportObservationV1 | None = None
+        self._motor_stream: MotorStreamRefV1 | None = None
+        self._motor_reference: MotorFeedbackV1 | None = None
+        self._motor_watermark: MotorFeedbackV1 | None = None
+        self._motor_cutoff = -1
+        self._motor_tick_seconds: float | None = None
+        self._motor_context: tuple[str, str, int] | None = None
+
 
     @property
     def circuit_id(self) -> str:
@@ -489,3 +499,94 @@ class Nca8BodySensoryModuleV1:
         del self._pending_samples[result.result_id]
         self._last_application = application
         return application
+
+
+    def apply_motor_evidence(
+        self, evidence: FocalMotorEvidenceV1 | None, *, stream: MotorStreamRefV1,
+        cycle_id: int, cutoff_tick: int, tick_seconds: float = 0.05,
+    ) -> NavMapStateV1:
+        """Apply H5 replay/live-admitted motor evidence to the existing source.
+
+        This opt-in entry is never called by the retained A0 scheduler. H5's
+        preview runner supplies the explicit eligibility boundary; H6 will wire
+        that boundary to actual scheduled local feedback. Duplicate acquisitions
+        may be reread while current, but generate no new rate. Missing or stale
+        input breaks the pair reference without erasing the ordering watermark.
+        Wrong generation, changed duplicate and reversed events fail before any
+        source mutation. At most one pair plus one ordering watermark is retained.
+        """
+        cycle = _positive_int(cycle_id, field_name="cycle_id")
+        if self._motor_stream is not None and stream != self._motor_stream:
+            raise ValueError("motor stream/generation changed; create a fresh sensory owner")
+        current = self.current_state
+        if current is not None and cycle <= current.applied_cycle:
+            raise ValueError("source application cycles must increase")
+        # Construction validates type, finite time and focal/event correspondence.
+        provisional = MotorSupportConfigurationV1(
+            self.map_library.posture_support_ref, stream, evidence, None, cycle, cutoff_tick, tick_seconds,
+        )
+        if self._motor_tick_seconds is not None and tick_seconds != self._motor_tick_seconds:
+            raise ValueError("source physical timebase cannot change within a generation")
+        if cutoff_tick <= self._motor_cutoff:
+            raise ValueError("motor focal cutoffs must increase")
+        feedback, watermark = provisional.feedback, self._motor_watermark
+        duplicate = feedback is not None and watermark is not None and feedback.sample_id == watermark.sample_id
+        if feedback is not None and watermark is not None:
+            if duplicate and feedback != watermark:
+                raise ValueError("one motor sample cannot change content or time")
+            if feedback.sample_id < watermark.sample_id or (not duplicate and feedback.event_tick <= watermark.event_tick):
+                raise ValueError("motor source samples/events must not run backwards")
+        reference = self._motor_reference
+        comparable = (
+            provisional.current and not duplicate and feedback is not None and reference is not None
+            and 0 < feedback.event_tick - reference.event_tick <= 8
+        )
+        configuration = replace(provisional, previous=reference if comparable else None)
+        result = self.map_library.update_motor_current_state(configuration)
+        self._motor_stream = stream
+        self._motor_cutoff = cutoff_tick
+        self._motor_tick_seconds = tick_seconds
+        self._motor_reference = feedback if provisional.current else None
+        if feedback is not None:
+            self._motor_watermark = feedback
+        return result
+
+    def retain_motor_context(self, task_id: str, context_id: str, *, cycle_id: int, expires_at_tick: int) -> None:
+        """Accept one bounded selected-task continuation request, not source facts.
+
+        A preview coordinator calls this only after Navigation selected an
+        application on this source. The effect is a persistence-rank contribution
+        to the next source bid. It changes no acquisition, geometry, timestamp or
+        durable organization and conveys no motor permission. The task retains
+        its own shorter/longer budget; this request cannot extend that budget.
+        """
+        task = _bounded_identifier(task_id, field_name="task_id", maximum=120)
+        context = _bounded_identifier(context_id, field_name="context_id", maximum=120)
+        current = self.current_state
+        facet = current.motor_support if current is not None else None
+        if facet is None or not facet.current or facet.applied_cycle != cycle_id:
+            raise ValueError("continuation request requires this cycle's current source")
+        if isinstance(expires_at_tick, bool) or not isinstance(expires_at_tick, int):
+            raise TypeError("context expiry must be an integer")
+        if not facet.cutoff_tick < expires_at_tick <= facet.cutoff_tick + 8:
+            raise ValueError("source continuation must expire within eight lower ticks")
+        self._motor_context = task, context, expires_at_tick
+
+    def clear_motor_context(self) -> None:
+        """Release the temporary continuation request without changing sensory data."""
+        self._motor_context = None
+
+    def motor_context_rank(self, task_id: str | None, context_id: str) -> int:
+        """Return a bounded owner-mediated bid component under current evidence.
+
+        The caller still sends the bid through Attention. Staleness, expiry or a
+        changed task/context makes this contribution zero; no read renews it.
+        """
+        current = self.current_state
+        facet = current.motor_support if current is not None else None
+        request = self._motor_context
+        if facet is None or not facet.current or request is None:
+            return 0
+        if request[:2] != (task_id, context_id) or facet.cutoff_tick >= request[2]:
+            return 0
+        return 20
