@@ -648,7 +648,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.30.25"
+__version__ = "0.30.26"
 __all__ = [
     "main",
     "interactive_loop",
@@ -3030,6 +3030,8 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("nca8_trace", "nca8_trace"),
     ("nca8_maternal", "nca8_maternal"),
     ("nca8_maternal_outcomes", "nca8_maternal_outcomes"),
+    ("nca8_maternal_attention", "nca8_maternal_attention"),
+    ("nca8_maternal_attention_demo", "nca8_maternal_attention_demo"),
     ("nca8_followmom", "nca8_followmom"),
     ("nca8_followmom_demo", "nca8_followmom_demo"),
     ("nca8_stand_follow_demo", "nca8_stand_follow_demo"),
@@ -7913,6 +7915,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="Enable optional pure-Python coverage for a full preflight run (default: off)",
     )
+    p.add_argument(
+        "--timing", action="store_true",
+        help="Report preflight phase times and the 20 slowest pytest phases >= 0.5 s (requires --preflight)",
+    )
     #p.add_argument("--write-artifacts", action="store_true", help="Write preflight artifacts to disk")
     p.add_argument("--load", help="Load session from JSON file")
     p.add_argument("--save", help="Save session to JSON file on exit")
@@ -7920,6 +7926,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     try:
         args = p.parse_args(argv)
+        if args.timing and not args.preflight:
+            p.error("--timing requires --preflight")
     except SystemExit as e:
         code = getattr(e, "code", 0)
         return 2 if code else 0  # pylint: disable=using-constant-test

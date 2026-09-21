@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Inspect P16-2B-A/B/C approach, correspondence, continuous stand-follow and replays.
+"""Inspect P16-2B-A/B/C/D approach, correspondence, continuous stand-follow and replays.
 
 Run from any directory. This helper delegates to the same finite functions as
-NCA8 menu 10, writes no repository files, and reports actual owner-bound/durable
+NCA8 menus 10-12, writes no repository files, and reports actual owner-bound/durable
 violations as a nonzero exit. A valid adverse task outcome is not a test failure.
 """
 
@@ -25,6 +25,7 @@ from nca8_followmom_demo import (
 )
 
 from nca8_stand_follow_demo import STAND_FOLLOW_CASES_V1, render_stand_follow_v1, run_stand_follow_v1
+from nca8_maternal_attention_demo import MATERNAL_ATTENTION_CASES_V1, render_maternal_attention_v1, run_maternal_attention_v1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -36,9 +37,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     selected.add_argument("--outcomes", nargs="?", const="all", choices=("all", *MATERNAL_OUTCOME_CASES_V1))
     selected.add_argument("--stand-follow", nargs="?", const="all", choices=("all", *STAND_FOLLOW_CASES_V1),
                           help="run one continuous Righting/Follow-Mom stream, not a stage list")
+    selected.add_argument("--outcome-attention", nargs="?", const="all", choices=("all", *MATERNAL_ATTENTION_CASES_V1),
+                          help="inspect maternal discrepancy, actual source competition and one focal allocation")
     parser.add_argument("--detail", action="store_true", help="include source, PNM, target and local-drive details")
     parser.add_argument("--json", action="store_true", help="export complete detached results instead of text")
     args = parser.parse_args(argv)
+    if args.outcome_attention is not None:
+        attention_cases = MATERNAL_ATTENTION_CASES_V1 if args.outcome_attention == "all" else (args.outcome_attention,)
+        attention_results = tuple(run_maternal_attention_v1(case) for case in attention_cases)
+        print(json.dumps([item.as_dict() for item in attention_results], sort_keys=True, allow_nan=False) if args.json else
+              "\n\n".join(render_maternal_attention_v1(item, detail=args.detail) for item in attention_results))
+        return int(any(item.bound_violations or not item.durable_unchanged for item in attention_results))
     if args.stand_follow is not None:
         stand_cases = STAND_FOLLOW_CASES_V1 if args.stand_follow == "all" else (args.stand_follow,)
         stand_results = tuple(run_stand_follow_v1(case) for case in stand_cases)

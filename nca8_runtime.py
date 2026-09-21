@@ -45,6 +45,7 @@ from nca8_maternal import MaternalNavMapStateV1
 from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetProposalV1, BodyTranslationCapabilityV1, nominal_body_capabilities_v1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1
 from nca8_righting import RightingApplicationV1, RightingContextV1, RightingIPV1, RightingTaskV1
+from nca8_maternal_attention import MaternalFocalAllocationV1, MaternalOutcomeAttentionV1
 from nca8_outcome_attention import RightingFocalAllocationV1
 
 from nca8_adapters import (
@@ -102,7 +103,7 @@ from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 from nca8_visual import VisualNavMapStateV1
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -1618,6 +1619,7 @@ class RightingPreviewResultV1:
     persistence_rank: int
     outcome_allocation: RightingFocalAllocationV1 | None = None
     outcome_source_bid: AttentionBidV1 | None = None
+    maternal_outcome_allocation: MaternalFocalAllocationV1 | None = None
 
     def as_dict(self) -> dict[str, object]:
         """Return a detached review record; exporting never replays the calculation."""
@@ -1631,6 +1633,8 @@ class RightingPreviewResultV1:
             **({"outcome_attention": {"allocation": self.outcome_allocation.as_dict(),
                                      "source_bid": self.outcome_source_bid.as_dict() if self.outcome_source_bid is not None else None}}
                if self.outcome_allocation is not None else {}),
+            **({"maternal_outcome_allocation": self.maternal_outcome_allocation.as_dict()}
+               if self.maternal_outcome_allocation is not None else {}),
         }
 
 
@@ -1812,16 +1816,22 @@ class Nca8RightingPreviewSessionV1:
         self._prepared = replace(opportunity, source_status="completed", persistence_rank=0)
         return self._prepared
 
-    def select_prepared(self, opportunity: RightingSourceOpportunityV1) -> RightingPreviewResultV1:
+    def select_prepared(
+        self, opportunity: RightingSourceOpportunityV1, *, maternal_attention: MaternalOutcomeAttentionV1 | None = None,
+    ) -> RightingPreviewResultV1:
         """Use the actual Attention and Navigation owners in D, once per source basis.
 
         In the opt-in integrated profile, an unfinished support task may nominate
         its currently adequate source while distinct supported dwell is pending.
         This nomination does not select an IP, add a sample or create motor
         permission. Competing bids still pass through the ordinary selector.
+        An opt-in maternal interpretation uses this same allocation, never a
+        second WNM or an extra task selection beside the Righting interpretation.
         """
         if not isinstance(opportunity, RightingSourceOpportunityV1) or opportunity is not self._prepared or self._selected is not None:
             raise ValueError("selection requires this owner's current unselected opportunity")
+        if maternal_attention is not None and not isinstance(maternal_attention, MaternalOutcomeAttentionV1):
+            raise TypeError("maternal focal work requires the configured source-owned outcome route")
         cycle, source = opportunity.cycle_id, opportunity.source
         bids = list(opportunity.competing_bids)
         source_bid = None
@@ -1846,15 +1856,25 @@ class Nca8RightingPreviewSessionV1:
         if outcome_owner is not None:
             allocation = (outcome_owner.allocate(working, cycle_id=cycle) if self.navigation.enabled
                           else RightingFocalAllocationV1("navigation_disabled"))
-        if allocation is not None and not allocation.permits_primitive_selection:
+        maternal_allocation = None
+        if maternal_attention is not None:
+            maternal_allocation = (maternal_attention.allocate(working, cycle_id=cycle) if self.navigation.enabled
+                                   else MaternalFocalAllocationV1("navigation_disabled"))
+        hold_reason = allocation.kind if allocation is not None and not allocation.permits_primitive_selection else None
+        if maternal_allocation is not None and not maternal_allocation.permits_primitive_selection:
+            if hold_reason is not None:
+                raise RuntimeError("two domain interpretations cannot consume the same focal opportunity")
+            hold_reason = f"maternal_{maternal_allocation.kind}"
+        if hold_reason is not None:
             if working is None:
                 raise RuntimeError("a nonprimitive focal allocation requires the selected source")
-            decision = self.navigation.record_focal_hold(working, cycle_id=cycle, reason=allocation.kind)
+            decision = self.navigation.record_focal_hold(working, cycle_id=cycle, reason=hold_reason)
         else:
             decision = self.navigation.commit(working, self._primitives, cycle_id=cycle)
         result = RightingPreviewResultV1(
             cycle, opportunity.cutoff_tick, source, selection, decision, None, self.righting.task,
             opportunity.source_status, opportunity.persistence_rank, allocation, source_bid if outcome_owner is not None else None,
+            maternal_allocation,
         )
         self._selected = result
         return result

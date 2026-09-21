@@ -63,7 +63,7 @@ from cca8_env import HybridEnvironment
 from cca8_features import FactMeta, time_attrs_from_ctx
 
 
-__version__ = "0.2.4"
+__version__ = "0.3.0"
 __all__ = [
     "PreflightRuntime",
     "run_llm_operational_preflight_check",
@@ -135,19 +135,23 @@ def _coverage_preflight_status() -> tuple[bool, str]:
     return True, "pure-Python Coverage.py and pytest-cov are available"
 
 
-def _build_pytest_args(*, coverage_enabled: bool, coveragerc_exists: bool) -> list[str]:
+def _build_pytest_args(*, coverage_enabled: bool, coveragerc_exists: bool, timing_enabled: bool = False) -> list[str]:
     """Build the pytest command arguments used by full preflight.
 
     Normal preflight explicitly blocks the optional pytest-cov plugin so
     coverage cannot activate accidentally. Coverage arguments are added only
     after the caller requested coverage and the pure-Python installation check
-    succeeded.
+    succeeded. Optional timing adds pytest's own slow setup/call/teardown report;
+    it neither reruns nor filters tests and is independent of optional coverage.
     """
     pytest_args = [
         "-v",
         "-ra",
         "--junitxml=.coverage/junit.xml",
     ]
+
+    if timing_enabled:
+        pytest_args.extend(["--durations=20", "--durations-min=0.5"])
 
     if not coverage_enabled:
         pytest_args.extend(["-p", "no:pytest_cov", "tests"])
@@ -432,6 +436,7 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
 
     """
     coverage_requested = _coverage_requested(args)
+    timing_enabled = bool(getattr(args, "timing", False))
     coverage_active = False
     print("\nPreflight running....")
     print("Like an aircraft pre-flight, this check verifies the critical parts of")
@@ -566,6 +571,10 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
         # red
         return f"\x1b[31m{line}\x1b[0m" if _ANSI_OK else line
 
+    # Optional wall-clock diagnostics only: no test decorators, skips or second suite run.
+    phase_times: list[tuple[str, float]] = []
+    phase_started = _time.perf_counter() if timing_enabled else 0.0
+
     # --- Unit tests (pytest) — run first ------------------------------------------------
     try:
         if _os.path.isdir("tests"):
@@ -600,6 +609,7 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
                 _args = _build_pytest_args(
                     coverage_enabled=coverage_active,
                     coveragerc_exists=_os.path.exists(".coveragerc"),
+                    timing_enabled=timing_enabled,
                 )
 
                 _rc = _pytest.main(_args)
@@ -630,6 +640,11 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
             ok("pytest: no 'tests' directory found — skipping\n")
     except Exception as e:
         bad(f"pytest not available or other error: {e}\n")
+
+    if timing_enabled:
+        phase_finished = _time.perf_counter()
+        phase_times.append(("unit tests (including collection/reporting)", phase_finished - phase_started))
+        phase_started = phase_finished
 
     # Part 2 probe counting should exclude the earlier Part 1 pytest lane bookkeeping.
     # We keep the cumulative counters for overall PASS/FAIL logic, but remember the offsets
@@ -1550,6 +1565,11 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
         bad(f"action helpers failed: {e}")
 
 
+    if timing_enabled:
+        phase_finished = _time.perf_counter()
+        phase_times.append(("architecture/scenario probes", phase_finished - phase_started))
+        phase_started = phase_finished
+
     # part 3 -- hardware and robotics preflight
     hal_str  = getattr(args, "hal_status_str", "OFF (no embodiment)")
     body_str = getattr(args, "body_status_str", runtime.placeholder_embodiment)
@@ -1695,6 +1715,11 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
         bad_hw(f"disk free check error: {e}")
 
 
+    if timing_enabled:
+        phase_finished = _time.perf_counter()
+        phase_times.append(("hardware/robotics checks", phase_finished - phase_started))
+        phase_started = phase_finished
+
     # part 4 -- integrated system preflight
     print(f"\n[preflight system functionality] HAL={hal_str}; body={body_str}")
 
@@ -1726,6 +1751,9 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
     _llm_probe = runtime.llm_operational_check(20.0)
     _llm_severity, _llm_message = _classify_llm_preflight_assessment(_llm_probe)
     report_sys(_llm_severity, _llm_message)
+
+    if timing_enabled:
+        phase_times.append(("system-fitness assessments", _time.perf_counter() - phase_started))
 
     # Compute Summary Results
     # ---- Summary footer (with denominators) ----
@@ -1794,6 +1822,12 @@ def run_preflight_full(args: Any, runtime: PreflightRuntime) -> int:
     else:
         print(line2)
     print(line3)
+    if timing_enabled:
+        print("[preflight timing] Wall-clock seconds; diagnostics do not alter pass/fail:")
+        for phase_name, phase_seconds in phase_times:
+            print(f"[preflight timing] {phase_name}: {phase_seconds:.3f} s")
+        print(f"[preflight timing] total (including preflight overhead): {elapsed_total:.3f} s")
+        print("[preflight timing] pytest reports up to 20 slow setup/call/teardown phases >= 0.5 s above.")
 
     if status_ok:
         runtime.print_ascii_logo(style="goat", color=True)

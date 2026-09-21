@@ -18,7 +18,8 @@ disable=
     use-implicit-booleaness-not-comparison,
     no-else-return,
     broad-exception-caught,
-    duplicate-code
+    duplicate-code,
+	chained-comparison
 
 [FORMAT]
 max-line-length=170

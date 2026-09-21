@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from cca8_motor_contracts import MotorStreamRefV1
 from cca8_navmap_kernel import (
@@ -29,7 +30,10 @@ from cca8_navmap_kernel import (
 )
 from nca8_visual import VisualDetectionV1, VisualGuidanceV1, VisualNavMapStateV1
 
-__version__ = "0.1.0"
+if TYPE_CHECKING:
+    from nca8_maternal_attention import MaternalOutcomeAttentionV1
+
+__version__ = "0.2.0"
 __all__ = ["MaternalSeedV1", "MaternalNavMapStateV1", "MaternalCandidateV1", "MaternalSourceV1", "__version__"]
 
 MOM_REF = NavMapRefV1("maternal_target", 1)
@@ -288,6 +292,24 @@ class MaternalSourceV1:
         self._last_supported: VisualNavMapStateV1 | None = None
         self._identity_seen = False
         self._influence: tuple[str, int] | None = None
+        self._outcome_attention: MaternalOutcomeAttentionV1 | None = None
+
+    @property
+    def outcome_attention(self) -> MaternalOutcomeAttentionV1 | None:
+        """Read the opt-in source-owned relevance extension, not a second representation."""
+        return self._outcome_attention
+
+    def configure_outcome_attention(self) -> None:
+        """Attach the no-learning maternal outcome route once, before source processing.
+
+        The local import keeps the source schema independent of its optional
+        executive-facing consumer. Configuration changes no seeded organization,
+        current evidence or motor permission. Reset constructs a fresh owner.
+        """
+        if self._current is not None or self._outcome_attention is not None:
+            raise RuntimeError("configure maternal relevance only once before source updates")
+        import nca8_maternal_attention  # pylint: disable=import-outside-toplevel
+        self._outcome_attention = nca8_maternal_attention.MaternalOutcomeAttentionV1(self._stream, self._seed)
 
     @property
     def durable_map(self) -> NavMapV2:

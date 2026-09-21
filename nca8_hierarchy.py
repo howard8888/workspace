@@ -44,7 +44,8 @@ from nca8_translation import TranslationFixtureV1, TranslationApplicationV1, Sup
 from nca8_visual import VisualSourceV1, VisualNavMapStateV1, VisualObservationV1
 from nca8_maternal import MaternalSourceV1, MaternalNavMapStateV1
 from nca8_followmom import FollowMomProfileV1, FollowMomIPV1, FollowMomApplicationV1, FollowMomAssessmentV1
-from nca8_maternal_outcomes import MaternalIntervalEvidenceV1, MaternalOutcomeFrameV1, MaternalOutcomeRuntimeV1
+from nca8_maternal_attention import MaternalAttentionFrameV1, MaternalMismatchRequestV1
+from nca8_maternal_outcomes import MaternalIntervalEvidenceV1, MaternalOutcomeFrameV1, MaternalOutcomeRuntimeV1, MaternalOutcomeV1
 from nca8_contracts import CircuitResultV1, CircuitTimingV1, CycleCommitmentV1, CyclePhase
 from nca8_executive import AttentionBidV1
 from nca8_handoff import Nca8HandoffReceiptV1, Nca8InternalHandoffV1, Nca8MotorEnvelopeV1, Nca8PhaseEDispatchV1
@@ -61,7 +62,7 @@ from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, Senso
 from nca8_sensorimotor_contracts import BodyTranslationTargetV1, FocalMotorEvidenceV1, LocalTargetReportV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -101,6 +102,7 @@ class IntegratedRightingCycleV1:
     maternal_source: MaternalNavMapStateV1 | None = None
     maternal_task: FollowMomAssessmentV1 | None = None
     maternal_correspondence: MaternalOutcomeFrameV1 | None = None
+    maternal_attention: MaternalAttentionFrameV1 | None = None
 
     @property
     def status(self) -> str:
@@ -139,6 +141,7 @@ class IntegratedRightingCycleV1:
                 "maternal_task": self.maternal_task.as_dict() if self.maternal_task is not None else None}
                if self.maternal_source is not None else {}),
             **({"maternal_correspondence": self.maternal_correspondence.as_dict()} if self.maternal_correspondence is not None else {}),
+            **({"maternal_attention": self.maternal_attention.as_dict()} if self.maternal_attention is not None else {}),
         }
 
 
@@ -199,6 +202,8 @@ class IntegratedRightingCoreV1:
         self.maternal = None if follow_mom_profile is None else MaternalSourceV1(
             stream, follow_mom_profile.seed, enabled=follow_mom_profile.association_enabled,
         )
+        if self.maternal is not None and follow_mom_profile is not None and follow_mom_profile.outcome_attention_enabled:
+            self.maternal.configure_outcome_attention()
         self.follow_mom = (FollowMomIPV1(self.maternal, follow_mom_profile)
                            if self.maternal is not None and follow_mom_profile is not None else None)
         self.maternal_outcomes = (MaternalOutcomeRuntimeV1(stream, compare_predictions=follow_mom_profile.prediction_comparison_enabled)
@@ -359,6 +364,7 @@ class IntegratedRightingCoreV1:
             raise RuntimeError("the frozen summary sidecar lost its ingress association")
         maternal_owner = self.maternal_outcomes
         maternal_before = maternal_owner.history()[-1].number if maternal_owner is not None and maternal_owner.history() else 0
+        maternal_results: tuple[MaternalOutcomeV1, ...] = ()
         if maternal_owner is not None:
             maternal_results = maternal_owner.consume_intervals(maternal_intervals, cutoff_tick=tick)
             for outcome in maternal_results:
@@ -383,6 +389,9 @@ class IntegratedRightingCoreV1:
                               details={"sample": visual_source.sample_id, "event": visual_source.event_tick,
                                        "status": visual_source.input_status, "frame": visual_source.frame_id})
         maternal_source = None
+        maternal_attention = self.maternal.outcome_attention if self.maternal is not None else None
+        maternal_requests: tuple[MaternalMismatchRequestV1, ...] = ()
+        maternal_bid = None
         if self.maternal is not None and self.follow_mom is not None:
             if visual_source is None:
                 raise RuntimeError("maternal association requires the applied visual configuration")
@@ -395,7 +404,19 @@ class IntegratedRightingCoreV1:
             self.follow_mom.prepare(maternal_source, feedback, reports=reports, support_recovery_pending=support_pending)
             maternal_candidate = self.maternal.candidate(task_id=self.follow_mom.task.task_id if self.follow_mom.task is not None else None)
             if maternal_candidate is not None:
-                competing_bids = (*competing_bids, self.cognition.attention.build_bid(maternal_candidate, cycle_id=cycle))
+                maternal_bid = self.cognition.attention.build_bid(maternal_candidate, cycle_id=cycle)
+            if maternal_attention is not None:
+                maternal_requests = maternal_attention.admit(maternal_results, maternal_source, self.follow_mom.task, cutoff_tick=tick)
+                maternal_bid = maternal_attention.contribute_bid(maternal_bid)
+                for maternal_request in maternal_requests:
+                    self.trace.append("hierarchy_maternal_outcome_request", "maternal discrepancy requested source consideration, not an action",
+                                      cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
+                                      details={"request_id": maternal_request.request_id,
+                                               "pnm_id": maternal_request.outcome.claim.preview.pnm.pnm_id,
+                                               "significance": maternal_request.significance,
+                                               "expires_at_tick": maternal_request.expires_at_tick})
+            if maternal_bid is not None:
+                competing_bids = (*competing_bids, maternal_bid)
             self.trace.append("hierarchy_maternal_source", "MOM association updated from independent recognition and geometry",
                               cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
                               details={"identity": maternal_source.identity_status, "localized": maternal_source.action_localized,
@@ -428,12 +449,13 @@ class IntegratedRightingCoreV1:
         created_requests = () if outcome_owner is None else outcome_owner.admit(
             claim_outcomes, prepared.source, self.cognition.righting.task, prepared.context, cutoff_tick=tick,
         )
-        for request in created_requests:
+        for outcome_request in created_requests:
             self.trace.append("hierarchy_outcome_request", "task-PNM discrepancy changed a source request, not a task decision",
                               cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
-                              details={"request_id": request.request_id, "pnm_id": request.outcome.registration.preview.pnm.pnm_id,
-                                       "significance": request.significance, "relations": ",".join(request.relations),
-                                       "admitted_tick": tick, "expires_at_tick": request.expires_at_tick})
+                              details={"request_id": outcome_request.request_id,
+                                       "pnm_id": outcome_request.outcome.registration.preview.pnm.pnm_id,
+                                       "significance": outcome_request.significance, "relations": ",".join(outcome_request.relations),
+                                       "admitted_tick": tick, "expires_at_tick": outcome_request.expires_at_tick})
         self.cognition.mapper.expire(at_tick=tick)
         self.trace.append(
             "hierarchy_source", "one POSTURE-SUPPORT source updated from eligible physical evidence", cycle_id=cycle,
@@ -447,7 +469,17 @@ class IntegratedRightingCoreV1:
                               details={"number": event.number, "reason": event.reason, "sample_id": event.sample_id,
                                        "event_tick": event.event_tick, "noticed_tick": event.noticed_tick})
         self.scheduler.enter_runtime_phase(cycle, CyclePhase.FOCAL_COMMITMENT)
-        selected = self.cognition.select_prepared(prepared)
+        selected = (self.cognition.select_prepared(prepared, maternal_attention=maternal_attention)
+                    if maternal_attention is not None else self.cognition.select_prepared(prepared))
+        maternal_allocation = selected.maternal_outcome_allocation
+        if maternal_allocation is not None:
+            maternal_interpretation = maternal_allocation.interpretation
+            self.trace.append("hierarchy_maternal_outcome_allocation", "maternal focal allocation recorded; interpretation and response cannot share a slot",
+                              cycle_id=cycle, phase=CyclePhase.FOCAL_COMMITMENT.name,
+                              details={"kind": maternal_allocation.kind,
+                                       "request_id": maternal_interpretation.request.request_id if maternal_interpretation is not None else None,
+                                       "status": maternal_interpretation.status if maternal_interpretation is not None else None,
+                                       "outcome_rank": maternal_bid.prediction_or_envelope_failure_rank if maternal_bid is not None else 0})
         allocation = selected.outcome_allocation
         if allocation is not None:
             interpretation = allocation.interpretation
@@ -463,7 +495,8 @@ class IntegratedRightingCoreV1:
         if application is not None and not isinstance(application, (RightingApplicationV1, TranslationApplicationV1, FollowMomApplicationV1)):
             raise TypeError("this integrated profile has no consumer for the selected application")
         self.trace.append(
-            "hierarchy_selection", ("Attention selected the source; Navigation recorded the single focal allocation" if allocation is not None
+            "hierarchy_selection", ("Attention selected the source; Navigation recorded the single focal allocation"
+                                    if allocation is not None or maternal_allocation is not None
                                     else "Attention selected the source; Navigation selected the task"), cycle_id=cycle,
             phase=CyclePhase.FOCAL_COMMITMENT.name,
             details={"attention": selected.attention.disposition.value, "primitive": selected.navigation.selected_primitive_id,
@@ -575,8 +608,11 @@ class IntegratedRightingCoreV1:
             created_requests, () if outcome_owner is None else outcome_owner.pending(), learning_report, visual_source,
             maternal_source, self.follow_mom.assessment() if self.follow_mom is not None else None,
             MaternalOutcomeFrameV1(tick, tuple(item for item in maternal_owner.history() if item.number > maternal_before),
-                                   maternal_registration, maternal_owner.pending(), maternal_owner.compare_predictions)
+                                   maternal_registration, maternal_owner.pending(), maternal_owner.compare_predictions,
+                                   maternal_attention is not None)
             if maternal_owner is not None else None,
+            MaternalAttentionFrameV1(maternal_requests, maternal_attention.pending(), maternal_bid, maternal_allocation)
+            if maternal_attention is not None and maternal_allocation is not None else None,
         )
         self.last_result = result
         return result
@@ -742,6 +778,8 @@ class IntegratedRightingTrialV1:
             **({"outcome_staged_intervals": len(self._outcome_intervals), **self.core.outcomes.retained_counts()}
                if self.core.outcomes is not None else {}),
             **(cognition.sensory.outcome_attention.retained_counts() if cognition.sensory.outcome_attention is not None else {}),
+            **(self.core.maternal.outcome_attention.retained_counts()
+               if self.core.maternal is not None and self.core.maternal.outcome_attention is not None else {}),
             **(cognition.sensory.learning_hook.retained_counts() if cognition.sensory.learning_hook is not None else {}),
             **({"maternal_staged_intervals": len(self._maternal_intervals), **self.core.maternal_outcomes.retained_counts()}
                if self.core.maternal_outcomes is not None else {}),

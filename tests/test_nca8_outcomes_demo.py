@@ -265,7 +265,7 @@ def test_cli_ambiguous_or_unknown_selectors_are_not_silently_accepted(arguments,
 
 
 def test_versions_register_real_components_not_new_primitives():
-    assert cca8_run.__version__ == "0.30.25"
+    assert cca8_run.__version__ == "0.30.26"
     assert outcomes.__version__ == "0.1.1" and demo.__version__ == "0.1.0"
     versions = cca8_run.versions_dict()
     assert versions["nca8_outcomes"] == "0.1.1"

@@ -24,8 +24,9 @@ from nca8_visual_demo import run_visual_preview_menu_v1
 from nca8_translation_demo import run_translation_menu_v1
 from nca8_followmom_demo import run_follow_mom_menu_v1
 from nca8_stand_follow_demo import run_stand_follow_menu_v1
+from nca8_maternal_attention_demo import run_maternal_attention_menu_v1
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -397,6 +398,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print("  9) Review visual sources and non-actuating body-frame mapping (P16-2A-A)")
         print("  10) Review MOM association and persistent Follow-Mom (P16-2B-A)")
         print("  11) Review continuous stand -> Follow-Mom (P16-2B-C)")
+        print("  12) Maternal outcome-to-Attention review (P16-2B-D; one focal allocation)")
         print("  [Enter] Return to Main Menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
@@ -465,7 +467,10 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
             if choice == "11":
                 run_stand_follow_menu_v1()
                 continue
-            print("Please choose 1-11, or press Enter to return.")
+            if choice == "12":
+                run_maternal_attention_menu_v1()
+                continue
+            print("Please choose 1-12, or press Enter to return.")
         except Exception as exc:  # pragma: no cover - defensive interactive boundary
             print(f"[nca8:error] {type(exc).__name__}: {exc}")
             if session is not None and session.status().reset_required:

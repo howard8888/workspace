@@ -34,7 +34,7 @@ from nca8_followmom_demo import follow_mom_owner_limits_v1, maternal_durable_sig
 from nca8_hierarchy import IntegratedRightingCycleV1, IntegratedRightingTrialV1
 from nca8_sensorimotor import SensorimotorStepV1
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "STAND_FOLLOW_CASES_V1", "StandFollowProfileV1", "StandFollowPhysicalSampleV1", "StandFollowExperimentV1",
     "stand_follow_profile_v1", "create_stand_follow_trial_v1", "run_stand_follow_v1", "render_stand_follow_v1",
@@ -73,10 +73,13 @@ class StandFollowProfileV1:
     visual_gap_cutoffs: tuple[int, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
-        """Disclose actual initial conditions, missingness and unchanged task criteria."""
+        """Disclose initial conditions; retain the original disabled-route export schema."""
+        maternal = asdict(self.maternal)
+        if not self.maternal.outcome_attention_enabled:
+            maternal.pop("outcome_attention_enabled")
         return {
             "profile": "stand_follow_v1", "case": self.case,
-            "physical": asdict(self.physical), "planar": asdict(self.planar), "maternal": asdict(self.maternal),
+            "physical": asdict(self.physical), "planar": asdict(self.planar), "maternal": maternal,
             "translation_capability": None if self.translation is None else self.translation.as_dict(),
             "righting_target_inset_degrees": self.target_inset_degrees, "righting_enabled": self.righting_enabled,
             "visual_gap_focal_cutoffs": list(self.visual_gap_cutoffs), "focal_interval_ticks": 4,

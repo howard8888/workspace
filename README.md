@@ -16,16 +16,130 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-2B-C continuous stand -> Follow-Mom
+## NCA8 update: P16-2B-D maternal outcome -> Attention
+
+Entry: accepted, committed P16-2B-C at clean
+`b403585f4fd690f5f95e6c91ee4abb7a60eaef28`. This successor is a local-review
+candidate, not acceptance of full P16-2B or B99. It adds one opt-in maternal
+outcome-relevance/focal-allocation path and the requested optional preflight timing
+diagnostics. Architecture v10.1 and adopted Planning v18 remain authoritative;
+no physics, task criterion, learned parameter, dependency or default mode changes.
+
+The registry now has **89 production components / 8 host behavioral primitives**
+(`cca8_run.py v0.30.26`). `nca8_maternal_attention.py` is a source-owned extension,
+not another biological part or task selector. `nca8_maternal_attention_demo.py` is
+its external review harness. `FollowMomProfileV1(outcomes_enabled=True,
+outcome_attention_enabled=True)` enables the path; retained profiles keep it off.
+
+Use **NCA8 menu 12**, with paired source competition, same-source maintenance,
+nominal/routine controls, expiry/missing-evidence/protection, continuous stand-follow,
+and compact/detail views. Existing menus 1-11 keep their routes. The same functions
+serve the developer entry:
+
+    python scripts/review_nca8_followmom.py --outcome-attention
+    python scripts/review_nca8_followmom.py --outcome-attention competing_on --detail
+    python scripts/review_nca8_followmom.py --outcome-attention competing_off
+    python scripts/review_nca8_followmom.py --outcome-attention unresolved_current --detail
+    python scripts/review_nca8_followmom.py --outcome-attention stand_drift
+    python scripts/review_nca8_followmom.py --outcome-attention competing_on --json
+
+### Named maternal outcome policy, not a second executive
+
+C2 receives the original maternal comparator's executed claim and later endpoint
+evidence. A fixed, local significance check requests source relevance for an
+observed identity contradiction, maternal-anchor error of at least 0.10 m,
+contradicted expected adequate proximity, or two consecutive executed discrepancies
+in a shared relation while proximity remains inadequate. One small mismatch,
+missing evidence, nonapplication and disabled comparison are not sufficient.
+The original 0.02-m correspondence tolerance is unchanged.
+
+Only the maternal bid's outcome component is raised to 40. Ordinary task need,
+current recognition/localization, protection and other priorities stay separate.
+The source must remain accessible; the request cannot reinstate missing geometry.
+Attention selects one source. When this source receives WNM, one request may be
+interpreted against its eligible current relations. The existing conservative
+1G-B one-opportunity policy applies: that opportunity performs no new IP selection,
+PNM creation or target installation. A dependent response is reconsidered later
+through ordinary current Navigation and BodyMap, not replayed from history.
+
+Current relevance and historical fit are separate. A returned maternal anchor can
+resolve present relevance without repairing its earlier mismatched prediction.
+A moved kid's current position is not judged against an obsolete SELF endpoint;
+SELF/separation interpretation instead asks about its current target-specific
+proximity requirement. Unknown current relevance remains unresolved. An unresolved
+dependency blocks only new task selection on that source until its original expiry;
+it neither blocks another source nor suspends protected local feedback.
+
+Eight pending requests, one preceding canonical outcome and one dependency are the
+live bounds; requests expire eight ticks after admission without renewal. A
+32-entry diagnostic history is not cognitive memory. Original task limits remain
+20 focal opportunities / 80 physical ticks. Interpretation does not extend either
+limit, restart a completed task, restore a motor lease, infer causal credit or
+perform learning. Overflow is explicit, not silent eviction or hidden extra work.
+
+### Discriminating reviews and honest null results
+
+The main on/off pair uses the same physical start, task history and original
+predictions. Fixed external drift after local target achievement at intervals
+[6,8) and [14,16) produces two small endpoint discrepancies. A real visual-scene
+candidate competes at cutoffs 16 and 20. At 20, route-off selects the visual source;
+route-on selects maternal content and spends that same opportunity interpreting
+it. Normal maternal response selection can occur at 24. **Both runs still reach
+supported proximity at 68**: the demonstrated effect is focal allocation, not a
+survival or speed improvement.
+
+The same-source maintain pair supplies its competitor only at 20 and disables the
+separate operation-persistence nomination in both arms; otherwise that already
+sufficient priority would mask the outcome route. Task identity and continuity are
+retained. The route then demonstrates maintaining, rather than switching to, the
+maternal source. This controlled nomination ablation is explicitly part of that
+pair, not a change to normal Follow-Mom.
+
+A stronger ordinary task-need competitor prevents capture until the request expires
+at 28. A sensor dropout from interval 17 preserves original endpoint 16 but leaves
+current localization unavailable at interpretation 20; no resolved response is
+invented. Support removal from interval 20 produces a local stop at 22, before the
+next focal opportunity at 24. Nominal, one-small-error and comparison-off controls
+produce no request. Continuous nominal stand-follow still completes at 104; timed
+drift in the following phase gives interpretation at 60 and reconsideration at 64.
+All runs keep their declared 80- or 160-tick external horizon, independent of success.
+
+The maternal no-learning participation/Phase-F reconciliation path remains next.
+This slice does not close full P16-2B, begin feeding/rest, complete B99, implement
+maternal identity acquisition or promote NCA8 to default. Retained standalone
+`maternal_correspondence_v1` exports keep their original disabled-route schema;
+new enabled frames name their actual separate Attention consumer.
+
+### Standard validation order and optional preflight timing
+
+The adopted local workflow is Pylint, mypy, new/changed tests, focused neighboring
+regressions, **one preflight**, selected meaningful manual reviews, then Git hygiene.
+Preflight includes the full pytest suite; do not routinely precede it with another
+full pytest or full NCA8 selection. Source repairs must precede the behavioral
+qualification of the corrected code. This later workflow agreement supersedes the
+redundant command order in Planning v18 section 59 without reducing the final scope.
+
+    python cca8_run.py --preflight --timing
+
+Timing adds pytest's `--durations=20 --durations-min=0.5` report and elapsed seconds
+for unit tests (including collection/reporting), architecture/scenario probes,
+hardware/robotics checks, system-fitness assessments and total preflight work.
+`time.perf_counter()` measures wall-clock diagnostics, not simulated cognitive or
+motor time. No decorators, filtering, repeats or pass/fail changes are introduced.
+Normal `--preflight` stays timing-free. `--timing` without `--preflight` is refused.
+Existing optional `--coverage` remains independent and keeps its pure-Python
+coverage policy; timing neither enables coverage nor bypasses dependency failures.
+
+## Retained P16-2B-C continuous stand -> Follow-Mom
 
 P16-2B-B is accepted at clean `d628789a3d5705d67ce582217f7252e53ff5461f`.
 This bounded successor joins the existing Righting, visual/MOM, Follow-Mom and
-translation mechanisms in **one uninterrupted body/world stream**. It is a source
-review candidate, not acceptance of full P16-2B or B99. Architecture v10.1 and
+translation mechanisms in **one uninterrupted body/world stream**. This scope
+was accepted at `b403585`; full P16-2B and B99 were not closed. Architecture v10.1 and
 adopted Planning v18, especially section 41, remain the authorities. No feeding,
 new learner, legacy fallback, interpreter change or default promotion is included.
 
-The registry contains **87 production components / 8 host behavioral primitives**
+At that checkpoint the registry contained **87 production components / 8 host behavioral primitives**
 (`cca8_run.py v0.30.25`). The only new production file is the external experiment
 `nca8_stand_follow_demo.py`; it neither chooses tasks nor introduces a new motor
 architecture. The existing hierarchy owns integration, and the existing task,
