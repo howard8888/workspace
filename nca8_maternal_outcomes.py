@@ -33,7 +33,7 @@ from nca8_prediction import MaternalApproachPreviewV1
 from nca8_sensorimotor_contracts import BodyTranslationTargetV1, CommittedBodyTargetV1, LocalTargetReportV1
 from nca8_visual import VisualObservationV1
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __all__ = [
     "MaternalIntervalEvidenceV1", "MaternalClaimV1", "MaternalOutcomeV1", "MaternalOutcomeFrameV1",
     "MaternalOutcomeRuntimeV1", "__version__",
@@ -183,6 +183,7 @@ class MaternalOutcomeFrameV1:
     pending: tuple[MaternalClaimV1, ...]
     comparison_enabled: bool
     attention_enabled: bool = False
+    learning_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Report only completed bookkeeping, preserving separate later installation."""
@@ -192,7 +193,7 @@ class MaternalOutcomeFrameV1:
             "registration": None if self.registration is None else self.registration.as_dict(),
             "pending": [item.as_dict() for item in self.pending],
             "attention_route": "separate_maternal_attention_v1" if self.attention_enabled else "not_implemented_for_maternal",
-            "learning_route": "not_implemented_for_maternal", "durable_updates": 0,
+            "learning_route": "maternal_no_learning_v1" if self.learning_enabled else "not_implemented_for_maternal", "durable_updates": 0,
         }
 
 

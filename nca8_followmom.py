@@ -32,7 +32,7 @@ from nca8_prediction import MaternalApproachPreviewV1, ProjectedNavMapV1
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
 from nca8_sensorimotor_contracts import BodyTranslationTargetV1, CommittedBodyTargetV1, LocalTargetReportV1, TargetOriginV1
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = ["FollowMomProfileV1", "FollowMomTaskV1", "FollowMomApplicationV1", "FollowMomAssessmentV1", "FollowMomIPV1", "__version__"]
 
 
@@ -55,14 +55,17 @@ class FollowMomProfileV1:
     outcomes_enabled: bool = False
     prediction_comparison_enabled: bool = True
     outcome_attention_enabled: bool = False
+    learning_hook_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.seed, MaternalSeedV1):
             raise TypeError("Follow-Mom requires a declared initial association")
         if not all(isinstance(flag, bool) for flag in (self.association_enabled, self.recognition_enabled, self.spatial_enabled,
                                                        self.following_enabled, self.influence_enabled, self.outcomes_enabled,
-                                                       self.prediction_comparison_enabled, self.outcome_attention_enabled)):
+                                                       self.prediction_comparison_enabled, self.outcome_attention_enabled, self.learning_hook_enabled)):
             raise TypeError("maternal profile switches must be Boolean")
+        if self.learning_hook_enabled and not self.outcomes_enabled:
+            raise ValueError("maternal no-learning hook requires the canonical maternal correspondence consumer")
         if self.outcome_attention_enabled and not self.outcomes_enabled:
             raise ValueError("maternal outcome Attention requires the canonical maternal correspondence consumer")
         if not self.outcomes_enabled and not self.prediction_comparison_enabled:

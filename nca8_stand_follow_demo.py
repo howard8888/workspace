@@ -34,7 +34,7 @@ from nca8_followmom_demo import follow_mom_owner_limits_v1, maternal_durable_sig
 from nca8_hierarchy import IntegratedRightingCycleV1, IntegratedRightingTrialV1
 from nca8_sensorimotor import SensorimotorStepV1
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __all__ = [
     "STAND_FOLLOW_CASES_V1", "StandFollowProfileV1", "StandFollowPhysicalSampleV1", "StandFollowExperimentV1",
     "stand_follow_profile_v1", "create_stand_follow_trial_v1", "run_stand_follow_v1", "render_stand_follow_v1",
@@ -75,6 +75,8 @@ class StandFollowProfileV1:
     def as_dict(self) -> dict[str, object]:
         """Disclose initial conditions; retain the original disabled-route export schema."""
         maternal = asdict(self.maternal)
+        if not self.maternal.learning_hook_enabled:
+            maternal.pop("learning_hook_enabled")
         if not self.maternal.outcome_attention_enabled:
             maternal.pop("outcome_attention_enabled")
         return {

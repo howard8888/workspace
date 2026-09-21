@@ -41,7 +41,7 @@ from nca8_maternal_outcomes import MaternalClaimV1, MaternalOutcomeV1
 from nca8_sensorimotor_contracts import BodyTranslationTargetV1, CommittedBodyTargetV1
 from nca8_visual import VisualObservationV1
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "MaternalMismatchRequestV1", "MaternalInterpretationV1", "MaternalFocalAllocationV1",
     "MaternalAttentionFrameV1", "MaternalOutcomeAttentionV1", "__version__",
@@ -159,6 +159,7 @@ class MaternalAttentionFrameV1:
     pending: tuple[MaternalMismatchRequestV1, ...]
     source_bid: AttentionBidV1 | None
     allocation: MaternalFocalAllocationV1
+    learning_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Describe the actual source route; learning remains a separately deferred lane."""
@@ -166,7 +167,8 @@ class MaternalAttentionFrameV1:
             "profile": "maternal_outcome_attention_v1", "created": [item.as_dict() for item in self.created],
             "pending": [item.as_dict() for item in self.pending],
             "source_bid": self.source_bid.as_dict() if self.source_bid is not None else None,
-            "allocation": self.allocation.as_dict(), "learning_route": "deferred_maternal_reconciliation", "durable_updates": 0,
+            "allocation": self.allocation.as_dict(),
+            "learning_route": "maternal_no_learning_v1" if self.learning_enabled else "deferred_maternal_reconciliation", "durable_updates": 0,
         }
 
 

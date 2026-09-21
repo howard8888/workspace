@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import math
 import textwrap
+from functools import lru_cache
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -51,7 +52,7 @@ from typing import TypeAlias
 
 # pylint: disable=unnecessary-comprehension
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 __all__ = [
     "Nca8TraceBufferV1",
     "Nca8TraceEventV1",
@@ -1954,13 +1955,40 @@ def _flow_ascii_v1(text: str) -> str:
     Other characters are shown as Python-style escapes rather than executed as
     terminal controls or silently removed. Rendering does not alter raw records.
     """
+    if text.isascii() and text.isprintable():
+        return text
     return "".join(character if " " <= character <= "~" else ascii(character)[1:-1] for character in text)
 
 
+@lru_cache(maxsize=1024)
+def _flow_wrap_cached_v1(text: str, width: int, indent: str) -> tuple[str, ...]:
+    """Reuse only short, already escaped text wrapping, never event interpretation.
+
+    The caller admits at most 512 text characters, 32 indent characters and a
+    width of 1..140. Together with 1,024 entries this bounds retained formatting
+    data. Keys contain strings/integers only, not events, sources or live owners.
+    Immutable values prevent callers from modifying another rendering. Cache
+    eviction, a cold cache and a warm cache must produce exactly the same text.
+    Context-sensitive provenance lookup still runs independently for every view.
+    """
+    return tuple(textwrap.wrap(
+        text, width=width, initial_indent=indent, subsequent_indent=indent,
+        break_long_words=True, break_on_hyphens=False,
+    )) or (indent,)
+
+
 def _flow_wrap_v1(text: str, width: int, *, indent: str = "") -> list[str]:
-    """Wrap text deterministically, including long identifiers, without truncation."""
+    """Wrap without truncation; return a fresh list even when formatting is reused.
+
+    Long/unusual inputs take the original uncached path. Caching is strictly a
+    bounded presentation optimization: no record, explanation, partial view or
+    assertion is omitted, and no previous rendering supplies missing evidence.
+    """
+    escaped = _flow_ascii_v1(text)
+    if len(escaped) <= 512 and len(indent) <= 32 and 1 <= width <= 140:
+        return list(_flow_wrap_cached_v1(escaped, width, indent))
     return textwrap.wrap(
-        _flow_ascii_v1(text), width=width, initial_indent=indent, subsequent_indent=indent,
+        escaped, width=width, initial_indent=indent, subsequent_indent=indent,
         break_long_words=True, break_on_hyphens=False,
     ) or [indent]
 

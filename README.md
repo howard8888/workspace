@@ -16,7 +16,124 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-2B-D maternal outcome -> Attention
+## NCA8 update: P16-2B-E maternal participation / Phase F
+
+Entry: accepted, committed P16-2B-D at clean
+`da74a071d24ca96d57509e0e2c92e120f8c53072`. This successor is prepared for local
+validation and acceptance, not a durable-learning or B99 promotion. Architecture
+v10.1 and adopted Planning v18 remain authoritative. Physics, task criteria,
+motor permissions, source selection and default routing are unchanged.
+
+The current registry has **91 production components / 8 host behavioral primitives**
+(`cca8_run.py v0.30.27`). The two added modules are `nca8_maternal_learning.py`,
+a maternal-source-owned no-learning recipient, and `nca8_maternal_learning_demo.py`,
+an external review harness. Enable the hook explicitly with
+`FollowMomProfileV1(outcomes_enabled=True, learning_hook_enabled=True)`.
+The independently controlled maternal Attention route remains available through
+`outcome_attention_enabled=True`; its actual focal allocation is not duplicated in F.
+Retained profiles leave the new hook off and keep their original export schemas.
+
+Use **NCA8 menu 13** for live hook-on/off comparisons, interpretation/expiry controls,
+capability narrowing/veto, support protection, sensory gaps, assistance, continuous
+stand-follow, original-recipient fixtures and the read-only L01-L25 inventory.
+Existing menus 1-12 retain their routes. Developer entries call the same functions:
+
+    python scripts/review_nca8_followmom.py --learning nominal_on
+    python scripts/review_nca8_followmom.py --learning competing_on --detail
+    python scripts/review_nca8_followmom.py --learning competing_off
+    python scripts/review_nca8_followmom.py --learning unresolved_current
+    python scripts/review_nca8_followmom.py --learning stand_drift
+    python scripts/review_nca8_followmom.py --learning-routing
+    python scripts/review_nca8_followmom.py --learning nominal_on --json
+
+### Original participation, independent lifetimes, no durable learner
+
+One participant retains the originating maternal source/seed, task, application,
+original PNM basis and proposed-versus-authorized translation relations. It is a
+candidate recipient, not proof of execution, task success or causal action credit.
+There are at most eight participants; each expires before creation cycle + 4.
+This inherited short-delay engineering profile is independent of the task's
+20-opportunity/80-tick limits, eight-tick target lease, PNM endpoint/availability
+window and eight-tick Attention-request lifetime. A 32-entry diagnostic deque
+cannot refresh eligibility or supply authoritative evidence.
+
+The actual scheduler F callback, after handoff acceptance and before closure or
+external installation, offers older C2 outcomes to the maternal owner. New E
+participation has no observed future result. Canonical known compatible forecast
+relations can receive `accepted_no_update`; unknown, interrupted, canceled,
+not-applied, unregistered, expired and observed-without-command cases remain
+explicitly different dispositions. Narrowing can leave only the original maternal
+anchor eligible; incompatible SELF/separation predictions are never repaired to
+match the smaller authorized movement.
+
+A supported mismatch request waits for the interpretation actually performed in
+the existing focal opportunity. An unresolved interpretation retains only its
+original eligibility lifetime. Disabling maternal Attention conservatively holds
+discrepant evidence rather than performing that interpretation for free in F.
+The hook does not choose WNM, an IP, a target or an emotional/learning verdict.
+It changes no map organization, gain, preference, identity, SEC value or RNG state.
+L12 remains `eligibility_only_no_durable_rule`; the 25-row inventory and future
+18 Working C99 minima are unchanged. No additional fictitious learner is created.
+
+### Fixed reviews and source-routing limits
+
+The 19 live profiles have a fixed 80-tick horizon, or 160 ticks for continuous
+stand-follow. Nominal hook-on/off both complete supported proximity at tick64;
+competing hook-on/off both interpret at20, reconsider at24 and complete at68.
+These pairs demonstrate neutral eligibility processing, not a survival advantage.
+The protected competitor prevents interpretation; maternal eligibility expires
+at24 while its Attention request can remain until28. Missing current evidence
+produces unresolved interpretation at20 and no accepted dependent teaching.
+
+Narrowing uses the existing eight-tick focal cadence; its last claim/participant
+can remain pending at the physical horizon rather than receiving fabricated extra
+time. Faster one-tick focal cadence causes the four-cycle eligibility to expire
+before the same eight-tick endpoint can be observed. This exposes the short-delay
+profile's limitation; the implementation does not silently lengthen eligibility.
+Support loss interrupts the lower target at22 before the next focal opportunity
+at24. Assistance can complete proximity without establishing action credit.
+
+The stand profiles call the separate Righting and maternal no-learning recipients
+within the same actual F checkpoint, not two focal tasks. Their original source
+references and claims do not cross domains. Both retain completion at104; maternal
+stand-drift interpretation/reconsideration remain60/64. Righting's separate
+Attention setting remains as in the retained stand profile, not silently enabled.
+
+The two routing fixtures perform real core selection, authorization, installation,
+C2 and F, but supply explicit synthetic command/endpoint records and perform no
+physical world steps. They demonstrate that A's original recipient can receive an
+old matching endpoint while B is focal and A has lost current localization/access.
+The otherwise identical expired case rejects it. This is a controlled access-loss
+boundary proof, not implementation of general Ready/offloading.
+
+### Faster exhaustive trace verification without reduced coverage
+
+The original `test_every_prefix_and_suffix_of_gate_a_renders_without_losing_records`
+is unchanged: all 158-event Gate-A prefix/suffix boundaries and all 318 renders
+still execute. `nca8_trace.py v0.9.1` instead removes repeated presentation work:
+a printable-ASCII fast path and a 1,024-entry short-string wrapping cache. Cache
+keys contain no events, sources or owners; values are immutable tuples and callers
+receive fresh lists. Only escaped strings <=512 characters, indents <=32 and
+widths1..140 are cached. Longer/unusual input uses the original uncached path.
+Context-dependent interpretation and provenance lookup always run anew.
+
+Tests compare the original uncached algorithm with cold, warm and evicted caches,
+including Unicode/control escapes, partial traces, list mutation and memory bounds.
+No renderer output, test assertion, prefix/suffix case or validation selection is
+removed. Use `python cca8_run.py --preflight --timing` to observe the local effect;
+there is no machine-dependent wall-clock assertion in pytest.
+
+Qualification of this candidate completes the maternal no-learning/F slice only.
+Feeding/rest and the complete hard-newborn B99 run remain subsequent work. There
+is no learned maternal identity, LP acquisition, persistence or default promotion.
+
+## Retained P16-2B-D checkpoint: maternal outcome -> Attention
+
+The following section records the preceding delivery's scope and historical
+89-component inventory. P16-2B-D was subsequently accepted and committed as
+`da74a07`; its stated next maternal reconciliation work is implemented by the
+new opt-in slice above, pending local acceptance.
+
 
 Entry: accepted, committed P16-2B-C at clean
 `b403585f4fd690f5f95e6c91ee4abb7a60eaef28`. This successor is a local-review

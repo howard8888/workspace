@@ -32,8 +32,9 @@ from nca8_visual import VisualDetectionV1, VisualGuidanceV1, VisualNavMapStateV1
 
 if TYPE_CHECKING:
     from nca8_maternal_attention import MaternalOutcomeAttentionV1
+    from nca8_maternal_learning import MaternalLearningHookV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["MaternalSeedV1", "MaternalNavMapStateV1", "MaternalCandidateV1", "MaternalSourceV1", "__version__"]
 
 MOM_REF = NavMapRefV1("maternal_target", 1)
@@ -293,6 +294,7 @@ class MaternalSourceV1:
         self._identity_seen = False
         self._influence: tuple[str, int] | None = None
         self._outcome_attention: MaternalOutcomeAttentionV1 | None = None
+        self._learning_hook: MaternalLearningHookV1 | None = None
 
     @property
     def outcome_attention(self) -> MaternalOutcomeAttentionV1 | None:
@@ -310,6 +312,26 @@ class MaternalSourceV1:
             raise RuntimeError("configure maternal relevance only once before source updates")
         import nca8_maternal_attention  # pylint: disable=import-outside-toplevel
         self._outcome_attention = nca8_maternal_attention.MaternalOutcomeAttentionV1(self._stream, self._seed)
+
+    @property
+    def learning_hook(self) -> MaternalLearningHookV1 | None:
+        """Read this source's optional eligibility owner, not the currently selected WNM."""
+        return self._learning_hook
+
+    def configure_learning_hook(self, *, diagnostic_capacity: int = 32) -> None:
+        """Attach one maternal no-learning owner before the first source update.
+
+        The local import avoids making the source schema depend on its optional
+        consequence consumer at import time. This creates only bounded transient
+        eligibility; no seeded map, identity, parameter or motor right changes.
+        Reset constructs a fresh owner after the old hook has been closed.
+        """
+        if self._current is not None or self._learning_hook is not None:
+            raise RuntimeError("configure maternal learning hook once before source updates")
+        import nca8_maternal_learning  # pylint: disable=import-outside-toplevel
+        self._learning_hook = nca8_maternal_learning.MaternalLearningHookV1(
+            self._stream, self._seed, diagnostic_capacity=diagnostic_capacity,
+        )
 
     @property
     def durable_map(self) -> NavMapV2:

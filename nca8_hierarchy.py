@@ -56,13 +56,14 @@ from nca8_outcomes import (
 from nca8_righting import RightingApplicationV1, RightingContextV1
 from nca8_outcome_attention import RightingMismatchRequestV1
 from nca8_learning import LearningPhaseFReportV1
+from nca8_maternal_learning import MaternalLearningPhaseFReportV1
 from nca8_runtime import Nca8RightingPreviewSessionV1, RightingPreviewResultV1
 from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, SchedulerCycleSnapshotV1
 from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, SensorimotorProfileV1, SensorimotorStepV1
 from nca8_sensorimotor_contracts import BodyTranslationTargetV1, FocalMotorEvidenceV1, LocalTargetReportV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -103,6 +104,7 @@ class IntegratedRightingCycleV1:
     maternal_task: FollowMomAssessmentV1 | None = None
     maternal_correspondence: MaternalOutcomeFrameV1 | None = None
     maternal_attention: MaternalAttentionFrameV1 | None = None
+    maternal_learning_report: MaternalLearningPhaseFReportV1 | None = None
 
     @property
     def status(self) -> str:
@@ -142,6 +144,8 @@ class IntegratedRightingCycleV1:
                if self.maternal_source is not None else {}),
             **({"maternal_correspondence": self.maternal_correspondence.as_dict()} if self.maternal_correspondence is not None else {}),
             **({"maternal_attention": self.maternal_attention.as_dict()} if self.maternal_attention is not None else {}),
+            **({"maternal_learning_reconciliation": self.maternal_learning_report.as_dict()}
+               if self.maternal_learning_report is not None else {}),
         }
 
 
@@ -204,6 +208,8 @@ class IntegratedRightingCoreV1:
         )
         if self.maternal is not None and follow_mom_profile is not None and follow_mom_profile.outcome_attention_enabled:
             self.maternal.configure_outcome_attention()
+        if self.maternal is not None and follow_mom_profile is not None and follow_mom_profile.learning_hook_enabled:
+            self.maternal.configure_learning_hook(diagnostic_capacity=learning_diagnostic_capacity)
         self.follow_mom = (FollowMomIPV1(self.maternal, follow_mom_profile)
                            if self.maternal is not None and follow_mom_profile is not None else None)
         self.maternal_outcomes = (MaternalOutcomeRuntimeV1(stream, compare_predictions=follow_mom_profile.prediction_comparison_enabled)
@@ -253,6 +259,9 @@ class IntegratedRightingCoreV1:
         hook = self.cognition.sensory.learning_hook
         if hook is not None:
             hook.close()
+        maternal_hook = self.maternal.learning_hook if self.maternal is not None else None
+        if maternal_hook is not None:
+            maternal_hook.close()
         if self.outcomes is not None:
             self.outcomes.reject_uninstalled()
         receipt = self.handoff.receipt
@@ -572,10 +581,12 @@ class IntegratedRightingCoreV1:
                           phase=CyclePhase.PROJECT_DISPATCH.name, details={"receipt": accepted.receipt_id})
         hook = self.cognition.sensory.learning_hook
         learning_report: LearningPhaseFReportV1 | None = None
+        maternal_hook = self.maternal.learning_hook if self.maternal is not None else None
+        maternal_learning_report: MaternalLearningPhaseFReportV1 | None = None
 
         def reconcile_learning() -> None:
-            """Visit the one source-side participant while the scheduler is actually in F."""
-            nonlocal learning_report
+            """Visit configured source participants once in F, never scan the learning ledger."""
+            nonlocal learning_report, maternal_learning_report
             if hook is not None:
                 learning_report = hook.reconcile(
                     cycle_id=cycle, cutoff_tick=tick, registration=claim_registration,
@@ -591,10 +602,27 @@ class IntegratedRightingCoreV1:
                                            "offered_outcomes": learning_report.offered_outcomes,
                                            "dispositions": ",".join(item.status for item in learning_report.dispositions),
                                            "durable_learning_updates": 0, "ledger_rows_executed": 0})
+            if maternal_hook is not None:
+                maternal_learning_report = maternal_hook.reconcile(
+                    cycle_id=cycle, cutoff_tick=tick, registration=maternal_registration,
+                    task=application.task if isinstance(application, FollowMomApplicationV1) else None,
+                    outcomes=maternal_results, requests=maternal_requests,
+                    interpretation=maternal_allocation.interpretation
+                    if maternal_allocation is not None and maternal_allocation.kind == "interpretation" else None,
+                    comparison_enabled=maternal_owner.compare_predictions if maternal_owner is not None else False,
+                    attention_enabled=maternal_attention is not None,
+                )
+                self.trace.append("hierarchy_maternal_learning_hook", "F reconciled original maternal participation; no durable update",
+                                  cycle_id=cycle, phase=CyclePhase.LEARNING_SCHEDULE.name,
+                                  details={"recipient": maternal_learning_report.recipient_id,
+                                           "participants": len(maternal_learning_report.pending),
+                                           "offered_outcomes": maternal_learning_report.offered_outcomes,
+                                           "dispositions": ",".join(item.status for item in maternal_learning_report.dispositions),
+                                           "durable_learning_updates": 0, "ledger_rows_executed": 0})
             self.trace.append("hierarchy_learning", "F reconciliation: no durable learner or new physical outcome", cycle_id=cycle,
                               phase=CyclePhase.LEARNING_SCHEDULE.name, details={"durable_learning_updates": 0})
 
-        if hook is None:
+        if hook is None and maternal_hook is None:
             # Preserve the retained empty-F trace and original scheduler call.
             reconcile_learning()
             schedule = self.scheduler.phase_f_finish(cycle, self.trace)
@@ -609,10 +637,11 @@ class IntegratedRightingCoreV1:
             maternal_source, self.follow_mom.assessment() if self.follow_mom is not None else None,
             MaternalOutcomeFrameV1(tick, tuple(item for item in maternal_owner.history() if item.number > maternal_before),
                                    maternal_registration, maternal_owner.pending(), maternal_owner.compare_predictions,
-                                   maternal_attention is not None)
+                                   maternal_attention is not None, maternal_hook is not None)
             if maternal_owner is not None else None,
-            MaternalAttentionFrameV1(maternal_requests, maternal_attention.pending(), maternal_bid, maternal_allocation)
+            MaternalAttentionFrameV1(maternal_requests, maternal_attention.pending(), maternal_bid, maternal_allocation, maternal_hook is not None)
             if maternal_attention is not None and maternal_allocation is not None else None,
+            maternal_learning_report=maternal_learning_report,
         )
         self.last_result = result
         return result
@@ -781,6 +810,8 @@ class IntegratedRightingTrialV1:
             **(self.core.maternal.outcome_attention.retained_counts()
                if self.core.maternal is not None and self.core.maternal.outcome_attention is not None else {}),
             **(cognition.sensory.learning_hook.retained_counts() if cognition.sensory.learning_hook is not None else {}),
+            **(self.core.maternal.learning_hook.retained_counts()
+               if self.core.maternal is not None and self.core.maternal.learning_hook is not None else {}),
             **({"maternal_staged_intervals": len(self._maternal_intervals), **self.core.maternal_outcomes.retained_counts()}
                if self.core.maternal_outcomes is not None else {}),
         }
@@ -818,6 +849,8 @@ class IntegratedRightingTrialV1:
                if self.core.maternal_outcomes is not None else {}),
             **({"learning_participation": [item.as_dict() for item in self.core.cognition.sensory.learning_hook.pending()]}
                if self.core.cognition.sensory.learning_hook is not None else {}),
+            **({"maternal_learning_participation": [item.as_dict() for item in self.core.maternal.learning_hook.pending()]}
+               if self.core.maternal is not None and self.core.maternal.learning_hook is not None else {}),
             **({"task_outcomes_profile": "righting_outcomes_v1",
                 "task_assessment": self.core.outcomes.last_assessment.as_dict() if self.core.outcomes.last_assessment is not None else None,
                 "pending_claims": [item.as_dict() for item in self.core.outcomes.pending()],

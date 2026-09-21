@@ -343,7 +343,7 @@ def test_component_registry_and_menu_describe_real_current_features():
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_outcome_attention"] == "nca8_outcome_attention"
     assert registry["nca8_outcome_attention_demo"] == "nca8_outcome_attention_demo"
-    assert cca8_run.__version__ == "0.30.26" and len(cca8_run._cca8_component_rows()) == 89
+    assert cca8_run.__version__ == "0.30.27" and len(cca8_run._cca8_component_rows()) == 91
     assert nca8_outcome_attention.__version__ == "0.1.0" and demo.__version__ == "0.1.1"
     assert len(cca8_run.PRIMITIVES) == 8
     assert "H6-B qualification and P16-1G task outcomes remain open" not in Path(nca8_menu.__file__).read_text()
