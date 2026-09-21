@@ -34,7 +34,7 @@ from nca8_primitives import PrimitiveApplicationV1
 # Small validators intentionally remain local for readable standalone modules.
 # pylint: disable=duplicate-code
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __all__ = [
     "Nca8PredictionRuntimeV1",
     "PendingPredictionTraceV1",
@@ -299,8 +299,11 @@ class MaternalApproachPreviewV1:
     scene_target: NavPointV1
     predicted_self: NavPointV1
     horizon_ticks: int = 8
+    outcome_consumer_enabled: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.outcome_consumer_enabled, bool):
+            raise TypeError("maternal outcome consumer marker must be Boolean")
         if not isinstance(self.pnm, ProjectedNavMapV1) or not isinstance(self.basis, MaternalNavMapStateV1):
             raise TypeError("maternal projection requires its original typed PNM/source")
         if not self.basis.action_localized or self.basis.self_position is None or self.basis.applied_cycle != self.pnm.created_cycle:
@@ -330,7 +333,8 @@ class MaternalApproachPreviewV1:
                 "predicted_separation_metres": self.predicted_separation, "horizon_ticks": self.horizon_ticks,
                 "model": "follow_mom_static_anchor_v1", "status": "conditional_not_observed",
                 "target_motion_assumption": "original_target_stationary_during_contribution", "contact_prediction": "not_supplied",
-                "task_outcome_consumer": "deferred_maternal_qualification", "learned_operation": False}
+                "task_outcome_consumer": "maternal_correspondence_v1" if self.outcome_consumer_enabled else "deferred_maternal_qualification",
+                "learned_operation": False}
 
 
 @dataclass(frozen=True, slots=True)

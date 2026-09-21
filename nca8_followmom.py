@@ -32,7 +32,7 @@ from nca8_prediction import MaternalApproachPreviewV1, ProjectedNavMapV1
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
 from nca8_sensorimotor_contracts import BodyTranslationTargetV1, CommittedBodyTargetV1, LocalTargetReportV1, TargetOriginV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["FollowMomProfileV1", "FollowMomTaskV1", "FollowMomApplicationV1", "FollowMomAssessmentV1", "FollowMomIPV1", "__version__"]
 
 
@@ -52,13 +52,18 @@ class FollowMomProfileV1:
     spatial_enabled: bool = True
     following_enabled: bool = True
     influence_enabled: bool = True
+    outcomes_enabled: bool = False
+    prediction_comparison_enabled: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.seed, MaternalSeedV1):
             raise TypeError("Follow-Mom requires a declared initial association")
         if not all(isinstance(flag, bool) for flag in (self.association_enabled, self.recognition_enabled, self.spatial_enabled,
-                                                       self.following_enabled, self.influence_enabled)):
+                                                       self.following_enabled, self.influence_enabled, self.outcomes_enabled,
+                                                       self.prediction_comparison_enabled)):
             raise TypeError("maternal profile switches must be Boolean")
+        if not self.outcomes_enabled and not self.prediction_comparison_enabled:
+            raise ValueError("disable maternal prediction comparison only inside the opt-in correspondence profile")
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +142,7 @@ class FollowMomAssessmentV1:
     supported_samples: tuple[MaternalNavMapStateV1, ...]
     local_target_busy: bool
     cancel_previous: bool
+    outcome_consumer_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Export distinct observed proximity, local continuation and uncertain credit."""
@@ -144,7 +150,8 @@ class FollowMomAssessmentV1:
                 "supported_samples": [{"sample_id": item.sample_id, "event_tick": item.event_tick, "separation": item.separation}
                                       for item in self.supported_samples],
                 "local_target_busy": self.local_target_busy, "cancel_previous": self.cancel_previous,
-                "task_pnm_correspondence": "deferred_maternal_qualification", "durable_updates": 0}
+                "task_pnm_correspondence": "separate_maternal_consumer" if self.outcome_consumer_enabled else "deferred_maternal_qualification",
+                "durable_updates": 0}
 
 
 class FollowMomIPV1:
@@ -199,7 +206,8 @@ class FollowMomIPV1:
 
     def assessment(self) -> FollowMomAssessmentV1:
         """Freeze the currently computed disposition without rerunning any cognitive work."""
-        return FollowMomAssessmentV1(self._task, self._reason, tuple(self._supported), self._target_busy, self._cancel_previous)
+        return FollowMomAssessmentV1(self._task, self._reason, tuple(self._supported), self._target_busy, self._cancel_previous,
+                                     self.profile.outcomes_enabled)
 
     def retained_counts(self) -> dict[str, int]:
         """Measure finite task, evidence and history storage independent of the trace."""
@@ -357,7 +365,8 @@ class FollowMomIPV1:
             TargetOriginV1(basis.stream, task.task_id, app_id, f"follow_mom_envelope:{basis.stream.generation}:{cycle_id}"),
             basis.source_map_ref, task.region_id, 0.48, 0.25, "selected_follow_mom",
         )
-        projection = MaternalApproachPreviewV1(pnm, basis, task.task_id, task.region_id, basis.target_position, predicted, horizon)
+        projection = MaternalApproachPreviewV1(pnm, basis, task.task_id, task.region_id, basis.target_position, predicted, horizon,
+                                               self.profile.outcomes_enabled)
         next_task = replace(task, applications=task.applications + 1)
         result = FollowMomApplicationV1(app_id, self.primitive_id, self.primitive_kind, cycle_id, wnm.working_id,
                                        ("maternal:limited_proximity_contribution",), expected, pnm.observation_condition,

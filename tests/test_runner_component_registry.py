@@ -48,6 +48,7 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "nca8_followmom": "nca8_followmom",
     "nca8_followmom_demo": "nca8_followmom_demo",
     "nca8_maternal": "nca8_maternal",
+    "nca8_maternal_outcomes": "nca8_maternal_outcomes",
     "nca8_hierarchy": "nca8_hierarchy",
     "nca8_hierarchy_demo": "nca8_hierarchy_demo",
     "nca8_hierarchy_qualification": "nca8_hierarchy_qualification",

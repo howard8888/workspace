@@ -157,7 +157,7 @@ def test_cli_works_outside_repo_and_exports_the_exact_shared_result(args, tmp_pa
 
 
 @pytest.mark.parametrize("args", [["--case", "unknown"], ["--replay", "unknown"], ["--case"],
-                                  ["--case", "nominal", "--replay"], ["--outcomes"]])
+                                  ["--case", "nominal", "--replay"], ["--outcomes", "unknown"]])
 def test_cli_ambiguous_or_unknown_requests_fail_explicitly(args, tmp_path):
     process = subprocess.run([sys.executable, str(ROOT / "scripts/review_nca8_followmom.py"), *args],
                              cwd=tmp_path, capture_output=True, check=False)
@@ -189,5 +189,5 @@ def test_registry_reports_real_components_without_promoting_local_smp_to_task():
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     for name in ("nca8_maternal", "nca8_followmom", "nca8_followmom_demo"):
         assert registry[name] == name
-    assert cca8_run.__version__ == "0.30.23" and len(cca8_run._cca8_component_rows()) == 85
+    assert cca8_run.__version__ == "0.30.24" and len(cca8_run._cca8_component_rows()) == 86
     assert len(cca8_run.PRIMITIVES) == 8

@@ -25,7 +25,7 @@ from nca8_prediction import ProjectedNavMapV1, SupportPreviewV1, VisualTranslati
 from nca8_primitives import TaskActionV1
 from nca8_sensorimotor_contracts import BodyTranslationTargetV1, CommittedBodyTargetV1
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __all__ = ["Nca8PhaseEDispatchV1", "Nca8HandoffReceiptV1", "Nca8InternalHandoffV1", "Nca8MotorEnvelopeV1", "__version__"]
 
 
@@ -107,7 +107,9 @@ class Nca8MotorEnvelopeV1:
             "original_preview": self.projection.as_dict() if self.projection is not None else None,
             "targets": [item.as_dict() for item in self.targets], "replaces": [item.as_dict() for item in self.replaces],
             "cancel_previous": self.cancel_previous, "physical_execution_established": False,
-            "task_pnm_correspondence": ("deferred_maternal_qualification" if isinstance(self.projection, MaternalApproachPreviewV1) else
+            "task_pnm_correspondence": ("maternal_correspondence_v1" if isinstance(self.projection, MaternalApproachPreviewV1)
+                                        and self.projection.outcome_consumer_enabled else
+                                        "deferred_maternal_qualification" if isinstance(self.projection, MaternalApproachPreviewV1) else
                                         "not_implemented_for_visual" if isinstance(self.projection, VisualTranslationPreviewV1)
                                         else "deferred_to_P16_1G"), "durable_learning_updates": 0,
         }

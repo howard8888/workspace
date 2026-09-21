@@ -16,13 +16,97 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P16-2B-B original maternal PNM correspondence
+
+The maternal approach slice and its lint/type correction were accepted and committed
+as clean `09f0c47`. This next opt-in slice adds **execution-sensitive correspondence**
+without changing Follow-Mom decisions, physical equations, target tolerances, task
+budgets or durable organization. It is a review candidate, not full P16-2B or B99
+completion. A99 and P16-2A remain accepted; the legacy default is unchanged.
+The registry contains **86 production components / 8 host behavioral primitives**
+(`cca8_run.py v0.30.24`). The only new production module is
+`nca8_maternal_outcomes.py`; the existing hierarchy, demo and review script are reused.
+
+Use **NCA8 menu 10 -> 10**, or the same shared developer entry:
+
+    python scripts/review_nca8_followmom.py --outcomes
+    python scripts/review_nca8_followmom.py --outcomes nominal --detail
+    python scripts/review_nca8_followmom.py --outcomes post_achievement_drift --detail
+    python scripts/review_nca8_followmom.py --outcomes drift_comparison_off --detail
+    python scripts/review_nca8_followmom.py --outcomes narrowed_k8 --detail
+    python scripts/review_nca8_followmom.py --outcomes brief_gap --detail
+
+Without `--outcomes`, the 24 accepted maternal profiles and four source-only replays
+retain their original defaults and exports. No new outcome owner runs in those paths.
+The new family contains 21 live profiles, all with 80 physical updates / 4.00 seconds.
+
+### Original evidence, actual execution and separate verdicts
+
+Before handoff, E retains the original maternal projection, the proposed request,
+the actual authorized translation and any incompatible forecast subset. After core
+closure and once-consumed installation, lower updates record genuine command exposure
+and paired motor/visual acquisitions. C2 uses only frozen returned evidence. No private
+body snapshot, stage, success flag or new action's future outcome enters the core.
+
+The `maternal_correspondence_v1` profile compares three original relations: SELF
+endpoint, stationary maternal anchor and separation. Each has a fixed 0.02-m residual
+tolerance, separate from the unchanged 0.01-m local target tolerance. The original
+endpoint is the projection cutoff plus its eight-tick horizon; its first availability
+may be up to eight ticks later. These are engineering assumptions, not biological
+constants. The generic PNM's descriptive cycle fields do not renew an actuator lease
+or replace this explicit physical endpoint/availability contract.
+
+Historical visual products refer to the same motor acquisition that the fixed-scene
+provider actually delivered. They do not resample the body, make old evidence current,
+or count as another independent observation. The new optional original-feedback
+argument to `MotorWorldV1.visual_surface` is valid only for this fixed-object scaffold;
+a future moving-object provider must supply its own time-correct sensory history.
+
+A narrowed or reversed BodyMap endpoint leaves SELF/separation unevaluable under the
+original forecast; the unchanged maternal anchor can remain comparable. Raw residuals
+are still inspectable. Veto is `not_applied`. Replacement, cancellation or lower blocking
+before the original endpoint produces an interruption disposition, not a fully executed
+prediction failure. An endpoint already reached in time can still receive its delayed
+report after a new target is installed. Missing/ambiguous evidence remains unknown or
+expires unresolved; a contradictory descriptor is not a new known maternal location.
+
+The fixed post-achievement drift control makes the distinction visible: the local
+target is achieved at tick 6, but the physical drift over ticks 6-8 yields an original
+PNM mismatch at event 8, available 9 and compared at 12. The body actually moved closer,
+so a prediction mismatch is not synonymous with a bad consequence or failed task.
+The comparison-off pair retains the same obligations, commands, physical trajectory
+and supported proximity completion, disabling only endpoint comparison.
+
+Ordinary narrowed K4 following can replace a local target before its original eight-tick
+forecast endpoint; it therefore produces interruption, not an invented complete forecast
+trial. The separately named `narrowed_k8` case allows the original endpoint to occur,
+retaining 80 physical updates while openly changing focal polling to K8. It is not a
+matched-cadence performance comparison. A final endpoint whose report would arrive after
+the physical horizon remains pending; runs are not extended to clear that record.
+
+### Bounds and remaining qualification
+
+The consumer owns at most eight pending claims, 32 terminal reports, 16 recent acquisition
+identities, one installed-target reference and one awaiting installation. At most 16
+returned intervals wait for the next focal admission. Overflow stops before another
+physical interval; faults never replay a consumed receipt or declare uncertain effects
+unapplied. Current-source, task, target, prediction and diagnostic lifetimes remain distinct.
+
+Correspondence does **not** select a task, assign causal credit, complete proximity dwell,
+change Attention, perform demanding interpretation or write a learner. The combined
+stand-to-follow demonstration and maternal mismatch-to-Attention/no-learning routing
+remain open under P16-2B; the Righting-only 1G evidence is not borrowed for these claims.
+No acquired identity/LP, moving-mother physical model, general search/Ready system,
+feeding, B99, C99, D99 or default promotion is claimed.
+
 ## NCA8 update: P16-2B-A MOM source and persistent maternal approach
 
-P16-2A-A/B are accepted through clean `7d23fb6`. This next, opt-in slice implements
+P16-2A-A/B are accepted through clean `7d23fb6`. This retained, opt-in slice implements
 one declared initial maternal association and a developmentally supplied Follow-Mom IP.
-A99 and the accepted visual/translation foundation are retained. This is a review
-candidate, not full P16-2B or B99 completion. The existing default remains unchanged.
-The registry now contains **85 production components / 8 host behavioral primitives**
+A99 and the accepted visual/translation foundation are retained. P16-2B-A plus its
+lint/type correction was accepted and committed as `09f0c47`, without full P16-2B or
+B99 completion. The existing default remains unchanged. At this checkpoint the registry
+contained **85 production components / 8 host behavioral primitives**
 (`cca8_run.py v0.30.23`). The three new ordinary modules are `nca8_maternal.py`,
 `nca8_followmom.py`, and `nca8_followmom_demo.py`; they do not denote three new brain parts.
 

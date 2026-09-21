@@ -33,7 +33,7 @@ import math
 
 from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, PlanarFeedbackV1
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 __all__ = [
     "MotorBodyStateV1",
     "MotorWorldPerturbationV1",
@@ -581,15 +581,26 @@ class MotorWorldV1:
         """Read actual horizontal state for external evaluation; cognition must not use it."""
         return self._planar
 
-    def visual_surface(self) -> dict[str, object] | None:
+    def visual_surface(self, *, feedback: MotorFeedbackV1 | None = None) -> dict[str, object] | None:
         """Expose a fixed-scene sensory scaffold at the latest DELIVERED acquisition.
 
         Object locations are fixed for this slice. SELF comes from that same old
         sensor sample, never from the newer private body. Reading this surface
         neither advances nor resamples anything. The outer adapter supplies the
         matching original event/availability header and positive whitelist.
+        Optional feedback supplies a previously delivered canonical acquisition
+        for historical comparison. This does not change the provider's current
+        sample or resample the body; it is valid only for this fixed-scene scaffold.
         """
-        profile, sensed = self._planar_profile, self._latest_feedback.planar
+        # The optional original sample supports delayed-claim routing, not new sensing.
+        # Scene objects are fixed under this provider, so only the measured SELF basis varies.
+        basis = self._latest_feedback if feedback is None else feedback
+        if not isinstance(basis, MotorFeedbackV1):
+            raise TypeError("visual surface requires a canonical original motor acquisition")
+        basis.validate_available(stream=self._stream, at_tick=self._tick)
+        if basis.sample_id > self._latest_feedback.sample_id or basis.event_tick > self._latest_feedback.event_tick:
+            raise ValueError("visual surface cannot use an acquisition beyond the delivered boundary")
+        profile, sensed = self._planar_profile, basis.planar
         if profile is None or sensed is None or not profile.vision_available:
             return None
         anchor: dict[str, object] = {"entity": "self"}

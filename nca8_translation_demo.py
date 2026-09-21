@@ -10,6 +10,8 @@ four focal opportunities are fixed across cases. Observer truth never enters
 cognition. No renderer advances the world or restores motor permission.
 """
 
+#pylint: disable=duplicate-code
+
 from __future__ import annotations
 
 import json

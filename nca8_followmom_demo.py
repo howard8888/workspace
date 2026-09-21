@@ -7,7 +7,8 @@ and run eighty 0.05-second physical intervals. The ordinary A-F core selects the
 actual Follow-Mom IP, and the existing BodyMap/executor/provider perform movement.
 External truth is retained only for inspection. Separate explicitly nonphysical
 replays examine contradictory recognition and independently approaching targets.
-Neither set closes the combined stand-to-follow or maternal PNM-outcome gates.
+The opt-in P16-2B-B profile adds original endpoint correspondence to the same
+runs. Combined stand-to-follow and maternal Attention/learning routes remain open.
 """
 
 from __future__ import annotations
@@ -29,10 +30,11 @@ from nca8_maternal import MaternalNavMapStateV1, MaternalSeedV1, MaternalSourceV
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_visual import VisualDetectionV1, VisualObservationV1, VisualSourceV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["FOLLOW_MOM_CASES_V1", "MATERNAL_REPLAY_CASES_V1", "FollowMomExperimentV1", "MaternalSourceReplayV1",
            "create_follow_mom_trial_v1", "run_follow_mom_v1", "run_maternal_source_replay_v1",
-           "render_follow_mom_v1", "render_maternal_replay_v1", "run_follow_mom_menu_v1", "__version__"]
+           "render_follow_mom_v1", "render_maternal_replay_v1", "run_follow_mom_menu_v1",
+           "MATERNAL_OUTCOME_CASES_V1", "run_maternal_outcome_menu_v1", "__version__"]
 
 FOLLOW_MOM_CASES_V1 = (
     "nominal", "heading_90", "different_target", "already_near", "association_off", "wrong_seed",
@@ -41,6 +43,11 @@ FOLLOW_MOM_CASES_V1 = (
     "competing_on", "competing_off", "fast_cadence", "far_target", "assisted", "assisted_no_task",
 )
 MATERNAL_REPLAY_CASES_V1 = ("independent_approach", "own_closing", "contradiction", "relocated_target")
+MATERNAL_OUTCOME_CASES_V1 = (
+    "nominal", "heading_90", "brief_gap", "prolonged_gap", "support_interruption", "mapping_reversed", "narrowed",
+    "obstacle_contact", "motor_blocked", "feedback_missing", "cancelled", "competing_off", "fast_cadence",
+    "assisted", "assisted_no_task", "veto", "delayed_feedback", "comparison_off", "narrowed_k8", "post_achievement_drift", "drift_comparison_off",
+)
 # These shared-owner limits deliberately match the independent translation control.
 # pylint: disable=duplicate-code
 _LIMITS = {
@@ -54,11 +61,15 @@ _LIMITS = {
     "maternal_durable_maps": 1, "maternal_current_configurations": 1, "maternal_supported_bases": 1,
     "maternal_influence_requests": 1, "follow_mom_tasks": 1, "follow_mom_source_bases": 1,
     "follow_mom_local_targets": 1, "follow_mom_supported_samples": 3, "follow_mom_applications": 8,
+    "maternal_pending_claims": 8, "maternal_outcome_history": 32, "maternal_recent_acquisitions": 16,
+    "maternal_awaiting_installation": 1, "maternal_execution_reference": 1, "maternal_staged_intervals": 16,
 }
 # pylint: enable=duplicate-code
 
 
-def create_follow_mom_trial_v1(case: str, *, trace_capacity: int = 256) -> IntegratedRightingTrialV1:
+def create_follow_mom_trial_v1(
+    case: str, *, trace_capacity: int = 256, outcomes_enabled: bool = False, compare_predictions: bool = True,
+) -> IntegratedRightingTrialV1:
     """Configure task-independent physical conditions and declared sensory scaffolds.
 
     All live cases start supported. The existing body equations and motor limits
@@ -66,11 +77,15 @@ def create_follow_mom_trial_v1(case: str, *, trace_capacity: int = 256) -> Integ
     admissions by the outer runner; it is not a hidden instruction to the IP.
     Contact/support failures remain sensed by the existing lower controller.
     """
-    if not isinstance(case, str) or case not in FOLLOW_MOM_CASES_V1:
+    if not isinstance(outcomes_enabled, bool) or not isinstance(compare_predictions, bool):
+        raise TypeError("maternal outcome experiment switches must be Boolean")
+    allowed = (*FOLLOW_MOM_CASES_V1, *MATERNAL_OUTCOME_CASES_V1) if outcomes_enabled else FOLLOW_MOM_CASES_V1
+    if not isinstance(case, str) or case not in allowed:
         raise ValueError("unknown Follow-Mom experiment")
     physical = MotorWorldProfileV1(initial_body=MotorBodyStateV1(0.0, 1.0))
     planar = PlanarWorldProfileV1(objects=(PlanarObjectV1("region_1", (2.0, 1.0)),))
-    profile = FollowMomProfileV1()
+    profile = FollowMomProfileV1(outcomes_enabled=outcomes_enabled,
+                                 prediction_comparison_enabled=compare_predictions and case not in {"comparison_off", "drift_comparison_off"})
     capability = BodyTranslationCapabilityV1()
     if case == "heading_90":
         planar = replace(planar, initial_heading=90.0)
@@ -92,7 +107,7 @@ def create_follow_mom_trial_v1(case: str, *, trace_capacity: int = 256) -> Integ
         profile = replace(profile, influence_enabled=False)
     elif case == "support_interruption":
         physical = replace(physical, perturbations=(MotorWorldPerturbationV1(9, 17, remove_support=True),))
-    elif case == "narrowed":
+    elif case in {"narrowed", "narrowed_k8"}:
         capability = BodyTranslationCapabilityV1(maximum_step=0.1)
     elif case == "obstacle_contact":
         planar = replace(planar, objects=(*planar.objects, PlanarObjectV1("obstacle", (0.14, 0.07), radius=0.045)))
@@ -102,6 +117,12 @@ def create_follow_mom_trial_v1(case: str, *, trace_capacity: int = 256) -> Integ
         physical = replace(physical, perturbations=(MotorWorldPerturbationV1(9, 80, drop_feedback=True),))
     elif case == "far_target":
         planar = replace(planar, objects=(PlanarObjectV1("region_1", (20.0, 1.0)),))
+    elif case == "veto":
+        planar = replace(planar, heading_available=False)
+    elif case == "delayed_feedback":
+        physical = replace(physical, sensor_delay_ticks=4)
+    elif case in {"post_achievement_drift", "drift_comparison_off"}:
+        planar = replace(planar, perturbations=(PlanarPerturbationV1(6, 8, velocity=(0.6, 0.3)),))
     if case in {"assisted", "assisted_no_task"}:
         planar = replace(planar, perturbations=(PlanarPerturbationV1(1, 21, velocity=(1.6, 0.8)),))
     return IntegratedRightingTrialV1(
@@ -147,20 +168,26 @@ class FollowMomExperimentV1:
 
     def as_dict(self) -> dict[str, object]:
         """Export distinct selected tasks, motor work and current-proximity evidence."""
-        return {"case": self.case, "profile": "maternal_approach_v1", "initial_condition": "supported_standing",
+        correspondence = any(cycle.maternal_correspondence is not None for cycle in self.cycles)
+        return {"case": self.case, "profile": "maternal_correspondence_v1" if correspondence else "maternal_approach_v1",
+                "initial_condition": "supported_standing",
                 "physical_ticks": len(self.local_steps), "elapsed_seconds": len(self.local_steps) * 0.05,
                 "cycles": [item.as_dict() for item in self.cycles], "local_steps": [item.as_dict() for item in self.local_steps],
                 "observer_physical_samples": [item.as_dict() for item in self.physical_samples],
                 "final_feedback": self.final_feedback.as_dict(), "peak_counts": dict(self.peak_counts),
                 "bound_violations": list(self.bound_violations), "durable_unchanged": self.durable_unchanged,
-                "durable_updates": 0, "task_pnm_correspondence": "deferred_maternal_qualification",
-                "full_P16_2B": "open_combined_stand_to_follow_and_outcome_qualification"}
+                "durable_updates": 0,
+                "task_pnm_correspondence": "original_endpoint_consumer" if correspondence else "deferred_maternal_qualification",
+                "full_P16_2B": "open_combined_stand_to_follow_and_maternal_routes" if correspondence else
+                "open_combined_stand_to_follow_and_outcome_qualification"}
 
 
 # pylint: enable=duplicate-code
 
 
-def run_follow_mom_v1(case: str = "nominal", *, trace_capacity: int = 256) -> FollowMomExperimentV1:
+def run_follow_mom_v1(
+    case: str = "nominal", *, trace_capacity: int = 256, outcomes_enabled: bool = False, compare_predictions: bool = True,
+) -> FollowMomExperimentV1:
     """Run one finite eighty-tick trial with no provider truth in cognitive decisions.
 
     The competing-source pair raises the real visual owner's candidate at
@@ -169,7 +196,8 @@ def run_follow_mom_v1(case: str = "nominal", *, trace_capacity: int = 256) -> Fo
     twenty-opportunity task cap; its earlier budget exhaustion is not concealed.
     No case stops or extends physical time merely to obtain a positive endpoint.
     """
-    trial = create_follow_mom_trial_v1(case, trace_capacity=trace_capacity)
+    trial = create_follow_mom_trial_v1(case, trace_capacity=trace_capacity, outcomes_enabled=outcomes_enabled,
+                                     compare_predictions=compare_predictions)
     before = _durable(trial)
     # The same passive collection pattern is retained for cross-profile comparisons.
     # pylint: disable=duplicate-code
@@ -193,7 +221,7 @@ def run_follow_mom_v1(case: str = "nominal", *, trace_capacity: int = 256) -> Fo
         cycles.append(trial.focal_step(visual_input_enabled=enabled, visual_bid_priority=priority))
         observe()
 
-    stride = 1 if case == "fast_cadence" else 4
+    stride = 1 if case == "fast_cadence" else 8 if case == "narrowed_k8" else 4
     for tick in range(80):
         if tick % stride == 0:
             focal()
@@ -271,7 +299,9 @@ def render_follow_mom_v1(result: FollowMomExperimentV1, *, detail: bool = False)
         raise TypeError("expected a completed Follow-Mom result and Boolean detail")
     last = result.cycles[-1]
     task = last.maternal_task
-    lines = [f"P16-2B-A MATERNAL APPROACH | {result.case}",
+    correspondence = any(cycle.maternal_correspondence is not None for cycle in result.cycles)
+    title = "P16-2B-B MATERNAL CORRESPONDENCE" if correspondence else "P16-2B-A MATERNAL APPROACH"
+    lines = [f"{title} | {result.case}",
              "  Initial supported standing; seeded MOM association, selected developmental Follow-Mom IP; no learned identity.",
              f"  physical ticks={len(result.local_steps)}; elapsed={len(result.local_steps)*0.05:.2f}s; focal opportunities={len(result.cycles)}",
              f"  final task={None if task is None or task.task is None else task.task.as_dict()}",
@@ -298,6 +328,26 @@ def render_follow_mom_v1(result: FollowMomExperimentV1, *, detail: bool = False)
                 target = reservation.current.target
                 lines.append(f"    BodyMap {target.kind.value}: offset={target.offset}; endpoint={target.endpoint}; "
                              f"lease=[{reservation.current.committed_tick},{reservation.current.expires_at_tick})")
+    if any(cycle.maternal_correspondence is not None for cycle in result.cycles):
+        lines.append("  P16-2B-B ORIGINAL MATERNAL PNM / AUTHORIZED EXECUTION / CORRESPONDING ENDPOINT")
+        for cycle in result.cycles:
+            frame = cycle.maternal_correspondence
+            if frame is None:
+                continue
+            registration = frame.registration
+            if detail and registration is not None:
+                lines.append(f"    claim at {frame.cutoff_tick}: {registration.as_dict()}")
+            for outcome in frame.outcomes:
+                evidence = outcome.evidence
+                lines.append(f"    at {frame.cutoff_tick}: {outcome.claim.preview.pnm.pnm_id} -> {outcome.status}; "
+                             f"event={None if evidence is None else evidence.event_tick}; "
+                             f"available={None if evidence is None else evidence.available_tick}; "
+                             f"commands={outcome.command_intervals}; relations={dict(outcome.relations)}; "
+                             f"residuals={dict(outcome.residuals)}")
+        final_frame = result.cycles[-1].maternal_correspondence
+        if final_frame is not None:
+            lines.append(f"    pending at physical horizon={[item.preview.pnm.pnm_id for item in final_frame.pending]}")
+        lines.append("    Comparison is not task completion, demanding interpretation, Attention escalation or learning.")
     if detail:
         for step, body in zip(result.local_steps, result.physical_samples):
             drive = None if step.command is None or step.command.translation is None else step.command.translation.as_dict()
@@ -305,6 +355,8 @@ def render_follow_mom_v1(result: FollowMomExperimentV1, *, detail: bool = False)
                          f"reports={[(item.disposition.value, item.reason) for item in step.reports]}")
     lines.extend((f"  bounds={list(result.bound_violations)}; durable unchanged={result.durable_unchanged}; learned updates=0",
                   "  Current-proximity completion is not causal credit or a task-PNM verdict.",
+                  "  Full P16-2B remains open: combined stand-to-follow and maternal Attention/learning routes are not claimed here."
+                  if correspondence else
                   "  Full P16-2B remains open: combined stand-to-follow and maternal outcome qualification are not claimed here."))
     return "\n".join(lines)
 
@@ -334,15 +386,41 @@ def run_follow_mom_menu_v1() -> None:
               "  3) Association, recognition, geometry and IP controls\n  4) Brief/prolonged gaps and support interruption\n"
               "  5) Selected source influence / competing source\n  6) Mapping, capability, contact and faults\n"
               "  7) Cadence, finite task and external assistance\n  8) Source-only motion/contradiction replays\n"
-              "  9) Detailed nominal live timeline\n  [Enter] Return to NCA8 menu")
+              "  9) Detailed nominal live timeline\n  10) Original maternal PNM correspondence (P16-2B-B)\n"
+              "  [Enter] Return to NCA8 menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
             return
-        if choice == "8":
+        if choice == "10":
+            run_maternal_outcome_menu_v1()
+        elif choice == "8":
             for case in MATERNAL_REPLAY_CASES_V1:
                 print(render_maternal_replay_v1(run_maternal_source_replay_v1(case)))
         elif choice in groups:
             for case in groups[choice]:
                 print(render_follow_mom_v1(run_follow_mom_v1(case), detail=choice == "9"))
         else:
-            print("Choose 1-9 or press Enter to return.")
+            print("Choose 1-10 or press Enter to return.")
+
+
+def run_maternal_outcome_menu_v1() -> None:
+    """Inspect the same opt-in correspondence runs as the CLI, without touching A0."""
+    groups = {"1": MATERNAL_OUTCOME_CASES_V1, "2": ("nominal", "comparison_off", "post_achievement_drift", "drift_comparison_off"),
+              "3": ("narrowed", "narrowed_k8", "mapping_reversed", "veto"), "4": ("brief_gap", "prolonged_gap", "delayed_feedback", "feedback_missing"),
+              "5": ("obstacle_contact", "motor_blocked", "support_interruption", "cancelled"),
+              "6": ("assisted", "assisted_no_task"), "7": ("nominal",)}
+    while True:
+        print("\nP16-2B-B -- MATERNAL PNM CORRESPONDENCE\n"
+              "  1) All endpoint profiles\n  2) Comparison on/off; same task and motor authority\n"
+              "  3) Original forecast versus narrowing, reversed mapping and veto\n"
+              "  4) Missing and delayed endpoint evidence\n  5) Contact, blocking, interruption and cancellation\n"
+              "  6) Assistance and uncertain causal credit\n  7) Detailed original-claim timeline\n"
+              "  [Enter] Return to Follow-Mom review")
+        choice = cca8_cli.read_menu_input_v1()
+        if not choice:
+            return
+        if choice not in groups:
+            print("Choose 1-7 or press Enter to return.")
+            continue
+        for case in groups[choice]:
+            print(render_follow_mom_v1(run_follow_mom_v1(case, outcomes_enabled=True), detail=choice == "7"))

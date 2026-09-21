@@ -700,11 +700,11 @@ def test_component_versions_and_inventory_are_accurate():
     import cca8_run
     import nca8_body
     import nca8_body_targets
-    assert cca8_run.__version__ == "0.30.23"
+    assert cca8_run.__version__ == "0.30.24"
     assert nca8_body.__version__ == "0.5.0"
     assert nca8_body_targets.__version__ == "0.7.0"
     assert dict(cca8_run._CCA8_COMPONENT_REGISTRY)["nca8_body_targets"] == "nca8_body_targets"
-    assert len(cca8_run._cca8_component_rows()) == 85
+    assert len(cca8_run._cca8_component_rows()) == 86
     assert len(cca8_run.PRIMITIVES) == 8
 
 

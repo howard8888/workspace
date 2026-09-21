@@ -24,7 +24,7 @@ from nca8_visual_demo import run_visual_preview_menu_v1
 from nca8_translation_demo import run_translation_menu_v1
 from nca8_followmom_demo import run_follow_mom_menu_v1
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -39,7 +39,8 @@ Option 8 also offers the 1G-C no-learning hook, Phase F and L01-L25 coverage rev
 A99 is accepted at the Planning-v18 scope; legacy/default routing is unchanged.
 Option 9 previews visual sources and body-frame geometry without movement (P16-2A-A).
 Option 9 -> 8 runs actual finite translation/contact with a supplied operation fixture (P16-2A-B).
-P16-2A-A/B are accepted; option 10 adds the P16-2B-A maternal approach review.
+P16-2A-A/B and P16-2B-A are accepted; option 10 retains the maternal approach review.
+Option 10 -> 10 adds original maternal PNM correspondence (P16-2B-B); combined stand/follow and maternal routes remain open.
 Full P16-2B and B99 remain open; no learned maternal identity or new default is claimed.
 Planning v16 P16-1R-B separates internal handoff and cycle closure from the
 external world step and returning-input admission. Gate-A decisions are unchanged.
