@@ -34,7 +34,7 @@ from types import MappingProxyType
 from typing import Any, TypeAlias
 
 from cca8_env import EnvConfig, EnvObservation, HybridEnvironment
-from cca8_motor_contracts import MotorStreamRefV1
+from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from cca8_navmap_kernel import NavPointV1
 from cca8_navpatch import CELL_BLOCKED, CELL_GOAL, CELL_HAZARD, CELL_TRAVERSABLE, CELL_UNKNOWN
 
@@ -42,7 +42,7 @@ from nca8_visual import VisualDetectionV1, VisualObservationV1
 from nca8_maps import SupportObservationV1
 from nca8_primitives import TaskActionKindV1, TaskActionV1
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "NCA8_SCAFFOLD_LEDGER_V1",
     "Nca8EnvironmentBridgeV1",
@@ -52,7 +52,7 @@ __all__ = [
     "Nca8ObservationV1",
     "Nca8ScaffoldLedgerEntryV1",
     "adapt_env_observation_v1",
-    "admit_visual_surface_v1",
+    "admit_visual_surface_v1", "admit_motor_visual_surface_v1",
     "environment_token_for_task_action_v1",
     "create_environment_bridge_v1",
     "__version__",
@@ -657,6 +657,26 @@ def admit_visual_surface_v1(
                 raise ValueError("visual region requires an opaque handle and optional category")
             detections.append(VisualDetectionV1(region_id, descriptor, point(item)))
     return VisualObservationV1(stream, sample_id, event_tick, available_tick, frame, point(surface.get("anchor")), tuple(detections))
+
+
+def admit_motor_visual_surface_v1(surface: dict[str, Any] | None, feedback: MotorFeedbackV1) -> VisualObservationV1 | None:
+    """Admit a provider surface sampled with an original delivered motor acquisition.
+
+    The outer runner, not cognition, obtains the surface. This boundary applies
+    the existing recursive whitelist before visual decoding. It creates no new
+    acquisition/time, never reads a private world, and never substitutes a target
+    for sensing. In this first fixed-landmark provider both products share one
+    physical event. Later independent modality rates require their own profile.
+    """
+    if not isinstance(feedback, MotorFeedbackV1):
+        raise TypeError("surface admission requires the original motor acquisition")
+    if surface is None:
+        return None
+    if not isinstance(surface, dict) or feedback.planar is None:
+        raise TypeError("a planar surface requires typed measured planar feedback")
+    admitted = adapt_env_observation_v1(EnvObservation(surface_grid=surface, env_meta={"step_index": feedback.event_tick}))
+    return admit_visual_surface_v1(admitted, stream=feedback.stream, sample_id=feedback.sample_id,
+                                   event_tick=feedback.event_tick, available_tick=feedback.available_tick)
 
 
 _TASK_ACTION_TO_ENVIRONMENT_TOKEN_V1: dict[TaskActionKindV1, str | None] = {

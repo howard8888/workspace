@@ -29,10 +29,10 @@ from nca8_maps import MotorSupportConfigurationV1
 from nca8_prediction import SupportPreviewV1
 from nca8_righting import RightingApplicationV1, RightingContextV1, RightingTaskV1, righting_support_adequacy_v1
 from nca8_sensorimotor_contracts import (
-    CommittedBodyTargetV1, LocalTargetDispositionV1, LocalTargetReportV1, SensorimotorTargetKindV1,
+    BodyRelativeTargetV1, CommittedBodyTargetV1, LocalTargetDispositionV1, LocalTargetReportV1, SensorimotorTargetKindV1,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "RightingIntervalEvidenceV1", "RightingClaimRegistrationV1", "RightingClaimOutcomeV1",
     "RightingTaskAssessmentV1", "RightingOutcomeRuntimeV1", "__version__",
@@ -291,11 +291,15 @@ class RightingOutcomeRuntimeV1:
             raise RuntimeError("previous claim still awaits installation disposition")
         if len(self._pending) >= 8:
             raise OverflowError("eight unresolved task claims; no silent eviction or additional dispatch")
+        endpoints: dict[SensorimotorTargetKindV1, float] = {}
+        for committed in targets:
+            if not isinstance(committed.target, BodyRelativeTargetV1):
+                raise ValueError("Righting correspondence cannot consume a translation target")
+            endpoints[committed.target.kind] = committed.target.endpoint
         self._bind_task(application.task)
         if self._previous is None:
             self._previous = preview.basis.feedback
         changed: set[str] = set()
-        endpoints = {target.target.kind: target.target.endpoint for target in targets}
         for kind, name, requested in ((_ORIENTATION, "tilt", request.desired_tilt_degrees),
                                       (_EXTENSION, "extension", request.desired_extension)):
             if requested is not None and (kind not in endpoints or abs(endpoints[kind] - requested) > 1e-12):

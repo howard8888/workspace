@@ -31,14 +31,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 
-from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1
+from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, PlanarFeedbackV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "MotorBodyStateV1",
     "MotorWorldPerturbationV1",
     "MotorWorldProfileV1",
     "MotorWorldV1",
+    "PlanarObjectV1", "PlanarPerturbationV1", "PlanarWorldProfileV1", "PlanarWorldStateV1",
     "SupportWorldStateV1",
     "SupportWorldProfileV1",
     "support_profile_for_scenario_v1",
@@ -392,6 +393,147 @@ def _motor_support(body: MotorBodyStateV1, profile: MotorWorldProfileV1, surface
     return contact, loading
 
 
+@dataclass(frozen=True, slots=True)
+class PlanarObjectV1:
+    """One fixed point/disk in the external horizontal scene, not a task target.
+
+    Region IDs are opaque sensor handles. A positive radius denotes an obstacle;
+    radius zero is a noncolliding landmark. The body is represented by a point
+    for translation collision, not anatomical hooves or a contact polygon.
+    """
+
+    region_id: str
+    position: tuple[float, float]
+    radius: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.region_id, str) or not 1 <= len(self.region_id) <= 80:
+            raise ValueError("object region_id must be bounded text")
+        if any(not (char.isascii() and (char.isalnum() or char in "_:.-/")) for char in self.region_id):
+            raise ValueError("object handle contains unsupported characters")
+        PlanarFeedbackV1("scene_xy:validation", self.position, 0.0, False)
+        object.__setattr__(self, "radius", _motor_number(self.radius, "obstacle radius", 0.0, 100.0))
+
+
+@dataclass(frozen=True, slots=True)
+class PlanarPerturbationV1:
+    """Fixed-time exogenous velocity/yaw, invisible to the motor controller.
+
+    Velocity is scene-relative metres/second and can displace a neutral or
+    blocked body. Heading rate is degrees/second. Neither is a commanded target,
+    an action index, a task script or a sensory success flag.
+    """
+
+    start_tick: int
+    stop_tick: int
+    velocity: tuple[float, float] = (0.0, 0.0)
+    heading_rate: float = 0.0
+
+    def __post_init__(self) -> None:
+        _motor_integer(self.start_tick, "planar perturbation start")
+        _motor_integer(self.stop_tick, "planar perturbation stop")
+        if self.stop_tick <= self.start_tick:
+            raise ValueError("perturbation stop must follow start")
+        if not isinstance(self.velocity, tuple) or len(self.velocity) != 2:
+            raise TypeError("external velocity must be an immutable pair")
+        for value in self.velocity:
+            _motor_number(value, "external velocity", -2.0, 2.0)
+        object.__setattr__(self, "heading_rate", _motor_number(self.heading_rate, "external heading rate", -180.0, 180.0))
+
+
+@dataclass(frozen=True, slots=True)
+class PlanarWorldProfileV1:
+    """Opt-in horizontal extension of the SAME motor plant and sensor clock.
+
+    Nominal speed is one metre/second times the normalized body-relative drive,
+    conditional on actual contact/load and a near-upright body. Zero drive has
+    no self-propulsion but external forcing still acts. Swept point/disk collision
+    clips displacement at first contact without selecting a route or sliding
+    around the obstacle. Localization and fixed object categories are explicit
+    idealized sensory scaffolds; this is not a gait or vision simulator.
+    """
+
+    frame_id: str = "scene_xy:lab"
+    initial_position: tuple[float, float] = (0.0, 0.0)
+    initial_heading: float = 0.0
+    objects: tuple[PlanarObjectV1, ...] = ()
+    motor_enabled: bool = True
+    position_available: bool = True
+    heading_available: bool = True
+    contact_available: bool = True
+    vision_available: bool = True
+    perturbations: tuple[PlanarPerturbationV1, ...] = ()
+
+    def __post_init__(self) -> None:
+        PlanarFeedbackV1(self.frame_id, self.initial_position, self.initial_heading, False)
+        for flag in (self.motor_enabled, self.position_available, self.heading_available, self.contact_available, self.vision_available):
+            if not isinstance(flag, bool):
+                raise TypeError("planar profile switches must be Boolean")
+        if not isinstance(self.objects, tuple) or len(self.objects) > 8 or any(not isinstance(item, PlanarObjectV1) for item in self.objects):
+            raise ValueError("supply at most eight immutable physical objects")
+        if len({item.region_id for item in self.objects}) != len(self.objects):
+            raise ValueError("physical region handles must be unique")
+        if any(item.radius > 0 and math.hypot(self.initial_position[0] - item.position[0],
+                                             self.initial_position[1] - item.position[1]) < item.radius - 1e-12 for item in self.objects):
+            raise ValueError("initial point body cannot lie inside a solid obstacle")
+        if not isinstance(self.perturbations, tuple) or len(self.perturbations) > 8:
+            raise ValueError("supply at most eight external planar perturbations")
+        previous = 0
+        for item in self.perturbations:
+            if not isinstance(item, PlanarPerturbationV1) or item.start_tick < previous:
+                raise ValueError("planar perturbations must be typed, ordered and nonoverlapping")
+            previous = item.stop_tick
+
+
+@dataclass(frozen=True, slots=True)
+class PlanarWorldStateV1:
+    """Actual horizontal pose and contact for external inspection only."""
+
+    position: tuple[float, float]
+    heading_degrees: float
+    obstacle_contact: bool = False
+
+    def __post_init__(self) -> None:
+        PlanarFeedbackV1("scene_xy:validation", self.position, self.heading_degrees, self.obstacle_contact)
+
+    def as_dict(self) -> dict[str, object]:
+        """Export physical truth, never a substitute for an admitted sensor sample."""
+        return {"position": list(self.position), "heading_degrees": self.heading_degrees, "obstacle_contact": self.obstacle_contact}
+
+
+def _swept_planar_step(
+    start: tuple[float, float], delta: tuple[float, float], objects: tuple[PlanarObjectV1, ...],
+) -> tuple[tuple[float, float], bool]:
+    """Clip one continuous point trajectory at its first disk intersection.
+
+    This prevents tunnelling even when both unbounded endpoints are outside a
+    disk. A tangent start may move away; an inward drive from contact stays put.
+    The measured contact is a geometric consequence, not a copied expectation.
+    """
+    dx, dy = delta
+    length_squared = dx * dx + dy * dy
+    fraction = 1.0
+    for item in objects:
+        if item.radius <= 0.0 or length_squared == 0.0:
+            continue
+        px, py = start[0] - item.position[0], start[1] - item.position[1]
+        radial = px * dx + py * dy
+        c = px * px + py * py - item.radius * item.radius
+        if c <= 1e-12 and radial < 0.0:
+            fraction = 0.0
+            continue
+        discriminant = radial * radial - length_squared * c
+        if discriminant < 0.0:
+            continue
+        entry = (-radial - math.sqrt(max(0.0, discriminant))) / length_squared
+        if 0.0 < entry <= fraction:
+            fraction = entry
+    position = start[0] + fraction * dx, start[1] + fraction * dy
+    contact = any(item.radius > 0.0 and math.hypot(position[0] - item.position[0], position[1] - item.position[1])
+                  <= item.radius + 1e-10 for item in objects)
+    return position, contact
+
+
 class MotorWorldV1:
     """A small deterministic body simulator with explicit command and sensing time.
 
@@ -413,18 +555,49 @@ class MotorWorldV1:
     readings are retained; a diagnostic trace never drives the physical model.
     """
 
-    def __init__(self, stream: MotorStreamRefV1, profile: MotorWorldProfileV1 | None = None) -> None:
+    def __init__(
+        self, stream: MotorStreamRefV1, profile: MotorWorldProfileV1 | None = None, *, planar_profile: PlanarWorldProfileV1 | None = None,
+    ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("stream must be MotorStreamRefV1")
         if profile is not None and not isinstance(profile, MotorWorldProfileV1):
             raise TypeError("profile must be MotorWorldProfileV1 or None")
+        if planar_profile is not None and not isinstance(planar_profile, PlanarWorldProfileV1):
+            raise TypeError("planar_profile must be PlanarWorldProfileV1 or None")
+        self._planar_profile = planar_profile
+        self._planar = (None if planar_profile is None else
+                        PlanarWorldStateV1(planar_profile.initial_position, planar_profile.initial_heading,
+                                           _swept_planar_step(planar_profile.initial_position, (0.0, 0.0), planar_profile.objects)[1]))
         self._stream = stream
         self._profile = profile if profile is not None else MotorWorldProfileV1()
         self._body = self._profile.initial_body
         self._tick = 0
         self._last_command_id = 0
         self._pending: tuple[MotorFeedbackV1, ...] = ()
-        self._latest_feedback = self._measure(self._body, 0.0, self._profile.surface_present, event_tick=0, delay=0)
+        self._latest_feedback = self._measure(self._body, 0.0, self._profile.surface_present, event_tick=0, delay=0, planar=self._planar)
+
+    @property
+    def planar_body(self) -> PlanarWorldStateV1 | None:
+        """Read actual horizontal state for external evaluation; cognition must not use it."""
+        return self._planar
+
+    def visual_surface(self) -> dict[str, object] | None:
+        """Expose a fixed-scene sensory scaffold at the latest DELIVERED acquisition.
+
+        Object locations are fixed for this slice. SELF comes from that same old
+        sensor sample, never from the newer private body. Reading this surface
+        neither advances nor resamples anything. The outer adapter supplies the
+        matching original event/availability header and positive whitelist.
+        """
+        profile, sensed = self._planar_profile, self._latest_feedback.planar
+        if profile is None or sensed is None or not profile.vision_available:
+            return None
+        anchor: dict[str, object] = {"entity": "self"}
+        if sensed.position is not None:
+            anchor.update(x=sensed.position[0], y=sensed.position[1])
+        return {"schema": "surface_grid_v1", "frame": profile.frame_id, "anchor": anchor,
+                "objects": [{"entity": item.region_id, "kind": "object", "x": item.position[0], "y": item.position[1]}
+                            for item in profile.objects], "landmarks": []}
 
     @property
     def stream(self) -> MotorStreamRefV1:
@@ -472,9 +645,10 @@ class MotorWorldV1:
         rejected after reset. No active cognitive target or lease is restored.
         Generation overflow is rejected before replacing any owned value.
         """
-        fresh = MotorWorldV1(MotorStreamRefV1(self._stream.stream_id, self._stream.generation + 1), self._profile)
+        fresh = MotorWorldV1(MotorStreamRefV1(self._stream.stream_id, self._stream.generation + 1), self._profile, planar_profile=self._planar_profile)
         self._stream = fresh.stream
         self._body = fresh.body
+        self._planar = fresh.planar_body
         self._tick = 0
         self._last_command_id = 0
         self._pending = ()
@@ -483,6 +657,7 @@ class MotorWorldV1:
 
     def _measure(
         self, body: MotorBodyStateV1, angular_rate: float, surface_present: bool, *, event_tick: int, delay: int,
+        planar: PlanarWorldStateV1 | None = None,
     ) -> MotorFeedbackV1:
         """Sense actual geometry; omit declared channels without repairing them.
 
@@ -493,7 +668,16 @@ class MotorWorldV1:
         contact, loading = _motor_support(body, self._profile, surface_present)
         instability = _clamp(abs(math.sin(math.radians(body.body_tilt_degrees))) * (1.0 - loading) + abs(angular_rate) / 180.0)
         missing = self._profile.unavailable_channels
+        planar_feedback = None
+        horizontal = self._planar_profile
+        if planar is not None and horizontal is not None:
+            planar_feedback = PlanarFeedbackV1(
+                horizontal.frame_id, planar.position if horizontal.position_available else None,
+                planar.heading_degrees if horizontal.heading_available else None,
+                planar.obstacle_contact if horizontal.contact_available else None,
+            )
         return MotorFeedbackV1(
+            planar=planar_feedback,
             stream=self._stream, sample_id=event_tick + 1, event_tick=event_tick, available_tick=event_tick + delay,
             body_tilt_degrees=None if "body_tilt_degrees" in missing else body.body_tilt_degrees,
             support_extension=None if "support_extension" in missing else body.support_extension,
@@ -501,6 +685,29 @@ class MotorWorldV1:
             useful_loading=None if "useful_loading" in missing else loading,
             destabilization=None if "destabilization" in missing else instability,
         )
+
+    def _advance_planar(self, command: MotorCommandV1 | None, surface_present: bool) -> PlanarWorldStateV1 | None:
+        """Integrate actual bounded velocity/yaw without reading a cognitive target."""
+        profile, body = self._planar_profile, self._planar
+        if profile is None or body is None:
+            return None
+        drive = None if command is None else command.translation
+        contact, load = _motor_support(self._body, self._profile, surface_present)
+        forward, left = 0.0, 0.0
+        if drive is not None and profile.motor_enabled and contact and load >= 0.75 and abs(self._body.body_tilt_degrees) <= 12.0:
+            forward, left = drive.forward, drive.left
+        cosine, sine = math.cos(math.radians(body.heading_degrees)), math.sin(math.radians(body.heading_degrees))
+        vx, vy = cosine * forward - sine * left, sine * forward + cosine * left
+        heading_rate = 0.0
+        for event in profile.perturbations:
+            if event.start_tick <= self._tick < event.stop_tick:
+                vx, vy = vx + event.velocity[0], vy + event.velocity[1]
+                heading_rate = event.heading_rate
+                break
+        interval = self._profile.dt_seconds
+        position, obstacle_contact = _swept_planar_step(body.position, (vx * interval, vy * interval), profile.objects)
+        heading = ((body.heading_degrees + heading_rate * interval + 180.0) % 360.0) - 180.0
+        return PlanarWorldStateV1(position, heading, obstacle_contact)
 
     def step(self, command: MotorCommandV1 | None = None) -> tuple[MotorFeedbackV1, ...]:
         """Advance once and return newly available sensor reports in acquisition order.
@@ -518,6 +725,8 @@ class MotorWorldV1:
         """
         if command is not None and not isinstance(command, MotorCommandV1):
             raise TypeError("motor mode accepts MotorCommandV1 or None, not a task token or target")
+        if command is not None and command.translation is not None and self._planar_profile is None:
+            raise ValueError("translation requires the explicit planar physical profile")
         if self._tick >= _MOTOR_COUNTER_LIMIT - max(1, self._profile.sensor_delay_ticks) - 1:
             raise OverflowError("motor time/sample identity exhausted; reset required")
         if command is not None:
@@ -542,11 +751,12 @@ class MotorWorldV1:
             body_tilt_degrees=max(-90.0, min(90.0, self._body.body_tilt_degrees + dt * angular_rate)),
             support_extension=_clamp(self._body.support_extension + dt * extension_drive),
         )
+        next_planar = self._advance_planar(command, surface_present)
         next_tick = self._tick + 1
         pending = self._pending
         if not dropout:
             measurement = self._measure(next_body, angular_rate, surface_present,
-                                        event_tick=next_tick, delay=self._profile.sensor_delay_ticks)
+                                        event_tick=next_tick, delay=self._profile.sensor_delay_ticks, planar=next_planar)
             pending += (measurement,)
         delivered = tuple(item for item in pending if item.available_tick <= next_tick)
         future = tuple(item for item in pending if item.available_tick > next_tick)
@@ -556,6 +766,7 @@ class MotorWorldV1:
         if command is not None:
             self._last_command_id = command.command_id
         self._body = next_body
+        self._planar = next_planar
         self._tick = next_tick
         self._pending = future
         if delivered:

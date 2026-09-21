@@ -20,9 +20,10 @@ from cca8_support_world import MotorBodyStateV1, MotorWorldPerturbationV1, Motor
 from nca8_hierarchy import IntegratedRightingCycleV1, IntegratedRightingTrialV1
 from nca8_righting import RightingApplicationV1
 from nca8_sensorimotor import SensorimotorStepV1
+from nca8_sensorimotor_contracts import BodyRelativeTargetV1
 from nca8_trace import Nca8TraceEventV1
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 __all__ = [
     "IntegratedRightingExperimentV1", "run_integrated_righting_v1", "render_integrated_righting_v1",
     "run_hierarchy_review_menu_v1", "focal_hierarchy_lines_v1", "lower_hierarchy_lines_v1", "__version__",
@@ -111,6 +112,8 @@ def focal_hierarchy_lines_v1(result: IntegratedRightingCycleV1) -> list[str]:
     if calc.proposal is not None:
         for binding in calc.proposal.bindings:
             target = binding.target
+            if not isinstance(target, BodyRelativeTargetV1):
+                raise TypeError("this retained review expects a scalar support target")
             lines.append(f"     BodyMap {target.kind.value}: endpoint={target.endpoint:.4f}, "
                          f"basis sample={target.basis.sample_id}, finite lease={target.lease_ticks} ticks")
         for kind, reason in calc.proposal.withheld:

@@ -28,7 +28,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 
 from cca8_motor_contracts import MotorStreamRefV1
-from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetMapperV1
+from nca8_body_targets import BodyAxisCapabilityV1, BodyTranslationCapabilityV1, BodyTargetMapperV1
 
 from nca8_maps import (
     DurableNavMapRefV1,
@@ -49,7 +49,7 @@ from nca8_primitives import (
 # comprehensible without a generic state-management framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.4.2"
+__version__ = "0.5.0"
 __all__ = [
     "AuthorizedActionEnvelopeV1",
     "BodyActionHandoffV1",
@@ -532,6 +532,7 @@ class Nca8BodyRuntimeV1:
     def configure_motor_targets(
         self, stream: MotorStreamRefV1, capabilities: tuple[BodyAxisCapabilityV1, ...], *,
         tick_seconds: float = 0.05, maximum_feedback_age: int = 2, orientation_mapping_sign: int = 1, visual_preview_enabled: bool = False,
+        translation_capability: BodyTranslationCapabilityV1 | None = None, translation_mapping_sign: int = 1,
     ) -> BodyTargetMapperV1:
         """Configure one H3 body stream using explicitly supplied capabilities.
 
@@ -552,6 +553,7 @@ class Nca8BodyRuntimeV1:
             stream, capabilities, tick_seconds=tick_seconds,
             maximum_feedback_age=maximum_feedback_age, enabled=self._action_handoff_enabled,
             orientation_mapping_sign=orientation_mapping_sign, visual_preview_enabled=visual_preview_enabled,
+            translation_capability=translation_capability, translation_mapping_sign=translation_mapping_sign,
         )
         self._motor_targets = mapper
         return mapper

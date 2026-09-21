@@ -38,7 +38,7 @@ _ALLOWED_CCA8_IMPORTS: dict[str, frozenset[str]] = {
     "nca8_outcome_attention_demo.py": frozenset({"cca8_cli", "cca8_motor_contracts", "cca8_support_world"}),
     "nca8_outcomes.py": frozenset({"cca8_motor_contracts"}),
     "nca8_outcomes_demo.py": frozenset({"cca8_cli", "cca8_support_world"}),
-    "nca8_prediction.py": frozenset(),
+    "nca8_prediction.py": frozenset({"cca8_navmap_kernel"}),
     "nca8_primitives.py": frozenset(),
     "nca8_righting.py": frozenset({"cca8_motor_contracts"}),
     "nca8_righting_demo.py": frozenset({"cca8_motor_contracts"}),
@@ -50,6 +50,8 @@ _ALLOWED_CCA8_IMPORTS: dict[str, frozenset[str]] = {
     "nca8_sensory.py": frozenset({"cca8_motor_contracts"}),
     "nca8_support_dynamics.py": frozenset(),
     "nca8_trace.py": frozenset(),
+    "nca8_translation.py": frozenset({"cca8_navmap_kernel"}),
+    "nca8_translation_demo.py": frozenset({"cca8_cli", "cca8_motor_contracts", "cca8_support_world"}),
     "nca8_visual.py": frozenset({"cca8_motor_contracts", "cca8_navmap_kernel"}),
     "nca8_visual_demo.py": frozenset({"cca8_cli", "cca8_env", "cca8_motor_contracts", "cca8_navmap_kernel"}),
 }
@@ -125,6 +127,8 @@ def test_flat_nca8_module_set_is_explicit_and_complete() -> None:
         "nca8_sensory.py",
         "nca8_support_dynamics.py",
         "nca8_trace.py",
+        "nca8_translation.py",
+        "nca8_translation_demo.py",
         "nca8_visual.py",
         "nca8_visual_demo.py",
     )

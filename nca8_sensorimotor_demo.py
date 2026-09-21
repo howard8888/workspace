@@ -27,9 +27,9 @@ from nca8_body_targets import (
     nominal_body_capabilities_v1,
 )
 from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, SensorimotorProfileV1, SensorimotorStepV1
-from nca8_sensorimotor_contracts import LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
+from nca8_sensorimotor_contracts import BodyRelativeTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "SensorimotorTrialV1", "SensorimotorExperimentV1", "run_sensorimotor_experiment_v1",
     "render_sensorimotor_experiment_v1", "run_sensorimotor_review_v1", "run_sensorimotor_review_menu_v1", "__version__",
@@ -305,6 +305,8 @@ def render_sensorimotor_experiment_v1(result: SensorimotorExperimentV1, *, detai
     for reservation in result.targets:
         committed = reservation.current
         target = committed.target
+        if not isinstance(target, BodyRelativeTargetV1):
+            raise TypeError("this retained review expects a scalar support target")
         lines.append(
             f"  target {target.kind.value}: {target.basis_coordinate:+.3f} -> {target.endpoint:+.3f}; "
             f"lease=[{committed.committed_tick},{committed.expires_at_tick})"

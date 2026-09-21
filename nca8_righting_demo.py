@@ -20,9 +20,9 @@ from nca8_executive import AttentionBidV1
 from nca8_maps import DurableNavMapRefV1, NavMapStateV1, Nca8ContactStateV1, Nca8PostureStateV1, Nca8SupportStateV1
 from nca8_righting import RightingActivityV1, RightingApplicationV1, RightingContextV1
 from nca8_runtime import Nca8RightingPreviewSessionV1, RightingPreviewResultV1
-from nca8_sensorimotor_contracts import SensorimotorTargetKindV1
+from nca8_sensorimotor_contracts import BodyRelativeTargetV1, SensorimotorTargetKindV1
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "RightingPreviewExampleV1", "competing_preview_bid_v1", "run_righting_preview_examples_v1",
     "render_righting_preview_v1", "run_righting_preview_review_v1", "__version__",
@@ -176,6 +176,8 @@ def render_righting_preview_v1(example: RightingPreviewExampleV1) -> str:
     if result.proposal is not None:
         for binding in result.proposal.bindings:
             target = binding.target
+            if not isinstance(target, BodyRelativeTargetV1):
+                raise TypeError("this retained review expects a scalar support target")
             lines.append(f"  BodyMap {target.kind.value}: offset={target.offset:+.4f}; anchored endpoint={target.endpoint:+.4f}")
         for kind, reason in result.proposal.withheld:
             lines.append(f"  BodyMap {kind.value}: WITHHELD ({reason})")

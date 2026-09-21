@@ -16,6 +16,120 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P16-2A-B actual translation target execution
+
+P16-2A-A was accepted after green local validation and committed as `29ae77e`.
+This opt-in `visual_translation_v1` slice extends Planning v18 section 40.1 through
+the **existing** A-F core, BodyMap reservation, consumed handoff, local executor
+and motor world. It is not a second motor stack or a change to legacy/default
+routing. A99 remains accepted. This new slice requires its own local validation
+and manual acceptance; B99, C99 and D99 remain open.
+
+Use **NCA8 menu 9 -> 8** for physical translation, while choices 1-7 retain the
+non-actuating 2A-A previews. The same permanent developer entry supports:
+
+    python scripts/review_nca8_visual.py --translation
+    python scripts/review_nca8_visual.py --translation heading_90 --detail
+    python scripts/review_nca8_visual.py --translation obstacle_contact --detail
+    python scripts/review_nca8_visual.py --translation disturbed --json
+
+The registry contains **82 production components / 8 host behavioral primitives**
+(`cca8_run.py v0.30.22`). The two new ordinary modules are `nca8_translation.py`
+and `nca8_translation_demo.py`. They implement a supplied operation fixture and
+its observer experiments, not a new biological module or a new innate visual IP.
+
+### What is selected, assumed and actually executed
+
+The experiment explicitly supplies one **LP-kind interface fixture**, its region
+handle, a 0.50-m stand-off and a maximum 0.25-m contribution. No LP is acquired.
+Ordinary Navigation tests applicability against the selected current visual
+source and applies the fixture at most once. No runner action list selects it;
+real support priority can select the existing Righting instead. It is not Mom
+recognition, persistent following, route planning or the P16-2B operation.
+
+The selected fixture computes a sparse source-relative prospective SELF change
+and retains the original target anchor. Its separate request enters BodyMap,
+which uses independently observed current position/heading, support and actual
+capability to calculate the accepted forward/left movement. The PNM cannot
+supply missing body coordinates, relax a constraint, or overwrite current SELF.
+Material narrowing and mapping perturbations preserve the original forecast;
+the visual task-outcome/credit consumer is explicitly not implemented here.
+Local target success therefore does not establish fulfillment of that forecast.
+
+BodyMap creates one `BodyTranslationTargetV1` with an immutable starting pose and
+anchored scene endpoint. Current heading can change the later body-relative drive,
+but cannot accumulate the original offset again or move the endpoint. Translation
+excludes simultaneous posture manipulation in this conservative profile. The
+same reservation and handoff machinery accepts, closes, consumes and installs
+once. Subsequent local updates do not select another operation or consume the
+receipt again. Cancellation/reset, expiry and missing evidence retain their
+existing distinct meanings; no new task output does not renew a lease.
+
+### Physical and feedback contract
+
+The existing `MotorWorldV1` has an optional `PlanarWorldProfileV1`, independent of
+its original signed gravity-relative tilt/support coordinates. Horizontal yaw is
+counterclockwise from scene +X; forward/left drives are a bounded unit vector at
+at most 1 m/s. The world rotates that *actual supplied drive* by its actual yaw,
+integrates one 0.05-second interval and computes swept point/disk obstacle contact.
+It receives no target coordinate, entity handle, PNM, task label or success flag.
+A blocked motor removes commanded translation, not externally imposed drift.
+Neutral input still permits declared exogenous motion; it is not guaranteed safety.
+
+Opaque visible point objects and optional positive-radius obstacle disks are fixed
+physical fixtures. Collision contact is computed from motion, not from a prediction.
+This is a horizontal point-body surrogate, not goat gait, friction, inertia, limbs,
+surface exploration or real-robot safety. Support-quality protection is conservative:
+known contact, absolute tilt <=12 degrees, loading >=0.75, destabilization <=0.15,
+known position/heading and known noncontact with an obstacle.
+
+The neutral `MotorCommandV1`/`MotorFeedbackV1` records carry optional version-2
+translation/planar companions. With no companion their original version-1 wire
+exports and behavior remain exact. A planar reading shares the original sensor
+sample/event/availability identity. The visual projection of that same acquisition
+passes through the existing positive whitelist and visual source owner; it does
+not manufacture a second independent observation or retimestamp a delayed event.
+
+The local executor retains reactive target following and a separate fixed local
+prediction consumer. Translation uses a 0.03-m local residual limit, at most two
+anomalous corrections and the existing half-rate anomalous response. Turning that
+consumer off preserves reactive sensing and the prediction records/comparisons;
+it disables the protective consequence, not every form of prediction. In-flight
+command accounting is an estimate, never evidence for observed achievement.
+
+### Finite profile and controls
+
+Each experiment has 12 physical updates / 0.60 seconds and focal opportunities at
+0, 4, 8 and 12. The last focal admission adds no physical step. One target lease
+is at most eight local ticks; nominal requested movement is 0.25 m, radial excursion
+0.35 m, tolerance 0.01 m and speed at most 1 m/s. Missing local feedback permits
+no new unsupported drive and uses the existing two-tick finite withholding policy.
+There are at most four recent commands, four local expectations per pursuit, four
+unacknowledged significant events and sixteen pending sensor deliveries. Source,
+PNM/history and diagnostics retain separate measured bounds. No durable learner
+or configuration parameter changes during these trials.
+
+Twenty-four controls cover changed heading, equivalent coordinate re-expression,
+changed target, reversed BodyMap mapping, missing capability, blocked motor,
+recognition/guidance ablations, unknown vision/heading/contact, narrowing, collision,
+support loss/priority, lateral and yaw forcing, slower feedback, prediction protection
+off, missing/delayed sensing and explicit cancellation. Cases are configured before
+execution; their names never enter a cognitive or local-control decision.
+
+The reversed mapping can achieve its *wrong* local endpoint; that is not task
+success. Prediction-protection-off and intact runs can share a final endpoint
+despite different early drives. Missing capability and blocked physical motors
+remain different mechanisms. Recognition-off preserves geometric execution for
+the supplied region; spatial-off withholds it. These are testable architectural
+controls, not evidence of learned vision or biological uniqueness.
+
+P16-2A-B is the review candidate for this actual movement path. Full P16-2A
+acceptance requires the retained previews and this physical evidence with the
+local validation wall. P16-2B still owns maternal association, real Follow-Mom,
+persistent task-level proximity/continuation and its corresponding outcome route.
+The historical sections below describe their named profiles, not restrictions
+on every newer opt-in extension.
+
 ## NCA8 update: P16-2A-A visual source and non-actuating body-frame preview
 
 P16-1G-C and **A99 were accepted after Howard's green local validation** and
@@ -29,7 +143,7 @@ Use **NCA8 menu 9** for the visual/frame review, or the permanent developer entr
     python scripts/review_nca8_visual.py --case heading_90 --detail
     python scripts/review_nca8_visual.py --case gap_recovery --json
 
-The current registry contains **80 production components / 8 host behavioral
+At the 2A-A checkpoint the registry contained **80 production components / 8 host behavioral
 primitives** (`cca8_run.py v0.30.21`). `nca8_visual.py` owns one enduring
 `visual_scene@r1` and its typed current configuration. `nca8_visual_demo.py` runs
 finite shared experiments; neither is a new task selector or a learned visual
@@ -92,16 +206,17 @@ steps, zero motor commands, zero installations and zero durable updates. Source,
 request and heading are fixtures, not live locomotor sensing. No collision,
 contact or task-completion result is inferred from a computed vector.
 
-### Scope still open
+### Scope remaining at the accepted 2A-A checkpoint
 
-The next P16-2A sub-slice must extend the same target/time/authority path with a
+The next P16-2A sub-slice was required to extend the same target/time/authority path with a
 real translation capability, command-driven physical displacement/contact and
 appropriate adverse controls. A new field or frame preview does not satisfy
 section 40.1. There is no `policy:follow_mom` shortcut here, no new visual IP or
 MOM ANM, no learned calibration, and no default-mode change. Full P16-2A, maternal
 P16-2B, B99, C99, D99 and the later general inspection/Ready/learning work remain
-open. This source slice itself remains a review candidate until its local wall
-and manual source/heading/unknown-evidence checks are accepted.
+open at that checkpoint. P16-2A-A was accepted and committed as `29ae77e` after
+its local wall and manual source/heading/unknown-evidence checks. The newer
+2A-B section above records the additional physical consumer and its review boundary.
 
 ## NCA8 update: P16-1G-C called no-learning hook, Phase F and coverage
 

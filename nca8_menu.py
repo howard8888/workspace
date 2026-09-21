@@ -21,8 +21,9 @@ from nca8_learning_demo import run_learning_review_menu_v1
 from nca8_righting_demo import run_righting_preview_review_v1
 from nca8_sensorimotor_demo import run_sensorimotor_review_menu_v1
 from nca8_visual_demo import run_visual_preview_menu_v1
+from nca8_translation_demo import run_translation_menu_v1
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -36,7 +37,8 @@ H6-B and P16-1G-A/B/C are accepted checkpoints. Option 8 includes the opt-in out
 Option 8 also offers the 1G-C no-learning hook, Phase F and L01-L25 coverage review.
 A99 is accepted at the Planning-v18 scope; legacy/default routing is unchanged.
 Option 9 previews visual sources and body-frame geometry without movement (P16-2A-A).
-Full P16-2A translation execution and B99 remain open.
+Option 9 -> 8 runs actual finite translation/contact with a supplied operation fixture (P16-2A-B).
+P16-2A-B acceptance and B99 remain open; no acquired Follow-Mom or new default is claimed.
 Planning v16 P16-1R-B separates internal handoff and cycle closure from the
 external world step and returning-input admission. Gate-A decisions are unchanged.
 
@@ -448,7 +450,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
                 )
                 continue
             if choice == "9":
-                run_visual_preview_menu_v1()
+                run_visual_preview_menu_v1(translation_review=run_translation_menu_v1)
                 continue
             print("Please choose 1, 2, 3, 4, 5, 6, 7, 8, or 9; or press Enter to return.")
         except Exception as exc:  # pragma: no cover - defensive interactive boundary

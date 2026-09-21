@@ -39,7 +39,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
-from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetProposalV1, nominal_body_capabilities_v1
+from nca8_translation import TranslationApplicationV1
+from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetProposalV1, BodyTranslationCapabilityV1, nominal_body_capabilities_v1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1
 from nca8_righting import RightingApplicationV1, RightingContextV1, RightingIPV1, RightingTaskV1
 from nca8_outcome_attention import RightingFocalAllocationV1
@@ -99,7 +100,7 @@ from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 from nca8_visual import VisualNavMapStateV1
 
-__version__ = "0.11.1"
+__version__ = "0.12.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -1678,6 +1679,7 @@ class Nca8RightingPreviewSessionV1:
         additional_primitives: Sequence[PrimitiveRuntimeV1] = (),
         orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True, outcome_attention_enabled: bool = False,
         visual_preview_enabled: bool = False,
+        translation_capability: BodyTranslationCapabilityV1 | None = None, translation_mapping_sign: int = 1,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("preview requires a MotorStreamRefV1")
@@ -1711,6 +1713,7 @@ class Nca8RightingPreviewSessionV1:
         self.mapper = self.body.configure_motor_targets(
             stream, nominal_body_capabilities_v1() if capabilities is None else capabilities,
             orientation_mapping_sign=orientation_mapping_sign, visual_preview_enabled=visual_preview_enabled,
+            translation_capability=translation_capability, translation_mapping_sign=translation_mapping_sign,
         )
         self._cycle = 0
         self._cutoff = -1
@@ -1862,6 +1865,12 @@ class Nca8RightingPreviewSessionV1:
                 self.sensory.retain_motor_context(
                     application.task.task_id, next_context.context_id, cycle_id=cycle, expires_at_tick=expiry,
                 )
+        elif isinstance(application, TranslationApplicationV1):
+            if self.task_pnm_consumer_enabled:
+                self.prediction.adopt_visual_preview(application.projection)
+            proposal = self.mapper.propose_translation(
+                application.contribution, application.projection.basis, at_tick=cutoff_tick, replace_existing=replace_existing,
+            )
         elif self.task_pnm_consumer_enabled:
             self.prediction.adopt_support_preview(None)
         result = replace(selected, proposal=proposal)

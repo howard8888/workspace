@@ -21,13 +21,14 @@ import math
 from collections import deque
 from dataclasses import dataclass, field
 
-from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1
-from nca8_body_targets import BodyTargetMapperV1, BodyTargetReservationV1
+from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, PlanarDriveV1
+from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetMapperV1, BodyTargetReservationV1
 from nca8_sensorimotor_contracts import (
-    LocalTargetDispositionV1, LocalTargetReportV1, MotorInstallationSourceV1, SensorimotorTargetKindV1, TargetOriginV1,
+    BodyRelativeTargetV1, BodyTranslationTargetV1, LocalTargetDispositionV1, LocalTargetReportV1,
+    MotorInstallationSourceV1, SensorimotorTargetKindV1, TargetOriginV1,
 )
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 __all__ = [
     "LocalMotorPredictionV1", "LocalPredictionComparisonV1", "LocalControlEventV1",
     "SensorimotorProfileV1", "SensorimotorStepV1", "SensorimotorExecutorV1", "__version__",
@@ -39,6 +40,7 @@ _EVENT_LIMIT = 4
 _EPSILON = 1e-12
 _ORIENTATION = SensorimotorTargetKindV1.ORIENTATION_ADJUST
 _EXTENSION = SensorimotorTargetKindV1.SUPPORT_EXTENSION
+_TRANSLATION = SensorimotorTargetKindV1.PLANAR_TRANSLATION
 _TERMINAL = frozenset({
     LocalTargetDispositionV1.ACHIEVED, LocalTargetDispositionV1.BLOCKED,
     LocalTargetDispositionV1.UNAVAILABLE, LocalTargetDispositionV1.CANCELLED,
@@ -60,11 +62,15 @@ def _tick(value: object, label: str = "at_tick") -> int:
 
 def _coordinate(feedback: MotorFeedbackV1, kind: SensorimotorTargetKindV1) -> float | None:
     """Read the measured coordinate for one family, preserving missingness."""
+    if kind is _TRANSLATION:
+        raise ValueError("translation requires its vector-specific calculation")
     return feedback.body_tilt_degrees if kind is _ORIENTATION else feedback.support_extension
 
 
 def _drive(command: MotorCommandV1 | None, kind: SensorimotorTargetKindV1) -> float:
     """Read an actually issued drive, treating None as the provider's neutral input."""
+    if kind is _TRANSLATION:
+        raise ValueError("translation requires its vector-specific calculation")
     if command is None:
         return 0.0
     return command.orientation_drive if kind is _ORIENTATION else command.extension_drive
@@ -72,6 +78,8 @@ def _drive(command: MotorCommandV1 | None, kind: SensorimotorTargetKindV1) -> fl
 
 def _motor_rate(kind: SensorimotorTargetKindV1) -> float:
     """Return the declared motor calibration, not a private simulator reading."""
+    if kind is _TRANSLATION:
+        raise ValueError("translation requires its vector-specific calculation")
     return 90.0 if kind is _ORIENTATION else 1.0
 
 
@@ -127,7 +135,7 @@ class LocalMotorPredictionV1:
     basis_event_tick: int
     issued_tick: int
     event_tick: int
-    expected_coordinate: float
+    expected_coordinate: float | tuple[float, float]
     tolerance: float
     expected_contact: bool | None
 
@@ -391,6 +399,8 @@ class SensorimotorExecutorV1:
             execution, origin = committed.execution_id, target.origin
             report = LocalTargetReportV1(committed, LocalTargetDispositionV1.PENDING, tick, "installed_supplied_target")
             prepared[target.kind] = _Pursuit(reservation, report)
+        if _TRANSLATION in prepared and len(prepared) != 1:
+            raise ValueError("translation excludes simultaneous support manipulation in this profile")
         return prepared
 
     @property
@@ -554,8 +564,19 @@ class SensorimotorExecutorV1:
                                     maxlen=_HISTORY_LIMIT)
         if match is None:
             return None
-        value = _coordinate(feedback, match.kind)
-        residual = None if value is None else value - match.expected_coordinate
+        if match.kind is _TRANSLATION:
+            planar = feedback.planar
+            expected = match.expected_coordinate
+            anchor = pursuit.reservation.current.target.basis.planar
+            residual = None
+            if (planar is not None and planar.position is not None and anchor is not None
+                    and planar.frame_id == anchor.frame_id and isinstance(expected, tuple)):
+                residual = math.hypot(planar.position[0] - expected[0], planar.position[1] - expected[1])
+        else:
+            value = _coordinate(feedback, match.kind)
+            if isinstance(match.expected_coordinate, tuple):
+                raise TypeError("scalar prediction cannot carry a vector")
+            residual = None if value is None else value - match.expected_coordinate
         contact_mismatch: bool | None = None
         if match.expected_contact is not None and feedback.support_contact is not None:
             contact_mismatch = feedback.support_contact is not match.expected_contact
@@ -600,6 +621,13 @@ class SensorimotorExecutorV1:
         of exact world knowledge. Its error is tested against H1's stated bounds.
         """
         target = pursuit.reservation.current.target
+        if isinstance(target, BodyTranslationTargetV1):
+            known_translation = self._known_commands(feedback.event_tick, tick)
+            estimate = None if known_translation is None else self._estimated_planar_position(feedback, (*known_translation, command))
+            if estimate is None:
+                return None
+            return LocalMotorPredictionV1(target.target_id, target.revision, target.kind, feedback.sample_id, feedback.event_tick,
+                                          tick, tick + 1, estimate, 0.03, True if feedback.support_contact is True else None)
         value = _coordinate(feedback, target.kind)
         known = self._known_commands(feedback.event_tick, tick)
         if value is None or known is None:
@@ -629,17 +657,26 @@ class SensorimotorExecutorV1:
             return False
         reserved = pursuit.reservation
         target = reserved.current.target
-        value = _coordinate(feedback, target.kind)
-        if value is None or not reserved.updated_tick <= feedback.event_tick <= reserved.current.expires_at_tick:
+        if not reserved.updated_tick <= feedback.event_tick <= reserved.current.expires_at_tick:
             return False
-        if abs(value - target.endpoint) > target.tolerance + _EPSILON:
+        if isinstance(target, BodyTranslationTargetV1):
+            planar, anchor = feedback.planar, target.basis.planar
+            if planar is None or anchor is None or planar.position is None or planar.frame_id != anchor.frame_id:
+                return False
+            distance = math.hypot(planar.position[0] - target.endpoint[0], planar.position[1] - target.endpoint[1])
+        else:
+            value = _coordinate(feedback, target.kind)
+            if value is None:
+                return False
+            distance = abs(value - target.endpoint)
+        if distance > target.tolerance + _EPSILON:
             return False
         reason = "observed_target_achieved" if tick < reserved.current.expires_at_tick else "observed_achievement_before_expiry"
         self._report(pursuit, LocalTargetDispositionV1.ACHIEVED, tick, reason, feedback)
         pursuit.predictions.clear()
         return True
 
-    def _axis_command(self, pursuit: _Pursuit, feedback: MotorFeedbackV1 | None, tick: int) -> float:
+    def _axis_command(self, pursuit: _Pursuit, feedback: MotorFeedbackV1 | None, tick: int) -> float | PlanarDriveV1:
         """Calculate one axis's bounded reactive response or an explicit local stop."""
         reservation = pursuit.reservation
         committed = reservation.current
@@ -676,6 +713,10 @@ class SensorimotorExecutorV1:
             self._event(pursuit, tick, refusal, feedback)
             pursuit.predictions.clear()
             return 0.0
+        if isinstance(target, BodyTranslationTargetV1):
+            return self._translation_response(pursuit, feedback, tick)
+        if not isinstance(target, BodyRelativeTargetV1) or not isinstance(reservation.capability, BodyAxisCapabilityV1):
+            raise TypeError("scalar control requires a scalar target and capability")
         value = _coordinate(feedback, target.kind)
         if value is None:
             raise RuntimeError("BodyMap permitted a target without its measured coordinate")
@@ -719,6 +760,83 @@ class SensorimotorExecutorV1:
         self._report(pursuit, disposition, tick, reason, feedback)
         return response
 
+    def _estimated_planar_position(
+        self, feedback: MotorFeedbackV1, commands: tuple[MotorCommandV1 | None, ...],
+    ) -> tuple[float, float] | None:
+        """Account for issued commands since sensing with an explicit fixed-yaw model.
+
+        Unknown in-flight rotations or external forcing are NOT available here.
+        The next actual observation corrects that approximation. The estimate
+        limits the next increment; it never proves displacement or achievement.
+        """
+        planar = feedback.planar
+        if planar is None or planar.position is None or planar.heading_degrees is None:
+            return None
+        x, y = planar.position
+        cosine, sine = math.cos(math.radians(planar.heading_degrees)), math.sin(math.radians(planar.heading_degrees))
+        for command in commands:
+            drive = None if command is None else command.translation
+            if drive is not None:
+                x += self._mapper.tick_seconds * (cosine * drive.forward - sine * drive.left)
+                y += self._mapper.tick_seconds * (sine * drive.forward + cosine * drive.left)
+        return x, y
+
+    def _translation_response(self, pursuit: _Pursuit, feedback: MotorFeedbackV1, tick: int) -> PlanarDriveV1:
+        """Follow only the installed endpoint, under the common lifecycle/protection.
+
+        No object handle, source, WNM, task selection or physical state is read.
+        Current measured yaw changes the drive pair without moving the original
+        scene endpoint. Vector norm, not each coordinate alone, bounds the rate.
+        """
+        target = pursuit.reservation.current.target
+        planar, anchor = feedback.planar, target.basis.planar
+        if not isinstance(target, BodyTranslationTargetV1) or planar is None or anchor is None or anchor.position is None:
+            raise TypeError("translation response requires a vector target and its original body basis")
+        if planar.position is None or planar.heading_degrees is None:
+            raise RuntimeError("BodyMap permitted translation without measured position/yaw")
+        neutral = PlanarDriveV1(0.0, 0.0)
+        if math.hypot(planar.position[0] - anchor.position[0], planar.position[1] - anchor.position[1]) > target.max_displacement + _EPSILON:
+            self._report(pursuit, LocalTargetDispositionV1.INTERRUPTED, tick, "original_excursion_exceeded", feedback)
+            self._event(pursuit, tick, "original_excursion_exceeded", feedback)
+            pursuit.predictions.clear()
+            return neutral
+        if self._observed_achievement(pursuit, feedback, tick):
+            return neutral
+        known = self._known_commands(feedback.event_tick, tick)
+        estimate = None if known is None else self._estimated_planar_position(feedback, known)
+        if estimate is None:
+            self._report(pursuit, LocalTargetDispositionV1.UNRESOLVED, tick, "command_history_unavailable", feedback)
+            return neutral
+        rate = target.max_rate
+        if pursuit.anomaly_pending:
+            if pursuit.corrections >= target.max_corrections:
+                self._report(pursuit, LocalTargetDispositionV1.INTERRUPTED, tick, "anomalous_correction_budget_exhausted", feedback)
+                pursuit.predictions.clear()
+                return neutral
+            rate *= 0.5
+        dx, dy = target.endpoint[0] - estimate[0], target.endpoint[1] - estimate[1]
+        distance = math.hypot(dx, dy)
+        ratio = min(1.0, rate * self._mapper.tick_seconds / distance) if distance > 0.0 else 0.0
+        dx, dy = dx * ratio, dy * ratio
+        if math.hypot(estimate[0] + dx - anchor.position[0], estimate[1] + dy - anchor.position[1]) > target.max_displacement + _EPSILON:
+            self._report(pursuit, LocalTargetDispositionV1.INTERRUPTED, tick, "command_would_exceed_original_bounds", feedback)
+            self._event(pursuit, tick, "command_would_exceed_original_bounds", feedback)
+            pursuit.predictions.clear()
+            return neutral
+        cosine, sine = math.cos(math.radians(planar.heading_degrees)), math.sin(math.radians(planar.heading_degrees))
+        response = PlanarDriveV1((cosine * dx + sine * dy) / self._mapper.tick_seconds,
+                                (-sine * dx + cosine * dy) / self._mapper.tick_seconds)
+        moving = math.hypot(response.forward, response.left) > 0.0
+        reason = "reactive_target_following" if moving else "awaiting_sensed_target_confirmation"
+        if pursuit.anomaly_pending and moving:
+            pursuit.corrections += 1
+            pursuit.anomaly_pending = False
+            reason = "bounded_anomalous_correction"
+        residual = math.hypot(planar.position[0] - target.endpoint[0], planar.position[1] - target.endpoint[1])
+        progress = residual < math.hypot(*target.offset) - target.tolerance
+        self._report(pursuit, LocalTargetDispositionV1.PARTIAL if progress else LocalTargetDispositionV1.ACTIVE, tick, reason, feedback)
+        return response
+
     def step(self, feedback: MotorFeedbackV1 | None, *, at_tick: int) -> SensorimotorStepV1:
         """Calculate one local update; the outer driver subsequently advances the body.
 
@@ -734,7 +852,7 @@ class SensorimotorExecutorV1:
             disposition = self._mapper.update_feedback(feedback, at_tick=tick)
             current = self._mapper.current_feedback(at_tick=tick)
             comparisons: list[LocalPredictionComparisonV1] = []
-            responses: dict[SensorimotorTargetKindV1, float] = {}
+            responses: dict[SensorimotorTargetKindV1, float | PlanarDriveV1] = {}
             for kind in SensorimotorTargetKindV1:
                 pursuit = self._pursuits.get(kind)
                 if pursuit is None:
@@ -758,9 +876,13 @@ class SensorimotorExecutorV1:
                         pursuit.predictions.clear()
             orientation = responses.get(_ORIENTATION, 0.0)
             extension = responses.get(_EXTENSION, 0.0)
+            if not isinstance(orientation, float) or not isinstance(extension, float):
+                raise TypeError("support channels cannot receive a vector translation")
+            vector = responses.get(_TRANSLATION)
+            translation = vector if isinstance(vector, PlanarDriveV1) and math.hypot(vector.forward, vector.left) > 0.0 else None
             command: MotorCommandV1 | None = None
-            if orientation != 0.0 or extension != 0.0:
-                command = MotorCommandV1(self._mapper.stream, tick + 1, tick, orientation, extension)
+            if orientation != 0.0 or extension != 0.0 or translation is not None:
+                command = MotorCommandV1(self._mapper.stream, tick + 1, tick, orientation, extension, translation=translation)
             predictions: list[LocalMotorPredictionV1] = []
             if current is not None:
                 for pursuit in self._pursuits.values():

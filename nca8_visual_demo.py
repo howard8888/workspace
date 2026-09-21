@@ -11,6 +11,8 @@ These are finite source/transform fixtures, not full A-F cycles or world runs.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from dataclasses import dataclass
 
 import cca8_cli
@@ -23,7 +25,7 @@ from nca8_runtime import Nca8RightingPreviewSessionV1, RightingPreviewResultV1
 from nca8_sensorimotor_contracts import TargetOriginV1
 from nca8_visual import VisualNavMapStateV1, VisualObservationV1, VisualSourceV1
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = ["VISUAL_PREVIEW_CASES_V1", "VisualPreviewRecordV1", "VisualPreviewRunV1", "run_visual_preview_v1",
            "render_visual_preview_v1", "run_visual_preview_menu_v1", "__version__"]
 
@@ -211,8 +213,10 @@ def render_visual_preview_v1(run: VisualPreviewRunV1, *, detail: bool = False) -
     return "\n".join(lines)
 
 
-def run_visual_preview_menu_v1() -> None:
+def run_visual_preview_menu_v1(*, translation_review: Callable[[], None] | None = None) -> None:
     """Launch the shared finite fixtures without touching an existing A0 session."""
+    if translation_review is not None and not callable(translation_review):
+        raise TypeError("translation_review must be callable")
     choices = {"1": VISUAL_PREVIEW_CASES_V1, "2": ("heading_0", "heading_90", "rotated_coordinates", "translated_coordinates"),
                "3": ("heading_0", "recognition_off", "spatial_off", "both_off"),
                "4": ("missing_vision", "missing_heading", "frame_mismatch", "target_unlocalized", "stale_body"),
@@ -223,9 +227,14 @@ def run_visual_preview_menu_v1() -> None:
               "  3) Recognition/guidance independently disabled\n  4) Missing, stale and incompatible geometry\n"
               "  5) Real support competition and nonfocal visual refresh\n  6) Gap / old duplicate / fresh reacquisition\n"
               "  7) Detailed nominal frame calculation\n  [Enter] Return to NCA8 menu")
+        if translation_review is not None:
+            print("  8) Actual translation target execution and contact (P16-2A-B)")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
             return
+        if choice == "8" and translation_review is not None:
+            translation_review()
+            continue
         cases = choices.get(choice)
         if cases is None:
             print("Choose 1-7 or press Enter to return.")

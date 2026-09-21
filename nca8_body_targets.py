@@ -28,16 +28,16 @@ from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from cca8_navmap_kernel import NavMapRefV1, NavPointV1
 from nca8_visual import VisualNavMapStateV1
 from nca8_sensorimotor_contracts import (
-    BodyRelativeTargetV1,
+    BodyRelativeTargetV1, BodyTranslationTargetV1,
     CommittedBodyTargetV1,
     SensorimotorTargetKindV1,
     TargetOriginV1,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "PlanarBodyObservationV1", "VisualApproachRequestV1", "VisualBodyPreviewV1",
-    "BodyAxisCapabilityV1",
+    "BodyAxisCapabilityV1", "BodyTranslationCapabilityV1",
     "BodyMovementRequestV1",
     "BodyTargetBindingV1",
     "BodyTargetMapperV1",
@@ -89,6 +89,8 @@ def _axis_limits(kind: SensorimotorTargetKindV1) -> tuple[float, float, float]:
         raise TypeError("kind must be SensorimotorTargetKindV1")
     if kind is SensorimotorTargetKindV1.ORIENTATION_ADJUST:
         return -90.0, 90.0, 90.0
+    if kind is SensorimotorTargetKindV1.PLANAR_TRANSLATION:
+        raise ValueError("vector translation is not a scalar axis")
     return 0.0, 1.0, 1.0
 
 
@@ -163,6 +165,41 @@ def nominal_body_capabilities_v1() -> tuple[BodyAxisCapabilityV1, ...]:
 
 
 @dataclass(frozen=True, slots=True)
+class BodyTranslationCapabilityV1:
+    """Fixed supplied vector competence; not learned calibration or task choice.
+
+    Limits are deliberately small: a 0.25-metre target, 0.35-metre radial
+    excursion, at most one metre/second, and a 0.01-metre local tolerance.
+    Narrower supplied limits are permitted. The original eight-tick lease and
+    two anomalous corrections remain independent of the task lifetime.
+    """
+
+    capability_id: str = "smp:planar_translation:v1"
+    maximum_step: float = 0.25
+    maximum_excursion: float = 0.35
+    maximum_rate: float = 1.0
+    tolerance: float = 0.01
+
+    def __post_init__(self) -> None:
+        _name(self.capability_id, "translation capability")
+        for name in ("maximum_step", "maximum_excursion", "tolerance"):
+            object.__setattr__(self, name, _scalar(getattr(self, name), name, 0.0, 0.5))
+        object.__setattr__(self, "maximum_rate", _scalar(self.maximum_rate, "translation rate", 0.0, 1.0))
+        if not 0.0 < self.tolerance <= self.maximum_step <= self.maximum_excursion or self.maximum_rate <= 0.0:
+            raise ValueError("translation capability requires positive, ordered motion limits")
+
+    @property
+    def kind(self) -> SensorimotorTargetKindV1:
+        """Return the vector resource family, not two separate focal operations."""
+        return SensorimotorTargetKindV1.PLANAR_TRANSLATION
+
+    def as_dict(self) -> dict[str, object]:
+        """Describe assumed competence without claiming a successful movement."""
+        return {"kind": self.kind.value, "capability_id": self.capability_id, "maximum_step": self.maximum_step,
+                "maximum_excursion": self.maximum_excursion, "maximum_rate": self.maximum_rate, "tolerance": self.tolerance}
+
+
+@dataclass(frozen=True, slots=True)
 class BodyMovementRequestV1:
     """A supplied task contribution in the declared gravity/surface frame.
 
@@ -204,10 +241,18 @@ class BodyMovementRequestV1:
 class BodyTargetBindingV1:
     """One proposed H1 target associated with one available family capability."""
 
-    target: BodyRelativeTargetV1
-    capability: BodyAxisCapabilityV1
+    target: BodyRelativeTargetV1 | BodyTranslationTargetV1
+    capability: BodyAxisCapabilityV1 | BodyTranslationCapabilityV1
 
     def __post_init__(self) -> None:
+        if isinstance(self.target, BodyTranslationTargetV1):
+            if not isinstance(self.capability, BodyTranslationCapabilityV1):
+                raise TypeError("translation binding needs vector competence")
+            if (math.hypot(*self.target.offset) > self.capability.maximum_step + _EPSILON
+                    or self.target.max_displacement > self.capability.maximum_excursion
+                    or self.target.max_rate > self.capability.maximum_rate or self.target.tolerance > self.capability.tolerance):
+                raise ValueError("translation exceeds its supplied capability")
+            return
         if not isinstance(self.target, BodyRelativeTargetV1) or not isinstance(self.capability, BodyAxisCapabilityV1):
             raise TypeError("a binding requires a body target and an axis capability")
         if self.target.kind is not self.capability.kind:
@@ -232,14 +277,15 @@ class BodyTargetProposalV1:
     any resource. It also does not replace an already reserved target.
     """
 
-    request: BodyMovementRequestV1
+    request: BodyMovementRequestV1 | VisualApproachRequestV1
     created_tick: int
     bindings: tuple[BodyTargetBindingV1, ...]
     withheld: tuple[tuple[SensorimotorTargetKindV1, str], ...]
     replaces: tuple[BodyTargetReservationV1, ...] = ()
+    visual_preview: VisualBodyPreviewV1 | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.request, BodyMovementRequestV1):
+        if not isinstance(self.request, (BodyMovementRequestV1, VisualApproachRequestV1)):
             raise TypeError("proposal requires BodyMovementRequestV1")
         _index(self.created_tick, "created_tick")
         if not isinstance(self.replaces, tuple) or len(self.replaces) > 2:
@@ -259,14 +305,22 @@ class BodyTargetProposalV1:
             if not isinstance(item, tuple) or len(item) != 2:
                 raise TypeError("withheld entry must contain family and reason")
             kind, reason = item
-            _axis_limits(kind)
+            if not isinstance(kind, SensorimotorTargetKindV1):
+                raise TypeError("withheld kind must name a target family")
             _name(reason, "withheld reason")
             kinds.append(kind)
         expected = set()
-        if self.request.desired_tilt_degrees is not None:
-            expected.add(SensorimotorTargetKindV1.ORIENTATION_ADJUST)
-        if self.request.desired_extension is not None:
-            expected.add(SensorimotorTargetKindV1.SUPPORT_EXTENSION)
+        if isinstance(self.request, VisualApproachRequestV1):
+            expected.add(SensorimotorTargetKindV1.PLANAR_TRANSLATION)
+            if self.visual_preview is None or self.visual_preview.request is not self.request:
+                raise ValueError("translation proposal needs the original geometric calculation")
+        else:
+            if self.visual_preview is not None:
+                raise ValueError("support proposal cannot carry a visual preview")
+            if self.request.desired_tilt_degrees is not None:
+                expected.add(SensorimotorTargetKindV1.ORIENTATION_ADJUST)
+            if self.request.desired_extension is not None:
+                expected.add(SensorimotorTargetKindV1.SUPPORT_EXTENSION)
         if len(kinds) != len(set(kinds)) or set(kinds) != expected:
             raise ValueError("each requested axis needs exactly one binding or refusal")
 
@@ -277,6 +331,7 @@ class BodyTargetProposalV1:
             "bindings": [binding.as_dict() for binding in self.bindings],
             "withheld": [{"kind": kind.value, "reason": reason} for kind, reason in self.withheld],
             "status": "proposed", "motor_execution": False,
+            **({"visual_mapping": self.visual_preview.as_dict()} if self.visual_preview is not None else {}),
             **({"replaces": [item.current.as_dict() for item in self.replaces]} if self.replaces else {}),
         }
 
@@ -297,7 +352,7 @@ class BodyTargetReservationV1:
 
     initial: CommittedBodyTargetV1
     current: CommittedBodyTargetV1
-    capability: BodyAxisCapabilityV1
+    capability: BodyAxisCapabilityV1 | BodyTranslationCapabilityV1
     updated_tick: int
     status: str = "reserved"
 
@@ -324,7 +379,10 @@ class BodyTargetReservationV1:
             before.max_rate, before.max_displacement, before.tolerance, before.max_corrections,
         ):
             raise ValueError("refinement changed the original pursuit bounds")
-        if abs(after.endpoint - before.endpoint) > before.tolerance + _EPSILON:
+        if isinstance(before, BodyTranslationTargetV1):
+            if not isinstance(after, BodyTranslationTargetV1) or after != before:
+                raise ValueError("this translation profile requires a new authorization for target changes")
+        elif isinstance(after, BodyTranslationTargetV1) or abs(after.endpoint - before.endpoint) > before.tolerance + _EPSILON:
             raise ValueError("refinement exceeds original endpoint tolerance band")
         if self.status == "reserved" and self.updated_tick >= self.initial.expires_at_tick:
             raise ValueError("a reserved revision cannot start at or after expiry")
@@ -497,7 +555,8 @@ class BodyTargetMapperV1:
     def __init__(
         self, stream: MotorStreamRefV1, capabilities: tuple[BodyAxisCapabilityV1, ...], *,
         tick_seconds: float = 0.05, maximum_feedback_age: int = 2, enabled: bool = True, orientation_mapping_sign: int = 1,
-        visual_preview_enabled: bool = False,
+        visual_preview_enabled: bool = False, translation_capability: BodyTranslationCapabilityV1 | None = None,
+        translation_mapping_sign: int = 1,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("stream must be MotorStreamRefV1")
@@ -524,6 +583,14 @@ class BodyTargetMapperV1:
             raise ValueError("orientation_mapping_sign must be +1 or -1")
         if not isinstance(visual_preview_enabled, bool):
             raise TypeError("visual_preview_enabled must be Boolean")
+        if translation_capability is not None and not isinstance(translation_capability, BodyTranslationCapabilityV1):
+            raise TypeError("translation capability must be typed or absent")
+        if translation_capability is not None and not visual_preview_enabled:
+            raise ValueError("translation requires the visual/body geometry path")
+        if isinstance(translation_mapping_sign, bool) or not isinstance(translation_mapping_sign, int) or translation_mapping_sign not in (-1, 1):
+            raise ValueError("translation mapping sign must be +1 or -1")
+        self._translation_capability = translation_capability
+        self._translation_mapping_sign = translation_mapping_sign
         self._visual_preview_enabled = visual_preview_enabled
         self._planar_observation: PlanarBodyObservationV1 | None = None
         self._planar_available = False
@@ -683,7 +750,12 @@ class BodyTargetMapperV1:
         returns the same reason used by H3. No command or target change occurs.
         """
         self.validate_reservation(reservation, at_tick=at_tick)
-        return self._axis_refusal(reservation.current.target.kind, self.current_feedback(at_tick=at_tick))
+        feedback = self.current_feedback(at_tick=at_tick)
+        if isinstance(reservation.current.target, BodyTranslationTargetV1) and feedback is not None and feedback.planar is not None:
+            original = reservation.current.target.basis.planar
+            if original is None or original.frame_id != feedback.planar.frame_id:
+                return "translation_frame_changed"
+        return self._axis_refusal(reservation.current.target.kind, feedback)
 
     def _check_tick(self, at_tick: int) -> int:
         """Reject time reversal without advancing an external or internal clock."""
@@ -701,6 +773,8 @@ class BodyTargetMapperV1:
         """
         tick = self._check_tick(at_tick)
         if feedback is None:
+            if self._translation_capability is not None:
+                self._planar_available = False
             self._feedback_available = False
             self._pending = None
             self._last_tick = tick
@@ -722,6 +796,12 @@ class BodyTargetMapperV1:
                 raise ValueError("sensor identity and physical event order disagree")
         if feedback != previous or not self._feedback_available:
             self._pending = None
+        if self._visual_preview_enabled and feedback.planar is not None:
+            planar = feedback.planar
+            self.observe_planar_body(PlanarBodyObservationV1(
+                feedback.stream, feedback.sample_id, feedback.event_tick, feedback.available_tick, planar.frame_id,
+                None if planar.position is None else NavPointV1(*planar.position), planar.heading_degrees,
+            ), at_tick=tick)
         self._feedback = feedback
         self._feedback_available = True
         self._last_tick = tick
@@ -761,6 +841,8 @@ class BodyTargetMapperV1:
 
     def _axis_refusal(self, kind: SensorimotorTargetKindV1, feedback: MotorFeedbackV1 | None) -> str | None:
         """Check only the evidence and capability required by the requested family."""
+        if kind is SensorimotorTargetKindV1.PLANAR_TRANSLATION:
+            return self._translation_refusal(feedback)
         if not self._enabled:
             return "bodymap_disabled"
         if kind not in self._capabilities:
@@ -781,6 +863,92 @@ class BodyTargetMapperV1:
             if not feedback.support_contact or feedback.useful_loading <= 0.0:
                 return "loaded_support_unavailable"
         return None
+
+    def _translation_refusal(self, feedback: MotorFeedbackV1 | None) -> str | None:
+        """Apply evidence-limited translation protection, never choose a new task.
+
+        The initial capability needs mobility-quality support (tilt <=12 degrees,
+        load >=0.75 and destabilization <=0.15) plus known obstacle contact. These
+        are fixed engineering constraints, not a theorem of biological balance.
+        Incompatibility with posture manipulation is checked at reservation time.
+        """
+        if not self._enabled:
+            return "bodymap_disabled"
+        if self._translation_capability is None:
+            return "capability_unavailable"
+        if feedback is None:
+            return "current_body_feedback_unavailable"
+        planar = feedback.planar
+        if planar is None or planar.position is None or planar.heading_degrees is None:
+            return "required_coordinate_missing"
+        if (feedback.support_contact is None or feedback.body_tilt_degrees is None or feedback.useful_loading is None
+                or feedback.destabilization is None or planar.obstacle_contact is None):
+            return "required_support_evidence_missing"
+        if planar.obstacle_contact:
+            return "observed_obstacle_contact"
+        if (not feedback.support_contact or feedback.useful_loading < 0.75
+                or abs(feedback.body_tilt_degrees) > 12.0 or feedback.destabilization > 0.15):
+            return "translation_support_unavailable"
+        return None
+
+    def propose_translation(
+        self, request: VisualApproachRequestV1, source: VisualNavMapStateV1, *, at_tick: int,
+        lease_ticks: int = 8, replace_existing: bool = False,
+    ) -> BodyTargetProposalV1:
+        """Map the supplied visual requirement into a real finite vector target.
+
+        The accepted 2A-A calculation supplies geometry only. This method checks
+        current independent body sensing and declared capability, narrows the
+        bounded step, then proposes a vector target anchored to that acquisition.
+        Reserving and installing still require the original proposal and a later
+        single-use handoff. Mapping reversal is a named calibration-fault control;
+        it alters neither sensing, requested object nor the physical motor signs.
+        """
+        tick = self._check_tick(at_tick)
+        _index(lease_ticks, "translation lease", 1, 8)
+        if tick > _MAX_INDEX - lease_ticks:
+            raise ValueError("translation expiry exceeds the supported time range")
+        if not isinstance(replace_existing, bool):
+            raise TypeError("replace_existing must be Boolean")
+        preview = self.preview_visual_approach(request, source, at_tick=tick)
+        number = _index(self._proposal_number + 1, "proposal number", 1)
+        feedback = self._current_feedback(tick)
+        live = self.reservations(at_tick=tick)
+        replacing = live if replace_existing else ()
+        reason = None if preview.status == "geometry_only_not_authorized" else preview.status
+        if reason is None:
+            reason = self._translation_refusal(feedback)
+        if reason is None and live and not replace_existing:
+            reason = "incompatible_body_resource_reserved"
+        bindings: tuple[BodyTargetBindingV1, ...] = ()
+        capability = self._translation_capability
+        if reason is None:
+            if feedback is None or capability is None or preview.body_step is None or preview.body is None:
+                raise RuntimeError("permitted translation lost its original geometry")
+            planar = feedback.planar
+            if planar is None or planar.position is None or planar.heading_degrees is None:
+                raise RuntimeError("permitted translation has no current independent body basis")
+            if (preview.body.sample_id, preview.body.event_tick, preview.body.frame_id, preview.body.heading_degrees) != (
+                feedback.sample_id, feedback.event_tick, planar.frame_id, planar.heading_degrees,
+            ) or preview.body.position != NavPointV1(*planar.position):
+                raise ValueError("preview and authorization must use the same independent body acquisition")
+            length = math.hypot(preview.body_step.x, preview.body_step.y)
+            permitted = min(capability.maximum_step, capability.maximum_rate * self._tick_seconds * lease_ticks)
+            if length > capability.tolerance and permitted <= capability.tolerance:
+                reason = "insufficient_motion_budget"
+            else:
+                ratio = min(1.0, permitted / length) if length > 0.0 else 1.0
+                sign = self._translation_mapping_sign
+                offset = (preview.body_step.x * ratio * sign, preview.body_step.y * ratio * sign)
+                target = BodyTranslationTargetV1(
+                    f"body_target:planar_translation:{number}", 1, request.origin, feedback, offset,
+                    capability.tolerance, capability.maximum_excursion, capability.maximum_rate, lease_ticks,
+                )
+                bindings = (BodyTargetBindingV1(target, capability),)
+        withheld = () if reason is None else ((SensorimotorTargetKindV1.PLANAR_TRANSLATION, reason),)
+        proposal = BodyTargetProposalV1(request, tick, bindings, withheld, replacing, preview)
+        self._pending, self._proposal_number, self._last_tick = proposal, number, tick
+        return proposal
 
     def _make_binding(
         self, request: BodyMovementRequestV1, kind: SensorimotorTargetKindV1,
@@ -861,6 +1029,8 @@ class BodyTargetMapperV1:
                         reason = "insufficient_motion_budget"
             if reason is None and foreign_origin:
                 reason = "different_task_envelope_reserved"
+            if reason is None and SensorimotorTargetKindV1.PLANAR_TRANSLATION in occupied:
+                reason = "incompatible_body_resource_reserved"
             if reason is None and kind in occupied:
                 reason = "resource_already_reserved"
             if reason is not None:
@@ -892,6 +1062,8 @@ class BodyTargetMapperV1:
             raise ValueError("proposal is not the mapper's current original proposal")
         if not proposal.bindings:
             raise ValueError("proposal has no usable target to reserve")
+        if proposal.visual_preview is not None and tick != proposal.created_tick:
+            raise ValueError("translation must commit at its original reviewed visual cutoff")
         feedback = self._current_feedback(tick)
         live = self.reservations(at_tick=tick)
         if proposal.replaces:
@@ -954,6 +1126,8 @@ class BodyTargetMapperV1:
         if tick <= reservation.updated_tick:
             raise ValueError("refinement requires a later local tick")
         initial, current = reservation.initial.target, reservation.current.target
+        if not isinstance(initial, BodyRelativeTargetV1) or not isinstance(current, BodyRelativeTargetV1):
+            raise ValueError("translation changes require a new task authorization, not scalar refinement")
         lower, upper, _ = _axis_limits(current.kind)
         value = _scalar(endpoint, "endpoint", lower, upper)
         feedback = self._current_feedback(tick)
@@ -968,6 +1142,8 @@ class BodyTargetMapperV1:
         if abs(value - initial.endpoint) > initial.tolerance + _EPSILON:
             raise ValueError("refinement exceeds the original endpoint tolerance band")
         capability = reservation.capability
+        if not isinstance(capability, BodyAxisCapabilityV1):
+            raise TypeError("scalar refinement requires scalar capability")
         if not capability.minimum_coordinate - _EPSILON <= value <= capability.maximum_coordinate + _EPSILON:
             raise ValueError("refined endpoint exceeds capability coordinate range")
         remaining_travel = current.max_rate * self._tick_seconds * (reservation.current.expires_at_tick - tick)

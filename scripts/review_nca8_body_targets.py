@@ -33,7 +33,7 @@ from nca8_body_targets import (
     BodyTargetProposalV1,
     nominal_body_capabilities_v1,
 )
-from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, TargetOriginV1
+from nca8_sensorimotor_contracts import BodyRelativeTargetV1, FocalMotorEvidenceV1, TargetOriginV1
 
 
 def _section(number: int, title: str) -> None:
@@ -80,6 +80,8 @@ def _show(proposal: BodyTargetProposalV1) -> None:
     """Describe each mapped axis or its own refusal without printing a world dump."""
     for binding in proposal.bindings:
         target = binding.target
+        if not isinstance(target, BodyRelativeTargetV1):
+            raise TypeError("this retained review expects a scalar support target")
         print(
             f"  {target.kind.value}: basis={target.basis_coordinate:+.3f} offset={target.offset:+.3f}"
             f" endpoint={target.endpoint:+.3f}; capability={binding.capability.capability_id}"
@@ -130,11 +132,13 @@ def main() -> int:
     mapper = _configured(first)
     original = mapper.propose(request, at_tick=0)
     old_target = original.bindings[0].target
+    assert isinstance(old_target, BodyRelativeTargetV1)
     focal = FocalMotorEvidenceV1(first, 1, 0)
     old_focal = json.dumps(focal.as_dict(), sort_keys=True)
     later = replace(first, sample_id=2, event_tick=1, available_tick=1, body_tilt_degrees=25.0)
     mapper.update_feedback(later, at_tick=1)  # Explicit later-sample fixture, not a physical command result.
     newer = mapper.propose(request, at_tick=1)
+    assert isinstance(newer.bindings[0].target, BodyRelativeTargetV1)
     print(f"  supplied later tilt=25.0; original target endpoint={old_target.endpoint:+.1f}")
     print(f"  a NEW proposal from that new basis targets {newer.bindings[0].target.endpoint:+.1f}")
     print(f"  original focal evidence unchanged: {json.dumps(focal.as_dict(), sort_keys=True) == old_focal}")
@@ -163,6 +167,7 @@ def main() -> int:
     _section(6, "BOUNDED REFINEMENT / NO DRIFT OR LEASE RENEWAL")
     mapper.update_feedback(later, at_tick=1)
     revised = mapper.refine(tilt_reservation, endpoint=17.5, at_tick=1)
+    assert isinstance(revised.current.target, BodyRelativeTargetV1)
     print(
         f"  original endpoint=18.0; refined endpoint={revised.current.target.endpoint:.1f};"
         f" revision={revised.current.target.revision}; revision event={revised.updated_tick}"

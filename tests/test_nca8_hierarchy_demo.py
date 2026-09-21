@@ -144,8 +144,8 @@ def test_registry_versions_include_real_modules_and_preserve_legacy_count():
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_hierarchy"] == "nca8_hierarchy"
     assert registry["nca8_hierarchy_demo"] == "nca8_hierarchy_demo"
-    assert cca8_run.__version__ == "0.30.21"
-    assert nca8_hierarchy.__version__ == demo.__version__ == "0.5.0"
-    assert cca8_motor_contracts.__version__ == nca8_handoff.__version__ == nca8_sensorimotor_contracts.__version__ == "0.2.0"
-    assert len(cca8_run._cca8_component_rows()) == 80
+    assert cca8_run.__version__ == "0.30.22"
+    assert nca8_hierarchy.__version__ == "0.6.0" and demo.__version__ == "0.5.1"
+    assert cca8_motor_contracts.__version__ == nca8_handoff.__version__ == nca8_sensorimotor_contracts.__version__ == "0.3.0"
+    assert len(cca8_run._cca8_component_rows()) == 82
     assert len(cca8_run.PRIMITIVES) == 8

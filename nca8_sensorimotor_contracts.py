@@ -26,9 +26,9 @@ from typing import Protocol
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
-    "BodyRelativeTargetV1",
+    "BodyRelativeTargetV1", "BodyTranslationTargetV1",
     "CommittedBodyTargetV1",
     "FocalMotorEvidenceV1",
     "LocalTargetDispositionV1",
@@ -84,6 +84,7 @@ class SensorimotorTargetKindV1(str, Enum):
 
     ORIENTATION_ADJUST = "orientation_adjust"
     SUPPORT_EXTENSION = "support_extension"
+    PLANAR_TRANSLATION = "planar_translation"
 
 
 class TargetDirectiveV1(str, Enum):
@@ -182,6 +183,8 @@ class BodyRelativeTargetV1:
             raise TypeError("origin requires TargetOriginV1")
         if not isinstance(self.kind, SensorimotorTargetKindV1):
             raise TypeError("kind requires SensorimotorTargetKindV1")
+        if self.kind is SensorimotorTargetKindV1.PLANAR_TRANSLATION:
+            raise ValueError("a vector translation requires BodyTranslationTargetV1, never a scalar target")
         if not isinstance(self.basis, MotorFeedbackV1):
             raise TypeError("basis requires MotorFeedbackV1")
         if self.basis.stream != self.origin.stream:
@@ -242,6 +245,77 @@ class BodyRelativeTargetV1:
 
 
 @dataclass(frozen=True, slots=True)
+class BodyTranslationTargetV1:
+    """One finite forward/left offset anchored to an original horizontal pose.
+
+    The scene endpoint is derived once from the saved measured position/yaw.
+    New feedback can remap pursuit into a new body heading, but never adds the
+    original offset again. The displacement bound is radial, not per-axis;
+    rate and tolerance are metres/second and metres. One translation resource
+    excludes incompatible support manipulation in this initial conservative
+    profile. This record itself grants no installation or motion authority.
+    """
+
+    target_id: str
+    revision: int
+    origin: TargetOriginV1
+    basis: MotorFeedbackV1
+    offset: tuple[float, float]
+    tolerance: float = 0.01
+    max_displacement: float = 0.35
+    max_rate: float = 1.0
+    lease_ticks: int = _MAX_LEASE_TICKS
+    max_corrections: int = _MAX_CORRECTIONS
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "target_id", _text(self.target_id, "target_id"))
+        _counter(self.revision, "revision", low=1)
+        if not isinstance(self.origin, TargetOriginV1) or not isinstance(self.basis, MotorFeedbackV1):
+            raise TypeError("translation target needs its typed origin and measured body basis")
+        if self.basis.stream != self.origin.stream:
+            raise ValueError("translation basis belongs to another generation")
+        planar = self.basis.planar
+        if planar is None or planar.position is None or planar.heading_degrees is None:
+            raise ValueError("translation cannot invent missing starting position or heading")
+        if not isinstance(self.offset, tuple) or len(self.offset) != 2:
+            raise TypeError("translation offset must be an immutable forward/left pair")
+        object.__setattr__(self, "offset", (_real(self.offset[0], "forward offset"), _real(self.offset[1], "left offset")))
+        for name in ("tolerance", "max_displacement", "max_rate"):
+            object.__setattr__(self, name, _real(getattr(self, name), name))
+        if not 0.0 < self.tolerance <= self.max_displacement <= 0.5 or not 0.0 < self.max_rate <= 1.0:
+            raise ValueError("translation exceeds the fixed tolerance/excursion/rate contract")
+        if math.hypot(*self.offset) > self.max_displacement + 1e-12:
+            raise ValueError("translation offset exceeds the original radial excursion")
+        _counter(self.lease_ticks, "lease_ticks", low=1, high=_MAX_LEASE_TICKS)
+        _counter(self.max_corrections, "max_corrections", high=_MAX_CORRECTIONS)
+        if max(abs(value) for value in self.endpoint) > 10000.0:
+            raise ValueError("translation endpoint exceeds the supported scene coordinates")
+
+    @property
+    def kind(self) -> SensorimotorTargetKindV1:
+        """Identify the single vector resource; it is not two unrelated tasks."""
+        return SensorimotorTargetKindV1.PLANAR_TRANSLATION
+
+    @property
+    def endpoint(self) -> tuple[float, float]:
+        """Return the same anchored scene endpoint after any subsequent body motion."""
+        planar = self.basis.planar
+        if planar is None or planar.position is None or planar.heading_degrees is None:
+            raise ValueError("translation target lost its required original geometry")
+        cosine, sine = math.cos(math.radians(planar.heading_degrees)), math.sin(math.radians(planar.heading_degrees))
+        forward, left = self.offset
+        return planar.position[0] + cosine * forward - sine * left, planar.position[1] + sine * forward + cosine * left
+
+    def as_dict(self) -> dict[str, object]:
+        """Export a proposal with immutable anchors, not a replayable motor right."""
+        return {"schema": "body_translation_target_v1", "status": "proposed", "target_id": self.target_id,
+                "revision": self.revision, "origin": self.origin.as_dict(), "kind": self.kind.value,
+                "basis": self.basis.as_dict(), "offset": list(self.offset), "endpoint": list(self.endpoint),
+                "tolerance": self.tolerance, "max_displacement": self.max_displacement, "max_rate": self.max_rate,
+                "lease_ticks": self.lease_ticks, "max_corrections": self.max_corrections}
+
+
+@dataclass(frozen=True, slots=True)
 class CommittedBodyTargetV1:
     """Describe a committed target's finite execution association, without installing it.
 
@@ -252,13 +326,13 @@ class CommittedBodyTargetV1:
     intentionally no decoder that restores live targets from exported diagnostics.
     """
 
-    target: BodyRelativeTargetV1
+    target: BodyRelativeTargetV1 | BodyTranslationTargetV1
     execution_id: str
     committed_tick: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.target, BodyRelativeTargetV1):
-            raise TypeError("committed target requires BodyRelativeTargetV1")
+        if not isinstance(self.target, (BodyRelativeTargetV1, BodyTranslationTargetV1)):
+            raise TypeError("committed target requires a typed scalar or translation target")
         object.__setattr__(self, "execution_id", _text(self.execution_id, "execution_id"))
         tick = _counter(self.committed_tick, "committed_tick")
         if tick > _MAX_COUNTER - self.target.lease_ticks:
@@ -404,17 +478,22 @@ class LocalTargetReportV1:
         if feedback is None:
             raise ValueError("observed local achievement/progress requires actual feedback")
         target = self.committed_target.target
-        coordinate = (
-            feedback.body_tilt_degrees
-            if target.kind is SensorimotorTargetKindV1.ORIENTATION_ADJUST
-            else feedback.support_extension
-        )
-        if coordinate is None:
-            raise ValueError("the target's measured result is unavailable")
+        if isinstance(target, BodyTranslationTargetV1):
+            planar = feedback.planar
+            anchor = target.basis.planar
+            if planar is None or anchor is None or planar.position is None or planar.frame_id != anchor.frame_id:
+                raise ValueError("translation result needs compatible observed position")
+            distance = math.hypot(planar.position[0] - target.endpoint[0], planar.position[1] - target.endpoint[1])
+        else:
+            coordinate = (feedback.body_tilt_degrees if target.kind is SensorimotorTargetKindV1.ORIENTATION_ADJUST
+                          else feedback.support_extension)
+            if coordinate is None:
+                raise ValueError("the target's measured result is unavailable")
+            distance = abs(coordinate - target.endpoint)
         if self.disposition is LocalTargetDispositionV1.ACHIEVED:
             if feedback.event_tick > self.committed_target.expires_at_tick:
                 raise ValueError("achievement was not observed by the target lease endpoint")
-            if abs(coordinate - target.endpoint) > target.tolerance + 1e-12:
+            if distance > target.tolerance + 1e-12:
                 raise ValueError("measured coordinate does not achieve the target tolerance")
 
     def as_dict(self) -> dict[str, object]:
