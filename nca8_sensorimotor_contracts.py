@@ -26,7 +26,7 @@ from typing import Protocol
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "BodyRelativeTargetV1", "BodyTranslationTargetV1",
     "CommittedBodyTargetV1",
@@ -36,7 +36,7 @@ __all__ = [
     "MotorInstallationSourceV1",
     "SensorimotorTargetKindV1",
     "TargetDirectiveV1",
-    "TargetOriginV1",
+    "TargetOriginV1", "scalar_motor_coordinate_v1", "oral_basis_compatible_v1",
     "__version__",
 ]
 
@@ -80,11 +80,54 @@ def _real(value: object, name: str) -> float:
 
 
 class SensorimotorTargetKindV1(str, Enum):
-    """The two supplied-target families, not Navigation-selected task primitives."""
+    """Supported body resources, not Navigation-selected task primitives.
+
+    ORAL_REACH is the optional single body-forward reach coordinate. It grants
+    neither a head-orientation strategy nor latch/suckling competence.
+    """
 
     ORIENTATION_ADJUST = "orientation_adjust"
     SUPPORT_EXTENSION = "support_extension"
     PLANAR_TRANSLATION = "planar_translation"
+    ORAL_REACH = "oral_reach"
+
+
+def scalar_motor_coordinate_v1(feedback: MotorFeedbackV1, kind: SensorimotorTargetKindV1) -> float | None:
+    """Read one actually measured scalar resource; never synthesize missing reach.
+
+    Mapper, contracts and executor share this dispatch so a new oral coordinate
+    cannot accidentally be interpreted as support extension. Vector translation
+    deliberately has no scalar fallback. This reader has no side effects.
+    """
+    if not isinstance(feedback, MotorFeedbackV1) or not isinstance(kind, SensorimotorTargetKindV1):
+        raise TypeError("scalar coordinate needs canonical feedback and a typed target family")
+    if kind is SensorimotorTargetKindV1.ORIENTATION_ADJUST:
+        return feedback.body_tilt_degrees
+    if kind is SensorimotorTargetKindV1.SUPPORT_EXTENSION:
+        return feedback.support_extension
+    if kind is SensorimotorTargetKindV1.ORAL_REACH:
+        return None if feedback.oral is None else feedback.oral.extension_metres
+    raise ValueError("vector translation has no scalar motor coordinate")
+
+
+def oral_basis_compatible_v1(basis: MotorFeedbackV1, feedback: MotorFeedbackV1) -> bool:
+    """Check that the body-forward axis still denotes its original scene relation.
+
+    The first oral executor cannot rotate its head or compensate for whole-body
+    movement. More than 0.001 metres of translation or 0.5 degrees of yaw makes
+    its old scene-directed target inappropriate. These are fixed engineering
+    tolerances, not measured anatomy. Missing pose is not a compatible anchor;
+    a new target/authorization is needed after an incompatible body change.
+    """
+    if not isinstance(basis, MotorFeedbackV1) or not isinstance(feedback, MotorFeedbackV1):
+        raise TypeError("oral basis comparison requires canonical motor acquisitions")
+    before, after = basis.planar, feedback.planar
+    if (basis.stream != feedback.stream or before is None or after is None or before.frame_id != after.frame_id
+            or before.position is None or after.position is None or before.heading_degrees is None or after.heading_degrees is None):
+        return False
+    distance = math.hypot(after.position[0] - before.position[0], after.position[1] - before.position[1])
+    angle = (after.heading_degrees - before.heading_degrees + 180.0) % 360.0 - 180.0
+    return distance <= 0.001 + 1e-12 and abs(angle) <= 0.5 + 1e-12
 
 
 class TargetDirectiveV1(str, Enum):
@@ -153,7 +196,10 @@ class BodyRelativeTargetV1:
     ``offset`` is added to that acquisition's tilt or extension, never to a
     later measurement. ``max_displacement`` bounds permitted excursions from
     the original basis; ``max_rate`` is in degrees/s or normalized units/s for
-    the corresponding family. Tolerance is a local measurement criterion,
+    the corresponding family. ORAL_REACH uses metres and metres/second on a
+    single body-forward axis, capped at 0.35 metres and 0.5 metres/second, with
+    an independently retained horizontal body position/yaw basis.
+    Tolerance is a local measurement criterion,
     not a probability or a task-success threshold. A caller cannot request
     missing starting geometry or silently clip an infeasible endpoint.
 
@@ -195,6 +241,10 @@ class BodyRelativeTargetV1:
         _counter(self.max_corrections, "max_corrections", high=_MAX_CORRECTIONS)
         if self.kind is SensorimotorTargetKindV1.ORIENTATION_ADJUST:
             lower, upper, rate_limit = -90.0, 90.0, 90.0
+        elif self.kind is SensorimotorTargetKindV1.ORAL_REACH:
+            lower, upper, rate_limit = 0.0, 0.35, 0.5
+            if not oral_basis_compatible_v1(self.basis, self.basis):
+                raise ValueError("oral target requires a known original body position and heading")
         else:
             lower, upper, rate_limit = 0.0, 1.0, 1.0
         if not 0.0 < self.max_displacement <= upper - lower:
@@ -211,10 +261,7 @@ class BodyRelativeTargetV1:
     @property
     def basis_coordinate(self) -> float:
         """Return the required measured coordinate or reject missing geometry."""
-        if self.kind is SensorimotorTargetKindV1.ORIENTATION_ADJUST:
-            value = self.basis.body_tilt_degrees
-        else:
-            value = self.basis.support_extension
+        value = scalar_motor_coordinate_v1(self.basis, self.kind)
         if value is None:
             raise ValueError("the target's required starting body coordinate is missing")
         return value
@@ -241,6 +288,8 @@ class BodyRelativeTargetV1:
             "max_rate": self.max_rate,
             "lease_ticks": self.lease_ticks,
             "max_corrections": self.max_corrections,
+            **({"coordinate_frame": "body_forward_oral_v1", "coordinate_units": "metres", "rate_units": "metres_per_second"}
+               if self.kind is SensorimotorTargetKindV1.ORAL_REACH else {}),
         }
 
 
@@ -485,8 +534,9 @@ class LocalTargetReportV1:
                 raise ValueError("translation result needs compatible observed position")
             distance = math.hypot(planar.position[0] - target.endpoint[0], planar.position[1] - target.endpoint[1])
         else:
-            coordinate = (feedback.body_tilt_degrees if target.kind is SensorimotorTargetKindV1.ORIENTATION_ADJUST
-                          else feedback.support_extension)
+            coordinate = scalar_motor_coordinate_v1(feedback, target.kind)
+            if target.kind is SensorimotorTargetKindV1.ORAL_REACH and not oral_basis_compatible_v1(target.basis, feedback):
+                raise ValueError("oral result lacks the original compatible body-forward anchor")
             if coordinate is None:
                 raise ValueError("the target's measured result is unavailable")
             distance = abs(coordinate - target.endpoint)

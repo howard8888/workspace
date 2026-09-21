@@ -20,7 +20,9 @@ from dataclasses import dataclass, replace
 
 import cca8_cli
 from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, admit_motor_feedback_batch_v1
-from cca8_support_world import MotorBodyStateV1, MotorWorldPerturbationV1, MotorWorldProfileV1, MotorWorldV1
+from cca8_support_world import (
+    MotorBodyStateV1, MotorWorldPerturbationV1, MotorWorldProfileV1, MotorWorldV1, OralWorldProfileV1, PlanarWorldProfileV1,
+)
 from nca8_body import Nca8BodyRuntimeV1
 from nca8_body_targets import (
     BodyAxisCapabilityV1, BodyMovementRequestV1, BodyTargetProposalV1, BodyTargetReservationV1,
@@ -29,7 +31,7 @@ from nca8_body_targets import (
 from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, SensorimotorProfileV1, SensorimotorStepV1
 from nca8_sensorimotor_contracts import BodyRelativeTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 __all__ = [
     "SensorimotorTrialV1", "SensorimotorExperimentV1", "run_sensorimotor_experiment_v1",
     "render_sensorimotor_experiment_v1", "run_sensorimotor_review_v1", "run_sensorimotor_review_menu_v1", "__version__",
@@ -110,6 +112,9 @@ class SensorimotorTrialV1:
     A fresh/reset trial explicitly supplies the desired coordinates, constructs
     BodyMap targets through H3, and installs that fixture once. Current body
     readings are real H2 measurements. No target endpoint is assigned to physics.
+    Optional planar/oral physical profiles let a specialized relation fixture
+    override only _initialize(); construction, stepping, fault handling and reset
+    stay shared. Default H4 profiles and complete experiment exports are unchanged.
     """
 
     def __init__(
@@ -117,8 +122,11 @@ class SensorimotorTrialV1:
         capabilities: tuple[BodyAxisCapabilityV1, ...] | None = None,
         desired_tilt_degrees: float | None = 0.0, desired_extension: float | None = 0.60,
         control_profile: SensorimotorProfileV1 | None = None,
+        planar_profile: PlanarWorldProfileV1 | None = None, oral_profile: OralWorldProfileV1 | None = None,
+        stream_id: str = "h4_fixture_body",
     ) -> None:
-        self.world = MotorWorldV1(MotorStreamRefV1("h4_fixture_body", 1), physical_profile)
+        self.world = MotorWorldV1(MotorStreamRefV1(stream_id, 1), physical_profile,
+                                 planar_profile=planar_profile, oral_profile=oral_profile)
         self._capabilities = nominal_body_capabilities_v1() if capabilities is None else capabilities
         self._desired_tilt = desired_tilt_degrees
         self._desired_extension = desired_extension

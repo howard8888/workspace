@@ -16,6 +16,64 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P16-2C-B oral-target/contact foundation
+
+P16-2C-A has been locally validated and committed; Howard reports clean
+`main` / `origin/main` at `c484b92`. The supplied archive has those exact source
+contents but retains pre-commit Git metadata at `3bfb689`. This candidate is
+based on the verified P16-2C-A source tree, not a claim of independent live GitHub
+verification. Full P16-2C and B99 remain open.
+
+The current registry has **95 production components / 8 host behavioral primitives**
+(`cca8_run.py v0.30.30`). This slice adds an optional **body-forward oral reach axis**
+to the existing neutral motor records, physical provider, BodyMap target mapper
+and scalar sensorimotor executor. It does not create a second motor framework.
+The original v1/v2 motor exports and default capabilities remain unchanged; oral
+profiles use strict v3 motor packets with measured reach and explicit touch/unknown.
+
+The experiment updates real visual, maternal and feeding-detail owners from one
+admitted acquisition, then supplies a clearly labelled relation requirement.
+BodyMap transforms its independently represented detail into this body's reach
+coordinate, binds the optional capability, and proposes/reserves one finite target.
+The existing H4 external driver installs once, advances one physical interval at
+a time, and admits later feedback. There are **no Navigation calls or cognitive
+cycles during this lower experiment**; the source update is a fixture opportunity.
+The existing P16-2C-A continuous stand/follow/focal-access experiments are retained.
+
+The declared provider is deliberately small: 0–0.35 metres of reach at up to
+0.5 metres/second, one 0.15-metre contribution, at most eight lower ticks per
+lease, and the existing 0.05-second timebase. A fixed independent tactile disk
+supplies tip-overlap sensing. This is not rigid collision physics, a seal, latch,
+or milk. The axis cannot turn the head or repair off-axis geometry. Current
+support, body position/heading and known touch are required. A moved body anchor,
+unexpected early touch, lost support or stale sensing blocks further pursuit
+when the relevant feedback arrives; an in-flight interval is not retroactively
+undone. Neutral drive does not guarantee stable bodily support.
+
+Review through **Main 1 → Watch Cognition 4 → NCA8 15 → feeding review 18**.
+The oral submenu includes nominal, absent/unknown touch, geometry, source and
+capability controls, timed disturbance with reactive/prediction-off/open-loop
+contrasts, missing/delayed feedback, body/support change and cancellation.
+Its retained-detail view does not rerun movement. Secondary shared entry:
+
+    python scripts/review_nca8_feeding.py --oral --case all
+    python scripts/review_nca8_feeding.py --oral --case nominal --detail
+
+Without `--oral`, the script retains the original P16-2C-A source/access route.
+Each oral case uses twelve physical ticks. Local coordinate achievement,
+physical contact, delivered tactile evidence and their times are reported
+separately. In particular, removing the tactile surface leaves target attainment
+possible without touch; a sensor dropout can leave physical touch unobserved.
+Local prediction protection changes a disturbed rate, not necessarily completion
+speed. Open-loop replay is an explicit external ablation, not normal stale-data
+permission. PASS requires complete evidence and the declared case checks.
+
+**Not implemented by this slice:** Navigation-selected SeekNipple, continuous
+stand/follow/oral integration, task-level oral PNM/outcome correspondence,
+feeding participation/Phase-F reconciliation, latch, suckling, milk/nourishment,
+rest, durable learning, B99 or default-runtime promotion. These remain subsequent
+steps. The supplied relation fixture is lower-capability evidence only.
+
 ## NCA8 update: P16-2C-A feeding-detail source and focal access
 
 Entry: accepted full P16-2B, committed at clean
@@ -26,7 +84,7 @@ review; it does not complete P16-2C or authorize an oral movement capability.
 The preceding P16-2B-F issue-time acceptance language below is historical:
 Howard subsequently accepted full P16-2B at its declared experimental scope.
 
-The current registry has **94 production components / 8 host behavioral primitives**
+At the P16-2C-A checkpoint the registry had **94 production components / 8 host behavioral primitives**
 (`cca8_run.py v0.30.29`). `nca8_feeding.py` owns one current feeding-detail
 association source; `nca8_feeding_demo.py` supplies an external review, not another
 executive. The existing source/Attention/Navigation/A-F hierarchy is reused.

@@ -11,6 +11,8 @@ checks its seeded parent relation before ordinary Attention can select it.
 The observer can retain complete finite records; cognition never reads them.
 Checks qualify this source/access slice, not SeekNipple, latch, feeding, rest or
 B99. Contact and milk remain explicitly unobserved, rather than false or zero.
+The separate menu-18 P16-2C-B foundation adds supplied oral-target/touch tests;
+it does not change any of these P16-2C-A experiments or integrate a feeding IP.
 """
 
 from __future__ import annotations
@@ -24,10 +26,11 @@ from cca8_support_world import MotorBodyStateV1, MotorWorldPerturbationV1, Plana
 from nca8_feeding import FeedingDetailProfileV1, FeedingDetailSeedV1, FeedingDetailNavMapStateV1
 from nca8_followmom_demo import follow_mom_owner_limits_v1, maternal_durable_signature_v1
 from nca8_hierarchy import IntegratedRightingCycleV1, IntegratedRightingTrialV1
+from nca8_oral_demo import run_oral_contact_menu_v1
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_stand_follow_demo import StandFollowPhysicalSampleV1, StandFollowProfileV1, stand_follow_profile_v1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "FEEDING_DETAIL_CASES_V1", "FeedingDetailExperimentV1", "feeding_detail_profiles_v1", "create_feeding_detail_trial_v1",
     "run_feeding_detail_v1", "render_feeding_detail_v1", "run_feeding_detail_menu_v1", "__version__",
@@ -283,10 +286,13 @@ def run_feeding_detail_menu_v1() -> None:
         print("  0) All cases (compact)")
         for index, case in enumerate(FEEDING_DETAIL_CASES_V1, 1):
             print(f"  {index}) {case}")
+        print("  18) Oral target/contact foundation (P16-2C-B; supplied requirement)")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
             return
-        if choice == "0":
+        if choice == "18":
+            run_oral_contact_menu_v1()
+        elif choice == "0":
             for case in FEEDING_DETAIL_CASES_V1:
                 print(render_feeding_detail_v1(run_feeding_detail_v1(case)))
         elif choice.isascii() and choice.isdigit() and 1 <= int(choice) <= len(FEEDING_DETAIL_CASES_V1):

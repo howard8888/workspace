@@ -26,12 +26,12 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "MOTOR_COMMAND_SCHEMA_V1",
     "MOTOR_FEEDBACK_SCHEMA_V1",
     "MOTOR_FRAME_V1",
-    "PlanarDriveV1", "PlanarFeedbackV1",
+    "PlanarDriveV1", "PlanarFeedbackV1", "OralFeedbackV1",
     "MotorCommandV1",
     "MotorFeedbackV1",
     "MotorStreamRefV1",
@@ -215,6 +215,43 @@ class PlanarFeedbackV1:
 
 
 @dataclass(frozen=True, slots=True)
+class OralFeedbackV1:
+    """Measured body-forward reach and independent touch in the same acquisition.
+
+    This optional v3 facet has no sample clock of its own. The enclosing motor
+    record supplies event, availability and generation. Reach is metres along
+    the body's forward axis, not body translation or a selected destination.
+    Contact is sensed proximity in the declared physical surrogate; it does not
+    identify a nipple, imply a latch, or establish milk transfer. Each channel
+    can be unknown. Missing contact must never be substituted with False.
+    """
+
+    extension_metres: float | None
+    contact: bool | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "extension_metres", _optional_number(self.extension_metres, "oral extension", 0.0, 0.35))
+        if self.contact is not None and not isinstance(self.contact, bool):
+            raise TypeError("oral contact must be Boolean or unknown")
+
+    def as_dict(self) -> dict[str, object]:
+        """Describe two measured channels, without task or feeding-success fields."""
+        return {"frame_id": "body_forward_oral_v1", "units": "metres",
+                "extension_metres": self.extension_metres, "contact": self.contact}
+
+    @classmethod
+    def from_dict(cls, value: object) -> OralFeedbackV1:
+        """Decode the exact body-forward facet; reject wrong units or added answers."""
+        packet = _fields(value, frozenset({"frame_id", "units", "extension_metres", "contact"}))
+        if packet["frame_id"] != "body_forward_oral_v1" or packet["units"] != "metres":
+            raise ValueError("unsupported oral frame or units")
+        contact = packet["contact"]
+        if contact is not None and not isinstance(contact, bool):
+            raise TypeError("oral contact must be Boolean or unknown")
+        return cls(_optional_number(packet["extension_metres"], "oral extension", 0.0, 0.35), contact)
+
+
+@dataclass(frozen=True, slots=True)
 class MotorCommandV1:
     """Two signed normalized drives for one external interval [tick, tick+1).
 
@@ -223,7 +260,9 @@ class MotorCommandV1:
     Command numbers increase within a stream generation; gaps are permissible,
     duplicate/reversed numbers are not. Neither a task label nor a desired body
     endpoint belongs in this motor record. Zero drives are neutral input, not a
-    promise that passive physics stops or that support is safe.
+    promise that passive physics stops or that support is safe. The opt-in v3
+    oral_drive is normalized body-forward reach velocity (0.5 metres/s at one),
+    not a seek/latch/suckle command. Old v1/v2 exports remain unchanged.
     """
 
     stream: MotorStreamRefV1
@@ -232,10 +271,12 @@ class MotorCommandV1:
     orientation_drive: float = 0.0
     extension_drive: float = 0.0
     translation: PlanarDriveV1 | None = field(default=None, kw_only=True)
+    oral_drive: float | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.stream, MotorStreamRefV1):
             raise TypeError("stream must be MotorStreamRefV1")
+        object.__setattr__(self, "oral_drive", _optional_number(self.oral_drive, "oral drive", -1.0, 1.0))
         if self.translation is not None and not isinstance(self.translation, PlanarDriveV1):
             raise TypeError("translation must be PlanarDriveV1 or None")
         _integer(self.command_id, "command_id", minimum=1)
@@ -249,7 +290,8 @@ class MotorCommandV1:
     def is_neutral(self) -> bool:
         """Return whether both commanded drives are zero, without implying safety."""
         return (self.orientation_drive == 0.0 and self.extension_drive == 0.0
-                and (self.translation is None or (self.translation.forward == 0.0 and self.translation.left == 0.0)))
+                and (self.translation is None or (self.translation.forward == 0.0 and self.translation.left == 0.0))
+                and (self.oral_drive is None or self.oral_drive == 0.0))
 
     def validate_for_update(self, *, stream: MotorStreamRefV1, now_tick: int, previous_command_id: int) -> None:
         """Check caller-supplied ownership/time/ordering without applying anything.
@@ -274,22 +316,25 @@ class MotorCommandV1:
     def as_dict(self) -> dict[str, object]:
         """Return the exact detached wire schema with no cognitive task fields."""
         return {
-            "schema": MOTOR_COMMAND_SCHEMA_V1 if self.translation is None else "body_motor_command_v2",
+            "schema": ("body_motor_command_v3" if self.oral_drive is not None else
+                       MOTOR_COMMAND_SCHEMA_V1 if self.translation is None else "body_motor_command_v2"),
             "stream": self.stream.as_dict(),
             "command_id": self.command_id,
             "issued_tick": self.issued_tick,
             "orientation_drive": self.orientation_drive,
             "extension_drive": self.extension_drive,
-            **({"translation": self.translation.as_dict()} if self.translation is not None else {}),
+            **({"translation": None if self.translation is None else self.translation.as_dict(), "oral_drive": self.oral_drive}
+               if self.oral_drive is not None else {"translation": self.translation.as_dict()} if self.translation is not None else {}),
         }
 
     @classmethod
     def from_dict(cls, value: object) -> MotorCommandV1:
         """Strictly decode a command description; do not execute or authorize it."""
-        extended = isinstance(value, Mapping) and value.get("schema") == "body_motor_command_v2"
+        oral = isinstance(value, Mapping) and value.get("schema") == "body_motor_command_v3"
+        extended = oral or isinstance(value, Mapping) and value.get("schema") == "body_motor_command_v2"
         fields = {"schema", "stream", "command_id", "issued_tick", "orientation_drive", "extension_drive"}
-        packet = _fields(value, frozenset(fields | ({"translation"} if extended else set())))
-        if packet["schema"] != ("body_motor_command_v2" if extended else MOTOR_COMMAND_SCHEMA_V1):
+        packet = _fields(value, frozenset(fields | ({"translation"} if extended else set()) | ({"oral_drive"} if oral else set())))
+        if packet["schema"] != ("body_motor_command_v3" if oral else "body_motor_command_v2" if extended else MOTOR_COMMAND_SCHEMA_V1):
             raise ValueError("unsupported motor command schema")
         return cls(
             stream=MotorStreamRefV1.from_dict(packet["stream"]),
@@ -297,7 +342,8 @@ class MotorCommandV1:
             issued_tick=_integer(packet["issued_tick"], "issued_tick"),
             orientation_drive=_number(packet["orientation_drive"], "orientation_drive", -1.0, 1.0),
             extension_drive=_number(packet["extension_drive"], "extension_drive", -1.0, 1.0),
-            translation=PlanarDriveV1.from_dict(packet["translation"]) if extended else None,
+            translation=PlanarDriveV1.from_dict(packet["translation"]) if extended and (not oral or packet["translation"] is not None) else None,
+            oral_drive=_number(packet["oral_drive"], "oral drive", -1.0, 1.0) if oral else None,
         )
 
 
@@ -331,8 +377,11 @@ class MotorFeedbackV1:
     destabilization: float | None
     frame_id: str = MOTOR_FRAME_V1
     planar: PlanarFeedbackV1 | None = field(default=None, kw_only=True)
+    oral: OralFeedbackV1 | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
+        if self.oral is not None and (not isinstance(self.oral, OralFeedbackV1) or self.planar is None):
+            raise TypeError("oral feedback requires its typed facet and a planar body frame")
         if self.planar is not None and not isinstance(self.planar, PlanarFeedbackV1):
             raise TypeError("planar must be PlanarFeedbackV1 or None")
         if not isinstance(self.stream, MotorStreamRefV1):
@@ -368,13 +417,15 @@ class MotorFeedbackV1:
     def as_dict(self) -> dict[str, object]:
         """Return a detached JSON-safe sensor packet retaining original identity."""
         return {
-            "schema": MOTOR_FEEDBACK_SCHEMA_V1 if self.planar is None else "body_motor_feedback_v2",
+            "schema": ("body_motor_feedback_v3" if self.oral is not None else
+                       MOTOR_FEEDBACK_SCHEMA_V1 if self.planar is None else "body_motor_feedback_v2"),
             "stream": self.stream.as_dict(),
             "sample_id": self.sample_id,
             "event_tick": self.event_tick,
             "available_tick": self.available_tick,
             "frame_id": self.frame_id,
             **({"planar": self.planar.as_dict()} if self.planar is not None else {}),
+            **({"oral": self.oral.as_dict()} if self.oral is not None else {}),
             "angle_units": "degrees",
             "extension_units": "normalized",
             "body_tilt_degrees": self.body_tilt_degrees,
@@ -393,12 +444,13 @@ class MotorFeedbackV1:
         packet shape. Unknown task, policy, outcome and scenario keys are errors.
         No raw mapping is retained, and changing it later cannot mutate a record.
         """
-        extended = isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v2"
+        oral = isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v3"
+        extended = oral or isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v2"
         packet = _fields(value, frozenset({
             "schema", "stream", "sample_id", "event_tick", "available_tick", "frame_id", "angle_units", "extension_units",
             "body_tilt_degrees", "support_extension", "support_contact", "useful_loading", "destabilization",
-        } | ({"planar"} if extended else set())))
-        if packet["schema"] != ("body_motor_feedback_v2" if extended else MOTOR_FEEDBACK_SCHEMA_V1):
+        } | ({"planar"} if extended else set()) | ({"oral"} if oral else set())))
+        if packet["schema"] != ("body_motor_feedback_v3" if oral else "body_motor_feedback_v2" if extended else MOTOR_FEEDBACK_SCHEMA_V1):
             raise ValueError("unsupported motor feedback schema")
         if packet["angle_units"] != "degrees" or packet["extension_units"] != "normalized":
             raise ValueError("unsupported enhanced motor units")
@@ -415,6 +467,7 @@ class MotorFeedbackV1:
             available_tick=_integer(packet["available_tick"], "available_tick"),
             frame_id=frame,
             planar=PlanarFeedbackV1.from_dict(packet["planar"]) if extended else None,
+            oral=OralFeedbackV1.from_dict(packet["oral"]) if oral else None,
             body_tilt_degrees=_optional_number(packet["body_tilt_degrees"], "body_tilt_degrees", -90.0, 90.0),
             support_extension=_optional_number(packet["support_extension"], "support_extension", 0.0, 1.0),
             support_contact=contact,

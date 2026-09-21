@@ -483,7 +483,7 @@ def test_physical_provider_has_no_cognitive_imports_or_task_input() -> None:
     assert set(inspect.signature(MotorWorldV1.step).parameters) == {"self", "command"}
     assert set(inspect.signature(HybridEnvironment.step_motor).parameters) == {"self", "command"}
     assert set(inspect.signature(MotorCommandV1).parameters) == {
-        "stream", "command_id", "issued_tick", "orientation_drive", "extension_drive", "translation",
+        "stream", "command_id", "issued_tick", "orientation_drive", "extension_drive", "translation", "oral_drive",
     }
 
 

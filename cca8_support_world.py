@@ -31,14 +31,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 
-from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, PlanarFeedbackV1
+from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, OralFeedbackV1, PlanarFeedbackV1
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "MotorBodyStateV1",
     "MotorWorldPerturbationV1",
     "MotorWorldProfileV1",
-    "MotorWorldV1",
+    "MotorWorldV1", "OralWorldStateV1", "OralWorldProfileV1", "OralWorldPerturbationV1",
     "PlanarObjectV1", "PlanarDetailObjectV1", "PlanarPerturbationV1", "PlanarWorldProfileV1", "PlanarWorldStateV1",
     "SupportWorldStateV1",
     "SupportWorldProfileV1",
@@ -559,6 +559,101 @@ def _swept_planar_step(
     return position, contact
 
 
+@dataclass(frozen=True, slots=True)
+class OralWorldStateV1:
+    """Actual single-axis reach and touch, for external inspection only.
+
+    Contact is recomputed from the current tip and independent scene surfaces.
+    This is a functional point/disk sensing surrogate, not an anatomical mouth,
+    force/collision solver, latch constraint or source of nourishment.
+    """
+
+    extension_metres: float = 0.0
+    contact: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "extension_metres", _motor_number(self.extension_metres, "oral extension", 0.0, 0.35))
+        if not isinstance(self.contact, bool):
+            raise TypeError("physical oral contact must be Boolean")
+
+    def as_dict(self) -> dict[str, object]:
+        """Export actual geometry without substituting it for admitted sensing."""
+        return {"extension_metres": self.extension_metres, "contact": self.contact}
+
+
+@dataclass(frozen=True, slots=True)
+class OralWorldPerturbationV1:
+    """Fixed-time external reach forcing, independent of command or task count.
+
+    The rate in metres/second acts over [start_tick, stop_tick) even with neutral
+    drive. Its label/rate never enters local control; only later sensed effects
+    do. This models a disturbance for a causal test, not neural noise or learning.
+    """
+
+    start_tick: int
+    stop_tick: int
+    rate_metres_s: float
+
+    def __post_init__(self) -> None:
+        _motor_integer(self.start_tick, "oral perturbation start")
+        _motor_integer(self.stop_tick, "oral perturbation stop")
+        if self.stop_tick <= self.start_tick:
+            raise ValueError("oral perturbation stop must follow start")
+        object.__setattr__(self, "rate_metres_s", _motor_number(self.rate_metres_s, "oral forcing", -1.0, 1.0))
+
+
+@dataclass(frozen=True, slots=True)
+class OralWorldProfileV1:
+    """Opt-in body-forward reach in the existing plant, not a feeding programme.
+
+    Full drive gives 0.5 metres/second within 0..0.35 metres. Motion requires
+    actual supported posture; zero drive retains the reach coordinate, but body
+    motion and independently scheduled forcing still change the tip or contact.
+    Surfaces use the existing point/disk geometry independently of visual region
+    categories. Any such surface can produce touch; contact conveys no identity.
+    The tip may enter the sensor disk: no rigid collision, seal or latch is modeled.
+
+    Sensing shares the existing motor acquisition and delayed delivery. Missing
+    reach or touch channels remain unknown. Old profiles never enable this facet.
+    """
+
+    initial_extension_metres: float = 0.0
+    surfaces: tuple[PlanarObjectV1, ...] = ()
+    motor_enabled: bool = True
+    extension_available: bool = True
+    contact_available: bool = True
+    perturbations: tuple[OralWorldPerturbationV1, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "initial_extension_metres",
+                           _motor_number(self.initial_extension_metres, "initial oral reach", 0.0, 0.35))
+        if not all(isinstance(flag, bool) for flag in (self.motor_enabled, self.extension_available, self.contact_available)):
+            raise TypeError("oral profile switches must be Boolean")
+        if not isinstance(self.surfaces, tuple) or len(self.surfaces) > 8:
+            raise ValueError("oral surfaces require at most eight immutable disks")
+        for surface in self.surfaces:
+            if not isinstance(surface, PlanarObjectV1) or not 0.0 < surface.radius <= 0.05:
+                raise ValueError("oral sensing surfaces require physical disks with radius in (0, 0.05] metres")
+        if len({surface.region_id for surface in self.surfaces}) != len(self.surfaces):
+            raise ValueError("oral surface handles must be unique")
+        if not isinstance(self.perturbations, tuple) or len(self.perturbations) > 8:
+            raise ValueError("supply at most eight oral forcing intervals")
+        previous = 0
+        for event in self.perturbations:
+            if not isinstance(event, OralWorldPerturbationV1) or event.start_tick < previous:
+                raise ValueError("oral forcing must be typed, ordered and nonoverlapping")
+            previous = event.stop_tick
+
+
+def _oral_state(extension: float, planar: PlanarWorldStateV1, profile: OralWorldProfileV1) -> OralWorldStateV1:
+    """Calculate touch from actual tip geometry, without a target or visual label."""
+    radians = math.radians(planar.heading_degrees)
+    tip = (planar.position[0] + extension * math.cos(radians), planar.position[1] + extension * math.sin(radians))
+    contact = any(math.hypot(tip[0] - surface.position[0], tip[1] - surface.position[1]) <= surface.radius + 1e-12
+                  for surface in profile.surfaces)
+    return OralWorldStateV1(extension, contact)
+
+
 class MotorWorldV1:
     """A small deterministic body simulator with explicit command and sensing time.
 
@@ -582,6 +677,7 @@ class MotorWorldV1:
 
     def __init__(
         self, stream: MotorStreamRefV1, profile: MotorWorldProfileV1 | None = None, *, planar_profile: PlanarWorldProfileV1 | None = None,
+        oral_profile: OralWorldProfileV1 | None = None,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("stream must be MotorStreamRefV1")
@@ -589,17 +685,28 @@ class MotorWorldV1:
             raise TypeError("profile must be MotorWorldProfileV1 or None")
         if planar_profile is not None and not isinstance(planar_profile, PlanarWorldProfileV1):
             raise TypeError("planar_profile must be PlanarWorldProfileV1 or None")
+        if oral_profile is not None and (not isinstance(oral_profile, OralWorldProfileV1) or planar_profile is None):
+            raise TypeError("oral profile requires its typed settings and the existing planar body profile")
+        self._oral_profile = oral_profile
         self._planar_profile = planar_profile
         self._planar = (None if planar_profile is None else
                         PlanarWorldStateV1(planar_profile.initial_position, planar_profile.initial_heading,
                                            _swept_planar_step(planar_profile.initial_position, (0.0, 0.0), planar_profile.objects)[1]))
+        self._oral = (None if oral_profile is None or self._planar is None else
+                      _oral_state(oral_profile.initial_extension_metres, self._planar, oral_profile))
         self._stream = stream
         self._profile = profile if profile is not None else MotorWorldProfileV1()
         self._body = self._profile.initial_body
         self._tick = 0
         self._last_command_id = 0
         self._pending: tuple[MotorFeedbackV1, ...] = ()
-        self._latest_feedback = self._measure(self._body, 0.0, self._profile.surface_present, event_tick=0, delay=0, planar=self._planar)
+        self._latest_feedback = self._measure(self._body, 0.0, self._profile.surface_present,
+                                             event_tick=0, delay=0, planar=self._planar, oral=self._oral)
+
+    @property
+    def oral_body(self) -> OralWorldStateV1 | None:
+        """Read actual oral state for the external observer, never as cognitive input."""
+        return self._oral
 
     @property
     def planar_body(self) -> PlanarWorldStateV1 | None:
@@ -687,10 +794,12 @@ class MotorWorldV1:
         rejected after reset. No active cognitive target or lease is restored.
         Generation overflow is rejected before replacing any owned value.
         """
-        fresh = MotorWorldV1(MotorStreamRefV1(self._stream.stream_id, self._stream.generation + 1), self._profile, planar_profile=self._planar_profile)
+        fresh = MotorWorldV1(MotorStreamRefV1(self._stream.stream_id, self._stream.generation + 1), self._profile,
+                             planar_profile=self._planar_profile, oral_profile=self._oral_profile)
         self._stream = fresh.stream
         self._body = fresh.body
         self._planar = fresh.planar_body
+        self._oral = fresh.oral_body
         self._tick = 0
         self._last_command_id = 0
         self._pending = ()
@@ -699,7 +808,7 @@ class MotorWorldV1:
 
     def _measure(
         self, body: MotorBodyStateV1, angular_rate: float, surface_present: bool, *, event_tick: int, delay: int,
-        planar: PlanarWorldStateV1 | None = None,
+        planar: PlanarWorldStateV1 | None = None, oral: OralWorldStateV1 | None = None,
     ) -> MotorFeedbackV1:
         """Sense actual geometry; omit declared channels without repairing them.
 
@@ -718,8 +827,12 @@ class MotorWorldV1:
                 planar.heading_degrees if horizontal.heading_available else None,
                 planar.obstacle_contact if horizontal.contact_available else None,
             )
+        oral_feedback = None
+        if oral is not None and self._oral_profile is not None:
+            oral_feedback = OralFeedbackV1(oral.extension_metres if self._oral_profile.extension_available else None,
+                                          oral.contact if self._oral_profile.contact_available else None)
         return MotorFeedbackV1(
-            planar=planar_feedback,
+            planar=planar_feedback, oral=oral_feedback,
             stream=self._stream, sample_id=event_tick + 1, event_tick=event_tick, available_tick=event_tick + delay,
             body_tilt_degrees=None if "body_tilt_degrees" in missing else body.body_tilt_degrees,
             support_extension=None if "support_extension" in missing else body.support_extension,
@@ -751,6 +864,28 @@ class MotorWorldV1:
         heading = ((body.heading_degrees + heading_rate * interval + 180.0) % 360.0) - 180.0
         return PlanarWorldStateV1(position, heading, obstacle_contact)
 
+    def _advance_oral(
+        self, command: MotorCommandV1 | None, planar: PlanarWorldStateV1 | None, surface_present: bool,
+    ) -> OralWorldStateV1 | None:
+        """Integrate the sole reach motor and recompute independent physical touch.
+
+        No task, requested endpoint, part identity, visual category or success
+        counter is available here. Whole-body motion can move the tip even when
+        its own reach drive is zero; cancelling a target is not freezing physics.
+        """
+        profile, state = self._oral_profile, self._oral
+        if profile is None or state is None or planar is None:
+            return None
+        contact, load = _motor_support(self._body, self._profile, surface_present)
+        drive = 0.0
+        if (command is not None and command.oral_drive is not None and profile.motor_enabled
+                and contact and load >= 0.75 and abs(self._body.body_tilt_degrees) <= 12.0):
+            drive = command.oral_drive
+        forcing = next((event.rate_metres_s for event in profile.perturbations
+                        if event.start_tick <= self._tick < event.stop_tick), 0.0)
+        extension = max(0.0, min(0.35, state.extension_metres + self._profile.dt_seconds * (0.5 * drive + forcing)))
+        return _oral_state(extension, planar, profile)
+
     def step(self, command: MotorCommandV1 | None = None) -> tuple[MotorFeedbackV1, ...]:
         """Advance once and return newly available sensor reports in acquisition order.
 
@@ -769,6 +904,8 @@ class MotorWorldV1:
             raise TypeError("motor mode accepts MotorCommandV1 or None, not a task token or target")
         if command is not None and command.translation is not None and self._planar_profile is None:
             raise ValueError("translation requires the explicit planar physical profile")
+        if command is not None and command.oral_drive is not None and self._oral_profile is None:
+            raise ValueError("oral drive requires the explicit oral physical profile")
         if self._tick >= _MOTOR_COUNTER_LIMIT - max(1, self._profile.sensor_delay_ticks) - 1:
             raise OverflowError("motor time/sample identity exhausted; reset required")
         if command is not None:
@@ -794,11 +931,12 @@ class MotorWorldV1:
             support_extension=_clamp(self._body.support_extension + dt * extension_drive),
         )
         next_planar = self._advance_planar(command, surface_present)
+        next_oral = self._advance_oral(command, next_planar, surface_present)
         next_tick = self._tick + 1
         pending = self._pending
         if not dropout:
             measurement = self._measure(next_body, angular_rate, surface_present,
-                                        event_tick=next_tick, delay=self._profile.sensor_delay_ticks, planar=next_planar)
+                                        event_tick=next_tick, delay=self._profile.sensor_delay_ticks, planar=next_planar, oral=next_oral)
             pending += (measurement,)
         delivered = tuple(item for item in pending if item.available_tick <= next_tick)
         future = tuple(item for item in pending if item.available_tick > next_tick)
@@ -809,6 +947,7 @@ class MotorWorldV1:
             self._last_command_id = command.command_id
         self._body = next_body
         self._planar = next_planar
+        self._oral = next_oral
         self._tick = next_tick
         self._pending = future
         if delivered:
