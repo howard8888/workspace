@@ -10,6 +10,10 @@ No files are written; callers may redirect stdout outside the repository.
 """
 from __future__ import annotations
 
+# This thin review entry intentionally resembles other developer review scripts.
+# Keep duplicate-code suppressed here rather than refactoring unrelated production modules.
+# pylint: disable=duplicate-code
+
 import argparse
 import json
 import sys

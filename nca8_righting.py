@@ -26,6 +26,7 @@ No target installation, motor command, physical step or durable learning occurs.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from enum import Enum
 
@@ -39,7 +40,7 @@ from nca8_primitives import (
 )
 from nca8_sensorimotor_contracts import TargetOriginV1
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 __all__ = [
     "RightingActivityV1", "RightingContextV1", "RightingTaskV1", "RightingApplicationV1", "RightingIPV1",
     "righting_support_adequacy_v1", "__version__",
@@ -241,9 +242,13 @@ class RightingIPV1:
     primitive_id = "ip:righting"
     primitive_kind = PrimitiveKindV1.INSTINCTIVE
 
-    def __init__(self, *, enabled: bool = True) -> None:
+    def __init__(self, *, enabled: bool = True, target_inset_degrees: float = 0.0) -> None:
         if not isinstance(enabled, bool):
             raise TypeError("enabled must be Boolean")
+        if (isinstance(target_inset_degrees, bool) or not isinstance(target_inset_degrees, (int, float))
+                or not 0.0 <= target_inset_degrees <= 3.0 or not math.isfinite(target_inset_degrees)):
+            raise ValueError("Righting target inset must be finite degrees in [0, 3]")
+        self._target_inset_degrees = float(target_inset_degrees)
         self._enabled = enabled
         self._context = RightingContextV1()
         self._task: RightingTaskV1 | None = None
@@ -257,6 +262,17 @@ class RightingIPV1:
     def task(self) -> RightingTaskV1 | None:
         """Return immutable task context; no query resets its finite budget."""
         return self._task
+
+    @property
+    def target_inset_degrees(self) -> float:
+        """Read the fixed target margin; it never relaxes the task's support criterion.
+
+        The retained reference uses zero. A named integration profile can aim
+        inside the adequate orientation region to accommodate finite local target
+        tolerance. This is fixed task calibration, not learning or sensed success.
+        The small [0, 3]-degree range leaves all existing activity criteria intact.
+        """
+        return self._target_inset_degrees
 
     @property
     def context(self) -> RightingContextV1:
@@ -400,7 +416,10 @@ class RightingIPV1:
             tilt = feedback.body_tilt_degrees
             if tilt is not None and abs(tilt) > max_tilt:
                 extent = (6.0 + 6.0 * feedback.useful_loading) * (0.5 if unknown else 1.0)
-                destination = max_tilt if tilt > 0 else -max_tilt
+                # Aim inside, not merely at, the unchanged activity boundary.
+                # The default zero inset preserves the original H5/H6 reference.
+                aim = max_tilt - self._target_inset_degrees
+                destination = aim if tilt > 0 else -aim
                 desired_tilt = tilt + _bounded_step(destination - tilt, extent)
         if desired_tilt is None and desired_extension is None:
             return "no_supported_contribution", None, None

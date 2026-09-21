@@ -23,8 +23,9 @@ from nca8_sensorimotor_demo import run_sensorimotor_review_menu_v1
 from nca8_visual_demo import run_visual_preview_menu_v1
 from nca8_translation_demo import run_translation_menu_v1
 from nca8_followmom_demo import run_follow_mom_menu_v1
+from nca8_stand_follow_demo import run_stand_follow_menu_v1
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -39,8 +40,9 @@ Option 8 also offers the 1G-C no-learning hook, Phase F and L01-L25 coverage rev
 A99 is accepted at the Planning-v18 scope; legacy/default routing is unchanged.
 Option 9 previews visual sources and body-frame geometry without movement (P16-2A-A).
 Option 9 -> 8 runs actual finite translation/contact with a supplied operation fixture (P16-2A-B).
-P16-2A-A/B and P16-2B-A are accepted; option 10 retains the maternal approach review.
-Option 10 -> 10 adds original maternal PNM correspondence (P16-2B-B); combined stand/follow and maternal routes remain open.
+P16-2A-A/B and P16-2B-A/B are accepted; option 10 retains the maternal approach review.
+Option 10 -> 10 retains original maternal PNM correspondence (P16-2B-B).
+Option 11 reviews continuous stand -> Follow-Mom (P16-2B-C); maternal Attention/no-learning routes remain open.
 Full P16-2B and B99 remain open; no learned maternal identity or new default is claimed.
 Planning v16 P16-1R-B separates internal handoff and cycle closure from the
 external world step and returning-input admission. Gate-A decisions are unchanged.
@@ -394,6 +396,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print("  8) Review integrated Righting and persistent motor execution (P18-H6-A/B)")
         print("  9) Review visual sources and non-actuating body-frame mapping (P16-2A-A)")
         print("  10) Review MOM association and persistent Follow-Mom (P16-2B-A)")
+        print("  11) Review continuous stand -> Follow-Mom (P16-2B-C)")
         print("  [Enter] Return to Main Menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
@@ -459,7 +462,10 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
             if choice == "10":
                 run_follow_mom_menu_v1()
                 continue
-            print("Please choose 1, 2, 3, 4, 5, 6, 7, 8, or 9; or press Enter to return.")
+            if choice == "11":
+                run_stand_follow_menu_v1()
+                continue
+            print("Please choose 1-11, or press Enter to return.")
         except Exception as exc:  # pragma: no cover - defensive interactive boundary
             print(f"[nca8:error] {type(exc).__name__}: {exc}")
             if session is not None and session.status().reset_required:

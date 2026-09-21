@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Inspect P16-2B-A/B approach, original PNM correspondence and source-only replays.
+"""Inspect P16-2B-A/B/C approach, correspondence, continuous stand-follow and replays.
 
 Run from any directory. This helper delegates to the same finite functions as
 NCA8 menu 10, writes no repository files, and reports actual owner-bound/durable
@@ -24,6 +24,8 @@ from nca8_followmom_demo import (
     run_follow_mom_v1, run_maternal_source_replay_v1,
 )
 
+from nca8_stand_follow_demo import STAND_FOLLOW_CASES_V1, render_stand_follow_v1, run_stand_follow_v1
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Select one declared experiment family; do not silently repair unknown selectors."""
@@ -32,9 +34,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     selected.add_argument("--case", choices=("all", *FOLLOW_MOM_CASES_V1), default="all")
     selected.add_argument("--replay", nargs="?", const="all", choices=("all", *MATERNAL_REPLAY_CASES_V1))
     selected.add_argument("--outcomes", nargs="?", const="all", choices=("all", *MATERNAL_OUTCOME_CASES_V1))
+    selected.add_argument("--stand-follow", nargs="?", const="all", choices=("all", *STAND_FOLLOW_CASES_V1),
+                          help="run one continuous Righting/Follow-Mom stream, not a stage list")
     parser.add_argument("--detail", action="store_true", help="include source, PNM, target and local-drive details")
     parser.add_argument("--json", action="store_true", help="export complete detached results instead of text")
     args = parser.parse_args(argv)
+    if args.stand_follow is not None:
+        stand_cases = STAND_FOLLOW_CASES_V1 if args.stand_follow == "all" else (args.stand_follow,)
+        stand_results = tuple(run_stand_follow_v1(case) for case in stand_cases)
+        print(json.dumps([item.as_dict() for item in stand_results], sort_keys=True, allow_nan=False) if args.json else
+              "\n\n".join(render_stand_follow_v1(item, detail=args.detail) for item in stand_results))
+        return int(any(item.bound_violations or not item.durable_unchanged for item in stand_results))
     if args.replay is not None:
         replay_cases = MATERNAL_REPLAY_CASES_V1 if args.replay == "all" else (args.replay,)
         replays = tuple(run_maternal_source_replay_v1(case) for case in replay_cases)

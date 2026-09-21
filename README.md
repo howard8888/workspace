@@ -16,14 +16,160 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-2B-B original maternal PNM correspondence
+## NCA8 update: P16-2B-C continuous stand -> Follow-Mom
+
+P16-2B-B is accepted at clean `d628789a3d5705d67ce582217f7252e53ff5461f`.
+This bounded successor joins the existing Righting, visual/MOM, Follow-Mom and
+translation mechanisms in **one uninterrupted body/world stream**. It is a source
+review candidate, not acceptance of full P16-2B or B99. Architecture v10.1 and
+adopted Planning v18, especially section 41, remain the authorities. No feeding,
+new learner, legacy fallback, interpreter change or default promotion is included.
+
+The registry contains **87 production components / 8 host behavioral primitives**
+(`cca8_run.py v0.30.25`). The only new production file is the external experiment
+`nca8_stand_follow_demo.py`; it neither chooses tasks nor introduces a new motor
+architecture. The existing hierarchy owns integration, and the existing task,
+source, BodyMap, handoff and target executor retain their functions.
+
+Use **NCA8 menu 11**. It offers nominal, gap/support-loss, selective mechanism,
+heading/destination and detailed timeline reviews. Existing NCA8 menu 10 and
+10 -> 10 retain the accepted supported-start maternal experiments. All use the
+same functions as the developer entry:
+
+    python scripts/review_nca8_followmom.py --stand-follow
+    python scripts/review_nca8_followmom.py --stand-follow nominal --detail
+    python scripts/review_nca8_followmom.py --stand-follow brief_gap --detail
+    python scripts/review_nca8_followmom.py --stand-follow support_loss --detail
+    python scripts/review_nca8_followmom.py --stand-follow boundary_aim --detail
+    python scripts/review_nca8_followmom.py --stand-follow nominal --json
+
+### What actually makes the transition
+
+Both source domains are present from the first opportunity. The MOM source keeps
+updating while POSTURE-SUPPORT is focal. Current inadequate support supplies an
+ordinary Attention bid; Navigation can select the available Righting IP. In the
+new opt-in profile, an active support task also nominates its source while it
+awaits supported dwell. Attention still arbitrates that bid: the test can force
+Mom to win without thereby authorizing locomotion or completing Righting.
+
+Follow-Mom applicability distinguishes current adequate body evidence from an
+unfinished recovery task. While that recovery remains active, exact maternal
+pursuit is withheld, without deleting the represented maternal relation. C2 can
+complete the original recovery from three distinct current acquisitions over the
+unchanged physical span. The closing handoff explicitly retires its lower rights.
+The conservative release policy makes maternal pursuit eligible at the next focal
+opportunity, after that handoff has been consumed. It is not an external newborn
+stage or an instruction derived from an evaluator's stood_up/reached_mom flag.
+
+In the nominal run the resulting evidence sequence is:
+
+    focal 0..24: selected Righting, seven bounded target contributions
+    focal 28/32: adequate current support, but distinct-sample dwell still pending
+    focal 36: completion proof uses physical samples 27, 31 and 35; revoke old rights
+    focal 40: maternal source wins; Navigation selects Follow-Mom; install translation
+    focal 44: no new task output; the existing finite translation continues
+    focal 104: three supported proximity samples complete the maternal task
+
+There is one WNM, not a recovery WNM plus a hidden maternal WNM. A terminal Righting
+transition retires rights once; its historical completed record no longer cancels
+later independently authorized translation. In nominal execution, the last support
+target's scheduled lease ends at 32; the terminal cancellation at 36 confirms the
+closed disposition rather than claiming that an active support drive stopped then.
+Local target achievement, lease end and supported task completion have separate
+times. Lower updates never replay a handoff receipt. An initially supported control
+follows at tick 0 without any Righting
+task, so the driver does not impose a Righting-first task list.
+
+### Explicit target calibration, not a relaxed completion rule
+
+The retained Righting reference aims at the exact 12-degree mobility boundary.
+Its local orientation executor has a 1-degree target tolerance; a locally finished
+target can therefore leave the body just outside the task's adequate region.
+The new `stand_follow_v1` experiment uses an explicit **2-degree inward target
+margin**, aiming at 10 degrees when approaching that boundary. Current source
+values, physical equations, the 12-degree task criterion and 1-degree local
+tolerance are unchanged. Earlier large contributions retain their existing finite
+step limits. Constructor validation permits only a fixed 0..3-degree margin.
+
+This is a disclosed engineering calibration, not learning, a biological constant,
+an unconditional upright target or invented evidence. Righting's default margin
+remains zero, preserving accepted H5/H6/1G and maternal reference profiles. The
+new `boundary_aim` control differs only in that margin: recovery exhausts its own
+budget without qualifying support, and Follow-Mom does not start. Safe-rest and
+supported-crouch applicability are not changed.
+
+### Two outcome owners, one actual physical history
+
+The combined profile explicitly enables both original correspondence consumers.
+Each registers only its own task's original PNM and authorized target. The outer
+driver sends support-resource reports to Righting; maternal translation is not
+relabelled as support execution. The original issued command and sensor acquisition
+objects remain intact, including identity, event time and availability. Existing
+strict wrong-target/generation/lease checks are not weakened. Family replacement
+ends the earlier execution but does not rewrite its pending historical claim.
+
+Righting completion, local translation achievement, maternal proximity, prediction
+match and causal credit remain different. The maternal-comparison-off pair retains
+the same commitments, targets, commands, body trajectory and proximity completion.
+It removes only maternal endpoint comparison; it neither disables Righting evidence
+nor proves that prediction is unnecessary. No maternal mismatch-to-Attention or
+maternal no-learning participation/reconciliation route is claimed in this slice.
+
+### Fixed-time positive and adverse evidence
+
+Every case uses 160 physical increments at 0.05 seconds, four increments per focal
+opportunity, and a final eligible read at tick 160: **8.0 seconds / 41 focal reads**.
+Each task separately retains its 80-tick / 20-opportunity cap. The finite observer
+horizon accommodates two tasks; it does not extend either task or clear all pending
+claims artificially. Finishing early neither resets nor stops the world. This is
+not the full hard-newborn environment or a demonstrated six-milestone benchmark.
+
+| Profile | Actual distinction |
+| --- | --- |
+| nominal | Supported Righting at 36, first translation at 40, proximity completion at 104. |
+| brief_gap | Visual admission withheld at 60; precise pursuit cancelled, uncertainty widened; the same task resumes at 64 and completes at 108. |
+| prolonged_gap | Visual admission withheld at 60, 64, 68, 72 and 76; the maternal task terminates, with no restart on later reacquisition. |
+| support_loss | Physical support removed over intervals [57,161); local feedback interrupts pursuit at 59, before the next focal read at 60. No hidden recovery rescues the run. |
+| boundary_aim | Zero target inset retains the old boundary aim; no supported Righting completion and no maternal movement. |
+| righting_off | The body cannot recover through a hidden stand-up provider. |
+| following_off / association_off | Recovery can complete, but no maternal task or movement appears. |
+| translation_unavailable | Follow-Mom can propose, but BodyMap supplies no executable translation; the task expires without movement. |
+| heading_90 / different_target | Changed body heading changes actual local drive; changed represented maternal destination changes actual direction. |
+| already_supported | Follow-Mom starts directly; no compulsory recovery stage. |
+| motor_blocked | A target is installed, but actual translation does not occur; execution ends unsuccessfully. |
+| maternal_comparison_off | Same physical and task trajectory as nominal; only maternal endpoint comparison is disabled. |
+
+The support-loss run preserves an earlier completed Righting record as **history**,
+not current safety. Current body evidence becomes inadequate and forbids pursuit.
+This experiment does not add general Righting re-arming, a new recovery strategy,
+a generic task scheduler, broad Ready semantics or automatic fallback. The brief
+visual gap is a declared sensory-admission intervention, not simulated raw-pixel
+occlusion physics. Maternal individual identity remains a developmental scaffold.
+
+The read-only export separates focal source/task records, actual lower commands,
+original claim outcomes and an external physical observer lane. Observer truth
+never enters cognition. Retention, JSON/detail rendering and menu use do not alter
+behavior or RNG. Bound checks use actual owner counts and remain independent of
+trace retention. The durable comparison reads all three enduring organizations.
+No phase-specific Markdown, Architecture/Planning rewrite or new dependency is
+added to the repository; the delivery package carries the exact-source validation
+record and application commands.
+
+**Remaining P16-2B work:** maternal mismatch-to-Attention routing and the maternal
+no-learning participation/Phase-F reconciliation proof. Their Righting-specific
+predecessors are not sufficient maternal-domain evidence. Feeding/rest (P16-2C),
+the continuous hard-newborn run and B99 remain later work. Local Windows validation
+and Howard's review are required before accepting this slice.
+
+## Retained checkpoint: P16-2B-B original maternal PNM correspondence
 
 The maternal approach slice and its lint/type correction were accepted and committed
-as clean `09f0c47`. This next opt-in slice adds **execution-sensitive correspondence**
-without changing Follow-Mom decisions, physical equations, target tolerances, task
-budgets or durable organization. It is a review candidate, not full P16-2B or B99
-completion. A99 and P16-2A remain accepted; the legacy default is unchanged.
-The registry contains **86 production components / 8 host behavioral primitives**
+as clean `09f0c47`. P16-2B-B was subsequently accepted at `d628789`. Its opt-in
+**execution-sensitive correspondence** does not change Follow-Mom decisions,
+physical equations, target tolerances, task budgets or durable organization.
+It does not by itself complete full P16-2B or B99. A99 and P16-2A remain accepted;
+the legacy default is unchanged. At that checkpoint the registry contained
+**86 production components / 8 host behavioral primitives**
 (`cca8_run.py v0.30.24`). The only new production module is
 `nca8_maternal_outcomes.py`; the existing hierarchy, demo and review script are reused.
 
@@ -94,8 +240,9 @@ unapplied. Current-source, task, target, prediction and diagnostic lifetimes rem
 
 Correspondence does **not** select a task, assign causal credit, complete proximity dwell,
 change Attention, perform demanding interpretation or write a learner. The combined
-stand-to-follow demonstration and maternal mismatch-to-Attention/no-learning routing
-remain open under P16-2B; the Righting-only 1G evidence is not borrowed for these claims.
+stand-to-follow demonstration was still open at this checkpoint; its successor is
+reviewed above. Maternal mismatch-to-Attention/no-learning routing remains open
+under P16-2B; the Righting-only 1G evidence is not borrowed for these claims.
 No acquired identity/LP, moving-mother physical model, general search/Ready system,
 feeding, B99, C99, D99 or default promotion is claimed.
 

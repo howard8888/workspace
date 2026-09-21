@@ -149,8 +149,8 @@ def test_registry_includes_one_cohesive_qualification_component():
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_hierarchy_qualification"] == "nca8_hierarchy_qualification"
     assert qualification.__version__ == "0.1.0"
-    assert cca8_run.__version__ == "0.30.24"
-    assert len(cca8_run._cca8_component_rows()) == 86
+    assert cca8_run.__version__ == "0.30.25"
+    assert len(cca8_run._cca8_component_rows()) == 87
     assert len(cca8_run.PRIMITIVES) == 8
 
 

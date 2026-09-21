@@ -102,7 +102,7 @@ from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 from nca8_visual import VisualNavMapStateV1
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -1680,7 +1680,8 @@ class Nca8RightingPreviewSessionV1:
         influence_enabled: bool = True, righting_enabled: bool = True,
         additional_primitives: Sequence[PrimitiveRuntimeV1] = (),
         orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True, outcome_attention_enabled: bool = False,
-        visual_preview_enabled: bool = False,
+        visual_preview_enabled: bool = False, monitor_support_completion: bool = False,
+        righting_target_inset_degrees: float = 0.0,
         translation_capability: BodyTranslationCapabilityV1 | None = None, translation_mapping_sign: int = 1,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
@@ -1695,7 +1696,10 @@ class Nca8RightingPreviewSessionV1:
         if not isinstance(task_pnm_consumer_enabled, bool):
             raise TypeError("task_pnm_consumer_enabled must be Boolean")
         self.task_pnm_consumer_enabled = task_pnm_consumer_enabled
-        self.righting = RightingIPV1(enabled=righting_enabled)
+        if not isinstance(monitor_support_completion, bool):
+            raise TypeError("monitor_support_completion must be Boolean")
+        self.monitor_support_completion = monitor_support_completion
+        self.righting = RightingIPV1(enabled=righting_enabled, target_inset_degrees=righting_target_inset_degrees)
         self._primitives = (self.righting, *additional_primitives)
         if len({item.primitive_id for item in self._primitives}) != len(self._primitives):
             raise ValueError("task candidate IDs must be distinct")
@@ -1809,17 +1813,27 @@ class Nca8RightingPreviewSessionV1:
         return self._prepared
 
     def select_prepared(self, opportunity: RightingSourceOpportunityV1) -> RightingPreviewResultV1:
-        """Use the actual Attention and Navigation owners in D, once per source basis."""
+        """Use the actual Attention and Navigation owners in D, once per source basis.
+
+        In the opt-in integrated profile, an unfinished support task may nominate
+        its currently adequate source while distinct supported dwell is pending.
+        This nomination does not select an IP, add a sample or create motor
+        permission. Competing bids still pass through the ordinary selector.
+        """
         if not isinstance(opportunity, RightingSourceOpportunityV1) or opportunity is not self._prepared or self._selected is not None:
             raise ValueError("selection requires this owner's current unselected opportunity")
         cycle, source = opportunity.cycle_id, opportunity.source
         bids = list(opportunity.competing_bids)
         source_bid = None
-        if opportunity.source_status == "support_needed":
+        waiting_for_support = (self.monitor_support_completion and self.righting.task is not None
+                               and self.righting.task.status == "active"
+                               and opportunity.source_status == "currently_adequate_not_dwell")
+        if opportunity.source_status == "support_needed" or waiting_for_support:
             source_bid = AttentionBidV1(
                 f"support_bid:{cycle}", "source:posture_support", source, "body_sensory", cycle,
                 0, 20, 0, 0, opportunity.persistence_rank, 20,
-                ("activity_relative_support_need",), False, "source:posture_support",
+                ("active_support_task_awaiting_dwell" if waiting_for_support else "activity_relative_support_need",),
+                False, "source:posture_support",
             )
         outcome_owner = self.sensory.outcome_attention
         if outcome_owner is not None:

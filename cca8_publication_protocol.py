@@ -325,9 +325,13 @@ def validate_manifest_v1(
             errors.append(f"entry_not_object:{expected_index}")
             continue
         try:
-            episode_index = int(entry.get("episode_index"))
-            seed = int(entry.get("episode_seed"))
-        except Exception:
+            episode_index_raw = entry.get("episode_index")
+            seed_raw = entry.get("episode_seed")
+            if episode_index_raw is None or seed_raw is None:
+                raise ValueError("missing entry identity")
+            episode_index = int(episode_index_raw)
+            seed = int(seed_raw)
+        except (TypeError, ValueError):
             errors.append(f"entry_identity_invalid:{expected_index}")
             continue
         if episode_index != expected_index:

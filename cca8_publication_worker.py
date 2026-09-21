@@ -298,7 +298,8 @@ def _verify_schedule_record(job: dict[str, Any], episode: dict[str, Any]) -> lis
 
     if bool(episode.get("conflicted_repair_conflict_present")) != bool(schedule["route_changed"]):
         errors.append("route_change_mismatch")
-    if abs(float(episode.get("conflicted_repair_conflict_draw")) - float(schedule["route_change_draw"])) > 1e-15:
+    conflict_draw = episode.get("conflicted_repair_conflict_draw")
+    if conflict_draw is None or abs(float(conflict_draw) - float(schedule["route_change_draw"])) > 1e-15:
         errors.append("route_change_draw_mismatch")
     if not close_list(episode.get("conflicted_repair_encoding_draws"), schedule["encoding_draws"]):
         errors.append("encoding_draws_mismatch")

@@ -292,7 +292,6 @@ def compute_lhsi_v1(row: dict[str, Any], spec: LHSISpec) -> tuple[float, dict[st
     stale = max(0.0, _number(row.get("lhsi_stale_memory_intrusion_proxy_count")))
     loops = max(0.0, _number(row.get("lhsi_repeated_action_loop_count")))
     provenance_raw = row.get("lhsi_provenance_complete_cycle_rate")
-    provenance_available = isinstance(provenance_raw, (int, float)) and math.isfinite(float(provenance_raw))
 
     components = {
         "wrong_stage_penalty": min(spec.wrong_stage_cap, spec.wrong_stage_weight * wrong),
@@ -300,7 +299,7 @@ def compute_lhsi_v1(row: dict[str, Any], spec: LHSISpec) -> tuple[float, dict[st
         "stale_penalty": min(spec.stale_cap, spec.stale_weight * stale),
         "loop_penalty": min(spec.loop_cap, spec.loop_weight * loops),
     }
-    if provenance_available:
+    if isinstance(provenance_raw, (int, float)) and math.isfinite(float(provenance_raw)):
         provenance = max(0.0, min(1.0, float(provenance_raw)))
         components["provenance_penalty"] = min(
             spec.provenance_cap,

@@ -215,7 +215,10 @@ def validate_batch_records_v1(
         else:
             process_nonces.add(nonce)
         try:
-            pid = int(process.get("pid"))
+            pid_raw = process.get("pid")
+            if pid_raw is None:
+                raise ValueError("missing worker pid")
+            pid = int(pid_raw)
             worker_pids.append(pid)
             if pid == os.getpid():
                 errors.append(f"episode_not_in_fresh_process:{row.get('job_id')}")

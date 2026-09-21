@@ -8,8 +8,8 @@ disable=
     line-too-long,
     too-many-arguments, too-many-locals, too-many-branches, too-many-statements,
     too-many-instance-attributes, too-many-public-methods, too-many-return-statements,
+    too-many-boolean-expressions,
     logging-fstring-interpolation,
-    bare-except,
     pointless-string-statement,
     too-many-lines,
     too-many-nested-blocks,
@@ -17,7 +17,8 @@ disable=
     wrong-import-position,
     use-implicit-booleaness-not-comparison,
     no-else-return,
-    broad-exception-caught
+    broad-exception-caught,
+    duplicate-code
 
 [FORMAT]
 max-line-length=170

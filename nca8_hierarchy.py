@@ -21,6 +21,13 @@ response reconsideration. Protected lower execution still respects its original
 lease. The opt-in 1G-C source-owned hook maintains bounded eligibility and
 reconciles available evidence at F, with zero durable updates. No profile calls
 the legacy/A0 provider, and the learning inventory is never executed as a loop.
+
+P16-2B-C explicitly permits both domain-specific outcome consumers in one stream.
+The outer driver routes support target reports to Righting and shared acquisitions
+with their original identity to both consumers; it never converts a translation
+into a Righting command. An unfinished recovery constrains Follow-Mom applicability.
+A terminal Righting transition retires its rights once; the historical record
+cannot cancel a later independently authorized task. No task-order list is added.
 """
 
 from __future__ import annotations
@@ -51,10 +58,10 @@ from nca8_learning import LearningPhaseFReportV1
 from nca8_runtime import Nca8RightingPreviewSessionV1, RightingPreviewResultV1
 from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, SchedulerCycleSnapshotV1
 from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, SensorimotorProfileV1, SensorimotorStepV1
-from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1
+from nca8_sensorimotor_contracts import BodyTranslationTargetV1, FocalMotorEvidenceV1, LocalTargetReportV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -157,6 +164,7 @@ class IntegratedRightingCoreV1:
         translation_fixture: TranslationFixtureV1 | None = None,
         translation_capability: BodyTranslationCapabilityV1 | None = None, translation_mapping_sign: int = 1,
         follow_mom_profile: FollowMomProfileV1 | None = None,
+        stand_follow_enabled: bool = False, righting_target_inset_degrees: float = 0.0,
     ) -> None:
         _bounded_count(trace_capacity, "trace_capacity", 1, 4096)
         if not all(isinstance(flag, bool) for flag in (
@@ -175,8 +183,13 @@ class IntegratedRightingCoreV1:
         if follow_mom_profile is not None and translation_fixture is not None:
             raise ValueError("supplied translation and developmental Follow-Mom are separate experiment profiles")
         visual_profile = translation_fixture if translation_fixture is not None else follow_mom_profile
-        if visual_profile is not None and task_outcomes_enabled:
+        if not isinstance(stand_follow_enabled, bool):
+            raise TypeError("stand_follow_enabled must be Boolean")
+        if stand_follow_enabled and (follow_mom_profile is None or not follow_mom_profile.outcomes_enabled or not task_outcomes_enabled):
+            raise ValueError("stand-follow requires separate Righting and maternal correspondence consumers")
+        if visual_profile is not None and task_outcomes_enabled and not stand_follow_enabled:
             raise ValueError("Righting-only task outcome/learning consumers cannot score visual or maternal translation")
+        self.stand_follow_enabled = stand_follow_enabled
         if visual_profile is None and (translation_capability is not None or translation_mapping_sign != 1):
             raise ValueError("translation capability/calibration requires an opt-in visual operation")
         self.translation = None if translation_fixture is None else SuppliedTranslationOperationV1(translation_fixture)
@@ -198,7 +211,8 @@ class IntegratedRightingCoreV1:
             outcome_attention_enabled=task_outcome_attention_enabled,
             additional_primitives=tuple(item for item in (self.translation, self.follow_mom) if item is not None),
             visual_preview_enabled=self.visual is not None, translation_capability=translation_capability,
-            translation_mapping_sign=translation_mapping_sign,
+            translation_mapping_sign=translation_mapping_sign, monitor_support_completion=stand_follow_enabled,
+            righting_target_inset_degrees=righting_target_inset_degrees,
         )
         if task_learning_hook_enabled:
             self.cognition.sensory.configure_learning_hook(stream, diagnostic_capacity=learning_diagnostic_capacity)
@@ -314,6 +328,7 @@ class IntegratedRightingCoreV1:
     ) -> IntegratedRightingCycleV1:
         """Implement the guarded C/D/E owner stages between real scheduler boundaries."""
         cycle = self.scheduler.last_completed_cycle + 1
+        previous_support_task = self.cognition.righting.task
         evidence = None if feedback is None else FocalMotorEvidenceV1(feedback, cycle, tick)
         if feedback is not None:
             feedback.validate_available(stream=self.cognition.stream, at_tick=tick)
@@ -372,7 +387,12 @@ class IntegratedRightingCoreV1:
             if visual_source is None:
                 raise RuntimeError("maternal association requires the applied visual configuration")
             maternal_source = self.maternal.update(visual_source)
-            self.follow_mom.prepare(maternal_source, feedback, reports=reports)
+            # This is unfinished task authority, not a newborn stage or evaluator milestone.
+            # C2 completion later in this pass releases it only for the next opportunity,
+            # allowing the closed handoff to retire old support rights first.
+            support_pending = (self.stand_follow_enabled and previous_support_task is not None
+                               and previous_support_task.status != "completed")
+            self.follow_mom.prepare(maternal_source, feedback, reports=reports, support_recovery_pending=support_pending)
             maternal_candidate = self.maternal.candidate(task_id=self.follow_mom.task.task_id if self.follow_mom.task is not None else None)
             if maternal_candidate is not None:
                 competing_bids = (*competing_bids, self.cognition.attention.build_bid(maternal_candidate, cycle_id=cycle))
@@ -459,7 +479,8 @@ class IntegratedRightingCoreV1:
                      "registered": self.cognition.prediction.current_pnm is not None,
                      "consumer": ("adopt_maternal_preview" if isinstance(application, FollowMomApplicationV1) else
                                   "adopt_visual_preview" if isinstance(application, TranslationApplicationV1) else "adopt_support_preview"),
-                     "task_outcomes": ("maternal_correspondence_v1" if maternal_owner is not None else
+                     "task_outcomes": ("separate_righting_and_maternal_consumers" if self.stand_follow_enabled else
+                                       "maternal_correspondence_v1" if maternal_owner is not None else
                                        "not_implemented_for_visual" if self.visual is not None else
                                        "P16_1G_A" if self.outcomes is not None else "deferred_to_P16_1G")},
         )
@@ -489,6 +510,10 @@ class IntegratedRightingCoreV1:
         projection = application.projection if isinstance(application, (RightingApplicationV1, TranslationApplicationV1, FollowMomApplicationV1)) else None
         origin = reservations[0].current.target.origin if reservations else None
         terminal_task = calculation.task is not None and calculation.task.status != "active"
+        if self.stand_follow_enabled:
+            # Retire the terminal transition once. A historical completed Righting
+            # task must never cancel a later, independently authorized translation.
+            terminal_task = terminal_task and (previous_support_task is None or previous_support_task.status == "active")
         motor = Nca8MotorEnvelopeV1(
             self.cognition.stream, tick, projection, tuple(item.current for item in reservations),
             tuple(item.current for item in proposal.replaces) if proposal is not None and reservations else (), changed_context or terminal_task or (self.follow_mom is not None and self.follow_mom.cancel_previous),
@@ -589,6 +614,7 @@ class IntegratedRightingTrialV1:
         translation_fixture: TranslationFixtureV1 | None = None, planar_profile: PlanarWorldProfileV1 | None = None,
         translation_capability: BodyTranslationCapabilityV1 | None = None, translation_mapping_sign: int = 1,
         follow_mom_profile: FollowMomProfileV1 | None = None,
+        stand_follow_enabled: bool = False, righting_target_inset_degrees: float = 0.0,
     ) -> None:
         profile = MotorWorldProfileV1() if physical_profile is None else physical_profile
         if not isinstance(profile, MotorWorldProfileV1) or profile.dt_seconds != 0.05:
@@ -617,6 +643,8 @@ class IntegratedRightingTrialV1:
         if (translation_fixture is None and follow_mom_profile is None) != (planar_profile is None):
             raise ValueError("an integrated visual operation requires its physical planar profile")
         self._follow_mom_profile = follow_mom_profile
+        self._stand_follow_enabled = stand_follow_enabled
+        self._righting_target_inset_degrees = righting_target_inset_degrees
         self._translation_fixture, self._translation_capability = translation_fixture, translation_capability
         self._translation_mapping_sign = translation_mapping_sign
         self._world = MotorWorldV1(MotorStreamRefV1(stream_id, 1), profile, planar_profile=planar_profile)
@@ -644,6 +672,7 @@ class IntegratedRightingTrialV1:
             task_learning_hook_enabled=self._task_learning_hook_enabled, learning_diagnostic_capacity=self._learning_diagnostic_capacity,
             translation_fixture=self._translation_fixture, translation_capability=self._translation_capability,
             translation_mapping_sign=self._translation_mapping_sign, follow_mom_profile=self._follow_mom_profile,
+            stand_follow_enabled=self._stand_follow_enabled, righting_target_inset_degrees=self._righting_target_inset_degrees,
         )
         self.controller = SensorimotorExecutorV1(
             self.core.cognition.mapper, profile=self._control_profile, installation_source=self.core.handoff,
@@ -723,7 +752,11 @@ class IntegratedRightingTrialV1:
         task = self.core.cognition.righting.task
         receipt = self.core.handoff.receipt
         return {
-            "profile": "integrated_righting_v1", "stream": self._world.stream.as_dict(),
+            "profile": "stand_follow_v1" if self._stand_follow_enabled else "integrated_righting_v1",
+            "stream": self._world.stream.as_dict(),
+            **({"righting_target_inset_degrees": self._righting_target_inset_degrees,
+                "support_release_policy": "completed_task_then_closed_handoff_before_follow_applicability"}
+               if self._stand_follow_enabled else {}),
             "tick": self.tick, "elapsed_seconds": self.tick * 0.05, "focal_cycles": self.core.scheduler.last_completed_cycle,
             "handoff_consumptions": self._consumptions, "installation_count": self.controller.installation_count,
             "task": task.as_dict() if task is not None else None,
@@ -796,6 +829,14 @@ class IntegratedRightingTrialV1:
                                    details={"tick": self.tick, "directive": motor.directive, "receipt": result.receipt.receipt_id})
             if result.reservations:
                 self.controller.install_authorized(result.reservations, at_tick=self.tick)
+                if self._stand_follow_enabled:
+                    # Family replacement ends only the previous family's execution.
+                    # Old claims retain their original endpoint/evidence lifetimes.
+                    if result.claim_registration is None and self.core.outcomes is not None:
+                        self.core.outcomes.end_execution(at_tick=self.tick, reason="replacement")
+                    if (self.core.maternal_outcomes is not None and
+                            (result.maternal_correspondence is None or result.maternal_correspondence.registration is None)):
+                        self.core.maternal_outcomes.end_execution(at_tick=self.tick, reason="replacement")
                 if self.core.maternal_outcomes is not None and result.maternal_correspondence is not None:
                     maternal_claim = result.maternal_correspondence.registration
                     if maternal_claim is not None:
@@ -868,7 +909,13 @@ class IntegratedRightingTrialV1:
                 delivered, self._latest_feedback, stream=self.core.cognition.stream, at_tick=self.tick,
             )
             if self.core.outcomes is not None:
-                self._outcome_intervals.append(RightingIntervalEvidenceV1(tick, command, result.reports, delivered))
+                # The Righting consumer receives only its support-resource reports.
+                # Keep the original command and acquisitions: do not fabricate a
+                # neutral action or count maternal movement as Righting exposure.
+                support_reports = (tuple(report for report in result.reports
+                                         if not isinstance(report.committed_target.target, BodyTranslationTargetV1))
+                                   if self._stand_follow_enabled else result.reports)
+                self._outcome_intervals.append(RightingIntervalEvidenceV1(tick, command, support_reports, delivered))
             if self.core.maternal_outcomes is not None:
                 observations: list[VisualObservationV1] = []
                 for sample in delivered:

@@ -406,8 +406,12 @@ def validate_episode_design_v1(
         profile = str(row.get("publication_profile") or "").lower()
         condition = str(row.get("condition") or "").upper()
         try:
-            episode_index = int(row.get("episode_index"))
-            episode_seed = int(row.get("seed" if "seed" in row else "episode_seed"))
+            episode_index_raw = row.get("episode_index")
+            episode_seed_raw = row.get("seed" if "seed" in row else "episode_seed")
+            if episode_index_raw is None or episode_seed_raw is None:
+                raise ValueError("missing episode identity")
+            episode_index = int(episode_index_raw)
+            episode_seed = int(episode_seed_raw)
         except (TypeError, ValueError):
             errors.append(f"invalid_episode_identity:row_{row_number}")
             continue
@@ -431,10 +435,10 @@ def validate_episode_design_v1(
         if not isinstance(row.get("success"), bool):
             errors.append(f"success_not_boolean:{key}")
         milestone = row.get("milestone_score")
-        if valid_number(milestone) and not 0.0 <= float(milestone) <= 1.0:
+        if valid_number(milestone) and milestone is not None and not 0.0 <= float(milestone) <= 1.0:
             errors.append(f"milestone_score_out_of_range:{key}")
         lhsi = row.get("lhsi_state_integrity_score")
-        if valid_number(lhsi) and not 0.0 <= float(lhsi) <= 1.0:
+        if valid_number(lhsi) and lhsi is not None and not 0.0 <= float(lhsi) <= 1.0:
             errors.append(f"lhsi_out_of_range:{key}")
 
         for field in required_numeric_fields:
@@ -783,6 +787,38 @@ def _stratum_rows(
     return output
 
 
+def _binary_field_predicate_v1(field: str, expected: bool) -> Callable[[dict[str, Any]], bool]:
+    """Return a typed predicate for one boolean publication field."""
+    def predicate(row: dict[str, Any]) -> bool:
+        return _bool(row.get(field)) is expected
+
+    return predicate
+
+
+def _schedule_combination_predicate_v1(
+    route_changed: bool,
+    memory_usable: bool,
+    reacquisition_started: bool,
+) -> Callable[[dict[str, Any]], bool]:
+    """Return a typed predicate for one conflicted-repair stochastic schedule combination."""
+    def predicate(row: dict[str, Any]) -> bool:
+        return (
+            _bool(row.get("publication_route_changed")) is route_changed
+            and _bool(row.get("publication_memory_usable")) is memory_usable
+            and _bool(row.get("publication_reacquisition_started")) is reacquisition_started
+        )
+
+    return predicate
+
+
+def _positive_field_predicate_v1(field: str, expected: bool) -> Callable[[dict[str, Any]], bool]:
+    """Return a typed predicate for whether a numeric mechanism count is positive."""
+    def predicate(row: dict[str, Any]) -> bool:
+        return (_number(row.get(field)) > 0.0) is expected
+
+    return predicate
+
+
 def mechanism_strata_v1(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     output.extend(_stratum_rows(rows, stratum_type="overall", stratum_value="all", predicate=lambda _: True))
@@ -800,7 +836,7 @@ def mechanism_strata_v1(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
                     rows,
                     stratum_type=label,
                     stratum_value=str(value).lower(),
-                    predicate=lambda row, field=field, value=value: _bool(row.get(field)) is value,
+                    predicate=_binary_field_predicate_v1(field, value),
                 )
             )
 
@@ -818,10 +854,8 @@ def mechanism_strata_v1(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
                         challenge_rows,
                         stratum_type="stochastic_schedule_combination",
                         stratum_value=label,
-                        predicate=lambda row, rc=route_changed, mu=memory_usable, ra=reacquisition_started: (
-                            _bool(row.get("publication_route_changed")) is rc
-                            and _bool(row.get("publication_memory_usable")) is mu
-                            and _bool(row.get("publication_reacquisition_started")) is ra
+                        predicate=_schedule_combination_predicate_v1(
+                            route_changed, memory_usable, reacquisition_started
                         ),
                     )
                 )
@@ -840,7 +874,7 @@ def mechanism_strata_v1(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
                     rows,
                     stratum_type=label,
                     stratum_value=str(observed).lower(),
-                    predicate=lambda row, field=field, observed=observed: (_number(row.get(field)) > 0.0) is observed,
+                    predicate=_positive_field_predicate_v1(field, observed),
                 )
             )
     return output

@@ -30,11 +30,12 @@ from nca8_maternal import MaternalNavMapStateV1, MaternalSeedV1, MaternalSourceV
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_visual import VisualDetectionV1, VisualObservationV1, VisualSourceV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["FOLLOW_MOM_CASES_V1", "MATERNAL_REPLAY_CASES_V1", "FollowMomExperimentV1", "MaternalSourceReplayV1",
            "create_follow_mom_trial_v1", "run_follow_mom_v1", "run_maternal_source_replay_v1",
            "render_follow_mom_v1", "render_maternal_replay_v1", "run_follow_mom_menu_v1",
-           "MATERNAL_OUTCOME_CASES_V1", "run_maternal_outcome_menu_v1", "__version__"]
+           "MATERNAL_OUTCOME_CASES_V1", "run_maternal_outcome_menu_v1", "follow_mom_owner_limits_v1",
+           "maternal_durable_signature_v1", "__version__"]
 
 FOLLOW_MOM_CASES_V1 = (
     "nominal", "heading_90", "different_target", "already_near", "association_off", "wrong_seed",
@@ -65,6 +66,16 @@ _LIMITS = {
     "maternal_awaiting_installation": 1, "maternal_execution_reference": 1, "maternal_staged_intervals": 16,
 }
 # pylint: enable=duplicate-code
+
+
+def follow_mom_owner_limits_v1() -> dict[str, int]:
+    """Return independent observer bounds for shared maternal/hierarchy owners.
+
+    The stand-follow review adds only the separate Righting-outcome limits.
+    This detached dictionary is diagnostic; changing it cannot configure any
+    agent capacity, task lease or actual owner storage.
+    """
+    return dict(_LIMITS)
 
 
 def create_follow_mom_trial_v1(
@@ -132,7 +143,7 @@ def create_follow_mom_trial_v1(
     )
 
 
-def _durable(trial: IntegratedRightingTrialV1) -> str:
+def maternal_durable_signature_v1(trial: IntegratedRightingTrialV1) -> str:
     """Measure all three actual enduring source organizations, not a canned flag."""
     visual, maternal = trial.core.visual, trial.core.maternal
     if visual is None or maternal is None:
@@ -198,7 +209,7 @@ def run_follow_mom_v1(
     """
     trial = create_follow_mom_trial_v1(case, trace_capacity=trace_capacity, outcomes_enabled=outcomes_enabled,
                                      compare_predictions=compare_predictions)
-    before = _durable(trial)
+    before = maternal_durable_signature_v1(trial)
     # The same passive collection pattern is retained for cross-profile comparisons.
     # pylint: disable=duplicate-code
     cycles: list[IntegratedRightingCycleV1] = []
@@ -235,7 +246,7 @@ def run_follow_mom_v1(
         observe()
     focal()
     return FollowMomExperimentV1(case, tuple(cycles), tuple(local), tuple(physical), trial.latest_feedback,
-                                 tuple(sorted(peaks.items())), before, _durable(trial))
+                                 tuple(sorted(peaks.items())), before, maternal_durable_signature_v1(trial))
 
 
 @dataclass(frozen=True, slots=True)

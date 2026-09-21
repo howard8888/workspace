@@ -32,7 +32,7 @@ from nca8_prediction import MaternalApproachPreviewV1, ProjectedNavMapV1
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
 from nca8_sensorimotor_contracts import BodyTranslationTargetV1, CommittedBodyTargetV1, LocalTargetReportV1, TargetOriginV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["FollowMomProfileV1", "FollowMomTaskV1", "FollowMomApplicationV1", "FollowMomAssessmentV1", "FollowMomIPV1", "__version__"]
 
 
@@ -143,6 +143,7 @@ class FollowMomAssessmentV1:
     local_target_busy: bool
     cancel_previous: bool
     outcome_consumer_enabled: bool = False
+    support_recovery_pending: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Export distinct observed proximity, local continuation and uncertain credit."""
@@ -150,6 +151,7 @@ class FollowMomAssessmentV1:
                 "supported_samples": [{"sample_id": item.sample_id, "event_tick": item.event_tick, "separation": item.separation}
                                       for item in self.supported_samples],
                 "local_target_busy": self.local_target_busy, "cancel_previous": self.cancel_previous,
+                **({"support_recovery_pending": True} if self.support_recovery_pending else {}),
                 "task_pnm_correspondence": "separate_maternal_consumer" if self.outcome_consumer_enabled else "deferred_maternal_qualification",
                 "durable_updates": 0}
 
@@ -176,6 +178,7 @@ class FollowMomIPV1:
         self._basis: MaternalNavMapStateV1 | None = None
         self._target: CommittedBodyTargetV1 | None = None
         self._support_available = False
+        self._support_recovery_pending = False
         self._target_busy = False
         self._applied_cycle = 0
         self._authorized_cycle = 0
@@ -207,7 +210,7 @@ class FollowMomIPV1:
     def assessment(self) -> FollowMomAssessmentV1:
         """Freeze the currently computed disposition without rerunning any cognitive work."""
         return FollowMomAssessmentV1(self._task, self._reason, tuple(self._supported), self._target_busy, self._cancel_previous,
-                                     self.profile.outcomes_enabled)
+                                     self.profile.outcomes_enabled, self._support_recovery_pending)
 
     def retained_counts(self) -> dict[str, int]:
         """Measure finite task, evidence and history storage independent of the trace."""
@@ -249,6 +252,7 @@ class FollowMomIPV1:
 
     def prepare(
         self, basis: MaternalNavMapStateV1, feedback: MotorFeedbackV1 | None, *, reports: tuple[LocalTargetReportV1, ...] = (),
+        support_recovery_pending: bool = False,
     ) -> None:
         """Update the current eligible opportunity before Attention and Navigation.
 
@@ -257,7 +261,16 @@ class FollowMomIPV1:
         and cannot come from future work. Missing visual input breaks proximity
         proof and requests cancellation of this task's old exact pursuit. Identity
         and a widening possible region stay in the sensory association owner.
+
+        support_recovery_pending is an explicit unfinished support-task constraint
+        supplied by the integrated core, not an evaluator's stood-up milestone.
+        It withholds applicability without selecting another IP or deleting Mom.
+        The core releases this constraint only after the support-completion
+        handoff has had an opportunity to revoke the old lower permissions.
+        Existing supported-start profiles leave it false.
         """
+        if not isinstance(support_recovery_pending, bool):
+            raise TypeError("support_recovery_pending must be Boolean")
         if not isinstance(basis, MaternalNavMapStateV1) or basis is not self.source.current:
             raise ValueError("Follow-Mom preparation requires its owner's actual current basis")
         if self._basis is not None and basis.applied_cycle <= self._basis.applied_cycle:
@@ -274,7 +287,9 @@ class FollowMomIPV1:
                and item.committed_target.target.target_id == self._target.target.target_id for item in reports):
             raise ValueError("a copied local target cannot replace the original authorized record")
         self._basis = basis
+        self._support_recovery_pending = support_recovery_pending
         self._support_available = bool(
+            not support_recovery_pending and
             feedback is not None and basis.cutoff_tick - feedback.event_tick <= 2 and feedback.support_contact is True
             and feedback.body_tilt_degrees is not None and abs(feedback.body_tilt_degrees) <= 12.0
             and feedback.useful_loading is not None and feedback.useful_loading >= 0.75
@@ -309,6 +324,8 @@ class FollowMomIPV1:
             self._reason = "following_disabled"
         elif not basis.action_localized:
             self._reason = "maternal_location_unavailable"
+        elif support_recovery_pending:
+            self._reason = "support_recovery_pending"
         elif not self._support_available:
             self._reason = "body_support_unavailable"
         elif basis.separation is not None and basis.separation <= 0.5 + 1e-12:
