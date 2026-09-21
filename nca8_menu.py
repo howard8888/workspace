@@ -27,8 +27,9 @@ from nca8_stand_follow_demo import run_stand_follow_menu_v1
 from nca8_maternal_attention_demo import run_maternal_attention_menu_v1
 from nca8_maternal_learning_demo import run_maternal_learning_menu_v1
 from nca8_followmom_qualification import run_follow_mom_qualification_menu_v1
+from nca8_feeding_demo import run_feeding_detail_menu_v1
 
-__version__ = "0.21.0"
+__version__ = "0.22.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -48,7 +49,8 @@ Option 10 -> 10 retains original maternal PNM correspondence (P16-2B-B).
 Options 11/12 retain accepted continuous stand -> Follow-Mom and maternal outcome-to-Attention (P16-2B-C/D).
 Option 13 retains the accepted maternal no-learning hook and actual Phase F (P16-2B-E).
 Option 14 offers combined P16-2B-F qualification for full P16-2B review before feeding.
-Full P16-2B awaits this qualification and acceptance; B99 remains open; no learned maternal identity or new default is claimed.
+P16-2B is accepted at its experimental scope. Option 15 reviews P16-2C-A feeding-detail source/access only.
+Feeding tasks, contact, milk and rest remain open; B99 remains open and legacy remains default.
 Planning v16 P16-1R-B separates internal handoff and cycle closure from the
 external world step and returning-input admission. Gate-A decisions are unchanged.
 
@@ -405,6 +407,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print("  12) Maternal outcome-to-Attention review (P16-2B-D; one focal allocation)")
         print("  13) Maternal participation, no-learning and Phase-F review (P16-2B-E)")
         print("  14) Combined Follow-Mom qualification (P16-2B-F; before feeding)")
+        print("  15) Feeding detail and focal access (P16-2C-A; no oral movement)")
         print("  [Enter] Return to Main Menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
@@ -482,7 +485,10 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
             if choice == "14":
                 run_follow_mom_qualification_menu_v1()
                 continue
-            print("Please choose 1-14, or press Enter to return.")
+            if choice == "15":
+                run_feeding_detail_menu_v1()
+                continue
+            print("Please choose 1-15, or press Enter to return.")
         except Exception as exc:  # pragma: no cover - defensive interactive boundary
             print(f"[nca8:error] {type(exc).__name__}: {exc}")
             if session is not None and session.status().reset_required:

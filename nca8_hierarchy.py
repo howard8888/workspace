@@ -43,6 +43,7 @@ from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetReservationV1, Bod
 from nca8_translation import TranslationFixtureV1, TranslationApplicationV1, SuppliedTranslationOperationV1
 from nca8_visual import VisualSourceV1, VisualNavMapStateV1, VisualObservationV1
 from nca8_maternal import MaternalSourceV1, MaternalNavMapStateV1
+from nca8_feeding import FeedingDetailProfileV1, FeedingDetailSourceV1, FeedingDetailNavMapStateV1
 from nca8_followmom import FollowMomProfileV1, FollowMomIPV1, FollowMomApplicationV1, FollowMomAssessmentV1
 from nca8_maternal_attention import MaternalAttentionFrameV1, MaternalMismatchRequestV1
 from nca8_maternal_outcomes import MaternalIntervalEvidenceV1, MaternalOutcomeFrameV1, MaternalOutcomeRuntimeV1, MaternalOutcomeV1
@@ -63,7 +64,7 @@ from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, Senso
 from nca8_sensorimotor_contracts import BodyTranslationTargetV1, FocalMotorEvidenceV1, LocalTargetReportV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -105,6 +106,7 @@ class IntegratedRightingCycleV1:
     maternal_correspondence: MaternalOutcomeFrameV1 | None = None
     maternal_attention: MaternalAttentionFrameV1 | None = None
     maternal_learning_report: MaternalLearningPhaseFReportV1 | None = None
+    feeding_detail_source: FeedingDetailNavMapStateV1 | None = None
 
     @property
     def status(self) -> str:
@@ -114,6 +116,8 @@ class IntegratedRightingCycleV1:
             return "partial_authorization" if proposal is not None and proposal.withheld else "authorized_pending_execution"
         if self.calculation.proposal is not None:
             return "refused_no_usable_target"
+        if isinstance(self.calculation.attention.selected_source_state, FeedingDetailNavMapStateV1):
+            return "feeding_detail_selected_no_task_implementation"
         return self.calculation.source_status
 
     def as_dict(self) -> dict[str, object]:
@@ -146,6 +150,10 @@ class IntegratedRightingCycleV1:
             **({"maternal_attention": self.maternal_attention.as_dict()} if self.maternal_attention is not None else {}),
             **({"maternal_learning_reconciliation": self.maternal_learning_report.as_dict()}
                if self.maternal_learning_report is not None else {}),
+            **({"feeding_detail_source": self.feeding_detail_source.as_dict(),
+                "feeding_task_status": "not_implemented_P16_2C_A",
+                "feeding_learning_status": "unimplemented_no_participation"}
+               if self.feeding_detail_source is not None else {}),
         }
 
 
@@ -172,6 +180,7 @@ class IntegratedRightingCoreV1:
         translation_capability: BodyTranslationCapabilityV1 | None = None, translation_mapping_sign: int = 1,
         follow_mom_profile: FollowMomProfileV1 | None = None,
         stand_follow_enabled: bool = False, righting_target_inset_degrees: float = 0.0,
+        feeding_detail_profile: FeedingDetailProfileV1 | None = None,
     ) -> None:
         _bounded_count(trace_capacity, "trace_capacity", 1, 4096)
         if not all(isinstance(flag, bool) for flag in (
@@ -196,6 +205,12 @@ class IntegratedRightingCoreV1:
             raise ValueError("stand-follow requires separate Righting and maternal correspondence consumers")
         if visual_profile is not None and task_outcomes_enabled and not stand_follow_enabled:
             raise ValueError("Righting-only task outcome/learning consumers cannot score visual or maternal translation")
+        if feeding_detail_profile is not None:
+            if not isinstance(feeding_detail_profile, FeedingDetailProfileV1):
+                raise TypeError("feeding detail requires its explicit source-only profile")
+            if follow_mom_profile is None:
+                raise ValueError("feeding detail requires the independently owned maternal/visual sources")
+        self.feeding_detail = None if feeding_detail_profile is None else FeedingDetailSourceV1(stream, feeding_detail_profile)
         self.stand_follow_enabled = stand_follow_enabled
         if visual_profile is None and (translation_capability is not None or translation_mapping_sign != 1):
             raise ValueError("translation capability/calibration requires an opt-in visual operation")
@@ -431,6 +446,22 @@ class IntegratedRightingCoreV1:
                               details={"identity": maternal_source.identity_status, "localized": maternal_source.action_localized,
                                        "separation": maternal_source.separation, "task_disposition": self.follow_mom.reason,
                                        "last_supported_tick": maternal_source.last_supported_tick})
+        feeding_source = None
+        if self.feeding_detail is not None:
+            if maternal_source is None:
+                raise RuntimeError("feeding detail requires this cycle's applied maternal basis")
+            feeding_source = self.feeding_detail.update(maternal_source)
+            feeding_candidate = self.feeding_detail.candidate()
+            if feeding_candidate is not None:
+                competing_bids = (*competing_bids, self.cognition.attention.build_bid(feeding_candidate, cycle_id=cycle))
+            self.trace.append("hierarchy_feeding_source", "feeding-detail evidence updated; nomination, when present, is not an oral action",
+                              cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
+                              details={"association": feeding_source.association_status,
+                                       "recognition": feeding_source.recognition_status,
+                                       "detail_localized": feeding_source.detail_position is not None,
+                                       "candidate": feeding_candidate is not None,
+                                       "event_tick": feeding_source.maternal.visual.event_tick,
+                                       "feeding_motor_authority": False})
         next_context = self.cognition.context if context is None else context
         changed_context = next_context != self.cognition.context
         prepared = self.cognition.prepare_source(
@@ -641,7 +672,7 @@ class IntegratedRightingCoreV1:
             if maternal_owner is not None else None,
             MaternalAttentionFrameV1(maternal_requests, maternal_attention.pending(), maternal_bid, maternal_allocation, maternal_hook is not None)
             if maternal_attention is not None and maternal_allocation is not None else None,
-            maternal_learning_report=maternal_learning_report,
+            maternal_learning_report=maternal_learning_report, feeding_detail_source=feeding_source,
         )
         self.last_result = result
         return result
@@ -680,6 +711,7 @@ class IntegratedRightingTrialV1:
         translation_capability: BodyTranslationCapabilityV1 | None = None, translation_mapping_sign: int = 1,
         follow_mom_profile: FollowMomProfileV1 | None = None,
         stand_follow_enabled: bool = False, righting_target_inset_degrees: float = 0.0,
+        feeding_detail_profile: FeedingDetailProfileV1 | None = None,
     ) -> None:
         profile = MotorWorldProfileV1() if physical_profile is None else physical_profile
         if not isinstance(profile, MotorWorldProfileV1) or profile.dt_seconds != 0.05:
@@ -708,6 +740,7 @@ class IntegratedRightingTrialV1:
         if (translation_fixture is None and follow_mom_profile is None) != (planar_profile is None):
             raise ValueError("an integrated visual operation requires its physical planar profile")
         self._follow_mom_profile = follow_mom_profile
+        self._feeding_detail_profile = feeding_detail_profile
         self._stand_follow_enabled = stand_follow_enabled
         self._righting_target_inset_degrees = righting_target_inset_degrees
         self._translation_fixture, self._translation_capability = translation_fixture, translation_capability
@@ -738,6 +771,7 @@ class IntegratedRightingTrialV1:
             translation_fixture=self._translation_fixture, translation_capability=self._translation_capability,
             translation_mapping_sign=self._translation_mapping_sign, follow_mom_profile=self._follow_mom_profile,
             stand_follow_enabled=self._stand_follow_enabled, righting_target_inset_degrees=self._righting_target_inset_degrees,
+            feeding_detail_profile=self._feeding_detail_profile,
         )
         self.controller = SensorimotorExecutorV1(
             self.core.cognition.mapper, profile=self._control_profile, installation_source=self.core.handoff,
@@ -802,6 +836,8 @@ class IntegratedRightingTrialV1:
             **({f"visual_{key}": value for key, value in self.core.visual.retained_counts().items()} if self.core.visual is not None else {}),
             **({f"maternal_{key}": value for key, value in self.core.maternal.retained_counts().items()}
                if self.core.maternal is not None else {}),
+            **({f"feeding_detail_{key}": value for key, value in self.core.feeding_detail.retained_counts().items()}
+               if self.core.feeding_detail is not None else {}),
             **({f"follow_mom_{key}": value for key, value in self.core.follow_mom.retained_counts().items()}
                if self.core.follow_mom is not None else {}),
             **({"outcome_staged_intervals": len(self._outcome_intervals), **self.core.outcomes.retained_counts()}
@@ -844,6 +880,9 @@ class IntegratedRightingTrialV1:
                 "visual_source": self.core.visual.current.as_dict() if self.core.visual.current is not None else None}
                if self.core.visual is not None else {}),
             **({"maternal_task": self.core.follow_mom.snapshot()} if self.core.follow_mom is not None else {}),
+            **({"feeding_detail_profile": self.core.feeding_detail.profile.as_dict(),
+                "feeding_detail_source": self.core.feeding_detail.current.as_dict() if self.core.feeding_detail.current is not None else None}
+               if self.core.feeding_detail is not None else {}),
             **({"maternal_pending_claims": [item.as_dict() for item in self.core.maternal_outcomes.pending()],
                 "maternal_outcome_history": [item.as_dict() for item in self.core.maternal_outcomes.history()]}
                if self.core.maternal_outcomes is not None else {}),

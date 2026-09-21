@@ -33,13 +33,13 @@ import math
 
 from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, PlanarFeedbackV1
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 __all__ = [
     "MotorBodyStateV1",
     "MotorWorldPerturbationV1",
     "MotorWorldProfileV1",
     "MotorWorldV1",
-    "PlanarObjectV1", "PlanarPerturbationV1", "PlanarWorldProfileV1", "PlanarWorldStateV1",
+    "PlanarObjectV1", "PlanarDetailObjectV1", "PlanarPerturbationV1", "PlanarWorldProfileV1", "PlanarWorldStateV1",
     "SupportWorldStateV1",
     "SupportWorldProfileV1",
     "support_profile_for_scenario_v1",
@@ -416,6 +416,31 @@ class PlanarObjectV1:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanarDetailObjectV1(PlanarObjectV1):
+    """Opt-in visual detail on the same fixed-scene physical object interface.
+
+    Inherited position/radius retain their ordinary point/disk meaning. The
+    category and finite visual sensing radius affect only the existing sensory
+    surface, never collision or movement. A feeding category is lower-provider
+    recognition scaffolding, not learned nipple identity, part-of evidence,
+    contact, latch, milk or a task milestone. Original PlanarObjectV1 instances
+    keep their exact schema and unlimited-visibility behavior.
+    """
+
+    descriptor: str = "feeding"
+    visibility_radius: float = 0.4
+
+    def __post_init__(self) -> None:
+        PlanarObjectV1.__post_init__(self)
+        if not isinstance(self.descriptor, str) or self.descriptor not in {"object", "landmark", "hazard", "social", "feeding"}:
+            raise ValueError("detail descriptor must belong to the existing surface recognition scaffold")
+        radius = _motor_number(self.visibility_radius, "visibility radius", 0.0, 100.0)
+        if radius <= 0.0:
+            raise ValueError("a finite visibility radius must be positive")
+        object.__setattr__(self, "visibility_radius", radius)
+
+
+@dataclass(frozen=True, slots=True)
 class PlanarPerturbationV1:
     """Fixed-time exogenous velocity/yaw, invisible to the motor controller.
 
@@ -606,9 +631,15 @@ class MotorWorldV1:
         anchor: dict[str, object] = {"entity": "self"}
         if sensed.position is not None:
             anchor.update(x=sensed.position[0], y=sensed.position[1])
+        # Visibility uses the ORIGINAL delivered body position, never newer private
+        # coordinates or task progress. Missing position cannot reveal ranged detail.
+        visible = tuple(item for item in profile.objects if not isinstance(item, PlanarDetailObjectV1) or
+                        sensed.position is not None and math.hypot(item.position[0] - sensed.position[0],
+                                                                  item.position[1] - sensed.position[1]) <= item.visibility_radius + 1e-12)
         return {"schema": "surface_grid_v1", "frame": profile.frame_id, "anchor": anchor,
-                "objects": [{"entity": item.region_id, "kind": "object", "x": item.position[0], "y": item.position[1]}
-                            for item in profile.objects], "landmarks": []}
+                "objects": [{"entity": item.region_id, "kind": item.descriptor if isinstance(item, PlanarDetailObjectV1) else "object",
+                             "x": item.position[0], "y": item.position[1]}
+                            for item in visible], "landmarks": []}
 
     @property
     def stream(self) -> MotorStreamRefV1:

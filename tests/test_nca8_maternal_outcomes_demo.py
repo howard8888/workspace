@@ -271,8 +271,8 @@ def test_parent_menu_exposes_the_same_submenu_without_another_loop(monkeypatch):
 
 def test_registry_adds_one_real_consumer_without_new_host_primitives():
     import cca8_run
-    assert cca8_run.__version__ == "0.30.28"
-    assert len(cca8_run._cca8_component_rows()) == 92 and len(cca8_run.PRIMITIVES) == 8
+    assert cca8_run.__version__ == "0.30.29"
+    assert len(cca8_run._cca8_component_rows()) == 94 and len(cca8_run.PRIMITIVES) == 8
     assert dict(cca8_run._CCA8_COMPONENT_REGISTRY)["nca8_maternal_outcomes"] == "nca8_maternal_outcomes"
 
 

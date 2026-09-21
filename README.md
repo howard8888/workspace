@@ -16,6 +16,93 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P16-2C-A feeding-detail source and focal access
+
+Entry: accepted full P16-2B, committed at clean
+`3bfb689ef6dccb1fcdbb71d0f6a0e7c0e7fb79ee` (21 September 2026).
+Architecture v10.1 and adopted Planning v18 remain the governing documents.
+This is the first small software slice of Planning section 42, prepared for local
+review; it does not complete P16-2C or authorize an oral movement capability.
+The preceding P16-2B-F issue-time acceptance language below is historical:
+Howard subsequently accepted full P16-2B at its declared experimental scope.
+
+The current registry has **94 production components / 8 host behavioral primitives**
+(`cca8_run.py v0.30.29`). `nca8_feeding.py` owns one current feeding-detail
+association source; `nca8_feeding_demo.py` supplies an external review, not another
+executive. The existing source/Attention/Navigation/A-F hierarchy is reused.
+No new task IP, BodyMap target family, SMP, physical drive, learned identity or
+learner is added. The legacy/default runtime and the optimized trace renderer
+remain unchanged. B99, C99 and default-readiness gates remain open.
+
+Use **NCA8 menu 15 -> 1** for the nominal detailed review, or **15 -> 0** for all
+17 compact cases. The secondary developer entry calls the same functions:
+
+    python scripts/review_nca8_feeding.py --case all
+    python scripts/review_nca8_feeding.py --case nominal --detail
+    python scripts/review_nca8_feeding.py --case nominal --json
+
+### What the new source actually receives and changes
+
+The existing horizontal physical provider has a small opt-in `PlanarDetailObjectV1`
+subclass. Ordinary `PlanarObjectV1` fields and exported schemas are unchanged.
+The review's maternal point remains at (2,1) metres; an independently represented
+zero-radius detail point is at (1.82,1). Its supplied category is `feeding`, with
+a 0.4-metre visual sensing radius. This is a declared structured-sensory scaffold,
+not raw-pixel recognition, oral reach, nipple identity, contact or milk evidence.
+Visibility depends on SELF in the original delivered motor acquisition, not the
+newer private body or task status. Reading or exporting the surface never steps
+or resamples the world. The detail has no new physical force or drive.
+
+A fixed initial association seed relates distinct parent and detail region handles.
+The feeding owner separately checks current maternal support, observed detail
+category, independent detail localization, parent/detail separation (at most
+0.3 metres), and SELF/detail proximity (at most 0.65 metres for focal access).
+Wrong category, missing detail, inconsistent geometry or a wrong seed withholds
+this initial access route; maternal identity alone cannot create a detail point.
+These thresholds are engineering conditions, not anatomical measurements.
+
+A fixed supplied developmental feeding-need condition permits nomination. It is
+not read from a milestone, task-completion flag, hidden counter or simulator reward.
+With that condition and the Attention route enabled, the owner submits an ordinary
+source bid: need rank 10, persistence rank 0, activation rank 60. Existing maternal
+persistence and current Righting need retain their ordinary ranking effects.
+Attention selects the source; Navigation creates the one source-linked WNM.
+The supplied task repertoire has no feeding operation, so feeding focus yields no
+feeding application, PNM, target or dispatch. Existing finite lower permissions
+are neither enlarged nor renewed by source access.
+
+### Causal review and limits
+
+Each live case uses exactly 160 lower updates at 0.05 seconds, with 41 focal
+opportunities at cutoffs 0,4,...,160. In nominal operation, detail first appears
+from event95 at cutoff96 and ordinary Attention selects it then. Maternal proximity
+completion is recorded later at104: it did not instruct the source switch.
+Attention-off and supplied-need-off preserve the same sensory/source content,
+commands and physical trajectory, but prevent feeding focus. This is a focal
+allocation effect, not a speed or feeding-performance benefit.
+
+The already-near case selects detail at cutoff0 without a prior Righting or
+Follow-Mom task. The support-competition case supplies the same nearby detail to
+a fallen body: actual Righting need wins while the feeding source remains present.
+The post-completion support-loss case retains detail but creates no new movement
+permission. It does not claim a new recovery episode or safe rest after the earlier
+Righting task is terminal. Those task/lifecycle extensions are outside this slice.
+
+A brief gap removes precise detail at120 and new evidence restores access at124.
+The longer gap removes access at120/124/128/132; fresh evidence at136 restores it.
+No feeding-specific continuity model is supplied: maternal continuity cannot be
+relabelled as current nipple localization. Original immutable source samples keep
+their acquisition identity and time; no history is installed as cognitive memory.
+
+Each source owner retains one durable seed and one current configuration. Real
+owner counts, durable-map before/after signatures, source-linked WNM identity,
+no-feeding-dispatch, complete horizons and handoff counts are checked. An empty,
+truncated or failed run cannot receive PASS. These are source-access checks, not
+the later full P16-2C or B99 qualification. The feeding Phase-F status is explicitly
+`unimplemented_no_participation`; it does not borrow another task's learning claim.
+SeekNipple, oral targets/contact/latch, Suckle, observed nourishment, Rest and their
+outcome/participation integration remain later small slices under section 42.
+
 ## NCA8 update: P16-2B-F combined Follow-Mom qualification
 
 Entry: accepted, committed P16-2B-E at clean
@@ -25,7 +112,7 @@ of P16-2B, feeding, B99 or a new default runtime. Architecture v10.1 and adopted
 Planning v18 remain the authorities; the current source and local wall provide
 implementation evidence, not the older issue-time progress statements in the plan.
 
-The current registry has **92 production components / 8 host behavioral primitives**
+At P16-2B-F delivery the registry had **92 production components / 8 host behavioral primitives**
 (`cca8_run.py v0.30.28`). The one new component, `nca8_followmom_qualification.py`,
 is an external observer/review harness, not an additional cognitive part or
 controller. The accepted A-F core, sensory/source owners, Follow-Mom, prediction,
