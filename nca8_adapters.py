@@ -34,12 +34,15 @@ from types import MappingProxyType
 from typing import Any, TypeAlias
 
 from cca8_env import EnvConfig, EnvObservation, HybridEnvironment
+from cca8_motor_contracts import MotorStreamRefV1
+from cca8_navmap_kernel import NavPointV1
 from cca8_navpatch import CELL_BLOCKED, CELL_GOAL, CELL_HAZARD, CELL_TRAVERSABLE, CELL_UNKNOWN
 
+from nca8_visual import VisualDetectionV1, VisualObservationV1
 from nca8_maps import SupportObservationV1
 from nca8_primitives import TaskActionKindV1, TaskActionV1
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 __all__ = [
     "NCA8_SCAFFOLD_LEDGER_V1",
     "Nca8EnvironmentBridgeV1",
@@ -49,6 +52,7 @@ __all__ = [
     "Nca8ObservationV1",
     "Nca8ScaffoldLedgerEntryV1",
     "adapt_env_observation_v1",
+    "admit_visual_surface_v1",
     "environment_token_for_task_action_v1",
     "create_environment_bridge_v1",
     "__version__",
@@ -590,6 +594,69 @@ def adapt_env_observation_v1(observation: EnvObservation) -> Nca8ObservationV1:
         support_observation=support_observation,
         support_observation_error=support_error,
     )
+
+
+def admit_visual_surface_v1(
+    observation: Nca8ObservationV1 | None, *, stream: MotorStreamRefV1, sample_id: int,
+    event_tick: int, available_tick: int,
+) -> VisualObservationV1 | None:
+    """Decode a narrow, opt-in horizontal visual scene from admitted geometry.
+
+    First use adapt_env_observation_v1; this function accepts neither EnvState nor
+    raw environment observations. It consumes only surface_grid schema/frame,
+    anchor x/y, and objects/landmarks entity/kind/x/y. It ignores cues, predicates,
+    affordances, proximity flags, preferred focus, priority hints and task labels.
+    Entity strings are opaque supplied region handles, never maternal identities.
+
+    The named scene_xy: frame explicitly denotes right-handed horizontal metre
+    coordinates. The old frame='body' and dx/dy products are NOT reinterpreted as
+    allocentric x/y. Partial coordinates remain unknown. The outer transport must
+    supply original sample/event/availability; step_index must match event_tick.
+    No missing clock, sample, heading or geometry is inferred. None or an absent
+    surface is missing input; a valid empty surface is a distinct acquisition.
+    Oversized/duplicate/malformed retained contributions reject the whole packet.
+    """
+    if observation is None:
+        return None
+    if not isinstance(observation, Nca8ObservationV1):
+        raise TypeError("visual admission requires the already whitelisted observation")
+    surface = observation.surface_grid
+    if not surface or surface == {"objects": (), "landmarks": (), "affordances": {}}:
+        # The retained whitelist normalizes a supplied empty surface to these keys.
+        return None
+    if surface.get("schema") != "surface_grid_v1":
+        raise ValueError("visual preview requires the declared surface_grid_v1 schema")
+    frame = surface.get("frame")
+    if not isinstance(frame, str):
+        raise ValueError("visual scene needs an explicit frame")
+    if observation.step_index != event_tick or isinstance(event_tick, bool):
+        raise ValueError("visual event must equal the observation's original step_index")
+
+    def point(value: object) -> NavPointV1 | None:
+        """Decode one complete x/y pair; never backfill one absent coordinate."""
+        if not isinstance(value, Mapping):
+            return None
+        x, y = value.get("x"), value.get("y")
+        if x is None or y is None:
+            return None
+        if isinstance(x, bool) or isinstance(y, bool) or not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+            raise ValueError("visual coordinates must be numeric or unknown")
+        return NavPointV1(x, y)
+
+    detections: list[VisualDetectionV1] = []
+    for channel in ("objects", "landmarks"):
+        items = surface.get(channel, ())
+        if not isinstance(items, (tuple, list)) or len(items) + len(detections) > 8:
+            raise ValueError("the visual profile admits at most eight regions, without silent truncation")
+        for item in items:
+            if not isinstance(item, Mapping):
+                raise TypeError("visual region must be an admitted mapping")
+            region_id = item.get("entity")
+            descriptor = item.get("kind")
+            if not isinstance(region_id, str) or (descriptor is not None and not isinstance(descriptor, str)):
+                raise ValueError("visual region requires an opaque handle and optional category")
+            detections.append(VisualDetectionV1(region_id, descriptor, point(item)))
+    return VisualObservationV1(stream, sample_id, event_tick, available_tick, frame, point(surface.get("anchor")), tuple(detections))
 
 
 _TASK_ACTION_TO_ENVIRONMENT_TOKEN_V1: dict[TaskActionKindV1, str | None] = {

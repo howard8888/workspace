@@ -25,6 +25,8 @@ import math
 from dataclasses import dataclass, replace
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
+from cca8_navmap_kernel import NavMapRefV1, NavPointV1
+from nca8_visual import VisualNavMapStateV1
 from nca8_sensorimotor_contracts import (
     BodyRelativeTargetV1,
     CommittedBodyTargetV1,
@@ -32,8 +34,9 @@ from nca8_sensorimotor_contracts import (
     TargetOriginV1,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
+    "PlanarBodyObservationV1", "VisualApproachRequestV1", "VisualBodyPreviewV1",
     "BodyAxisCapabilityV1",
     "BodyMovementRequestV1",
     "BodyTargetBindingV1",
@@ -337,6 +340,138 @@ class BodyTargetReservationV1:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class PlanarBodyObservationV1:
+    """Independent horizontal body localization for the visual mapping preview.
+
+    Position is metres in an explicit scene_xy: frame. Heading is counterclockwise
+    degrees from that frame's +X axis, with body +Y to the left. This is horizontal
+    yaw, NOT the existing signed gravity-relative body tilt. Neither is inferred
+    from the other. The current fixture supplies localization as a declared sensor
+    scaffold; no locomotor provider exists in 2A-A. Unknown position/heading stays
+    unknown. The original acquisition/time/generation is immutable.
+    """
+
+    stream: MotorStreamRefV1
+    sample_id: int
+    event_tick: int
+    available_tick: int
+    frame_id: str
+    position: NavPointV1 | None
+    heading_degrees: float | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.stream, MotorStreamRefV1):
+            raise TypeError("planar body observation needs MotorStreamRefV1")
+        _index(self.sample_id, "sample_id", 1)
+        _index(self.event_tick, "event_tick")
+        _index(self.available_tick, "available_tick", self.event_tick)
+        _name(self.frame_id, "frame_id")
+        if not self.frame_id.startswith("scene_xy:") or self.frame_id == "scene_xy:":
+            raise ValueError("planar body observation needs an explicit horizontal scene_xy: metre frame")
+        if self.position is not None:
+            if not isinstance(self.position, NavPointV1):
+                raise TypeError("body position must be NavPointV1 or None")
+            _scalar(self.position.x, "body x", -10000, 10000)
+            _scalar(self.position.y, "body y", -10000, 10000)
+        if self.heading_degrees is not None:
+            object.__setattr__(self, "heading_degrees", _scalar(self.heading_degrees, "heading", -180, 180))
+
+    def as_dict(self) -> dict[str, object]:
+        """Export current localization without implying target or motor permission."""
+        return {"stream": self.stream.as_dict(), "sample_id": self.sample_id, "event_tick": self.event_tick,
+                "available_tick": self.available_tick, "frame_id": self.frame_id, "units": "metres",
+                "position": None if self.position is None else self.position.as_dict(),
+                "heading_degrees": self.heading_degrees, "heading_is_gravity_tilt": False}
+
+
+@dataclass(frozen=True, slots=True)
+class VisualApproachRequestV1:
+    """A hand-supplied approach requirement for the non-actuating frame fixture.
+
+    Reuse H1 origin vocabulary; these references do not create an actual task,
+    application, envelope or lease. Region selection is an explicit fixture,
+    not Follow-Mom or an implicit policy in BodyMap. The bounded intermediate
+    displacement stops short of the selected point by stand_off_metres.
+    """
+
+    origin: TargetOriginV1
+    source_map_ref: NavMapRefV1
+    region_id: str
+    stand_off_metres: float = 0.5
+    maximum_step_metres: float = 0.25
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.origin, TargetOriginV1) or not isinstance(self.source_map_ref, NavMapRefV1):
+            raise TypeError("visual request needs the existing origin and source-reference contracts")
+        _name(self.region_id, "region_id")
+        object.__setattr__(self, "stand_off_metres", _scalar(self.stand_off_metres, "stand off", 0, 100))
+        step = _scalar(self.maximum_step_metres, "maximum step", 0, 1)
+        if step == 0:
+            raise ValueError("maximum step must be positive")
+        object.__setattr__(self, "maximum_step_metres", step)
+
+    def as_dict(self) -> dict[str, object]:
+        """Declare the supplied, unselected requirement rather than a task decision."""
+        return {"origin": self.origin.as_dict(), "source_map_ref": self.source_map_ref.as_dict(),
+                "region_id": self.region_id, "stand_off_metres": self.stand_off_metres,
+                "maximum_step_metres": self.maximum_step_metres, "source": "supplied_requirement_fixture"}
+
+
+@dataclass(frozen=True, slots=True)
+class VisualBodyPreviewV1:
+    """A non-actuating BodyMap result with immutable source and body anchors.
+
+    A body_relative_target is the whole target displacement, while body_step is
+    the bounded intermediate proposal. hypothetical_self is a geometric preview
+    under perfect translation, not a PNM generated by a selected IP or an observed
+    outcome. This type is deliberately incompatible with live H1 reservations,
+    H6 handoffs and H4 installation. No translation capability is claimed yet.
+    """
+
+    request: VisualApproachRequestV1
+    source: VisualNavMapStateV1
+    body: PlanarBodyObservationV1 | None
+    cutoff_tick: int
+    status: str
+    scene_target: NavPointV1 | None = None
+    body_relative_target: NavPointV1 | None = None
+    body_step: NavPointV1 | None = None
+    hypothetical_self: NavPointV1 | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, VisualApproachRequestV1) or not isinstance(self.source, VisualNavMapStateV1):
+            raise TypeError("preview requires its typed original request and visual source")
+        _index(self.cutoff_tick, "cutoff_tick", self.source.cutoff_tick)
+        if self.status not in {"geometry_only_not_authorized", "mapping_disabled", "visual_unavailable", "visual_stale",
+                               "spatial_stream_disabled", "target_unlocalized", "body_pose_unavailable",
+                               "body_geometry_unknown", "frame_incompatible"}:
+            raise ValueError("unknown visual mapping disposition")
+        if self.body is not None and not isinstance(self.body, PlanarBodyObservationV1):
+            raise TypeError("preview body must be a typed localization or None")
+        if self.request.origin.stream != self.source.stream or self.request.source_map_ref != self.source.source_map_ref:
+            raise ValueError("preview request and source have different origins")
+        points = (self.scene_target, self.body_relative_target, self.body_step, self.hypothetical_self)
+        if self.status == "geometry_only_not_authorized":
+            if self.body is None or any(not isinstance(point, NavPointV1) for point in points):
+                raise ValueError("computed visual preview requires all geometric fields and its body basis")
+            if self.body_step is not None and math.hypot(self.body_step.x, self.body_step.y) > self.request.maximum_step_metres + _EPSILON:
+                raise ValueError("preview exceeds the requested intermediate step bound")
+        elif any(point is not None for point in points):
+            raise ValueError("a withheld preview cannot expose a fabricated target")
+
+    def as_dict(self) -> dict[str, object]:
+        """Export actual/hypothetical fields separately; no reader acquires authority."""
+        return {"request": self.request.as_dict(), "source": self.source.as_dict(),
+                "body": None if self.body is None else self.body.as_dict(), "cutoff_tick": self.cutoff_tick,
+                "status": self.status, "scene_target": None if self.scene_target is None else self.scene_target.as_dict(),
+                "body_relative_target": None if self.body_relative_target is None else self.body_relative_target.as_dict(),
+                "body_step": None if self.body_step is None else self.body_step.as_dict(),
+                "hypothetical_self": None if self.hypothetical_self is None else self.hypothetical_self.as_dict(),
+                "prediction_model": "perfect_translation_geometry_fixture_only",
+                "motor_authority": False, "capability_bound": False, "task_selected": False, "task_pnm_created": False}
+
+
 class BodyTargetMapperV1:
     """Own one local body view and at most two nonexecuting target reservations.
 
@@ -362,6 +497,7 @@ class BodyTargetMapperV1:
     def __init__(
         self, stream: MotorStreamRefV1, capabilities: tuple[BodyAxisCapabilityV1, ...], *,
         tick_seconds: float = 0.05, maximum_feedback_age: int = 2, enabled: bool = True, orientation_mapping_sign: int = 1,
+        visual_preview_enabled: bool = False,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("stream must be MotorStreamRefV1")
@@ -386,6 +522,11 @@ class BodyTargetMapperV1:
             raise TypeError("orientation_mapping_sign must be +1 or -1, not Boolean")
         if orientation_mapping_sign not in (-1, 1):
             raise ValueError("orientation_mapping_sign must be +1 or -1")
+        if not isinstance(visual_preview_enabled, bool):
+            raise TypeError("visual_preview_enabled must be Boolean")
+        self._visual_preview_enabled = visual_preview_enabled
+        self._planar_observation: PlanarBodyObservationV1 | None = None
+        self._planar_available = False
         self._orientation_mapping_sign = orientation_mapping_sign
         self._stream = stream
         self._capabilities = axes
@@ -400,6 +541,91 @@ class BodyTargetMapperV1:
         self._reservations: dict[SensorimotorTargetKindV1, BodyTargetReservationV1] = {}
         self._executor_owner: object | None = None
 
+    def observe_planar_body(self, observation: PlanarBodyObservationV1 | None, *, at_tick: int) -> None:
+        """Maintain one optional body-local spatial reading without updating vision.
+
+        This opt-in preview channel shares the mapper's existing stream and clock.
+        It grants no resource, target or motor permission. Bad/future/reversed or
+        changed-duplicate packets reject before mutation. An explicit gap cannot
+        be repaired with an old duplicate; a distinct acquisition is required.
+        """
+        if not self._visual_preview_enabled:
+            raise RuntimeError("planar body input requires the explicit visual-preview profile")
+        tick = self._check_tick(at_tick)
+        retained = self._planar_observation
+        available = False
+        if observation is not None:
+            if not isinstance(observation, PlanarBodyObservationV1):
+                raise TypeError("planar body input requires a typed observation or None")
+            if observation.stream != self._stream or observation.available_tick > tick:
+                raise ValueError("planar body input is foreign or not yet available")
+            duplicate = retained is not None and observation.sample_id == retained.sample_id
+            if retained is not None:
+                if duplicate and observation != retained:
+                    raise ValueError("planar body acquisition identity changed")
+                if not duplicate and (observation.sample_id <= retained.sample_id or observation.event_tick <= retained.event_tick):
+                    raise ValueError("planar body samples and events must advance")
+            available = self._planar_available if duplicate else True
+            retained = observation
+        self._planar_observation, self._planar_available, self._last_tick = retained, available, tick
+
+    def preview_visual_approach(
+        self, request: VisualApproachRequestV1, source: VisualNavMapStateV1, *, at_tick: int,
+    ) -> VisualBodyPreviewV1:
+        """Compute the explicit scene-to-body transform with no reservation or drive.
+
+        R(-heading) maps target minus current body position to forward/left metres.
+        A bounded intermediate step is re-expressed in the scene solely to display
+        its hypothetical geometric effect. Current source/body data are unchanged.
+        There is no collision solver, movement guarantee, task choice or learned
+        calibration. Actual translation execution is the next 2A sub-slice.
+        """
+        if not self._visual_preview_enabled:
+            raise RuntimeError("visual mapping requires the explicit preview profile")
+        tick = self._check_tick(at_tick)
+        if not isinstance(request, VisualApproachRequestV1) or not isinstance(source, VisualNavMapStateV1):
+            raise TypeError("mapping needs a typed supplied request and visual source")
+        if request.origin.stream != self._stream or source.stream != self._stream or request.source_map_ref != source.source_map_ref:
+            raise ValueError("visual mapping cannot borrow a different source or generation")
+        if source.cutoff_tick > tick:
+            raise ValueError("visual source was applied after this mapping opportunity")
+        body = self._planar_observation if self._planar_available else None
+        if body is not None and tick - body.event_tick > self._maximum_feedback_age:
+            body = None
+        status = "geometry_only_not_authorized"
+        region = next((item for item in source.guidance if item.region_id == request.region_id), None)
+        if not self._enabled:
+            status = "mapping_disabled"
+        elif not source.evidence_current:
+            status = "visual_unavailable"
+        elif source.event_tick is None or tick - source.event_tick > 2:
+            status = "visual_stale"
+        elif not source.spatial_enabled:
+            status = "spatial_stream_disabled"
+        elif region is None:
+            status = "target_unlocalized"
+        elif body is None:
+            status = "body_pose_unavailable"
+        elif body.position is None or body.heading_degrees is None:
+            status = "body_geometry_unknown"
+        elif body.frame_id != source.frame_id:
+            status = "frame_incompatible"
+        if status != "geometry_only_not_authorized":
+            return VisualBodyPreviewV1(request, source, body, tick, status)
+        if region is None or body is None or body.position is None or body.heading_degrees is None:
+            raise RuntimeError("validated visual mapping lost its geometry")
+        dx, dy = region.position.x - body.position.x, region.position.y - body.position.y
+        heading = math.radians(body.heading_degrees)
+        cosine, sine = math.cos(heading), math.sin(heading)
+        forward, left = cosine * dx + sine * dy, -sine * dx + cosine * dy
+        distance = math.hypot(dx, dy)
+        extent = min(request.maximum_step_metres, max(0.0, distance - request.stand_off_metres))
+        ratio = extent / distance if distance > 0.0 else 0.0
+        step = NavPointV1(forward * ratio, left * ratio)
+        hypothetical = NavPointV1(body.position.x + dx * ratio, body.position.y + dy * ratio)
+        return VisualBodyPreviewV1(request, source, body, tick, status, region.position,
+                                   NavPointV1(forward, left), step, hypothetical)
+
     def retained_counts(self) -> dict[str, int]:
         """Count owned records without expiring, refreshing or granting any right.
 
@@ -408,7 +634,8 @@ class BodyTargetMapperV1:
         The fixed limits are one sensor, one unreserved proposal and two resources.
         """
         return {"body_sensor_records": int(self._feedback is not None),
-                "body_pending_proposals": int(self._pending is not None), "body_reserved_records": len(self._reservations)}
+                "body_pending_proposals": int(self._pending is not None), "body_reserved_records": len(self._reservations),
+                **({"planar_body_records": int(self._planar_observation is not None)} if self._visual_preview_enabled else {})}
 
     @property
     def stream(self) -> MotorStreamRefV1:

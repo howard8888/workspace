@@ -16,17 +16,104 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P16-2A-A visual source and non-actuating body-frame preview
+
+P16-1G-C and **A99 were accepted after Howard's green local validation** and
+committed as `6bc442e` (20 September 2026). This is the first bounded sub-slice of
+Planning v18 section 40, not completion of P16-2A or B99. The retained A99,
+A0 and legacy execution profiles and all learning rules remain unchanged.
+
+Use **NCA8 menu 9** for the visual/frame review, or the permanent developer entry:
+
+    python scripts/review_nca8_visual.py
+    python scripts/review_nca8_visual.py --case heading_90 --detail
+    python scripts/review_nca8_visual.py --case gap_recovery --json
+
+The current registry contains **80 production components / 8 host behavioral
+primitives** (`cca8_run.py v0.30.21`). `nca8_visual.py` owns one enduring
+`visual_scene@r1` and its typed current configuration. `nca8_visual_demo.py` runs
+finite shared experiments; neither is a new task selector or a learned visual
+system. The common Attention/WNM contract accepts a closed union of the actual
+posture and visual source types. Visual content has no dummy posture/support
+fields. Existing StandUp and Righting explicitly refuse a visual-domain argument.
+
+### Evidence, independent streams, and the declared scaffold
+
+The new opt-in reader consumes only already-whitelisted `surface_grid_v1`
+geometry: a named `scene_xy:` horizontal metre frame, SELF anchor, and up to eight
+objects/landmarks with opaque region handles, optional category and optional x/y.
+A body-frame label is not silently converted to an allocentric frame. Original
+sample/event/availability are supplied by the fixture transport; the event must
+match the observation's original `step_index`. The existing outer whitelist still
+drops unsupported fields and normalizes input as before; this reader does not
+claim to validate information that the older whitelist already discarded.
+
+Provider category labels are a **recognition scaffold, not acquired identity**.
+Region localization and SELF-relative geometry are independently suppressible.
+Recognition-off retains the geometric result for the externally supplied region;
+spatial-off retains categories but withholds the directional preview. This is not
+proof of learned vision, maternal recognition, selective search or a complete
+ventral/dorsal neural implementation. Neither stream selects an operation.
+
+One acquisition watermark and one current configuration suffice. Rereading keeps
+original times; missing input clears present access, and an old duplicate cannot
+restore it. Freshness is a fixed two-local-tick engineering profile. Empty valid
+acquisitions are distinct from absent packets, but neither proves a particular
+object absent. New samples update the same source, not a new durable map.
+
+### Actual frame computation, deliberately no movement
+
+The existing BodyMap target helper optionally accepts an independent typed
+horizontal body position/heading fixture. Heading is counterclockwise from scene
++X; body +X is forward and +Y is left. It is **not the gravity-relative tilt**
+used by the Righting provider. Both visual and body times/frames must be valid.
+For target-minus-body vector (dx, dy), BodyMap actually computes:
+
+    forward = cos(heading) * dx + sin(heading) * dy
+    left    = -sin(heading) * dx + cos(heading) * dy
+
+With fixed target (2, 1) m and body (0, 0), heading 0 degrees gives (2, 1) m;
+heading 90 degrees gives (1, -2) m. Re-expressing the whole coordinate basis
+preserves the physical relation. The separately supplied request specifies a
+0.50-m stand-off and at most a 0.25-m intermediate step in the default fixture.
+A hypothetical SELF position shows that geometric step; it never overwrites
+current source/body evidence. It is not a Navigation-selected operation's PNM.
+
+The same existing H5 preview composition provides the real support source,
+Attention, Navigation/WNM, Righting applicability and BodyMap owner. A visual
+mapping is reviewed only when the visual source wins the common selector.
+Supported body need can instead select Righting; visual updates continue and a
+later focal return uses their new configuration. These are preview opportunities,
+**not full A-F cycles or an action-responsive world run**.
+
+The new preview type cannot be reserved as an H1 target or installed by H4.
+It grants no lease or actuator rights. All 17 declared cases execute zero world
+steps, zero motor commands, zero installations and zero durable updates. Source,
+request and heading are fixtures, not live locomotor sensing. No collision,
+contact or task-completion result is inferred from a computed vector.
+
+### Scope still open
+
+The next P16-2A sub-slice must extend the same target/time/authority path with a
+real translation capability, command-driven physical displacement/contact and
+appropriate adverse controls. A new field or frame preview does not satisfy
+section 40.1. There is no `policy:follow_mom` shortcut here, no new visual IP or
+MOM ANM, no learned calibration, and no default-mode change. Full P16-2A, maternal
+P16-2B, B99, C99, D99 and the later general inspection/Ready/learning work remain
+open. This source slice itself remains a review candidate until its local wall
+and manual source/heading/unknown-evidence checks are accepted.
+
 ## NCA8 update: P16-1G-C called no-learning hook, Phase F and coverage
 
 P16-1G-B was accepted, validated locally and committed as `8ebff4a`. The new
 opt-in **righting_no_learning_v1** profile adds actual bounded participation and
-teaching admission, **not durable learning**. Its implementation and A99 remain
-pending the local validation wall and manual acceptance. Legacy/default routing,
+teaching admission, **not durable learning**. Its implementation and A99 were accepted at `6bc442e` after the local
+validation wall and manual review. Legacy/default routing,
 physical equations, task criteria, prediction tolerances and all existing task,
 request and motor budgets are unchanged.
 
-Use **NCA8 menu 8 -> integrated review 8**. The current inventory is **78 production
-components and 8 host behavioral primitives**. `nca8_learning.py` implements a
+Use **NCA8 menu 8 -> integrated review 8**. At that checkpoint the inventory was
+**78 production components and 8 host behavioral primitives**. `nca8_learning.py` implements a
 small extension owned by the existing POSTURE-SUPPORT sensory owner.
 `nca8_learning_demo.py` inspects shared experiments; `nca8_learning_registry.py`
 contains the complete read-only L01-L25 inventory. The latter is inspected only

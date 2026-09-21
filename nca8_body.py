@@ -49,7 +49,7 @@ from nca8_primitives import (
 # comprehensible without a generic state-management framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 __all__ = [
     "AuthorizedActionEnvelopeV1",
     "BodyActionHandoffV1",
@@ -531,7 +531,7 @@ class Nca8BodyRuntimeV1:
 
     def configure_motor_targets(
         self, stream: MotorStreamRefV1, capabilities: tuple[BodyAxisCapabilityV1, ...], *,
-        tick_seconds: float = 0.05, maximum_feedback_age: int = 2, orientation_mapping_sign: int = 1,
+        tick_seconds: float = 0.05, maximum_feedback_age: int = 2, orientation_mapping_sign: int = 1, visual_preview_enabled: bool = False,
     ) -> BodyTargetMapperV1:
         """Configure one H3 body stream using explicitly supplied capabilities.
 
@@ -543,13 +543,15 @@ class Nca8BodyRuntimeV1:
         fields, action envelope, handoff, current WNM or learner are modified.
         The optional -1 orientation mapping sign is an explicitly selected H6-B
         calibration-fault control; +1 preserves the normal body transformation.
+        visual_preview_enabled admits a separate non-actuating horizontal-pose
+        field; it does not add a live target family or change existing targets.
         """
         if self._motor_targets is not None:
             raise ValueError("motor targets already configured; reset the owning BodyMap for a new stream")
         mapper = BodyTargetMapperV1(
             stream, capabilities, tick_seconds=tick_seconds,
             maximum_feedback_age=maximum_feedback_age, enabled=self._action_handoff_enabled,
-            orientation_mapping_sign=orientation_mapping_sign,
+            orientation_mapping_sign=orientation_mapping_sign, visual_preview_enabled=visual_preview_enabled,
         )
         self._motor_targets = mapper
         return mapper

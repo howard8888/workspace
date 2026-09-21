@@ -32,14 +32,14 @@ from enum import Enum
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from nca8_body_targets import BodyMovementRequestV1
 from nca8_executive import WorkingNavMapStateV1
-from nca8_maps import DurableNavMapRefV1, MotorSupportConfigurationV1
+from nca8_maps import NavMapStateV1, DurableNavMapRefV1, MotorSupportConfigurationV1
 from nca8_prediction import ProjectedNavMapV1, SupportPreviewV1
 from nca8_primitives import (
     PrimitiveApplicabilityV1, PrimitiveApplicationV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1,
 )
 from nca8_sensorimotor_contracts import TargetOriginV1
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 __all__ = [
     "RightingActivityV1", "RightingContextV1", "RightingTaskV1", "RightingApplicationV1", "RightingIPV1",
     "righting_support_adequacy_v1", "__version__",
@@ -420,7 +420,7 @@ class RightingIPV1:
         """Read the selected source; return ranks/vetoes without starting a task."""
         if not isinstance(wnm, WorkingNavMapStateV1) or cycle_id != self._cycle or wnm.refreshed_cycle != cycle_id:
             raise ValueError("Righting requires the prepared current WNM opportunity")
-        source = wnm.primary_source_state.motor_support
+        source = wnm.primary_source_state.motor_support if isinstance(wnm.primary_source_state, NavMapStateV1) else None
         status = self.source_status(source) if self._enabled else "righting_disabled"
         if status == "support_needed" and source is not None:
             status = self._contribution(source)[0]
@@ -449,7 +449,7 @@ class RightingIPV1:
         actual = self.evaluate_applicability(wnm, cycle_id=cycle_id)
         if applicability != actual or not actual.eligible:
             raise ValueError("Righting requires its current eligible applicability record")
-        source = wnm.primary_source_state.motor_support
+        source = wnm.primary_source_state.motor_support if isinstance(wnm.primary_source_state, NavMapStateV1) else None
         if source is None or source.feedback is None:
             raise ValueError("current motor support is required")
         strategy, desired_tilt, desired_extension = self._contribution(source)

@@ -688,20 +688,23 @@ def test_helper_import_and_source_have_no_cognitive_executor_or_world_dependency
     assert result.returncode == 0, result.stderr
     tree = ast.parse((ROOT / "nca8_body_targets.py").read_text(encoding="utf-8"))
     imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
-    assert imports <= {"__future__", "dataclasses", "cca8_motor_contracts", "nca8_sensorimotor_contracts"}
+    assert imports <= {"__future__", "dataclasses", "cca8_motor_contracts", "nca8_sensorimotor_contracts",
+                       "cca8_navmap_kernel", "nca8_visual"}
     names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     assert "MotorCommandV1" not in names
+    constructed = {node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+    assert not constructed & {"VisualSourceV1", "AttentionRuntimeV1", "NavigationRuntimeV1", "MotorWorldV1"}
 
 
 def test_component_versions_and_inventory_are_accurate():
     import cca8_run
     import nca8_body
     import nca8_body_targets
-    assert cca8_run.__version__ == "0.30.20"
-    assert nca8_body.__version__ == "0.4.1"
-    assert nca8_body_targets.__version__ == "0.4.0"
+    assert cca8_run.__version__ == "0.30.21"
+    assert nca8_body.__version__ == "0.4.2"
+    assert nca8_body_targets.__version__ == "0.5.0"
     assert dict(cca8_run._CCA8_COMPONENT_REGISTRY)["nca8_body_targets"] == "nca8_body_targets"
-    assert len(cca8_run._cca8_component_rows()) == 78
+    assert len(cca8_run._cca8_component_rows()) == 80
     assert len(cca8_run.PRIMITIVES) == 8
 
 

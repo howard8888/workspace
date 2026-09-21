@@ -51,6 +51,8 @@ REQUIRED_COMPONENTS: dict[str, str] = {
     "nca8_learning": "nca8_learning",
     "nca8_learning_demo": "nca8_learning_demo",
     "nca8_learning_registry": "nca8_learning_registry",
+    "nca8_visual": "nca8_visual",
+    "nca8_visual_demo": "nca8_visual_demo",
     "nca8_outcomes": "nca8_outcomes",
     "nca8_outcomes_demo": "nca8_outcomes_demo",
     "nca8_righting": "nca8_righting",

@@ -20,8 +20,9 @@ from nca8_outcome_attention_demo import run_outcome_attention_menu_v1
 from nca8_learning_demo import run_learning_review_menu_v1
 from nca8_righting_demo import run_righting_preview_review_v1
 from nca8_sensorimotor_demo import run_sensorimotor_review_menu_v1
+from nca8_visual_demo import run_visual_preview_menu_v1
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -31,9 +32,11 @@ Options 1-5 retain Gate A; option 6 reviews P18-H4 supplied-target motor control
 H4 is not yet integrated Righting or a new default cognitive runtime.
 Option 7 runs the H5 relational Righting preview without installing targets or moving a body.
 Option 8 runs the separate H6-A hierarchy and H6-B qualification controls with finite targets and local movement.
-H6-B and P16-1G-A/B are accepted checkpoints. Option 8 includes the opt-in outcome/Attention reviews.
+H6-B and P16-1G-A/B/C are accepted checkpoints. Option 8 includes the opt-in outcome/Attention reviews.
 Option 8 also offers the 1G-C no-learning hook, Phase F and L01-L25 coverage review.
-P16-1G-C / A99 acceptance remains pending the local wall and review; legacy/default routing is unchanged.
+A99 is accepted at the Planning-v18 scope; legacy/default routing is unchanged.
+Option 9 previews visual sources and body-frame geometry without movement (P16-2A-A).
+Full P16-2A translation execution and B99 remain open.
 Planning v16 P16-1R-B separates internal handoff and cycle closure from the
 external world step and returning-input admission. Gate-A decisions are unchanged.
 
@@ -384,6 +387,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print("  6) Review supplied-target movement and fast local feedback (P18-H4)")
         print("  7) Review relational Righting and sparse PNM preview (P18-H5; no movement)")
         print("  8) Review integrated Righting and persistent motor execution (P18-H6-A/B)")
+        print("  9) Review visual sources and non-actuating body-frame mapping (P16-2A-A)")
         print("  [Enter] Return to Main Menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
@@ -443,7 +447,10 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
                     outcome_attention_menu=run_outcome_attention_menu_v1, learning_menu=run_learning_review_menu_v1,
                 )
                 continue
-            print("Please choose 1, 2, 3, 4, 5, 6, 7, or 8; or press Enter to return.")
+            if choice == "9":
+                run_visual_preview_menu_v1()
+                continue
+            print("Please choose 1, 2, 3, 4, 5, 6, 7, 8, or 9; or press Enter to return.")
         except Exception as exc:  # pragma: no cover - defensive interactive boundary
             print(f"[nca8:error] {type(exc).__name__}: {exc}")
             if session is not None and session.status().reset_required:

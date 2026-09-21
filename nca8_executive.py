@@ -24,10 +24,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol, Sequence
+from typing import TYPE_CHECKING, Protocol, Sequence, TypeAlias
 
 from nca8_maps import NavMapStateV1
+from nca8_visual import VisualNavMapStateV1
 from nca8_support_dynamics import SupportDynamicsV1
+
+# Closed, typed domain union: visual content never acquires dummy posture fields.
+SourceNavMapStateV1: TypeAlias = NavMapStateV1 | VisualNavMapStateV1
 
 #pylint: disable=unnecessary-ellipsis
 
@@ -38,8 +42,9 @@ if TYPE_CHECKING:
 # a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
+    "SourceNavMapStateV1",
     "AttentionBidV1",
     "AttentionCandidateV1",
     "AttentionDispositionV1",
@@ -115,7 +120,7 @@ class AttentionCandidateV1(Protocol):
         ...
 
     @property
-    def source_map_state(self) -> NavMapStateV1:
+    def source_map_state(self) -> SourceNavMapStateV1:
         """Return the current source NavMap state."""
         ...
 
@@ -184,7 +189,7 @@ class AttentionBidV1:
 
     bid_id: str
     candidate_id: str
-    source_map_state: NavMapStateV1
+    source_map_state: SourceNavMapStateV1
     source: str
     cycle_id: int
     protected_safety_rank: int
@@ -204,12 +209,14 @@ class AttentionBidV1:
             "candidate_id",
             _bounded_identifier(self.candidate_id, field_name="candidate_id"),
         )
-        if not isinstance(self.source_map_state, NavMapStateV1):
-            raise TypeError("source_map_state must be a NavMapStateV1")
+        if not isinstance(self.source_map_state, (NavMapStateV1, VisualNavMapStateV1)):
+            raise TypeError("source_map_state must be a supported posture or visual source configuration")
         object.__setattr__(self, "source", _bounded_identifier(self.source, field_name="source"))
         _positive_int(self.cycle_id, field_name="cycle_id")
         if self.source_map_state.applied_cycle != self.cycle_id:
             raise ValueError("Attention bid must reference a state applied in the same cycle")
+        if isinstance(self.source_map_state, VisualNavMapStateV1) and not self.source_map_state.evidence_current:
+            raise ValueError("unavailable visual content cannot gain focal access through a fabricated bid")
         for field_name in (
             "protected_safety_rank",
             "new_task_need_rank",
@@ -328,7 +335,7 @@ class AttentionSelectionV1:
         )
 
     @property
-    def selected_source_state(self) -> NavMapStateV1 | None:
+    def selected_source_state(self) -> SourceNavMapStateV1 | None:
         """Return the selected source state without granting it WNM authority."""
         return self.selected_bid.source_map_state if self.selected_bid is not None else None
 
@@ -358,7 +365,7 @@ class WorkingNavMapStateV1:
     """
 
     working_id: str
-    primary_source_state: NavMapStateV1
+    primary_source_state: SourceNavMapStateV1
     source_candidate_id: str
     working_relations: tuple[str, ...]
     context_refs: tuple[str, ...]
@@ -373,8 +380,8 @@ class WorkingNavMapStateV1:
             "working_id",
             _bounded_identifier(self.working_id, field_name="working_id"),
         )
-        if not isinstance(self.primary_source_state, NavMapStateV1):
-            raise TypeError("primary_source_state must be a NavMapStateV1")
+        if not isinstance(self.primary_source_state, (NavMapStateV1, VisualNavMapStateV1)):
+            raise TypeError("primary_source_state must be a supported posture or visual source configuration")
         object.__setattr__(
             self,
             "source_candidate_id",
@@ -518,7 +525,7 @@ class AttentionRuntimeV1:
             bid_id=f"attention_bid:{candidate.candidate_id}:{cycle}",
             candidate_id=candidate.candidate_id,
             source_map_state=candidate.source_map_state,
-            source="bodymap_candidate",
+            source="visual_candidate" if isinstance(candidate.source_map_state, VisualNavMapStateV1) else "bodymap_candidate",
             cycle_id=cycle,
             protected_safety_rank=candidate.protected_safety_rank,
             new_task_need_rank=candidate.new_task_need_rank,
@@ -712,7 +719,8 @@ class NavigationRuntimeV1:
         primitive_view = replace(wnm, support_dynamics=None) if wnm.support_dynamics is not None else wnm
         # H5 explicitly admits the enhanced facet only to an opt-in preview
         # selector. A0 continues to receive no motor/support-dynamics authority.
-        if not self._motor_preview_enabled and primitive_view.primary_source_state.motor_support is not None:
+        if (not self._motor_preview_enabled and isinstance(primitive_view.primary_source_state, NavMapStateV1)
+                and primitive_view.primary_source_state.motor_support is not None):
             primitive_view = replace(
                 primitive_view, primary_source_state=replace(primitive_view.primary_source_state, motor_support=None),
             )

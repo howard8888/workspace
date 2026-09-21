@@ -26,11 +26,12 @@ from enum import Enum
 from typing import Protocol, Sequence
 
 from nca8_executive import WorkingNavMapStateV1
+from nca8_maps import NavMapStateV1
 
 # Small validators intentionally remain local for readable standalone modules.
 # pylint: disable=duplicate-code
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "ActionEnvelopeRequestV1",
     "PrimitiveApplicabilityV1",
@@ -454,7 +455,7 @@ class StandUpIPV1:
         if not isinstance(wnm, WorkingNavMapStateV1):
             raise TypeError("wnm must be a WorkingNavMapStateV1")
         cycle = _positive_int(cycle_id, field_name="cycle_id")
-        relations = frozenset(wnm.working_relations)
+        relations = frozenset(wnm.working_relations) if isinstance(wnm.primary_source_state, NavMapStateV1) else frozenset()
         fallen = "posture:fallen" in relations
         inadequate = "support:inadequate" in relations
         retry_available = self._application_count < self._maximum_applications

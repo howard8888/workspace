@@ -399,9 +399,9 @@ def test_unknown_choice_still_returns_to_menu_without_constructing_a_session(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Rewording the numbered actions must not introduce another executable menu choice."""
-    responses = iter(("9", ""))
+    """An unsupported choice must remain inert after adding the separately scoped visual review."""
+    responses = iter(("99", ""))
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
 
     assert nca8_menu.run_nca8_experimental_menu_v1(None) is None
-    assert "Please choose 1, 2, 3, 4, 5, 6, 7, or 8; or press Enter to return." in capsys.readouterr().out
+    assert "Please choose 1, 2, 3, 4, 5, 6, 7, 8, or 9; or press Enter to return." in capsys.readouterr().out

@@ -20,9 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 NCA8_FILES = tuple(sorted(ROOT.glob("nca8_*.py")))
 
 _ALLOWED_CCA8_IMPORTS: dict[str, frozenset[str]] = {
-    "nca8_adapters.py": frozenset({"cca8_env", "cca8_navpatch"}),
+    "nca8_adapters.py": frozenset({"cca8_env", "cca8_navpatch", "cca8_motor_contracts", "cca8_navmap_kernel"}),
     "nca8_body.py": frozenset({"cca8_motor_contracts"}),
-    "nca8_body_targets.py": frozenset({"cca8_motor_contracts"}),
+    "nca8_body_targets.py": frozenset({"cca8_motor_contracts", "cca8_navmap_kernel"}),
     "nca8_contracts.py": frozenset(),
     "nca8_executive.py": frozenset(),
     "nca8_handoff.py": frozenset({"cca8_motor_contracts"}),
@@ -50,6 +50,8 @@ _ALLOWED_CCA8_IMPORTS: dict[str, frozenset[str]] = {
     "nca8_sensory.py": frozenset({"cca8_motor_contracts"}),
     "nca8_support_dynamics.py": frozenset(),
     "nca8_trace.py": frozenset(),
+    "nca8_visual.py": frozenset({"cca8_motor_contracts", "cca8_navmap_kernel"}),
+    "nca8_visual_demo.py": frozenset({"cca8_cli", "cca8_env", "cca8_motor_contracts", "cca8_navmap_kernel"}),
 }
 
 _FORBIDDEN_LEGACY_COGNITION = frozenset(
@@ -123,6 +125,8 @@ def test_flat_nca8_module_set_is_explicit_and_complete() -> None:
         "nca8_sensory.py",
         "nca8_support_dynamics.py",
         "nca8_trace.py",
+        "nca8_visual.py",
+        "nca8_visual_demo.py",
     )
 
 

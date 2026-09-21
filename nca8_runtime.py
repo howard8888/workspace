@@ -97,8 +97,9 @@ from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, Sc
 from nca8_sensory import Nca8BodySensoryApplicationV1, Nca8BodySensoryModuleV1
 from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
+from nca8_visual import VisualNavMapStateV1
 
-__version__ = "0.11.0"
+__version__ = "0.11.1"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -1676,6 +1677,7 @@ class Nca8RightingPreviewSessionV1:
         influence_enabled: bool = True, righting_enabled: bool = True,
         additional_primitives: Sequence[PrimitiveRuntimeV1] = (),
         orientation_mapping_sign: int = 1, task_pnm_consumer_enabled: bool = True, outcome_attention_enabled: bool = False,
+        visual_preview_enabled: bool = False,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("preview requires a MotorStreamRefV1")
@@ -1708,7 +1710,7 @@ class Nca8RightingPreviewSessionV1:
         self.body = Nca8BodyRuntimeV1()
         self.mapper = self.body.configure_motor_targets(
             stream, nominal_body_capabilities_v1() if capabilities is None else capabilities,
-            orientation_mapping_sign=orientation_mapping_sign,
+            orientation_mapping_sign=orientation_mapping_sign, visual_preview_enabled=visual_preview_enabled,
         )
         self._cycle = 0
         self._cutoff = -1
@@ -1759,6 +1761,9 @@ class Nca8RightingPreviewSessionV1:
         for bid in competing_bids:
             if not isinstance(bid, AttentionBidV1) or bid.cycle_id != cycle:
                 raise ValueError("competing source bids must belong to this focal opportunity")
+            if isinstance(bid.source_map_state, VisualNavMapStateV1):
+                if bid.source_map_state.stream != self.stream or bid.source_map_state.cutoff_tick != cutoff_tick:
+                    raise ValueError("visual candidate must belong to this stream and frozen cutoff")
             if bid.source_map_state.source_map_ref == self.maps.posture_support_ref:
                 raise ValueError("a competing source must not impersonate POSTURE-SUPPORT")
         if len({bid.candidate_id for bid in competing_bids}) != len(competing_bids):
