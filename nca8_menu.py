@@ -22,8 +22,9 @@ from nca8_righting_demo import run_righting_preview_review_v1
 from nca8_sensorimotor_demo import run_sensorimotor_review_menu_v1
 from nca8_visual_demo import run_visual_preview_menu_v1
 from nca8_translation_demo import run_translation_menu_v1
+from nca8_followmom_demo import run_follow_mom_menu_v1
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -38,7 +39,8 @@ Option 8 also offers the 1G-C no-learning hook, Phase F and L01-L25 coverage rev
 A99 is accepted at the Planning-v18 scope; legacy/default routing is unchanged.
 Option 9 previews visual sources and body-frame geometry without movement (P16-2A-A).
 Option 9 -> 8 runs actual finite translation/contact with a supplied operation fixture (P16-2A-B).
-P16-2A-B acceptance and B99 remain open; no acquired Follow-Mom or new default is claimed.
+P16-2A-A/B are accepted; option 10 adds the P16-2B-A maternal approach review.
+Full P16-2B and B99 remain open; no learned maternal identity or new default is claimed.
 Planning v16 P16-1R-B separates internal handoff and cycle closure from the
 external world step and returning-input admission. Gate-A decisions are unchanged.
 
@@ -390,6 +392,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print("  7) Review relational Righting and sparse PNM preview (P18-H5; no movement)")
         print("  8) Review integrated Righting and persistent motor execution (P18-H6-A/B)")
         print("  9) Review visual sources and non-actuating body-frame mapping (P16-2A-A)")
+        print("  10) Review MOM association and persistent Follow-Mom (P16-2B-A)")
         print("  [Enter] Return to Main Menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
@@ -451,6 +454,9 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
                 continue
             if choice == "9":
                 run_visual_preview_menu_v1(translation_review=run_translation_menu_v1)
+                continue
+            if choice == "10":
+                run_follow_mom_menu_v1()
                 continue
             print("Please choose 1, 2, 3, 4, 5, 6, 7, 8, or 9; or press Enter to return.")
         except Exception as exc:  # pragma: no cover - defensive interactive boundary

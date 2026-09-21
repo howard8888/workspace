@@ -27,6 +27,7 @@ from dataclasses import dataclass, replace
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from cca8_navmap_kernel import NavMapRefV1, NavPointV1
 from nca8_visual import VisualNavMapStateV1
+from nca8_maternal import MaternalNavMapStateV1
 from nca8_sensorimotor_contracts import (
     BodyRelativeTargetV1, BodyTranslationTargetV1,
     CommittedBodyTargetV1,
@@ -34,7 +35,7 @@ from nca8_sensorimotor_contracts import (
     TargetOriginV1,
 )
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "PlanarBodyObservationV1", "VisualApproachRequestV1", "VisualBodyPreviewV1",
     "BodyAxisCapabilityV1", "BodyTranslationCapabilityV1",
@@ -445,11 +446,13 @@ class PlanarBodyObservationV1:
 
 @dataclass(frozen=True, slots=True)
 class VisualApproachRequestV1:
-    """A hand-supplied approach requirement for the non-actuating frame fixture.
+    """A bounded source-relative requirement with an explicitly identified origin.
 
-    Reuse H1 origin vocabulary; these references do not create an actual task,
-    application, envelope or lease. Region selection is an explicit fixture,
-    not Follow-Mom or an implicit policy in BodyMap. The bounded intermediate
+    The retained visual fixtures supply their requirement without claiming task
+    selection. The maternal profile instead records a selected Follow-Mom
+    application. Neither a record nor its origin label grants a motor lease:
+    BodyMap proposal, reservation and the closed handoff still establish that
+    boundary. BodyMap never chooses the represented region. The intermediate
     displacement stops short of the selected point by stand_off_metres.
     """
 
@@ -458,11 +461,14 @@ class VisualApproachRequestV1:
     region_id: str
     stand_off_metres: float = 0.5
     maximum_step_metres: float = 0.25
+    origin_status: str = "supplied_requirement_fixture"
 
     def __post_init__(self) -> None:
         if not isinstance(self.origin, TargetOriginV1) or not isinstance(self.source_map_ref, NavMapRefV1):
             raise TypeError("visual request needs the existing origin and source-reference contracts")
         _name(self.region_id, "region_id")
+        if self.origin_status not in {"supplied_requirement_fixture", "selected_follow_mom"}:
+            raise ValueError("unsupported approach requirement origin")
         object.__setattr__(self, "stand_off_metres", _scalar(self.stand_off_metres, "stand off", 0, 100))
         step = _scalar(self.maximum_step_metres, "maximum step", 0, 1)
         if step == 0:
@@ -473,7 +479,7 @@ class VisualApproachRequestV1:
         """Declare the supplied, unselected requirement rather than a task decision."""
         return {"origin": self.origin.as_dict(), "source_map_ref": self.source_map_ref.as_dict(),
                 "region_id": self.region_id, "stand_off_metres": self.stand_off_metres,
-                "maximum_step_metres": self.maximum_step_metres, "source": "supplied_requirement_fixture"}
+                "maximum_step_metres": self.maximum_step_metres, "source": self.origin_status}
 
 
 @dataclass(frozen=True, slots=True)
@@ -488,7 +494,7 @@ class VisualBodyPreviewV1:
     """
 
     request: VisualApproachRequestV1
-    source: VisualNavMapStateV1
+    source: VisualNavMapStateV1 | MaternalNavMapStateV1
     body: PlanarBodyObservationV1 | None
     cutoff_tick: int
     status: str
@@ -498,7 +504,7 @@ class VisualBodyPreviewV1:
     hypothetical_self: NavPointV1 | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.request, VisualApproachRequestV1) or not isinstance(self.source, VisualNavMapStateV1):
+        if not isinstance(self.request, VisualApproachRequestV1) or not isinstance(self.source, (VisualNavMapStateV1, MaternalNavMapStateV1)):
             raise TypeError("preview requires its typed original request and visual source")
         _index(self.cutoff_tick, "cutoff_tick", self.source.cutoff_tick)
         if self.status not in {"geometry_only_not_authorized", "mapping_disabled", "visual_unavailable", "visual_stale",
@@ -637,7 +643,7 @@ class BodyTargetMapperV1:
         self._planar_observation, self._planar_available, self._last_tick = retained, available, tick
 
     def preview_visual_approach(
-        self, request: VisualApproachRequestV1, source: VisualNavMapStateV1, *, at_tick: int,
+        self, request: VisualApproachRequestV1, source: VisualNavMapStateV1 | MaternalNavMapStateV1, *, at_tick: int,
     ) -> VisualBodyPreviewV1:
         """Compute the explicit scene-to-body transform with no reservation or drive.
 
@@ -645,12 +651,12 @@ class BodyTargetMapperV1:
         A bounded intermediate step is re-expressed in the scene solely to display
         its hypothetical geometric effect. Current source/body data are unchanged.
         There is no collision solver, movement guarantee, task choice or learned
-        calibration. Actual translation execution is the next 2A sub-slice.
+        calibration. Execution requires the separate proposal/reservation/handoff path.
         """
         if not self._visual_preview_enabled:
             raise RuntimeError("visual mapping requires the explicit preview profile")
         tick = self._check_tick(at_tick)
-        if not isinstance(request, VisualApproachRequestV1) or not isinstance(source, VisualNavMapStateV1):
+        if not isinstance(request, VisualApproachRequestV1) or not isinstance(source, (VisualNavMapStateV1, MaternalNavMapStateV1)):
             raise TypeError("mapping needs a typed supplied request and visual source")
         if request.origin.stream != self._stream or source.stream != self._stream or request.source_map_ref != source.source_map_ref:
             raise ValueError("visual mapping cannot borrow a different source or generation")
@@ -892,7 +898,7 @@ class BodyTargetMapperV1:
         return None
 
     def propose_translation(
-        self, request: VisualApproachRequestV1, source: VisualNavMapStateV1, *, at_tick: int,
+        self, request: VisualApproachRequestV1, source: VisualNavMapStateV1 | MaternalNavMapStateV1, *, at_tick: int,
         lease_ticks: int = 8, replace_existing: bool = False,
     ) -> BodyTargetProposalV1:
         """Map the supplied visual requirement into a real finite vector target.
@@ -1048,7 +1054,7 @@ class BodyTargetMapperV1:
     def reserve(
         self, proposal: BodyTargetProposalV1, *, execution_id: str, at_tick: int,
     ) -> tuple[BodyTargetReservationV1, ...]:
-        """Reserve proposed body resources for an explicitly supplied execution fixture.
+        """Reserve proposed body resources for the separately authorized execution path.
 
         This is a BodyMap-side association, not motor installation or proof of
         task authorization. H4/H6 must separately validate the real handoff.

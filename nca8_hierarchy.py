@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1, admit_motor_feedback_batch_v1
 from cca8_support_world import MotorBodyStateV1, MotorWorldProfileV1, MotorWorldV1, PlanarWorldProfileV1, PlanarWorldStateV1
@@ -35,6 +35,8 @@ from nca8_adapters import admit_motor_visual_surface_v1
 from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetReservationV1, BodyTranslationCapabilityV1
 from nca8_translation import TranslationFixtureV1, TranslationApplicationV1, SuppliedTranslationOperationV1
 from nca8_visual import VisualSourceV1, VisualNavMapStateV1, VisualObservationV1
+from nca8_maternal import MaternalSourceV1, MaternalNavMapStateV1
+from nca8_followmom import FollowMomProfileV1, FollowMomIPV1, FollowMomApplicationV1, FollowMomAssessmentV1
 from nca8_contracts import CircuitResultV1, CircuitTimingV1, CycleCommitmentV1, CyclePhase
 from nca8_executive import AttentionBidV1
 from nca8_handoff import Nca8HandoffReceiptV1, Nca8InternalHandoffV1, Nca8MotorEnvelopeV1, Nca8PhaseEDispatchV1
@@ -51,7 +53,7 @@ from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, Senso
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -88,6 +90,8 @@ class IntegratedRightingCycleV1:
     outcome_requests_pending: tuple[RightingMismatchRequestV1, ...] = ()
     learning_report: LearningPhaseFReportV1 | None = None
     visual_source: VisualNavMapStateV1 | None = None
+    maternal_source: MaternalNavMapStateV1 | None = None
+    maternal_task: FollowMomAssessmentV1 | None = None
 
     @property
     def status(self) -> str:
@@ -107,7 +111,9 @@ class IntegratedRightingCycleV1:
             "scheduler": self.scheduler.as_dict(), "status": self.status,
             "earlier_local_reports": [item.as_dict() for item in self.local_reports],
             "earlier_local_events": [item.as_dict() for item in self.local_events],
-            "task_completion": (self.task_outcome.status if self.task_outcome is not None else
+            "task_completion": (self.maternal_task.task.status if self.maternal_task is not None and self.maternal_task.task is not None else
+                                self.task_outcome.status if self.task_outcome is not None else
+                                "not_established_maternal" if self.maternal_source is not None else
                                 "not_established_visual_fixture" if self.visual_source is not None else "not_established_H6A"),
             "durable_learning_updates": 0,
             **({"task_outcome": self.task_outcome.as_dict(),
@@ -118,8 +124,11 @@ class IntegratedRightingCycleV1:
                 "outcome_requests_pending": [item.as_dict() for item in self.outcome_requests_pending]}
                if self.calculation.outcome_allocation is not None else {}),
             **({"learning_reconciliation": self.learning_report.as_dict()} if self.learning_report is not None else {}),
-            **({"visual_source": self.visual_source.as_dict(), "operation_scope": "supplied_translation_fixture"}
+            **({"visual_source": self.visual_source.as_dict(), "operation_scope": "developmental_follow_mom" if self.maternal_source is not None else "supplied_translation_fixture"}
                if self.visual_source is not None else {}),
+            **({"maternal_source": self.maternal_source.as_dict(),
+                "maternal_task": self.maternal_task.as_dict() if self.maternal_task is not None else None}
+               if self.maternal_source is not None else {}),
         }
 
 
@@ -144,6 +153,7 @@ class IntegratedRightingCoreV1:
         learning_diagnostic_capacity: int = 32,
         translation_fixture: TranslationFixtureV1 | None = None,
         translation_capability: BodyTranslationCapabilityV1 | None = None, translation_mapping_sign: int = 1,
+        follow_mom_profile: FollowMomProfileV1 | None = None,
     ) -> None:
         _bounded_count(trace_capacity, "trace_capacity", 1, 4096)
         if not all(isinstance(flag, bool) for flag in (
@@ -157,21 +167,31 @@ class IntegratedRightingCoreV1:
         _bounded_count(learning_diagnostic_capacity, "learning_diagnostic_capacity", 1, 32)
         if translation_fixture is not None and not isinstance(translation_fixture, TranslationFixtureV1):
             raise TypeError("translation requires its explicit supplied-operation fixture")
-        if translation_fixture is not None and task_outcomes_enabled:
-            raise ValueError("Righting-only task outcome/learning consumers cannot score visual translation")
-        if translation_fixture is None and (translation_capability is not None or translation_mapping_sign != 1):
-            raise ValueError("translation capability/calibration requires the opt-in fixture")
+        if follow_mom_profile is not None and not isinstance(follow_mom_profile, FollowMomProfileV1):
+            raise TypeError("maternal operation requires its explicit profile")
+        if follow_mom_profile is not None and translation_fixture is not None:
+            raise ValueError("supplied translation and developmental Follow-Mom are separate experiment profiles")
+        visual_profile = translation_fixture if translation_fixture is not None else follow_mom_profile
+        if visual_profile is not None and task_outcomes_enabled:
+            raise ValueError("Righting-only task outcome/learning consumers cannot score visual or maternal translation")
+        if visual_profile is None and (translation_capability is not None or translation_mapping_sign != 1):
+            raise ValueError("translation capability/calibration requires an opt-in visual operation")
         self.translation = None if translation_fixture is None else SuppliedTranslationOperationV1(translation_fixture)
-        self.visual = None if translation_fixture is None else VisualSourceV1(
-            stream, recognition_enabled=translation_fixture.recognition_enabled, spatial_enabled=translation_fixture.spatial_enabled,
+        self.visual = None if visual_profile is None else VisualSourceV1(
+            stream, recognition_enabled=visual_profile.recognition_enabled, spatial_enabled=visual_profile.spatial_enabled,
         )
+        self.maternal = None if follow_mom_profile is None else MaternalSourceV1(
+            stream, follow_mom_profile.seed, enabled=follow_mom_profile.association_enabled,
+        )
+        self.follow_mom = (FollowMomIPV1(self.maternal, follow_mom_profile)
+                           if self.maternal is not None and follow_mom_profile is not None else None)
         self.outcomes = RightingOutcomeRuntimeV1(stream, compare_predictions=task_prediction_comparison_enabled) if task_outcomes_enabled else None
         self.cognition = Nca8RightingPreviewSessionV1(
             stream, context=context, capabilities=capabilities,
             righting_enabled=righting_enabled, influence_enabled=influence_enabled,
             orientation_mapping_sign=orientation_mapping_sign, task_pnm_consumer_enabled=task_pnm_consumer_enabled,
             outcome_attention_enabled=task_outcome_attention_enabled,
-            additional_primitives=() if self.translation is None else (self.translation,),
+            additional_primitives=tuple(item for item in (self.translation, self.follow_mom) if item is not None),
             visual_preview_enabled=self.visual is not None, translation_capability=translation_capability,
             translation_mapping_sign=translation_mapping_sign,
         )
@@ -218,6 +238,7 @@ class IntegratedRightingCoreV1:
         context: RightingContextV1 | None = None, competing_bids: Sequence[AttentionBidV1] = (),
         local_reports: tuple[LocalTargetReportV1, ...] = (), local_events: tuple[LocalControlEventV1, ...] = (),
         outcome_intervals: tuple[RightingIntervalEvidenceV1, ...] = (), visual_observation: VisualObservationV1 | None = None,
+        visual_bid_priority: tuple[int, int] | None = None,
     ) -> IntegratedRightingCycleV1:
         """Freeze one eligible summary, choose/project/authorize, finish F and close.
 
@@ -248,6 +269,11 @@ class IntegratedRightingCoreV1:
             raise ValueError("outcome input must be a bounded immutable interval batch")
         if self.outcomes is None and outcome_intervals:
             raise ValueError("outcome input requires the explicit 1G-A profile")
+        if visual_bid_priority is not None:
+            if self.visual is None or not isinstance(visual_bid_priority, tuple) or len(visual_bid_priority) != 2:
+                raise ValueError("priority control needs a configured visual source and two integer ranks")
+            for rank in visual_bid_priority:
+                _bounded_count(rank, "visual priority component", 0, 1000)
         if self.visual is None and visual_observation is not None:
             raise ValueError("visual input requires its configured source owner")
         if visual_observation is not None:
@@ -258,7 +284,7 @@ class IntegratedRightingCoreV1:
         try:
             return self._run_cycle(
                 feedback, tick=cutoff_tick, context=context, competing_bids=competing_bids, reports=local_reports, events=local_events,
-                outcome_intervals=outcome_intervals, visual_observation=visual_observation,
+                outcome_intervals=outcome_intervals, visual_observation=visual_observation, visual_bid_priority=visual_bid_priority,
             )
         except BaseException:
             self.stop("internal_hierarchy_cycle_failed_no_world_call")
@@ -270,7 +296,7 @@ class IntegratedRightingCoreV1:
         self, feedback: MotorFeedbackV1 | None, *, tick: int, context: RightingContextV1 | None,
         competing_bids: Sequence[AttentionBidV1], reports: tuple[LocalTargetReportV1, ...],
         events: tuple[LocalControlEventV1, ...], outcome_intervals: tuple[RightingIntervalEvidenceV1, ...],
-        visual_observation: VisualObservationV1 | None,
+        visual_observation: VisualObservationV1 | None, visual_bid_priority: tuple[int, int] | None,
     ) -> IntegratedRightingCycleV1:
         """Implement the guarded C/D/E owner stages between real scheduler boundaries."""
         cycle = self.scheduler.last_completed_cycle + 1
@@ -305,11 +331,29 @@ class IntegratedRightingCoreV1:
             visual_source = self.visual.update(visual_observation, cycle_id=cycle, cutoff_tick=tick)
             candidate = self.visual.candidate()
             if candidate is not None:
-                competing_bids = (*competing_bids, self.cognition.attention.build_bid(candidate, cycle_id=cycle))
+                visual_bid = self.cognition.attention.build_bid(candidate, cycle_id=cycle)
+                if visual_bid_priority is not None:
+                    visual_bid = replace(visual_bid, new_task_need_rank=visual_bid_priority[0], activation_rank=visual_bid_priority[1],
+                                         reasons=("explicit_visual_priority_control",))
+                competing_bids = (*competing_bids, visual_bid)
             self.trace.append("hierarchy_visual_source", "eligible measured geometry updated one enduring visual source",
                               cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
                               details={"sample": visual_source.sample_id, "event": visual_source.event_tick,
                                        "status": visual_source.input_status, "frame": visual_source.frame_id})
+        maternal_source = None
+        if self.maternal is not None and self.follow_mom is not None:
+            if visual_source is None:
+                raise RuntimeError("maternal association requires the applied visual configuration")
+            maternal_source = self.maternal.update(visual_source)
+            self.follow_mom.prepare(maternal_source, feedback, reports=reports)
+            maternal_candidate = self.maternal.candidate(task_id=self.follow_mom.task.task_id if self.follow_mom.task is not None else None)
+            if maternal_candidate is not None:
+                competing_bids = (*competing_bids, self.cognition.attention.build_bid(maternal_candidate, cycle_id=cycle))
+            self.trace.append("hierarchy_maternal_source", "MOM association updated from independent recognition and geometry",
+                              cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
+                              details={"identity": maternal_source.identity_status, "localized": maternal_source.action_localized,
+                                       "separation": maternal_source.separation, "task_disposition": self.follow_mom.reason,
+                                       "last_supported_tick": maternal_source.last_supported_tick})
         next_context = self.cognition.context if context is None else context
         changed_context = next_context != self.cognition.context
         prepared = self.cognition.prepare_source(
@@ -369,7 +413,7 @@ class IntegratedRightingCoreV1:
                                        "outcome_rank": selected.outcome_source_bid.prediction_or_envelope_failure_rank
                                        if selected.outcome_source_bid is not None else 0})
         application = selected.navigation.application
-        if application is not None and not isinstance(application, (RightingApplicationV1, TranslationApplicationV1)):
+        if application is not None and not isinstance(application, (RightingApplicationV1, TranslationApplicationV1, FollowMomApplicationV1)):
             raise TypeError("this integrated profile has no consumer for the selected application")
         self.trace.append(
             "hierarchy_selection", ("Attention selected the source; Navigation recorded the single focal allocation" if allocation is not None
@@ -386,7 +430,8 @@ class IntegratedRightingCoreV1:
             cycle_id=cycle, phase=CyclePhase.PROJECT_DISPATCH.name,
             details={"enabled": self.cognition.task_pnm_consumer_enabled,
                      "registered": self.cognition.prediction.current_pnm is not None,
-                     "consumer": "adopt_visual_preview" if isinstance(application, TranslationApplicationV1) else "adopt_support_preview",
+                     "consumer": ("adopt_maternal_preview" if isinstance(application, FollowMomApplicationV1) else
+                                  "adopt_visual_preview" if isinstance(application, TranslationApplicationV1) else "adopt_support_preview"),
                      "task_outcomes": ("not_implemented_for_visual" if self.visual is not None else
                                        "P16_1G_A" if self.outcomes is not None else "deferred_to_P16_1G")},
         )
@@ -395,6 +440,8 @@ class IntegratedRightingCoreV1:
         if proposal is not None and proposal.bindings:
             reservations = self.cognition.mapper.reserve(proposal, execution_id=f"motor_execution:{self.cognition.stream.generation}:{cycle}",
                                                         at_tick=tick)
+        if isinstance(application, FollowMomApplicationV1) and self.follow_mom is not None:
+            self.follow_mom.authorized(application, tuple(item.current for item in reservations))
         claim_registration = None
         if self.outcomes is not None and isinstance(application, RightingApplicationV1) and proposal is not None:
             claim_registration = self.outcomes.register(application, proposal, tuple(item.current for item in reservations))
@@ -403,12 +450,12 @@ class IntegratedRightingCoreV1:
                               details={"pnm_id": claim_registration.preview.pnm.pnm_id, "endpoint_event_tick": claim_registration.due_tick,
                                        "compatible": ",".join(claim_registration.compatible_relations),
                                        "unevaluable": ",".join(claim_registration.unevaluable_relations), "target_count": len(reservations)})
-        projection = application.projection if isinstance(application, (RightingApplicationV1, TranslationApplicationV1)) else None
+        projection = application.projection if isinstance(application, (RightingApplicationV1, TranslationApplicationV1, FollowMomApplicationV1)) else None
         origin = reservations[0].current.target.origin if reservations else None
         terminal_task = calculation.task is not None and calculation.task.status != "active"
         motor = Nca8MotorEnvelopeV1(
             self.cognition.stream, tick, projection, tuple(item.current for item in reservations),
-            tuple(item.current for item in proposal.replaces) if proposal is not None and reservations else (), changed_context or terminal_task,
+            tuple(item.current for item in proposal.replaces) if proposal is not None and reservations else (), changed_context or terminal_task or (self.follow_mom is not None and self.follow_mom.cancel_previous),
         )
         decision = calculation.navigation
         commitment = CycleCommitmentV1(
@@ -416,7 +463,8 @@ class IntegratedRightingCoreV1:
             calculation.attention.selection_id, decision.wnm.working_id if decision.wnm is not None else None,
             decision.selected_primitive_id, application.application_id if application is not None else None,
             projection.pnm.pnm_id if projection is not None else None,
-            ("TRANSLATE_TO_VISIBLE_REGION" if isinstance(application, TranslationApplicationV1) else "RESTORE_VIABLE_SUPPORT")
+            ("FOLLOW_MOM" if isinstance(application, FollowMomApplicationV1) else
+             "TRANSLATE_TO_VISIBLE_REGION" if isinstance(application, TranslationApplicationV1) else "RESTORE_VIABLE_SUPPORT")
             if reservations else None,
             origin.application_id if origin is not None else None, origin.envelope_id if origin is not None else None,
         )
@@ -464,6 +512,7 @@ class IntegratedRightingCoreV1:
         result = IntegratedRightingCycleV1(
             calculation, commitment, ready, reservations, schedule, reports, events, task_outcome, claim_outcomes, claim_registration,
             created_requests, () if outcome_owner is None else outcome_owner.pending(), learning_report, visual_source,
+            maternal_source, self.follow_mom.assessment() if self.follow_mom is not None else None,
         )
         self.last_result = result
         return result
@@ -500,6 +549,7 @@ class IntegratedRightingTrialV1:
         learning_diagnostic_capacity: int = 32,
         translation_fixture: TranslationFixtureV1 | None = None, planar_profile: PlanarWorldProfileV1 | None = None,
         translation_capability: BodyTranslationCapabilityV1 | None = None, translation_mapping_sign: int = 1,
+        follow_mom_profile: FollowMomProfileV1 | None = None,
     ) -> None:
         profile = MotorWorldProfileV1() if physical_profile is None else physical_profile
         if not isinstance(profile, MotorWorldProfileV1) or profile.dt_seconds != 0.05:
@@ -524,8 +574,9 @@ class IntegratedRightingTrialV1:
         self._focal_only_feedback_from_tick = focal_only_feedback_from_tick
         self._orientation_mapping_sign = orientation_mapping_sign
         self._task_pnm_consumer_enabled = task_pnm_consumer_enabled
-        if (translation_fixture is None) != (planar_profile is None):
-            raise ValueError("the integrated translation fixture requires its physical planar profile")
+        if (translation_fixture is None and follow_mom_profile is None) != (planar_profile is None):
+            raise ValueError("an integrated visual operation requires its physical planar profile")
+        self._follow_mom_profile = follow_mom_profile
         self._translation_fixture, self._translation_capability = translation_fixture, translation_capability
         self._translation_mapping_sign = translation_mapping_sign
         self._world = MotorWorldV1(MotorStreamRefV1(stream_id, 1), profile, planar_profile=planar_profile)
@@ -552,7 +603,7 @@ class IntegratedRightingTrialV1:
             task_outcome_attention_enabled=self._task_outcome_attention_enabled,
             task_learning_hook_enabled=self._task_learning_hook_enabled, learning_diagnostic_capacity=self._learning_diagnostic_capacity,
             translation_fixture=self._translation_fixture, translation_capability=self._translation_capability,
-            translation_mapping_sign=self._translation_mapping_sign,
+            translation_mapping_sign=self._translation_mapping_sign, follow_mom_profile=self._follow_mom_profile,
         )
         self.controller = SensorimotorExecutorV1(
             self.core.cognition.mapper, profile=self._control_profile, installation_source=self.core.handoff,
@@ -614,6 +665,10 @@ class IntegratedRightingTrialV1:
             "pending_sensor_deliveries": self._world.pending_feedback_count,
             **cognition.mapper.retained_counts(), **self.controller.retained_counts(),
             **({f"visual_{key}": value for key, value in self.core.visual.retained_counts().items()} if self.core.visual is not None else {}),
+            **({f"maternal_{key}": value for key, value in self.core.maternal.retained_counts().items()}
+               if self.core.maternal is not None else {}),
+            **({f"follow_mom_{key}": value for key, value in self.core.follow_mom.retained_counts().items()}
+               if self.core.follow_mom is not None else {}),
             **({"outcome_staged_intervals": len(self._outcome_intervals), **self.core.outcomes.retained_counts()}
                if self.core.outcomes is not None else {}),
             **(cognition.sensory.outcome_attention.retained_counts() if cognition.sensory.outcome_attention is not None else {}),
@@ -640,9 +695,10 @@ class IntegratedRightingTrialV1:
             "wnm_count": int(self.core.cognition.navigation.current_wnm is not None),
             "current_task_pnm_count": int(self.core.cognition.prediction.current_pnm is not None),
             "task_success_established": task is not None and task.status == "completed", "durable_learning_updates": 0,
-            **({"translation_scope": "one_supplied_operation_not_acquired", "translation_mapping_sign": self._translation_mapping_sign,
+            **({"translation_scope": "developmental_follow_mom" if self.core.follow_mom is not None else "one_supplied_operation_not_acquired", "translation_mapping_sign": self._translation_mapping_sign,
                 "visual_source": self.core.visual.current.as_dict() if self.core.visual.current is not None else None}
                if self.core.visual is not None else {}),
+            **({"maternal_task": self.core.follow_mom.snapshot()} if self.core.follow_mom is not None else {}),
             **({"learning_participation": [item.as_dict() for item in self.core.cognition.sensory.learning_hook.pending()]}
                if self.core.cognition.sensory.learning_hook is not None else {}),
             **({"task_outcomes_profile": "righting_outcomes_v1",
@@ -667,7 +723,7 @@ class IntegratedRightingTrialV1:
 
     def focal_step(
         self, *, context: RightingContextV1 | None = None, competing_bids: Sequence[AttentionBidV1] = (),
-        visual_input_enabled: bool = True,
+        visual_input_enabled: bool = True, visual_bid_priority: tuple[int, int] | None = None,
     ) -> IntegratedRightingCycleV1:
         """Run one focal opportunity and consume/install once, with zero world steps."""
         self._require_idle()
@@ -682,7 +738,7 @@ class IntegratedRightingTrialV1:
             result = self.core.run_cycle(
                 self._latest_feedback, cutoff_tick=self.tick, context=context, competing_bids=competing_bids,
                 local_reports=self.controller.reports, local_events=self.controller.events,
-                outcome_intervals=tuple(self._outcome_intervals), visual_observation=visual,
+                outcome_intervals=tuple(self._outcome_intervals), visual_observation=visual, visual_bid_priority=visual_bid_priority,
             )
             self._outcome_intervals.clear()
             motor = self.core.handoff.consume_motor(result.receipt)
@@ -803,6 +859,8 @@ class IntegratedRightingTrialV1:
         self.core.cognition.righting.cancel_task()
         if self.core.translation is not None:
             self.core.translation.cancel()
+        if self.core.follow_mom is not None:
+            self.core.follow_mom.cancel()
         self.core.cognition.sensory.clear_motor_context()
         self.core.trace.append("hierarchy_cancel", "explicit task and execution cancellation; no success claim",
                                details={"tick": self.tick})

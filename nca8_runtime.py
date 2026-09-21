@@ -40,6 +40,8 @@ from dataclasses import dataclass, replace
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from nca8_translation import TranslationApplicationV1
+from nca8_followmom import FollowMomApplicationV1
+from nca8_maternal import MaternalNavMapStateV1
 from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetProposalV1, BodyTranslationCapabilityV1, nominal_body_capabilities_v1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1
 from nca8_righting import RightingApplicationV1, RightingContextV1, RightingIPV1, RightingTaskV1
@@ -100,7 +102,7 @@ from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 from nca8_visual import VisualNavMapStateV1
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -1764,7 +1766,7 @@ class Nca8RightingPreviewSessionV1:
         for bid in competing_bids:
             if not isinstance(bid, AttentionBidV1) or bid.cycle_id != cycle:
                 raise ValueError("competing source bids must belong to this focal opportunity")
-            if isinstance(bid.source_map_state, VisualNavMapStateV1):
+            if isinstance(bid.source_map_state, (VisualNavMapStateV1, MaternalNavMapStateV1)):
                 if bid.source_map_state.stream != self.stream or bid.source_map_state.cutoff_tick != cutoff_tick:
                     raise ValueError("visual candidate must belong to this stream and frozen cutoff")
             if bid.source_map_state.source_map_ref == self.maps.posture_support_ref:
@@ -1870,6 +1872,13 @@ class Nca8RightingPreviewSessionV1:
                 self.prediction.adopt_visual_preview(application.projection)
             proposal = self.mapper.propose_translation(
                 application.contribution, application.projection.basis, at_tick=cutoff_tick, replace_existing=replace_existing,
+            )
+        elif isinstance(application, FollowMomApplicationV1):
+            if self.task_pnm_consumer_enabled:
+                self.prediction.adopt_maternal_preview(application.projection)
+            proposal = self.mapper.propose_translation(
+                application.contribution, application.projection.basis, at_tick=cutoff_tick,
+                lease_ticks=application.projection.horizon_ticks, replace_existing=replace_existing,
             )
         elif self.task_pnm_consumer_enabled:
             self.prediction.adopt_support_preview(None)

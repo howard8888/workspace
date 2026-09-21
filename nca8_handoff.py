@@ -21,11 +21,11 @@ from dataclasses import dataclass, replace
 from cca8_motor_contracts import MotorStreamRefV1
 from nca8_body import AuthorizedActionEnvelopeV1, BodyActionHandoffV1, BodyTaskTargetV1, EnvelopeStatusV1, LowerActionRequestV1
 from nca8_contracts import CycleCommitmentV1
-from nca8_prediction import ProjectedNavMapV1, SupportPreviewV1, VisualTranslationPreviewV1
+from nca8_prediction import ProjectedNavMapV1, SupportPreviewV1, VisualTranslationPreviewV1, MaternalApproachPreviewV1
 from nca8_primitives import TaskActionV1
 from nca8_sensorimotor_contracts import BodyTranslationTargetV1, CommittedBodyTargetV1
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = ["Nca8PhaseEDispatchV1", "Nca8HandoffReceiptV1", "Nca8InternalHandoffV1", "Nca8MotorEnvelopeV1", "__version__"]
 
 
@@ -42,7 +42,7 @@ class Nca8MotorEnvelopeV1:
 
     stream: MotorStreamRefV1
     cutoff_tick: int
-    projection: SupportPreviewV1 | VisualTranslationPreviewV1 | None
+    projection: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | None
     targets: tuple[CommittedBodyTargetV1, ...] = ()
     replaces: tuple[CommittedBodyTargetV1, ...] = ()
     cancel_previous: bool = False
@@ -54,7 +54,7 @@ class Nca8MotorEnvelopeV1:
             raise ValueError("motor envelope requires a finite cutoff tick")
         if not isinstance(self.cancel_previous, bool):
             raise TypeError("cancel_previous must be Boolean")
-        if self.projection is not None and not isinstance(self.projection, (SupportPreviewV1, VisualTranslationPreviewV1)):
+        if self.projection is not None and not isinstance(self.projection, (SupportPreviewV1, VisualTranslationPreviewV1, MaternalApproachPreviewV1)):
             raise TypeError("motor projection requires the matching typed support or visual record")
         for group in (self.targets, self.replaces):
             if not isinstance(group, tuple) or len(group) > 2 or any(not isinstance(item, CommittedBodyTargetV1) for item in group):
@@ -107,7 +107,8 @@ class Nca8MotorEnvelopeV1:
             "original_preview": self.projection.as_dict() if self.projection is not None else None,
             "targets": [item.as_dict() for item in self.targets], "replaces": [item.as_dict() for item in self.replaces],
             "cancel_previous": self.cancel_previous, "physical_execution_established": False,
-            "task_pnm_correspondence": ("not_implemented_for_visual" if isinstance(self.projection, VisualTranslationPreviewV1)
+            "task_pnm_correspondence": ("deferred_maternal_qualification" if isinstance(self.projection, MaternalApproachPreviewV1) else
+                                        "not_implemented_for_visual" if isinstance(self.projection, VisualTranslationPreviewV1)
                                         else "deferred_to_P16_1G"), "durable_learning_updates": 0,
         }
 
@@ -206,8 +207,8 @@ def _validate_dispatch(dispatch: Nca8PhaseEDispatchV1) -> None:
         if motor.targets:
             origin = motor.targets[0].target.origin
             if (commitment.task_action, commitment.task_action_id, commitment.action_envelope_id) != (
-                ("TRANSLATE_TO_VISIBLE_REGION" if isinstance(motor.projection, VisualTranslationPreviewV1)
-                 else "RESTORE_VIABLE_SUPPORT"), origin.application_id, origin.envelope_id,
+                ("FOLLOW_MOM" if isinstance(motor.projection, MaternalApproachPreviewV1) else
+                 "TRANSLATE_TO_VISIBLE_REGION" if isinstance(motor.projection, VisualTranslationPreviewV1) else "RESTORE_VIABLE_SUPPORT"), origin.application_id, origin.envelope_id,
             ):
                 raise ValueError("motor targets do not match the committed task/envelope")
         elif any(value is not None for value in (commitment.task_action, commitment.task_action_id, commitment.action_envelope_id)):

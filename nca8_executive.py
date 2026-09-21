@@ -28,10 +28,11 @@ from typing import TYPE_CHECKING, Protocol, Sequence, TypeAlias
 
 from nca8_maps import NavMapStateV1
 from nca8_visual import VisualNavMapStateV1
+from nca8_maternal import MaternalNavMapStateV1
 from nca8_support_dynamics import SupportDynamicsV1
 
 # Closed, typed domain union: visual content never acquires dummy posture fields.
-SourceNavMapStateV1: TypeAlias = NavMapStateV1 | VisualNavMapStateV1
+SourceNavMapStateV1: TypeAlias = NavMapStateV1 | VisualNavMapStateV1 | MaternalNavMapStateV1
 
 #pylint: disable=unnecessary-ellipsis
 
@@ -42,7 +43,7 @@ if TYPE_CHECKING:
 # a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "SourceNavMapStateV1",
     "AttentionBidV1",
@@ -209,14 +210,16 @@ class AttentionBidV1:
             "candidate_id",
             _bounded_identifier(self.candidate_id, field_name="candidate_id"),
         )
-        if not isinstance(self.source_map_state, (NavMapStateV1, VisualNavMapStateV1)):
-            raise TypeError("source_map_state must be a supported posture or visual source configuration")
+        if not isinstance(self.source_map_state, (NavMapStateV1, VisualNavMapStateV1, MaternalNavMapStateV1)):
+            raise TypeError("source_map_state must be a supported posture, visual or maternal source configuration")
         object.__setattr__(self, "source", _bounded_identifier(self.source, field_name="source"))
         _positive_int(self.cycle_id, field_name="cycle_id")
         if self.source_map_state.applied_cycle != self.cycle_id:
             raise ValueError("Attention bid must reference a state applied in the same cycle")
         if isinstance(self.source_map_state, VisualNavMapStateV1) and not self.source_map_state.evidence_current:
             raise ValueError("unavailable visual content cannot gain focal access through a fabricated bid")
+        if isinstance(self.source_map_state, MaternalNavMapStateV1) and not self.source_map_state.focal_accessible:
+            raise ValueError("inaccessible maternal content cannot gain focus through a fabricated bid")
         for field_name in (
             "protected_safety_rank",
             "new_task_need_rank",
@@ -380,8 +383,8 @@ class WorkingNavMapStateV1:
             "working_id",
             _bounded_identifier(self.working_id, field_name="working_id"),
         )
-        if not isinstance(self.primary_source_state, (NavMapStateV1, VisualNavMapStateV1)):
-            raise TypeError("primary_source_state must be a supported posture or visual source configuration")
+        if not isinstance(self.primary_source_state, (NavMapStateV1, VisualNavMapStateV1, MaternalNavMapStateV1)):
+            raise TypeError("primary_source_state must be a supported posture, visual or maternal source configuration")
         object.__setattr__(
             self,
             "source_candidate_id",
@@ -525,7 +528,8 @@ class AttentionRuntimeV1:
             bid_id=f"attention_bid:{candidate.candidate_id}:{cycle}",
             candidate_id=candidate.candidate_id,
             source_map_state=candidate.source_map_state,
-            source="visual_candidate" if isinstance(candidate.source_map_state, VisualNavMapStateV1) else "bodymap_candidate",
+            source=("maternal_candidate" if isinstance(candidate.source_map_state, MaternalNavMapStateV1) else
+                    "visual_candidate" if isinstance(candidate.source_map_state, VisualNavMapStateV1) else "bodymap_candidate"),
             cycle_id=cycle,
             protected_safety_rank=candidate.protected_safety_rank,
             new_task_need_rank=candidate.new_task_need_rank,

@@ -16,14 +16,86 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P16-2B-A MOM source and persistent maternal approach
+
+P16-2A-A/B are accepted through clean `7d23fb6`. This next, opt-in slice implements
+one declared initial maternal association and a developmentally supplied Follow-Mom IP.
+A99 and the accepted visual/translation foundation are retained. This is a review
+candidate, not full P16-2B or B99 completion. The existing default remains unchanged.
+The registry now contains **85 production components / 8 host behavioral primitives**
+(`cca8_run.py v0.30.23`). The three new ordinary modules are `nca8_maternal.py`,
+`nca8_followmom.py`, and `nca8_followmom_demo.py`; they do not denote three new brain parts.
+
+Use **NCA8 menu 10** or the same shared developer entry:
+
+    python scripts/review_nca8_followmom.py
+    python scripts/review_nca8_followmom.py --case nominal --detail
+    python scripts/review_nca8_followmom.py --case brief_gap --detail
+    python scripts/review_nca8_followmom.py --case support_interruption --detail
+    python scripts/review_nca8_followmom.py --replay
+
+### Representation, authority and scope
+
+The MOM map is one seeded `maternal_target@r1` association source, updated from the
+existing visual owner's independently available category and geometry contributions.
+Its seed associates a configured opaque region handle and category; this is a disclosed
+initial-identity scaffold, not learned identity, a private maternal flag, or a rule that
+all objects are Mom. Removing the association or its recognition evidence leaves the
+underlying visual source intact but prevents maternal approach. No external evaluator,
+legacy maternal module or hidden scenario stage decides the operation.
+
+The current SELF/target relation distinguishes identity, localization, separation and
+motion. Two distinct comparable acquisitions support separate self- and target-closing
+rates. A closing gap during self-movement does not automatically stop Follow-Mom.
+The selected IP computes successive bounded contributions and sparse maternal PNMs;
+ordinary BodyMap, handoff, the existing local executor and motor provider perform actual
+movement. A single task spans multiple separately authorized targets, never repeated
+consumption of one handoff. Current body support independently limits translation.
+
+The initial profile retains a twenty-focal-opportunity/eighty-physical-tick task cap,
+0.05-second physical increments and existing eight-tick target leases. Maximum task
+contribution is 0.25 m. Adequate proximity is 0.50 m; the explicitly declared 0.48-m
+approach aim provides margin against the unchanged 0.01-m local tolerance. Completion
+needs three distinct focal acquisitions spanning at least eight ticks, with supported
+body evidence and no intervening inadequate focal sample. It establishes observed
+proximity, not causal action credit or fulfillment of an earlier PNM.
+
+Missing localization withdraws precise pursuit at the next focal admission. Identity
+and a widening possible region may remain for eight ticks from genuine target support;
+that region never becomes a precise movement target. A known contradictory category
+withdraws the association immediately. Reacquisition within the original task limits
+can resume from current geometry; expired/cancelled tasks do not silently restart.
+A support interruption suspends incompatible locomotion without deleting the maternal
+association. Local terminal blocking or exhausted correction stops repeated pursuit.
+
+### Experiments and remaining work
+
+All 24 live profiles start in supported standing and retain eighty physical updates
+(four seconds), including negative controls. The faster-focal control keeps the same
+physical horizon and twenty-opportunity cap, exposing earlier task-budget exhaustion.
+The source-influence pair changes only the selected-operation continuation request;
+the real visual candidate has the same declared competing priority in both runs.
+Different focal selections can therefore be observed even when motor trajectories agree.
+
+Four separately labelled **source-only replays** distinguish self-closing, independently
+returning target evidence, contradiction and target relocation. They run no physical
+world and are not evidence of a physically moving maternal body. No model equations,
+provider behavior, local controller tolerance, dependency or learner is changed here.
+
+Full P16-2B retains the combined stand-to-follow/hard-newborn qualification and maternal
+prediction-outcome/Attention/learning routing. The old Righting-specific outcome service
+is not falsely reused to score a maternal PNM. No acquired LP, general Ready/search,
+feeding, auditory fusion, individual-identity development, B99 or default promotion is
+claimed. Earlier review experiments remain separately accessible and unchanged.
+
 ## NCA8 update: P16-2A-B actual translation target execution
 
 P16-2A-A was accepted after green local validation and committed as `29ae77e`.
 This opt-in `visual_translation_v1` slice extends Planning v18 section 40.1 through
 the **existing** A-F core, BodyMap reservation, consumed handoff, local executor
 and motor world. It is not a second motor stack or a change to legacy/default
-routing. A99 remains accepted. This new slice requires its own local validation
-and manual acceptance; B99, C99 and D99 remain open.
+routing. A99 remains accepted. P16-2A-B was accepted with green local validation
+and committed as `7d23fb6`; B99, C99 and D99 remain open.
 
 Use **NCA8 menu 9 -> 8** for physical translation, while choices 1-7 retain the
 non-actuating 2A-A previews. The same permanent developer entry supports:
