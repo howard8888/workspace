@@ -475,7 +475,7 @@ def test_h1_registers_production_contract_modules_without_starting_new_actors() 
         "registry=dict(cca8_run._CCA8_COMPONENT_REGISTRY); "
         "assert registry['motor_contracts']=='cca8_motor_contracts'; "
         "assert registry['nca8_sensorimotor_contracts']=='nca8_sensorimotor_contracts'; "
-        "assert len(cca8_run._cca8_component_rows())==91; "
+        "assert len(cca8_run._cca8_component_rows())==92; "
         "assert len(cca8_run.PRIMITIVES)==8"
     )
     completed = subprocess.run([sys.executable, "-c", script], cwd=ROOT, capture_output=True, text=True, check=False)

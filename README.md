@@ -16,7 +16,104 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-2B-E maternal participation / Phase F
+## NCA8 update: P16-2B-F combined Follow-Mom qualification
+
+Entry: accepted, committed P16-2B-E at clean
+`ffeecfe079d42196a8b5e4dd3b9fc3a77c32b472`. This is the combined qualification
+candidate for review of full P16-2B before P16-2C. It is not automatic acceptance
+of P16-2B, feeding, B99 or a new default runtime. Architecture v10.1 and adopted
+Planning v18 remain the authorities; the current source and local wall provide
+implementation evidence, not the older issue-time progress statements in the plan.
+
+The current registry has **92 production components / 8 host behavioral primitives**
+(`cca8_run.py v0.30.28`). The one new component, `nca8_followmom_qualification.py`,
+is an external observer/review harness, not an additional cognitive part or
+controller. The accepted A-F core, sensory/source owners, Follow-Mom, prediction,
+BodyMap, target executor and physical providers are unchanged. The optimized
+`nca8_trace.py v0.9.1` and the exhaustive prefix/suffix test are unchanged as well.
+
+Use **NCA8 menu 14 -> 1** for the complete compact qualification report. Other
+choices show selected detailed profiles and explicitly say `PARTIAL`, because
+unrun controls have not passed. Menus 1-13 and their existing experiments remain
+available. The developer entry calls the same shared functions and writes no files:
+
+    python scripts/review_nca8_followmom.py --qualification
+    python scripts/review_nca8_followmom.py --qualification brief_gap --detail
+    python scripts/review_nca8_followmom.py --qualification --json
+
+### Combined evidence rather than another task implementation
+
+Sixteen live profiles compose the C stand-follow reference with the D maternal
+outcome-to-Attention route and the E maternal/Righting no-learning recipients.
+All use exactly 160 physical increments of 0.05 seconds and 41 focal reads at
+cutoffs 0,4,...,160. The final read adds no physical time. Each task retains its
+own twenty-opportunity/eighty-tick bound; no task-order list or success-driven
+horizon extension exists in the runner. This is a declared combined surrogate,
+not the full hard-newborn feeding/rest provider.
+
+Nominal, brief/prolonged visual gaps, physical support loss, disabled Righting,
+Follow-Mom and association, missing translation capability, changed body heading,
+changed target, already-supported start, blocked motor and boundary-aim controls
+reuse the accepted C settings. Maternal Attention and both no-learning recipients
+are now exercised together. Righting outcome Attention stays disabled as in the
+accepted E stand experiment: this is not a new simultaneous dual-domain mismatch
+qualification. Absent optional mechanisms remain explicit, not silently enabled.
+
+The three drift profiles retain the E physical forcing at intervals [46,48) and
+[54,56), adding an ordinary visual competitor at fixed cutoffs56 and60. They differ
+only in the maternal Attention switch or maternal learning-hook switch. At tick60
+identical current source/body/visual facts, original claim evidence and prior
+commands produce maternal interpretation with Attention enabled versus visual
+focus with it disabled. The enabled route waits until64 for response. Both
+conditions complete proximity at108: no survival or speed advantage is claimed.
+The hook-on/off pair preserves complete cognitive/motor/physical evidence except
+the actual maternal F report and its two explicit hook-enabled metadata labels.
+
+Nominal completes Righting at36 and maternal proximity at104; the brief gap
+withholds precise movement at60 and completes at108 using the same task. The
+prolonged gap terminates `target_unavailable`; fresh later vision does not revive
+old permissions. Physical support loss at57 stops local translation before the
+next focal opportunity60, with maternal representation retained. Supported-start
+following begins at0 without a Righting task, disproving a forced stage order.
+Missing mechanisms and blocked movement retain truthful bounded adverse outcomes.
+
+### Report scope, evidence quality and acceptance
+
+The report checks fixed profiles, exact physical/focal clocks, handoff/install
+counts, actual owner bounds, unchanged durable/fixed organization, actual F
+calls, exclusive interpretation, supported completion, original-evidence
+consumption, selective negative controls and paired comparisons. It evaluates
+already completed records; neither report generation nor JSON inspection reruns
+cognition or becomes a source of motor permission. A missing case yields `PARTIAL`,
+a failed check yields `FAIL`, and duplicate/unknown evidence identities are rejected.
+A complete experimental `PASS` is not a replacement for the local validation wall.
+
+Four retained source-only replays distinguish independent target approach, own
+closing, category contradiction and target relocation. Two retained original-
+recipient fixtures test A's eligibility after B is focal and A loses access,
+including independent expiry. These six evidence sets are explicitly nonphysical:
+no physical Mom motion, general Ready/offloading or selected source-replay action
+is claimed. The live runs supply the actual stand/follow/gap/authority evidence.
+
+All durable learning remains absent. An `accepted_no_update` report concerns
+eligible original relations, not learned identity, causal credit, calibration,
+LP acquisition or task preference. P16-2C feeding/contact/suckling/rest is the
+next implementation phase only after this P16-2B qualification is locally
+validated and accepted. Full newborn B99, general inspection, Ready, learning,
+comparison and default promotion retain their separate destinations.
+
+The agreed local wall is **Pylint -> mypy -> new/changed tests -> focused
+regressions -> one preflight -> selected manual review -> Git hygiene**.
+Preflight supplies the single full-pytest run; do not immediately duplicate it
+with another full pytest or full NCA8 run. Use `--preflight --timing` for optional
+duration diagnostics. This later agreed workflow supersedes the older repetitive
+example in Planning v18 section59 without weakening the required checks.
+
+## Retained P16-2B-E checkpoint: maternal participation / Phase F
+
+The following block records the E delivery and its historical 91-component
+inventory. E was subsequently accepted and committed as `ffeecfe`. Its no-learning
+and rendering scopes remain intact; F above adds combined qualification only.
 
 Entry: accepted, committed P16-2B-D at clean
 `da74a071d24ca96d57509e0e2c92e120f8c53072`. This successor is prepared for local

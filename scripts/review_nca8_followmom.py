@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Inspect P16-2B-A/B/C/D/E approach, correspondence, continuous stand-follow and replays.
+"""Inspect P16-2B-A/B/C/D/E/F approach, correspondence, continuous stand-follow and replays.
 
 Run from any directory. This helper delegates to the same finite functions as
-NCA8 menus 10-13, writes no repository files, and reports actual owner-bound/durable
+NCA8 menus 10-14, writes no repository files, and reports actual owner-bound/durable
 violations as a nonzero exit. A valid adverse task outcome is not a test failure.
 """
 
@@ -31,6 +31,10 @@ from nca8_maternal_learning_demo import (
     run_maternal_learning_routing_fixture_v1, render_maternal_learning_routing_fixture_v1,
 )
 
+from nca8_followmom_qualification import (
+    FOLLOW_MOM_QUALIFICATION_CASES_V1, run_follow_mom_qualification_v1, render_follow_mom_qualification_v1,
+)
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Select one declared experiment family; do not silently repair unknown selectors."""
@@ -47,9 +51,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                           help="inspect maternal participation and actual no-learning Phase F")
     selected.add_argument("--learning-routing", nargs="?", const="all", choices=("all", "eligible", "expired"),
                           help="supply explicit routing fixtures without physical world steps")
+    selected.add_argument("--qualification", nargs="?", const="all", choices=("all", *FOLLOW_MOM_QUALIFICATION_CASES_V1),
+                          help="run the combined 2B qualification; individual cases remain explicitly partial")
     parser.add_argument("--detail", action="store_true", help="include source, PNM, target and local-drive details")
     parser.add_argument("--json", action="store_true", help="export complete detached results instead of text")
     args = parser.parse_args(argv)
+    if args.qualification is not None:
+        qualification = run_follow_mom_qualification_v1(args.qualification)
+        print(json.dumps(qualification.as_dict(), sort_keys=True, allow_nan=False) if args.json else
+              render_follow_mom_qualification_v1(qualification, detail=args.detail))
+        return int(qualification.status == "FAIL" or (args.qualification == "all" and qualification.status != "PASS"))
     if args.learning is not None:
         learning_cases = MATERNAL_LEARNING_CASES_V1 if args.learning == "all" else (args.learning,)
         learning_results = tuple(run_maternal_learning_v1(case) for case in learning_cases)
