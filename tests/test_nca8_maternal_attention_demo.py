@@ -234,7 +234,7 @@ def test_review_script_matches_function_from_another_directory(tmp_path, results
 
 def test_new_registry_is_complete_without_extra_behavioral_primitives():
     rows = cca8_run._cca8_component_rows()
-    assert cca8_run.__version__ == "0.30.33" and len(rows) == 101
+    assert cca8_run.__version__ == "0.30.34" and len(rows) == 103
     assert {"nca8_maternal_attention", "nca8_maternal_attention_demo"} <= {row[0] for row in rows}
     assert len(cca8_run.PRIMITIVES) == 8
 

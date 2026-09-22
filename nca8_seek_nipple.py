@@ -14,7 +14,9 @@ engineering reach criterion is independent of touch; even a true touch cannot
 identify a nipple surface, seal a latch or establish milk. P16-2C-D may opt in to
 separate original-PNM correspondence. P16-2C-E may allocate its source-owned
 interpretation instead of a new primitive in the existing focal slot. Neither
-extension changes these task rules or renews their budgets. Feeding participation/learning and full newborn qualification remain deferred.
+extension changes these task rules or renews their budgets. P16-2C-F can retain
+source-owned participation and reconcile it at F without durable learning.
+Full feeding and newborn qualification remain deferred.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from nca8_prediction import ProjectedNavMapV1, SeekNipplePreviewV1
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
 from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = ["SeekNippleProfileV1", "SeekNippleTaskV1", "SeekNippleApplicationV1", "SeekNippleAssessmentV1", "SeekNippleIPV1", "__version__"]
 
 _MAX_TICKS = 48
@@ -59,12 +61,15 @@ class SeekNippleProfileV1:
     outcomes_enabled: bool = False
     prediction_comparison_enabled: bool = True
     outcome_attention_enabled: bool = False
+    learning_hook_enabled: bool = False
 
     def __post_init__(self) -> None:
-        if not all(isinstance(flag, bool) for flag in (self.enabled, self.influence_enabled, self.outcomes_enabled, self.prediction_comparison_enabled, self.outcome_attention_enabled)):
+        if not all(isinstance(flag, bool) for flag in (self.enabled, self.influence_enabled, self.outcomes_enabled, self.prediction_comparison_enabled, self.outcome_attention_enabled, self.learning_hook_enabled)):
             raise TypeError("seeking switches must be Boolean")
         if not self.outcomes_enabled and not self.prediction_comparison_enabled:
             raise ValueError("comparison-off requires the explicit seeking correspondence consumer")
+        if self.learning_hook_enabled and not self.outcomes_enabled:
+            raise ValueError("seeking participation requires the canonical correspondence consumer")
         if self.outcome_attention_enabled and not self.outcomes_enabled:
             raise ValueError("seeking relevance requires the canonical correspondence consumer")
 
@@ -78,7 +83,7 @@ class SeekNippleProfileV1:
                 "task_pnm_correspondence": "seek_nipple_correspondence_v1" if self.outcomes_enabled else "deferred",
                 **({"prediction_comparison_enabled": self.prediction_comparison_enabled} if self.outcomes_enabled else {}),
                 **({"outcome_attention": "seeking_outcome_attention_v1"} if self.outcome_attention_enabled else {}),
-                "feeding_learning": "unimplemented_no_participation"}
+                "feeding_learning": "seeking_no_learning_v1" if self.learning_hook_enabled else "unimplemented_no_participation"}
 
 
 @dataclass(frozen=True, slots=True)

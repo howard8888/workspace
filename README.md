@@ -16,7 +16,77 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-2C-E seeking discrepancy to Attention
+## NCA8 update: P16-2C-F seeking participation and Phase F
+
+Entry: P16-2C-E is accepted and committed on clean `main` and recorded `origin/main`
+at `66045ab212323c76b6b7bae92b49b178867e82c8`, tree `b2e2a4f1d518f84e1855866f22d53b60d7f9e579`.
+F is a prepared opt-in candidate under adopted Planning v18 / accepted Architecture v10.1.
+Local validation and explicit acceptance remain required. Legacy/default routing is unchanged.
+
+`cca8_run.py v0.30.34` lists **103 production components / 8 host behavioral primitives**.
+The two additions, `nca8_seek_learning` and `nca8_seek_learning_demo`, provide one source-owned
+participation hook and its read-only review. They add no cognitive part, task IP, motor framework,
+physical provider, durable learner or L-number. The existing seeking claim check is reused
+before an outcome exists; participation does not manufacture a synthetic observation.
+
+The real Phase-F callback now has an optional feeding-detail recipient. It receives original
+selected seeking participation, earlier canonical C2 outcomes and an interpretation actually
+performed at D. It does not rediscover the recipient from whichever source is currently WNM.
+Eight temporary participants have independent eligibility ending before creation cycle + 4;
+32 disposable diagnostic dispositions cannot prolong it. Source availability, task lifetime,
+original PNM arrival, Attention relevance and motor permission keep their existing lifetimes.
+
+Known compatible executed geometric relations can be `accepted_no_update`. A significant
+request waits for its actual focal interpretation. With Attention disabled, a discrepant
+result waits conservatively and expires instead of being interpreted secretly at F.
+Unknown, nonapplied, interrupted, unregistered and expired evidence has an explicit no-update
+disposition. The just-issued action cannot supply its future outcome before core closure.
+All durable-update counts remain zero; acceptance does not prove causation, latch or milk.
+
+The 24 fixed live cases include hook-on/off nominal, competing-source and continuous-run
+pairs; Attention/comparison controls; current versus historical recovery; nonfocal routing;
+missing evidence; narrowed permission; cancellation; independent eligibility; and cadence.
+A narrowed early contribution admits only the unchanged detail anchor. A later contribution
+that fully fits its own original forecast can legitimately admit all three relations.
+The physical equations, task/reach criteria, target limits and original forecasts are not retuned.
+Hook-on/off pairs preserve the complete command, physical, source, task and focal-decision path.
+An unavailable whole visual batch is distinct from a missing current product with supported
+historical evidence; the latter is also tested as an explicit core-input routing fixture.
+
+Menu: Main menu **1 -> 4 -> 15 -> 22**, then **5** for all cases or **6** to inspect retained
+results without new movement. The secondary entry is:
+
+    python scripts/review_nca8_feeding.py --seek-learning --case all
+
+The A/B/C/D/E menus and full exports remain retained independent controls. Full P16-2C,
+latch/Suckle, milk/nourishment, Rest, durable learning and B99 remain open. This is the
+seeking participation/F seam, not full feeding qualification or a new learned behavior.
+
+### Validation amendment approved 22 September 2026
+
+Use **production Pylint -> production mypy -> changed/new tests -> complete focused NCA8
+and relevant host regressions -> one preflight -> causal/manual review -> Git checks**.
+Preflight supplies the only full-suite pytest execution. Do not add a standalone full pytest
+immediately before or after it. Changed/focused subsets still intentionally overlap that suite.
+This explicit agreement supersedes the redundant standalone full-suite command in Planning
+v18 section 59 and clarifies that the complete focused NCA8 selection is retained.
+No coverage threshold, failure rule, interpreter, dependency, or suppression is changed.
+Normal preflight remains coverage-free; optional coverage is explicitly requested as before.
+
+The release package supplies a separate `validate_update.py` helper. It writes complete
+stdout/stderr logs and a compact `summary.txt` outside the repository, stops on the first
+failure, and checks that source/HEAD/index remain unchanged. It never applies, stages,
+commits, pushes or installs dependencies. The summary records early Pylint/mypy outcomes
+without relying on terminal scrollback. Manual judgment and staged-tree matching remain
+separate; an automated pass is not automatic acceptance. Existing test/preflight internals
+are unchanged. Prior E instructions already used one preflight; this amendment makes the
+single-full-suite rule and persistent evidence capture explicit for future packages.
+
+## Retained P16-2C-E checkpoint: seeking discrepancy to Attention
+
+The following block records the E delivery and its historical component count. E has since
+been accepted at the F entry above; its independent experiment remains available.
+
 
 Entry: P16-2C-D is accepted and committed on clean `main` and recorded
 `origin/main` at `33ae61996cbd2644c0f01336c43152db9f5dbbde`, tree
@@ -737,10 +807,10 @@ new enabled frames name their actual separate Attention consumer.
 
 ### Standard validation order and optional preflight timing
 
-The adopted local workflow is Pylint, mypy, new/changed tests, focused neighboring
-regressions, **one preflight**, selected meaningful manual reviews, then Git hygiene.
-Preflight includes the full pytest suite; do not routinely precede it with another
-full pytest or full NCA8 selection. Source repairs must precede the behavioral
+The adopted local workflow is Pylint, mypy, new/changed tests, the complete focused
+NCA8 selection and relevant host regressions, **one preflight**, selected meaningful
+manual reviews, then Git hygiene. Preflight includes the full pytest suite; do not
+routinely precede it with a separate full-suite pytest run. Source repairs must precede the behavioral
 qualification of the corrected code. This later workflow agreement supersedes the
 redundant command order in Planning v18 section 59 without reducing the final scope.
 

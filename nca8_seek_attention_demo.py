@@ -29,10 +29,10 @@ from nca8_seek_nipple_demo import SeekNippleExperimentProfileV1, SeekNippleExper
 from nca8_seek_outcomes_demo import seek_nipple_outcome_profile_v1
 from nca8_seek_outcomes import SeekNippleOutcomeV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["SEEKING_ATTENTION_CASES_V1", "SeekingAttentionExperimentV1", "seeking_attention_profile_v1",
            "create_seeking_attention_trial_v1", "run_seeking_attention_v1", "render_seeking_attention_v1",
-           "run_seeking_attention_menu_v1", "__version__"]
+           "run_seeking_attention_menu_v1", "seeking_attention_owner_limits_v1", "__version__"]
 
 SEEKING_ATTENTION_CASES_V1 = (
     "competing_on", "competing_off", "maintain_on", "maintain_off", "nominal_on", "nominal_off", "no_surface",
@@ -244,6 +244,11 @@ class SeekingAttentionExperimentV1:
                 "durable_before": raw.durable_before, "durable_after": raw.durable_after, "dispositions": list(self.dispositions),
                 "registered_pnm_cycles": list(raw.registered_pnm_cycles), "checks": dict(self.checks()), "review_status": self.review_status,
                 "feeding_learning": "unimplemented_no_participation", "causal_credit": "not_established", "B99": "open"}
+
+
+def seeking_attention_owner_limits_v1() -> dict[str, int]:
+    """Expose a detached copy of E's declared limits for the participation review."""
+    return dict(_LIMITS)
 
 
 def run_seeking_attention_v1(case: str = "competing_on", *, trace_capacity: int = 256) -> SeekingAttentionExperimentV1:

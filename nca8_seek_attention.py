@@ -28,7 +28,7 @@ from nca8_feeding import FeedingDetailNavMapStateV1, FeedingDetailSeedV1
 from nca8_seek_nipple import SeekNippleTaskV1
 from nca8_seek_outcomes import SeekNippleOutcomeV1, validate_seeking_outcome_v1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["SeekingMismatchRequestV1", "SeekingInterpretationV1", "SeekingFocalAllocationV1", "SeekingAttentionFrameV1",
            "SeekingOutcomeAttentionV1", "__version__"]
 
@@ -128,13 +128,14 @@ class SeekingAttentionFrameV1:
     pending: tuple[SeekingMismatchRequestV1, ...]
     source_bid: AttentionBidV1 | None
     allocation: SeekingFocalAllocationV1
+    learning_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
-        """Report the implemented route without claiming feeding learning or Phase F."""
+        """Report the relevance route and optional no-learning hook without claiming plasticity."""
         return {"profile": "seeking_outcome_attention_v1", "created": [item.as_dict() for item in self.created],
                 "pending": [item.as_dict() for item in self.pending],
                 "source_bid": self.source_bid.as_dict() if self.source_bid is not None else None,
-                "allocation": self.allocation.as_dict(), "learning_route": "unimplemented_no_participation", "durable_updates": 0}
+                "allocation": self.allocation.as_dict(), "learning_route": "seeking_no_learning_v1" if self.learning_enabled else "unimplemented_no_participation", "durable_updates": 0}
 
 
 class SeekingOutcomeAttentionV1:

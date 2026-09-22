@@ -61,13 +61,14 @@ from nca8_righting import RightingApplicationV1, RightingContextV1
 from nca8_outcome_attention import RightingMismatchRequestV1
 from nca8_learning import LearningPhaseFReportV1
 from nca8_maternal_learning import MaternalLearningPhaseFReportV1
+from nca8_seek_learning import SeekingLearningPhaseFReportV1
 from nca8_runtime import Nca8RightingPreviewSessionV1, RightingPreviewResultV1
 from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, SchedulerCycleSnapshotV1
 from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, SensorimotorProfileV1, SensorimotorStepV1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1, SensorimotorTargetKindV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -113,6 +114,7 @@ class IntegratedRightingCycleV1:
     seeking_task: SeekNippleAssessmentV1 | None = None
     seeking_correspondence: SeekNippleOutcomeFrameV1 | None = None
     seeking_attention: SeekingAttentionFrameV1 | None = None
+    seeking_learning_report: SeekingLearningPhaseFReportV1 | None = None
 
     @property
     def status(self) -> str:
@@ -157,12 +159,14 @@ class IntegratedRightingCycleV1:
             **({"maternal_correspondence": self.maternal_correspondence.as_dict()} if self.maternal_correspondence is not None else {}),
             **({"seeking_correspondence": self.seeking_correspondence.as_dict()} if self.seeking_correspondence is not None else {}),
             **({"seeking_attention": self.seeking_attention.as_dict()} if self.seeking_attention is not None else {}),
+            **({"seeking_learning_reconciliation": self.seeking_learning_report.as_dict()}
+               if self.seeking_learning_report is not None else {}),
             **({"maternal_attention": self.maternal_attention.as_dict()} if self.maternal_attention is not None else {}),
             **({"maternal_learning_reconciliation": self.maternal_learning_report.as_dict()}
                if self.maternal_learning_report is not None else {}),
             **({"feeding_detail_source": self.feeding_detail_source.as_dict(),
                 "feeding_task_status": self.seeking_task.reason if self.seeking_task is not None else "not_implemented_P16_2C_A",
-                "feeding_learning_status": "unimplemented_no_participation",
+                "feeding_learning_status": "seeking_no_learning_v1" if self.seeking_learning_report is not None else "unimplemented_no_participation",
                 **({"seeking_task": self.seeking_task.as_dict()} if self.seeking_task is not None else {})}
                if self.feeding_detail_source is not None else {}),
         }
@@ -230,6 +234,8 @@ class IntegratedRightingCoreV1:
         self.feeding_detail = None if feeding_detail_profile is None else FeedingDetailSourceV1(stream, feeding_detail_profile)
         if self.feeding_detail is not None and seek_nipple_profile is not None and seek_nipple_profile.outcome_attention_enabled:
             self.feeding_detail.configure_outcome_attention()
+        if self.feeding_detail is not None and seek_nipple_profile is not None and seek_nipple_profile.learning_hook_enabled:
+            self.feeding_detail.configure_learning_hook(diagnostic_capacity=learning_diagnostic_capacity)
         self.seek_nipple = (SeekNippleIPV1(self.feeding_detail, seek_nipple_profile)
                             if self.feeding_detail is not None and seek_nipple_profile is not None else None)
         self.seeking_outcomes = (SeekNippleOutcomeRuntimeV1(stream, compare_predictions=seek_nipple_profile.prediction_comparison_enabled)
@@ -298,6 +304,8 @@ class IntegratedRightingCoreV1:
             self.seeking_outcomes.close(reason=self._fault)
         if self.feeding_detail is not None and self.feeding_detail.outcome_attention is not None:
             self.feeding_detail.outcome_attention.close()
+        if self.feeding_detail is not None and self.feeding_detail.learning_hook is not None:
+            self.feeding_detail.learning_hook.close()
         if self.maternal_outcomes is not None:
             self.maternal_outcomes.close(reason=self._fault)
         hook = self.cognition.sensory.learning_hook
@@ -723,10 +731,12 @@ class IntegratedRightingCoreV1:
         learning_report: LearningPhaseFReportV1 | None = None
         maternal_hook = self.maternal.learning_hook if self.maternal is not None else None
         maternal_learning_report: MaternalLearningPhaseFReportV1 | None = None
+        seeking_hook = self.feeding_detail.learning_hook if self.feeding_detail is not None else None
+        seeking_learning_report: SeekingLearningPhaseFReportV1 | None = None
 
         def reconcile_learning() -> None:
             """Visit configured source participants once in F, never scan the learning ledger."""
-            nonlocal learning_report, maternal_learning_report
+            nonlocal learning_report, maternal_learning_report, seeking_learning_report
             if hook is not None:
                 learning_report = hook.reconcile(
                     cycle_id=cycle, cutoff_tick=tick, registration=claim_registration,
@@ -759,10 +769,27 @@ class IntegratedRightingCoreV1:
                                            "offered_outcomes": maternal_learning_report.offered_outcomes,
                                            "dispositions": ",".join(item.status for item in maternal_learning_report.dispositions),
                                            "durable_learning_updates": 0, "ledger_rows_executed": 0})
+            if seeking_hook is not None:
+                seeking_learning_report = seeking_hook.reconcile(
+                    cycle_id=cycle, cutoff_tick=tick, registration=seeking_registration,
+                    task=application.task if isinstance(application, SeekNippleApplicationV1) else None,
+                    outcomes=seeking_results, requests=seeking_requests,
+                    interpretation=seeking_allocation.interpretation
+                    if seeking_allocation is not None and seeking_allocation.kind == "interpretation" else None,
+                    comparison_enabled=seeking_owner.compare_predictions if seeking_owner is not None else False,
+                    attention_enabled=seeking_attention is not None,
+                )
+                self.trace.append("hierarchy_seeking_learning_hook", "F reconciled original seeking participation; no durable update",
+                                  cycle_id=cycle, phase=CyclePhase.LEARNING_SCHEDULE.name,
+                                  details={"recipient": seeking_learning_report.recipient_id,
+                                           "participants": len(seeking_learning_report.pending),
+                                           "offered_outcomes": seeking_learning_report.offered_outcomes,
+                                           "dispositions": ",".join(item.status for item in seeking_learning_report.dispositions),
+                                           "durable_learning_updates": 0, "ledger_rows_executed": 0})
             self.trace.append("hierarchy_learning", "F reconciliation: no durable learner or new physical outcome", cycle_id=cycle,
                               phase=CyclePhase.LEARNING_SCHEDULE.name, details={"durable_learning_updates": 0})
 
-        if hook is None and maternal_hook is None:
+        if hook is None and maternal_hook is None and seeking_hook is None:
             # Preserve the retained empty-F trace and original scheduler call.
             reconcile_learning()
             schedule = self.scheduler.phase_f_finish(cycle, self.trace)
@@ -786,8 +813,9 @@ class IntegratedRightingCoreV1:
             seeking_correspondence=SeekNippleOutcomeFrameV1(
                 tick, tuple(item for item in seeking_owner.history() if item.number > seeking_before),
                 seeking_registration, seeking_owner.pending(), seeking_owner.compare_predictions,
-                seeking_attention is not None) if seeking_owner is not None else None,
-            seeking_attention=SeekingAttentionFrameV1(seeking_requests, seeking_attention.pending(), feeding_bid, seeking_allocation)
+                seeking_attention is not None, seeking_hook is not None) if seeking_owner is not None else None,
+            seeking_learning_report=seeking_learning_report,
+            seeking_attention=SeekingAttentionFrameV1(seeking_requests, seeking_attention.pending(), feeding_bid, seeking_allocation, seeking_hook is not None)
             if seeking_attention is not None and seeking_allocation is not None else None,
         )
         self.last_result = result
@@ -981,6 +1009,8 @@ class IntegratedRightingTrialV1:
                if self.core.maternal is not None and self.core.maternal.learning_hook is not None else {}),
             **(self.core.feeding_detail.outcome_attention.retained_counts()
                if self.core.feeding_detail is not None and self.core.feeding_detail.outcome_attention is not None else {}),
+            **(self.core.feeding_detail.learning_hook.retained_counts()
+               if self.core.feeding_detail is not None and self.core.feeding_detail.learning_hook is not None else {}),
             **({"seeking_staged_intervals": len(self._seeking_intervals), **self.core.seeking_outcomes.retained_counts()}
                if self.core.seeking_outcomes is not None else {}),
             **({"maternal_staged_intervals": len(self._maternal_intervals), **self.core.maternal_outcomes.retained_counts()}

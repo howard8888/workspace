@@ -25,9 +25,9 @@ from nca8_seek_nipple import SeekNippleApplicationV1
 from nca8_sensorimotor_contracts import BodyRelativeTargetV1, CommittedBodyTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1
 from nca8_visual import VisualObservationV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["SeekNippleEndpointV1", "SeekNippleIntervalEvidenceV1", "SeekNippleClaimV1", "SeekNippleOutcomeV1",
-           "SeekNippleOutcomeFrameV1", "SeekNippleOutcomeRuntimeV1", "validate_seeking_outcome_v1", "__version__"]
+           "SeekNippleOutcomeFrameV1", "SeekNippleOutcomeRuntimeV1", "validate_seeking_outcome_v1", "validate_seeking_claim_v1", "__version__"]
 _RELATIONS = ("mouth_position", "detail_anchor", "separation")
 _TOLERANCE = 0.005
 
@@ -206,6 +206,7 @@ class SeekNippleOutcomeFrameV1:
     pending: tuple[SeekNippleClaimV1, ...]
     comparison_enabled: bool
     attention_enabled: bool = False
+    learning_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Report implemented correspondence and explicitly absent downstream routes."""
@@ -213,7 +214,7 @@ class SeekNippleOutcomeFrameV1:
                 "comparison_enabled": self.comparison_enabled, "outcomes": [item.as_dict() for item in self.outcomes],
                 "registration": self.registration.as_dict() if self.registration is not None else None,
                 "pending": [item.as_dict() for item in self.pending], "attention_route": "seeking_outcome_attention_v1" if self.attention_enabled else "deferred_seeking_attention",
-                "learning_route": "unimplemented_no_participation", "durable_updates": 0}
+                "learning_route": "seeking_no_learning_v1" if self.learning_enabled else "unimplemented_no_participation", "durable_updates": 0}
 
 
 @dataclass(slots=True)
@@ -537,20 +538,16 @@ def _compare(
     return relations, tuple(residuals.items()), identity
 
 
-def validate_seeking_outcome_v1(outcome: SeekNippleOutcomeV1, *, stream: MotorStreamRefV1, cutoff_tick: int) -> None:
-    """Check a downstream description against its original canonical evidence.
+def validate_seeking_claim_v1(claim: SeekNippleClaimV1, *, stream: MotorStreamRefV1) -> None:
+    """Validate original prospective meaning and permission without inventing an outcome.
 
-    Used by the optional source relevance consumer, not by the physical driver.
-    This read-only boundary rejects wrong domains, fabricated geometry scores,
-    malformed permission subsets and future evidence. It reuses the original
-    fixed comparison; it neither republishes an outcome nor consumes a claim.
-    The actual publisher still owns exposure provenance and at-most-once
-    consumption. A serialized/copied description never restores motor rights.
+    The same read-only check serves the original outcome boundary and optional
+    pre-execution participation. It neither publishes nor consumes evidence and
+    cannot authorize installation. BodyMap narrowing preserves its original
+    relation subset; a copied target cannot supply the original body basis.
     """
-    cutoff = _tick(cutoff_tick)
-    if not isinstance(outcome, SeekNippleOutcomeV1) or not isinstance(outcome.claim, SeekNippleClaimV1):
-        raise TypeError("seeking relevance requires a canonical seeking outcome")
-    claim = outcome.claim
+    if not isinstance(claim, SeekNippleClaimV1):
+        raise TypeError("seeking participation requires a canonical seeking claim")
     if not isinstance(claim.preview, SeekNipplePreviewV1) or not isinstance(claim.request, OralReachRequestV1):
         raise TypeError("seeking outcome requires the original typed preview and request")
     preview, request = claim.preview, claim.request
@@ -560,13 +557,6 @@ def validate_seeking_outcome_v1(outcome: SeekNippleOutcomeV1, *, stream: MotorSt
             or request.source_map_ref != preview.basis.source_map_ref or request.region_id != preview.region_id
             or request.origin_status != "selected_seek_nipple" or request.lease_ticks != preview.horizon_ticks):
         raise ValueError("seeking outcome changed its original domain, source, task or stream")
-    if isinstance(outcome.number, bool) or not isinstance(outcome.number, int) or not 1 <= outcome.number < 2**63:
-        raise ValueError("seeking outcome number must be a bounded positive integer")
-    if not preview.basis.cutoff_tick <= _tick(outcome.evaluated_tick) <= cutoff:
-        raise ValueError("seeking outcome cannot precede its original claim or arrive from the future")
-    if (isinstance(outcome.command_intervals, bool) or not isinstance(outcome.command_intervals, int)
-            or not 0 <= outcome.command_intervals <= preview.horizon_ticks):
-        raise ValueError("seeking exposure must fit its original finite horizon")
     if not isinstance(claim.targets, tuple) or len(claim.targets) > 1:
         raise ValueError("seeking permission must be the original sole oral target or veto")
     for target in claim.targets:
@@ -596,6 +586,31 @@ def validate_seeking_outcome_v1(outcome: SeekNippleOutcomeV1, *, stream: MotorSt
     if (set(claim.compatible_relations) & set(claim.unevaluable_relations)
             or set(claim.compatible_relations) | set(claim.unevaluable_relations) != set(_RELATIONS)):
         raise ValueError("seeking permission must classify every original relation once")
+
+
+def validate_seeking_outcome_v1(outcome: SeekNippleOutcomeV1, *, stream: MotorStreamRefV1, cutoff_tick: int) -> None:
+    """Check a downstream description against its original canonical evidence.
+
+    Used by the optional source relevance consumer, not by the physical driver.
+    This read-only boundary rejects wrong domains, fabricated geometry scores,
+    malformed permission subsets and future evidence. It reuses the original
+    fixed comparison; it neither republishes an outcome nor consumes a claim.
+    The actual publisher still owns exposure provenance and at-most-once
+    consumption. A serialized/copied description never restores motor rights.
+    """
+    cutoff = _tick(cutoff_tick)
+    if not isinstance(outcome, SeekNippleOutcomeV1) or not isinstance(outcome.claim, SeekNippleClaimV1):
+        raise TypeError("seeking relevance requires a canonical seeking outcome")
+    claim = outcome.claim
+    validate_seeking_claim_v1(claim, stream=stream)
+    preview = claim.preview
+    if isinstance(outcome.number, bool) or not isinstance(outcome.number, int) or not 1 <= outcome.number < 2**63:
+        raise ValueError("seeking outcome number must be a bounded positive integer")
+    if not preview.basis.cutoff_tick <= _tick(outcome.evaluated_tick) <= cutoff:
+        raise ValueError("seeking outcome cannot precede its original claim or arrive from the future")
+    if (isinstance(outcome.command_intervals, bool) or not isinstance(outcome.command_intervals, int)
+            or not 0 <= outcome.command_intervals <= preview.horizon_ticks):
+        raise ValueError("seeking exposure must fit its original finite horizon")
     for rows in (outcome.relations, outcome.residuals):
         if not isinstance(rows, tuple) or len(rows) > 3 or any(not isinstance(row, tuple) or len(row) != 2 for row in rows):
             raise ValueError("seeking results require bounded immutable relation rows")

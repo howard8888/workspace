@@ -33,8 +33,9 @@ from nca8_visual import VisualDetectionV1
 
 if TYPE_CHECKING:
     from nca8_seek_attention import SeekingOutcomeAttentionV1
+    from nca8_seek_learning import SeekingLearningHookV1
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "FeedingDetailSeedV1", "FeedingDetailProfileV1", "FeedingDetailNavMapStateV1",
     "FeedingDetailCandidateV1", "FeedingDetailSourceV1", "__version__",
@@ -396,6 +397,7 @@ class FeedingDetailSourceV1:
         self._current: FeedingDetailNavMapStateV1 | None = None
         self._influence: tuple[str, int] | None = None
         self._outcome_attention: SeekingOutcomeAttentionV1 | None = None
+        self._learning_hook: SeekingLearningHookV1 | None = None
 
     @property
     def outcome_attention(self) -> SeekingOutcomeAttentionV1 | None:
@@ -414,6 +416,26 @@ class FeedingDetailSourceV1:
             raise RuntimeError("configure seeking relevance only once before source updates")
         import nca8_seek_attention  # pylint: disable=import-outside-toplevel
         self._outcome_attention = nca8_seek_attention.SeekingOutcomeAttentionV1(self._stream, self._profile.seed)
+
+    @property
+    def learning_hook(self) -> SeekingLearningHookV1 | None:
+        """Read this source's optional participation owner, not a durable learner."""
+        return self._learning_hook
+
+    def configure_learning_hook(self, *, diagnostic_capacity: int = 32) -> None:
+        """Attach bounded no-learning participation once, before source processing.
+
+        Configuration has no sensory, focal, physical or learned effect. The
+        real F callback is its consumer; only original selected seeking can
+        register participation. Reset/stop closes the old extension. The late
+        import preserves the existing source-schema/executive import boundary.
+        """
+        if self._current is not None or self._learning_hook is not None:
+            raise RuntimeError("configure seeking participation only once before source updates")
+        import nca8_seek_learning  # pylint: disable=import-outside-toplevel
+        self._learning_hook = nca8_seek_learning.SeekingLearningHookV1(
+            self._stream, self._profile.seed, diagnostic_capacity=diagnostic_capacity,
+        )
 
     @property
     def profile(self) -> FeedingDetailProfileV1:
