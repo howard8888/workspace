@@ -46,6 +46,7 @@ from nca8_maternal import MaternalSourceV1, MaternalNavMapStateV1
 from nca8_feeding import FeedingDetailProfileV1, FeedingDetailSourceV1, FeedingDetailNavMapStateV1
 from nca8_followmom import FollowMomProfileV1, FollowMomIPV1, FollowMomApplicationV1, FollowMomAssessmentV1
 from nca8_seek_nipple import SeekNippleProfileV1, SeekNippleIPV1, SeekNippleApplicationV1, SeekNippleAssessmentV1
+from nca8_seek_outcomes import SeekNippleIntervalEvidenceV1, SeekNippleOutcomeFrameV1, SeekNippleOutcomeRuntimeV1
 from nca8_maternal_attention import MaternalAttentionFrameV1, MaternalMismatchRequestV1
 from nca8_maternal_outcomes import MaternalIntervalEvidenceV1, MaternalOutcomeFrameV1, MaternalOutcomeRuntimeV1, MaternalOutcomeV1
 from nca8_contracts import CircuitResultV1, CircuitTimingV1, CycleCommitmentV1, CyclePhase
@@ -65,7 +66,7 @@ from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, Senso
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1, SensorimotorTargetKindV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -109,6 +110,7 @@ class IntegratedRightingCycleV1:
     maternal_learning_report: MaternalLearningPhaseFReportV1 | None = None
     feeding_detail_source: FeedingDetailNavMapStateV1 | None = None
     seeking_task: SeekNippleAssessmentV1 | None = None
+    seeking_correspondence: SeekNippleOutcomeFrameV1 | None = None
 
     @property
     def status(self) -> str:
@@ -149,6 +151,7 @@ class IntegratedRightingCycleV1:
                 "maternal_task": self.maternal_task.as_dict() if self.maternal_task is not None else None}
                if self.maternal_source is not None else {}),
             **({"maternal_correspondence": self.maternal_correspondence.as_dict()} if self.maternal_correspondence is not None else {}),
+            **({"seeking_correspondence": self.seeking_correspondence.as_dict()} if self.seeking_correspondence is not None else {}),
             **({"maternal_attention": self.maternal_attention.as_dict()} if self.maternal_attention is not None else {}),
             **({"maternal_learning_reconciliation": self.maternal_learning_report.as_dict()}
                if self.maternal_learning_report is not None else {}),
@@ -222,6 +225,8 @@ class IntegratedRightingCoreV1:
         self.feeding_detail = None if feeding_detail_profile is None else FeedingDetailSourceV1(stream, feeding_detail_profile)
         self.seek_nipple = (SeekNippleIPV1(self.feeding_detail, seek_nipple_profile)
                             if self.feeding_detail is not None and seek_nipple_profile is not None else None)
+        self.seeking_outcomes = (SeekNippleOutcomeRuntimeV1(stream, compare_predictions=seek_nipple_profile.prediction_comparison_enabled)
+                                 if seek_nipple_profile is not None and seek_nipple_profile.outcomes_enabled else None)
         self.stand_follow_enabled = stand_follow_enabled
         if visual_profile is None and (translation_capability is not None or translation_mapping_sign != 1):
             raise ValueError("translation capability/calibration requires an opt-in visual operation")
@@ -282,6 +287,8 @@ class IntegratedRightingCoreV1:
         self._fault = reason[:100]
         if self.seek_nipple is not None:
             self.seek_nipple.cancel()
+        if self.seeking_outcomes is not None:
+            self.seeking_outcomes.close(reason=self._fault)
         if self.maternal_outcomes is not None:
             self.maternal_outcomes.close(reason=self._fault)
         hook = self.cognition.sensory.learning_hook
@@ -302,6 +309,7 @@ class IntegratedRightingCoreV1:
         local_reports: tuple[LocalTargetReportV1, ...] = (), local_events: tuple[LocalControlEventV1, ...] = (),
         outcome_intervals: tuple[RightingIntervalEvidenceV1, ...] = (), visual_observation: VisualObservationV1 | None = None,
         maternal_intervals: tuple[MaternalIntervalEvidenceV1, ...] = (),
+        seeking_intervals: tuple[SeekNippleIntervalEvidenceV1, ...] = (),
         visual_bid_priority: tuple[int, int] | None = None,
     ) -> IntegratedRightingCycleV1:
         """Freeze one eligible summary, choose/project/authorize, finish F and close.
@@ -337,6 +345,12 @@ class IntegratedRightingCoreV1:
             raise ValueError("maternal intervals require a bounded immutable batch")
         if self.maternal_outcomes is None and maternal_intervals:
             raise ValueError("maternal interval input requires the explicit correspondence profile")
+        if not isinstance(seeking_intervals, tuple) or len(seeking_intervals) > 16 or any(
+            not isinstance(item, SeekNippleIntervalEvidenceV1) for item in seeking_intervals
+        ):
+            raise ValueError("seeking intervals require a bounded immutable typed batch")
+        if self.seeking_outcomes is None and seeking_intervals:
+            raise ValueError("seeking interval input requires the explicit correspondence profile")
         if visual_bid_priority is not None:
             if self.visual is None or not isinstance(visual_bid_priority, tuple) or len(visual_bid_priority) != 2:
                 raise ValueError("priority control needs a configured visual source and two integer ranks")
@@ -353,7 +367,7 @@ class IntegratedRightingCoreV1:
             return self._run_cycle(
                 feedback, tick=cutoff_tick, context=context, competing_bids=competing_bids, reports=local_reports, events=local_events,
                 outcome_intervals=outcome_intervals, visual_observation=visual_observation, visual_bid_priority=visual_bid_priority,
-                maternal_intervals=maternal_intervals,
+                maternal_intervals=maternal_intervals, seeking_intervals=seeking_intervals,
             )
         except BaseException:
             self.stop("internal_hierarchy_cycle_failed_no_world_call")
@@ -366,7 +380,7 @@ class IntegratedRightingCoreV1:
         competing_bids: Sequence[AttentionBidV1], reports: tuple[LocalTargetReportV1, ...],
         events: tuple[LocalControlEventV1, ...], outcome_intervals: tuple[RightingIntervalEvidenceV1, ...],
         visual_observation: VisualObservationV1 | None, visual_bid_priority: tuple[int, int] | None,
-        maternal_intervals: tuple[MaternalIntervalEvidenceV1, ...],
+        maternal_intervals: tuple[MaternalIntervalEvidenceV1, ...], seeking_intervals: tuple[SeekNippleIntervalEvidenceV1, ...],
     ) -> IntegratedRightingCycleV1:
         """Implement the guarded C/D/E owner stages between real scheduler boundaries."""
         cycle = self.scheduler.last_completed_cycle + 1
@@ -390,6 +404,9 @@ class IntegratedRightingCoreV1:
                 **({"maternal_interval_count": len(maternal_intervals),
                     "maternal_last_interval_tick": maternal_intervals[-1].tick if maternal_intervals else None}
                    if self.maternal_outcomes is not None else {}),
+                **({"seeking_interval_count": len(seeking_intervals),
+                    "seeking_last_interval_tick": seeking_intervals[-1].tick if seeking_intervals else None}
+                   if self.seeking_outcomes is not None else {}),
             },
         )
         self.trace.append("hierarchy_cycle", "focal core opened; physical time is held", cycle_id=cycle,
@@ -399,17 +416,30 @@ class IntegratedRightingCoreV1:
         applied = self.scheduler.phase_c_apply_frozen(cycle, self.trace)
         if tuple(item.result_id for item in applied) != (ingress.result_id,):
             raise RuntimeError("the frozen summary sidecar lost its ingress association")
+        seeking_owner = self.seeking_outcomes
+        seeking_before = seeking_owner.history()[-1].number if seeking_owner is not None and seeking_owner.history() else 0
+        if seeking_owner is not None:
+            for seeking_outcome in seeking_owner.consume_intervals(seeking_intervals, cutoff_tick=tick):
+                self.trace.append("hierarchy_seeking_outcome", "original seeking endpoint compared once; not reach, touch or causal credit",
+                                  cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
+                                  details={"pnm_id": seeking_outcome.claim.preview.pnm.pnm_id, "status": seeking_outcome.status,
+                                           "event_tick": seeking_outcome.evidence.feedback.event_tick
+                                           if seeking_outcome.evidence is not None else None,
+                                           "command_intervals": seeking_outcome.command_intervals})
+
         maternal_owner = self.maternal_outcomes
         maternal_before = maternal_owner.history()[-1].number if maternal_owner is not None and maternal_owner.history() else 0
         maternal_results: tuple[MaternalOutcomeV1, ...] = ()
         if maternal_owner is not None:
             maternal_results = maternal_owner.consume_intervals(maternal_intervals, cutoff_tick=tick)
-            for outcome in maternal_results:
-                self.trace.append("hierarchy_maternal_outcome", "original maternal endpoint compared once, not task success or causal credit",
+            for maternal_outcome in maternal_results:
+                self.trace.append("hierarchy_maternal_outcome",
+                                  "original maternal endpoint compared once, not task success or causal credit",
                                   cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
-                                  details={"pnm_id": outcome.claim.preview.pnm.pnm_id, "status": outcome.status,
-                                           "event_tick": outcome.evidence.event_tick if outcome.evidence is not None else None,
-                                           "command_intervals": outcome.command_intervals})
+                                  details={"pnm_id": maternal_outcome.claim.preview.pnm.pnm_id, "status": maternal_outcome.status,
+                                           "event_tick": maternal_outcome.evidence.event_tick
+                                           if maternal_outcome.evidence is not None else None,
+                                           "command_intervals": maternal_outcome.command_intervals})
         claim_outcomes = () if self.outcomes is None else self.outcomes.consume_intervals(outcome_intervals, cutoff_tick=tick)
         visual_source = None
         if self.visual is not None:
@@ -570,14 +600,17 @@ class IntegratedRightingCoreV1:
         self.scheduler.enter_runtime_phase(cycle, CyclePhase.PROJECT_DISPATCH)
         calculation = self.cognition.project_selected(selected, replace_existing=True)
         self.trace.append(
-            "hierarchy_pnm_consumer", "Prediction registration is separate from the deferred task-outcome consumer",
+            "hierarchy_pnm_consumer", ("Prediction registration and original seeking correspondence are separate consumers"
+                                       if seeking_owner is not None else
+                                       "Prediction registration is separate from the deferred task-outcome consumer"),
             cycle_id=cycle, phase=CyclePhase.PROJECT_DISPATCH.name,
             details={"enabled": self.cognition.task_pnm_consumer_enabled,
                      "registered": self.cognition.prediction.current_pnm is not None,
                      "consumer": ("adopt_seeking_preview" if isinstance(application, SeekNippleApplicationV1) else
                                   "adopt_maternal_preview" if isinstance(application, FollowMomApplicationV1) else
                                   "adopt_visual_preview" if isinstance(application, TranslationApplicationV1) else "adopt_support_preview"),
-                     "task_outcomes": ("separate_righting_and_maternal_consumers" if self.stand_follow_enabled else
+                     "task_outcomes": ("seek_nipple_correspondence_v1_with_separate_existing_consumers" if seeking_owner is not None else
+                                       "separate_righting_and_maternal_consumers" if self.stand_follow_enabled else
                                        "maternal_correspondence_v1" if maternal_owner is not None else
                                        "not_implemented_for_visual" if self.visual is not None else
                                        "P16_1G_A" if self.outcomes is not None else "deferred_to_P16_1G")},
@@ -591,6 +624,14 @@ class IntegratedRightingCoreV1:
             self.follow_mom.authorized(application, tuple(item.current for item in reservations))
         if isinstance(application, SeekNippleApplicationV1) and self.seek_nipple is not None:
             self.seek_nipple.authorized(application, tuple(item.current for item in reservations))
+        seeking_registration = None
+        if seeking_owner is not None and isinstance(application, SeekNippleApplicationV1) and proposal is not None:
+            seeking_registration = seeking_owner.register(application, proposal, tuple(item.current for item in reservations))
+            self.trace.append("hierarchy_seeking_claim", "original seeking forecast reconciled before handoff",
+                              cycle_id=cycle, phase=CyclePhase.PROJECT_DISPATCH.name,
+                              details={"pnm_id": seeking_registration.preview.pnm.pnm_id, "endpoint_event_tick": seeking_registration.due_tick,
+                                       "compatible": ",".join(seeking_registration.compatible_relations),
+                                       "unevaluable": ",".join(seeking_registration.unevaluable_relations)})
         maternal_registration = None
         if maternal_owner is not None and isinstance(application, FollowMomApplicationV1) and proposal is not None:
             maternal_registration = maternal_owner.register(application, proposal, tuple(item.current for item in reservations))
@@ -704,6 +745,9 @@ class IntegratedRightingCoreV1:
             if maternal_attention is not None and maternal_allocation is not None else None,
             maternal_learning_report=maternal_learning_report, feeding_detail_source=feeding_source,
             seeking_task=self.seek_nipple.assessment() if self.seek_nipple is not None else None,
+            seeking_correspondence=SeekNippleOutcomeFrameV1(
+                tick, tuple(item for item in seeking_owner.history() if item.number > seeking_before),
+                seeking_registration, seeking_owner.pending(), seeking_owner.compare_predictions) if seeking_owner is not None else None,
         )
         self.last_result = result
         return result
@@ -766,6 +810,7 @@ class IntegratedRightingTrialV1:
         self._task_prediction_comparison_enabled = task_prediction_comparison_enabled
         self._outcome_intervals: list[RightingIntervalEvidenceV1] = []
         self._maternal_intervals: list[MaternalIntervalEvidenceV1] = []
+        self._seeking_intervals: list[SeekNippleIntervalEvidenceV1] = []
         self._focal_only_feedback_from_tick = focal_only_feedback_from_tick
         self._orientation_mapping_sign = orientation_mapping_sign
         self._task_pnm_consumer_enabled = task_pnm_consumer_enabled
@@ -819,6 +864,7 @@ class IntegratedRightingTrialV1:
         self._history.clear()
         self._outcome_intervals.clear()
         self._maternal_intervals.clear()
+        self._seeking_intervals.clear()
 
     @property
     def tick(self) -> int:
@@ -892,6 +938,8 @@ class IntegratedRightingTrialV1:
             **(cognition.sensory.learning_hook.retained_counts() if cognition.sensory.learning_hook is not None else {}),
             **(self.core.maternal.learning_hook.retained_counts()
                if self.core.maternal is not None and self.core.maternal.learning_hook is not None else {}),
+            **({"seeking_staged_intervals": len(self._seeking_intervals), **self.core.seeking_outcomes.retained_counts()}
+               if self.core.seeking_outcomes is not None else {}),
             **({"maternal_staged_intervals": len(self._maternal_intervals), **self.core.maternal_outcomes.retained_counts()}
                if self.core.maternal_outcomes is not None else {}),
         }
@@ -929,6 +977,9 @@ class IntegratedRightingTrialV1:
             **({"feeding_detail_profile": self.core.feeding_detail.profile.as_dict(),
                 "feeding_detail_source": self.core.feeding_detail.current.as_dict() if self.core.feeding_detail.current is not None else None}
                if self.core.feeding_detail is not None else {}),
+            **({"seeking_pending_claims": [item.as_dict() for item in self.core.seeking_outcomes.pending()],
+                "seeking_outcome_history": [item.as_dict() for item in self.core.seeking_outcomes.history()]}
+               if self.core.seeking_outcomes is not None else {}),
             **({"maternal_pending_claims": [item.as_dict() for item in self.core.maternal_outcomes.pending()],
                 "maternal_outcome_history": [item.as_dict() for item in self.core.maternal_outcomes.history()]}
                if self.core.maternal_outcomes is not None else {}),
@@ -976,9 +1027,12 @@ class IntegratedRightingTrialV1:
                 outcome_intervals=tuple(self._outcome_intervals), visual_observation=visual, visual_bid_priority=visual_bid_priority,
                 maternal_intervals=tuple(self._maternal_intervals) if visual_input_enabled else
                 tuple(replace(item, observations=()) for item in self._maternal_intervals),
+                seeking_intervals=tuple(self._seeking_intervals) if visual_input_enabled else
+                tuple(replace(item, observations=()) for item in self._seeking_intervals),
             )
             self._outcome_intervals.clear()
             self._maternal_intervals.clear()
+            self._seeking_intervals.clear()
             motor = self.core.handoff.consume_motor(result.receipt)
             self._consumptions += 1
             self.core.trace.append("hierarchy_consumed", "outer driver consumed the closed handoff once", cycle_id=result.commitment.cycle_id,
@@ -993,6 +1047,12 @@ class IntegratedRightingTrialV1:
                     if (self.core.maternal_outcomes is not None and
                             (result.maternal_correspondence is None or result.maternal_correspondence.registration is None)):
                         self.core.maternal_outcomes.end_execution(at_tick=self.tick, reason="replacement")
+                if self.core.seeking_outcomes is not None:
+                    seeking_claim = result.seeking_correspondence.registration if result.seeking_correspondence is not None else None
+                    if seeking_claim is not None:
+                        self.core.seeking_outcomes.installed(seeking_claim, at_tick=self.tick)
+                    else:
+                        self.core.seeking_outcomes.end_execution(at_tick=self.tick, reason="replacement")
                 if self.core.maternal_outcomes is not None and result.maternal_correspondence is not None:
                     maternal_claim = result.maternal_correspondence.registration
                     if maternal_claim is not None:
@@ -1005,6 +1065,8 @@ class IntegratedRightingTrialV1:
                                                 "installation_count": self.controller.installation_count})
             elif motor.cancel_previous:
                 self.controller.cancel_execution(at_tick=self.tick)
+                if self.core.seeking_outcomes is not None:
+                    self.core.seeking_outcomes.end_execution(at_tick=self.tick)
                 if self.core.maternal_outcomes is not None:
                     self.core.maternal_outcomes.end_execution(at_tick=self.tick)
                 if self.core.outcomes is not None:
@@ -1038,6 +1100,9 @@ class IntegratedRightingTrialV1:
         if self.core.outcomes is not None and len(self._outcome_intervals) >= 16:
             self._stop("outcome_ingress_overflow_before_physical_step")
             raise OverflowError("sixteen lower intervals await focal outcome admission; physical time was not advanced")
+        if self.core.seeking_outcomes is not None and len(self._seeking_intervals) >= 16:
+            self._stop("seeking_ingress_overflow_before_physical_step")
+            raise OverflowError("sixteen seeking intervals await C2; no further physical step")
         if self.core.maternal_outcomes is not None and len(self._maternal_intervals) >= 16:
             self._stop("maternal_ingress_overflow_before_physical_step")
             raise OverflowError("sixteen returned maternal intervals await C2; no further physical step")
@@ -1075,13 +1140,16 @@ class IntegratedRightingTrialV1:
                                              SensorimotorTargetKindV1.ORIENTATION_ADJUST, SensorimotorTargetKindV1.SUPPORT_EXTENSION})
                                    if self._stand_follow_enabled else result.reports)
                 self._outcome_intervals.append(RightingIntervalEvidenceV1(tick, command, support_reports, delivered))
-            if self.core.maternal_outcomes is not None:
+            if self.core.maternal_outcomes is not None or self.core.seeking_outcomes is not None:
                 observations: list[VisualObservationV1] = []
                 for sample in delivered:
                     observation = admit_motor_visual_surface_v1(self._world.visual_surface(feedback=sample), sample)
                     if observation is not None:
                         observations.append(observation)
-                self._maternal_intervals.append(MaternalIntervalEvidenceV1(tick, command, result.reports, delivered, tuple(observations)))
+                if self.core.maternal_outcomes is not None:
+                    self._maternal_intervals.append(MaternalIntervalEvidenceV1(tick, command, result.reports, delivered, tuple(observations)))
+                if self.core.seeking_outcomes is not None:
+                    self._seeking_intervals.append(SeekNippleIntervalEvidenceV1(tick, command, result.reports, delivered, tuple(observations)))
             self.core.trace.append(
                 "hierarchy_input", "physical interval completed; due sensing staged for later consumers",
                 details={"tick": self.tick, "sample_id": self._latest_feedback.sample_id,
@@ -1125,6 +1193,8 @@ class IntegratedRightingTrialV1:
         if self.core.handoff.has_pending_request:
             raise RuntimeError("resolve the pending focal handoff before cancellation")
         self.controller.cancel_execution(at_tick=self.tick)
+        if self.core.seeking_outcomes is not None:
+            self.core.seeking_outcomes.end_execution(at_tick=self.tick)
         if self.core.maternal_outcomes is not None:
             self.core.maternal_outcomes.end_execution(at_tick=self.tick)
         if self.core.outcomes is not None:

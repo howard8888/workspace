@@ -25,7 +25,7 @@ from nca8_prediction import ProjectedNavMapV1, SupportPreviewV1, VisualTranslati
 from nca8_primitives import TaskActionV1
 from nca8_sensorimotor_contracts import BodyTranslationTargetV1, CommittedBodyTargetV1, SensorimotorTargetKindV1
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = ["Nca8PhaseEDispatchV1", "Nca8HandoffReceiptV1", "Nca8InternalHandoffV1", "Nca8MotorEnvelopeV1", "__version__"]
 
 
@@ -113,7 +113,9 @@ class Nca8MotorEnvelopeV1:
             "original_preview": self.projection.as_dict() if self.projection is not None else None,
             "targets": [item.as_dict() for item in self.targets], "replaces": [item.as_dict() for item in self.replaces],
             "cancel_previous": self.cancel_previous, "physical_execution_established": False,
-            "task_pnm_correspondence": ("deferred_seek_correspondence" if isinstance(self.projection, SeekNipplePreviewV1) else
+            "task_pnm_correspondence": ("seek_nipple_correspondence_v1" if isinstance(self.projection, SeekNipplePreviewV1)
+                                        and self.projection.outcome_consumer_enabled else
+                                        "deferred_seek_correspondence" if isinstance(self.projection, SeekNipplePreviewV1) else
                                         "maternal_correspondence_v1" if isinstance(self.projection, MaternalApproachPreviewV1)
                                         and self.projection.outcome_consumer_enabled else
                                         "deferred_maternal_qualification" if isinstance(self.projection, MaternalApproachPreviewV1) else

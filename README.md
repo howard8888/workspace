@@ -16,6 +16,92 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P16-2C-D original seeking prediction correspondence
+
+Entry: accepted P16-2C-C, freshly verified clean `main` and recorded `origin/main`
+at `bfb100047f0a653ded5d0555de35faa757998b6f`, tree
+`38d728e7c899ff6815973e0aaac7fb4492678319`. This is a prepared opt-in candidate,
+not a local validation certificate, remote verification or default promotion.
+Planning v18 / accepted Architecture v10.1 continue to govern. Historical
+candidate wording in earlier sections describes their issue-time scope.
+
+`cca8_run.py v0.30.32` lists **99 production components / 8 host behavioral
+primitives**. The two additions are `nca8_seek_outcomes` (bounded original-claim
+correspondence) and `nca8_seek_outcomes_demo` (read-only experiment review).
+No new task primitive, physical model, drive channel, scalar executor, dependency,
+learning rule or active default is added. C's task policy and geometric reach
+criterion are unchanged. Its common fixed-schedule evidence collector is reused.
+
+### What the new consumer proves, and what it cannot prove
+
+D registers the selected operation's original mouth/detail prediction with its
+actual BodyMap proposal and authorized target at E, before handoff. Installation
+is recorded only after the closed receipt is consumed and the target installed.
+Returned original command intervals and paired motor/visual acquisitions reach
+C2 on the existing path. They answer the old claim, never replace a newer source.
+The lower control loop still acts independently inside its original permission.
+
+The first profile scores mouth position, the stationary detail anchor and their
+separation with a fixed 0.005-metre residual tolerance (1e-12 boundary allowance).
+The original endpoint is the preview cutoff plus its at-most-eight-tick horizon.
+An exact endpoint may arrive up to eight ticks later; that availability allowance
+does not extend the target lease. Missing exact events expire unresolved; missing
+coordinates/visual support remain unknown. Region/category/parent compatibility
+remains a declared seeded interpretation, not acquired individual identity.
+
+Only actual nonzero oral-command intervals under the identical installed target
+count as commanded exposure. Support and translation intervals cannot earn that
+count. Exposure itself is not proof of successful movement or causal credit.
+A pre-execution veto is `not_applied`. A materially narrowed authorized endpoint
+marks mouth/separation unevaluable under that permission while retaining the
+unchanged detail-anchor question; it never edits the old prediction. Cancellation
+before the endpoint interrupts the obligation; cancellation at/after it preserves
+the pending original evidence. Uncertain physical-call effects stop without retry.
+
+Geometric reach, tactile contact, local target achievement and PNM matching are
+four different results. The original PNM did not predict touch: D must not infer
+a nipple surface, latch, milk, nourishment, task completion or learning from a
+match. The task may finish while an earlier claim remains pending. A faster focal
+cadence can match one endpoint yet exhaust the unchanged task budget.
+
+### Fixed causal reviews and menu access
+
+NCA8 menu **15 -> 20** runs the original-correspondence review. Its options offer
+nominal/no-surface/comparison-off, endpoint drift, narrowing/veto, missing evidence
+and interruption, and continuous stand-follow-seek. Option 6 runs all 29 cases;
+option 7 inspects retained results without repeating movement. Existing feeding
+source choices, option 18 (B) and option 19 (C) remain independently available.
+The secondary developer route is:
+
+    python scripts/review_nca8_feeding.py --seek-outcomes --case all
+    python scripts/review_nca8_feeding.py --seek-outcomes --case endpoint_drift --detail
+
+The nominal original event-8 prediction is compared at cutoff 12 using its
+sample available at tick 9, not the newer current event-11 source. Removing only
+the tactile surface preserves the commands and geometric match but removes touch.
+A fixed 0.01-metre external reach displacement during [7,8) creates an original
+endpoint discrepancy after local achievement. The corresponding comparison-off
+condition retains that physical trajectory and all task decisions. Moving the
+same disturbance to [8,9) leaves event 8 matched despite changed newer geometry.
+These controls test correspondence, not improved movement or prediction's unique
+information value. The narrowing_control and narrowed pair both use cadence eight
+and identical initial geometry/provider/task profiles; only BodyMap maximum step
+changes to 0.04 metres. The original task contribution and PNM remain unchanged.
+
+Near-start reviews retain C's 64-tick horizon, while continuous variants retain
+160 ticks; all use dt=0.05 seconds. Task budget remains 12 focal opportunities /
+48 ticks; target lease remains at most eight ticks. New owner limits are eight
+pending claims, 32 terminal records, sixteen recent paired acquisitions, sixteen
+staged intervals, one awaiting installation and one execution reference.
+Diagnostic retention may change only its measured storage count, not behavior.
+
+`SeekNippleProfileV1.outcomes_enabled` defaults false. Enabling D permits a separate
+`prediction_comparison_enabled=False` control; no other owner gains authority.
+Original A/B/C exports and task/physical controls remain regression obligations.
+The full local Pylint/mypy/pytest/preflight and manual wall still governs acceptance.
+Seeking mismatch-to-Attention, feeding participation/Phase F, latch, Suckle,
+observed milk/nourishment, safe Rest and full P16-2C/B99 remain open.
+
 ## NCA8 update: P16-2C-C Navigation-selected SeekNipple
 
 Entry: accepted P16-2C-B, freshly verified clean `main` and recorded `origin/main`

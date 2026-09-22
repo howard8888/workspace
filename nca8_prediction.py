@@ -35,7 +35,7 @@ from nca8_primitives import PrimitiveApplicationV1
 # Small validators intentionally remain local for readable standalone modules.
 # pylint: disable=duplicate-code
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "Nca8PredictionRuntimeV1",
     "PendingPredictionTraceV1",
@@ -347,7 +347,8 @@ class SeekNipplePreviewV1:
     stationary body/target and available lower competence. BodyMap independently
     tests whether its one-axis capability can realize that request. This record
     neither supplies an actuator endpoint nor predicts touch from visual position.
-    Later execution-sensitive PNM comparison is a separate, still-deferred route.
+    Execution-sensitive comparison is a separate opt-in P16-2C-D consumer; its
+    enablement label changes neither this original forecast nor motor permission.
     """
 
     pnm: ProjectedNavMapV1
@@ -357,10 +358,13 @@ class SeekNipplePreviewV1:
     scene_target: NavPointV1
     predicted_mouth: NavPointV1
     horizon_ticks: int = 8
+    outcome_consumer_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.pnm, ProjectedNavMapV1) or not isinstance(self.basis, FeedingDetailNavMapStateV1):
             raise TypeError("seeking prediction requires its typed PNM and feeding source")
+        if not isinstance(self.outcome_consumer_enabled, bool):
+            raise TypeError("seeking outcome-consumer switch must be Boolean")
         mouth = self.basis.mouth_position
         if mouth is None or not self.basis.oral_evidence_current or self.basis.applied_cycle != self.pnm.created_cycle:
             raise ValueError("seeking prediction requires this opportunity's paired current mouth/detail evidence")
@@ -393,7 +397,7 @@ class SeekNipplePreviewV1:
                 "horizon_ticks": self.horizon_ticks, "model": "seek_nipple_straight_relation_v1",
                 "status": "conditional_not_observed", "body_and_detail_assumption": "stationary_during_contribution",
                 "contact_prediction": "not_inferred_from_visual_geometry", "latch_prediction": "not_supplied",
-                "task_outcome_consumer": "deferred_seek_correspondence", "learned_operation": False}
+                "task_outcome_consumer": "seek_nipple_correspondence_v1" if self.outcome_consumer_enabled else "deferred_seek_correspondence", "learned_operation": False}
 
 
 @dataclass(frozen=True, slots=True)

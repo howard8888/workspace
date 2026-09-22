@@ -33,10 +33,10 @@ from nca8_seek_nipple import SeekNippleApplicationV1, SeekNippleProfileV1
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_sensorimotor_contracts import SensorimotorTargetKindV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["SEEK_NIPPLE_CASES_V1", "SeekNippleExperimentProfileV1", "SeekNipplePhysicalSampleV1", "SeekNippleExperimentV1",
            "seek_nipple_profile_v1", "create_seek_nipple_trial_v1", "run_seek_nipple_v1", "render_seek_nipple_v1",
-           "run_seek_nipple_menu_v1", "__version__"]
+           "run_seek_nipple_menu_v1", "seek_nipple_owner_limits_v1", "collect_seek_nipple_evidence_v1", "__version__"]
 
 SEEK_NIPPLE_CASES_V1 = (
     "nominal", "seek_off", "attention_off", "source_off", "no_need", "missing_detail", "wrong_category",
@@ -297,6 +297,33 @@ def run_seek_nipple_v1(case: str = "nominal", *, trace_capacity: int = 256) -> S
     """Advance one fixed schedule with no observer-result-dependent task branching."""
     profile = seek_nipple_profile_v1(case)
     trial = create_seek_nipple_trial_v1(case, trace_capacity=trace_capacity)
+    return collect_seek_nipple_evidence_v1(trial, profile)
+
+
+def seek_nipple_owner_limits_v1() -> dict[str, int]:
+    """Expose a detached copy of the retained C observer's measured owner bounds."""
+    return dict(_LIMITS)
+
+
+def collect_seek_nipple_evidence_v1(
+    trial: IntegratedRightingTrialV1, profile: SeekNippleExperimentProfileV1,
+) -> SeekNippleExperimentV1:
+    """Collect complete evidence on one fixed external schedule, without task policy.
+
+    Shared by the retained C experiment and the separate D correspondence review.
+    The caller has already selected the provider/configuration at construction;
+    this driver never interprets an outcome to choose a task. Collection requires
+    a fresh idle trial and a finite 1/4/8 cadence within 160 physical ticks.
+    Returning this record does not automatically qualify a different experiment
+    under C's case-specific review rules; D supplies its own explicit checks.
+    """
+    if not isinstance(trial, IntegratedRightingTrialV1) or not isinstance(profile, SeekNippleExperimentProfileV1):
+        raise TypeError("seeking collection requires its typed trial and frozen profile")
+    if trial.tick != 0 or trial.handoff_consumptions or trial.core.last_result is not None:
+        raise ValueError("seeking collection requires a fresh trial without earlier focal work")
+    if (isinstance(profile.horizon_ticks, bool) or not isinstance(profile.horizon_ticks, int) or not 1 <= profile.horizon_ticks <= 160
+            or isinstance(profile.cadence, bool) or not isinstance(profile.cadence, int) or profile.cadence not in (1, 4, 8)):
+        raise ValueError("seeking collection requires a finite physical horizon and declared cadence")
     before = _durable_signature(trial)
     cycles: list[IntegratedRightingCycleV1] = []
     steps: list[SensorimotorStepV1] = []

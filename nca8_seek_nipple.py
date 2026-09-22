@@ -11,8 +11,9 @@ The supplied developmental need and part/recognition seeds are not learned.
 Two distinct paired current acquisitions spanning four physical ticks establish
 that the mouth reached the represented detail within five millimetres. This
 engineering reach criterion is independent of touch; even a true touch cannot
-identify a nipple surface, seal a latch or establish milk. PNM correspondence,
-feeding participation/learning and full newborn qualification remain deferred.
+identify a nipple surface, seal a latch or establish milk. P16-2C-D may opt in to
+separate original-PNM correspondence; it does not change these task rules.
+Feeding participation/learning and full newborn qualification remain deferred.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from nca8_prediction import ProjectedNavMapV1, SeekNipplePreviewV1
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
 from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["SeekNippleProfileV1", "SeekNippleTaskV1", "SeekNippleApplicationV1", "SeekNippleAssessmentV1", "SeekNippleIPV1", "__version__"]
 
 _MAX_TICKS = 48
@@ -54,10 +55,14 @@ class SeekNippleProfileV1:
 
     enabled: bool = True
     influence_enabled: bool = True
+    outcomes_enabled: bool = False
+    prediction_comparison_enabled: bool = True
 
     def __post_init__(self) -> None:
-        if not isinstance(self.enabled, bool) or not isinstance(self.influence_enabled, bool):
+        if not all(isinstance(flag, bool) for flag in (self.enabled, self.influence_enabled, self.outcomes_enabled, self.prediction_comparison_enabled)):
             raise TypeError("seeking switches must be Boolean")
+        if not self.outcomes_enabled and not self.prediction_comparison_enabled:
+            raise ValueError("comparison-off requires the explicit seeking correspondence consumer")
 
     def as_dict(self) -> dict[str, object]:
         """Describe fixed scope without promising task success or physiological realism."""
@@ -66,7 +71,9 @@ class SeekNippleProfileV1:
                 "maximum_contribution_metres": 0.15, "maximum_target_lease_ticks": 8,
                 "maximum_detail_gap_ticks": 8, "reach_tolerance_metres": _REACH_TOLERANCE,
                 "reach_samples": 2, "minimum_reach_span_ticks": 4, "contact_required_for_reach": False,
-                "task_pnm_correspondence": "deferred", "feeding_learning": "unimplemented_no_participation"}
+                "task_pnm_correspondence": "seek_nipple_correspondence_v1" if self.outcomes_enabled else "deferred",
+                **({"prediction_comparison_enabled": self.prediction_comparison_enabled} if self.outcomes_enabled else {}),
+                "feeding_learning": "unimplemented_no_participation"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,7 +374,8 @@ class SeekNippleIPV1:
                                "later corresponding mouth/detail acquisition; conditional approach, not contact", cycle_id + 1, cycle_id + 2)
         request = OralReachRequestV1(TargetOriginV1(basis.stream, task.task_id, app_id, f"seek_nipple_envelope:{basis.stream.generation}:{cycle_id}"),
                                      basis.source_map_ref, task.region_id, horizon, "selected_seek_nipple")
-        projection = SeekNipplePreviewV1(pnm, basis, task.task_id, task.region_id, detail, predicted, horizon)
+        projection = SeekNipplePreviewV1(pnm, basis, task.task_id, task.region_id, detail, predicted, horizon,
+                                        outcome_consumer_enabled=self.profile.outcomes_enabled)
         next_task = replace(task, applications=task.applications + 1)
         result = SeekNippleApplicationV1(app_id, self.primitive_id, self.primitive_kind, cycle_id, wnm.working_id,
                                          ("feeding:limited_mouth_detail_approach",), relations, pnm.observation_condition,
