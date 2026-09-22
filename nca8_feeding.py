@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from cca8_navmap_kernel import (
@@ -30,7 +31,10 @@ from nca8_contracts import CircuitValidityV1
 from nca8_maternal import MaternalNavMapStateV1
 from nca8_visual import VisualDetectionV1
 
-__version__ = "0.2.0"
+if TYPE_CHECKING:
+    from nca8_seek_attention import SeekingOutcomeAttentionV1
+
+__version__ = "0.3.0"
 __all__ = [
     "FeedingDetailSeedV1", "FeedingDetailProfileV1", "FeedingDetailNavMapStateV1",
     "FeedingDetailCandidateV1", "FeedingDetailSourceV1", "__version__",
@@ -391,6 +395,25 @@ class FeedingDetailSourceV1:
         self._durable = _build_seed(profile.seed)
         self._current: FeedingDetailNavMapStateV1 | None = None
         self._influence: tuple[str, int] | None = None
+        self._outcome_attention: SeekingOutcomeAttentionV1 | None = None
+
+    @property
+    def outcome_attention(self) -> SeekingOutcomeAttentionV1 | None:
+        """Read the optional source-owned relevance extension, not a second focus."""
+        return self._outcome_attention
+
+    def configure_outcome_attention(self) -> None:
+        """Attach the fixed seeking relevance profile once, before source processing.
+
+        The late import follows the existing maternal ownership boundary: the
+        source schema does not import executive work at module initialization.
+        Configuration changes no sensory fact, durable map or actuator right.
+        Reset constructs a new source; core stopping closes its old extension.
+        """
+        if self._current is not None or self._outcome_attention is not None:
+            raise RuntimeError("configure seeking relevance only once before source updates")
+        import nca8_seek_attention  # pylint: disable=import-outside-toplevel
+        self._outcome_attention = nca8_seek_attention.SeekingOutcomeAttentionV1(self._stream, self._profile.seed)
 
     @property
     def profile(self) -> FeedingDetailProfileV1:

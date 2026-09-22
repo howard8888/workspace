@@ -12,8 +12,9 @@ Two distinct paired current acquisitions spanning four physical ticks establish
 that the mouth reached the represented detail within five millimetres. This
 engineering reach criterion is independent of touch; even a true touch cannot
 identify a nipple surface, seal a latch or establish milk. P16-2C-D may opt in to
-separate original-PNM correspondence; it does not change these task rules.
-Feeding participation/learning and full newborn qualification remain deferred.
+separate original-PNM correspondence. P16-2C-E may allocate its source-owned
+interpretation instead of a new primitive in the existing focal slot. Neither
+extension changes these task rules or renews their budgets. Feeding participation/learning and full newborn qualification remain deferred.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from nca8_prediction import ProjectedNavMapV1, SeekNipplePreviewV1
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
 from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["SeekNippleProfileV1", "SeekNippleTaskV1", "SeekNippleApplicationV1", "SeekNippleAssessmentV1", "SeekNippleIPV1", "__version__"]
 
 _MAX_TICKS = 48
@@ -57,12 +58,15 @@ class SeekNippleProfileV1:
     influence_enabled: bool = True
     outcomes_enabled: bool = False
     prediction_comparison_enabled: bool = True
+    outcome_attention_enabled: bool = False
 
     def __post_init__(self) -> None:
-        if not all(isinstance(flag, bool) for flag in (self.enabled, self.influence_enabled, self.outcomes_enabled, self.prediction_comparison_enabled)):
+        if not all(isinstance(flag, bool) for flag in (self.enabled, self.influence_enabled, self.outcomes_enabled, self.prediction_comparison_enabled, self.outcome_attention_enabled)):
             raise TypeError("seeking switches must be Boolean")
         if not self.outcomes_enabled and not self.prediction_comparison_enabled:
             raise ValueError("comparison-off requires the explicit seeking correspondence consumer")
+        if self.outcome_attention_enabled and not self.outcomes_enabled:
+            raise ValueError("seeking relevance requires the canonical correspondence consumer")
 
     def as_dict(self) -> dict[str, object]:
         """Describe fixed scope without promising task success or physiological realism."""
@@ -73,6 +77,7 @@ class SeekNippleProfileV1:
                 "reach_samples": 2, "minimum_reach_span_ticks": 4, "contact_required_for_reach": False,
                 "task_pnm_correspondence": "seek_nipple_correspondence_v1" if self.outcomes_enabled else "deferred",
                 **({"prediction_comparison_enabled": self.prediction_comparison_enabled} if self.outcomes_enabled else {}),
+                **({"outcome_attention": "seeking_outcome_attention_v1"} if self.outcome_attention_enabled else {}),
                 "feeding_learning": "unimplemented_no_participation"}
 
 

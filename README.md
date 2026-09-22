@@ -16,6 +16,108 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P16-2C-E seeking discrepancy to Attention
+
+Entry: P16-2C-D is accepted and committed on clean `main` and recorded
+`origin/main` at `33ae61996cbd2644c0f01336c43152db9f5dbbde`, tree
+`d66160dfc3f2f090c9331a25f217ad96b77622d8`, including the domain-specific
+seeking/maternal loop-name correction. E is a prepared opt-in candidate under
+adopted Planning v18 / accepted Architecture v10.1, not a local validation
+certificate or default promotion. Earlier candidate sections retain their
+issue-time meaning; they do not override these later acceptance checkpoints.
+
+`cca8_run.py v0.30.33` lists **101 production components / 8 host behavioral
+primitives**. The two additions are `nca8_seek_attention` and its read-only
+`nca8_seek_attention_demo`. The feeding source owns the optional relevance
+extension; it is not a new brain part, world model, primitive or motor framework.
+The physical provider, drive wire, scalar executor, task criteria and budgets
+are unchanged. C/D default profiles remain independent controls.
+
+### Original prediction, current relevance and action stay separate
+
+D first compares the original seeking endpoint against its actual permission,
+command exposure and corresponding paired acquisition. E validates that canonical
+result without republishing it, then applies a fixed local significance rule.
+Only an informative executed mismatch can request consideration. The initial
+profile recognizes a contradicted feeding-part identity, a detail-anchor shift
+of at least 0.02 metres, a predicted final reach that was not supported, or two
+consecutive distinct same-task endpoint discrepancies while reach remains unmet.
+An isolated small intermediate error does not automatically capture attention.
+Missing/unknown evidence, vetoes, interrupted horizons and disabled comparisons
+do not become invented prediction failures. Touch is still not a PNM score.
+
+The request adds rank 40 only to an already eligible ordinary feeding bid. It
+cannot resurrect disabled nomination, missing detail or contradicted current
+content. Ordinary Attention still selects one source; current higher-priority
+support need remains independently effective. No comparator selects SeekNipple,
+changes source facts, refreshes an acquisition, or grants motor permission.
+
+The named `seeking_outcome_attention_v1` policy extends the existing conservative
+single-opportunity interpretation policy to feeding. After the one WNM is chosen,
+interpretation compares the historical discrepancy with its current supported
+relations. It consumes that opportunity instead of selecting another primitive
+or creating a target/PNM. A later opportunity may reconsider a response through
+ordinary current applicability and BodyMap. An unknown dependent response waits
+only within the original request lifetime; unrelated source work and lower
+protection continue. This is an explicit initial policy, not a universal claim
+that every mammalian comparison needs a whole cognitive cycle.
+
+Storage is bounded: eight pending requests, one previous endpoint, one dependent
+response and at most 32 diagnostic dispositions. Requests expire eight physical
+ticks after admission; reads/replays do not renew them. Interpretation counts
+against the original task's 12-focal-opportunity / 48-tick budget. Neither
+historical resolution nor request expiry restarts a terminal task or old target.
+
+### Causal contrasts and honest limits
+
+There are 24 finite cases. Competing-source and maintained-source on/off pairs
+change focal allocation at cutoff 12 while retaining identical complete physical
+trajectories, local command records, current feeding evidence and task records.
+Both reach at tick 24. This is an allocation effect, not a speed improvement.
+The on condition interprets the original event-8 discrepancy at cutoff 12 and
+reconsiders its response at 16; the off condition gives the visual source focus.
+
+A fixed opposite perturbation after event 8 restores the current geometry before
+interpretation. The original mismatch remains a mismatch while current relevance
+is reported `historical_resolved`. Another case changes the body only after the
+original matched endpoint and creates no retrospective mismatch. Persistent and
+isolated intermediate discrepancies have distinct significance results.
+
+Two support controls differ by one physical interval. A loss whose feedback is
+first available after cutoff 12 cannot retroactively change that frozen decision;
+protection and later support focus still occur. The earlier loss is already
+available at cutoff 12, defeats the feeding request, and lets that request expire
+uninterpreted. This timing pair was added after an initial review expectation
+incorrectly treated the later report as already available; no safety, sensory,
+prediction, task or stopping threshold was changed.
+
+The continuous stand-follow-seek case retains geometric reach at 112. A separate
+fixed oral disturbance creates a request/interpretation at 112 and reaches at
+124. These are different physical conditions, not an Attention-only performance
+contrast. Nominal/no-surface, comparison-off, gap, dropout, delay, unavailable
+capability, narrowing, cancellation and fixed-horizon cadence cases remain
+explicitly bounded. Some adverse cases do not reach.
+
+### Review access and remaining work
+
+NCA8 **15 -> 21** opens E; choices 1-5 group contrasts, 6 runs all cases, and 7
+inspects retained detail without rerunning movement. The ordinary route starts
+at Main menu 1 (Watch Cognition) -> 4 (NCA8). Existing A options and B/C/D options
+18/19/20 are unchanged. The secondary developer entry is:
+
+    python scripts/review_nca8_feeding.py --seek-attention --case all
+
+The release candidate adds 198 tests. Local acceptance still requires the full
+production Pylint/mypy scope, changed tests, complete NCA8/host regressions, full
+preflight and positive/adverse review. Review-environment tool limitations are
+recorded in the external delivery evidence, not hidden by dependency skips.
+
+E does not add feeding participation/learning or Phase-F reconciliation. Existing
+Righting/maternal no-learning paths remain at their own scope. General head
+alignment/search, latch, Suckle, milk/nourishment, Rest, durable learning, full
+P16-2C, B99 and default promotion remain open. No separate Goal Module, universal
+outcome evaluator or guaranteed causal credit is introduced.
+
 ## NCA8 update: P16-2C-D original seeking prediction correspondence
 
 Entry: accepted P16-2C-C, freshly verified clean `main` and recorded `origin/main`

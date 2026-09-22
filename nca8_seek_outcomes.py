@@ -7,7 +7,8 @@ command exposure and paired motor/visual acquisitions. It does not read current
 source state or private physics, select an operation, change a target, establish
 latch, or assign causal credit. Matching the original endpoint and completing a
 reach task are different questions. Default C experiments do not create this
-owner. Its Attention and learning consumers remain separately deferred.
+owner. P16-2C-E can opt in to source-owned Attention/interpretation using the
+canonical downstream validator; feeding learning remains separately deferred.
 """
 
 from __future__ import annotations
@@ -24,9 +25,9 @@ from nca8_seek_nipple import SeekNippleApplicationV1
 from nca8_sensorimotor_contracts import BodyRelativeTargetV1, CommittedBodyTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1
 from nca8_visual import VisualObservationV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["SeekNippleEndpointV1", "SeekNippleIntervalEvidenceV1", "SeekNippleClaimV1", "SeekNippleOutcomeV1",
-           "SeekNippleOutcomeFrameV1", "SeekNippleOutcomeRuntimeV1", "__version__"]
+           "SeekNippleOutcomeFrameV1", "SeekNippleOutcomeRuntimeV1", "validate_seeking_outcome_v1", "__version__"]
 _RELATIONS = ("mouth_position", "detail_anchor", "separation")
 _TOLERANCE = 0.005
 
@@ -204,13 +205,14 @@ class SeekNippleOutcomeFrameV1:
     registration: SeekNippleClaimV1 | None
     pending: tuple[SeekNippleClaimV1, ...]
     comparison_enabled: bool
+    attention_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Report implemented correspondence and explicitly absent downstream routes."""
         return {"profile": "seek_nipple_correspondence_v1", "cutoff_tick": self.cutoff_tick,
                 "comparison_enabled": self.comparison_enabled, "outcomes": [item.as_dict() for item in self.outcomes],
                 "registration": self.registration.as_dict() if self.registration is not None else None,
-                "pending": [item.as_dict() for item in self.pending], "attention_route": "deferred_seeking_attention",
+                "pending": [item.as_dict() for item in self.pending], "attention_route": "seeking_outcome_attention_v1" if self.attention_enabled else "deferred_seeking_attention",
                 "learning_route": "unimplemented_no_participation", "durable_updates": 0}
 
 
@@ -533,3 +535,102 @@ def _compare(
                        "unknown" if name not in residuals else "matched" if residuals[name] <= _TOLERANCE + 1e-12 else "mismatch")
                       for name in _RELATIONS)
     return relations, tuple(residuals.items()), identity
+
+
+def validate_seeking_outcome_v1(outcome: SeekNippleOutcomeV1, *, stream: MotorStreamRefV1, cutoff_tick: int) -> None:
+    """Check a downstream description against its original canonical evidence.
+
+    Used by the optional source relevance consumer, not by the physical driver.
+    This read-only boundary rejects wrong domains, fabricated geometry scores,
+    malformed permission subsets and future evidence. It reuses the original
+    fixed comparison; it neither republishes an outcome nor consumes a claim.
+    The actual publisher still owns exposure provenance and at-most-once
+    consumption. A serialized/copied description never restores motor rights.
+    """
+    cutoff = _tick(cutoff_tick)
+    if not isinstance(outcome, SeekNippleOutcomeV1) or not isinstance(outcome.claim, SeekNippleClaimV1):
+        raise TypeError("seeking relevance requires a canonical seeking outcome")
+    claim = outcome.claim
+    if not isinstance(claim.preview, SeekNipplePreviewV1) or not isinstance(claim.request, OralReachRequestV1):
+        raise TypeError("seeking outcome requires the original typed preview and request")
+    preview, request = claim.preview, claim.request
+    origin = request.origin
+    if (preview.basis.stream != stream or origin.stream != stream or origin.task_id != preview.task_id
+            or origin.application_id != preview.pnm.application_id or preview.pnm.primitive_id != "ip:seek_nipple"
+            or request.source_map_ref != preview.basis.source_map_ref or request.region_id != preview.region_id
+            or request.origin_status != "selected_seek_nipple" or request.lease_ticks != preview.horizon_ticks):
+        raise ValueError("seeking outcome changed its original domain, source, task or stream")
+    if isinstance(outcome.number, bool) or not isinstance(outcome.number, int) or not 1 <= outcome.number < 2**63:
+        raise ValueError("seeking outcome number must be a bounded positive integer")
+    if not preview.basis.cutoff_tick <= _tick(outcome.evaluated_tick) <= cutoff:
+        raise ValueError("seeking outcome cannot precede its original claim or arrive from the future")
+    if (isinstance(outcome.command_intervals, bool) or not isinstance(outcome.command_intervals, int)
+            or not 0 <= outcome.command_intervals <= preview.horizon_ticks):
+        raise ValueError("seeking exposure must fit its original finite horizon")
+    if not isinstance(claim.targets, tuple) or len(claim.targets) > 1:
+        raise ValueError("seeking permission must be the original sole oral target or veto")
+    for target in claim.targets:
+        if (not isinstance(target, CommittedBodyTargetV1) or not isinstance(target.target, BodyRelativeTargetV1)
+                or target.target.kind is not SensorimotorTargetKindV1.ORAL_REACH or target.target.origin != origin
+                or target.target.basis is not preview.basis.oral_feedback or target.committed_tick != preview.basis.cutoff_tick
+                or target.expires_at_tick > claim.due_tick):
+            raise ValueError("seeking permission does not retain the original body and horizon")
+    expected_compatible: tuple[str, ...] = _RELATIONS
+    expected_unevaluable: tuple[str, ...] = ()
+    if claim.targets:
+        local = claim.targets[0].target
+        if not isinstance(local, BodyRelativeTargetV1):
+            raise ValueError("seeking target must retain its oral-relative type")
+        planar = local.basis.planar
+        if planar is None or planar.position is None or planar.heading_degrees is None or planar.frame_id != preview.basis.frame_id:
+            raise ValueError("seeking target lacks its original scene anchor")
+        angle = math.radians(planar.heading_degrees)
+        endpoint = NavPointV1(planar.position[0] + local.endpoint * math.cos(angle), planar.position[1] + local.endpoint * math.sin(angle))
+        if _distance(endpoint, preview.predicted_mouth) > 1e-12:
+            expected_compatible, expected_unevaluable = ("detail_anchor",), ("mouth_position", "separation")
+    if claim.compatible_relations != expected_compatible or claim.unevaluable_relations != expected_unevaluable:
+        raise ValueError("seeking relation subset disagrees with actual original BodyMap narrowing")
+    for names in (claim.compatible_relations, claim.unevaluable_relations):
+        if not isinstance(names, tuple) or any(name not in _RELATIONS for name in names) or len(set(names)) != len(names):
+            raise ValueError("seeking authorization relation set is malformed")
+    if (set(claim.compatible_relations) & set(claim.unevaluable_relations)
+            or set(claim.compatible_relations) | set(claim.unevaluable_relations) != set(_RELATIONS)):
+        raise ValueError("seeking permission must classify every original relation once")
+    for rows in (outcome.relations, outcome.residuals):
+        if not isinstance(rows, tuple) or len(rows) > 3 or any(not isinstance(row, tuple) or len(row) != 2 for row in rows):
+            raise ValueError("seeking results require bounded immutable relation rows")
+        if any(row[0] not in _RELATIONS for row in rows) or len({row[0] for row in rows}) != len(rows):
+            raise ValueError("seeking results cannot contain unknown or duplicate relations")
+    for _, residual in outcome.residuals:
+        if isinstance(residual, bool) or not isinstance(residual, (int, float)) or not math.isfinite(residual) or residual < 0:
+            raise ValueError("seeking residual must be finite and nonnegative")
+    evidence = outcome.evidence
+    if evidence is not None:
+        if not isinstance(evidence, SeekNippleEndpointV1):
+            raise TypeError("seeking result requires its original paired endpoint")
+        evidence.feedback.validate_available(stream=stream, at_tick=outcome.evaluated_tick)
+        if (evidence.feedback.event_tick != claim.due_tick or evidence.feedback.available_tick > claim.expires_at_tick
+                or preview.basis.oral_feedback is None or evidence.feedback.sample_id <= preview.basis.oral_feedback.sample_id):
+            raise ValueError("seeking result lacks the original distinct later acquisition")
+    scored = {"matched", "partly_matched", "mismatch", "identity_contradicted", "unknown", "observed_without_command"}
+    unscored = {"not_applied", "cancelled", "interrupted", "expired_unresolved", "unresolved_stopped", "comparison_disabled"}
+    if outcome.status not in scored | unscored:
+        raise ValueError("unknown seeking outcome disposition")
+    if outcome.status in scored:
+        if evidence is None or not claim.targets:
+            raise ValueError("scored seeking outcome requires original permission and corresponding evidence")
+        relations, residuals, identity = _compare(claim, evidence)
+        values = {value for _, value in relations}
+        status = "mismatch" if "mismatch" in values else "unknown" if "unknown" in values else "matched"
+        if status == "matched" and claim.unevaluable_relations:
+            status = "partly_matched"
+        if identity == "contradicted":
+            status = "identity_contradicted"
+        if outcome.command_intervals == 0:
+            status = "observed_without_command"
+        if outcome.relations != relations or outcome.residuals != residuals or outcome.status != status:
+            raise ValueError("seeking result disagrees with its original canonical endpoint comparison")
+    elif outcome.relations or outcome.residuals:
+        raise ValueError("unscored seeking outcome cannot contain geometric verdicts")
+    if outcome.status == "not_applied" and (claim.targets or outcome.command_intervals or evidence is not None):
+        raise ValueError("nonapplication cannot hide authorized execution or scored evidence")
