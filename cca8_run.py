@@ -648,7 +648,7 @@ _wm_creative_update = cca8_policy_runtime._wm_creative_update
 #nb version number of different modules are unique to that module
 #nb the public API index specifies what downstream code should import from this module
 
-__version__ = "0.30.30"
+__version__ = "0.30.31"
 __all__ = [
     "main",
     "interactive_loop",
@@ -2897,50 +2897,8 @@ def boot_prime_stand(world, ctx) -> None:
         print(f"[boot] Could not seed posture:fallen: {e}")
 
 
-# print_tagging_and_policies_help moved to cca8_profiles.py or cca8_guidance.py.
-
-# --------------------------------------------------------------------------------------
-# Profiles & tutorials: experimental profiles (dry-run) + narrative fallbacks
-# --------------------------------------------------------------------------------------
-
-
-# _goat_defaults moved to cca8_profiles.py or cca8_guidance.py.
-
-
-# _print_goat_fallback moved to cca8_profiles.py or cca8_guidance.py.
-
-
-# profile_rcos_api moved to cca8_profiles.py or cca8_guidance.py.
-
-
-# profile_chimpanzee moved to cca8_profiles.py or cca8_guidance.py.
-
-
-# profile_human moved to cca8_profiles.py or cca8_guidance.py.
-
-
-# profile_human_multi_brains moved to cca8_profiles.py or cca8_guidance.py.
-
-
-# profile_society_multi_agents moved to cca8_profiles.py or cca8_guidance.py.
-
-
-# profile_multi_brains_adv_planning moved to cca8_profiles.py or cca8_guidance.py.
-
-
-# profile_superhuman moved to cca8_profiles.py or cca8_guidance.py.
-
-
-# profile_cca11_governed_cognitive_plurality moved to cca8_profiles.py.
-
-
-# profile_cca12_governed_pod moved to cca8_profiles.py.
-
-
-# _open_readme_tutorial moved to cca8_profiles.py or cca8_guidance.py.
-
-
-# run_new_user_tour moved to cca8_profiles.py or cca8_guidance.py.
+# Profile/tutorial implementations were extracted to cca8_profiles.py and cca8_guidance.py.
+# The former per-helper relocation placeholders are consolidated here; no implementation is removed.
 
 
 # --------------------------------------------------------------------------------------
@@ -3040,6 +2998,8 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("nca8_feeding", "nca8_feeding"),
     ("nca8_feeding_demo", "nca8_feeding_demo"),
     ("nca8_oral_demo", "nca8_oral_demo"),
+    ("nca8_seek_nipple", "nca8_seek_nipple"),
+    ("nca8_seek_nipple_demo", "nca8_seek_nipple_demo"),
     ("nca8_stand_follow_demo", "nca8_stand_follow_demo"),
     ("nca8_translation", "nca8_translation"),
     ("nca8_translation_demo", "nca8_translation_demo"),

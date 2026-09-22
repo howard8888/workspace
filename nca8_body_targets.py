@@ -36,7 +36,7 @@ from nca8_sensorimotor_contracts import (
     TargetOriginV1, oral_basis_compatible_v1, scalar_motor_coordinate_v1,
 )
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "PlanarBodyObservationV1", "VisualApproachRequestV1", "VisualBodyPreviewV1",
     "BodyAxisCapabilityV1", "BodyTranslationCapabilityV1",
@@ -119,15 +119,16 @@ class BodyAxisCapabilityV1:
     maximum_rate: float
     tolerance: float
 
+
     def __post_init__(self) -> None:
         lower, upper, rate = _axis_limits(self.kind)
         object.__setattr__(self, "capability_id", _name(self.capability_id, "capability_id"))
-        for field in ("minimum_coordinate", "maximum_coordinate"):
-            object.__setattr__(self, field, _scalar(getattr(self, field), field, lower, upper))
+        for field_name in ("minimum_coordinate", "maximum_coordinate"):
+            object.__setattr__(self, field_name, _scalar(getattr(self, field_name), field_name, lower, upper))
         if self.minimum_coordinate >= self.maximum_coordinate:
             raise ValueError("capability coordinate interval must have positive width")
-        for field in ("maximum_step", "maximum_excursion", "tolerance"):
-            object.__setattr__(self, field, _scalar(getattr(self, field), field, 0.0, upper - lower))
+        for field_name in ("maximum_step", "maximum_excursion", "tolerance"):
+            object.__setattr__(self, field_name, _scalar(getattr(self, field_name), field_name, 0.0, upper - lower))
         object.__setattr__(self, "maximum_rate", _scalar(self.maximum_rate, "maximum_rate", 0.0, rate))
         if not 0.0 < self.tolerance <= self.maximum_step <= self.maximum_excursion:
             raise ValueError("require 0 < tolerance <= maximum_step <= maximum_excursion")
@@ -266,17 +267,20 @@ class OralReachRequestV1:
     source_map_ref: NavMapRefV1
     region_id: str
     lease_ticks: int = 8
+    origin_status: str = "supplied_requirement_fixture"
 
     def __post_init__(self) -> None:
         if not isinstance(self.origin, TargetOriginV1) or not isinstance(self.source_map_ref, NavMapRefV1):
             raise TypeError("oral request requires the shared origin and a source reference")
         _name(self.region_id, "oral region handle")
         _index(self.lease_ticks, "oral lease", 1, 8)
+        if self.origin_status not in {"supplied_requirement_fixture", "selected_seek_nipple"}:
+            raise ValueError("oral origin must identify the supplied fixture or selected task")
 
     def as_dict(self) -> dict[str, object]:
         """Describe a supplied relation requirement, without live actuator rights."""
         return {"origin": self.origin.as_dict(), "source_map_ref": self.source_map_ref.as_dict(),
-                "region_id": self.region_id, "lease_ticks": self.lease_ticks, "origin_status": "supplied_requirement_fixture"}
+                "region_id": self.region_id, "lease_ticks": self.lease_ticks, "origin_status": self.origin_status}
 
 
 @dataclass(frozen=True, slots=True)
@@ -658,8 +662,8 @@ class BodyTargetMapperV1:
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("stream must be MotorStreamRefV1")
-        if not isinstance(capabilities, tuple) or len(capabilities) > 2:
-            raise ValueError("supply an immutable tuple of at most two axis capabilities")
+        if not isinstance(capabilities, tuple) or len(capabilities) > 3:
+            raise ValueError("supply at most three distinct axis capabilities; concurrent targets remain separately bounded")
         axes: dict[SensorimotorTargetKindV1, BodyAxisCapabilityV1] = {}
         names: set[str] = set()
         for capability in capabilities:
@@ -1072,6 +1076,7 @@ class BodyTargetMapperV1:
 
     def propose_oral_reach(
         self, request: OralReachRequestV1, source: FeedingDetailNavMapStateV1 | None, *, at_tick: int,
+        replace_existing: bool = False,
     ) -> BodyTargetProposalV1:
         """Map one supplied feeding relation to the bounded existing scalar target path.
 
@@ -1091,6 +1096,12 @@ class BodyTargetMapperV1:
             raise ValueError("oral mapping requires its own typed request and generation")
         if tick > _MAX_INDEX - request.lease_ticks:
             raise ValueError("oral target expiry exceeds the finite clock")
+        if not isinstance(replace_existing, bool):
+            raise TypeError("oral replacement must be Boolean")
+        live = self.reservations(at_tick=tick)
+        replacing = live if (replace_existing and request.origin_status == "selected_seek_nipple" and all(
+            item.current.target.kind is SensorimotorTargetKindV1.ORAL_REACH
+            and item.current.target.origin.task_id == request.origin.task_id for item in live)) else ()
         if source is not None:
             if not isinstance(source, FeedingDetailNavMapStateV1) or source.stream != self._stream or source.cutoff_tick != tick:
                 raise ValueError("oral mapping requires the current generation/cutoff feeding source")
@@ -1125,7 +1136,7 @@ class BodyTargetMapperV1:
                     reason = "oral_target_out_of_reach"
                 elif oral.contact is True and abs(forward - oral.extension_metres) > capability.tolerance + _EPSILON:
                     reason = "oral_contact_before_target"
-                elif self.reservations(at_tick=tick):
+                elif live and not replacing:
                     reason = "incompatible_body_resource_reserved"
                 else:
                     goal = max(capability.minimum_coordinate, min(capability.maximum_coordinate, forward))
@@ -1141,7 +1152,7 @@ class BodyTargetMapperV1:
                         bindings = (BodyTargetBindingV1(target, capability),)
         preview = OralReachPreviewV1(request, source, feedback, forward, left, reason or "geometry_only_not_authorized")
         withheld = () if reason is None else ((SensorimotorTargetKindV1.ORAL_REACH, reason),)
-        proposal = BodyTargetProposalV1(request, tick, bindings, withheld, oral_preview=preview)
+        proposal = BodyTargetProposalV1(request, tick, bindings, withheld, replacing if bindings else (), oral_preview=preview)
         self._pending, self._proposal_number, self._last_tick = proposal, number, tick
         return proposal
 

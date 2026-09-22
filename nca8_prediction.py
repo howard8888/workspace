@@ -28,20 +28,21 @@ from typing import Sequence
 from cca8_navmap_kernel import NavPointV1
 from nca8_visual import VisualNavMapStateV1
 from nca8_maternal import MaternalNavMapStateV1
+from nca8_feeding import FeedingDetailNavMapStateV1
 from nca8_maps import MotorSupportConfigurationV1, Nca8PostureStateV1, Nca8SupportStateV1, NavMapStateV1
 from nca8_primitives import PrimitiveApplicationV1
 
 # Small validators intentionally remain local for readable standalone modules.
 # pylint: disable=duplicate-code
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 __all__ = [
     "Nca8PredictionRuntimeV1",
     "PendingPredictionTraceV1",
     "PredictionOutcomeStatusV1",
     "PredictionOutcomeV1",
     "ProjectedNavMapV1",
-    "SupportPreviewV1", "VisualTranslationPreviewV1", "MaternalApproachPreviewV1",
+    "SupportPreviewV1", "VisualTranslationPreviewV1", "MaternalApproachPreviewV1", "SeekNipplePreviewV1",
     "__version__",
 ]
 
@@ -338,6 +339,64 @@ class MaternalApproachPreviewV1:
 
 
 @dataclass(frozen=True, slots=True)
+class SeekNipplePreviewV1:
+    """Sparse oral approach prediction from the selected feeding-detail source.
+
+    The original scene detail and observed mouth anchors are immutable. The
+    operation predicts a limited reduction of their separation assuming a
+    stationary body/target and available lower competence. BodyMap independently
+    tests whether its one-axis capability can realize that request. This record
+    neither supplies an actuator endpoint nor predicts touch from visual position.
+    Later execution-sensitive PNM comparison is a separate, still-deferred route.
+    """
+
+    pnm: ProjectedNavMapV1
+    basis: FeedingDetailNavMapStateV1
+    task_id: str
+    region_id: str
+    scene_target: NavPointV1
+    predicted_mouth: NavPointV1
+    horizon_ticks: int = 8
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.pnm, ProjectedNavMapV1) or not isinstance(self.basis, FeedingDetailNavMapStateV1):
+            raise TypeError("seeking prediction requires its typed PNM and feeding source")
+        mouth = self.basis.mouth_position
+        if mouth is None or not self.basis.oral_evidence_current or self.basis.applied_cycle != self.pnm.created_cycle:
+            raise ValueError("seeking prediction requires this opportunity's paired current mouth/detail evidence")
+        if self.pnm.primitive_id != "ip:seek_nipple":
+            raise ValueError("seeking prediction must belong to the selected SeekNipple operation")
+        if _bounded_identifier(self.task_id, field_name="task_id", maximum=100) != self.task_id:
+            raise ValueError("seeking task identity cannot be normalized into another identity")
+        if self.region_id != self.basis.seed.detail_region_id or self.scene_target != self.basis.detail_position:
+            raise ValueError("seeking prediction cannot replace its originating detail anchor")
+        if not isinstance(self.predicted_mouth, NavPointV1):
+            raise TypeError("predicted mouth must be a scene point")
+        if isinstance(self.horizon_ticks, bool) or not isinstance(self.horizon_ticks, int) or not 1 <= self.horizon_ticks <= 8:
+            raise ValueError("seeking prediction horizon must be one to eight physical ticks")
+        extent = math.hypot(self.predicted_mouth.x - mouth.x, self.predicted_mouth.y - mouth.y)
+        if extent > min(0.15, self.horizon_ticks * 0.025) + 1e-12:
+            raise ValueError("seeking prediction exceeds its declared bounded reference motion")
+        if self.predicted_separation > math.hypot(self.scene_target.x - mouth.x, self.scene_target.y - mouth.y) + 1e-12:
+            raise ValueError("seeking prediction cannot increase the requested mouth/detail separation")
+
+    @property
+    def predicted_separation(self) -> float:
+        """Read expected scene geometry, not local target achievement or touch."""
+        return math.hypot(self.scene_target.x - self.predicted_mouth.x, self.scene_target.y - self.predicted_mouth.y)
+
+    def as_dict(self) -> dict[str, object]:
+        """Export the original sparse claim without creating evidence or permission."""
+        return {"pnm": self.pnm.as_dict(), "basis": self.basis.as_dict(), "task_id": self.task_id,
+                "region_id": self.region_id, "scene_target": self.scene_target.as_dict(),
+                "predicted_mouth": self.predicted_mouth.as_dict(), "predicted_separation_metres": self.predicted_separation,
+                "horizon_ticks": self.horizon_ticks, "model": "seek_nipple_straight_relation_v1",
+                "status": "conditional_not_observed", "body_and_detail_assumption": "stationary_during_contribution",
+                "contact_prediction": "not_inferred_from_visual_geometry", "latch_prediction": "not_supplied",
+                "task_outcome_consumer": "deferred_seek_correspondence", "learned_operation": False}
+
+
+@dataclass(frozen=True, slots=True)
 class PendingPredictionTraceV1:
     """One bounded operation-linked expectation awaiting matching evidence."""
 
@@ -457,8 +516,8 @@ class Nca8PredictionRuntimeV1:
         self._current: PendingPredictionTraceV1 | None = None
         self._pending: list[PendingPredictionTraceV1] = []
         self._outcome_history: list[PredictionOutcomeV1] = []
-        self._preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | None = None
-        self._preview_history: list[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1] = []
+        self._preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | None = None
+        self._preview_history: list[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1] = []
         self._last_preview_cycle = 0
 
     @property
@@ -664,7 +723,7 @@ class Nca8PredictionRuntimeV1:
         """Return the visual member of the same single prospective slot, if any."""
         return self._preview if isinstance(self._preview, VisualTranslationPreviewV1) else None
 
-    def preview_history(self) -> tuple[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1, ...]:
+    def preview_history(self) -> tuple[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1, ...]:
         """Return at most eight immutable superseded previews, not pending outcomes."""
         return tuple(self._preview_history)
 
@@ -697,7 +756,18 @@ class Nca8PredictionRuntimeV1:
             raise TypeError("expected an original maternal projection")
         self._adopt_preview(preview)
 
-    def _adopt_preview(self, preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | None) -> None:
+    @property
+    def current_seeking_preview(self) -> SeekNipplePreviewV1 | None:
+        """Read the current selected oral prediction, never a second active PNM."""
+        return self._preview if isinstance(self._preview, SeekNipplePreviewV1) else None
+
+    def adopt_seeking_preview(self, preview: SeekNipplePreviewV1) -> None:
+        """Register an original seeking forecast without claiming execution or fulfilment."""
+        if not isinstance(preview, SeekNipplePreviewV1):
+            raise TypeError("seeking registration requires its typed original prediction")
+        self._adopt_preview(preview)
+
+    def _adopt_preview(self, preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | None) -> None:
         """Replace one prospective role; retain bounded immutable earlier meanings."""
         if self._current is not None or self._pending:
             raise ValueError("cannot mix unexecuted previews with pending executed claims")

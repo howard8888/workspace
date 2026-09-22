@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""P16-2C-A: one feeding-detail source, before oral task or motor authority.
+"""One feeding-detail source with optional paired oral evidence and task relevance.
 
 A fixed association seed relates two DISTINCT observed region handles. The
 maternal owner supports the parent; the existing visual owner supplies the
@@ -9,8 +9,9 @@ check can reject that declared part relation. It cannot discover an unseen
 nipple from the maternal overview, create contact, or report milk.
 
 The source can nominate its current configuration to ordinary Attention. No
-SeekNipple/Suckle/Rest operation is installed here. There is no new target,
-PNM, lower executor, interoceptive learner, or durable change. Missing detail
+operation is selected here. The opt-in P16-2C-C task consumes a same-acquisition
+mouth/detail relation and may retain one finite source-relevance request. The
+source does not own a PNM, target, executor, interoceptive learner or durable change. Missing detail
 immediately loses current localization/access; this first profile supplies no
 feeding-specific continuity model. Old immutable views keep their old times.
 """
@@ -18,9 +19,9 @@ feeding-specific continuity model. Old immutable views keep their old times.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from cca8_motor_contracts import MotorStreamRefV1
+from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from cca8_navmap_kernel import (
     NavElementV1, NavFrameV1, NavGeometryKindV1, NavGeometryV1, NavMapRefV1,
     NavMapV2, NavPointV1, NavProvenanceV1, NavRelationV1, NavSourceClassV1,
@@ -29,7 +30,7 @@ from nca8_contracts import CircuitValidityV1
 from nca8_maternal import MaternalNavMapStateV1
 from nca8_visual import VisualDetectionV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "FeedingDetailSeedV1", "FeedingDetailProfileV1", "FeedingDetailNavMapStateV1",
     "FeedingDetailCandidateV1", "FeedingDetailSourceV1", "__version__",
@@ -129,12 +130,17 @@ class FeedingDetailNavMapStateV1:
     maternal: MaternalNavMapStateV1
     seed: FeedingDetailSeedV1
     enabled: bool = True
+    oral_feedback: MotorFeedbackV1 | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.maternal, MaternalNavMapStateV1) or not isinstance(self.seed, FeedingDetailSeedV1):
             raise TypeError("feeding detail requires a typed original maternal basis and seed")
         if not isinstance(self.enabled, bool):
             raise TypeError("source enablement must be Boolean")
+        if self.oral_feedback is not None:
+            if not isinstance(self.oral_feedback, MotorFeedbackV1):
+                raise TypeError("oral source evidence must be canonical motor feedback")
+            self.oral_feedback.validate_available(stream=self.stream, at_tick=self.cutoff_tick)
 
     @property
     def stream(self) -> MotorStreamRefV1:
@@ -244,6 +250,56 @@ class FeedingDetailNavMapStateV1:
         return self.association_status == "compatible" and distance is not None and distance <= self.seed.maximum_self_distance + 1e-12
 
     @property
+    def oral_evidence_current(self) -> bool:
+        """Pair the actual body/visual occurrence, never fill gaps from a prediction.
+
+        P16-2C-C opts in to this derived cortical relation. The original body
+        acquisition remains independently available to protected BodyMap. The
+        same sample/event/frame and SELF position must agree; mere arrival in
+        one focal cycle cannot fuse unrelated acquisitions into current truth.
+        Unpaired evidence is unusable. A paired acquisition can still have an
+        unknown oral channel; derived properties preserve that missingness.
+        """
+        body, visual = self.oral_feedback, self.maternal.visual
+        if not self.focal_accessible or body is None or self.cutoff_tick - body.event_tick > 2:
+            return False
+        planar = body.planar
+        if planar is None or planar.position is None or planar.heading_degrees is None or body.oral is None:
+            return False
+        return (body.sample_id == visual.sample_id and body.event_tick == visual.event_tick
+                and planar.frame_id == visual.frame_id and visual.self_position is not None
+                and planar.position == (visual.self_position.x, visual.self_position.y))
+
+    @property
+    def mouth_position(self) -> NavPointV1 | None:
+        """Express the observed one-axis oral tip in the source's scene coordinates.
+
+        This is an explicit aggregate body model, not inferred head anatomy.
+        Missing reach or heading cannot be replaced by a desired target. The
+        transform uses only paired admitted sensing, not the physical provider.
+        """
+        body = self.oral_feedback
+        if not self.oral_evidence_current or body is None or body.planar is None or body.oral is None:
+            return None
+        position, heading, reach = body.planar.position, body.planar.heading_degrees, body.oral.extension_metres
+        if position is None or heading is None or reach is None:
+            return None
+        angle = math.radians(heading)
+        return NavPointV1(position[0] + reach * math.cos(angle), position[1] + reach * math.sin(angle))
+
+    @property
+    def mouth_detail_distance(self) -> float | None:
+        """Measure current mouth/detail geometry independently of tactile contact."""
+        mouth, detail = self.mouth_position, self.detail_position
+        return None if mouth is None or detail is None else math.hypot(detail.x - mouth.x, detail.y - mouth.y)
+
+    @property
+    def oral_contact(self) -> bool | None:
+        """Retain valid touch, valid no-touch and unavailable touch as three states."""
+        body = self.oral_feedback
+        return body.oral.contact if self.oral_evidence_current and body is not None and body.oral is not None else None
+
+    @property
     def validity(self) -> CircuitValidityV1:
         """Mark unavailable visual evidence as stale; never refresh its timestamp."""
         return self.maternal.visual.validity if self.enabled else CircuitValidityV1.STALE
@@ -274,8 +330,14 @@ class FeedingDetailNavMapStateV1:
                 "parent_distance": self.parent_distance, "self_distance": self.self_distance,
                 "association_status": self.association_status, "focal_accessible": self.focal_accessible,
                 "active_relation_labels": list(self.active_relation_labels), "feeding_motor_authority": False,
-                "contact_evidence": "not_supplied", "latch_evidence": "not_supplied", "milk_evidence": "not_supplied",
-                "durable_learning_updates": 0}
+                "contact_evidence": "not_supplied" if self.oral_feedback is None else self.oral_contact,
+                "latch_evidence": "not_supplied", "milk_evidence": "not_supplied", "durable_learning_updates": 0,
+                **({"oral_relation": {"body_acquisition": self.oral_feedback.as_dict(),
+                                      "paired_current": self.oral_evidence_current,
+                                      "mouth_position": None if self.mouth_position is None else self.mouth_position.as_dict(),
+                                      "mouth_detail_distance_metres": self.mouth_detail_distance,
+                                      "contact": self.oral_contact, "contact_identifies_surface": False}}
+                   if self.oral_feedback is not None else {})}
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,17 +351,20 @@ class FeedingDetailCandidateV1:
     """
 
     source_map_state: FeedingDetailNavMapStateV1
+    current_task_persistence_rank: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_map_state, FeedingDetailNavMapStateV1) or not self.source_map_state.focal_accessible:
             raise ValueError("feeding nomination needs current nearby compatible part evidence")
+        if (isinstance(self.current_task_persistence_rank, bool) or not isinstance(self.current_task_persistence_rank, int)
+                or self.current_task_persistence_rank not in (0, 20)):
+            raise ValueError("feeding persistence uses only the declared zero/twenty ranks")
 
     candidate_id = "source:feeding_detail"
     protected_safety_rank = 0
     new_task_need_rank = 10
     prediction_or_envelope_failure_rank = 0
     novelty_or_ambiguity_rank = 0
-    current_task_persistence_rank = 0
     activation_rank = 60
     safety_escalation = False
     stable_tie_key = "feeding_detail"
@@ -325,6 +390,7 @@ class FeedingDetailSourceV1:
         self._stream, self._profile = stream, profile
         self._durable = _build_seed(profile.seed)
         self._current: FeedingDetailNavMapStateV1 | None = None
+        self._influence: tuple[str, int] | None = None
 
     @property
     def profile(self) -> FeedingDetailProfileV1:
@@ -341,7 +407,9 @@ class FeedingDetailSourceV1:
         """Read the current slot, including an explicit unavailable configuration."""
         return self._current
 
-    def update(self, maternal: MaternalNavMapStateV1) -> FeedingDetailNavMapStateV1:
+    def update(
+        self, maternal: MaternalNavMapStateV1, *, oral_feedback: MotorFeedbackV1 | None = None,
+    ) -> FeedingDetailNavMapStateV1:
         """Apply one already-frozen maternal/visual basis atomically before Attention.
 
         Foreign generations and repeated/reordered source opportunities are
@@ -353,8 +421,10 @@ class FeedingDetailSourceV1:
         previous = self._current
         if previous is not None and (maternal.applied_cycle <= previous.applied_cycle or maternal.cutoff_tick <= previous.cutoff_tick):
             raise ValueError("feeding updates must advance focal and physical cutoffs")
-        current = FeedingDetailNavMapStateV1(maternal, self._profile.seed, self._profile.source_enabled)
+        current = FeedingDetailNavMapStateV1(maternal, self._profile.seed, self._profile.source_enabled, oral_feedback=oral_feedback)
         self._current = current
+        if self._influence is not None and current.cutoff_tick >= self._influence[1]:
+            self._influence = None
         return current
 
     def candidate(self) -> FeedingDetailCandidateV1 | None:
@@ -362,8 +432,32 @@ class FeedingDetailSourceV1:
         current = self._current
         if current is None or not current.focal_accessible or not self._profile.attention_enabled or not self._profile.feeding_need:
             return None
-        return FeedingDetailCandidateV1(current)
+        rank = 20 if self._influence is not None and current.cutoff_tick < self._influence[1] else 0
+        return FeedingDetailCandidateV1(current, rank)
+
+    def retain_influence(self, task_id: str, *, cycle_id: int, expires_at_tick: int) -> None:
+        """Retain one selected-task relevance request for at most eight physical ticks.
+
+        This changes only the source's ordinary persistence rank. It does not
+        renew sensory support, revive unavailable detail, select an IP or grant
+        a motor lease. P16-2C-A/B never call this optional task-owner seam.
+        """
+        current = self._current
+        if not isinstance(task_id, str) or not 1 <= len(task_id) <= 100 or not task_id.isascii() or not task_id.isprintable() or task_id.strip() != task_id:
+            raise ValueError("feeding influence requires a bounded task identity")
+        if (current is None or not current.focal_accessible or isinstance(cycle_id, bool) or not isinstance(cycle_id, int)
+                or cycle_id != current.applied_cycle):
+            raise ValueError("feeding influence requires this current source opportunity")
+        if (isinstance(expires_at_tick, bool) or not isinstance(expires_at_tick, int)
+                or not current.cutoff_tick < expires_at_tick <= current.cutoff_tick + 8):
+            raise ValueError("feeding influence cannot extend beyond eight physical ticks")
+        self._influence = (task_id, expires_at_tick)
+
+    def clear_influence(self) -> None:
+        """Release task relevance without deleting sensed or durable source content."""
+        self._influence = None
 
     def retained_counts(self) -> dict[str, int]:
         """Report measured owner storage, independent of observer history capacity."""
-        return {"durable_maps": 1, "current_configurations": int(self._current is not None)}
+        return {"durable_maps": 1, "current_configurations": int(self._current is not None),
+                **({"task_influences": 1} if self._influence is not None else {})}

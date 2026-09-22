@@ -16,6 +16,84 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P16-2C-C Navigation-selected SeekNipple
+
+Entry: accepted P16-2C-B, freshly verified clean `main` and recorded `origin/main`
+at `8f16d012eeceda60cb33557254688630c86985ae`. The archive source tree is
+`eda74a0cc225e19c308a86eea4841e94e33683df`; its Git metadata now agrees with the
+reported checkout. This is a prepared opt-in candidate, not a default promotion
+or a live remote verification. Planning v18 / Architecture v10.1 still govern.
+
+The registry is now **97 production components / 8 host behavioral primitives**
+(`cca8_run.py v0.30.31`). The additions are the actual `nca8_seek_nipple` task
+and `nca8_seek_nipple_demo` observer. The host primitive count is not the NCA8 task
+inventory. Existing A/B experiments remain separately runnable with their prior
+source/export semantics; their historical descriptions below apply to those slices.
+
+The new path is **paired current mouth/detail evidence → ordinary Attention and
+one source-linked WNM → Navigation-selected SeekNipple → sparse PNM plus separate
+oral requirement → protected BodyMap target → the existing sensorimotor executor
+and physical provider → later evidence**. There is no second executive, motor
+framework, world implementation or per-tick task PNM. The source's mouth point
+uses admitted body position, heading and measured oral reach from the same
+sample/event as its visual scene. Missing geometry is not reconstructed from a
+prediction or the maternal seed.
+
+This first task can approach only currently represented detail using the existing
+body-forward oral axis. It cannot perform blind search, turn the head, or invent
+body translation to repair an off-axis target. Its original task lasts at most
+12 focal opportunities / 48 physical ticks; each selected contribution remains
+at most 0.15 metres with an eight-tick lease. The available scalar capability
+inventory can contain orientation, support extension and oral reach together,
+but oral execution remains exclusive with support and planar translation.
+Three available families do not authorize three simultaneous targets.
+
+Current incompatible movement rights must expire or be explicitly retired before
+new oral authorization. An unfinished support-recovery obligation also blocks
+applicability. There is no `reached_mom` milestone gate. A brief missing-detail
+interval cancels exact oral pursuit while retaining the finite task; eight ticks
+of missing usable evidence terminate it. A changed body anchor first stops local
+pursuit; a later selected application can map current evidence anew within the
+same original task budget. It never rebases the old target or rewrites its PNM.
+
+The task reports **reached_detail** only after two distinct paired current
+acquisitions place the mouth within 0.005 metres of the detail, spanning at least
+four physical ticks (maximum allowed proof gap eight ticks). This is an engineering
+geometric criterion, not learned nipple identity, contact, latch or nourishment.
+The independent surface-absent control reaches the same coordinate without touch;
+feedback dropout can hide actual physical touch and cannot satisfy the proof.
+
+Review: **Main 1 → Watch Cognition 4 → NCA8 15 → feeding review 19**. The submenu
+runs the same 33 fixed cases as the script, with a retained-detail view that does
+not rerun movement. Near-start cases use 64 physical ticks. Three continuous cases
+use 160 ticks in a newly declared axis-aligned scene, Mom `(2,0)` and detail
+`(1.8,0)`; they do not change the old A scene or claim general head kinematics.
+The nominal new continuous path selects seeking at tick 92, before the separate
+maternal task completes at tick 100, and reaches represented detail at tick 112.
+
+    python scripts/review_nca8_feeding.py --seek --case all
+    python scripts/review_nca8_feeding.py --seek --case nominal --detail
+    python scripts/review_nca8_feeding.py --seek --case stand_follow --json
+
+`--seek` and `--oral` are mutually exclusive; omitting both retains A. Task-off,
+Attention-off, source/need/missing-channel, capability/mapping, gaps, protection,
+body change, cancellation and cadence controls remain distinct. Selected-task
+relevance changes the source owner's bounded persistence rank, not its measured
+facts. The matched competition control changes focal allocation while the same
+finite lower command sequence continues. PNM-registration-off leaves the required
+original handoff prediction and physical behavior intact: this tests registration,
+**not** predictive information value. No execution-sensitive seeking-PNM outcome
+comparison is claimed by this slice.
+
+**Still open:** seeking PNM correspondence and its task-outcome/Attention route;
+feeding participation and Phase-F reconciliation; latch, Suckle, milk/nourishment,
+Rest, full P16-2C and B99. Existing Righting/maternal hooks execute their ordinary
+Phase F in the continuous review with zero durable updates; they do not receive
+invented feeding credit. All local gains, maps, seeds and operation parameters
+remain fixed. Current touch and local coordinate achievement stay separate from
+the task proof. The original physical provider, motor wire and local executor
+implementations are unchanged in this slice.
+
 ## NCA8 update: P16-2C-B oral-target/contact foundation
 
 P16-2C-A has been locally validated and committed; Howard reports clean
@@ -24,7 +102,7 @@ contents but retains pre-commit Git metadata at `3bfb689`. This candidate is
 based on the verified P16-2C-A source tree, not a claim of independent live GitHub
 verification. Full P16-2C and B99 remain open.
 
-The current registry has **95 production components / 8 host behavioral primitives**
+At the P16-2C-B checkpoint the registry had **95 production components / 8 host behavioral primitives**
 (`cca8_run.py v0.30.30`). This slice adds an optional **body-forward oral reach axis**
 to the existing neutral motor records, physical provider, BodyMap target mapper
 and scalar sensorimotor executor. It does not create a second motor framework.
@@ -59,7 +137,7 @@ Its retained-detail view does not rerun movement. Secondary shared entry:
     python scripts/review_nca8_feeding.py --oral --case all
     python scripts/review_nca8_feeding.py --oral --case nominal --detail
 
-Without `--oral`, the script retains the original P16-2C-A source/access route.
+Without `--oral` or `--seek`, the script retains the original P16-2C-A source/access route.
 Each oral case uses twelve physical ticks. Local coordinate achievement,
 physical contact, delivered tactile evidence and their times are reported
 separately. In particular, removing the tactile surface leaves target attainment

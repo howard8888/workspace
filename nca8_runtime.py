@@ -41,6 +41,7 @@ from dataclasses import dataclass, replace
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from nca8_translation import TranslationApplicationV1
 from nca8_followmom import FollowMomApplicationV1
+from nca8_seek_nipple import SeekNippleApplicationV1
 from nca8_maternal import MaternalNavMapStateV1
 from nca8_feeding import FeedingDetailNavMapStateV1
 from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetProposalV1, BodyTranslationCapabilityV1, nominal_body_capabilities_v1
@@ -104,7 +105,7 @@ from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 from nca8_visual import VisualNavMapStateV1
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -1914,6 +1915,12 @@ class Nca8RightingPreviewSessionV1:
             proposal = self.mapper.propose_translation(
                 application.contribution, application.projection.basis, at_tick=cutoff_tick,
                 lease_ticks=application.projection.horizon_ticks, replace_existing=replace_existing,
+            )
+        elif isinstance(application, SeekNippleApplicationV1):
+            if self.task_pnm_consumer_enabled:
+                self.prediction.adopt_seeking_preview(application.projection)
+            proposal = self.mapper.propose_oral_reach(
+                application.contribution, application.projection.basis, at_tick=cutoff_tick, replace_existing=replace_existing,
             )
         elif self.task_pnm_consumer_enabled:
             self.prediction.adopt_support_preview(None)
