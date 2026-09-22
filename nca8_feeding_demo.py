@@ -31,10 +31,11 @@ from nca8_seek_nipple_demo import run_seek_nipple_menu_v1
 from nca8_seek_outcomes_demo import run_seek_nipple_outcome_menu_v1
 from nca8_seek_attention_demo import run_seeking_attention_menu_v1
 from nca8_seek_learning_demo import run_seeking_learning_menu_v1
+from nca8_oral_seal_demo import run_oral_seal_menu_v1
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_stand_follow_demo import StandFollowPhysicalSampleV1, StandFollowProfileV1, stand_follow_profile_v1
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "FEEDING_DETAIL_CASES_V1", "FeedingDetailExperimentV1", "feeding_detail_profiles_v1", "create_feeding_detail_trial_v1",
     "run_feeding_detail_v1", "render_feeding_detail_v1", "run_feeding_detail_menu_v1", "__version__",
@@ -295,9 +296,13 @@ def run_feeding_detail_menu_v1() -> None:
         print("  20) Original seeking prediction and actual execution (P16-2C-D)")
         print("  21) Seeking mismatch and one focal interpretation (P16-2C-E)")
         print("  22) Seeking participation and actual Phase F (P16-2C-F; no durable learning)")
+        print("  23) Supplied oral closure and observed seal (P16-2C-G; no Suckle or milk)")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
             return
+        if choice == "23":
+            run_oral_seal_menu_v1()
+            continue
         if choice == "22":
             run_seeking_learning_menu_v1()
             continue

@@ -31,13 +31,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 
-from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, OralFeedbackV1, PlanarFeedbackV1
+from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, OralFeedbackV1, OralSealFeedbackV1, PlanarFeedbackV1
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "MotorBodyStateV1",
     "MotorWorldPerturbationV1",
     "MotorWorldProfileV1",
+    "OralSealWorldStateV1", "OralSealWorldProfileV1", "OralClosurePerturbationV1",
     "MotorWorldV1", "OralWorldStateV1", "OralWorldProfileV1", "OralWorldPerturbationV1",
     "PlanarObjectV1", "PlanarDetailObjectV1", "PlanarPerturbationV1", "PlanarWorldProfileV1", "PlanarWorldStateV1",
     "SupportWorldStateV1",
@@ -654,6 +655,92 @@ def _oral_state(extension: float, planar: PlanarWorldStateV1, profile: OralWorld
     return OralWorldStateV1(extension, contact)
 
 
+@dataclass(frozen=True, slots=True)
+class OralSealWorldStateV1:
+    """Actual aggregate closure and seal for the external observer, not cognition.
+
+    A seal is a functional geometric relation indicator, not a fluid/force
+    calculation, maternal identity, latch task verdict, or nourishment signal.
+    """
+
+    closure: float = 0.0
+    sealed: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "closure", _motor_number(self.closure, "physical closure", 0.0, 1.0))
+        if not isinstance(self.sealed, bool):
+            raise TypeError("physical seal must be Boolean")
+
+    def as_dict(self) -> dict[str, object]:
+        """Expose external physical state separately from the delivered acquisition."""
+        return {"closure": self.closure, "sealed": self.sealed}
+
+
+@dataclass(frozen=True, slots=True)
+class OralClosurePerturbationV1:
+    """Apply a fixed external closure rate over [start, stop), not per task attempt."""
+
+    start_tick: int
+    stop_tick: int
+    rate_units_s: float
+
+    def __post_init__(self) -> None:
+        _motor_integer(self.start_tick, "closure perturbation start")
+        _motor_integer(self.stop_tick, "closure perturbation stop")
+        if self.stop_tick <= self.start_tick:
+            raise ValueError("closure perturbation stop must follow start")
+        object.__setattr__(self, "rate_units_s", _motor_number(self.rate_units_s, "closure forcing", -4.0, 4.0))
+
+
+@dataclass(frozen=True, slots=True)
+class OralSealWorldProfileV1:
+    """Opt-in closure actuator and sealable disks within the existing motor plant.
+
+    Signed drive changes closure at 2 normalized units/second. Neutral drive
+    retains that coordinate, not a guaranteed seal. Generic touch AND actual
+    tip membership in an independently supplied sealable disk AND closure at
+    least 0.5 are required for a seal. Body/reach motion can break it without
+    a release command. No visual descriptor or task identity is read here.
+
+    This is a functional lower-provider approximation, not oral biomechanics.
+    It models neither suction nor milk. A surface can be tactile yet nonsealable.
+    Channel dropout changes delivered knowledge, not the underlying physics.
+    """
+
+    initial_closure: float = 0.0
+    sealable_surfaces: tuple[PlanarObjectV1, ...] = ()
+    motor_enabled: bool = True
+    closure_available: bool = True
+    seal_available: bool = True
+    perturbations: tuple[OralClosurePerturbationV1, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "initial_closure", _motor_number(self.initial_closure, "initial closure", 0.0, 1.0))
+        if not all(isinstance(flag, bool) for flag in (self.motor_enabled, self.closure_available, self.seal_available)):
+            raise TypeError("seal profile switches must be Boolean")
+        # Reuse the existing geometric surface validator, not its reach dynamics.
+        OralWorldProfileV1(surfaces=self.sealable_surfaces)
+        if not isinstance(self.perturbations, tuple) or len(self.perturbations) > 8:
+            raise ValueError("supply at most eight closure forcing intervals")
+        previous = 0
+        for event in self.perturbations:
+            if not isinstance(event, OralClosurePerturbationV1) or event.start_tick < previous:
+                raise ValueError("closure forcing must be typed, ordered and nonoverlapping")
+            previous = event.stop_tick
+
+
+def _oral_seal_state(
+    closure: float, planar: PlanarWorldStateV1, oral: OralWorldStateV1, profile: OralSealWorldProfileV1,
+) -> OralSealWorldStateV1:
+    """Compute seal from actual closure/contact/geometry, never requested success."""
+    angle = math.radians(planar.heading_degrees)
+    tip = (planar.position[0] + oral.extension_metres * math.cos(angle),
+           planar.position[1] + oral.extension_metres * math.sin(angle))
+    compatible = any(math.hypot(tip[0] - disk.position[0], tip[1] - disk.position[1]) <= disk.radius + 1e-12
+                     for disk in profile.sealable_surfaces)
+    return OralSealWorldStateV1(closure, closure >= 0.5 - 1e-12 and oral.contact and compatible)
+
+
 class MotorWorldV1:
     """A small deterministic body simulator with explicit command and sensing time.
 
@@ -678,6 +765,7 @@ class MotorWorldV1:
     def __init__(
         self, stream: MotorStreamRefV1, profile: MotorWorldProfileV1 | None = None, *, planar_profile: PlanarWorldProfileV1 | None = None,
         oral_profile: OralWorldProfileV1 | None = None,
+        oral_seal_profile: OralSealWorldProfileV1 | None = None,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("stream must be MotorStreamRefV1")
@@ -687,6 +775,9 @@ class MotorWorldV1:
             raise TypeError("planar_profile must be PlanarWorldProfileV1 or None")
         if oral_profile is not None and (not isinstance(oral_profile, OralWorldProfileV1) or planar_profile is None):
             raise TypeError("oral profile requires its typed settings and the existing planar body profile")
+        if oral_seal_profile is not None and (not isinstance(oral_seal_profile, OralSealWorldProfileV1) or oral_profile is None):
+            raise TypeError("oral seal profile requires the typed oral and planar physical profiles")
+        self._oral_seal_profile = oral_seal_profile
         self._oral_profile = oral_profile
         self._planar_profile = planar_profile
         self._planar = (None if planar_profile is None else
@@ -694,6 +785,8 @@ class MotorWorldV1:
                                            _swept_planar_step(planar_profile.initial_position, (0.0, 0.0), planar_profile.objects)[1]))
         self._oral = (None if oral_profile is None or self._planar is None else
                       _oral_state(oral_profile.initial_extension_metres, self._planar, oral_profile))
+        self._oral_seal = (None if oral_seal_profile is None or self._planar is None or self._oral is None else
+                           _oral_seal_state(oral_seal_profile.initial_closure, self._planar, self._oral, oral_seal_profile))
         self._stream = stream
         self._profile = profile if profile is not None else MotorWorldProfileV1()
         self._body = self._profile.initial_body
@@ -701,7 +794,12 @@ class MotorWorldV1:
         self._last_command_id = 0
         self._pending: tuple[MotorFeedbackV1, ...] = ()
         self._latest_feedback = self._measure(self._body, 0.0, self._profile.surface_present,
-                                             event_tick=0, delay=0, planar=self._planar, oral=self._oral)
+                                             event_tick=0, delay=0, planar=self._planar, oral=self._oral, oral_seal=self._oral_seal)
+
+    @property
+    def oral_seal_body(self) -> OralSealWorldStateV1 | None:
+        """Inspect physical closure/seal externally; cognition must use delivered feedback."""
+        return self._oral_seal
 
     @property
     def oral_body(self) -> OralWorldStateV1 | None:
@@ -795,11 +893,12 @@ class MotorWorldV1:
         Generation overflow is rejected before replacing any owned value.
         """
         fresh = MotorWorldV1(MotorStreamRefV1(self._stream.stream_id, self._stream.generation + 1), self._profile,
-                             planar_profile=self._planar_profile, oral_profile=self._oral_profile)
+                             planar_profile=self._planar_profile, oral_profile=self._oral_profile, oral_seal_profile=self._oral_seal_profile)
         self._stream = fresh.stream
         self._body = fresh.body
         self._planar = fresh.planar_body
         self._oral = fresh.oral_body
+        self._oral_seal = fresh.oral_seal_body
         self._tick = 0
         self._last_command_id = 0
         self._pending = ()
@@ -809,6 +908,7 @@ class MotorWorldV1:
     def _measure(
         self, body: MotorBodyStateV1, angular_rate: float, surface_present: bool, *, event_tick: int, delay: int,
         planar: PlanarWorldStateV1 | None = None, oral: OralWorldStateV1 | None = None,
+        oral_seal: OralSealWorldStateV1 | None = None,
     ) -> MotorFeedbackV1:
         """Sense actual geometry; omit declared channels without repairing them.
 
@@ -831,8 +931,12 @@ class MotorWorldV1:
         if oral is not None and self._oral_profile is not None:
             oral_feedback = OralFeedbackV1(oral.extension_metres if self._oral_profile.extension_available else None,
                                           oral.contact if self._oral_profile.contact_available else None)
+        seal_feedback = None
+        if oral_seal is not None and self._oral_seal_profile is not None:
+            seal_feedback = OralSealFeedbackV1(oral_seal.closure if self._oral_seal_profile.closure_available else None,
+                                               oral_seal.sealed if self._oral_seal_profile.seal_available else None)
         return MotorFeedbackV1(
-            planar=planar_feedback, oral=oral_feedback,
+            planar=planar_feedback, oral=oral_feedback, oral_seal=seal_feedback,
             stream=self._stream, sample_id=event_tick + 1, event_tick=event_tick, available_tick=event_tick + delay,
             body_tilt_degrees=None if "body_tilt_degrees" in missing else body.body_tilt_degrees,
             support_extension=None if "support_extension" in missing else body.support_extension,
@@ -886,6 +990,29 @@ class MotorWorldV1:
         extension = max(0.0, min(0.35, state.extension_metres + self._profile.dt_seconds * (0.5 * drive + forcing)))
         return _oral_state(extension, planar, profile)
 
+    def _advance_oral_seal(
+        self, command: MotorCommandV1 | None, planar: PlanarWorldStateV1 | None,
+        oral: OralWorldStateV1 | None, surface_present: bool,
+    ) -> OralSealWorldStateV1 | None:
+        """Integrate independent closure and derive seal from the evolved geometry.
+
+        A closing command may close in empty space; it still cannot make a seal.
+        Actuation needs the same supported posture as the existing oral motor.
+        Forcing is external and acts even with no command or disabled motor.
+        """
+        profile, state = self._oral_seal_profile, self._oral_seal
+        if profile is None or state is None or planar is None or oral is None:
+            return None
+        contact, load = _motor_support(self._body, self._profile, surface_present)
+        drive = 0.0
+        if (command is not None and command.oral_closure_drive is not None and profile.motor_enabled
+                and contact and load >= 0.75 and abs(self._body.body_tilt_degrees) <= 12.0):
+            drive = command.oral_closure_drive
+        forcing = next((event.rate_units_s for event in profile.perturbations
+                        if event.start_tick <= self._tick < event.stop_tick), 0.0)
+        closure = _clamp(state.closure + self._profile.dt_seconds * (2.0 * drive + forcing))
+        return _oral_seal_state(closure, planar, oral, profile)
+
     def step(self, command: MotorCommandV1 | None = None) -> tuple[MotorFeedbackV1, ...]:
         """Advance once and return newly available sensor reports in acquisition order.
 
@@ -906,6 +1033,8 @@ class MotorWorldV1:
             raise ValueError("translation requires the explicit planar physical profile")
         if command is not None and command.oral_drive is not None and self._oral_profile is None:
             raise ValueError("oral drive requires the explicit oral physical profile")
+        if command is not None and command.oral_closure_drive is not None and self._oral_seal_profile is None:
+            raise ValueError("closure drive requires the explicit oral seal physical profile")
         if self._tick >= _MOTOR_COUNTER_LIMIT - max(1, self._profile.sensor_delay_ticks) - 1:
             raise OverflowError("motor time/sample identity exhausted; reset required")
         if command is not None:
@@ -932,11 +1061,13 @@ class MotorWorldV1:
         )
         next_planar = self._advance_planar(command, surface_present)
         next_oral = self._advance_oral(command, next_planar, surface_present)
+        next_seal = self._advance_oral_seal(command, next_planar, next_oral, surface_present)
         next_tick = self._tick + 1
         pending = self._pending
         if not dropout:
             measurement = self._measure(next_body, angular_rate, surface_present,
-                                        event_tick=next_tick, delay=self._profile.sensor_delay_ticks, planar=next_planar, oral=next_oral)
+                                        event_tick=next_tick, delay=self._profile.sensor_delay_ticks, planar=next_planar, oral=next_oral,
+                                        oral_seal=next_seal)
             pending += (measurement,)
         delivered = tuple(item for item in pending if item.available_tick <= next_tick)
         future = tuple(item for item in pending if item.available_tick > next_tick)
@@ -948,6 +1079,7 @@ class MotorWorldV1:
         self._body = next_body
         self._planar = next_planar
         self._oral = next_oral
+        self._oral_seal = next_seal
         self._tick = next_tick
         self._pending = future
         if delivered:

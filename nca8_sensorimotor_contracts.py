@@ -26,7 +26,7 @@ from typing import Protocol
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "BodyRelativeTargetV1", "BodyTranslationTargetV1",
     "CommittedBodyTargetV1",
@@ -36,7 +36,7 @@ __all__ = [
     "MotorInstallationSourceV1",
     "SensorimotorTargetKindV1",
     "TargetDirectiveV1",
-    "TargetOriginV1", "scalar_motor_coordinate_v1", "oral_basis_compatible_v1",
+    "TargetOriginV1", "scalar_motor_coordinate_v1", "oral_basis_compatible_v1", "oral_closure_basis_compatible_v1",
     "__version__",
 ]
 
@@ -84,12 +84,15 @@ class SensorimotorTargetKindV1(str, Enum):
 
     ORAL_REACH is the optional single body-forward reach coordinate. It grants
     neither a head-orientation strategy nor latch/suckling competence.
+    ORAL_CLOSURE is an independent normalized closing/opening coordinate;
+    attaining it cannot establish the separately measured physical seal.
     """
 
     ORIENTATION_ADJUST = "orientation_adjust"
     SUPPORT_EXTENSION = "support_extension"
     PLANAR_TRANSLATION = "planar_translation"
     ORAL_REACH = "oral_reach"
+    ORAL_CLOSURE = "oral_closure"
 
 
 def scalar_motor_coordinate_v1(feedback: MotorFeedbackV1, kind: SensorimotorTargetKindV1) -> float | None:
@@ -107,6 +110,8 @@ def scalar_motor_coordinate_v1(feedback: MotorFeedbackV1, kind: SensorimotorTarg
         return feedback.support_extension
     if kind is SensorimotorTargetKindV1.ORAL_REACH:
         return None if feedback.oral is None else feedback.oral.extension_metres
+    if kind is SensorimotorTargetKindV1.ORAL_CLOSURE:
+        return None if feedback.oral_seal is None else feedback.oral_seal.closure
     raise ValueError("vector translation has no scalar motor coordinate")
 
 
@@ -128,6 +133,20 @@ def oral_basis_compatible_v1(basis: MotorFeedbackV1, feedback: MotorFeedbackV1) 
     distance = math.hypot(after.position[0] - before.position[0], after.position[1] - before.position[1])
     angle = (after.heading_degrees - before.heading_degrees + 180.0) % 360.0 - 180.0
     return distance <= 0.001 + 1e-12 and abs(angle) <= 0.5 + 1e-12
+
+
+def oral_closure_basis_compatible_v1(basis: MotorFeedbackV1, feedback: MotorFeedbackV1) -> bool:
+    """Keep closure at its original body/heading/reach anchor, not a new surface.
+
+    Closure cannot compensate for more than 0.001 metres of reach change or the
+    existing oral body-anchor limits. A lost anchor requires a new mapping and
+    authorization; cached seal evidence cannot authorize pursuit at a new point.
+    """
+    if not oral_basis_compatible_v1(basis, feedback):
+        return False
+    before, after = basis.oral, feedback.oral
+    return (before is not None and after is not None and before.extension_metres is not None
+            and after.extension_metres is not None and abs(before.extension_metres - after.extension_metres) <= 0.001 + 1e-12)
 
 
 class TargetDirectiveV1(str, Enum):
@@ -198,13 +217,15 @@ class BodyRelativeTargetV1:
     the original basis; ``max_rate`` is in degrees/s or normalized units/s for
     the corresponding family. ORAL_REACH uses metres and metres/second on a
     single body-forward axis, capped at 0.35 metres and 0.5 metres/second, with
-    an independently retained horizontal body position/yaw basis.
+    an independently retained horizontal body position/yaw basis. ORAL_CLOSURE
+    uses normalized units with a 2 units/second ceiling and retains the original
+    body/yaw/reach anchor. Its coordinate criterion is not a seal criterion.
     Tolerance is a local measurement criterion,
     not a probability or a task-success threshold. A caller cannot request
     missing starting geometry or silently clip an infeasible endpoint.
 
-    The initial interface permits at most 90 degrees/s or 1 extension unit/s,
-    an eight-tick lease and two anomalous corrections. Smaller limits are
+    The support axes permit at most 90 degrees/s or 1 extension unit/s. All
+    scalar families share an eight-tick lease and two anomalous corrections. Smaller limits are
     allowed. Actual feasibility under sensing delay, coupling and disturbance
     must be qualified by H2-H4; nominal range validation does not prove it.
     This record does not grant permission and does not contain a motor command.
@@ -245,6 +266,10 @@ class BodyRelativeTargetV1:
             lower, upper, rate_limit = 0.0, 0.35, 0.5
             if not oral_basis_compatible_v1(self.basis, self.basis):
                 raise ValueError("oral target requires a known original body position and heading")
+        elif self.kind is SensorimotorTargetKindV1.ORAL_CLOSURE:
+            lower, upper, rate_limit = 0.0, 1.0, 2.0
+            if not oral_closure_basis_compatible_v1(self.basis, self.basis):
+                raise ValueError("closure target requires a known original body and reach anchor")
         else:
             lower, upper, rate_limit = 0.0, 1.0, 1.0
         if not 0.0 < self.max_displacement <= upper - lower:
@@ -537,6 +562,8 @@ class LocalTargetReportV1:
             coordinate = scalar_motor_coordinate_v1(feedback, target.kind)
             if target.kind is SensorimotorTargetKindV1.ORAL_REACH and not oral_basis_compatible_v1(target.basis, feedback):
                 raise ValueError("oral result lacks the original compatible body-forward anchor")
+            if target.kind is SensorimotorTargetKindV1.ORAL_CLOSURE and not oral_closure_basis_compatible_v1(target.basis, feedback):
+                raise ValueError("closure result lacks its original body and reach anchor")
             if coordinate is None:
                 raise ValueError("the target's measured result is unavailable")
             distance = abs(coordinate - target.endpoint)

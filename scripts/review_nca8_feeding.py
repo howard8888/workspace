@@ -7,8 +7,9 @@ the retained bounded selected-task review. --seek-outcomes adds original seeking
 prediction correspondence without changing that default. --seek-attention adds
 source relevance and one focal interpretation. --seek-learning adds source-owned
 participation and the real Phase-F callback, with zero durable learning.
-The --oral route supplies
-one relation fixture; it is not Navigation-selected feeding, latch or milk.
+The --oral route supplies a reach fixture; --oral-seal supplies bounded closure
+with independently measured seal evidence. Neither is Navigation-selected
+Suckle, a latch task verdict, or observed milk.
 The default source/access route and its complete exports remain unchanged.
 This helper writes no repository files; neither review closes P16-2C or B99.
 Any failed review check produces a nonzero exit. Run from any directory.
@@ -28,6 +29,7 @@ if str(ROOT) not in sys.path:
 
 from nca8_feeding_demo import FEEDING_DETAIL_CASES_V1, render_feeding_detail_v1, run_feeding_detail_v1
 from nca8_oral_demo import ORAL_CONTACT_CASES_V1, render_oral_contact_v1, run_oral_contact_v1
+from nca8_oral_seal_demo import ORAL_SEAL_CASES_V1, render_oral_seal_v1, run_oral_seal_v1
 from nca8_seek_nipple_demo import SEEK_NIPPLE_CASES_V1, render_seek_nipple_v1, run_seek_nipple_v1
 from nca8_seek_outcomes_demo import SEEK_NIPPLE_OUTCOME_CASES_V1, render_seek_nipple_outcome_v1, run_seek_nipple_outcome_v1
 from nca8_seek_attention_demo import SEEKING_ATTENTION_CASES_V1, render_seeking_attention_v1, run_seeking_attention_v1
@@ -38,6 +40,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run a declared finite case; never infer or repair an unknown selector."""
     parser = argparse.ArgumentParser(description=__doc__)
     family = parser.add_mutually_exclusive_group()
+    family.add_argument("--oral-seal", action="store_true", help="review supplied closure and independently observed seal; no Suckle")
     family.add_argument("--oral", action="store_true", help="review the separate supplied-target/contact foundation")
     family.add_argument("--seek", action="store_true", help="review Navigation-selected bounded seeking; no latch or milk")
     family.add_argument("--seek-outcomes", action="store_true", help="compare original seeking PNM with actual execution and later evidence")
@@ -47,12 +50,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--detail", action="store_true", help="include actual source-selection timeline")
     parser.add_argument("--json", action="store_true", help="export complete detached evidence rather than text")
     args = parser.parse_args(argv)
-    allowed = (SEEKING_LEARNING_CASES_V1 if args.seek_learning else SEEKING_ATTENTION_CASES_V1 if args.seek_attention else
+    allowed = (ORAL_SEAL_CASES_V1 if args.oral_seal else SEEKING_LEARNING_CASES_V1 if args.seek_learning else SEEKING_ATTENTION_CASES_V1 if args.seek_attention else
                SEEK_NIPPLE_OUTCOME_CASES_V1 if args.seek_outcomes else SEEK_NIPPLE_CASES_V1 if args.seek else
                ORAL_CONTACT_CASES_V1 if args.oral else FEEDING_DETAIL_CASES_V1)
     if args.case != "all" and args.case not in allowed:
         parser.error("case is not available in this review; choose: all, " + ", ".join(allowed))
     cases = allowed if args.case == "all" else (args.case,)
+    if args.oral_seal:
+        seal_results = tuple(run_oral_seal_v1(case) for case in cases)
+        print(json.dumps([item.as_dict() for item in seal_results], sort_keys=True, allow_nan=False) if args.json else
+              "\n\n".join(render_oral_seal_v1(item, detail=args.detail) for item in seal_results))
+        return int(any(item.review_status != "PASS" for item in seal_results))
     if args.seek_learning:
         learning_results = tuple(run_seeking_learning_v1(case) for case in cases)
         print(json.dumps([item.as_dict() for item in learning_results], sort_keys=True, allow_nan=False) if args.json else

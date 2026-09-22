@@ -16,7 +16,93 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-2C-F seeking participation and Phase F
+## NCA8 update: P16-2C-G supplied oral closure and observed seal
+
+Entry: P16-2C-F is accepted and committed on clean `main` and recorded `origin/main`
+at `7cfd37eb92f362451fb7eb156e1451012fda2672`, tree `f9a0c3f0ec040c5a690e3fa85c9af78d45524f2e`.
+G is a prepared opt-in candidate under Planning v18 / Architecture v10.1, not a local
+validation certificate or default promotion. The approved single-full-suite validation
+amendment below remains in force; the release logger now explicitly uses UTF-8 for
+redirected Python children, preserving Windows preflight output and the early static results.
+
+`cca8_run.py v0.30.35` lists **104 production components / 8 host behavioral primitives**.
+The one new component, `nca8_oral_seal_demo`, is an external lower-capability review,
+not a new brain part or Suckle IP. Its supported initial fixture places the mouth at the
+detail; this is NOT a continuous stand/follow/seek-to-latch result. The unchanged A-F
+experiments retain their separately qualified scopes and complete exports.
+
+### One reused motor path, three distinct observations
+
+The existing `MotorWorldV1` gains an optional aggregate closure coordinate in [0,1].
+Signed low-level drive changes closure at 2 normalized units/second under supported
+posture. It receives no task, target, visual descriptor, PNM or feeding milestone.
+A seal requires actual closure at least 0.5, real generic touch, and actual mouth
+intersection with an independently supplied sealable disk. A tactile surface need not
+be sealable. Neutral drive retains closure in this functional surrogate, but external
+body/reach motion can break the seal. No suction, tissue mechanics, milk or nutrition
+model is claimed, and there is no hidden closure or suckling sequence in the provider.
+
+The optional strict v4 motor schema adds `oral_closure_drive` and independently measured
+`oral_seal` channels (`closure`, `sealed`). Old v1/v2/v3 shapes remain unchanged when
+these optional fields are absent. Each measured channel can be unknown; a missing seal
+sensor neither invents False nor prevents the physical seal. Time/generation remain
+those of the original canonical acquisition, not a second sensor event.
+
+BodyMap maps an explicit `OralClosureRequestV1` to the existing scalar target/executor.
+Closing requires current paired mouth/detail geometry and touch within the declared
+0.005-metre correspondence tolerance. Compatible touch is not independent surface identity.
+Explicit opening can use current protected body evidence without a visual source or
+positive touch. Neither direction bypasses current support, coordinate, age or capability
+checks. The closure capability has step 0.6, excursion 0.8, rate 2 units/s and tolerance
+0.025; the original eight-tick lease and two anomalous-correction limit remain unchanged.
+Closure is exclusive with reach, locomotion and support movement in this initial profile.
+A body/reach-anchor change requires a fresh mapping and authorization, not in-place target
+retargeting. Available scalar families increase from three to four; simultaneous target
+limits remain unchanged. No new task selection or handoff permission is inferred.
+
+The source separately reports current feeding-contact/seal correspondence from admitted
+paired evidence. `compatible` is not a task latch verdict or observed nourishment.
+An old achieved coordinate remains a historical fact when later contact/seal is lost.
+The new source view does not overwrite old snapshots, create a PNM or learn a parameter.
+
+### Reproducible lower-capability contrasts
+
+The 29 fixed cases distinguish coordinate attainment, contact, seal, seal-sensor availability,
+explicit opening, source/capability refusal, missing input, support loss, original-anchor
+changes, cancellation, short lease, and disturbance controls. The new demo reuses H4's
+actual advance/admission/reset implementation and the common scalar executor; it does
+not build another motor loop. Source-review opportunities are not A-F cognitive cycles.
+
+In the nominal fixture, six commands attain closure 0.6 at physical event 6. A physical
+seal first appears at event 5, is available to the source at cutoff 6, and coordinate
+achievement is reported at tick 7 from event 6. The nonsealable surface preserves every
+command, closure sample and touch while producing no seal. Removing only seal sensing
+preserves complete physics/commands but leaves seal correspondence unknown.
+
+A fixed closure disturbance over [1,2) makes both reactive and prediction-protected control
+restore the requested 0.6. Protection takes an extra command and forms a seal one tick
+later than reactive-only control: this is a conservative policy effect, NOT improved speed.
+Nominal-command replay ends at 0.5, missing the requested coordinate while still forming
+a physical seal. This counterexample is retained, not retuned to make every ablation fail.
+A short lease attains its permitted intermediate 0.2, not the original requested 0.6.
+A later fixed body shift breaks the previously observed seal without erasing coordinate
+achievement. All durable source-map signatures remain unchanged.
+
+Menu: Main menu **1 -> 4 -> 15 -> 23**, then **4** for all cases or **5** for retained detail
+without new movement. Secondary entry:
+
+    python scripts/review_nca8_feeding.py --oral-seal --case all
+
+This is the supplied closure/seal foundation. Navigation-selected latch/Suckle integration,
+suckling execution and milk/nourishment evidence, Rest, full P16-2C and B99 remain open.
+No default, dependency, validation configuration, task repertoire, existing physics profile,
+L01-L25 learning status or protected threshold is changed to force a successful result.
+
+## Retained P16-2C-F checkpoint: seeking participation and Phase F
+
+The following section records the F delivery and its historical component count. F has
+since been accepted at the G entry above; its independent experiment remains available.
+
 
 Entry: P16-2C-E is accepted and committed on clean `main` and recorded `origin/main`
 at `66045ab212323c76b6b7bae92b49b178867e82c8`, tree `b2e2a4f1d518f84e1855866f22d53b60d7f9e579`.

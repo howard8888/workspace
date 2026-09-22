@@ -25,10 +25,11 @@ from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, PlanarDriveV1
 from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetMapperV1, BodyTargetReservationV1
 from nca8_sensorimotor_contracts import (
     BodyRelativeTargetV1, BodyTranslationTargetV1, LocalTargetDispositionV1, LocalTargetReportV1,
-    MotorInstallationSourceV1, SensorimotorTargetKindV1, TargetOriginV1, oral_basis_compatible_v1, scalar_motor_coordinate_v1,
+    MotorInstallationSourceV1, SensorimotorTargetKindV1, TargetOriginV1,
+    oral_basis_compatible_v1, oral_closure_basis_compatible_v1, scalar_motor_coordinate_v1,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "LocalMotorPredictionV1", "LocalPredictionComparisonV1", "LocalControlEventV1",
     "SensorimotorProfileV1", "SensorimotorStepV1", "SensorimotorExecutorV1", "__version__",
@@ -42,6 +43,7 @@ _ORIENTATION = SensorimotorTargetKindV1.ORIENTATION_ADJUST
 _EXTENSION = SensorimotorTargetKindV1.SUPPORT_EXTENSION
 _TRANSLATION = SensorimotorTargetKindV1.PLANAR_TRANSLATION
 _ORAL = SensorimotorTargetKindV1.ORAL_REACH
+_CLOSURE = SensorimotorTargetKindV1.ORAL_CLOSURE
 _TERMINAL = frozenset({
     LocalTargetDispositionV1.ACHIEVED, LocalTargetDispositionV1.BLOCKED,
     LocalTargetDispositionV1.UNAVAILABLE, LocalTargetDispositionV1.CANCELLED,
@@ -75,6 +77,8 @@ def _drive(command: MotorCommandV1 | None, kind: SensorimotorTargetKindV1) -> fl
         return 0.0
     if kind is _ORAL:
         return command.oral_drive if command.oral_drive is not None else 0.0
+    if kind is _CLOSURE:
+        return command.oral_closure_drive if command.oral_closure_drive is not None else 0.0
     return command.orientation_drive if kind is _ORIENTATION else command.extension_drive
 
 
@@ -82,7 +86,7 @@ def _motor_rate(kind: SensorimotorTargetKindV1) -> float:
     """Return the declared motor calibration, not a private simulator reading."""
     if kind is _TRANSLATION:
         raise ValueError("translation requires its vector-specific calculation")
-    return 90.0 if kind is _ORIENTATION else 0.5 if kind is _ORAL else 1.0
+    return 90.0 if kind is _ORIENTATION else 0.5 if kind is _ORAL else 2.0 if kind is _CLOSURE else 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -666,6 +670,8 @@ class SensorimotorExecutorV1:
             return False
         if target.kind is _ORAL and not oral_basis_compatible_v1(target.basis, feedback):
             return False
+        if target.kind is _CLOSURE and not oral_closure_basis_compatible_v1(target.basis, feedback):
+            return False
         if isinstance(target, BodyTranslationTargetV1):
             planar, anchor = feedback.planar, target.basis.planar
             if planar is None or anchor is None or planar.position is None or planar.frame_id != anchor.frame_id:
@@ -884,14 +890,17 @@ class SensorimotorExecutorV1:
             orientation = responses.get(_ORIENTATION, 0.0)
             extension = responses.get(_EXTENSION, 0.0)
             oral = responses.get(_ORAL, 0.0)
-            if not isinstance(orientation, float) or not isinstance(extension, float) or not isinstance(oral, float):
+            closure = responses.get(_CLOSURE, 0.0)
+            if (not isinstance(orientation, float) or not isinstance(extension, float)
+                    or not isinstance(oral, float) or not isinstance(closure, float)):
                 raise TypeError("support channels cannot receive a vector translation")
             vector = responses.get(_TRANSLATION)
             translation = vector if isinstance(vector, PlanarDriveV1) and math.hypot(vector.forward, vector.left) > 0.0 else None
             command: MotorCommandV1 | None = None
-            if orientation != 0.0 or extension != 0.0 or translation is not None or oral != 0.0:
+            if orientation != 0.0 or extension != 0.0 or translation is not None or oral != 0.0 or closure != 0.0:
                 command = MotorCommandV1(self._mapper.stream, tick + 1, tick, orientation, extension,
-                                         translation=translation, oral_drive=oral if oral != 0.0 else None)
+                                         translation=translation, oral_drive=oral if oral != 0.0 else None,
+                                         oral_closure_drive=closure if closure != 0.0 else None)
             predictions: list[LocalMotorPredictionV1] = []
             if current is not None:
                 for pursuit in self._pursuits.values():

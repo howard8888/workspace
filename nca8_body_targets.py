@@ -33,10 +33,10 @@ from nca8_sensorimotor_contracts import (
     BodyRelativeTargetV1, BodyTranslationTargetV1,
     CommittedBodyTargetV1,
     SensorimotorTargetKindV1,
-    TargetOriginV1, oral_basis_compatible_v1, scalar_motor_coordinate_v1,
+    TargetOriginV1, oral_basis_compatible_v1, oral_closure_basis_compatible_v1, scalar_motor_coordinate_v1,
 )
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 __all__ = [
     "PlanarBodyObservationV1", "VisualApproachRequestV1", "VisualBodyPreviewV1",
     "BodyAxisCapabilityV1", "BodyTranslationCapabilityV1",
@@ -45,6 +45,7 @@ __all__ = [
     "BodyTargetMapperV1",
     "BodyTargetProposalV1",
     "BodyTargetReservationV1",
+    "oral_closure_capability_v1", "OralClosureRequestV1", "OralClosurePreviewV1",
     "nominal_body_capabilities_v1", "oral_body_capability_v1", "OralReachRequestV1", "OralReachPreviewV1",
     "__version__",
 ]
@@ -95,6 +96,8 @@ def _axis_limits(kind: SensorimotorTargetKindV1) -> tuple[float, float, float]:
         raise ValueError("vector translation is not a scalar axis")
     if kind is SensorimotorTargetKindV1.ORAL_REACH:
         return 0.0, 0.35, 0.5
+    if kind is SensorimotorTargetKindV1.ORAL_CLOSURE:
+        return 0.0, 1.0, 2.0
     return 0.0, 1.0, 1.0
 
 
@@ -178,6 +181,16 @@ def oral_body_capability_v1() -> BodyAxisCapabilityV1:
     The ordinary eight-tick lease and body protection still apply independently.
     """
     return BodyAxisCapabilityV1(SensorimotorTargetKindV1.ORAL_REACH, "smp:oral_reach:v1", 0.0, 0.35, 0.15, 0.20, 0.5, 0.0025)
+
+
+def oral_closure_capability_v1() -> BodyAxisCapabilityV1:
+    """Supply optional aggregate closure competence; reaching is a different axis.
+
+    Step 0.6, excursion 0.8, rate 2 normalized units/s and tolerance 0.025 are
+    fixed engineering choices. Reaching the coordinate proves no physical seal,
+    nipple identity or milk transfer. The original lease and protection apply.
+    """
+    return BodyAxisCapabilityV1(SensorimotorTargetKindV1.ORAL_CLOSURE, "smp:oral_closure:v1", 0.0, 1.0, 0.6, 0.8, 2.0, 0.025)
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,6 +338,61 @@ class OralReachPreviewV1:
 
 
 @dataclass(frozen=True, slots=True)
+class OralClosureRequestV1:
+    """Supply a normalized closure requirement, not an achieved latch or Suckle.
+
+    The G fixture explicitly supplies this request; it is not task selection.
+    Closing needs current feeding-contact correspondence. An explicit opening
+    may use the independent current body alone, so visual loss does not forbid
+    release. Source/region references never enter the motor command or plant.
+    """
+
+    origin: TargetOriginV1
+    source_map_ref: NavMapRefV1
+    region_id: str
+    desired_closure: float
+    lease_ticks: int = 8
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.origin, TargetOriginV1) or not isinstance(self.source_map_ref, NavMapRefV1):
+            raise TypeError("closure request needs a typed origin and source reference")
+        _name(self.region_id, "closure region handle")
+        _index(self.lease_ticks, "closure lease", 1, 8)
+        object.__setattr__(self, "desired_closure", _scalar(self.desired_closure, "desired closure", 0.0, 1.0))
+
+    def as_dict(self) -> dict[str, object]:
+        """Describe the supplied requirement without claimed task or motor authority."""
+        return {"origin": self.origin.as_dict(), "source_map_ref": self.source_map_ref.as_dict(), "region_id": self.region_id,
+                "desired_closure": self.desired_closure, "lease_ticks": self.lease_ticks, "origin_status": "supplied_requirement"}
+
+
+@dataclass(frozen=True, slots=True)
+class OralClosurePreviewV1:
+    """Retain the original source/body check independently of target or seal success."""
+
+    request: OralClosureRequestV1
+    source: FeedingDetailNavMapStateV1 | None
+    body: MotorFeedbackV1 | None
+    status: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.request, OralClosureRequestV1):
+            raise TypeError("closure preview needs its typed request")
+        if self.source is not None and (not isinstance(self.source, FeedingDetailNavMapStateV1)
+                                      or self.source.stream != self.request.origin.stream):
+            raise ValueError("closure source is invalid or foreign")
+        if self.body is not None and (not isinstance(self.body, MotorFeedbackV1) or self.body.stream != self.request.origin.stream):
+            raise ValueError("closure body basis is invalid or foreign")
+        _name(self.status, "closure preview status")
+
+    def as_dict(self) -> dict[str, object]:
+        """Export evidence and refusal without creating a PNM or refreshing sensing."""
+        return {"request": self.request.as_dict(), "source": None if self.source is None else self.source.as_dict(),
+                "body": None if self.body is None else self.body.as_dict(), "status": self.status,
+                "establishes_seal": False, "is_pnm": False}
+
+
+@dataclass(frozen=True, slots=True)
 class BodyTargetBindingV1:
     """One proposed H1 target associated with one available family capability."""
 
@@ -364,16 +432,17 @@ class BodyTargetProposalV1:
     any resource. It also does not replace an already reserved target.
     """
 
-    request: BodyMovementRequestV1 | VisualApproachRequestV1 | OralReachRequestV1
+    request: BodyMovementRequestV1 | VisualApproachRequestV1 | OralReachRequestV1 | OralClosureRequestV1
     created_tick: int
     bindings: tuple[BodyTargetBindingV1, ...]
     withheld: tuple[tuple[SensorimotorTargetKindV1, str], ...]
     replaces: tuple[BodyTargetReservationV1, ...] = ()
     visual_preview: VisualBodyPreviewV1 | None = None
     oral_preview: OralReachPreviewV1 | None = field(default=None, kw_only=True)
+    closure_preview: OralClosurePreviewV1 | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.request, (BodyMovementRequestV1, VisualApproachRequestV1, OralReachRequestV1)):
+        if not isinstance(self.request, (BodyMovementRequestV1, VisualApproachRequestV1, OralReachRequestV1, OralClosureRequestV1)):
             raise TypeError("proposal requires BodyMovementRequestV1")
         _index(self.created_tick, "created_tick")
         if not isinstance(self.replaces, tuple) or len(self.replaces) > 2:
@@ -400,7 +469,14 @@ class BodyTargetProposalV1:
         expected = set()
         if self.oral_preview is not None and not isinstance(self.request, OralReachRequestV1):
             raise ValueError("only an oral request can carry its mapping preview")
-        if isinstance(self.request, OralReachRequestV1):
+        if self.closure_preview is not None and not isinstance(self.request, OralClosureRequestV1):
+            raise ValueError("only a closure request can carry its preview")
+        if isinstance(self.request, OralClosureRequestV1):
+            expected.add(SensorimotorTargetKindV1.ORAL_CLOSURE)
+            if (self.visual_preview is not None or self.oral_preview is not None or self.closure_preview is None
+                    or self.closure_preview.request is not self.request):
+                raise ValueError("closure proposal needs its original source/body preview")
+        elif isinstance(self.request, OralReachRequestV1):
             expected.add(SensorimotorTargetKindV1.ORAL_REACH)
             if self.visual_preview is not None or self.oral_preview is None or self.oral_preview.request is not self.request:
                 raise ValueError("oral proposal needs its original independent source/body mapping")
@@ -427,6 +503,7 @@ class BodyTargetProposalV1:
             "status": "proposed", "motor_execution": False,
             **({"visual_mapping": self.visual_preview.as_dict()} if self.visual_preview is not None else {}),
             **({"oral_mapping": self.oral_preview.as_dict()} if self.oral_preview is not None else {}),
+            **({"closure_mapping": self.closure_preview.as_dict()} if self.closure_preview is not None else {}),
             **({"replaces": [item.current.as_dict() for item in self.replaces]} if self.replaces else {}),
         }
 
@@ -477,7 +554,7 @@ class BodyTargetReservationV1:
         if isinstance(before, BodyTranslationTargetV1):
             if not isinstance(after, BodyTranslationTargetV1) or after != before:
                 raise ValueError("this translation profile requires a new authorization for target changes")
-        elif before.kind is SensorimotorTargetKindV1.ORAL_REACH and after != before:
+        elif before.kind in (SensorimotorTargetKindV1.ORAL_REACH, SensorimotorTargetKindV1.ORAL_CLOSURE) and after != before:
             raise ValueError("oral target changes require new authorization")
         elif isinstance(after, BodyTranslationTargetV1) or abs(after.endpoint - before.endpoint) > before.tolerance + _EPSILON:
             raise ValueError("refinement exceeds original endpoint tolerance band")
@@ -662,8 +739,8 @@ class BodyTargetMapperV1:
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("stream must be MotorStreamRefV1")
-        if not isinstance(capabilities, tuple) or len(capabilities) > 3:
-            raise ValueError("supply at most three distinct axis capabilities; concurrent targets remain separately bounded")
+        if not isinstance(capabilities, tuple) or len(capabilities) > 4:
+            raise ValueError("supply at most four distinct axis capabilities; concurrent targets remain separately bounded")
         axes: dict[SensorimotorTargetKindV1, BodyAxisCapabilityV1] = {}
         names: set[str] = set()
         for capability in capabilities:
@@ -867,6 +944,14 @@ class BodyTargetMapperV1:
                 raise RuntimeError("oral permission lacks its scalar target or measured reach")
             if oral.contact is True and abs(oral.extension_metres - target.endpoint) > target.tolerance + _EPSILON:
                 return "oral_contact_before_target"
+        if refusal is None and reservation.current.target.kind is SensorimotorTargetKindV1.ORAL_CLOSURE and feedback is not None:
+            target = reservation.current.target
+            if not oral_closure_basis_compatible_v1(target.basis, feedback):
+                return "oral_closure_anchor_changed"
+            if not isinstance(target, BodyRelativeTargetV1) or feedback.oral is None:
+                raise RuntimeError("closure permission lost its typed target or oral context")
+            if target.offset > 0.0 and feedback.oral.contact is not True:
+                return "oral_closing_contact_lost"
         return refusal
 
     def _check_tick(self, at_tick: int) -> int:
@@ -967,12 +1052,14 @@ class BodyTargetMapperV1:
         capability = self._capabilities[kind]
         if not capability.minimum_coordinate - _EPSILON <= coordinate <= capability.maximum_coordinate + _EPSILON:
             return "body_outside_capability_range"
-        if kind is SensorimotorTargetKindV1.ORAL_REACH:
+        if kind in (SensorimotorTargetKindV1.ORAL_REACH, SensorimotorTargetKindV1.ORAL_CLOSURE):
             planar, oral = feedback.planar, feedback.oral
             if planar is None or planar.position is None or planar.heading_degrees is None:
                 return "required_coordinate_missing"
             if oral is None or oral.contact is None:
                 return "required_contact_evidence_missing"
+            if kind is SensorimotorTargetKindV1.ORAL_CLOSURE and oral.extension_metres is None:
+                return "required_coordinate_missing"
             if (feedback.support_contact is None or feedback.useful_loading is None
                     or feedback.body_tilt_degrees is None or feedback.destabilization is None):
                 return "required_support_evidence_missing"
@@ -1156,6 +1243,65 @@ class BodyTargetMapperV1:
         self._pending, self._proposal_number, self._last_tick = proposal, number, tick
         return proposal
 
+    def propose_oral_closure(
+        self, request: OralClosureRequestV1, source: FeedingDetailNavMapStateV1 | None, *, at_tick: int,
+    ) -> BodyTargetProposalV1:
+        """Map a supplied closure request without selecting Suckle or granting a seal.
+
+        Closing requires a paired current mouth/detail relation and real touch.
+        Opening only requires protected current body evidence; source absence
+        cannot force an already closed mouth to remain closed. One bounded
+        scalar contribution is proposed, never copied into actual body state.
+        This initial profile does not replace live targets: their owner must
+        explicitly release them first. All other movement is incompatible.
+        """
+        tick = self._check_tick(at_tick)
+        if not isinstance(request, OralClosureRequestV1) or request.origin.stream != self._stream:
+            raise ValueError("closure mapping needs its typed request and current generation")
+        if tick > _MAX_INDEX - request.lease_ticks:
+            raise ValueError("closure target expiry exceeds the finite clock")
+        if source is not None:
+            if not isinstance(source, FeedingDetailNavMapStateV1) or source.stream != self._stream or source.cutoff_tick != tick:
+                raise ValueError("closure source requires the current generation and cutoff")
+            if source.source_map_ref != request.source_map_ref or source.seed.detail_region_id != request.region_id:
+                raise ValueError("closure source and request identify different represented regions")
+        feedback = self._current_feedback(tick)
+        number = _index(self._proposal_number + 1, "proposal number", 1)
+        kind = SensorimotorTargetKindV1.ORAL_CLOSURE
+        reason = self._axis_refusal(kind, feedback)
+        capability = self._capabilities.get(kind)
+        bindings: tuple[BodyTargetBindingV1, ...] = ()
+        if reason is None:
+            if feedback is None or capability is None or feedback.oral_seal is None or feedback.oral_seal.closure is None:
+                raise RuntimeError("closure mapping lost its measured body or capability")
+            current = feedback.oral_seal.closure
+            closing = request.desired_closure > current + capability.tolerance
+            if not capability.minimum_coordinate <= request.desired_closure <= capability.maximum_coordinate:
+                reason = "closure_target_out_of_range"
+            elif closing and (source is None or not source.focal_accessible):
+                reason = "current_feeding_detail_unavailable"
+            elif closing and source is not None and (not source.oral_evidence_current or source.oral_feedback != feedback):
+                reason = "oral_source_body_acquisition_mismatch"
+            elif closing and source is not None and source.contact_correspondence_status != "compatible":
+                reason = "feeding_contact_not_supported"
+            elif self.reservations(at_tick=tick):
+                reason = "incompatible_body_resource_reserved"
+            else:
+                step = min(capability.maximum_step, capability.maximum_rate * self._tick_seconds * request.lease_ticks)
+                if abs(request.desired_closure - current) > capability.tolerance and step <= capability.tolerance:
+                    reason = "insufficient_motion_budget"
+                else:
+                    offset = max(-step, min(step, request.desired_closure - current))
+                    target = BodyRelativeTargetV1(f"body_target:oral_closure:{number}", 1, request.origin, kind, feedback, offset,
+                                                 capability.tolerance, capability.maximum_excursion,
+                                                 capability.maximum_rate, request.lease_ticks)
+                    bindings = (BodyTargetBindingV1(target, capability),)
+        preview = OralClosurePreviewV1(request, source, feedback, reason or "geometry_only_not_authorized")
+        withheld = () if reason is None else ((kind, reason),)
+        proposal = BodyTargetProposalV1(request, tick, bindings, withheld, closure_preview=preview)
+        self._pending, self._proposal_number, self._last_tick = proposal, number, tick
+        return proposal
+
     def _make_binding(
         self, request: BodyMovementRequestV1, kind: SensorimotorTargetKindV1,
         goal: float, *, feedback: MotorFeedbackV1, number: int,
@@ -1235,7 +1381,8 @@ class BodyTargetMapperV1:
                         reason = "insufficient_motion_budget"
             if reason is None and foreign_origin:
                 reason = "different_task_envelope_reserved"
-            if reason is None and occupied.intersection({SensorimotorTargetKindV1.PLANAR_TRANSLATION, SensorimotorTargetKindV1.ORAL_REACH}):
+            if reason is None and occupied.intersection({SensorimotorTargetKindV1.PLANAR_TRANSLATION,
+                                                        SensorimotorTargetKindV1.ORAL_REACH, SensorimotorTargetKindV1.ORAL_CLOSURE}):
                 reason = "incompatible_body_resource_reserved"
             if reason is None and kind in occupied:
                 reason = "resource_already_reserved"
@@ -1268,7 +1415,8 @@ class BodyTargetMapperV1:
             raise ValueError("proposal is not the mapper's current original proposal")
         if not proposal.bindings:
             raise ValueError("proposal has no usable target to reserve")
-        if (proposal.visual_preview is not None or proposal.oral_preview is not None) and tick != proposal.created_tick:
+        if (tick != proposal.created_tick
+                and (proposal.visual_preview is not None or proposal.oral_preview is not None or proposal.closure_preview is not None)):
             raise ValueError("scene-directed target must commit at its original reviewed visual cutoff")
         feedback = self._current_feedback(tick)
         live = self.reservations(at_tick=tick)
@@ -1282,7 +1430,8 @@ class BodyTargetMapperV1:
             raise ValueError("resources belong to another task, envelope or execution")
         occupied = {item.current.target.kind for item in live}
         proposed_kinds = {binding.target.kind for binding in proposal.bindings}
-        if SensorimotorTargetKindV1.ORAL_REACH in occupied | proposed_kinds and len(live) + len(proposal.bindings) != 1:
+        oral_kinds = {SensorimotorTargetKindV1.ORAL_REACH, SensorimotorTargetKindV1.ORAL_CLOSURE}
+        if oral_kinds.intersection(occupied | proposed_kinds) and len(live) + len(proposal.bindings) != 1:
             raise ValueError("oral reach excludes simultaneous support or locomotor targets")
         added: list[BodyTargetReservationV1] = []
         for binding in proposal.bindings:
@@ -1335,7 +1484,7 @@ class BodyTargetMapperV1:
         if tick <= reservation.updated_tick:
             raise ValueError("refinement requires a later local tick")
         initial, current = reservation.initial.target, reservation.current.target
-        if current.kind is SensorimotorTargetKindV1.ORAL_REACH:
+        if current.kind in (SensorimotorTargetKindV1.ORAL_REACH, SensorimotorTargetKindV1.ORAL_CLOSURE):
             raise ValueError("oral target changes require a new source mapping and authorization")
         if not isinstance(initial, BodyRelativeTargetV1) or not isinstance(current, BodyRelativeTargetV1):
             raise ValueError("translation changes require a new task authorization, not scalar refinement")

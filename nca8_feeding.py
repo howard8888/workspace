@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from nca8_seek_attention import SeekingOutcomeAttentionV1
     from nca8_seek_learning import SeekingLearningHookV1
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "FeedingDetailSeedV1", "FeedingDetailProfileV1", "FeedingDetailNavMapStateV1",
     "FeedingDetailCandidateV1", "FeedingDetailSourceV1", "__version__",
@@ -305,6 +305,58 @@ class FeedingDetailNavMapStateV1:
         return body.oral.contact if self.oral_evidence_current and body is not None and body.oral is not None else None
 
     @property
+    def contact_correspondence_status(self) -> str:
+        """Compare current touch with the independently represented detail location.
+
+        Compatible means touch at a mouth position within 0.005 metres of the
+        represented detail, not independently sensed surface identity. Generic
+        touch elsewhere cannot be called feeding contact. No past sample is
+        accumulated, and no geometric endpoint manufactures a tactile report.
+        """
+        if not self.oral_evidence_current:
+            return "unavailable"
+        contact = self.oral_contact
+        if contact is None:
+            return "touch_unknown"
+        if not contact:
+            return "no_touch"
+        distance = self.mouth_detail_distance
+        if distance is None:
+            return "location_unknown"
+        return "compatible" if distance <= 0.005 + 1e-12 else "touch_elsewhere"
+
+    @property
+    def oral_sealed(self) -> bool | None:
+        """Expose the paired measured seal without inferring it from closure or PNM."""
+        body = self.oral_feedback
+        if not self.oral_evidence_current or body is None or body.oral_seal is None:
+            return None
+        return body.oral_seal.sealed
+
+    @property
+    def seal_correspondence_status(self) -> str:
+        """Relate seal sensing to contact evidence; this is not a latch task verdict.
+
+        Unknown seal remains unknown even with known closure and touch. A seal
+        sensor contradicting known no-touch is explicitly inconsistent. Current
+        compatible location is required; a missing visual product cannot borrow
+        a past source configuration as current truth.
+        """
+        body = self.oral_feedback
+        if body is None or body.oral_seal is None:
+            return "not_supplied"
+        if not self.oral_evidence_current:
+            return "unavailable"
+        if self.oral_sealed is None:
+            return "seal_unknown"
+        if not self.oral_sealed:
+            return "no_seal"
+        contact_status = self.contact_correspondence_status
+        if contact_status == "no_touch":
+            return "inconsistent_touch_and_seal"
+        return "compatible" if contact_status == "compatible" else "seal_unlocalized"
+
+    @property
     def validity(self) -> CircuitValidityV1:
         """Mark unavailable visual evidence as stale; never refresh its timestamp."""
         return self.maternal.visual.validity if self.enabled else CircuitValidityV1.STALE
@@ -342,7 +394,12 @@ class FeedingDetailNavMapStateV1:
                                       "mouth_position": None if self.mouth_position is None else self.mouth_position.as_dict(),
                                       "mouth_detail_distance_metres": self.mouth_detail_distance,
                                       "contact": self.oral_contact, "contact_identifies_surface": False}}
-                   if self.oral_feedback is not None else {})}
+                   if self.oral_feedback is not None else {}),
+                **({"seal_relation": {"contact_correspondence": self.contact_correspondence_status,
+                                      "sealed": self.oral_sealed, "correspondence": self.seal_correspondence_status,
+                                      "establishes_surface_identity": False, "establishes_latch_task": False,
+                                      "establishes_nourishment": False}}
+                   if self.oral_feedback is not None and self.oral_feedback.oral_seal is not None else {})}
 
 
 @dataclass(frozen=True, slots=True)
