@@ -29,9 +29,9 @@ from nca8_seek_nipple_demo import seek_nipple_profile_v1
 from nca8_sensorimotor_contracts import SensorimotorTargetKindV1
 from nca8_suckle import SuckleApplicationV1, SuckleProfileV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["SUCKLE_LATCH_CASES_V1", "SuckleExperimentProfileV1", "SuckleExperimentV1", "suckle_profile_v1",
-           "create_suckle_trial_v1", "run_suckle_v1", "render_suckle_v1", "run_suckle_menu_v1", "__version__"]
+           "create_suckle_trial_v1", "suckle_owner_limits_v1", "run_suckle_v1", "render_suckle_v1", "run_suckle_menu_v1", "__version__"]
 
 SUCKLE_LATCH_CASES_V1 = (
     "nominal", "suckle_off", "attention_off", "source_off", "no_need", "wrong_category", "missing_detail",
@@ -119,13 +119,21 @@ def suckle_profile_v1(case: str = "nominal") -> SuckleExperimentProfileV1:
     return SuckleExperimentProfileV1(run, task, seal, capability)
 
 
-def create_suckle_trial_v1(case: str = "nominal", *, trace_capacity: int = 256) -> IntegratedRightingTrialV1:
-    """Construct one fresh common hierarchy; no task is selected during construction."""
+def create_suckle_trial_v1(
+    case: str = "nominal", *, trace_capacity: int = 256, outcomes_enabled: bool = False, compare_predictions: bool = True,
+) -> IntegratedRightingTrialV1:
+    """Construct the common H hierarchy with an optional I observation-only consumer.
+
+    The correspondence switches do not alter physical profiles, source timing,
+    selection, target mapping or H's latch rule. Default H export stays unchanged.
+    No task is selected and no physical interval runs during construction.
+    """
     profile = suckle_profile_v1(case)
     run = profile.run
     return IntegratedRightingTrialV1(
         run.physical, stream_id="suckle_latch_reference_body", planar_profile=run.planar, oral_profile=run.oral,
-        oral_seal_profile=profile.seal, suckle_profile=profile.suckle,
+        oral_seal_profile=profile.seal, suckle_profile=replace(profile.suckle, outcomes_enabled=outcomes_enabled,
+                                                           prediction_comparison_enabled=compare_predictions),
         capabilities=(*nominal_body_capabilities_v1(), oral_body_capability_v1(), *((profile.capability,) if profile.capability else ())),
         follow_mom_profile=FollowMomProfileV1(outcomes_enabled=run.stand_follow,
                                              outcome_attention_enabled=run.stand_follow, learning_hook_enabled=run.stand_follow),
@@ -256,6 +264,15 @@ class SuckleExperimentV1:
                 "owner_limits": dict(_LIMITS), "durable_before": self.run.durable_before, "durable_after": self.run.durable_after,
                 "checks": dict(self.checks()), "review_status": self.review_status, "B99": "open",
                 "suckle_pnm_correspondence": "deferred", "suckle_learning": "unimplemented_no_participation"}
+
+
+def suckle_owner_limits_v1() -> dict[str, int]:
+    """Return detached H storage limits for additive experimental qualification.
+
+    New observers may extend these limits in their own review. They cannot edit
+    the retained H bounds or silently discard new counters to claim boundedness.
+    """
+    return dict(_LIMITS)
 
 
 def run_suckle_v1(case: str = "nominal", *, trace_capacity: int = 256) -> SuckleExperimentV1:

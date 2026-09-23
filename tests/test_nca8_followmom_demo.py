@@ -189,5 +189,5 @@ def test_registry_reports_real_components_without_promoting_local_smp_to_task():
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     for name in ("nca8_maternal", "nca8_followmom", "nca8_followmom_demo"):
         assert registry[name] == name
-    assert cca8_run.__version__ == "0.30.36" and len(cca8_run._cca8_component_rows()) == 106
+    assert cca8_run.__version__ == "0.30.36" and len(cca8_run._cca8_component_rows()) == 108
     assert len(cca8_run.PRIMITIVES) == 8

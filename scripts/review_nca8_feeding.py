@@ -11,7 +11,8 @@ The --oral route supplies a reach fixture; --oral-seal supplies bounded closure
 with independently measured seal evidence. Neither is Navigation-selected
 Suckle, a latch task verdict, or observed milk.
 The --suckle route selects the initial latch contribution through Navigation;
-milk, full Suckle and its task-PNM correspondence remain deferred.
+milk and full Suckle remain deferred. The --suckle-outcomes route adds original
+Suckle correspondence without Attention or learning consequences.
 The default source/access route and its complete exports remain unchanged.
 This helper writes no repository files; neither review closes P16-2C or B99.
 Any failed review check produces a nonzero exit. Run from any directory.
@@ -33,6 +34,7 @@ from nca8_feeding_demo import FEEDING_DETAIL_CASES_V1, render_feeding_detail_v1,
 from nca8_oral_demo import ORAL_CONTACT_CASES_V1, render_oral_contact_v1, run_oral_contact_v1
 from nca8_oral_seal_demo import ORAL_SEAL_CASES_V1, render_oral_seal_v1, run_oral_seal_v1
 from nca8_suckle_demo import SUCKLE_LATCH_CASES_V1, render_suckle_v1, run_suckle_v1
+from nca8_suckle_outcomes_demo import SUCKLE_OUTCOME_CASES_V1, render_suckle_outcome_v1, run_suckle_outcome_v1
 from nca8_seek_nipple_demo import SEEK_NIPPLE_CASES_V1, render_seek_nipple_v1, run_seek_nipple_v1
 from nca8_seek_outcomes_demo import SEEK_NIPPLE_OUTCOME_CASES_V1, render_seek_nipple_outcome_v1, run_seek_nipple_outcome_v1
 from nca8_seek_attention_demo import SEEKING_ATTENTION_CASES_V1, render_seeking_attention_v1, run_seeking_attention_v1
@@ -43,6 +45,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run a declared finite case; never infer or repair an unknown selector."""
     parser = argparse.ArgumentParser(description=__doc__)
     family = parser.add_mutually_exclusive_group()
+    family.add_argument("--suckle-outcomes", action="store_true", help="review execution-sensitive Suckle correspondence; no milk or learning")
     family.add_argument("--suckle", action="store_true", help="review selected initial latch; no milk or full Suckle task")
     family.add_argument("--oral-seal", action="store_true", help="review supplied closure and independently observed seal; no Suckle")
     family.add_argument("--oral", action="store_true", help="review the separate supplied-target/contact foundation")
@@ -54,12 +57,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--detail", action="store_true", help="include actual source-selection timeline")
     parser.add_argument("--json", action="store_true", help="export complete detached evidence rather than text")
     args = parser.parse_args(argv)
-    allowed = (SUCKLE_LATCH_CASES_V1 if args.suckle else ORAL_SEAL_CASES_V1 if args.oral_seal else SEEKING_LEARNING_CASES_V1 if args.seek_learning else SEEKING_ATTENTION_CASES_V1 if args.seek_attention else
+    allowed = (SUCKLE_OUTCOME_CASES_V1 if args.suckle_outcomes else SUCKLE_LATCH_CASES_V1 if args.suckle else ORAL_SEAL_CASES_V1 if args.oral_seal else SEEKING_LEARNING_CASES_V1 if args.seek_learning else SEEKING_ATTENTION_CASES_V1 if args.seek_attention else
                SEEK_NIPPLE_OUTCOME_CASES_V1 if args.seek_outcomes else SEEK_NIPPLE_CASES_V1 if args.seek else
                ORAL_CONTACT_CASES_V1 if args.oral else FEEDING_DETAIL_CASES_V1)
     if args.case != "all" and args.case not in allowed:
         parser.error("case is not available in this review; choose: all, " + ", ".join(allowed))
     cases = allowed if args.case == "all" else (args.case,)
+    if args.suckle_outcomes:
+        suckle_outcomes = tuple(run_suckle_outcome_v1(case) for case in cases)
+        print(json.dumps([item.as_dict() for item in suckle_outcomes], sort_keys=True, allow_nan=False) if args.json else
+              "\n\n".join(render_suckle_outcome_v1(item, detail=args.detail) for item in suckle_outcomes))
+        return int(any(item.review_status != "PASS" for item in suckle_outcomes))
     if args.suckle:
         suckle_results = tuple(run_suckle_v1(case) for case in cases)
         print(json.dumps([item.as_dict() for item in suckle_results], sort_keys=True, allow_nan=False) if args.json else

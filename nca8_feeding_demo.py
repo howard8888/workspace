@@ -33,10 +33,11 @@ from nca8_seek_attention_demo import run_seeking_attention_menu_v1
 from nca8_seek_learning_demo import run_seeking_learning_menu_v1
 from nca8_oral_seal_demo import run_oral_seal_menu_v1
 from nca8_suckle_demo import run_suckle_menu_v1
+from nca8_suckle_outcomes_demo import run_suckle_outcome_menu_v1
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_stand_follow_demo import StandFollowPhysicalSampleV1, StandFollowProfileV1, stand_follow_profile_v1
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "FEEDING_DETAIL_CASES_V1", "FeedingDetailExperimentV1", "feeding_detail_profiles_v1", "create_feeding_detail_trial_v1",
     "run_feeding_detail_v1", "render_feeding_detail_v1", "run_feeding_detail_menu_v1", "__version__",
@@ -299,9 +300,13 @@ def run_feeding_detail_menu_v1() -> None:
         print("  22) Seeking participation and actual Phase F (P16-2C-F; no durable learning)")
         print("  23) Supplied oral closure and observed seal (P16-2C-G; no Suckle or milk)")
         print("  24) Navigation-selected Suckle: initial latch (P16-2C-H; no milk)")
+        print("  25) Original Suckle prediction and actual execution (P16-2C-I)")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
             return
+        if choice == "25":
+            run_suckle_outcome_menu_v1()
+            continue
         if choice == "24":
             run_suckle_menu_v1()
             continue

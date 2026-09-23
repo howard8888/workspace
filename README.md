@@ -16,7 +16,73 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-2C-H selected Suckle initial latch
+## NCA8 update: P16-2C-I execution-sensitive Suckle correspondence
+
+Entry: H is accepted and committed at clean main / recorded origin/main
+`6112280fba17146ff7a9600547bbfe4431d770bd`, tree `3e8c73c7f3348c964fd4584875c116a855a95547`.
+I is a prepared opt-in candidate under adopted Planning v18 / accepted Architecture v10.1;
+Howard's local validation and explicit acceptance still govern this slice.
+
+The original selected Suckle preview and request are retained before handoff, alongside
+BodyMap's actual closure permission. The outer driver reports installation separately,
+then passes original commands, local reports and paired sensory acquisitions to the
+bounded operation-local correspondence owner at C2. The comparator cannot read the
+physical plant, choose a task, change the feeding source, command a movement or learn.
+
+H's preview forecasts closure and conditional seal at the original mouth/detail anchors.
+It does not forecast H's separate two-distinct-sample latch proof. I preserves that
+meaning: local target achievement, physical seal, sensed seal, latch proof, prediction
+match, nourishment and causal credit remain different. Original H preview exports retain
+their historical consumer description; the I claim/frame names the actual added consumer.
+
+The fixed endpoint is the original cutoff plus its original 1–8-tick horizon. Exact-event
+sensing may arrive eight ticks later; no target lease is extended. Closure tolerance is
+0.025 normalized units and anchor tolerance is 0.005 metres. A veto is `not_applied`, not
+an executed failure. A materially narrowed endpoint/lease/rate preserves both meanings
+and makes dependent closure/seal expectations unevaluable under that authorization.
+Missing sensing is unknown; an absent endpoint expires unresolved. Early interruption
+preserves returned exposure without scoring the uncompleted forecast. Cancellation at
+or after the original endpoint does not erase its already-realized evidence obligation.
+A physical-call fault leaves execution uncertain and is never recoded as a veto.
+
+The nominal H case issues six closure commands; physical seal first appears at tick 5.
+The original event-8 prediction is sensed at availability 9 and read by nominal C2 at 12.
+H separately establishes its latch proof at 12 from distinct events 7 and 11. These two
+results sharing a focal cutoff does not make them the same test. With a nonsealable
+surface, the same commands and closure produce a genuine seal mismatch; missing seal
+sensing leaves an unknown outcome despite the observer seeing a physical seal. A later
+source change cannot rewrite the original forecast. Existing protection interrupts some
+adverse attempts before their endpoint; those are not mislabeled endpoint mismatches.
+
+Live limits: eight pending claims, 32 terminal diagnostic records, sixteen paired
+acquisitions, one awaiting installation, one installed-target reference and sixteen
+staged lower intervals. Whole batches validate before mutation. Reset replaces the owner
+and generation. Diagnostic history grants no motor authority or prolonged eligibility.
+
+The 37-case I review reuses all 35 unchanged H physical profiles plus nominal and
+nonsealable comparison-off controls. Each executes a fresh H control and compares all
+retained behavioral evidence, not merely the final latch. Only the I correspondence
+frame/counters and focal diagnostic trace count are excluded from that behavioral hash;
+the complete counts remain exported and bounded. Tests also preserve full default-H
+exports against hashes captured at the exact accepted baseline before I edits.
+
+Menu: Main menu **1 -> 4 -> 15 -> 25**, then **5** for all cases or **6** for retained
+read-only detail. The secondary entry uses the same experiment functions:
+
+    python scripts/review_nca8_feeding.py --suckle-outcomes --case all --detail
+
+`nca8_suckle_outcomes` and `nca8_suckle_outcomes_demo` bring the registry to **108 production
+components / 8 unchanged host behavioral primitives**. No new dependency is introduced.
+The A–H reviews and default H behavior remain available. Production Pylint/mypy, changed
+tests, full focused NCA8 tests, host regressions and exactly one full-suite preflight
+remain the validation wall. The release helper saves UTF-8 logs and a compact summary.
+
+I adds no Suckle discrepancy-to-Attention route, participation/Phase-F consumer, durable
+learning, rhythmic suckling, milk/nourishment or Rest. Full P16-2C and B99 remain open;
+NCA8 is not promoted to default. The existing SeekNipple/F machinery is unchanged.
+
+## Retained H delivery record: selected Suckle initial latch
+
 
 Entry: G is accepted and committed at clean main / recorded origin/main
 `fc8e34823a686e0bf9157cfe5b0b1859347458b4`, tree `871ab207cf8180d4af69647fb8a18d4454c85967`.

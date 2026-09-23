@@ -273,4 +273,4 @@ def test_registry_includes_real_new_experiment_without_new_host_behavioral_primi
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_stand_follow_demo"] == "nca8_stand_follow_demo"
     assert cca8_run.__version__ == "0.30.36"
-    assert len(cca8_run._cca8_component_rows()) == 106 and len(cca8_run.PRIMITIVES) == 8
+    assert len(cca8_run._cca8_component_rows()) == 108 and len(cca8_run.PRIMITIVES) == 8

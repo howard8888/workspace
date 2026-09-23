@@ -325,7 +325,7 @@ def test_existing_feeding_menu_delegates_to_new_route_without_a_second_loop(monk
 
 
 def test_registry_adds_task_and_observer_without_changing_host_primitive_count():
-    assert cca8_run.__version__ == "0.30.36" and len(cca8_run._cca8_component_rows()) == 106
+    assert cca8_run.__version__ == "0.30.36" and len(cca8_run._cca8_component_rows()) == 108
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_seek_nipple"] == "nca8_seek_nipple" and registry["nca8_seek_nipple_demo"] == "nca8_seek_nipple_demo"
     assert len(cca8_run.PRIMITIVES) == 8

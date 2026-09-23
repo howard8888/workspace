@@ -371,5 +371,5 @@ def test_registry_reports_all_production_modules_without_registering_an_smp_as_a
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_sensorimotor"] == "nca8_sensorimotor"
     assert registry["nca8_sensorimotor_demo"] == "nca8_sensorimotor_demo"
-    assert len(cca8_run._cca8_component_rows()) == 106
+    assert len(cca8_run._cca8_component_rows()) == 108
     assert len(cca8_run.PRIMITIVES) == 8

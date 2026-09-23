@@ -3001,6 +3001,8 @@ _CCA8_COMPONENT_REGISTRY: tuple[tuple[str, str], ...] = (
     ("nca8_oral_seal_demo", "nca8_oral_seal_demo"),
     ("nca8_suckle", "nca8_suckle"),
     ("nca8_suckle_demo", "nca8_suckle_demo"),
+    ("nca8_suckle_outcomes", "nca8_suckle_outcomes"),
+    ("nca8_suckle_outcomes_demo", "nca8_suckle_outcomes_demo"),
     ("nca8_seek_nipple", "nca8_seek_nipple"),
     ("nca8_seek_nipple_demo", "nca8_seek_nipple_demo"),
     ("nca8_seek_attention", "nca8_seek_attention"),

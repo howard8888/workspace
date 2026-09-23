@@ -324,7 +324,7 @@ def test_default_feeding_source_menu_still_routes_all_without_oral_runs(monkeypa
 
 def test_registry_reports_one_added_observer_not_new_host_task_primitives():
     assert cca8_run.__version__ == "0.30.36"
-    assert len(cca8_run._cca8_component_rows()) == 106 and len(cca8_run.PRIMITIVES) == 8
+    assert len(cca8_run._cca8_component_rows()) == 108 and len(cca8_run.PRIMITIVES) == 8
     assert dict(cca8_run._CCA8_COMPONENT_REGISTRY)["nca8_oral_demo"] == "nca8_oral_demo"
 
 

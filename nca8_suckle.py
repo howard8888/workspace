@@ -26,7 +26,7 @@ from nca8_prediction import ProjectedNavMapV1, SucklePreviewV1
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
 from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["SuckleProfileV1", "SuckleTaskV1", "SuckleApplicationV1", "SuckleAssessmentV1", "SuckleIPV1", "__version__"]
 
 _MAX_TICKS = 48
@@ -54,15 +54,21 @@ class SuckleProfileV1:
 
     The constants describe this first engineering profile, not newborn
     physiology. Enabling it does not supply feeding need or a motor capability.
-    The complete Suckle task and original-PNM outcome route remain unfinished.
+    The complete feeding task remains unfinished. Optional correspondence observes
+    the original closure/seal prediction without changing task or motor decisions.
     """
 
     enabled: bool = True
     influence_enabled: bool = True
+    outcomes_enabled: bool = False
+    prediction_comparison_enabled: bool = True
 
     def __post_init__(self) -> None:
-        if not isinstance(self.enabled, bool) or not isinstance(self.influence_enabled, bool):
+        if not all(isinstance(value, bool) for value in (
+                self.enabled, self.influence_enabled, self.outcomes_enabled, self.prediction_comparison_enabled)):
             raise TypeError("Suckle switches must be Boolean")
+        if not self.outcomes_enabled and not self.prediction_comparison_enabled:
+            raise ValueError("Suckle comparison-off requires its correspondence owner")
 
     def as_dict(self) -> dict[str, object]:
         """Disclose fixed scope, timing and unimplemented consumers."""
@@ -71,7 +77,9 @@ class SuckleProfileV1:
                 "maximum_focal_opportunities": _MAX_OPPORTUNITIES, "maximum_physical_ticks": _MAX_TICKS,
                 "maximum_target_lease_ticks": 8, "maximum_evidence_gap_ticks": 8,
                 "latch_samples": 2, "minimum_latch_span_ticks": 4, "milk": "not_supplied",
-                "task_pnm_correspondence": "deferred", "learning": "unimplemented_no_participation",
+                "task_pnm_correspondence": "suckle_correspondence_v1" if self.outcomes_enabled else "deferred",
+                **({"prediction_comparison_enabled": self.prediction_comparison_enabled} if self.outcomes_enabled else {}),
+                "learning": "unimplemented_no_participation",
                 "full_suckle_task": "not_implemented"}
 
 

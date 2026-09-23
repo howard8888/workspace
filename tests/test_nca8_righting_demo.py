@@ -214,4 +214,4 @@ def test_registry_lists_real_production_modules_without_changing_host_behavior_c
     assert nca8_menu.__version__ == "0.29.0"
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_righting"] == "nca8_righting" and registry["nca8_righting_demo"] == "nca8_righting_demo"
-    assert len(cca8_run._cca8_component_rows()) == 106 and len(cca8_run.PRIMITIVES) == 8
+    assert len(cca8_run._cca8_component_rows()) == 108 and len(cca8_run.PRIMITIVES) == 8

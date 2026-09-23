@@ -412,7 +412,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print("  12) Maternal outcome-to-Attention review (P16-2B-D; one focal allocation)")
         print("  13) Maternal participation, no-learning and Phase-F review (P16-2B-E)")
         print("  14) Combined Follow-Mom qualification (P16-2B-F; before feeding)")
-        print("  15) Feeding: detail, seeking, oral contact/seal and selected initial latch (P16-2C-A/H)")
+        print("  15) Feeding: detail, seeking, initial latch and Suckle correspondence (P16-2C-A/I)")
         print("  [Enter] Return to Main Menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
