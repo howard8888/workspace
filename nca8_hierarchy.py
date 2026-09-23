@@ -50,7 +50,8 @@ from nca8_feeding import FeedingDetailProfileV1, FeedingDetailSourceV1, FeedingD
 from nca8_followmom import FollowMomProfileV1, FollowMomIPV1, FollowMomApplicationV1, FollowMomAssessmentV1
 from nca8_seek_nipple import SeekNippleProfileV1, SeekNippleIPV1, SeekNippleApplicationV1, SeekNippleAssessmentV1
 from nca8_suckle import SuckleProfileV1, SuckleIPV1, SuckleApplicationV1, SuckleAssessmentV1
-from nca8_suckle_outcomes import SuckleIntervalEvidenceV1, SuckleOutcomeFrameV1, SuckleOutcomeRuntimeV1
+from nca8_suckle_outcomes import SuckleIntervalEvidenceV1, SuckleOutcomeV1, SuckleOutcomeFrameV1, SuckleOutcomeRuntimeV1
+from nca8_suckle_attention import SuckleAttentionFrameV1, SuckleMismatchRequestV1
 from nca8_seek_outcomes import SeekNippleIntervalEvidenceV1, SeekNippleOutcomeFrameV1, SeekNippleOutcomeRuntimeV1, SeekNippleOutcomeV1
 from nca8_seek_attention import SeekingAttentionFrameV1, SeekingMismatchRequestV1
 from nca8_maternal_attention import MaternalAttentionFrameV1, MaternalMismatchRequestV1
@@ -73,7 +74,7 @@ from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, Senso
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1, SensorimotorTargetKindV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -122,6 +123,7 @@ class IntegratedRightingCycleV1:
     seeking_learning_report: SeekingLearningPhaseFReportV1 | None = None
     suckle_task: SuckleAssessmentV1 | None = None
     suckle_correspondence: SuckleOutcomeFrameV1 | None = None
+    suckle_attention: SuckleAttentionFrameV1 | None = None
 
     @property
     def status(self) -> str:
@@ -133,6 +135,8 @@ class IntegratedRightingCycleV1:
             return "refused_no_usable_target"
         if self.seeking_attention is not None and not self.seeking_attention.allocation.permits_primitive_selection:
             return f"seeking_{self.seeking_attention.allocation.kind}"
+        if self.suckle_attention is not None and not self.suckle_attention.allocation.permits_primitive_selection:
+            return f"suckle_{self.suckle_attention.allocation.kind}"
         if self.suckle_task is not None and isinstance(self.calculation.attention.selected_source_state, FeedingDetailNavMapStateV1):
             return self.suckle_task.reason
         if isinstance(self.calculation.attention.selected_source_state, FeedingDetailNavMapStateV1):
@@ -169,6 +173,7 @@ class IntegratedRightingCycleV1:
                if self.maternal_source is not None else {}),
             **({"maternal_correspondence": self.maternal_correspondence.as_dict()} if self.maternal_correspondence is not None else {}),
             **({"suckle_correspondence": self.suckle_correspondence.as_dict()} if self.suckle_correspondence is not None else {}),
+            **({"suckle_attention": self.suckle_attention.as_dict()} if self.suckle_attention is not None else {}),
             **({"seeking_correspondence": self.seeking_correspondence.as_dict()} if self.seeking_correspondence is not None else {}),
             **({"seeking_attention": self.seeking_attention.as_dict()} if self.seeking_attention is not None else {}),
             **({"seeking_learning_reconciliation": self.seeking_learning_report.as_dict()}
@@ -253,6 +258,8 @@ class IntegratedRightingCoreV1:
         self.feeding_detail = None if feeding_detail_profile is None else FeedingDetailSourceV1(stream, feeding_detail_profile)
         self.suckle = (SuckleIPV1(self.feeding_detail, suckle_profile)
                        if self.feeding_detail is not None and suckle_profile is not None else None)
+        if self.feeding_detail is not None and suckle_profile is not None and suckle_profile.outcome_attention_enabled:
+            self.feeding_detail.configure_suckle_outcome_attention()
         if self.feeding_detail is not None and seek_nipple_profile is not None and seek_nipple_profile.outcome_attention_enabled:
             self.feeding_detail.configure_outcome_attention()
         if self.feeding_detail is not None and seek_nipple_profile is not None and seek_nipple_profile.learning_hook_enabled:
@@ -331,6 +338,8 @@ class IntegratedRightingCoreV1:
             self.seeking_outcomes.close(reason=self._fault)
         if self.feeding_detail is not None and self.feeding_detail.outcome_attention is not None:
             self.feeding_detail.outcome_attention.close()
+        if self.feeding_detail is not None and self.feeding_detail.suckle_outcome_attention is not None:
+            self.feeding_detail.suckle_outcome_attention.close()
         if self.feeding_detail is not None and self.feeding_detail.learning_hook is not None:
             self.feeding_detail.learning_hook.close()
         if self.maternal_outcomes is not None:
@@ -469,8 +478,10 @@ class IntegratedRightingCoreV1:
             raise RuntimeError("the frozen summary sidecar lost its ingress association")
         suckle_owner = self.suckle_outcomes
         suckle_before = suckle_owner.history()[-1].number if suckle_owner is not None and suckle_owner.history() else 0
+        suckle_results: tuple[SuckleOutcomeV1, ...] = ()
         if suckle_owner is not None:
-            for outcome in suckle_owner.consume_intervals(suckle_intervals, cutoff_tick=tick):
+            suckle_results = suckle_owner.consume_intervals(suckle_intervals, cutoff_tick=tick)
+            for outcome in suckle_results:
                 self.trace.append("hierarchy_suckle_outcome", "original Suckle claim compared; not latch proof, milk or causal credit",
                                   cycle_id=cycle, details={"pnm_id": outcome.claim.preview.pnm.pnm_id, "status": outcome.status,
                                                           "command_intervals": outcome.command_intervals,
@@ -554,6 +565,8 @@ class IntegratedRightingCoreV1:
         feeding_source = None
         seeking_attention = self.feeding_detail.outcome_attention if self.feeding_detail is not None else None
         seeking_requests: tuple[SeekingMismatchRequestV1, ...] = ()
+        suckle_attention = self.feeding_detail.suckle_outcome_attention if self.feeding_detail is not None else None
+        suckle_requests: tuple[SuckleMismatchRequestV1, ...] = ()
         feeding_bid = None
         if self.feeding_detail is not None:
             if maternal_source is None:
@@ -589,6 +602,16 @@ class IntegratedRightingCoreV1:
                                       details={"request_id": seeking_request.request_id, "significance": seeking_request.significance,
                                                "pnm_id": seeking_request.outcome.claim.preview.pnm.pnm_id,
                                                "expires_at_tick": seeking_request.expires_at_tick})
+            if suckle_attention is not None:
+                suckle_requests = suckle_attention.admit(
+                    suckle_results, feeding_source, self.suckle.task if self.suckle is not None else None, cutoff_tick=tick,
+                )
+                feeding_bid = suckle_attention.contribute_bid(feeding_bid)
+                for request in suckle_requests:
+                    self.trace.append("hierarchy_suckle_outcome_request", "Suckle discrepancy requests its source, not another IP application",
+                                      cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
+                                      details={"request_id": request.request_id, "significance": request.significance,
+                                               "pnm_id": request.outcome.claim.preview.pnm.pnm_id, "expires_at_tick": request.expires_at_tick})
             if feeding_bid is not None:
                 competing_bids = (*competing_bids, feeding_bid)
             self.trace.append("hierarchy_feeding_source", "feeding-detail evidence updated; nomination, when present, is not an oral action",
@@ -646,11 +669,23 @@ class IntegratedRightingCoreV1:
                               details={"number": event.number, "reason": event.reason, "sample_id": event.sample_id,
                                        "event_tick": event.event_tick, "noticed_tick": event.noticed_tick})
         self.scheduler.enter_runtime_phase(cycle, CyclePhase.FOCAL_COMMITMENT)
-        if seeking_attention is not None:
+        if suckle_attention is not None:
+            selected = self.cognition.select_prepared(prepared, maternal_attention=maternal_attention,
+                                                       seeking_attention=seeking_attention, suckle_attention=suckle_attention)
+        elif seeking_attention is not None:
             selected = self.cognition.select_prepared(prepared, maternal_attention=maternal_attention, seeking_attention=seeking_attention)
         else:
             selected = (self.cognition.select_prepared(prepared, maternal_attention=maternal_attention)
                         if maternal_attention is not None else self.cognition.select_prepared(prepared))
+        suckle_allocation = selected.suckle_outcome_allocation
+        if suckle_allocation is not None:
+            suckle_interpretation = suckle_allocation.interpretation
+            self.trace.append("hierarchy_suckle_outcome_allocation", "Navigation allocation: interpretation is not an IP reapplication",
+                              cycle_id=cycle, phase=CyclePhase.FOCAL_COMMITMENT.name,
+                              details={"kind": suckle_allocation.kind,
+                                       "request_id": suckle_interpretation.request.request_id if suckle_interpretation is not None else None,
+                                       "status": suckle_interpretation.status if suckle_interpretation is not None else None,
+                                       "outcome_rank": feeding_bid.prediction_or_envelope_failure_rank if feeding_bid is not None else 0})
         seeking_allocation = selected.seeking_outcome_allocation
         if seeking_allocation is not None:
             seeking_interpretation = seeking_allocation.interpretation
@@ -878,11 +913,14 @@ class IntegratedRightingCoreV1:
             suckle_task=self.suckle.assessment() if self.suckle is not None else None,
             suckle_correspondence=SuckleOutcomeFrameV1(
                 tick, tuple(item for item in suckle_owner.history() if item.number > suckle_before),
-                suckle_registration, suckle_owner.pending(), suckle_owner.compare_predictions) if suckle_owner is not None else None,
+                suckle_registration, suckle_owner.pending(), suckle_owner.compare_predictions,
+                suckle_attention is not None) if suckle_owner is not None else None,
             seeking_correspondence=SeekNippleOutcomeFrameV1(
                 tick, tuple(item for item in seeking_owner.history() if item.number > seeking_before),
                 seeking_registration, seeking_owner.pending(), seeking_owner.compare_predictions,
                 seeking_attention is not None, seeking_hook is not None) if seeking_owner is not None else None,
+            suckle_attention=SuckleAttentionFrameV1(suckle_requests, suckle_attention.pending(), feeding_bid, suckle_allocation)
+            if suckle_attention is not None and suckle_allocation is not None else None,
             seeking_learning_report=seeking_learning_report,
             seeking_attention=SeekingAttentionFrameV1(seeking_requests, seeking_attention.pending(), feeding_bid, seeking_allocation, seeking_hook is not None)
             if seeking_attention is not None and seeking_allocation is not None else None,
@@ -1095,6 +1133,8 @@ class IntegratedRightingTrialV1:
                if self.core.maternal is not None and self.core.maternal.learning_hook is not None else {}),
             **(self.core.feeding_detail.outcome_attention.retained_counts()
                if self.core.feeding_detail is not None and self.core.feeding_detail.outcome_attention is not None else {}),
+            **(self.core.feeding_detail.suckle_outcome_attention.retained_counts()
+               if self.core.feeding_detail is not None and self.core.feeding_detail.suckle_outcome_attention is not None else {}),
             **(self.core.feeding_detail.learning_hook.retained_counts()
                if self.core.feeding_detail is not None and self.core.feeding_detail.learning_hook is not None else {}),
             **({"suckle_staged_intervals": len(self._suckle_intervals), **self.core.suckle_outcomes.retained_counts()}
@@ -1140,6 +1180,8 @@ class IntegratedRightingTrialV1:
             **({"feeding_detail_profile": self.core.feeding_detail.profile.as_dict(),
                 "feeding_detail_source": self.core.feeding_detail.current.as_dict() if self.core.feeding_detail.current is not None else None}
                if self.core.feeding_detail is not None else {}),
+            **({"suckle_pending_requests": [item.as_dict() for item in self.core.feeding_detail.suckle_outcome_attention.pending()]}
+               if self.core.feeding_detail is not None and self.core.feeding_detail.suckle_outcome_attention is not None else {}),
             **({"suckle_pending_claims": [item.as_dict() for item in self.core.suckle_outcomes.pending()],
                 "suckle_outcome_history": [item.as_dict() for item in self.core.suckle_outcomes.history()]}
                if self.core.suckle_outcomes is not None else {}),

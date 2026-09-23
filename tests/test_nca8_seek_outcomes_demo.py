@@ -372,7 +372,7 @@ def test_registry_lists_two_real_components_without_new_host_behavioral_primitiv
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry['nca8_seek_outcomes'] == 'nca8_seek_outcomes'
     assert registry['nca8_seek_outcomes_demo'] == 'nca8_seek_outcomes_demo'
-    assert len(cca8_run._cca8_component_rows()) == 108 and len(cca8_run.PRIMITIVES) == 8
+    assert len(cca8_run._cca8_component_rows()) == 110 and len(cca8_run.PRIMITIVES) == 8
 
 
 def test_narrowing_reference_holds_cadence_provider_geometry_and_original_task_fixed(results):

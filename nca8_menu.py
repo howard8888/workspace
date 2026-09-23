@@ -29,7 +29,7 @@ from nca8_maternal_learning_demo import run_maternal_learning_menu_v1
 from nca8_followmom_qualification import run_follow_mom_qualification_menu_v1
 from nca8_feeding_demo import run_feeding_detail_menu_v1
 
-__version__ = "0.29.0"
+__version__ = "0.30.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -56,6 +56,9 @@ Option 15 -> 19 retains selected SeekNipple (P16-2C-C); latch, milk, rest and B9
 Option 15 -> 20 retains original seeking PNM/execution correspondence (P16-2C-D).
 Option 15 -> 21 retains seeking outcome relevance and the one focal allocation (P16-2C-E).
 Option 15 -> 22 reviews original seeking participation and actual Phase F (P16-2C-F); durable learning remains open.
+Option 15 -> 23/24/25 retain oral seal, selected initial latch and original Suckle correspondence (G/H/I).
+Option 15 -> 26 reviews Suckle discrepancy, ordinary Attention and one Navigation-allocated interpretation (J).
+Outcome questions are not IPs; interpretation adds no task reapplication, movement grant or Suckle learning.
 Planning v16 P16-1R-B separates internal handoff and cycle closure from the
 external world step and returning-input admission. Gate-A decisions are unchanged.
 

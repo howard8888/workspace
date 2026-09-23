@@ -23,12 +23,12 @@ from collections import deque
 from dataclasses import dataclass, replace
 
 from cca8_motor_contracts import MotorStreamRefV1
-from nca8_executive import AttentionBidV1, WorkingNavMapStateV1
+from nca8_executive import AttentionBidV1, OutcomeInterpretationCandidateV1, WorkingNavMapStateV1
 from nca8_feeding import FeedingDetailNavMapStateV1, FeedingDetailSeedV1
 from nca8_seek_nipple import SeekNippleTaskV1
 from nca8_seek_outcomes import SeekNippleOutcomeV1, validate_seeking_outcome_v1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["SeekingMismatchRequestV1", "SeekingInterpretationV1", "SeekingFocalAllocationV1", "SeekingAttentionFrameV1",
            "SeekingOutcomeAttentionV1", "__version__"]
 
@@ -322,6 +322,30 @@ class SeekingOutcomeAttentionV1:
                     result = "currently_supported" if source.mouth_detail_distance <= 0.005 + 1e-12 else "still_relevant"
             results.append((relation, result))
         return tuple(results)
+
+    def interpretation_candidate(
+        self, working: WorkingNavMapStateV1 | None, *, cycle_id: int,
+    ) -> OutcomeInterpretationCandidateV1 | None:
+        """Offer the oldest eligible question without interpreting or consuming it.
+
+        Used only by J's pre-consumption Navigation arbitration. Existing seeking
+        allocation remains unchanged when J is absent. A losing request, dependency,
+        diagnostic history and last-allocation marker are all untouched by this read.
+        """
+        source = self._source
+        if (self._closed or source is None or isinstance(cycle_id, bool) or not isinstance(cycle_id, int)
+                or source.applied_cycle != cycle_id or cycle_id <= self._last_allocation_cycle):
+            raise ValueError("seeking candidacy requires one new admitted opportunity")
+        if working is not None and (not isinstance(working, WorkingNavMapStateV1) or working.refreshed_cycle != cycle_id):
+            raise ValueError("seeking candidacy requires this cycle's actual WNM")
+        if working is None or working.primary_source_state.source_map_ref != source.source_map_ref:
+            return None
+        if working.primary_source_state is not source or not source.focal_accessible:
+            raise ValueError("seeking candidacy requires the exact selected feeding source")
+        if self._budget_exhausted() or not self._pending:
+            return None
+        request = self._pending[0]
+        return OutcomeInterpretationCandidateV1(request.request_id, source, request.admitted_tick, request.expires_at_tick)
 
     def allocate(self, working: WorkingNavMapStateV1 | None, *, cycle_id: int) -> SeekingFocalAllocationV1:
         """Consume at most one question in the existing selected-source opportunity.

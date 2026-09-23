@@ -16,7 +16,58 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-2C-I execution-sensitive Suckle correspondence
+## NCA8 update: P16-2C-J Suckle outcome relevance and Navigation interpretation
+
+Entry: accepted I-v02 at clean `c8037b8a60a13f805608a9f1d318b147f509e5aa`,
+tree `0ca33f5e8c660810e508e9c4b4a354cd9ede1cd1`. Architecture v10.1 and Planning v18
+remain authoritative. J is opt-in; full local qualification and Howard's acceptance
+remain separate from implementation and menu availability.
+
+Navigation has one existing focal-work allocation: one outcome interpretation,
+one ordinary IP application, or an explicit hold. The original Suckle discrepancy
+can create a bounded question about the feeding source. Ordinary Attention selects
+or maintains that source as WNM. Navigation chooses among same-source seeking/Suckle
+question heads BEFORE any question is consumed and records its nonprimitive grant.
+Only the winner is interpreted; losing does not refresh the other question's expiry.
+Outcome questions are not IPs. Neither SeekNippleIPV1 nor SuckleIPV1 is reapplied by
+interpretation. A later response requires a subsequent ordinary Attention/Navigation
+decision, current applicability and BodyMap authorization.
+
+The interpretation records present relevance (still relevant, historically resolved,
+or unresolved), not cause, remedy, movement permission or task restart. Historical
+prediction and outcome identities are preserved. Default H/I/SeekNipple behavior,
+H physics and the I-v02 portable preservation test remain the comparator boundaries.
+There is no milk, nourishment, Rest, Suckle participation/Phase-F learning, durable
+learning, new Goal/SEC/Emotion machinery, or new scheduler/executive/WNM.
+
+The first J profile is disabled by default through
+`SuckleProfileV1.outcome_attention_enabled=False`; enabling it requires I correspondence.
+It contributes outcome rank 40 by maximum, not addition; eight pending questions have
+eight ticks from original admission inside the unchanged 12-opportunity/48-tick task
+budget. The oldest admission wins, with stable request identity breaking ties.
+These are engineering profile choices, not biological constants.
+
+Menu: Main menu **1 -> 4 -> 15 -> 26**, then **1** for paired Attention controls,
+**5** for all 14 cases or **6** for retained read-only detail. The same review is available as:
+
+    python scripts/review_nca8_feeding.py --suckle-attention --case all --detail
+
+The paired nonsealable cases keep physical profiles, evidence and competing-source
+inputs fixed while toggling J; they distinguish source switching from maintaining
+an already focal source. Other cases retain nominal, missing sensing, unavailable
+capability, interrupted/protected execution and continuous earlier-task controls.
+The simultaneous-question arbitration proof remains a separately labelled controlled
+contract test, not a claim that these physical runs generated two pending questions.
+All review checks and exports are observers, never inputs to cognition.
+
+`cca8_run.py v0.30.37` reports 110 components and the unchanged eight host behavioral
+primitives. The two added components are `nca8_suckle_attention` and
+`nca8_suckle_attention_demo`; neither is a new IP. Existing menu numbers and default
+legacy routing remain unchanged. Production static checks, focused and broader tests,
+and exactly one full suite through preflight remain required; no separate full pytest
+is added before preflight. Qualification helpers must save readable UTF-8 logs.
+
+## Retained I delivery record: execution-sensitive Suckle correspondence
 
 Entry: H is accepted and committed at clean main / recorded origin/main
 `6112280fba17146ff7a9600547bbfe4431d770bd`, tree `3e8c73c7f3348c964fd4584875c116a855a95547`.

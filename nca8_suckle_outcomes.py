@@ -28,9 +28,9 @@ from nca8_sensorimotor_contracts import BodyRelativeTargetV1, CommittedBodyTarge
 from nca8_suckle import SuckleApplicationV1
 from nca8_visual import VisualObservationV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["SuckleEndpointV1", "SuckleIntervalEvidenceV1", "SuckleClaimV1", "SuckleOutcomeV1", "SuckleOutcomeFrameV1",
-           "SuckleOutcomeRuntimeV1", "__version__"]
+           "SuckleOutcomeRuntimeV1", "validate_suckle_outcome_v1", "__version__"]
 _RELATIONS = ("mouth_position", "detail_anchor", "closure", "seal")
 _GEOMETRY_TOLERANCE = 0.005
 _CLOSURE_TOLERANCE = 0.025
@@ -260,13 +260,15 @@ class SuckleOutcomeFrameV1:
     registration: SuckleClaimV1 | None
     pending: tuple[SuckleClaimV1, ...]
     comparison_enabled: bool
+    attention_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
-        """Report only I's implemented consumer; Attention and learning remain absent."""
+        """Report I correspondence and the opt-in J consumer without implying learning."""
         return {"profile": "suckle_correspondence_v1", "cutoff_tick": self.cutoff_tick,
                 "outcomes": [item.as_dict() for item in self.outcomes], "pending": [item.as_dict() for item in self.pending],
                 "registration": None if self.registration is None else self.registration.as_dict(),
-                "comparison_enabled": self.comparison_enabled, "attention_route": "deferred_suckle_attention",
+                "comparison_enabled": self.comparison_enabled,
+                "attention_route": "suckle_outcome_attention_v1" if self.attention_enabled else "deferred_suckle_attention",
                 "learning_route": "unimplemented_no_participation", "durable_updates": 0}
 
 
@@ -579,3 +581,85 @@ def _compare(
             values["seal"] = "matched"
     relations = tuple((name, "unevaluable_authorization" if name in claim.unevaluable_relations else values[name]) for name in _RELATIONS)
     return relations, tuple(residuals.items()), identity
+
+
+def validate_suckle_outcome_v1(outcome: SuckleOutcomeV1, *, stream: MotorStreamRefV1, cutoff_tick: int) -> None:
+    """Validate a downstream description without republishing or repairing I evidence.
+
+    J uses this read-only boundary before admitting relevance. The original I
+    comparison and publisher are unchanged. Reconstructing the small claim record
+    below reruns its existing integrity checks, retaining its original references;
+    it cannot install a target or restore rights. Canonical relation scores are
+    recomputed from the ORIGINAL endpoint, never from the present source. This
+    validates consistency, not cryptographic provenance or perfect causal credit.
+    """
+    cutoff = _tick(cutoff_tick)
+    if not isinstance(stream, MotorStreamRefV1) or not isinstance(outcome, SuckleOutcomeV1):
+        raise TypeError("Suckle relevance needs a canonical stream and outcome")
+    claim = outcome.claim
+    if not isinstance(claim, SuckleClaimV1):
+        raise TypeError("Suckle outcome requires its original typed claim")
+    SuckleClaimV1(claim.preview, claim.request, claim.targets, claim.compatible_relations, claim.unevaluable_relations)
+    preview = claim.preview
+    if preview.basis.stream != stream or preview.pnm.primitive_id != "ip:suckle":
+        raise ValueError("Suckle outcome belongs to another stream, generation or operation")
+    if isinstance(outcome.number, bool) or not isinstance(outcome.number, int) or not 1 <= outcome.number < 2**63:
+        raise ValueError("Suckle outcome number must be a bounded positive integer")
+    if not preview.basis.cutoff_tick <= _tick(outcome.evaluated_tick) <= cutoff:
+        raise ValueError("Suckle outcome precedes its claim or arrives from the future")
+    if (isinstance(outcome.command_intervals, bool) or not isinstance(outcome.command_intervals, int)
+            or not 0 <= outcome.command_intervals <= preview.horizon_ticks or not isinstance(outcome.installed, bool)):
+        raise ValueError("Suckle exposure and installation must retain their original types and bounds")
+    if outcome.command_intervals and (not outcome.installed or not claim.targets):
+        raise ValueError("Suckle command exposure requires reported original installation")
+    if not isinstance(outcome.reason, str) or not outcome.reason or len(outcome.reason) > 300:
+        raise ValueError("Suckle outcome reason must be bounded text")
+    for rows in (outcome.relations, outcome.residuals):
+        if not isinstance(rows, tuple) or len(rows) > 4 or any(not isinstance(row, tuple) or len(row) != 2 for row in rows):
+            raise ValueError("Suckle outcome needs bounded immutable relation rows")
+        if any(row[0] not in _RELATIONS for row in rows) or len({row[0] for row in rows}) != len(rows):
+            raise ValueError("Suckle outcome has unknown or duplicated relations")
+    for _, residual in outcome.residuals:
+        if isinstance(residual, bool) or not isinstance(residual, (int, float)) or not math.isfinite(residual) or residual < 0:
+            raise ValueError("Suckle residual must be finite and nonnegative")
+    evidence = outcome.evidence
+    if evidence is not None:
+        if not isinstance(evidence, SuckleEndpointV1):
+            raise TypeError("Suckle outcome requires its original paired endpoint")
+        SuckleEndpointV1(evidence.feedback, evidence.observation)
+        evidence.feedback.validate_available(stream=stream, at_tick=outcome.evaluated_tick)
+        if (evidence.feedback.event_tick != claim.due_tick or evidence.feedback.available_tick > claim.expires_at_tick
+                or preview.basis.oral_feedback is None or evidence.feedback.sample_id <= preview.basis.oral_feedback.sample_id):
+            raise ValueError("Suckle outcome lacks its original distinct later acquisition")
+    scored = {"matched", "partly_matched", "mismatch", "identity_contradicted", "unknown", "observed_without_command"}
+    unscored = {"not_applied", "cancelled", "interrupted", "expired_unresolved", "unresolved_stopped", "comparison_disabled"}
+    if not isinstance(outcome.status, str) or outcome.status not in scored | unscored:
+        raise ValueError("unknown Suckle outcome disposition")
+    if outcome.status in scored:
+        if evidence is None or not claim.targets or not outcome.installed:
+            raise ValueError("scored Suckle outcome requires original permission, installation and evidence")
+        relations, residuals, identity = _compare(claim, evidence)
+        values = {value for _, value in relations}
+        status = "mismatch" if "mismatch" in values else "unknown" if "unknown" in values else "matched"
+        if status == "matched" and claim.unevaluable_relations:
+            status = "partly_matched"
+        if identity == "contradicted":
+            status = "identity_contradicted"
+        if outcome.command_intervals == 0:
+            status = "observed_without_command"
+        if (outcome.relations, outcome.residuals, outcome.status) != (relations, residuals, status):
+            raise ValueError("Suckle outcome disagrees with its original canonical comparison")
+    elif outcome.relations or outcome.residuals:
+        raise ValueError("unscored Suckle outcome cannot contain relation verdicts")
+    if outcome.status == "not_applied" and (claim.targets or outcome.installed or outcome.command_intervals or evidence is not None):
+        raise ValueError("nonapplication cannot hide permission, installation or observed execution")
+    if outcome.status == "cancelled" and (outcome.command_intervals or evidence is not None):
+        raise ValueError("cancelled Suckle is not an executed or observed failure")
+    if outcome.status == "interrupted" and (not outcome.command_intervals or evidence is not None):
+        raise ValueError("interrupted Suckle retains exposure, not a scored endpoint")
+    if outcome.status in {"expired_unresolved", "unresolved_stopped"} and evidence is not None:
+        raise ValueError("unresolved Suckle cannot borrow a scored endpoint")
+    if outcome.status == "expired_unresolved" and outcome.evaluated_tick <= claim.expires_at_tick:
+        raise ValueError("Suckle expiry must follow the original arrival window")
+    if outcome.status == "comparison_disabled" and (evidence is None or not outcome.installed or not claim.targets):
+        raise ValueError("comparison-off preserves original installation and endpoint evidence")

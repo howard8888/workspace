@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 # a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     "SourceNavMapStateV1",
     "AttentionBidV1",
@@ -52,6 +52,7 @@ __all__ = [
     "AttentionDispositionV1",
     "AttentionSelectionV1",
     "AttentionRuntimeV1",
+    "OutcomeInterpretationCandidateV1",
     "NavigationDecisionV1",
     "NavigationRuntimeV1",
     "WorkingNavMapStateV1",
@@ -451,6 +452,32 @@ class WorkingNavMapStateV1:
 
 
 @dataclass(frozen=True, slots=True)
+class OutcomeInterpretationCandidateV1:
+    """A read-only question offered for Navigation's existing focal allocation.
+
+    This is not an IP, a second WNM or an execution request. The source reference
+    must be the exact current source selected by Attention. Admission and expiry
+    belong to the original domain request; examining or losing candidacy cannot
+    renew either. No domain interpretation is performed while building a candidate.
+    """
+
+    request_id: str
+    source: SourceNavMapStateV1
+    admitted_tick: int
+    expires_at_tick: int
+
+    def __post_init__(self) -> None:
+        if _bounded_identifier(self.request_id, field_name="request_id") != self.request_id:
+            raise ValueError("outcome request identity must not be normalized")
+        if not isinstance(self.source, (NavMapStateV1, VisualNavMapStateV1, MaternalNavMapStateV1, FeedingDetailNavMapStateV1)):
+            raise TypeError("outcome candidacy requires an actual source configuration")
+        for name, value in (("admitted_tick", self.admitted_tick), ("expires_at_tick", self.expires_at_tick)):
+            _non_negative_int(value, field_name=name, maximum=2**63 - 1)
+        if self.expires_at_tick <= self.admitted_tick:
+            raise ValueError("outcome request needs a finite positive relevance lifetime")
+
+
+@dataclass(frozen=True, slots=True)
 class NavigationDecisionV1:
     """One complete Navigation arbitration result for a selected WNM."""
 
@@ -608,7 +635,7 @@ class AttentionRuntimeV1:
 
 
 class NavigationRuntimeV1:
-    """Own the zero-or-one WNM and select/apply one focal primitive."""
+    """Own one WNM and its single interpretation, ordinary IP application or hold."""
 
     def __init__(self, *, enabled: bool = True, motor_preview_enabled: bool = False) -> None:
         if not isinstance(enabled, bool):
@@ -678,6 +705,45 @@ class NavigationRuntimeV1:
         )
         self._current_wnm = next_wnm
         return next_wnm
+
+    def allocate_outcome_interpretation(
+        self, wnm: WorkingNavMapStateV1, candidates: tuple[OutcomeInterpretationCandidateV1, ...], *, cycle_id: int, at_tick: int,
+    ) -> OutcomeInterpretationCandidateV1 | None:
+        """Grant one question BEFORE any domain owner consumes its pending request.
+
+        J supplies at most two same-source heads (seeking and Suckle), not a new
+        scheduler or a task repertoire. All candidates validate before commitment.
+        Oldest original admission wins, with request identity as an explicit stable
+        tie-break; caller/registration order has no effect. The winner reserves
+        this opportunity with a nonprimitive Navigation decision. Only afterward
+        may the caller invoke its domain interpreter. A later commit in this same
+        opportunity is prohibited even if interpretation fails. An empty candidate
+        tuple consumes nothing and leaves ordinary IP selection available.
+        """
+        cycle = _positive_int(cycle_id, field_name="cycle_id")
+        tick = _non_negative_int(at_tick, field_name="at_tick", maximum=2**63 - 1)
+        if not self._enabled:
+            raise ValueError("disabled Navigation cannot grant an interpretation")
+        if not isinstance(wnm, WorkingNavMapStateV1) or wnm is not self._current_wnm or wnm.refreshed_cycle != cycle:
+            raise ValueError("interpretation arbitration requires Navigation's current WNM")
+        if self._last_decision is not None and self._last_decision.cycle_id >= cycle:
+            raise ValueError("the existing focal allocation has already been used")
+        if not isinstance(candidates, tuple) or len(candidates) > 2:
+            raise ValueError("J accepts at most two same-source interpretation candidates")
+        for candidate in candidates:
+            if not isinstance(candidate, OutcomeInterpretationCandidateV1):
+                raise TypeError("interpretation candidates are question records, not IPs")
+            if candidate.source is not wnm.primary_source_state or candidate.source.applied_cycle != cycle:
+                raise ValueError("a question cannot bypass Attention's selected source")
+            if not candidate.admitted_tick <= tick < candidate.expires_at_tick:
+                raise ValueError("an interpretation question is premature or expired")
+        if len({item.request_id for item in candidates}) != len(candidates):
+            raise ValueError("duplicate interpretation request identity")
+        if not candidates:
+            return None
+        winner = min(candidates, key=lambda item: (item.admitted_tick, item.request_id))
+        self.record_focal_hold(wnm, cycle_id=cycle, reason=f"outcome_interpretation:{winner.request_id}")
+        return winner
 
     def record_focal_hold(self, wnm: WorkingNavMapStateV1, *, cycle_id: int, reason: str) -> NavigationDecisionV1:
         """Record a nonprimitive allocation without secretly evaluating a task.

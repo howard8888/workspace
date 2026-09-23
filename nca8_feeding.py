@@ -33,9 +33,10 @@ from nca8_visual import VisualDetectionV1
 
 if TYPE_CHECKING:
     from nca8_seek_attention import SeekingOutcomeAttentionV1
+    from nca8_suckle_attention import SuckleOutcomeAttentionV1
     from nca8_seek_learning import SeekingLearningHookV1
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "FeedingDetailSeedV1", "FeedingDetailProfileV1", "FeedingDetailNavMapStateV1",
     "FeedingDetailCandidateV1", "FeedingDetailSourceV1", "__version__",
@@ -454,6 +455,7 @@ class FeedingDetailSourceV1:
         self._current: FeedingDetailNavMapStateV1 | None = None
         self._influence: tuple[str, int] | None = None
         self._outcome_attention: SeekingOutcomeAttentionV1 | None = None
+        self._suckle_outcome_attention: SuckleOutcomeAttentionV1 | None = None
         self._learning_hook: SeekingLearningHookV1 | None = None
 
     @property
@@ -473,6 +475,23 @@ class FeedingDetailSourceV1:
             raise RuntimeError("configure seeking relevance only once before source updates")
         import nca8_seek_attention  # pylint: disable=import-outside-toplevel
         self._outcome_attention = nca8_seek_attention.SeekingOutcomeAttentionV1(self._stream, self._profile.seed)
+
+    @property
+    def suckle_outcome_attention(self) -> SuckleOutcomeAttentionV1 | None:
+        """Read J's optional question owner; it has no focal or motor authority."""
+        return self._suckle_outcome_attention
+
+    def configure_suckle_outcome_attention(self) -> None:
+        """Attach one J relevance owner before processing this source generation.
+
+        The late import preserves the source-schema/executive dependency boundary.
+        Configuration creates no sensory fact, new map, IP or motor permission.
+        Reset constructs a fresh source and therefore a fresh bounded question owner.
+        """
+        if self._current is not None or self._suckle_outcome_attention is not None:
+            raise RuntimeError("configure Suckle relevance once before source updates")
+        import nca8_suckle_attention  # pylint: disable=import-outside-toplevel
+        self._suckle_outcome_attention = nca8_suckle_attention.SuckleOutcomeAttentionV1(self._stream, self._profile.seed)
 
     @property
     def learning_hook(self) -> SeekingLearningHookV1 | None:

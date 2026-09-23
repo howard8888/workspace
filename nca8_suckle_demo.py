@@ -29,7 +29,7 @@ from nca8_seek_nipple_demo import seek_nipple_profile_v1
 from nca8_sensorimotor_contracts import SensorimotorTargetKindV1
 from nca8_suckle import SuckleApplicationV1, SuckleProfileV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["SUCKLE_LATCH_CASES_V1", "SuckleExperimentProfileV1", "SuckleExperimentV1", "suckle_profile_v1",
            "create_suckle_trial_v1", "suckle_owner_limits_v1", "run_suckle_v1", "render_suckle_v1", "run_suckle_menu_v1", "__version__"]
 
@@ -121,19 +121,22 @@ def suckle_profile_v1(case: str = "nominal") -> SuckleExperimentProfileV1:
 
 def create_suckle_trial_v1(
     case: str = "nominal", *, trace_capacity: int = 256, outcomes_enabled: bool = False, compare_predictions: bool = True,
+    outcome_attention_enabled: bool = False,
 ) -> IntegratedRightingTrialV1:
     """Construct the common H hierarchy with an optional I observation-only consumer.
 
     The correspondence switches do not alter physical profiles, source timing,
     selection, target mapping or H's latch rule. Default H export stays unchanged.
-    No task is selected and no physical interval runs during construction.
+    J may explicitly enable its source-relevance consumer; default H/I callers
+    remain unchanged. No task is selected and no physical interval runs here.
     """
     profile = suckle_profile_v1(case)
     run = profile.run
     return IntegratedRightingTrialV1(
         run.physical, stream_id="suckle_latch_reference_body", planar_profile=run.planar, oral_profile=run.oral,
         oral_seal_profile=profile.seal, suckle_profile=replace(profile.suckle, outcomes_enabled=outcomes_enabled,
-                                                           prediction_comparison_enabled=compare_predictions),
+                                                           prediction_comparison_enabled=compare_predictions,
+                                                           outcome_attention_enabled=outcome_attention_enabled),
         capabilities=(*nominal_body_capabilities_v1(), oral_body_capability_v1(), *((profile.capability,) if profile.capability else ())),
         follow_mom_profile=FollowMomProfileV1(outcomes_enabled=run.stand_follow,
                                              outcome_attention_enabled=run.stand_follow, learning_hook_enabled=run.stand_follow),
