@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from nca8_seek_attention import SeekingOutcomeAttentionV1
     from nca8_seek_learning import SeekingLearningHookV1
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "FeedingDetailSeedV1", "FeedingDetailProfileV1", "FeedingDetailNavMapStateV1",
     "FeedingDetailCandidateV1", "FeedingDetailSourceV1", "__version__",
@@ -555,9 +555,17 @@ class FeedingDetailSourceV1:
             raise ValueError("feeding influence cannot extend beyond eight physical ticks")
         self._influence = (task_id, expires_at_tick)
 
-    def clear_influence(self) -> None:
-        """Release task relevance without deleting sensed or durable source content."""
-        self._influence = None
+    def clear_influence(self, *, task_id: str | None = None) -> None:
+        """Release relevance without deleting source content or another task's request.
+
+        An omitted identity retains the original explicit clear-all API. Task
+        owners pass their own identity: completed seeking must not erase a later
+        selected Suckle influence. No clear grants a new bid or motor lease.
+        """
+        if task_id is not None and (not isinstance(task_id, str) or not task_id):
+            raise ValueError("influence release requires a nonempty task identity")
+        if task_id is None or self._influence is not None and self._influence[0] == task_id:
+            self._influence = None
 
     def retained_counts(self) -> dict[str, int]:
         """Report measured owner storage, independent of observer history capacity."""

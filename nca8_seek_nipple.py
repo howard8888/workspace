@@ -33,7 +33,7 @@ from nca8_prediction import ProjectedNavMapV1, SeekNipplePreviewV1
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
 from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __all__ = ["SeekNippleProfileV1", "SeekNippleTaskV1", "SeekNippleApplicationV1", "SeekNippleAssessmentV1", "SeekNippleIPV1", "__version__"]
 
 _MAX_TICKS = 48
@@ -227,7 +227,8 @@ class SeekNippleIPV1:
         if self._task is not None and self._task.status == "active":
             self._task = replace(self._task, status="cancelled")
         self._cancelled, self._cancel_previous, self._reason = True, self._target is not None, "cancelled"
-        self.source.clear_influence()
+        if self._task is not None:
+            self.source.clear_influence(task_id=self._task.task_id)
 
     @staticmethod
     def _support_available(basis: FeedingDetailNavMapStateV1) -> bool:
@@ -345,7 +346,8 @@ class SeekNippleIPV1:
             "initiate_seeking", "continue_seeking", "authorized_oral_contribution_continues",
         }
         if self._task is not None and self._task.status != "active" or self._cancelled:
-            self.source.clear_influence()
+            if self._task is not None:
+                self.source.clear_influence(task_id=self._task.task_id)
 
     def evaluate_applicability(self, wnm: WorkingNavMapStateV1, *, cycle_id: int) -> PrimitiveApplicabilityV1:
         """Query only this source's current focal sample, without starting a task."""

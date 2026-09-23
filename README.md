@@ -16,7 +16,89 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
-## NCA8 update: P16-2C-G supplied oral closure and observed seal
+## NCA8 update: P16-2C-H selected Suckle initial latch
+
+Entry: G is accepted and committed at clean main / recorded origin/main
+`fc8e34823a686e0bf9157cfe5b0b1859347458b4`, tree `871ab207cf8180d4af69647fb8a18d4454c85967`.
+H is a prepared opt-in candidate under adopted Planning v18 / accepted Architecture v10.1.
+Local validation and explicit acceptance still govern this source slice. The UTF-8 saved-log
+helper and approved single-full-suite preflight procedure remain unchanged in scope.
+
+`cca8_run.py v0.30.36` lists **106 production components / 8 host behavioral primitives**.
+The two additions are `nca8_suckle` and its menu review `nca8_suckle_demo`. The new task IP
+is a member of the isolated NCA8 repertoire; the eight-primitive count is the retained host
+inventory, not a claim that only eight NCA8 operations exist.
+
+### Current contact, selected contribution, later seal evidence
+
+The common feeding source supplies paired current mouth/detail geometry and touch to the
+normal Attention/WNM/Navigation interface. Suckle's initial contribution asks BodyMap for
+bounded closure; the unchanged G mapper, scalar executor and physical provider carry it out.
+The runner neither supplies the closure requirement nor waits for a reached-Mom or
+SeekNipple-completed milestone. Actual incompatible movement rights must end first.
+The same external clock and existing C evidence collector are reused, not another motor loop.
+
+The selected operation preserves original mouth/detail anchors and projects bounded closure
+with a conditional seal expectation. Sealability is a declared assumption associated with
+the represented feeding category, not a reading of private surface properties. Narrowed
+BodyMap permission does not edit that forecast. Task-level Suckle PNM correspondence is
+explicitly deferred; the existing command-level feedback/prediction protections remain active.
+
+The named initial-latch profile requests closure 0.6, with 0.025 coordinate tolerance,
+12 focal opportunities / 48 physical ticks and at most eight ticks per unrenewed target.
+It retains eight applications, one current source basis, one target and two latch samples.
+Two distinct paired post-start seal/contact/detail acquisitions spanning at least four
+physical ticks establish `latch_established`. Adjacent proof samples may be at most eight
+ticks apart; known contradiction or missing required current evidence clears the proof.
+This is supported sampled latch evidence, not a claim of continuous unsampled seal or
+physical attachment. A later lost seal does not rewrite the historical task result. In the
+fixed later-body-shift case the seal breaks at event 13, a new ordinary seeking contribution
+at 16 restores contact/seal at 17, and the original latch proof remains historical throughout.
+No second Suckle task or closure command is invented to explain that recovery.
+
+Unknown seal does not prohibit a justified first closure when touch, geometry and closure
+coordinate are known. It cannot complete latch. Closure without a seal, absent capability,
+blocked motor, support loss, evidence gaps and cancellation have explicit bounded outcomes.
+A sealed initial fixture supplies no newly selected or earned latch task. Terminal tasks
+never restart on their own, and restored source availability does not renew task budgets.
+
+One source-owned relevance request now has task-scoped release: an earlier completed seeking
+operation cannot clear a later Suckle request. This changes no sensory facts or permissions.
+Its competing-source on/off control isolates focal allocation rather than claiming faster
+motion. Original seeking D/E/F routes remain available; they are not Suckle outcome or
+learning routes. H reports zero durable updates and no implemented Suckle participation.
+
+### Separate measured levels and retained controls
+
+The 35 fixed cases cover selection/source/need controls, compatible versus missing/wrong
+contact, nonsealable surfaces, independent sensor availability, narrowing, blocked execution,
+gaps, cancellation, changed body geometry, cadence, source competition and continuous runs.
+At-contact nominal Suckle is selected at tick 0, physical seal starts at event 5, the first
+focal seal evidence is event 7 at cutoff 8, and latch is established at cutoff 12.
+The nonsealable surface preserves closure/commands but cannot latch; absent seal sensing
+preserves physical seal/commands but cannot supply confirmation. These are distinct failures.
+
+In the separate seek-then-latch run, Suckle is selected at 8 before the independent seeking
+reach proof completes at 12; latch follows at 20. In the continuous stand/follow/seek run,
+Suckle is selected at 108 before seeking reach proof at 112; physical seal starts at 113,
+focal evidence begins at 116 and latch is established at 120. Those are observed times in
+this profile, never task-selection conditions. These runs still supply no milk or nourishment.
+
+Menu: Main **1 -> 4 -> 15 -> 24**, then **5** for all cases or **6** for retained detail.
+Secondary entry:
+
+    python scripts/review_nca8_feeding.py --suckle --case all
+
+This establishes only Navigation-selected Suckle's initial latch contribution and its sampled
+latch result. Rhythmic extraction/feeding competence, milk/nourishment, completion of the full
+Suckle feeding task, its original-PNM correspondence/Attention/participation, Rest, durable
+learning, full P16-2C and B99 remain open. No interpreter, dependency, validation threshold,
+physical equation, motor wire, scalar controller or default-runtime promotion is changed.
+
+## Retained P16-2C-G checkpoint: supplied oral closure and observed seal
+
+The following section preserves G's delivery scope and historical counts. G has been
+accepted at the H entry above; its supplied-target experiments remain independent controls.
 
 Entry: P16-2C-F is accepted and committed on clean `main` and recorded `origin/main`
 at `7cfd37eb92f362451fb7eb156e1451012fda2672`, tree `f9a0c3f0ec040c5a690e3fa85c9af78d45524f2e`.

@@ -36,7 +36,7 @@ from nca8_sensorimotor_contracts import (
     TargetOriginV1, oral_basis_compatible_v1, oral_closure_basis_compatible_v1, scalar_motor_coordinate_v1,
 )
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 __all__ = [
     "PlanarBodyObservationV1", "VisualApproachRequestV1", "VisualBodyPreviewV1",
     "BodyAxisCapabilityV1", "BodyTranslationCapabilityV1",
@@ -341,7 +341,8 @@ class OralReachPreviewV1:
 class OralClosureRequestV1:
     """Supply a normalized closure requirement, not an achieved latch or Suckle.
 
-    The G fixture explicitly supplies this request; it is not task selection.
+    The G fixture supplies this request; H may identify a selected Suckle
+    contribution. Neither origin label itself confers task or motor authority.
     Closing needs current feeding-contact correspondence. An explicit opening
     may use the independent current body alone, so visual loss does not forbid
     release. Source/region references never enter the motor command or plant.
@@ -352,10 +353,13 @@ class OralClosureRequestV1:
     region_id: str
     desired_closure: float
     lease_ticks: int = 8
+    origin_status: str = field(default="supplied_requirement", kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.origin, TargetOriginV1) or not isinstance(self.source_map_ref, NavMapRefV1):
             raise TypeError("closure request needs a typed origin and source reference")
+        if self.origin_status not in {"supplied_requirement", "selected_suckle"}:
+            raise ValueError("unknown closure request origin")
         _name(self.region_id, "closure region handle")
         _index(self.lease_ticks, "closure lease", 1, 8)
         object.__setattr__(self, "desired_closure", _scalar(self.desired_closure, "desired closure", 0.0, 1.0))
@@ -363,7 +367,7 @@ class OralClosureRequestV1:
     def as_dict(self) -> dict[str, object]:
         """Describe the supplied requirement without claimed task or motor authority."""
         return {"origin": self.origin.as_dict(), "source_map_ref": self.source_map_ref.as_dict(), "region_id": self.region_id,
-                "desired_closure": self.desired_closure, "lease_ticks": self.lease_ticks, "origin_status": "supplied_requirement"}
+                "desired_closure": self.desired_closure, "lease_ticks": self.lease_ticks, "origin_status": self.origin_status}
 
 
 @dataclass(frozen=True, slots=True)

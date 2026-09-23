@@ -29,7 +29,7 @@ from nca8_maternal_learning_demo import run_maternal_learning_menu_v1
 from nca8_followmom_qualification import run_follow_mom_qualification_menu_v1
 from nca8_feeding_demo import run_feeding_detail_menu_v1
 
-__version__ = "0.28.0"
+__version__ = "0.29.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -412,7 +412,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print("  12) Maternal outcome-to-Attention review (P16-2B-D; one focal allocation)")
         print("  13) Maternal participation, no-learning and Phase-F review (P16-2B-E)")
         print("  14) Combined Follow-Mom qualification (P16-2B-F; before feeding)")
-        print("  15) Feeding detail/focal access and oral-contact foundation (P16-2C-A/B)")
+        print("  15) Feeding: detail, seeking, oral contact/seal and selected initial latch (P16-2C-A/H)")
         print("  [Enter] Return to Main Menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:

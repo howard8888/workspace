@@ -15,13 +15,13 @@ These finite reviews do not qualify latch, suckling, nourishment, Rest or B99.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 
 import cca8_cli
 from cca8_motor_contracts import MotorFeedbackV1
 from cca8_support_world import (
     MotorBodyStateV1, MotorWorldProfileV1, MotorWorldPerturbationV1, OralWorldProfileV1, OralWorldStateV1,
-    PlanarObjectV1, PlanarDetailObjectV1, PlanarWorldProfileV1, PlanarWorldStateV1, PlanarPerturbationV1,
+    PlanarObjectV1, PlanarDetailObjectV1, PlanarWorldProfileV1, PlanarWorldStateV1, PlanarPerturbationV1, OralSealWorldStateV1,
 )
 from nca8_body_targets import BodyTranslationCapabilityV1, nominal_body_capabilities_v1, oral_body_capability_v1
 from nca8_feeding import FeedingDetailProfileV1
@@ -33,7 +33,7 @@ from nca8_seek_nipple import SeekNippleApplicationV1, SeekNippleProfileV1
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_sensorimotor_contracts import SensorimotorTargetKindV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["SEEK_NIPPLE_CASES_V1", "SeekNippleExperimentProfileV1", "SeekNipplePhysicalSampleV1", "SeekNippleExperimentV1",
            "seek_nipple_profile_v1", "create_seek_nipple_trial_v1", "run_seek_nipple_v1", "render_seek_nipple_v1",
            "run_seek_nipple_menu_v1", "seek_nipple_owner_limits_v1", "collect_seek_nipple_evidence_v1", "__version__"]
@@ -170,10 +170,12 @@ class SeekNipplePhysicalSampleV1:
     support: MotorBodyStateV1
     planar: PlanarWorldStateV1
     oral: OralWorldStateV1
+    seal: OralSealWorldStateV1 | None = field(default=None, kw_only=True)
 
     def as_dict(self) -> dict[str, object]:
         """Detach evaluator physics and label it independently from admitted sensing."""
-        return {"tick": self.tick, "support": asdict(self.support), "planar": self.planar.as_dict(), "oral": self.oral.as_dict()}
+        return {"tick": self.tick, "support": asdict(self.support), "planar": self.planar.as_dict(), "oral": self.oral.as_dict(),
+                **({"seal": self.seal.as_dict()} if self.seal is not None else {})}
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +193,7 @@ class SeekNippleExperimentV1:
     handoff_consumptions: int
     installations: int
     registered_pnm_cycles: tuple[int, ...]
+    registered_suckle_pnm_cycles: tuple[int, ...] = field(default=(), kw_only=True)
 
     @property
     def bound_violations(self) -> tuple[str, ...]:
@@ -329,6 +332,7 @@ def collect_seek_nipple_evidence_v1(
     steps: list[SensorimotorStepV1] = []
     physical: list[SeekNipplePhysicalSampleV1] = []
     registrations: list[int] = []
+    suckle_registrations: list[int] = []
     peaks: dict[str, int] = {}
 
     def inspect() -> None:
@@ -340,7 +344,7 @@ def collect_seek_nipple_evidence_v1(
         planar, oral = trial.observer_planar_body, trial.observer_oral_body
         if planar is None or oral is None:
             raise RuntimeError("seeking observer requires its declared planar/oral physical profile")
-        physical.append(SeekNipplePhysicalSampleV1(tick, trial.observer_body, planar, oral))
+        physical.append(SeekNipplePhysicalSampleV1(tick, trial.observer_body, planar, oral, seal=trial.observer_oral_seal_body))
         if tick == profile.cancel_tick:
             trial.cancel()
         if tick % profile.cadence == 0:
@@ -348,13 +352,16 @@ def collect_seek_nipple_evidence_v1(
                                           visual_bid_priority=(10, 70) if tick in profile.competitor_cutoffs else None))
             if trial.core.cognition.prediction.current_seeking_preview is not None:
                 registrations.append(cycles[-1].commitment.cycle_id)
+            if trial.core.cognition.prediction.current_suckle_preview is not None:
+                suckle_registrations.append(cycles[-1].commitment.cycle_id)
             inspect()
         if tick < profile.horizon_ticks:
             steps.append(trial.advance_lower())
             inspect()
     return SeekNippleExperimentV1(profile, tuple(cycles), tuple(steps), tuple(physical), trial.latest_feedback,
                                   tuple(sorted(peaks.items())), before, _durable_signature(trial), trial.handoff_consumptions,
-                                  trial.controller.installation_count, tuple(registrations))
+                                  trial.controller.installation_count, tuple(registrations),
+                                  registered_suckle_pnm_cycles=tuple(suckle_registrations))
 
 
 def render_seek_nipple_v1(result: SeekNippleExperimentV1, *, detail: bool = False) -> str:

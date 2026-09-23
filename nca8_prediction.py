@@ -35,14 +35,14 @@ from nca8_primitives import PrimitiveApplicationV1
 # Small validators intentionally remain local for readable standalone modules.
 # pylint: disable=duplicate-code
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "Nca8PredictionRuntimeV1",
     "PendingPredictionTraceV1",
     "PredictionOutcomeStatusV1",
     "PredictionOutcomeV1",
     "ProjectedNavMapV1",
-    "SupportPreviewV1", "VisualTranslationPreviewV1", "MaternalApproachPreviewV1", "SeekNipplePreviewV1",
+    "SupportPreviewV1", "VisualTranslationPreviewV1", "MaternalApproachPreviewV1", "SeekNipplePreviewV1", "SucklePreviewV1",
     "__version__",
 ]
 
@@ -401,6 +401,62 @@ class SeekNipplePreviewV1:
 
 
 @dataclass(frozen=True, slots=True)
+class SucklePreviewV1:
+    """Original sparse expectation for Suckle's initial latch contribution.
+
+    The original detail and mouth positions remain anchors. Closure is expected
+    to increase under declared competence; seal is conditional on the represented
+    feeding surface actually being sealable. The model cannot inspect private
+    surface properties. Actual BodyMap narrowing never rewrites this forecast.
+    H has no original-Suckle-PNM comparator or milk prediction.
+    """
+
+    pnm: ProjectedNavMapV1
+    basis: FeedingDetailNavMapStateV1
+    task_id: str
+    region_id: str
+    scene_target: NavPointV1
+    predicted_closure: float
+    horizon_ticks: int = 8
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.pnm, ProjectedNavMapV1) or not isinstance(self.basis, FeedingDetailNavMapStateV1):
+            raise TypeError("Suckle prediction requires its typed PNM and feeding source")
+        if (not self.basis.oral_evidence_current or self.basis.contact_correspondence_status != "compatible"
+                or self.basis.applied_cycle != self.pnm.created_cycle or self.basis.mouth_position is None):
+            raise ValueError("Suckle preview requires this opportunity's paired feeding contact")
+        if self.pnm.primitive_id != "ip:suckle":
+            raise ValueError("Suckle prediction must belong to the selected operation")
+        if _bounded_identifier(self.task_id, field_name="task_id", maximum=100) != self.task_id:
+            raise ValueError("Suckle task identity must be unchanged")
+        if self.region_id != self.basis.seed.detail_region_id or self.scene_target != self.basis.detail_position:
+            raise ValueError("Suckle preview cannot replace the original detail anchor")
+        if isinstance(self.horizon_ticks, bool) or not isinstance(self.horizon_ticks, int) or not 1 <= self.horizon_ticks <= 8:
+            raise ValueError("Suckle preview needs one to eight physical ticks")
+        body = self.basis.oral_feedback
+        if body is None or body.oral_seal is None or body.oral_seal.closure is None:
+            raise ValueError("Suckle prediction requires known measured closure")
+        expected = min(0.6, body.oral_seal.closure + min(0.6, 0.1 * self.horizon_ticks))
+        if (isinstance(self.predicted_closure, bool) or not isinstance(self.predicted_closure, (int, float))
+                or not math.isfinite(self.predicted_closure) or abs(self.predicted_closure - expected) > 1e-12
+                or self.predicted_closure < body.oral_seal.closure):
+            raise ValueError("Suckle prediction must preserve the declared bounded closure calculation")
+        object.__setattr__(self, "predicted_closure", float(self.predicted_closure))
+
+    def as_dict(self) -> dict[str, object]:
+        """Export original conditional relations without manufacturing later evidence."""
+        mouth = self.basis.mouth_position
+        return {"pnm": self.pnm.as_dict(), "basis": self.basis.as_dict(), "task_id": self.task_id,
+                "region_id": self.region_id, "scene_target": self.scene_target.as_dict(),
+                "predicted_mouth": None if mouth is None else mouth.as_dict(), "predicted_closure": self.predicted_closure,
+                "predicted_seal": self.predicted_closure >= 0.6 - 1e-12, "horizon_ticks": self.horizon_ticks,
+                "model": "suckle_initial_closure_v1", "status": "conditional_not_observed",
+                "surface_assumption": "represented_feeding_surface_sealable_not_privately_verified",
+                "task_outcome_consumer": "deferred_suckle_correspondence", "milk_prediction": "not_supplied",
+                "learned_operation": False}
+
+
+@dataclass(frozen=True, slots=True)
 class PendingPredictionTraceV1:
     """One bounded operation-linked expectation awaiting matching evidence."""
 
@@ -520,8 +576,8 @@ class Nca8PredictionRuntimeV1:
         self._current: PendingPredictionTraceV1 | None = None
         self._pending: list[PendingPredictionTraceV1] = []
         self._outcome_history: list[PredictionOutcomeV1] = []
-        self._preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | None = None
-        self._preview_history: list[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1] = []
+        self._preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | None = None
+        self._preview_history: list[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1] = []
         self._last_preview_cycle = 0
 
     @property
@@ -727,7 +783,7 @@ class Nca8PredictionRuntimeV1:
         """Return the visual member of the same single prospective slot, if any."""
         return self._preview if isinstance(self._preview, VisualTranslationPreviewV1) else None
 
-    def preview_history(self) -> tuple[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1, ...]:
+    def preview_history(self) -> tuple[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1, ...]:
         """Return at most eight immutable superseded previews, not pending outcomes."""
         return tuple(self._preview_history)
 
@@ -771,7 +827,18 @@ class Nca8PredictionRuntimeV1:
             raise TypeError("seeking registration requires its typed original prediction")
         self._adopt_preview(preview)
 
-    def _adopt_preview(self, preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | None) -> None:
+    @property
+    def current_suckle_preview(self) -> SucklePreviewV1 | None:
+        """Read the Suckle member of the existing single current prospective role."""
+        return self._preview if isinstance(self._preview, SucklePreviewV1) else None
+
+    def adopt_suckle_preview(self, preview: SucklePreviewV1) -> None:
+        """Register the original selected latch expectation, not observed fulfilment."""
+        if not isinstance(preview, SucklePreviewV1):
+            raise TypeError("Suckle registration requires its typed original prediction")
+        self._adopt_preview(preview)
+
+    def _adopt_preview(self, preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | None) -> None:
         """Replace one prospective role; retain bounded immutable earlier meanings."""
         if self._current is not None or self._pending:
             raise ValueError("cannot mix unexecuted previews with pending executed claims")
