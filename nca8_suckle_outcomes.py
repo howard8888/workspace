@@ -28,9 +28,9 @@ from nca8_sensorimotor_contracts import BodyRelativeTargetV1, CommittedBodyTarge
 from nca8_suckle import SuckleApplicationV1
 from nca8_visual import VisualObservationV1
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["SuckleEndpointV1", "SuckleIntervalEvidenceV1", "SuckleClaimV1", "SuckleOutcomeV1", "SuckleOutcomeFrameV1",
-           "SuckleOutcomeRuntimeV1", "validate_suckle_outcome_v1", "__version__"]
+           "SuckleOutcomeRuntimeV1", "validate_suckle_claim_v1", "validate_suckle_outcome_v1", "__version__"]
 _RELATIONS = ("mouth_position", "detail_anchor", "closure", "seal")
 _GEOMETRY_TOLERANCE = 0.005
 _CLOSURE_TOLERANCE = 0.025
@@ -261,15 +261,16 @@ class SuckleOutcomeFrameV1:
     pending: tuple[SuckleClaimV1, ...]
     comparison_enabled: bool
     attention_enabled: bool = False
+    learning_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
-        """Report I correspondence and the opt-in J consumer without implying learning."""
+        """Report I/J consumers and optional K eligibility without implying durable learning."""
         return {"profile": "suckle_correspondence_v1", "cutoff_tick": self.cutoff_tick,
                 "outcomes": [item.as_dict() for item in self.outcomes], "pending": [item.as_dict() for item in self.pending],
                 "registration": None if self.registration is None else self.registration.as_dict(),
                 "comparison_enabled": self.comparison_enabled,
                 "attention_route": "suckle_outcome_attention_v1" if self.attention_enabled else "deferred_suckle_attention",
-                "learning_route": "unimplemented_no_participation", "durable_updates": 0}
+                "learning_route": "suckle_no_learning_v1" if self.learning_enabled else "unimplemented_no_participation", "durable_updates": 0}
 
 
 @dataclass(slots=True)
@@ -581,6 +582,22 @@ def _compare(
             values["seal"] = "matched"
     relations = tuple((name, "unevaluable_authorization" if name in claim.unevaluable_relations else values[name]) for name in _RELATIONS)
     return relations, tuple(residuals.items()), identity
+
+
+def validate_suckle_claim_v1(claim: SuckleClaimV1, *, stream: MotorStreamRefV1) -> None:
+    """Validate original selected participation before later execution evidence exists.
+
+    K uses this read-only contract at the actual F checkpoint. Reconstructing only
+    the small claim reruns the same invariant checks used by I/J, retaining all
+    original preview/request/target references. No fabricated outcome, installation,
+    execution, teaching signal or new motor permission is introduced. Stream and
+    task-level primitive identity remain separate from the shared feeding source.
+    """
+    if not isinstance(stream, MotorStreamRefV1) or not isinstance(claim, SuckleClaimV1):
+        raise TypeError("Suckle participation needs its canonical stream and original claim")
+    SuckleClaimV1(claim.preview, claim.request, claim.targets, claim.compatible_relations, claim.unevaluable_relations)
+    if claim.preview.basis.stream != stream or claim.preview.pnm.primitive_id != "ip:suckle":
+        raise ValueError("Suckle claim belongs to another stream, generation or operation")
 
 
 def validate_suckle_outcome_v1(outcome: SuckleOutcomeV1, *, stream: MotorStreamRefV1, cutoff_tick: int) -> None:

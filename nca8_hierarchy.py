@@ -68,13 +68,14 @@ from nca8_outcome_attention import RightingMismatchRequestV1
 from nca8_learning import LearningPhaseFReportV1
 from nca8_maternal_learning import MaternalLearningPhaseFReportV1
 from nca8_seek_learning import SeekingLearningPhaseFReportV1
+from nca8_suckle_learning import SuckleLearningPhaseFReportV1
 from nca8_runtime import Nca8RightingPreviewSessionV1, RightingPreviewResultV1
 from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, SchedulerCycleSnapshotV1
 from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, SensorimotorProfileV1, SensorimotorStepV1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1, SensorimotorTargetKindV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -124,6 +125,7 @@ class IntegratedRightingCycleV1:
     suckle_task: SuckleAssessmentV1 | None = None
     suckle_correspondence: SuckleOutcomeFrameV1 | None = None
     suckle_attention: SuckleAttentionFrameV1 | None = None
+    suckle_learning_report: SuckleLearningPhaseFReportV1 | None = None
 
     @property
     def status(self) -> str:
@@ -156,7 +158,8 @@ class IntegratedRightingCycleV1:
                                 "not_established_maternal" if self.maternal_source is not None else
                                 "not_established_visual_fixture" if self.visual_source is not None else "not_established_H6A"),
             "durable_learning_updates": 0,
-            **({"suckle_initial_latch": self.suckle_task.as_dict(), "suckle_learning_status": "unimplemented_no_participation"}
+            **({"suckle_initial_latch": self.suckle_task.as_dict(),
+                "suckle_learning_status": "eligibility_only" if self.suckle_learning_report is not None else "unimplemented_no_participation"}
                if self.suckle_task is not None else {}),
             **({"task_outcome": self.task_outcome.as_dict(),
                 "claim_outcomes": [item.as_dict() for item in self.claim_outcomes],
@@ -173,6 +176,7 @@ class IntegratedRightingCycleV1:
                if self.maternal_source is not None else {}),
             **({"maternal_correspondence": self.maternal_correspondence.as_dict()} if self.maternal_correspondence is not None else {}),
             **({"suckle_correspondence": self.suckle_correspondence.as_dict()} if self.suckle_correspondence is not None else {}),
+            **({"suckle_learning_reconciliation": self.suckle_learning_report.as_dict()} if self.suckle_learning_report is not None else {}),
             **({"suckle_attention": self.suckle_attention.as_dict()} if self.suckle_attention is not None else {}),
             **({"seeking_correspondence": self.seeking_correspondence.as_dict()} if self.seeking_correspondence is not None else {}),
             **({"seeking_attention": self.seeking_attention.as_dict()} if self.seeking_attention is not None else {}),
@@ -260,6 +264,8 @@ class IntegratedRightingCoreV1:
                        if self.feeding_detail is not None and suckle_profile is not None else None)
         if self.feeding_detail is not None and suckle_profile is not None and suckle_profile.outcome_attention_enabled:
             self.feeding_detail.configure_suckle_outcome_attention()
+        if self.feeding_detail is not None and suckle_profile is not None and suckle_profile.learning_hook_enabled:
+            self.feeding_detail.configure_suckle_learning_hook(diagnostic_capacity=learning_diagnostic_capacity)
         if self.feeding_detail is not None and seek_nipple_profile is not None and seek_nipple_profile.outcome_attention_enabled:
             self.feeding_detail.configure_outcome_attention()
         if self.feeding_detail is not None and seek_nipple_profile is not None and seek_nipple_profile.learning_hook_enabled:
@@ -342,6 +348,8 @@ class IntegratedRightingCoreV1:
             self.feeding_detail.suckle_outcome_attention.close()
         if self.feeding_detail is not None and self.feeding_detail.learning_hook is not None:
             self.feeding_detail.learning_hook.close()
+        if self.feeding_detail is not None and self.feeding_detail.suckle_learning_hook is not None:
+            self.feeding_detail.suckle_learning_hook.close()
         if self.maternal_outcomes is not None:
             self.maternal_outcomes.close(reason=self._fault)
         hook = self.cognition.sensory.learning_hook
@@ -833,10 +841,12 @@ class IntegratedRightingCoreV1:
         maternal_learning_report: MaternalLearningPhaseFReportV1 | None = None
         seeking_hook = self.feeding_detail.learning_hook if self.feeding_detail is not None else None
         seeking_learning_report: SeekingLearningPhaseFReportV1 | None = None
+        suckle_hook = self.feeding_detail.suckle_learning_hook if self.feeding_detail is not None else None
+        suckle_learning_report: SuckleLearningPhaseFReportV1 | None = None
 
         def reconcile_learning() -> None:
             """Visit configured source participants once in F, never scan the learning ledger."""
-            nonlocal learning_report, maternal_learning_report, seeking_learning_report
+            nonlocal learning_report, maternal_learning_report, seeking_learning_report, suckle_learning_report
             if hook is not None:
                 learning_report = hook.reconcile(
                     cycle_id=cycle, cutoff_tick=tick, registration=claim_registration,
@@ -886,10 +896,27 @@ class IntegratedRightingCoreV1:
                                            "offered_outcomes": seeking_learning_report.offered_outcomes,
                                            "dispositions": ",".join(item.status for item in seeking_learning_report.dispositions),
                                            "durable_learning_updates": 0, "ledger_rows_executed": 0})
+            if suckle_hook is not None:
+                suckle_learning_report = suckle_hook.reconcile(
+                    cycle_id=cycle, cutoff_tick=tick, registration=suckle_registration,
+                    task=application.task if isinstance(application, SuckleApplicationV1) else None,
+                    outcomes=suckle_results, requests=suckle_requests,
+                    interpretation=suckle_allocation.interpretation
+                    if suckle_allocation is not None and suckle_allocation.kind == "interpretation" else None,
+                    comparison_enabled=suckle_owner.compare_predictions if suckle_owner is not None else False,
+                    attention_enabled=suckle_attention is not None,
+                )
+                self.trace.append("hierarchy_suckle_learning_hook", "F reconciled original Suckle participation; no durable update",
+                                  cycle_id=cycle, phase=CyclePhase.LEARNING_SCHEDULE.name,
+                                  details={"recipient": suckle_learning_report.recipient_id,
+                                           "participants": len(suckle_learning_report.pending),
+                                           "offered_outcomes": suckle_learning_report.offered_outcomes,
+                                           "dispositions": ",".join(item.status for item in suckle_learning_report.dispositions),
+                                           "durable_learning_updates": 0, "ledger_rows_executed": 0})
             self.trace.append("hierarchy_learning", "F reconciliation: no durable learner or new physical outcome", cycle_id=cycle,
                               phase=CyclePhase.LEARNING_SCHEDULE.name, details={"durable_learning_updates": 0})
 
-        if hook is None and maternal_hook is None and seeking_hook is None:
+        if hook is None and maternal_hook is None and seeking_hook is None and suckle_hook is None:
             # Preserve the retained empty-F trace and original scheduler call.
             reconcile_learning()
             schedule = self.scheduler.phase_f_finish(cycle, self.trace)
@@ -914,12 +941,14 @@ class IntegratedRightingCoreV1:
             suckle_correspondence=SuckleOutcomeFrameV1(
                 tick, tuple(item for item in suckle_owner.history() if item.number > suckle_before),
                 suckle_registration, suckle_owner.pending(), suckle_owner.compare_predictions,
-                suckle_attention is not None) if suckle_owner is not None else None,
+                suckle_attention is not None, suckle_hook is not None) if suckle_owner is not None else None,
             seeking_correspondence=SeekNippleOutcomeFrameV1(
                 tick, tuple(item for item in seeking_owner.history() if item.number > seeking_before),
                 seeking_registration, seeking_owner.pending(), seeking_owner.compare_predictions,
                 seeking_attention is not None, seeking_hook is not None) if seeking_owner is not None else None,
-            suckle_attention=SuckleAttentionFrameV1(suckle_requests, suckle_attention.pending(), feeding_bid, suckle_allocation)
+            suckle_learning_report=suckle_learning_report,
+            suckle_attention=SuckleAttentionFrameV1(suckle_requests, suckle_attention.pending(), feeding_bid, suckle_allocation,
+                                                   suckle_hook is not None)
             if suckle_attention is not None and suckle_allocation is not None else None,
             seeking_learning_report=seeking_learning_report,
             seeking_attention=SeekingAttentionFrameV1(seeking_requests, seeking_attention.pending(), feeding_bid, seeking_allocation, seeking_hook is not None)
@@ -1137,6 +1166,8 @@ class IntegratedRightingTrialV1:
                if self.core.feeding_detail is not None and self.core.feeding_detail.suckle_outcome_attention is not None else {}),
             **(self.core.feeding_detail.learning_hook.retained_counts()
                if self.core.feeding_detail is not None and self.core.feeding_detail.learning_hook is not None else {}),
+            **(self.core.feeding_detail.suckle_learning_hook.retained_counts()
+               if self.core.feeding_detail is not None and self.core.feeding_detail.suckle_learning_hook is not None else {}),
             **({"suckle_staged_intervals": len(self._suckle_intervals), **self.core.suckle_outcomes.retained_counts()}
                if self.core.suckle_outcomes is not None else {}),
             **({"seeking_staged_intervals": len(self._seeking_intervals), **self.core.seeking_outcomes.retained_counts()}

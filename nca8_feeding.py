@@ -35,8 +35,9 @@ if TYPE_CHECKING:
     from nca8_seek_attention import SeekingOutcomeAttentionV1
     from nca8_suckle_attention import SuckleOutcomeAttentionV1
     from nca8_seek_learning import SeekingLearningHookV1
+    from nca8_suckle_learning import SuckleLearningHookV1
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     "FeedingDetailSeedV1", "FeedingDetailProfileV1", "FeedingDetailNavMapStateV1",
     "FeedingDetailCandidateV1", "FeedingDetailSourceV1", "__version__",
@@ -457,6 +458,7 @@ class FeedingDetailSourceV1:
         self._outcome_attention: SeekingOutcomeAttentionV1 | None = None
         self._suckle_outcome_attention: SuckleOutcomeAttentionV1 | None = None
         self._learning_hook: SeekingLearningHookV1 | None = None
+        self._suckle_learning_hook: SuckleLearningHookV1 | None = None
 
     @property
     def outcome_attention(self) -> SeekingOutcomeAttentionV1 | None:
@@ -510,6 +512,27 @@ class FeedingDetailSourceV1:
             raise RuntimeError("configure seeking participation only once before source updates")
         import nca8_seek_learning  # pylint: disable=import-outside-toplevel
         self._learning_hook = nca8_seek_learning.SeekingLearningHookV1(
+            self._stream, self._profile.seed, diagnostic_capacity=diagnostic_capacity,
+        )
+
+    @property
+    def suckle_learning_hook(self) -> SuckleLearningHookV1 | None:
+        """Read K's original Suckle recipient, distinct from seeking and J questions."""
+        return self._suckle_learning_hook
+
+    def configure_suckle_learning_hook(self, *, diagnostic_capacity: int = 32) -> None:
+        """Attach one no-durable-learning Suckle hook before source processing.
+
+        This owner holds bounded participation in original selected applications.
+        Configuration changes no evidence, focal allocation, task or body permission.
+        The late import preserves the existing source schema's dependency direction.
+        Failed configuration leaves this optional owner absent; reset creates a new
+        source generation and stop closes the old hook without replaying evidence.
+        """
+        if self._current is not None or self._suckle_learning_hook is not None:
+            raise RuntimeError("configure Suckle participation once before source updates")
+        import nca8_suckle_learning  # pylint: disable=import-outside-toplevel
+        self._suckle_learning_hook = nca8_suckle_learning.SuckleLearningHookV1(
             self._stream, self._profile.seed, diagnostic_capacity=diagnostic_capacity,
         )
 

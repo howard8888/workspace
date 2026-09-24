@@ -31,7 +31,7 @@ from nca8_feeding import FeedingDetailNavMapStateV1, FeedingDetailSeedV1
 from nca8_suckle import SuckleTaskV1
 from nca8_suckle_outcomes import SuckleOutcomeV1, validate_suckle_outcome_v1
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = ["SuckleMismatchRequestV1", "SuckleInterpretationV1", "SuckleFocalAllocationV1", "SuckleAttentionFrameV1",
            "SuckleOutcomeAttentionV1", "__version__"]
 
@@ -117,13 +117,14 @@ class SuckleAttentionFrameV1:
     pending: tuple[SuckleMismatchRequestV1, ...]
     source_bid: AttentionBidV1 | None
     allocation: SuckleFocalAllocationV1
+    learning_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
-        """Separate request, ordinary bid and allocation, keeping learning absent."""
+        """Separate request/bid/allocation from optional eligibility and absent durable learning."""
         return {"profile": "suckle_outcome_attention_v1", "created": [item.as_dict() for item in self.created],
                 "pending": [item.as_dict() for item in self.pending],
                 "source_bid": self.source_bid.as_dict() if self.source_bid is not None else None,
-                "allocation": self.allocation.as_dict(), "learning_route": "unimplemented_no_participation", "durable_updates": 0}
+                "allocation": self.allocation.as_dict(), "learning_route": "suckle_no_learning_v1" if self.learning_enabled else "unimplemented_no_participation", "durable_updates": 0}
 
 
 class SuckleOutcomeAttentionV1:

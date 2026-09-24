@@ -26,7 +26,7 @@ from nca8_prediction import ProjectedNavMapV1, SucklePreviewV1
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
 from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = ["SuckleProfileV1", "SuckleTaskV1", "SuckleApplicationV1", "SuckleAssessmentV1", "SuckleIPV1", "__version__"]
 
 _MAX_TICKS = 48
@@ -59,6 +59,8 @@ class SuckleProfileV1:
     J's separate, default-disabled outcome_attention_enabled switch allows those
     outcomes to request source consideration and a Navigation-allocated
     interpretation, never automatic IP reapplication or new motor permission.
+    K's separate default-disabled hook records bounded participation at F. It
+    requires correspondence, not J, and never implements a durable learning rule.
     """
 
     enabled: bool = True
@@ -66,16 +68,19 @@ class SuckleProfileV1:
     outcomes_enabled: bool = False
     prediction_comparison_enabled: bool = True
     outcome_attention_enabled: bool = False
+    learning_hook_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not all(isinstance(value, bool) for value in (
                 self.enabled, self.influence_enabled, self.outcomes_enabled, self.prediction_comparison_enabled,
-                self.outcome_attention_enabled)):
+                self.outcome_attention_enabled, self.learning_hook_enabled)):
             raise TypeError("Suckle switches must be Boolean")
         if not self.outcomes_enabled and not self.prediction_comparison_enabled:
             raise ValueError("Suckle comparison-off requires its correspondence owner")
         if self.outcome_attention_enabled and not self.outcomes_enabled:
             raise ValueError("Suckle relevance requires original-outcome correspondence")
+        if self.learning_hook_enabled and not self.outcomes_enabled:
+            raise ValueError("Suckle participation requires original-outcome correspondence")
 
     def as_dict(self) -> dict[str, object]:
         """Disclose fixed scope, timing and unimplemented consumers."""
@@ -88,7 +93,9 @@ class SuckleProfileV1:
                 **({"prediction_comparison_enabled": self.prediction_comparison_enabled} if self.outcomes_enabled else {}),
                 **({"outcome_attention": "suckle_outcome_attention_v1", "interpretation_policy": "one_opportunity_then_later_response",
                     "maximum_pending_requests": 8, "request_lifetime_ticks": 8} if self.outcome_attention_enabled else {}),
-                "learning": "unimplemented_no_participation",
+                "learning": "suckle_no_learning_v1" if self.learning_hook_enabled else "unimplemented_no_participation",
+                **({"maximum_learning_participants": 8, "eligibility_lifetime_cycles": 4,
+                    "learning_maturity": "eligibility_only"} if self.learning_hook_enabled else {}),
                 "full_suckle_task": "not_implemented"}
 
 

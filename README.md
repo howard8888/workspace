@@ -16,6 +16,56 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 candidate: P16-2C-K original Suckle participation and Phase F
+
+Entry: accepted J at clean `30e03737b1cfd285ec8bbf292360efb53a03d277`,
+tree `fb32466c777621c56f428397481c406162d05708`. Architecture v10.1 and Planning v18
+remain authoritative. This is the K implementation/qualification candidate, not
+an accepted checkpoint, a durable learner or completion of P16-2C/B99.
+
+The existing F callback records original Navigation-selected Suckle participation
+before outer installation. Participation is not execution. Later I evidence must
+match the original Suckle source/sample, task/application, claim and authorized
+relations; current WNM is not the default recipient. Where an outcome requires
+J interpretation, F consumes only an already performed Navigation-granted result.
+It does not interpret, consume a pending J question, reapply either IP, diagnose
+cause, choose a remedy, grant movement or restart a task.
+
+`SuckleProfileV1.learning_hook_enabled=False` is the default. Enabling K requires
+I correspondence, not J; J-off mismatches wait conservatively. Each original
+participant expires before its creation cycle + 4. At most eight participants and
+32 diagnostic dispositions are retained. These are short-delay engineering bounds,
+independent of prediction windows, J's question expiry, task budget and motor lease.
+A later valid interpretation cannot revive expired participation. Accepted evidence
+is `accepted_no_update`, not causal credit or acquired competence. All durable
+update counts remain zero; no milk, nourishment, Rest or new Goal/SEC/Emotion path.
+
+Menu: **Main -> 4 -> 15 -> 27** after the usual startup/profile prompts. J remains
+at option 26. In K, 1 reviews hook-on/off pairs, 2 reviews dependency/nonfocal/expiry,
+3 reviews uncertainty/nonapplication/narrowing/interruption, 4 reviews continuous
+earlier tasks, 5 runs all 20 cases, and 6 inspects retained results without rerunning.
+The shared command-line review is:
+
+    python scripts/review_nca8_feeding.py --suckle-learning --case all --detail
+
+Each K review contains two separate fixed-schedule runs: the declared condition and
+an identical-conditions K-off control. On/off here refers to K, not J. Full behavior
+comparison excludes K's named report/disclosure fields, its two bounded counts and
+the explicitly diagnostic focal-trace count (K adds one F trace per cycle). Trace
+growth and bounds are checked separately; I/J records, permissions and physical
+evidence remain included. The
+full JSON export includes both runs. Read-only review failures return nonzero.
+The Stage C simultaneous-question and late-J-interpretation tests remain labelled
+contract fixtures, not claims that those circumstances naturally co-occur here.
+
+Host `cca8_run.py v0.30.38` registers 112 components and the unchanged eight host
+behavioral primitives. `nca8_suckle_learning` is a source-owned eligibility-only
+service; `nca8_suckle_learning_demo` is an observer. Neither is an IP or executive.
+Existing H/I/J defaults, I-v02 portable H preservation, BodyMap/physical authority,
+and the earlier learning hooks are retained. Static checks, broader qualification,
+Windows validation and Howard's acceptance are separate gates. One full suite is
+run through `--preflight`; no extra standalone complete pytest is required.
+
 ## NCA8 update: P16-2C-J Suckle outcome relevance and Navigation interpretation
 
 Entry: accepted I-v02 at clean `c8037b8a60a13f805608a9f1d318b147f509e5aa`,

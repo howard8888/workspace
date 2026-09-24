@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __all__ = ["LearningCapabilityV1", "learning_capabilities_v1", "render_learning_ledger_v1", "__version__"]
 
 
@@ -49,16 +49,19 @@ class LearningCapabilityV1:
 
     @property
     def live_consumer(self) -> str:
-        """Identify the two domain recipients of one partial capability; do not fabricate learners."""
+        """Identify called domain hooks for one partial capability, not durable learners."""
         return ("Nca8BodySensoryModuleV1.learning_hook -> RightingLearningHookV1.reconcile; "
-                "MaternalSourceV1.learning_hook -> MaternalLearningHookV1.reconcile (source-side no-learning seams only)"
+                "MaternalSourceV1.learning_hook -> MaternalLearningHookV1.reconcile; "
+                "FeedingDetailSourceV1.learning_hook -> SeekingLearningHookV1.reconcile; "
+                "FeedingDetailSourceV1.suckle_learning_hook -> SuckleLearningHookV1.reconcile (source-side no-learning seams only)"
                 if self.capability_id == "L12" else "none; no runtime learner for this row")
 
     @property
     def test_destination(self) -> str:
         """Separate current plumbing tests from the future required learning proof."""
         return ("tests/test_nca8_learning.py, tests/test_nca8_learning_demo.py, tests/test_nca8_maternal_learning.py "
-                "and tests/test_nca8_maternal_learning_demo.py; future durable proof at " + self.promotion_phase
+                "and tests/test_nca8_maternal_learning_demo.py; tests/test_nca8_seek_learning.py, "
+                "tests/test_nca8_seek_learning_demo.py and tests/test_nca8_suckle_learning.py; future durable proof at " + self.promotion_phase
                 if self.capability_id == "L12" else "planned promotion experiment at " + self.promotion_phase)
 
     def as_dict(self) -> dict[str, object]:
