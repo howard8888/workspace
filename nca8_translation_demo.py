@@ -24,11 +24,12 @@ from cca8_support_world import (
     PlanarObjectV1, PlanarPerturbationV1, PlanarWorldProfileV1, PlanarWorldStateV1,
 )
 from nca8_body_targets import BodyTranslationCapabilityV1
+from nca8_sensorimotor_contracts import BodyRelativeTargetV1, BodyTranslationTargetV1
 from nca8_hierarchy import IntegratedRightingCycleV1, IntegratedRightingTrialV1
 from nca8_sensorimotor import SensorimotorProfileV1, SensorimotorStepV1
 from nca8_translation import TranslationFixtureV1
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "TRANSLATION_CASES_V1", "TranslationExperimentV1", "create_translation_trial_v1", "run_translation_v1",
     "render_translation_v1", "run_translation_menu_v1", "__version__",
@@ -211,6 +212,8 @@ def render_translation_v1(result: TranslationExperimentV1, *, detail: bool = Fal
         lines.append(f"  original sparse PNM={motor.projection.as_dict()}")
     for reservation in first.reservations:
         target = reservation.current.target
+        if not isinstance(target, (BodyRelativeTargetV1, BodyTranslationTargetV1)):
+            raise TypeError("this retained review expects a scalar or translation target")
         lines.append(f"  BodyMap {target.kind.value}: offset={target.offset}; anchored endpoint={target.endpoint}; "
                      f"lease=[{reservation.current.committed_tick},{reservation.current.expires_at_tick})")
     if first.calculation.proposal is not None and first.calculation.proposal.withheld:

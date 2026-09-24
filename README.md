@@ -16,6 +16,53 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P16-2C-L-B supplied extraction/return targets
+
+Entry: accepted L-A v03 at `119a2db24a3250d44c4596bab6e7135e35ef85a0`,
+tree `ce1404556afe966355da26e7602bb66eee54865e`. Architecture v10.1 and
+Planning v18 remain authoritative. This is a candidate until Howard's testing
+and review; it does not complete Suckle, P16-2C, or Gate B99.
+
+A supplied requirement is checked by BodyMap and reserved/installed once in the
+existing executor. A dedicated `OralExtractionTargetV1` retains original body,
+yaw and reach anchors, outward/return endpoints, one or two cycles, and one lease
+of at most eight lower ticks. The initial capability offers a 0.10-unit stroke,
+0.20 excursion, 0.01 tolerance and 2 units/second. These are engineering choices,
+not physiological rates. Both endpoint bands must be distinct; nominal travel
+is checked without guaranteeing completion under missing/delayed feedback.
+
+Only actual, distinct acquisitions can confirm each ordered endpoint. Starting
+at the final return coordinate is not completion. Predicted motion accounts for
+in-flight commands but cannot advance the phase. A final late confirmation may
+report an endpoint sensed within the original lease; it cannot revive pursuit
+or supply missing earlier legs. Known lost seal/support/anchor blocks motion;
+missing required feedback withholds and times out. No opening, repositioning,
+IP selection, new task, or implicit lease renewal is a lower corrective strategy.
+
+The new capability is optional and not in the default inventory. A fifth available
+scalar family is not more concurrent authority: extraction excludes other active
+movement targets in this first profile. Private milk supply and sensed milk do
+not determine movement. Wet/dry/milk-sensor controls retain identical commands;
+local movement success is not transfer, nourishment, or Suckle task completion.
+
+Menu: Main -> 4 -> 15 -> 29 after the normal startup/profile prompts. J remains26,
+K remains27, and the direct-drive L-A physical review remains28. The shared route is:
+
+    python scripts/review_nca8_feeding.py --oral-extraction-control --case all --detail
+
+Twenty-four finite cases use the existing lower trial's advance/admission/reset
+path. They supply requirements, not motor command sequences or a fabricated
+Navigation handoff. All cognitive selection, task PNM, initial-latch H/I/J/K,
+L-A physics/wire formats, learning and normal default-runtime behavior are retained.
+The future task-driven extraction projection/handoff remains separately gated.
+
+The host is `0.30.40` with 114 registered components and eight unchanged
+host/legacy behavioral primitives. No new task IP or generic motor framework was
+added. Step 2 AI validation explicitly excludes the two Pyvis export tests and
+omits Pylint/mypy at Howard's request; repository validation configurations remain
+unchanged. Preflight owns the one repository-wide scoped run. Howard's own static,
+Pyvis and Windows/manual checks remain distinct from this scoped evidence.
+
 ## NCA8 update: P16-2C-L-A direct-drive extraction and milk sensing
 
 Entry: accepted K at `868629601c66b5d34a08e2edc3dae39051db3b19`, tree

@@ -24,12 +24,12 @@ from dataclasses import dataclass, field
 from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, PlanarDriveV1
 from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetMapperV1, BodyTargetReservationV1
 from nca8_sensorimotor_contracts import (
-    BodyRelativeTargetV1, BodyTranslationTargetV1, LocalTargetDispositionV1, LocalTargetReportV1,
+    BodyRelativeTargetV1, BodyTranslationTargetV1, OralExtractionTargetV1, LocalTargetDispositionV1, LocalTargetReportV1,
     MotorInstallationSourceV1, SensorimotorTargetKindV1, TargetOriginV1,
     oral_basis_compatible_v1, oral_closure_basis_compatible_v1, scalar_motor_coordinate_v1,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
     "LocalMotorPredictionV1", "LocalPredictionComparisonV1", "LocalControlEventV1",
     "SensorimotorProfileV1", "SensorimotorStepV1", "SensorimotorExecutorV1", "__version__",
@@ -44,6 +44,7 @@ _EXTENSION = SensorimotorTargetKindV1.SUPPORT_EXTENSION
 _TRANSLATION = SensorimotorTargetKindV1.PLANAR_TRANSLATION
 _ORAL = SensorimotorTargetKindV1.ORAL_REACH
 _CLOSURE = SensorimotorTargetKindV1.ORAL_CLOSURE
+_EXTRACTION = SensorimotorTargetKindV1.ORAL_EXTRACTION
 _TERMINAL = frozenset({
     LocalTargetDispositionV1.ACHIEVED, LocalTargetDispositionV1.BLOCKED,
     LocalTargetDispositionV1.UNAVAILABLE, LocalTargetDispositionV1.CANCELLED,
@@ -51,7 +52,7 @@ _TERMINAL = frozenset({
 })
 _MISSING_REASONS = frozenset({
     "current_body_feedback_unavailable", "required_coordinate_missing", "required_support_evidence_missing",
-    "required_contact_evidence_missing",
+    "required_contact_evidence_missing", "required_seal_evidence_missing",
 })
 
 
@@ -79,6 +80,8 @@ def _drive(command: MotorCommandV1 | None, kind: SensorimotorTargetKindV1) -> fl
         return command.oral_drive if command.oral_drive is not None else 0.0
     if kind is _CLOSURE:
         return command.oral_closure_drive if command.oral_closure_drive is not None else 0.0
+    if kind is _EXTRACTION:
+        return command.oral_extraction_drive if command.oral_extraction_drive is not None else 0.0
     return command.orientation_drive if kind is _ORIENTATION else command.extension_drive
 
 
@@ -86,7 +89,7 @@ def _motor_rate(kind: SensorimotorTargetKindV1) -> float:
     """Return the declared motor calibration, not a private simulator reading."""
     if kind is _TRANSLATION:
         raise ValueError("translation requires its vector-specific calculation")
-    return 90.0 if kind is _ORIENTATION else 0.5 if kind is _ORAL else 2.0 if kind is _CLOSURE else 1.0
+    return 90.0 if kind is _ORIENTATION else 0.5 if kind is _ORAL else 2.0 if kind in (_CLOSURE, _EXTRACTION) else 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +250,7 @@ class _Pursuit:
     corrections: int = 0
     missing_since: int | None = None
     anomaly_pending: bool = False
+    extraction_confirmations: tuple[MotorFeedbackV1, ...] = ()
     predictions: deque[LocalMotorPredictionV1] = field(default_factory=lambda: deque(maxlen=_HISTORY_LIMIT))
 
 
@@ -407,7 +411,7 @@ class SensorimotorExecutorV1:
             execution, origin = committed.execution_id, target.origin
             report = LocalTargetReportV1(committed, LocalTargetDispositionV1.PENDING, tick, "installed_supplied_target")
             prepared[target.kind] = _Pursuit(reservation, report)
-        if (_TRANSLATION in prepared or _ORAL in prepared) and len(prepared) != 1:
+        if (_TRANSLATION in prepared or _ORAL in prepared or _EXTRACTION in prepared) and len(prepared) != 1:
             raise ValueError("translation/oral reach excludes other simultaneous movement in this profile")
         return prepared
 
@@ -542,6 +546,7 @@ class SensorimotorExecutorV1:
         """Save a local report without ever changing the supplied target or body facts."""
         pursuit.report = LocalTargetReportV1(
             pursuit.reservation.current, disposition, tick, reason, feedback, pursuit.corrections,
+            extraction_confirmations=pursuit.extraction_confirmations,
         )
 
     def _event(
@@ -666,6 +671,8 @@ class SensorimotorExecutorV1:
             return False
         reserved = pursuit.reservation
         target = reserved.current.target
+        if isinstance(target, OralExtractionTargetV1):
+            return self._observe_extraction_endpoint(pursuit, feedback, tick)
         if not reserved.updated_tick <= feedback.event_tick <= reserved.current.expires_at_tick:
             return False
         if target.kind is _ORAL and not oral_basis_compatible_v1(target.basis, feedback):
@@ -728,6 +735,8 @@ class SensorimotorExecutorV1:
             return 0.0
         if isinstance(target, BodyTranslationTargetV1):
             return self._translation_response(pursuit, feedback, tick)
+        if isinstance(target, OralExtractionTargetV1):
+            return self._extraction_response(pursuit, feedback, tick)
         if not isinstance(target, BodyRelativeTargetV1) or not isinstance(reservation.capability, BodyAxisCapabilityV1):
             raise TypeError("scalar control requires a scalar target and capability")
         value = _coordinate(feedback, target.kind)
@@ -770,6 +779,102 @@ class SensorimotorExecutorV1:
             reason = "bounded_anomalous_correction"
         progress = abs(value - target.endpoint) < abs(target.offset) - target.tolerance
         disposition = LocalTargetDispositionV1.PARTIAL if progress else LocalTargetDispositionV1.ACTIVE
+        self._report(pursuit, disposition, tick, reason, feedback)
+        return response
+
+    def _observe_extraction_endpoint(self, pursuit: _Pursuit, feedback: MotorFeedbackV1, tick: int) -> bool:
+        """Advance at most one ordered leg using actual, distinct endpoint evidence.
+
+        Start equals return is not completion. At/after expiry only a delayed
+        FINAL acquisition observed by the original deadline can complete a
+        previously demonstrated prefix. It issues no drive or new permission.
+        Revoked/replaced descriptions cannot receive that late confirmation.
+        """
+        committed = pursuit.reservation.current
+        target = committed.target
+        if not isinstance(target, OralExtractionTargetV1):
+            raise TypeError("ordered extraction requires its dedicated target")
+        count = len(pursuit.extraction_confirmations)
+        if count >= 2 * target.repetitions or not self._mapper.owns_reservation(pursuit.reservation):
+            return False
+        if tick >= committed.expires_at_tick and count != 2 * target.repetitions - 1:
+            return False
+        previous = pursuit.extraction_confirmations[-1] if count else target.basis
+        if (feedback.sample_id <= previous.sample_id or feedback.event_tick <= previous.event_tick
+                or not committed.committed_tick < feedback.event_tick <= committed.expires_at_tick):
+            return False
+        value = _coordinate(feedback, _EXTRACTION)
+        endpoint = target.outward_endpoint if count % 2 == 0 else target.return_endpoint
+        if value is None or abs(value - endpoint) > target.tolerance + _EPSILON:
+            return False
+        confirmations = (*pursuit.extraction_confirmations, feedback)
+        complete = len(confirmations) == 2 * target.repetitions
+        # Validate all original context and event identities BEFORE committing progress.
+        try:
+            report = LocalTargetReportV1(
+                committed, LocalTargetDispositionV1.ACHIEVED if complete else LocalTargetDispositionV1.PARTIAL,
+                tick, "observed_extraction_pattern_achieved" if complete else "observed_extraction_leg",
+                feedback, pursuit.corrections, extraction_confirmations=confirmations,
+            )
+        except ValueError:
+            return False  # Incompatible/missing endpoint context is not an observed leg.
+        pursuit.extraction_confirmations, pursuit.report = confirmations, report
+        if complete:
+            pursuit.predictions.clear()
+        return complete
+
+    def _extraction_response(self, pursuit: _Pursuit, feedback: MotorFeedbackV1, tick: int) -> float:
+        """Follow the currently permitted leg of one unchanged original pattern.
+
+        The common ownership, fresh-evidence, support/seal and missing-data checks
+        precede this method. Estimates account for in-flight drives only; they
+        cannot advance a phase. No milk channel, private supply, IP or WNM is read.
+        """
+        target, capability = pursuit.reservation.current.target, pursuit.reservation.capability
+        if not isinstance(target, OralExtractionTargetV1) or not isinstance(capability, BodyAxisCapabilityV1):
+            raise TypeError("extraction control requires its original typed pattern and capability")
+        value = _coordinate(feedback, _EXTRACTION)
+        if value is None:
+            raise RuntimeError("BodyMap permitted extraction without a sensed stroke")
+        if abs(value - target.basis_coordinate) > target.max_displacement + _EPSILON:
+            self._report(pursuit, LocalTargetDispositionV1.INTERRUPTED, tick, "original_excursion_exceeded", feedback)
+            self._event(pursuit, tick, "original_excursion_exceeded", feedback)
+            pursuit.predictions.clear()
+            return 0.0
+        if self._observe_extraction_endpoint(pursuit, feedback, tick):
+            return 0.0
+        count = len(pursuit.extraction_confirmations)
+        endpoint = target.outward_endpoint if count % 2 == 0 else target.return_endpoint
+        known = self._known_commands(feedback.event_tick, tick)
+        if known is None:
+            self._report(pursuit, LocalTargetDispositionV1.UNRESOLVED, tick, "command_history_unavailable", feedback)
+            return 0.0
+        rate = target.max_rate
+        if pursuit.anomaly_pending:
+            if pursuit.corrections >= target.max_corrections:
+                self._report(pursuit, LocalTargetDispositionV1.INTERRUPTED, tick, "anomalous_correction_budget_exhausted", feedback)
+                pursuit.predictions.clear()
+                return 0.0
+            rate *= 0.5
+        scale = _motor_rate(_EXTRACTION)
+        estimated = value + self._mapper.tick_seconds * scale * sum(_drive(item, _EXTRACTION) for item in known)
+        delta = max(-rate * self._mapper.tick_seconds, min(rate * self._mapper.tick_seconds, endpoint - estimated))
+        lower = max(capability.minimum_coordinate, target.basis_coordinate - target.max_displacement)
+        upper = min(capability.maximum_coordinate, target.basis_coordinate + target.max_displacement)
+        if not lower - _EPSILON <= estimated + delta <= upper + _EPSILON:
+            self._report(pursuit, LocalTargetDispositionV1.INTERRUPTED, tick, "command_would_exceed_original_bounds", feedback)
+            self._event(pursuit, tick, "command_would_exceed_original_bounds", feedback)
+            pursuit.predictions.clear()
+            return 0.0
+        response = max(-1.0, min(1.0, delta / (scale * self._mapper.tick_seconds)))
+        reason = "extraction_outward_following" if count % 2 == 0 else "extraction_return_following"
+        if response == 0.0:
+            reason = "awaiting_sensed_extraction_endpoint"
+        if pursuit.anomaly_pending and response != 0.0:
+            pursuit.corrections += 1
+            pursuit.anomaly_pending = False
+            reason = "bounded_anomalous_correction"
+        disposition = LocalTargetDispositionV1.PARTIAL if count or abs(value - target.basis_coordinate) > target.tolerance else LocalTargetDispositionV1.ACTIVE
         self._report(pursuit, disposition, tick, reason, feedback)
         return response
 
@@ -891,16 +996,18 @@ class SensorimotorExecutorV1:
             extension = responses.get(_EXTENSION, 0.0)
             oral = responses.get(_ORAL, 0.0)
             closure = responses.get(_CLOSURE, 0.0)
+            extraction = responses.get(_EXTRACTION, 0.0)
             if (not isinstance(orientation, float) or not isinstance(extension, float)
-                    or not isinstance(oral, float) or not isinstance(closure, float)):
+                    or not isinstance(oral, float) or not isinstance(closure, float) or not isinstance(extraction, float)):
                 raise TypeError("support channels cannot receive a vector translation")
             vector = responses.get(_TRANSLATION)
             translation = vector if isinstance(vector, PlanarDriveV1) and math.hypot(vector.forward, vector.left) > 0.0 else None
             command: MotorCommandV1 | None = None
-            if orientation != 0.0 or extension != 0.0 or translation is not None or oral != 0.0 or closure != 0.0:
+            if orientation != 0.0 or extension != 0.0 or translation is not None or oral != 0.0 or closure != 0.0 or extraction != 0.0:
                 command = MotorCommandV1(self._mapper.stream, tick + 1, tick, orientation, extension,
                                          translation=translation, oral_drive=oral if oral != 0.0 else None,
-                                         oral_closure_drive=closure if closure != 0.0 else None)
+                                         oral_closure_drive=closure if closure != 0.0 else None,
+                                         oral_extraction_drive=extraction if extraction != 0.0 else None)
             predictions: list[LocalMotorPredictionV1] = []
             if current is not None:
                 for pursuit in self._pursuits.values():

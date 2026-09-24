@@ -20,15 +20,15 @@ feedback. All exports are detached descriptions, not save/load actuator rights.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = [
-    "BodyRelativeTargetV1", "BodyTranslationTargetV1",
+    "BodyRelativeTargetV1", "BodyTranslationTargetV1", "OralExtractionTargetV1",
     "CommittedBodyTargetV1",
     "FocalMotorEvidenceV1",
     "LocalTargetDispositionV1",
@@ -93,6 +93,7 @@ class SensorimotorTargetKindV1(str, Enum):
     PLANAR_TRANSLATION = "planar_translation"
     ORAL_REACH = "oral_reach"
     ORAL_CLOSURE = "oral_closure"
+    ORAL_EXTRACTION = "oral_extraction"
 
 
 def scalar_motor_coordinate_v1(feedback: MotorFeedbackV1, kind: SensorimotorTargetKindV1) -> float | None:
@@ -112,6 +113,8 @@ def scalar_motor_coordinate_v1(feedback: MotorFeedbackV1, kind: SensorimotorTarg
         return None if feedback.oral is None else feedback.oral.extension_metres
     if kind is SensorimotorTargetKindV1.ORAL_CLOSURE:
         return None if feedback.oral_seal is None else feedback.oral_seal.closure
+    if kind is SensorimotorTargetKindV1.ORAL_EXTRACTION:
+        return None if feedback.oral_extraction is None else feedback.oral_extraction.stroke
     raise ValueError("vector translation has no scalar motor coordinate")
 
 
@@ -250,8 +253,8 @@ class BodyRelativeTargetV1:
             raise TypeError("origin requires TargetOriginV1")
         if not isinstance(self.kind, SensorimotorTargetKindV1):
             raise TypeError("kind requires SensorimotorTargetKindV1")
-        if self.kind is SensorimotorTargetKindV1.PLANAR_TRANSLATION:
-            raise ValueError("a vector translation requires BodyTranslationTargetV1, never a scalar target")
+        if self.kind in {SensorimotorTargetKindV1.PLANAR_TRANSLATION, SensorimotorTargetKindV1.ORAL_EXTRACTION}:
+            raise ValueError("translation and extraction require their dedicated target records")
         if not isinstance(self.basis, MotorFeedbackV1):
             raise TypeError("basis requires MotorFeedbackV1")
         if self.basis.stream != self.origin.stream:
@@ -316,6 +319,78 @@ class BodyRelativeTargetV1:
             **({"coordinate_frame": "body_forward_oral_v1", "coordinate_units": "metres", "rate_units": "metres_per_second"}
                if self.kind is SensorimotorTargetKindV1.ORAL_REACH else {}),
         }
+
+
+@dataclass(frozen=True, slots=True)
+class OralExtractionTargetV1:
+    """One preauthorized extract/return pattern, not a scalar endpoint or task IP.
+
+    Both endpoints are anchored to the original measured stroke and body/reach
+    basis. One or two cycles require two or four distinct ordered acquisitions;
+    the initial return coordinate cannot establish completion. The original
+    eight-tick maximum lease and excursion/rate/correction limits apply to the
+    WHOLE pattern, not separately to each leg. No implicit renewal is possible.
+    These are deterministic engineering bounds, not physiological rhythm values.
+    Milk is neither a target quantity nor evidence that a movement leg completed.
+    """
+
+    target_id: str
+    revision: int
+    origin: TargetOriginV1
+    basis: MotorFeedbackV1
+    outward_offset: float
+    repetitions: int
+    tolerance: float
+    max_displacement: float
+    max_rate: float
+    lease_ticks: int = _MAX_LEASE_TICKS
+    max_corrections: int = _MAX_CORRECTIONS
+    kind: SensorimotorTargetKindV1 = field(default=SensorimotorTargetKindV1.ORAL_EXTRACTION, init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "target_id", _text(self.target_id, "target_id"))
+        _counter(self.revision, "revision", low=1)
+        _counter(self.repetitions, "repetitions", low=1, high=2)
+        _counter(self.lease_ticks, "lease_ticks", low=1, high=_MAX_LEASE_TICKS)
+        _counter(self.max_corrections, "max_corrections", high=_MAX_CORRECTIONS)
+        if not isinstance(self.origin, TargetOriginV1) or not isinstance(self.basis, MotorFeedbackV1):
+            raise TypeError("extraction needs an original origin and motor acquisition")
+        if self.basis.stream != self.origin.stream or not oral_closure_basis_compatible_v1(self.basis, self.basis):
+            raise ValueError("extraction needs its original stream and body/reach anchor")
+        for name in ("outward_offset", "tolerance", "max_displacement", "max_rate"):
+            object.__setattr__(self, name, _real(getattr(self, name), name))
+        if not 0.0 < 2.0 * self.tolerance < self.outward_offset <= self.max_displacement <= 1.0:
+            raise ValueError("extraction endpoints need distinct positive tolerance bands inside the excursion")
+        if not 0.0 < self.max_rate <= 2.0 or self.outward_endpoint > 1.0:
+            raise ValueError("extraction exceeds its physical stroke or rate range")
+
+    @property
+    def basis_coordinate(self) -> float:
+        """Return original measured stroke; missing sensing is never filled in."""
+        value = scalar_motor_coordinate_v1(self.basis, self.kind)
+        if value is None:
+            raise ValueError("extraction requires the original measured stroke")
+        return value
+
+    @property
+    def outward_endpoint(self) -> float:
+        """Return the fixed outward endpoint, without accumulating offsets."""
+        return self.basis_coordinate + self.outward_offset
+
+    @property
+    def return_endpoint(self) -> float:
+        """Return the original stroke, not proof of an already completed cycle."""
+        return self.basis_coordinate
+
+    def as_dict(self) -> dict[str, object]:
+        """Describe the entire finite pattern; exported records grant no permission."""
+        return {"schema": "oral_extraction_target_v1", "status": "proposed", "target_id": self.target_id,
+                "revision": self.revision, "origin": self.origin.as_dict(), "kind": self.kind.value,
+                "basis": self.basis.as_dict(), "outward_offset": self.outward_offset,
+                "outward_endpoint": self.outward_endpoint, "return_endpoint": self.return_endpoint,
+                "repetitions": self.repetitions, "tolerance": self.tolerance, "max_displacement": self.max_displacement,
+                "max_rate": self.max_rate, "lease_ticks": self.lease_ticks, "max_corrections": self.max_corrections,
+                "coordinate_units": "normalized_stroke", "milk_is_target": False}
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,12 +475,12 @@ class CommittedBodyTargetV1:
     intentionally no decoder that restores live targets from exported diagnostics.
     """
 
-    target: BodyRelativeTargetV1 | BodyTranslationTargetV1
+    target: BodyRelativeTargetV1 | BodyTranslationTargetV1 | OralExtractionTargetV1
     execution_id: str
     committed_tick: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.target, (BodyRelativeTargetV1, BodyTranslationTargetV1)):
+        if not isinstance(self.target, (BodyRelativeTargetV1, BodyTranslationTargetV1, OralExtractionTargetV1)):
             raise TypeError("committed target requires a typed scalar or translation target")
         object.__setattr__(self, "execution_id", _text(self.execution_id, "execution_id"))
         tick = _counter(self.committed_tick, "committed_tick")
@@ -518,6 +593,7 @@ class LocalTargetReportV1:
     reason: str
     feedback: MotorFeedbackV1 | None = None
     correction_count: int = 0
+    extraction_confirmations: tuple[MotorFeedbackV1, ...] = field(default=(), kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.committed_target, CommittedBodyTargetV1):
@@ -543,8 +619,49 @@ class LocalTargetReportV1:
                 raise ValueError("local feedback predates the target's body basis")
             if self.feedback.sample_id == target.basis.sample_id and self.feedback != target.basis:
                 raise ValueError("one sensor sample identity cannot describe changed content or time")
+        if isinstance(target, OralExtractionTargetV1):
+            self._validate_extraction_progress()
+        elif self.extraction_confirmations != ():
+            raise ValueError("only extraction can carry ordered stroke evidence")
         if self.disposition in {LocalTargetDispositionV1.ACHIEVED, LocalTargetDispositionV1.PARTIAL}:
             self._validate_observed_result()
+
+    def _validate_extraction_progress(self) -> None:
+        """Validate a bounded ordered prefix; no predicted or duplicated endpoints.
+
+        A late final confirmation may describe a measurement by the lease end,
+        but this descriptive record cannot grant another movement or extend time.
+        Live ownership and once-only phase advancement belong to the executor.
+        """
+        target = self.committed_target.target
+        if not isinstance(target, OralExtractionTargetV1):
+            raise TypeError("ordered progress requires an extraction target")
+        confirmations = self.extraction_confirmations
+        if not isinstance(confirmations, tuple) or len(confirmations) > 2 * target.repetitions:
+            raise ValueError("extraction evidence must be a bounded immutable prefix")
+        previous = target.basis
+        for index, sample in enumerate(confirmations):
+            if not isinstance(sample, MotorFeedbackV1):
+                raise TypeError("stroke confirmation requires actual motor feedback")
+            sample.validate_available(stream=target.origin.stream, at_tick=self.reported_tick)
+            if (sample.sample_id <= previous.sample_id or sample.event_tick <= previous.event_tick
+                    or not self.committed_target.committed_tick < sample.event_tick <= self.committed_target.expires_at_tick):
+                raise ValueError("stroke confirmation must be a distinct ordered event within the original lease")
+            value = scalar_motor_coordinate_v1(sample, target.kind)
+            endpoint = target.outward_endpoint if index % 2 == 0 else target.return_endpoint
+            if value is None or abs(value - endpoint) > target.tolerance + 1e-12:
+                raise ValueError("sensed endpoint does not confirm this ordered extraction leg")
+            if (not oral_closure_basis_compatible_v1(target.basis, sample) or sample.oral is None
+                    or sample.oral.contact is not True or sample.oral_seal is None or sample.oral_seal.sealed is not True
+                    or sample.oral_seal.closure is None or sample.oral_seal.closure < 0.5
+                    or sample.support_contact is not True or sample.useful_loading is None or sample.useful_loading < 0.75
+                    or sample.body_tilt_degrees is None or abs(sample.body_tilt_degrees) > 12.0
+                    or sample.destabilization is None or sample.destabilization > 0.25):
+                raise ValueError("stroke confirmation lacks its supported sealed body/reach context")
+            previous = sample
+        if self.disposition is LocalTargetDispositionV1.ACHIEVED:
+            if len(confirmations) != 2 * target.repetitions or self.feedback != confirmations[-1]:
+                raise ValueError("extraction achievement requires the whole ordered sensed sequence")
 
     def _validate_observed_result(self) -> None:
         """Validate a claimed observation without assigning task or causal credit."""
@@ -552,6 +669,11 @@ class LocalTargetReportV1:
         if feedback is None:
             raise ValueError("observed local achievement/progress requires actual feedback")
         target = self.committed_target.target
+        if isinstance(target, OralExtractionTargetV1):
+            if (scalar_motor_coordinate_v1(feedback, target.kind) is None
+                    or not oral_closure_basis_compatible_v1(target.basis, feedback)):
+                raise ValueError("extraction progress lacks its measured coordinate or original anchor")
+            return  # Whole-pattern achievement was checked against ordered confirmations.
         if isinstance(target, BodyTranslationTargetV1):
             planar = feedback.planar
             anchor = target.basis.planar
@@ -589,6 +711,14 @@ class LocalTargetReportV1:
             "feedback": self.feedback.as_dict() if self.feedback is not None else None,
             "establishes_task_success": False,
             "establishes_action_causation": False,
+            **({"extraction_progress": {
+                "confirmed_endpoints": [item.as_dict() for item in self.extraction_confirmations],
+                "completed_cycles": len(self.extraction_confirmations) // 2,
+                "required_endpoints": 2 * target.repetitions,
+                "next_leg": "complete" if len(self.extraction_confirmations) == 2 * target.repetitions else
+                            "outward" if len(self.extraction_confirmations) % 2 == 0 else "return",
+                "milk_is_movement_criterion": False,
+            }} if isinstance(target, OralExtractionTargetV1) else {}),
         }
 
 

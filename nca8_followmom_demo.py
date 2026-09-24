@@ -24,13 +24,14 @@ from cca8_support_world import (
     PlanarObjectV1, PlanarPerturbationV1, PlanarWorldProfileV1, PlanarWorldStateV1,
 )
 from nca8_body_targets import BodyTranslationCapabilityV1
+from nca8_sensorimotor_contracts import BodyRelativeTargetV1, BodyTranslationTargetV1
 from nca8_followmom import FollowMomIPV1, FollowMomProfileV1
 from nca8_hierarchy import IntegratedRightingCycleV1, IntegratedRightingTrialV1
 from nca8_maternal import MaternalNavMapStateV1, MaternalSeedV1, MaternalSourceV1
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_visual import VisualDetectionV1, VisualObservationV1, VisualSourceV1
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 __all__ = ["FOLLOW_MOM_CASES_V1", "MATERNAL_REPLAY_CASES_V1", "FollowMomExperimentV1", "MaternalSourceReplayV1",
            "create_follow_mom_trial_v1", "run_follow_mom_v1", "run_maternal_source_replay_v1",
            "render_follow_mom_v1", "render_maternal_replay_v1", "run_follow_mom_menu_v1",
@@ -337,6 +338,8 @@ def render_follow_mom_v1(result: FollowMomExperimentV1, *, detail: bool = False)
                 lines.append(f"    original PNM={motor.projection.as_dict()}")
             for reservation in cycle.reservations:
                 target = reservation.current.target
+                if not isinstance(target, (BodyRelativeTargetV1, BodyTranslationTargetV1)):
+                    raise TypeError("this retained review expects a scalar or translation target")
                 lines.append(f"    BodyMap {target.kind.value}: offset={target.offset}; endpoint={target.endpoint}; "
                              f"lease=[{reservation.current.committed_tick},{reservation.current.expires_at_tick})")
     if any(cycle.maternal_correspondence is not None for cycle in result.cycles):

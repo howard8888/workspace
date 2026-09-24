@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 import cca8_cli
 from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, admit_motor_feedback_batch_v1
 from cca8_support_world import (
-    MotorBodyStateV1, MotorWorldPerturbationV1, MotorWorldProfileV1, MotorWorldV1, OralWorldProfileV1, OralSealWorldProfileV1, PlanarWorldProfileV1,
+    OralExtractionWorldProfileV1, MotorBodyStateV1, MotorWorldPerturbationV1, MotorWorldProfileV1, MotorWorldV1, OralWorldProfileV1, OralSealWorldProfileV1, PlanarWorldProfileV1,
 )
 from nca8_body import Nca8BodyRuntimeV1
 from nca8_body_targets import (
@@ -31,7 +31,7 @@ from nca8_body_targets import (
 from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, SensorimotorProfileV1, SensorimotorStepV1
 from nca8_sensorimotor_contracts import BodyRelativeTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "SensorimotorTrialV1", "SensorimotorExperimentV1", "run_sensorimotor_experiment_v1",
     "render_sensorimotor_experiment_v1", "run_sensorimotor_review_v1", "run_sensorimotor_review_menu_v1", "__version__",
@@ -124,9 +124,11 @@ class SensorimotorTrialV1:
         control_profile: SensorimotorProfileV1 | None = None,
         planar_profile: PlanarWorldProfileV1 | None = None, oral_profile: OralWorldProfileV1 | None = None,
         stream_id: str = "h4_fixture_body", oral_seal_profile: OralSealWorldProfileV1 | None = None,
+        oral_extraction_profile: OralExtractionWorldProfileV1 | None = None,
     ) -> None:
         self.world = MotorWorldV1(MotorStreamRefV1(stream_id, 1), physical_profile,
-                                 planar_profile=planar_profile, oral_profile=oral_profile, oral_seal_profile=oral_seal_profile)
+                                 planar_profile=planar_profile, oral_profile=oral_profile, oral_seal_profile=oral_seal_profile,
+                                 oral_extraction_profile=oral_extraction_profile)
         self._capabilities = nominal_body_capabilities_v1() if capabilities is None else capabilities
         self._desired_tilt = desired_tilt_degrees
         self._desired_extension = desired_extension

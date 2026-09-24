@@ -20,6 +20,8 @@ checkpoint, including a separate hook-disabled behavioral control. It consumes
 an actual J result, never interprets, reapplies an IP or changes durable values.
 The --oral-extraction route supplies fixed direct motor drives and observes physical
 milk transfer/sensing; it is not autonomous Suckle or BodyMap target execution.
+The --oral-extraction-control route supplies a BodyMap requirement and observes the
+existing executor following it. It still does not select a Suckle IP or complete feeding.
 The default source/access route and its complete exports remain unchanged.
 This helper writes no repository files; neither review closes P16-2C or B99.
 Any failed review check produces a nonzero exit. Run from any directory.
@@ -39,6 +41,9 @@ if str(ROOT) not in sys.path:
 
 from nca8_feeding_demo import FEEDING_DETAIL_CASES_V1, render_feeding_detail_v1, run_feeding_detail_v1
 from nca8_oral_demo import ORAL_CONTACT_CASES_V1, render_oral_contact_v1, run_oral_contact_v1
+from nca8_oral_extraction_control_demo import (
+    ORAL_EXTRACTION_CONTROL_CASES_V1, render_oral_extraction_control_v1, run_oral_extraction_control_v1,
+)
 from nca8_oral_extraction_demo import ORAL_EXTRACTION_CASES_V1, render_oral_extraction_v1, run_oral_extraction_v1
 from nca8_oral_seal_demo import ORAL_SEAL_CASES_V1, render_oral_seal_v1, run_oral_seal_v1
 from nca8_suckle_demo import SUCKLE_LATCH_CASES_V1, render_suckle_v1, run_suckle_v1
@@ -55,6 +60,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run a declared finite case; never infer or repair an unknown selector."""
     parser = argparse.ArgumentParser(description=__doc__)
     family = parser.add_mutually_exclusive_group()
+    family.add_argument("--oral-extraction-control", action="store_true", help="review supplied BodyMap extraction/return control")
     family.add_argument("--oral-extraction", action="store_true", help="review direct-drive physical extraction/milk sensing only")
     family.add_argument("--suckle-learning", action="store_true", help="review original Suckle participation and no-learning Phase F")
     family.add_argument("--suckle-attention", action="store_true", help="review Suckle relevance and one Navigation interpretation; no learning")
@@ -70,12 +76,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--detail", action="store_true", help="include actual source-selection timeline")
     parser.add_argument("--json", action="store_true", help="export complete detached evidence rather than text")
     args = parser.parse_args(argv)
-    allowed = (ORAL_EXTRACTION_CASES_V1 if args.oral_extraction else SUCKLE_LEARNING_CASES_V1 if args.suckle_learning else SUCKLE_ATTENTION_CASES_V1 if args.suckle_attention else SUCKLE_OUTCOME_CASES_V1 if args.suckle_outcomes else SUCKLE_LATCH_CASES_V1 if args.suckle else ORAL_SEAL_CASES_V1 if args.oral_seal else SEEKING_LEARNING_CASES_V1 if args.seek_learning else SEEKING_ATTENTION_CASES_V1 if args.seek_attention else
+    allowed = (ORAL_EXTRACTION_CONTROL_CASES_V1 if args.oral_extraction_control else ORAL_EXTRACTION_CASES_V1 if args.oral_extraction else SUCKLE_LEARNING_CASES_V1 if args.suckle_learning else SUCKLE_ATTENTION_CASES_V1 if args.suckle_attention else SUCKLE_OUTCOME_CASES_V1 if args.suckle_outcomes else SUCKLE_LATCH_CASES_V1 if args.suckle else ORAL_SEAL_CASES_V1 if args.oral_seal else SEEKING_LEARNING_CASES_V1 if args.seek_learning else SEEKING_ATTENTION_CASES_V1 if args.seek_attention else
                SEEK_NIPPLE_OUTCOME_CASES_V1 if args.seek_outcomes else SEEK_NIPPLE_CASES_V1 if args.seek else
                ORAL_CONTACT_CASES_V1 if args.oral else FEEDING_DETAIL_CASES_V1)
     if args.case != "all" and args.case not in allowed:
         parser.error("case is not available in this review; choose: all, " + ", ".join(allowed))
     cases = allowed if args.case == "all" else (args.case,)
+    if args.oral_extraction_control:
+        extraction_control_results = tuple(run_oral_extraction_control_v1(case) for case in cases)
+        print(json.dumps([item.as_dict() for item in extraction_control_results], sort_keys=True, allow_nan=False) if args.json else
+              "\n\n".join(render_oral_extraction_control_v1(item, detail=args.detail) for item in extraction_control_results))
+        return int(any(item.review_status != "PASS" for item in extraction_control_results))
     if args.oral_extraction:
         extraction_results = tuple(run_oral_extraction_v1(case) for case in cases)
         print(json.dumps([item.as_dict() for item in extraction_results], sort_keys=True, allow_nan=False) if args.json else
