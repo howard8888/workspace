@@ -28,6 +28,7 @@ from nca8_followmom_demo import follow_mom_owner_limits_v1, maternal_durable_sig
 from nca8_hierarchy import IntegratedRightingCycleV1, IntegratedRightingTrialV1
 from nca8_oral_demo import run_oral_contact_menu_v1
 from nca8_oral_extraction_demo import run_oral_extraction_menu_v1
+from nca8_suckle_extraction_demo import run_suckle_extraction_menu_v1
 from nca8_oral_extraction_control_demo import run_oral_extraction_control_menu_v1
 from nca8_seek_nipple_demo import run_seek_nipple_menu_v1
 from nca8_seek_outcomes_demo import run_seek_nipple_outcome_menu_v1
@@ -41,7 +42,7 @@ from nca8_suckle_learning_demo import run_suckle_learning_menu_v1
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_stand_follow_demo import StandFollowPhysicalSampleV1, StandFollowProfileV1, stand_follow_profile_v1
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 __all__ = [
     "FEEDING_DETAIL_CASES_V1", "FeedingDetailExperimentV1", "feeding_detail_profiles_v1", "create_feeding_detail_trial_v1",
     "run_feeding_detail_v1", "render_feeding_detail_v1", "run_feeding_detail_menu_v1", "__version__",
@@ -309,11 +310,16 @@ def run_feeding_detail_menu_v1() -> None:
         print("  27) Original Suckle participation and Phase F (P16-2C-K; no durable learning)")
         print("  28) Direct-drive physical extraction and milk sensing (P16-2C-L-A; not autonomous Suckle)")
         print("  29) BodyMap extraction/return target control (P16-2C-L-B; supplied requirement)")
+        print("  30) Navigation-selected Suckle extraction (P16-2C-L-C; first bounded contribution)")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
             return
+        if choice == "30":
+            run_suckle_extraction_menu_v1()
+            continue
         if choice == "29":
             run_oral_extraction_control_menu_v1()
+            continue
         elif choice == "28":
             run_oral_extraction_menu_v1()
             continue

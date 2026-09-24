@@ -21,7 +21,7 @@ import cca8_cli
 from cca8_motor_contracts import MotorFeedbackV1
 from cca8_support_world import (
     MotorBodyStateV1, MotorWorldProfileV1, MotorWorldPerturbationV1, OralWorldProfileV1, OralWorldStateV1,
-    PlanarObjectV1, PlanarDetailObjectV1, PlanarWorldProfileV1, PlanarWorldStateV1, PlanarPerturbationV1, OralSealWorldStateV1,
+    PlanarObjectV1, PlanarDetailObjectV1, PlanarWorldProfileV1, PlanarWorldStateV1, PlanarPerturbationV1, OralSealWorldStateV1, OralExtractionWorldStateV1,
 )
 from nca8_body_targets import BodyTranslationCapabilityV1, nominal_body_capabilities_v1, oral_body_capability_v1
 from nca8_feeding import FeedingDetailProfileV1
@@ -33,7 +33,7 @@ from nca8_seek_nipple import SeekNippleApplicationV1, SeekNippleProfileV1
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_sensorimotor_contracts import SensorimotorTargetKindV1
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = ["SEEK_NIPPLE_CASES_V1", "SeekNippleExperimentProfileV1", "SeekNipplePhysicalSampleV1", "SeekNippleExperimentV1",
            "seek_nipple_profile_v1", "create_seek_nipple_trial_v1", "run_seek_nipple_v1", "render_seek_nipple_v1",
            "run_seek_nipple_menu_v1", "seek_nipple_owner_limits_v1", "collect_seek_nipple_evidence_v1", "__version__"]
@@ -171,11 +171,13 @@ class SeekNipplePhysicalSampleV1:
     planar: PlanarWorldStateV1
     oral: OralWorldStateV1
     seal: OralSealWorldStateV1 | None = field(default=None, kw_only=True)
+    extraction: OralExtractionWorldStateV1 | None = field(default=None, kw_only=True)
 
     def as_dict(self) -> dict[str, object]:
         """Detach evaluator physics and label it independently from admitted sensing."""
         return {"tick": self.tick, "support": asdict(self.support), "planar": self.planar.as_dict(), "oral": self.oral.as_dict(),
-                **({"seal": self.seal.as_dict()} if self.seal is not None else {})}
+                **({"seal": self.seal.as_dict()} if self.seal is not None else {}),
+                **({"extraction": self.extraction.as_dict()} if self.extraction is not None else {})}
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,7 +346,8 @@ def collect_seek_nipple_evidence_v1(
         planar, oral = trial.observer_planar_body, trial.observer_oral_body
         if planar is None or oral is None:
             raise RuntimeError("seeking observer requires its declared planar/oral physical profile")
-        physical.append(SeekNipplePhysicalSampleV1(tick, trial.observer_body, planar, oral, seal=trial.observer_oral_seal_body))
+        physical.append(SeekNipplePhysicalSampleV1(tick, trial.observer_body, planar, oral, seal=trial.observer_oral_seal_body,
+                                                   extraction=trial.observer_oral_extraction_body))
         if tick == profile.cancel_tick:
             trial.cancel()
         if tick % profile.cadence == 0:

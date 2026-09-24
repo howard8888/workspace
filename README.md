@@ -16,6 +16,60 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P16-2C-L-C selected first Suckle extraction
+
+Entry: accepted/amended L-B at `d3bbd4bfa4a40f144329927c261de49701c8e640`,
+tree `22730c9e77f7ac092e30be4518aaefa90dcf23cc`. Architecture v10.1 and Planning v18
+remain authoritative. This opt-in candidate adds one genuine Navigation-selected
+Suckle extraction contribution, not a complete feeding or nourishment policy.
+
+Current paired feeding contact/seal, body support, extraction position and declared
+need determine applicability. Ordinary Attention supplies the WNM; Navigation still
+allocates one interpretation, application or hold. The single registered ip:suckle
+can apply the new SuckleExtractionApplicationV1, with its own sparse
+SuckleExtractionPreviewV1 and separate provenance-labelled OralExtractionRequestV1.
+BodyMap maps/checks the existing L-B target. The real closed receipt is consumed
+once and install_authorized installs it once; no fixture installation is used.
+
+Default SuckleProfileV1.extraction_enabled=False preserves H/I/J/K. The initial
+enabled profile permits one extraction contribution only, with one/two L-B cycles,
+0.10 normalized outward extent, and at most eight local ticks within the original
+12-opportunity/48-tick Suckle episode. An existing completed latch record and its
+I/J/K identities are not reset, reinterpreted or replaced. An already sealed start
+creates finite episode context only at actual selected application. Current evidence,
+not a historical latch label or an evaluator milestone, justifies extraction.
+
+The original target lifetime never renews per stroke or focal opportunity. Core
+housekeeping retains only an all-but-final L-B evidence identity for the existing
+two-tick final-confirmation window; no commands are permitted at/after the original
+lease. Historical final confirmation is not revived execution permission. An old
+closure reservation blocks extraction separately from its own valid latch control.
+J interpretation precludes a new extraction application in that focal opportunity.
+
+Local movement disposition remains separate from original task-PNM/milk scoring,
+which is explicitly unimplemented/unscored for extraction. No new K participant,
+milk-based response policy, repeated extraction batches, nourishment, swallowing,
+Rest, Goal/SEC/Emotion mechanism, durable learning or physical/control change.
+The L-A plant, L-B executor and original I/J/K consumers retain their prior meanings.
+Physical milk and delivered sensory intervals remain independent observed quantities.
+
+Menu: Main -> 4 -> 15 -> 30, after normal startup/profile prompts. J26, K27,
+L-A28 and L-B29 are retained. Returning from L-B29 no longer falls through to the
+parent invalid-choice message. Menu and command line share the same finite review:
+
+    python scripts/review_nca8_feeding.py --suckle-extraction --case all --detail
+
+The 28 declared cases cover sealed and real latch/seek/stand-follow starts, selective
+route/need/source/Attention/capability controls, original handoffs, milk-independent
+commands, adverse execution, cadence and an ordinary competing source. Simultaneous
+J-question experiments remain labelled contract fixtures, not invented world events.
+No profile manually calls an IP or installs extraction from a hidden stage script.
+
+Host cca8_run.py v0.30.41 registers115 components and the unchanged eight host/legacy
+behavioral primitives. Scoped validation excludes only the two declared Pyvis export
+tests; Pylint/mypy remain owner-run. Preflight owns the one repository-wide run.
+Manual/Windows qualification and Howard's acceptance are separate from implementation.
+
 ## NCA8 update: P16-2C-L-B supplied extraction/return targets
 
 Entry: accepted L-A v03 at `119a2db24a3250d44c4596bab6e7135e35ef85a0`,

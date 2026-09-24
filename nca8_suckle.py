@@ -19,15 +19,16 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, replace
 
-from nca8_body_targets import OralClosureRequestV1
+from nca8_body_targets import OralClosureRequestV1, OralExtractionRequestV1
 from nca8_executive import WorkingNavMapStateV1
 from nca8_feeding import FeedingDetailNavMapStateV1, FeedingDetailSourceV1
-from nca8_prediction import ProjectedNavMapV1, SucklePreviewV1
+from nca8_prediction import ProjectedNavMapV1, SucklePreviewV1, SuckleExtractionPreviewV1
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
-from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
+from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetReportV1, OralExtractionTargetV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.4.0"
-__all__ = ["SuckleProfileV1", "SuckleTaskV1", "SuckleApplicationV1", "SuckleAssessmentV1", "SuckleIPV1", "__version__"]
+__version__ = "0.5.0"
+__all__ = ["SuckleProfileV1", "SuckleTaskV1", "SuckleApplicationV1", "SuckleAssessmentV1", "SuckleIPV1", "SuckleExtractionEpisodeV1", "SuckleExtractionApplicationV1",
+           "SuckleExtractionAssessmentV1", "__version__"]
 
 _MAX_TICKS = 48
 _MAX_OPPORTUNITIES = 12
@@ -69,12 +70,15 @@ class SuckleProfileV1:
     prediction_comparison_enabled: bool = True
     outcome_attention_enabled: bool = False
     learning_hook_enabled: bool = False
+    extraction_enabled: bool = False
+    extraction_repetitions: int = 2
 
     def __post_init__(self) -> None:
         if not all(isinstance(value, bool) for value in (
                 self.enabled, self.influence_enabled, self.outcomes_enabled, self.prediction_comparison_enabled,
-                self.outcome_attention_enabled, self.learning_hook_enabled)):
+                self.outcome_attention_enabled, self.learning_hook_enabled, self.extraction_enabled)):
             raise TypeError("Suckle switches must be Boolean")
+        _index(self.extraction_repetitions, 1, 2)
         if not self.outcomes_enabled and not self.prediction_comparison_enabled:
             raise ValueError("Suckle comparison-off requires its correspondence owner")
         if self.outcome_attention_enabled and not self.outcomes_enabled:
@@ -96,6 +100,10 @@ class SuckleProfileV1:
                 "learning": "suckle_no_learning_v1" if self.learning_hook_enabled else "unimplemented_no_participation",
                 **({"maximum_learning_participants": 8, "eligibility_lifetime_cycles": 4,
                     "learning_maturity": "eligibility_only"} if self.learning_hook_enabled else {}),
+                **({"extraction_contribution": "selected_first_contribution_v1", "maximum_extraction_contributions": 1,
+                    "extraction_repetitions": self.extraction_repetitions, "extraction_extent": 0.10,
+                    "extraction_task_correspondence": "unimplemented_unscored", "extraction_learning": "unimplemented"}
+                   if self.extraction_enabled else {}),
                 "full_suckle_task": "not_implemented"}
 
 
@@ -187,6 +195,112 @@ class SuckleAssessmentV1:
                 "pnm_fulfilment": "not_evaluated", "durable_updates": 0, "full_suckle_complete": False}
 
 
+@dataclass(frozen=True, slots=True)
+class SuckleExtractionEpisodeV1:
+    """Original finite context for one extraction application, not another task IP.
+
+    An existing latch contributes its unchanged start, deadline and application
+    count. An already-sealed start creates this context only at selected apply().
+    Keeping the latch snapshot separate prevents J/K from losing their original
+    recipient or treating a new movement as an earlier closure application.
+    """
+
+    task_id: str
+    region_id: str
+    started_cycle: int
+    started_tick: int
+    applications: int
+    latch: SuckleTaskV1 | None = None
+
+    def __post_init__(self) -> None:
+        _identifier(self.task_id)
+        _identifier(self.region_id)
+        _index(self.started_cycle, 1, 2**63 - _MAX_TICKS - 1)
+        _index(self.started_tick, 0, 2**63 - _MAX_TICKS - 1)
+        _index(self.applications, 1, _MAX_OPPORTUNITIES)
+        if self.latch is not None:
+            if (not isinstance(self.latch, SuckleTaskV1) or self.latch.status != "latch_established"
+                    or (self.task_id, self.region_id, self.started_cycle, self.started_tick, self.applications) !=
+                    (self.latch.task_id, self.latch.region_id, self.latch.started_cycle, self.latch.started_tick,
+                     self.latch.applications + 1)):
+                raise ValueError("extraction must retain the original established latch context and budget")
+        elif self.applications != 1:
+            raise ValueError("an already-sealed episode begins with its first actual application")
+
+    def as_dict(self) -> dict[str, object]:
+        """Expose the original episode bounds; one contribution is not satiety."""
+        return {"task_id": self.task_id, "region_id": self.region_id, "started_cycle": self.started_cycle,
+                "started_tick": self.started_tick, "applications": self.applications,
+                "expires_before_cycle": self.started_cycle + _MAX_OPPORTUNITIES,
+                "expires_at_tick": self.started_tick + _MAX_TICKS,
+                "original_latch": self.latch.as_dict() if self.latch is not None else None,
+                "scope": "one_extraction_contribution", "full_suckle_complete": False}
+
+
+@dataclass(frozen=True, slots=True)
+class SuckleExtractionApplicationV1(PrimitiveApplicationV1):
+    """One genuine selected use of ip:suckle; never accepted by closure-only I/K.
+
+    A separate task projection precedes BodyMap mapping. Neither the task request
+    nor this immutable provenance establishes installation, movement or milk.
+    """
+
+    task: SuckleExtractionEpisodeV1
+    contribution: OralExtractionRequestV1
+    projection: SuckleExtractionPreviewV1
+
+    def __post_init__(self) -> None:
+        PrimitiveApplicationV1.__post_init__(self)
+        if (not isinstance(self.task, SuckleExtractionEpisodeV1)
+                or not isinstance(self.contribution, OralExtractionRequestV1)
+                or not isinstance(self.projection, SuckleExtractionPreviewV1)):
+            raise TypeError("selected extraction requires its distinct episode, request and original preview")
+        origin, preview = self.contribution.origin, self.projection
+        if (self.primitive_id != "ip:suckle" or self.primitive_kind is not PrimitiveKindV1.INSTINCTIVE
+                or origin.task_id != self.task.task_id or origin.application_id != self.application_id
+                or origin.stream != preview.basis.stream or preview.task_id != self.task.task_id
+                or preview.pnm.application_id != self.application_id or preview.pnm.source_wnm_id != self.source_wnm_id
+                or preview.pnm.created_cycle != self.cycle_id or self.contribution.source_map_ref != preview.basis.source_map_ref
+                or self.contribution.region_id != self.task.region_id or preview.region_id != self.task.region_id
+                or self.contribution.origin_status != "selected_suckle_extraction"
+                or (self.contribution.outward_extent, self.contribution.repetitions, self.contribution.lease_ticks) !=
+                   (preview.outward_extent, preview.repetitions, preview.horizon_ticks)
+                or not self.task.started_cycle <= self.cycle_id < self.task.started_cycle + _MAX_OPPORTUNITIES
+                or not self.task.started_tick <= preview.basis.cutoff_tick < self.task.started_tick + _MAX_TICKS
+                or preview.horizon_ticks != min(8, self.task.started_tick + _MAX_TICKS - preview.basis.cutoff_tick)
+                or self.expected_relations != preview.pnm.expected_relations):
+            raise ValueError("extraction application, source, original projection and finite episode disagree")
+
+    def as_dict(self) -> dict[str, object]:
+        """Expose selected provenance without promoting the preview to observation."""
+        return {**PrimitiveApplicationV1.as_dict(self), "task": self.task.as_dict(),
+                "contribution": self.contribution.as_dict(), "projection": self.projection.as_dict(),
+                "origin_status": "navigation_selected_suckle_extraction"}
+
+
+@dataclass(frozen=True, slots=True)
+class SuckleExtractionAssessmentV1:
+    """Read-only original application/target association and local evidence.
+
+    Local achievement is not a scored task PNM or full feeding. This record adds
+    no learning participant. A late report cannot renew an expired motor lease.
+    """
+
+    status: str
+    application: SuckleExtractionApplicationV1 | None
+    target: CommittedBodyTargetV1 | None
+    local_report: LocalTargetReportV1 | None
+
+    def as_dict(self) -> dict[str, object]:
+        """Serialize bounded evidence, not a replayable permission or feeding result."""
+        return {"status": self.status, "application": self.application.as_dict() if self.application else None,
+                "target": self.target.as_dict() if self.target else None,
+                "local_report": self.local_report.as_dict() if self.local_report else None,
+                "participation": "not_implemented_for_extraction", "task_pnm_correspondence": "unimplemented_unscored",
+                "maximum_extraction_contributions": 1, "full_suckle_complete": False, "milk_received": "not_inferred",
+                "durable_learning_updates": 0}
+
+
 class SuckleIPV1:
     """Organize initial latch through the ordinary task-selection interface.
 
@@ -213,6 +327,10 @@ class SuckleIPV1:
         self._proof: list[FeedingDetailNavMapStateV1] = []
         self._gap_start: int | None = None
         self._applied_cycle, self._authorized_cycle = 0, 0
+        self._extraction_application: SuckleExtractionApplicationV1 | None = None
+        self._extraction_target: CommittedBodyTargetV1 | None = None
+        self._extraction_report: LocalTargetReportV1 | None = None
+        self._extraction_status = "not_prepared"
         self._reason = "not_prepared"
         self._busy, self._blocked, self._cancel_previous, self._cancelled = False, False, False, False
 
@@ -224,7 +342,7 @@ class SuckleIPV1:
     @property
     def authorized_target(self) -> CommittedBodyTargetV1 | None:
         """Retain original target identity for scoped revocation, not renewed rights."""
-        return self._target
+        return self._extraction_target if self._extraction_application is not None else self._target
 
     @property
     def cancel_previous(self) -> bool:
@@ -243,7 +361,10 @@ class SuckleIPV1:
     def retained_counts(self) -> dict[str, int]:
         """Expose actual bounded owner storage independently from observer exports."""
         return {"tasks": int(self._task is not None), "source_bases": int(self._basis is not None),
-                "targets": int(self._target is not None), "applications": len(self._history), "latch_samples": len(self._proof)}
+                "targets": int(self._target is not None), "applications": len(self._history), "latch_samples": len(self._proof),
+                **({"extraction_applications": int(self._extraction_application is not None),
+                    "extraction_targets": int(self._extraction_target is not None),
+                    "extraction_reports": int(self._extraction_report is not None)} if self.profile.extraction_enabled else {})}
 
     def cancel(self) -> None:
         """Make cancellation sticky; the caller separately retires motor authority."""
@@ -251,7 +372,10 @@ class SuckleIPV1:
             if self._task.status == "active":
                 self._task = replace(self._task, status="cancelled")
             self.source.clear_influence(task_id=self._task.task_id)
-        self._cancelled, self._cancel_previous, self._reason = True, self._target is not None, "cancelled"
+        if self._extraction_application is not None:
+            self.source.clear_influence(task_id=self._extraction_application.task.task_id)
+            self._extraction_status = "cancelled"
+        self._cancelled, self._cancel_previous, self._reason = True, self.authorized_target is not None, "cancelled"
 
     @staticmethod
     def _supported(basis: FeedingDetailNavMapStateV1) -> bool:
@@ -302,6 +426,7 @@ class SuckleIPV1:
 
     def prepare(
         self, basis: FeedingDetailNavMapStateV1, *, reports: tuple[LocalTargetReportV1, ...] = (), movement_blocked: bool = False,
+        extraction_movement_blocked: bool = False,
     ) -> None:
         """Prepare one eligible source opportunity without selecting an operation.
 
@@ -314,7 +439,7 @@ class SuckleIPV1:
             raise ValueError("Suckle needs its owner's actual current feeding basis")
         if self._basis is not None and basis.applied_cycle <= self._basis.applied_cycle:
             raise ValueError("Suckle preparation cannot repeat an opportunity")
-        if not isinstance(movement_blocked, bool):
+        if not isinstance(movement_blocked, bool) or not isinstance(extraction_movement_blocked, bool):
             raise TypeError("Suckle movement blocking must be Boolean")
         if not isinstance(reports, tuple) or len(reports) > 2 or any(not isinstance(item, LocalTargetReportV1) for item in reports):
             raise TypeError("Suckle accepts at most two typed local reports")
@@ -324,6 +449,10 @@ class SuckleIPV1:
             if (self._target is not None and item.committed_target.target.target_id == self._target.target.target_id
                     and item.committed_target is not self._target):
                 raise ValueError("Suckle report must retain its original authorized target")
+            if (self._extraction_target is not None
+                    and item.committed_target.target.target_id == self._extraction_target.target.target_id
+                    and item.committed_target is not self._extraction_target):
+                raise ValueError("extraction report must retain its exact original authorized target")
         self._basis, self._blocked = basis, movement_blocked
         report = next((item for item in reports if item.committed_target is self._target), None)
         self._busy = bool(self._target is not None and basis.cutoff_tick < self._target.expires_at_tick
@@ -382,8 +511,173 @@ class SuckleIPV1:
         self._cancel_previous = self._target is not None and self._reason not in {
             "initiate_latch", "continue_latch", "authorized_closure_continues", "latch_confirmation_pending",
         }
-        if self._task is not None and self._task.status != "active":
+        if self._task is not None and self._task.status != "active" and self._extraction_application is None:
             self.source.clear_influence(task_id=self._task.task_id)
+        if self.profile.extraction_enabled:
+            self._prepare_extraction(
+                basis, next((item for item in reports if item.committed_target is self._extraction_target), None),
+                movement_blocked=movement_blocked or extraction_movement_blocked,
+            )
+
+    def extraction_assessment(self) -> SuckleExtractionAssessmentV1 | None:
+        """Read the opt-in contribution without changing latch or question identity."""
+        if not self.profile.extraction_enabled:
+            return None
+        return SuckleExtractionAssessmentV1(self._extraction_status, self._extraction_application,
+                                            self._extraction_target, self._extraction_report)
+
+    def _prepare_extraction(
+        self, basis: FeedingDetailNavMapStateV1, report: LocalTargetReportV1 | None, *, movement_blocked: bool,
+    ) -> None:
+        """Use current evidence, never historical latch status alone, for readiness.
+
+        This is applicability preparation, not another executive. An issued
+        contribution cannot be retried; its original local report remains linked
+        to the exact authorized target. The old latch task stays available to J/K.
+        """
+        app, target = self._extraction_application, self._extraction_target
+        if app is not None:
+            if report is not None:
+                self._extraction_report = report
+            if (self._extraction_status == "lease_expired" and report is not None
+                    and report.disposition.value == "achieved"):
+                # L-B can confirm the FINAL in-lease endpoint after a focal expiry
+                # observation. This is historical evidence, never renewed pursuit.
+                self._extraction_status = "local_achieved"
+            if self._extraction_status not in {"selected", "authorized", "local_execution_pending"}:
+                self.source.clear_influence(task_id=app.task.task_id)
+                self._reason = f"extraction_{self._extraction_status}"
+                self._cancel_previous = target is not None
+                return
+            if self._cancelled:
+                status = "cancelled"
+            elif report is not None and report.disposition.value not in {"pending", "active", "partial", "unresolved"}:
+                status = f"local_{report.disposition.value}"
+            elif target is None:
+                status = "not_applied"
+            elif basis.cutoff_tick >= target.expires_at_tick:
+                status = "lease_expired"
+            elif (not self.source.profile.feeding_need or not self._supported(basis)
+                  or basis.seal_correspondence_status != "compatible" or not basis.focal_accessible):
+                status = "current_contact_unavailable"
+            elif movement_blocked:
+                status = "incompatible_movement"
+            else:
+                status = "local_execution_pending"
+            self._extraction_status, self._reason = status, f"extraction_{status}"
+            self._cancel_previous = target is not None and status != "local_execution_pending"
+            if status != "local_execution_pending":
+                self.source.clear_influence(task_id=app.task.task_id)
+            return
+        # A latch started in this episode must finish honestly; no reset of its
+        # terminal record, identity or original time/application budget is allowed.
+        if self._task is not None:
+            task = self._task
+            if task.status != "latch_established":
+                self._extraction_status = "awaiting_latch" if task.status == "active" else task.status
+                return
+            if (basis.applied_cycle >= task.started_cycle + _MAX_OPPORTUNITIES
+                    or basis.cutoff_tick >= task.started_tick + _MAX_TICKS or task.applications >= _MAX_OPPORTUNITIES):
+                self._extraction_status = "episode_budget_exhausted"
+                return
+        body = basis.oral_feedback
+        if self._cancelled or not self.profile.enabled or not self.source.profile.feeding_need:
+            status = "disabled_or_no_need"
+        elif not basis.focal_accessible or not self._supported(basis):
+            status = "current_source_or_support_unavailable"
+        elif basis.seal_correspondence_status != "compatible":
+            status = "current_seal_not_supported"
+        elif body is None or body.oral_extraction is None or body.oral_extraction.stroke is None:
+            status = "stroke_evidence_unavailable"
+        elif movement_blocked:
+            status = "awaiting_incompatible_movement_release"
+        else:
+            status = "ready"
+            self._reason = "initiate_extraction"
+            self._cancel_previous = False
+        self._extraction_status = status
+        # A terminal latch's old reservation is canceled by the existing outer
+        # handoff before a later opportunity may select the new contribution.
+
+    def awaiting_final_extraction_evidence(self, *, at_tick: int) -> bool:
+        """Keep only L-B's final-evidence identity briefly, never live pursuit.
+
+        The core's expiry housekeeping precedes the next lower observation
+        consumer. Preserve an already demonstrated all-but-final prefix for the
+        existing two-tick final-confirmation window; reservations() and the
+        executor still prohibit commands at/after the original lease endpoint.
+        Cancellation, absent prefix, success or a later time do not retain it.
+        """
+        _index(at_tick, 0, 2**63 - 1)
+        target, report = self._extraction_target, self._extraction_report
+        return bool(self.profile.extraction_enabled and not self._cancelled and target is not None
+                    and isinstance(target.target, OralExtractionTargetV1) and report is not None
+                    and report.committed_target is target
+                    and self._extraction_status in {"local_execution_pending", "lease_expired"}
+                    and report.disposition.value in {"active", "partial", "expired"}
+                    and len(report.extraction_confirmations) == 2 * target.target.repetitions - 1
+                    and target.expires_at_tick <= at_tick <= target.expires_at_tick + 2)
+
+    def _apply_extraction(self, wnm: WorkingNavMapStateV1, *, cycle_id: int) -> SuckleExtractionApplicationV1:
+        """Construct one selected projection/request; no lower target or world access."""
+        basis = self._basis
+        if basis is None or basis.detail_position is None or self._extraction_application is not None:
+            raise RuntimeError("selected extraction lost its original basis or exceeded its one-contribution bound")
+        latch = self._task
+        task = SuckleExtractionEpisodeV1(
+            latch.task_id if latch is not None else f"suckle_extraction:{basis.stream.generation}:{cycle_id}",
+            basis.seed.detail_region_id, latch.started_cycle if latch is not None else cycle_id,
+            latch.started_tick if latch is not None else basis.cutoff_tick,
+            latch.applications + 1 if latch is not None else 1, latch,
+        )
+        horizon = min(8, task.started_tick + _MAX_TICKS - basis.cutoff_tick)
+        app_id = f"suckle_extraction_application:{basis.stream.generation}:{cycle_id}"
+        relations = ("MOUTH:sealed_contact_maintained_conditionally", "DETAIL:original_scene_anchor",
+                     "EXTRACTION:finite_reciprocation_under_contact")
+        pnm = ProjectedNavMapV1(
+            f"pnm:{app_id}", app_id, self.primitive_id, wnm.working_id, cycle_id, relations,
+            "later task-linked contact/extraction evidence; supply unknown, milk not predicted", cycle_id + 1, cycle_id + 2,
+        )
+        request = OralExtractionRequestV1(
+            TargetOriginV1(basis.stream, task.task_id, app_id, f"suckle_extraction_envelope:{basis.stream.generation}:{cycle_id}"),
+            basis.source_map_ref, task.region_id, 0.10, self.profile.extraction_repetitions, horizon,
+            origin_status="selected_suckle_extraction",
+        )
+        preview = SuckleExtractionPreviewV1(pnm, basis, task.task_id, task.region_id, basis.detail_position,
+                                             request.outward_extent, request.repetitions, horizon)
+        result = SuckleExtractionApplicationV1(
+            app_id, self.primitive_id, self.primitive_kind, cycle_id, wnm.working_id,
+            ("feeding:first_extraction_contribution",), relations, pnm.observation_condition,
+            TaskActionV1(f"transport:{app_id}", cycle_id, TaskActionKindV1.NO_ACTION, app_id, ()), None,
+            task, request, preview,
+        )
+        if self.profile.influence_enabled:
+            self.source.retain_influence(task.task_id, cycle_id=cycle_id, expires_at_tick=basis.cutoff_tick + horizon)
+        self._extraction_application, self._applied_cycle = result, cycle_id
+        self._extraction_status = "selected"
+        return result
+
+    def _authorize_extraction(
+        self, application: SuckleExtractionApplicationV1, targets: tuple[CommittedBodyTargetV1, ...],
+    ) -> None:
+        """Retain actual permission once, including refusal; do not invent execution."""
+        if (application is not self._extraction_application or application.cycle_id != self._applied_cycle
+                or self._authorized_cycle == self._applied_cycle):
+            raise ValueError("extraction authorization must answer the exact current selected application once")
+        if not isinstance(targets, tuple) or len(targets) > 1:
+            raise ValueError("extraction can receive at most one authorized pattern")
+        for target in targets:
+            if (not isinstance(target, CommittedBodyTargetV1) or not isinstance(target.target, OralExtractionTargetV1)
+                    or target.target.origin != application.contribution.origin
+                    or target.target.basis != application.projection.basis.oral_feedback
+                    or target.target.outward_offset != application.contribution.outward_extent
+                    or target.target.repetitions != application.contribution.repetitions
+                    or target.committed_tick != application.projection.basis.cutoff_tick
+                    or target.expires_at_tick > target.committed_tick + application.contribution.lease_ticks):
+                raise ValueError("extraction permission differs from its original selected contribution")
+        self._extraction_target = targets[0] if targets else None
+        self._extraction_status = "authorized" if targets else "not_applied"
+        self._authorized_cycle = self._applied_cycle
 
     def evaluate_applicability(self, wnm: WorkingNavMapStateV1, *, cycle_id: int) -> PrimitiveApplicabilityV1:
         """Query this prepared current WNM; no milestone can grant eligibility."""
@@ -392,18 +686,20 @@ class SuckleIPV1:
             raise ValueError("Suckle applicability requires a current WNM")
         eligible = (wnm.primary_source_state is self._basis and self._basis is not None and self.source.current is self._basis
                     and self._basis.applied_cycle == cycle_id and cycle_id != self._applied_cycle
-                    and self._reason in {"initiate_latch", "continue_latch"})
+                    and self._reason in {"initiate_latch", "continue_latch", "initiate_extraction"})
         reason = self._reason if wnm.primary_source_state is self._basis else "not_the_prepared_feeding_source"
         return PrimitiveApplicabilityV1(self.primitive_id, self.primitive_kind, cycle_id, wnm.working_id, eligible,
                                         0, 50 if eligible else 0, 0, 0, 0, () if eligible else (reason,), (reason,), self.primitive_id)
 
     def apply(
         self, wnm: WorkingNavMapStateV1, applicability: PrimitiveApplicabilityV1, *, cycle_id: int,
-    ) -> SuckleApplicationV1:
+    ) -> SuckleApplicationV1 | SuckleExtractionApplicationV1:
         """Transform selected current contact into conditional closure/seal relations."""
         current = self.evaluate_applicability(wnm, cycle_id=cycle_id)
         if current != applicability or not current.eligible:
             raise ValueError("Suckle application requires the current eligible selection")
+        if self._reason == "initiate_extraction":
+            return self._apply_extraction(wnm, cycle_id=cycle_id)
         basis = self._basis
         if basis is None or basis.detail_position is None or basis.oral_feedback is None or basis.oral_feedback.oral_seal is None:
             raise RuntimeError("selected Suckle source lost its paired closure/contact evidence")
@@ -434,8 +730,11 @@ class SuckleIPV1:
         self._history.append(result)
         return result
 
-    def authorized(self, application: SuckleApplicationV1, targets: tuple[CommittedBodyTargetV1, ...]) -> None:
-        """Retain actual closure permission once; a proposal is not motor authority."""
+    def authorized(self, application: SuckleApplicationV1 | SuckleExtractionApplicationV1, targets: tuple[CommittedBodyTargetV1, ...]) -> None:
+        """Retain the selected contribution's actual permission once, never execution."""
+        if isinstance(application, SuckleExtractionApplicationV1):
+            self._authorize_extraction(application, targets)
+            return
         if (not self._history or application is not self._history[-1] or self._authorized_cycle == self._applied_cycle
                 or application.cycle_id != self._applied_cycle):
             raise ValueError("Suckle authorization must answer its original current application once")

@@ -36,7 +36,7 @@ from nca8_sensorimotor_contracts import (
     TargetOriginV1, oral_basis_compatible_v1, oral_closure_basis_compatible_v1, scalar_motor_coordinate_v1,
 )
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 __all__ = [
     "PlanarBodyObservationV1", "VisualApproachRequestV1", "VisualBodyPreviewV1",
     "BodyAxisCapabilityV1", "BodyTranslationCapabilityV1",
@@ -410,11 +410,12 @@ class OralClosurePreviewV1:
 
 @dataclass(frozen=True, slots=True)
 class OralExtractionRequestV1:
-    """Supplied, finite extract/return requirement; not a selected Suckle request.
+    """Finite extract/return requirement with explicit origin, never permission.
 
-    The whole pattern is proposed once with one original lease. No milk amount,
-    expected success, lower drive sequence or new task authority is supplied.
-    A future task integration needs its own reviewed projection/handoff contract.
+    The fixture default remains unchanged. L-C's selected contribution requires
+    its separate application, projection and consumed handoff; provenance alone
+    cannot authorize movement. The whole pattern has one original lease and no
+    milk target, expected success or lower motor-command script.
     """
 
     origin: TargetOriginV1
@@ -423,10 +424,13 @@ class OralExtractionRequestV1:
     outward_extent: float = 0.10
     repetitions: int = 1
     lease_ticks: int = 8
+    origin_status: str = "supplied_requirement_fixture"
 
     def __post_init__(self) -> None:
         if not isinstance(self.origin, TargetOriginV1) or not isinstance(self.source_map_ref, NavMapRefV1):
             raise TypeError("extraction request needs its origin and source reference")
+        if self.origin_status not in {"supplied_requirement_fixture", "selected_suckle_extraction"}:
+            raise ValueError("unknown extraction request provenance; labels do not grant authority")
         _name(self.region_id, "extraction region handle")
         _index(self.repetitions, "extraction repetitions", 1, 2)
         _index(self.lease_ticks, "extraction lease", 1, 8)
@@ -438,7 +442,7 @@ class OralExtractionRequestV1:
         """Describe the supplied requirement, without pretending Navigation selected it."""
         return {"origin": self.origin.as_dict(), "source_map_ref": self.source_map_ref.as_dict(), "region_id": self.region_id,
                 "outward_extent": self.outward_extent, "repetitions": self.repetitions, "lease_ticks": self.lease_ticks,
-                "origin_status": "supplied_requirement_fixture", "is_task_pnm": False}
+                "origin_status": self.origin_status, "is_task_pnm": False}
 
 
 @dataclass(frozen=True, slots=True)

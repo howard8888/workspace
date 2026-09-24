@@ -21,11 +21,11 @@ from dataclasses import dataclass, replace
 from cca8_motor_contracts import MotorStreamRefV1
 from nca8_body import AuthorizedActionEnvelopeV1, BodyActionHandoffV1, BodyTaskTargetV1, EnvelopeStatusV1, LowerActionRequestV1
 from nca8_contracts import CycleCommitmentV1
-from nca8_prediction import ProjectedNavMapV1, SupportPreviewV1, VisualTranslationPreviewV1, MaternalApproachPreviewV1, SeekNipplePreviewV1, SucklePreviewV1
+from nca8_prediction import ProjectedNavMapV1, SupportPreviewV1, VisualTranslationPreviewV1, MaternalApproachPreviewV1, SeekNipplePreviewV1, SucklePreviewV1, SuckleExtractionPreviewV1
 from nca8_primitives import TaskActionV1
-from nca8_sensorimotor_contracts import BodyTranslationTargetV1, CommittedBodyTargetV1, SensorimotorTargetKindV1
+from nca8_sensorimotor_contracts import BodyTranslationTargetV1, OralExtractionTargetV1, CommittedBodyTargetV1, SensorimotorTargetKindV1
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = ["Nca8PhaseEDispatchV1", "Nca8HandoffReceiptV1", "Nca8InternalHandoffV1", "Nca8MotorEnvelopeV1", "__version__"]
 
 
@@ -42,7 +42,7 @@ class Nca8MotorEnvelopeV1:
 
     stream: MotorStreamRefV1
     cutoff_tick: int
-    projection: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | None
+    projection: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1 | None
     targets: tuple[CommittedBodyTargetV1, ...] = ()
     replaces: tuple[CommittedBodyTargetV1, ...] = ()
     cancel_previous: bool = False
@@ -54,7 +54,7 @@ class Nca8MotorEnvelopeV1:
             raise ValueError("motor envelope requires a finite cutoff tick")
         if not isinstance(self.cancel_previous, bool):
             raise TypeError("cancel_previous must be Boolean")
-        if self.projection is not None and not isinstance(self.projection, (SupportPreviewV1, VisualTranslationPreviewV1, MaternalApproachPreviewV1, SeekNipplePreviewV1, SucklePreviewV1)):
+        if self.projection is not None and not isinstance(self.projection, (SupportPreviewV1, VisualTranslationPreviewV1, MaternalApproachPreviewV1, SeekNipplePreviewV1, SucklePreviewV1, SuckleExtractionPreviewV1)):
             raise TypeError("motor projection requires the matching typed support or visual record")
         for group in (self.targets, self.replaces):
             if not isinstance(group, tuple) or len(group) > 2 or any(not isinstance(item, CommittedBodyTargetV1) for item in group):
@@ -81,6 +81,13 @@ class Nca8MotorEnvelopeV1:
                     if (item.target.kind not in {SensorimotorTargetKindV1.ORIENTATION_ADJUST, SensorimotorTargetKindV1.SUPPORT_EXTENSION}
                             or item.target.basis != self.projection.basis.feedback):
                         raise ValueError("support target must preserve the authorized body evidence")
+                elif isinstance(self.projection, SuckleExtractionPreviewV1):
+                    if (not isinstance(item.target, OralExtractionTargetV1)
+                            or item.target.basis != self.projection.basis.oral_feedback
+                            or item.target.outward_offset != self.projection.outward_extent
+                            or item.target.repetitions != self.projection.repetitions
+                            or item.expires_at_tick > self.cutoff_tick + self.projection.horizon_ticks):
+                        raise ValueError("extraction target must match its own original preview, not a closure claim")
                 elif isinstance(self.projection, SucklePreviewV1):
                     if (item.target.kind is not SensorimotorTargetKindV1.ORAL_CLOSURE
                             or item.target.basis != self.projection.basis.oral_feedback
@@ -118,7 +125,8 @@ class Nca8MotorEnvelopeV1:
             "original_preview": self.projection.as_dict() if self.projection is not None else None,
             "targets": [item.as_dict() for item in self.targets], "replaces": [item.as_dict() for item in self.replaces],
             "cancel_previous": self.cancel_previous, "physical_execution_established": False,
-            "task_pnm_correspondence": ("deferred_suckle_correspondence" if isinstance(self.projection, SucklePreviewV1) else
+            "task_pnm_correspondence": ("unimplemented_unscored_extraction" if isinstance(self.projection, SuckleExtractionPreviewV1) else
+                                         "deferred_suckle_correspondence" if isinstance(self.projection, SucklePreviewV1) else
                                         "seek_nipple_correspondence_v1" if isinstance(self.projection, SeekNipplePreviewV1)
                                         and self.projection.outcome_consumer_enabled else
                                         "deferred_seek_correspondence" if isinstance(self.projection, SeekNipplePreviewV1) else
@@ -224,7 +232,8 @@ def _validate_dispatch(dispatch: Nca8PhaseEDispatchV1) -> None:
         if motor.targets:
             origin = motor.targets[0].target.origin
             if (commitment.task_action, commitment.task_action_id, commitment.action_envelope_id) != (
-                ("SUCKLE_INITIAL_LATCH" if isinstance(motor.projection, SucklePreviewV1) else
+                ("SUCKLE_EXTRACTION" if isinstance(motor.projection, SuckleExtractionPreviewV1) else
+                 "SUCKLE_INITIAL_LATCH" if isinstance(motor.projection, SucklePreviewV1) else
                  "SEEK_NIPPLE" if isinstance(motor.projection, SeekNipplePreviewV1) else
                  "FOLLOW_MOM" if isinstance(motor.projection, MaternalApproachPreviewV1) else
                  "TRANSLATE_TO_VISIBLE_REGION" if isinstance(motor.projection, VisualTranslationPreviewV1) else "RESTORE_VIABLE_SUPPORT"), origin.application_id, origin.envelope_id,

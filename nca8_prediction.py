@@ -35,14 +35,14 @@ from nca8_primitives import PrimitiveApplicationV1
 # Small validators intentionally remain local for readable standalone modules.
 # pylint: disable=duplicate-code
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     "Nca8PredictionRuntimeV1",
     "PendingPredictionTraceV1",
     "PredictionOutcomeStatusV1",
     "PredictionOutcomeV1",
     "ProjectedNavMapV1",
-    "SupportPreviewV1", "VisualTranslationPreviewV1", "MaternalApproachPreviewV1", "SeekNipplePreviewV1", "SucklePreviewV1",
+    "SupportPreviewV1", "VisualTranslationPreviewV1", "MaternalApproachPreviewV1", "SeekNipplePreviewV1", "SucklePreviewV1", "SuckleExtractionPreviewV1",
     "__version__",
 ]
 
@@ -457,6 +457,63 @@ class SucklePreviewV1:
 
 
 @dataclass(frozen=True, slots=True)
+class SuckleExtractionPreviewV1:
+    """Sparse original task expectation for one selected extraction contribution.
+
+    The supported mouth/detail relation is the anchor; maintained sealed contact
+    and finite reciprocation are conditional, not observations. The lower target
+    owns individual stroke endpoints. No milk yield is predicted from an unknown
+    supply. This preview uses the existing single PNM slot; its task-level
+    extraction/milk comparator is explicitly unimplemented, not a closure claim.
+    """
+
+    pnm: ProjectedNavMapV1
+    basis: FeedingDetailNavMapStateV1
+    task_id: str
+    region_id: str
+    scene_target: NavPointV1
+    outward_extent: float
+    repetitions: int
+    horizon_ticks: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.pnm, ProjectedNavMapV1) or not isinstance(self.basis, FeedingDetailNavMapStateV1):
+            raise TypeError("extraction prediction requires its original PNM and feeding source")
+        if (self.pnm.primitive_id != "ip:suckle" or self.pnm.created_cycle != self.basis.applied_cycle
+                or not self.basis.oral_evidence_current or not self.basis.focal_accessible
+                or self.basis.seal_correspondence_status != "compatible" or self.basis.mouth_position is None):
+            raise ValueError("extraction preview requires this opportunity's paired sealed feeding contact")
+        if _bounded_identifier(self.task_id, field_name="task_id", maximum=100) != self.task_id:
+            raise ValueError("extraction task identity must remain unchanged")
+        if self.region_id != self.basis.seed.detail_region_id or self.scene_target != self.basis.detail_position:
+            raise ValueError("extraction preview cannot replace the original detail anchor")
+        body = self.basis.oral_feedback
+        if body is None or body.oral_extraction is None or body.oral_extraction.stroke is None:
+            raise ValueError("extraction prediction requires known original stroke evidence")
+        if (isinstance(self.outward_extent, bool) or not isinstance(self.outward_extent, (int, float))
+                or not math.isfinite(self.outward_extent) or self.outward_extent != 0.10):
+            raise ValueError("the first extraction contribution has fixed 0.10 extent")
+        if isinstance(self.repetitions, bool) or not isinstance(self.repetitions, int) or self.repetitions not in (1, 2):
+            raise ValueError("extraction prediction describes one or two finite cycles")
+        if isinstance(self.horizon_ticks, bool) or not isinstance(self.horizon_ticks, int) or not 1 <= self.horizon_ticks <= 8:
+            raise ValueError("extraction prediction requires an original one-to-eight-tick horizon")
+        object.__setattr__(self, "outward_extent", float(self.outward_extent))
+
+    def as_dict(self) -> dict[str, object]:
+        """Keep prospective relationships separate from local achievement and milk."""
+        mouth = self.basis.mouth_position
+        return {"pnm": self.pnm.as_dict(), "basis": self.basis.as_dict(), "task_id": self.task_id,
+                "region_id": self.region_id, "scene_target": self.scene_target.as_dict(),
+                "mouth_anchor": mouth.as_dict() if mouth is not None else None,
+                "outward_extent": self.outward_extent, "repetitions": self.repetitions,
+                "horizon_ticks": self.horizon_ticks, "model": "suckle_bounded_extraction_v1",
+                "status": "conditional_not_observed", "predicted_relation": "sealed_contact_during_finite_reciprocation",
+                "milk_prediction": "not_supplied_supply_unverified", "task_outcome_consumer": "unimplemented_unscored",
+                "local_target_completion_is_pnm_fulfilment": False, "full_suckle_complete": False,
+                "learned_operation": False}
+
+
+@dataclass(frozen=True, slots=True)
 class PendingPredictionTraceV1:
     """One bounded operation-linked expectation awaiting matching evidence."""
 
@@ -576,8 +633,8 @@ class Nca8PredictionRuntimeV1:
         self._current: PendingPredictionTraceV1 | None = None
         self._pending: list[PendingPredictionTraceV1] = []
         self._outcome_history: list[PredictionOutcomeV1] = []
-        self._preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | None = None
-        self._preview_history: list[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1] = []
+        self._preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1 | None = None
+        self._preview_history: list[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1] = []
         self._last_preview_cycle = 0
 
     @property
@@ -783,7 +840,7 @@ class Nca8PredictionRuntimeV1:
         """Return the visual member of the same single prospective slot, if any."""
         return self._preview if isinstance(self._preview, VisualTranslationPreviewV1) else None
 
-    def preview_history(self) -> tuple[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1, ...]:
+    def preview_history(self) -> tuple[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1, ...]:
         """Return at most eight immutable superseded previews, not pending outcomes."""
         return tuple(self._preview_history)
 
@@ -838,7 +895,18 @@ class Nca8PredictionRuntimeV1:
             raise TypeError("Suckle registration requires its typed original prediction")
         self._adopt_preview(preview)
 
-    def _adopt_preview(self, preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | None) -> None:
+    @property
+    def current_suckle_extraction_preview(self) -> SuckleExtractionPreviewV1 | None:
+        """Read the extraction member of the same prospective slot, not a second PNM."""
+        return self._preview if isinstance(self._preview, SuckleExtractionPreviewV1) else None
+
+    def adopt_suckle_extraction_preview(self, preview: SuckleExtractionPreviewV1) -> None:
+        """Retain a selected extraction expectation without scoring closure or milk."""
+        if not isinstance(preview, SuckleExtractionPreviewV1):
+            raise TypeError("extraction registration requires its typed original prediction")
+        self._adopt_preview(preview)
+
+    def _adopt_preview(self, preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1 | None) -> None:
         """Replace one prospective role; retain bounded immutable earlier meanings."""
         if self._current is not None or self._pending:
             raise ValueError("cannot mix unexecuted previews with pending executed claims")

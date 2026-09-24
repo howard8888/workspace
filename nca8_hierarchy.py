@@ -40,6 +40,7 @@ from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1, admit_motor_
 from cca8_support_world import (
     MotorBodyStateV1, MotorWorldProfileV1, MotorWorldV1, PlanarWorldProfileV1, PlanarWorldStateV1,
     OralWorldProfileV1, OralWorldStateV1, OralSealWorldProfileV1, OralSealWorldStateV1,
+    OralExtractionWorldProfileV1, OralExtractionWorldStateV1,
 )
 from nca8_adapters import admit_motor_visual_surface_v1
 from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetReservationV1, BodyTranslationCapabilityV1
@@ -49,7 +50,8 @@ from nca8_maternal import MaternalSourceV1, MaternalNavMapStateV1
 from nca8_feeding import FeedingDetailProfileV1, FeedingDetailSourceV1, FeedingDetailNavMapStateV1
 from nca8_followmom import FollowMomProfileV1, FollowMomIPV1, FollowMomApplicationV1, FollowMomAssessmentV1
 from nca8_seek_nipple import SeekNippleProfileV1, SeekNippleIPV1, SeekNippleApplicationV1, SeekNippleAssessmentV1
-from nca8_suckle import SuckleProfileV1, SuckleIPV1, SuckleApplicationV1, SuckleAssessmentV1
+from nca8_suckle import (SuckleProfileV1, SuckleIPV1, SuckleApplicationV1, SuckleAssessmentV1,
+                         SuckleExtractionApplicationV1, SuckleExtractionAssessmentV1)
 from nca8_suckle_outcomes import SuckleIntervalEvidenceV1, SuckleOutcomeV1, SuckleOutcomeFrameV1, SuckleOutcomeRuntimeV1
 from nca8_suckle_attention import SuckleAttentionFrameV1, SuckleMismatchRequestV1
 from nca8_seek_outcomes import SeekNippleIntervalEvidenceV1, SeekNippleOutcomeFrameV1, SeekNippleOutcomeRuntimeV1, SeekNippleOutcomeV1
@@ -75,7 +77,7 @@ from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, Senso
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1, SensorimotorTargetKindV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -126,6 +128,7 @@ class IntegratedRightingCycleV1:
     suckle_correspondence: SuckleOutcomeFrameV1 | None = None
     suckle_attention: SuckleAttentionFrameV1 | None = None
     suckle_learning_report: SuckleLearningPhaseFReportV1 | None = None
+    suckle_extraction: SuckleExtractionAssessmentV1 | None = None
 
     @property
     def status(self) -> str:
@@ -158,6 +161,7 @@ class IntegratedRightingCycleV1:
                                 "not_established_maternal" if self.maternal_source is not None else
                                 "not_established_visual_fixture" if self.visual_source is not None else "not_established_H6A"),
             "durable_learning_updates": 0,
+            **({"suckle_extraction": self.suckle_extraction.as_dict()} if self.suckle_extraction is not None else {}),
             **({"suckle_initial_latch": self.suckle_task.as_dict(),
                 "suckle_learning_status": "eligibility_only" if self.suckle_learning_report is not None else "unimplemented_no_participation"}
                if self.suckle_task is not None else {}),
@@ -596,7 +600,12 @@ class IntegratedRightingCoreV1:
                                       for item in self.cognition.mapper.reservations(at_tick=tick))
                 support_pending = (self.stand_follow_enabled and previous_support_task is not None
                                    and previous_support_task.status != "completed")
-                self.suckle.prepare(feeding_source, reports=reports, movement_blocked=closure_blocked or support_pending)
+                extraction_blocked = any(
+                    item.current.target.kind is not SensorimotorTargetKindV1.ORAL_EXTRACTION
+                    or item.current is not self.suckle.authorized_target for item in self.cognition.mapper.reservations(at_tick=tick)
+                ) if self.suckle.profile.extraction_enabled else False
+                self.suckle.prepare(feeding_source, reports=reports, movement_blocked=closure_blocked or support_pending,
+                                    extraction_movement_blocked=extraction_blocked or support_pending)
             feeding_candidate = self.feeding_detail.candidate()
             feeding_bid = None if feeding_candidate is None else self.cognition.attention.build_bid(feeding_candidate, cycle_id=cycle)
             if seeking_attention is not None:
@@ -664,7 +673,11 @@ class IntegratedRightingCoreV1:
                                        "pnm_id": outcome_request.outcome.registration.preview.pnm.pnm_id,
                                        "significance": outcome_request.significance, "relations": ",".join(outcome_request.relations),
                                        "admitted_tick": tick, "expires_at_tick": outcome_request.expires_at_tick})
-        self.cognition.mapper.expire(at_tick=tick)
+        # Retirement is not the command deadline: the lower executor may still
+        # consume L-B's final in-lease acquisition in its original bounded window.
+        # All live-permission readers continue to enforce expires_at_tick.
+        if self.suckle is None or not self.suckle.awaiting_final_extraction_evidence(at_tick=tick):
+            self.cognition.mapper.expire(at_tick=tick)
         self.trace.append(
             "hierarchy_source", "one POSTURE-SUPPORT source updated from eligible physical evidence", cycle_id=cycle,
             phase=CyclePhase.UPDATE_OUTCOMES.name,
@@ -724,7 +737,7 @@ class IntegratedRightingCoreV1:
                                        "outcome_rank": selected.outcome_source_bid.prediction_or_envelope_failure_rank
                                        if selected.outcome_source_bid is not None else 0})
         application = selected.navigation.application
-        if application is not None and not isinstance(application, (RightingApplicationV1, TranslationApplicationV1, FollowMomApplicationV1, SeekNippleApplicationV1, SuckleApplicationV1)):
+        if application is not None and not isinstance(application, (RightingApplicationV1, TranslationApplicationV1, FollowMomApplicationV1, SeekNippleApplicationV1, SuckleApplicationV1, SuckleExtractionApplicationV1)):
             raise TypeError("this integrated profile has no consumer for the selected application")
         self.trace.append(
             "hierarchy_selection", ("Attention selected the source; Navigation recorded the single focal allocation"
@@ -732,7 +745,7 @@ class IntegratedRightingCoreV1:
                                     else "Attention selected the source; Navigation selected the task"), cycle_id=cycle,
             phase=CyclePhase.FOCAL_COMMITMENT.name,
             details={"attention": selected.attention.disposition.value, "primitive": selected.navigation.selected_primitive_id,
-                     "task_id": (application.task.task_id if isinstance(application, (SeekNippleApplicationV1, SuckleApplicationV1)) else
+                     "task_id": (application.task.task_id if isinstance(application, (SeekNippleApplicationV1, SuckleApplicationV1, SuckleExtractionApplicationV1)) else
                                  selected.task.task_id if selected.task is not None else None),
                      "strategy": application.strategy if isinstance(application, RightingApplicationV1) else None},
         )
@@ -745,7 +758,8 @@ class IntegratedRightingCoreV1:
             cycle_id=cycle, phase=CyclePhase.PROJECT_DISPATCH.name,
             details={"enabled": self.cognition.task_pnm_consumer_enabled,
                      "registered": self.cognition.prediction.current_pnm is not None,
-                     "consumer": ("adopt_suckle_preview" if isinstance(application, SuckleApplicationV1) else
+                     "consumer": ("adopt_suckle_extraction_preview" if isinstance(application, SuckleExtractionApplicationV1) else
+                                   "adopt_suckle_preview" if isinstance(application, SuckleApplicationV1) else
                                   "adopt_seeking_preview" if isinstance(application, SeekNippleApplicationV1) else
                                   "adopt_maternal_preview" if isinstance(application, FollowMomApplicationV1) else
                                   "adopt_visual_preview" if isinstance(application, TranslationApplicationV1) else "adopt_support_preview"),
@@ -764,7 +778,7 @@ class IntegratedRightingCoreV1:
             self.follow_mom.authorized(application, tuple(item.current for item in reservations))
         if isinstance(application, SeekNippleApplicationV1) and self.seek_nipple is not None:
             self.seek_nipple.authorized(application, tuple(item.current for item in reservations))
-        if isinstance(application, SuckleApplicationV1) and self.suckle is not None:
+        if isinstance(application, (SuckleApplicationV1, SuckleExtractionApplicationV1)) and self.suckle is not None:
             self.suckle.authorized(application, tuple(item.current for item in reservations))
         suckle_registration = None
         if suckle_owner is not None and isinstance(application, SuckleApplicationV1) and proposal is not None:
@@ -799,7 +813,7 @@ class IntegratedRightingCoreV1:
                               details={"pnm_id": claim_registration.preview.pnm.pnm_id, "endpoint_event_tick": claim_registration.due_tick,
                                        "compatible": ",".join(claim_registration.compatible_relations),
                                        "unevaluable": ",".join(claim_registration.unevaluable_relations), "target_count": len(reservations)})
-        projection = application.projection if isinstance(application, (RightingApplicationV1, TranslationApplicationV1, FollowMomApplicationV1, SeekNippleApplicationV1, SuckleApplicationV1)) else None
+        projection = application.projection if isinstance(application, (RightingApplicationV1, TranslationApplicationV1, FollowMomApplicationV1, SeekNippleApplicationV1, SuckleApplicationV1, SuckleExtractionApplicationV1)) else None
         origin = reservations[0].current.target.origin if reservations else None
         terminal_task = calculation.task is not None and calculation.task.status != "active"
         if self.stand_follow_enabled:
@@ -820,7 +834,8 @@ class IntegratedRightingCoreV1:
             calculation.attention.selection_id, decision.wnm.working_id if decision.wnm is not None else None,
             decision.selected_primitive_id, application.application_id if application is not None else None,
             projection.pnm.pnm_id if projection is not None else None,
-            ("SUCKLE_INITIAL_LATCH" if isinstance(application, SuckleApplicationV1) else
+            ("SUCKLE_EXTRACTION" if isinstance(application, SuckleExtractionApplicationV1) else
+             "SUCKLE_INITIAL_LATCH" if isinstance(application, SuckleApplicationV1) else
              "SEEK_NIPPLE" if isinstance(application, SeekNippleApplicationV1) else
              "FOLLOW_MOM" if isinstance(application, FollowMomApplicationV1) else
              "TRANSLATE_TO_VISIBLE_REGION" if isinstance(application, TranslationApplicationV1) else "RESTORE_VIABLE_SUPPORT")
@@ -938,6 +953,7 @@ class IntegratedRightingCoreV1:
             maternal_learning_report=maternal_learning_report, feeding_detail_source=feeding_source,
             seeking_task=self.seek_nipple.assessment() if self.seek_nipple is not None else None,
             suckle_task=self.suckle.assessment() if self.suckle is not None else None,
+            suckle_extraction=self.suckle.extraction_assessment() if self.suckle is not None else None,
             suckle_correspondence=SuckleOutcomeFrameV1(
                 tick, tuple(item for item in suckle_owner.history() if item.number > suckle_before),
                 suckle_registration, suckle_owner.pending(), suckle_owner.compare_predictions,
@@ -994,6 +1010,7 @@ class IntegratedRightingTrialV1:
         feeding_detail_profile: FeedingDetailProfileV1 | None = None,
         seek_nipple_profile: SeekNippleProfileV1 | None = None, oral_profile: OralWorldProfileV1 | None = None,
         suckle_profile: SuckleProfileV1 | None = None, oral_seal_profile: OralSealWorldProfileV1 | None = None,
+        oral_extraction_profile: OralExtractionWorldProfileV1 | None = None,
     ) -> None:
         profile = MotorWorldProfileV1() if physical_profile is None else physical_profile
         if not isinstance(profile, MotorWorldProfileV1) or profile.dt_seconds != 0.05:
@@ -1035,12 +1052,17 @@ class IntegratedRightingTrialV1:
             raise ValueError("selected seeking requires an explicit oral physical provider")
         if oral_profile is not None and seek_nipple_profile is None and suckle_profile is None:
             raise ValueError("oral hierarchy sensing requires the explicit seeking integration profile")
+        if oral_extraction_profile is not None and (suckle_profile is None or oral_seal_profile is None):
+            raise ValueError("extraction sensing requires the explicit Suckle/contact/seal integration")
+        if suckle_profile is not None and suckle_profile.extraction_enabled and oral_extraction_profile is None:
+            raise ValueError("selected extraction requires an explicit physical profile, not a fabricated actuator")
         self._stand_follow_enabled = stand_follow_enabled
         self._righting_target_inset_degrees = righting_target_inset_degrees
         self._translation_fixture, self._translation_capability = translation_fixture, translation_capability
         self._translation_mapping_sign = translation_mapping_sign
         self._world = MotorWorldV1(MotorStreamRefV1(stream_id, 1), profile, planar_profile=planar_profile,
-                                   oral_profile=oral_profile, oral_seal_profile=oral_seal_profile)
+                                   oral_profile=oral_profile, oral_seal_profile=oral_seal_profile,
+                                   oral_extraction_profile=oral_extraction_profile)
         self._context, self._capabilities, self._control_profile = context, capabilities, control_profile
         self._righting_enabled, self._influence_enabled, self._handoff_enabled = righting_enabled, influence_enabled, handoff_enabled
         self._trace_capacity = trace_capacity
@@ -1117,6 +1139,11 @@ class IntegratedRightingTrialV1:
         return self._world.oral_seal_body
 
     @property
+    def observer_oral_extraction_body(self) -> OralExtractionWorldStateV1 | None:
+        """Read physical transfer for external review only; no cognitive milk inference."""
+        return self._world.oral_extraction_body
+
+    @property
     def stopped(self) -> bool:
         """Report a sticky runtime failure; a terminal task alone does not stop time."""
         return self._fault is not None or self.core.fault is not None or self.controller.fault is not None
@@ -1180,6 +1207,7 @@ class IntegratedRightingTrialV1:
         """Read bounded task/source/execution status, without stepping or learning."""
         task = self.core.cognition.righting.task
         receipt = self.core.handoff.receipt
+        extraction = self.core.suckle.extraction_assessment() if self.core.suckle is not None else None
         return {
             "profile": "stand_follow_v1" if self._stand_follow_enabled else "integrated_righting_v1",
             "stream": self._world.stream.as_dict(),
@@ -1203,6 +1231,7 @@ class IntegratedRightingTrialV1:
             **({"translation_scope": "developmental_follow_mom" if self.core.follow_mom is not None else "one_supplied_operation_not_acquired", "translation_mapping_sign": self._translation_mapping_sign,
                 "visual_source": self.core.visual.current.as_dict() if self.core.visual.current is not None else None}
                if self.core.visual is not None else {}),
+            **({"suckle_extraction": extraction.as_dict()} if extraction is not None else {}),
             **({"suckle_profile": self.core.suckle.profile.as_dict(), "suckle_task": self.core.suckle.assessment().as_dict()}
                if self.core.suckle is not None else {}),
             **({"seeking_profile": self.core.seek_nipple.profile.as_dict(), "seeking_task": self.core.seek_nipple.assessment().as_dict()}

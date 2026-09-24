@@ -29,7 +29,7 @@ from nca8_maternal_learning_demo import run_maternal_learning_menu_v1
 from nca8_followmom_qualification import run_follow_mom_qualification_menu_v1
 from nca8_feeding_demo import run_feeding_detail_menu_v1
 
-__version__ = "0.33.0"
+__version__ = "0.34.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
