@@ -273,7 +273,7 @@ def test_unknown_case_not_repaired(bad):
 def test_registry_keeps_eight_host_primitives_and_adds_only_two_I_components():
     import cca8_run
     rows = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
-    assert len(cca8_run._cca8_component_rows()) == 112 and len(cca8_run.PRIMITIVES) == 8
+    assert len(cca8_run._cca8_component_rows()) == 113 and len(cca8_run.PRIMITIVES) == 8
     assert rows["nca8_suckle_outcomes"] == "nca8_suckle_outcomes"
     assert rows["nca8_suckle_outcomes_demo"] == "nca8_suckle_outcomes_demo"
 

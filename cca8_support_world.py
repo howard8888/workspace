@@ -31,14 +31,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 
-from cca8_motor_contracts import MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, OralFeedbackV1, OralSealFeedbackV1, PlanarFeedbackV1
+from cca8_motor_contracts import (
+    MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, OralFeedbackV1, OralSealFeedbackV1, PlanarFeedbackV1, OralExtractionFeedbackV1,
+)
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "MotorBodyStateV1",
     "MotorWorldPerturbationV1",
     "MotorWorldProfileV1",
     "OralSealWorldStateV1", "OralSealWorldProfileV1", "OralClosurePerturbationV1",
+    "OralExtractionWorldStateV1", "OralExtractionWorldProfileV1",
     "MotorWorldV1", "OralWorldStateV1", "OralWorldProfileV1", "OralWorldPerturbationV1",
     "PlanarObjectV1", "PlanarDetailObjectV1", "PlanarPerturbationV1", "PlanarWorldProfileV1", "PlanarWorldStateV1",
     "SupportWorldStateV1",
@@ -741,6 +744,92 @@ def _oral_seal_state(
     return OralSealWorldStateV1(closure, closure >= 0.5 - 1e-12 and oral.contact and compatible)
 
 
+_EXTRACTION_RATE_UNITS_S = 2.0
+_MILK_UNITS_PER_STROKE = 1.0
+_MAX_MILK_SUPPLY_UNITS = 1_000_000.0
+
+
+@dataclass(frozen=True, slots=True)
+class OralExtractionWorldStateV1:
+    """Actual extraction and conserved transfer for external observation only.
+
+    ``stroke`` is independent of reach and closure. Supply and accumulated
+    transfer are bounded provider quantities, never privileged cognitive input.
+    ``interval_milk_units`` describes only the latest completed physical step;
+    it is zero at construction/reset and on a step without transfer. Reset's
+    sensed facet instead reports no prior interval, not measured zero. Transfer
+    means entry into the mouth, not swallowing, absorption or nourishment.
+    """
+
+    stroke: float = 0.0
+    remaining_supply_units: float = 0.0
+    transferred_milk_units: float = 0.0
+    interval_milk_units: float = 0.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "stroke", _motor_number(self.stroke, "physical extraction stroke", 0.0, 1.0))
+        for name in ("remaining_supply_units", "transferred_milk_units"):
+            object.__setattr__(self, name, _motor_number(getattr(self, name), name, 0.0, _MAX_MILK_SUPPLY_UNITS))
+        object.__setattr__(self, "interval_milk_units",
+                           _motor_number(self.interval_milk_units, "physical interval milk", 0.0, _MILK_UNITS_PER_STROKE))
+        if self.interval_milk_units > self.transferred_milk_units:
+            raise ValueError("interval transfer cannot exceed accumulated transfer")
+        if self.remaining_supply_units + self.transferred_milk_units > _MAX_MILK_SUPPLY_UNITS:
+            raise ValueError("total physical supply exceeds the provider bound")
+
+    def as_dict(self) -> dict[str, object]:
+        """Return detached observer state; reservoir/total are not sensor channels."""
+        return {"stroke": self.stroke, "remaining_supply_units": self.remaining_supply_units,
+                "transferred_milk_units": self.transferred_milk_units, "interval_milk_units": self.interval_milk_units}
+
+
+@dataclass(frozen=True, slots=True)
+class OralExtractionWorldProfileV1:
+    """L-A opt-in physical extraction surrogate, not an automatic feeding routine.
+
+    A signed motor drive advances a separate [0,1] stroke at 2 units/second.
+    Positive ACTUAL displacement can draw one uncalibrated model volume unit
+    per full stroke from one fixed disk's finite supply. Return, neutral and
+    saturation do not transfer milk. There is no refill within a generation.
+    Touch, seal and supply are distinct physical conditions; a dry seal is valid.
+
+    Transfer needs support and closure throughout the interval, plus a conservative
+    tip-path certificate inside tactile, sealable and supplying disks. Uncertain
+    boundary-crossing intervals transfer zero, rather than crediting contact
+    first attained at their endpoint. This may undercount at coarse resolution;
+    it is not a continuous fluid model or physiological rate. The provider's
+    existing step, clock, delayed/dropout sensing and reset are reused. Channel
+    availability changes observations only, not the actual physical trajectory.
+    No Navigation/BodyMap/SMP extraction path is installed by this profile.
+    """
+
+    initial_stroke: float = 0.0
+    initial_supply_units: float = 0.0
+    supplying_surface: PlanarObjectV1 | None = None
+    motor_enabled: bool = True
+    stroke_available: bool = True
+    milk_available: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "initial_stroke", _motor_number(self.initial_stroke, "initial stroke", 0.0, 1.0))
+        object.__setattr__(self, "initial_supply_units",
+                           _motor_number(self.initial_supply_units, "initial milk supply", 0.0, _MAX_MILK_SUPPLY_UNITS))
+        if not all(isinstance(flag, bool) for flag in (self.motor_enabled, self.stroke_available, self.milk_available)):
+            raise TypeError("extraction profile switches must be Boolean")
+        if self.supplying_surface is not None:
+            # Reuse disk validation only; supplying does not imply touch or seal.
+            OralWorldProfileV1(surfaces=(self.supplying_surface,))
+        elif self.initial_supply_units != 0.0:
+            raise ValueError("positive physical supply requires its supplying surface")
+
+
+def _extraction_path_inside_disk(
+    disk: PlanarObjectV1, tip: tuple[float, float], travel_bound: float,
+) -> bool:
+    """Certify the whole tip path inside a convex disk, not endpoint contact alone."""
+    return math.hypot(tip[0] - disk.position[0], tip[1] - disk.position[1]) + travel_bound <= disk.radius + 1e-12
+
+
 class MotorWorldV1:
     """A small deterministic body simulator with explicit command and sensing time.
 
@@ -766,6 +855,7 @@ class MotorWorldV1:
         self, stream: MotorStreamRefV1, profile: MotorWorldProfileV1 | None = None, *, planar_profile: PlanarWorldProfileV1 | None = None,
         oral_profile: OralWorldProfileV1 | None = None,
         oral_seal_profile: OralSealWorldProfileV1 | None = None,
+        oral_extraction_profile: OralExtractionWorldProfileV1 | None = None,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("stream must be MotorStreamRefV1")
@@ -777,6 +867,13 @@ class MotorWorldV1:
             raise TypeError("oral profile requires its typed settings and the existing planar body profile")
         if oral_seal_profile is not None and (not isinstance(oral_seal_profile, OralSealWorldProfileV1) or oral_profile is None):
             raise TypeError("oral seal profile requires the typed oral and planar physical profiles")
+        if oral_extraction_profile is not None and (not isinstance(oral_extraction_profile, OralExtractionWorldProfileV1)
+                                                    or oral_seal_profile is None):
+            raise TypeError("extraction profile requires the typed seal, oral and planar physical profiles")
+        self._oral_extraction_profile = oral_extraction_profile
+        self._oral_extraction = (None if oral_extraction_profile is None else
+                                 OralExtractionWorldStateV1(oral_extraction_profile.initial_stroke,
+                                                           oral_extraction_profile.initial_supply_units))
         self._oral_seal_profile = oral_seal_profile
         self._oral_profile = oral_profile
         self._planar_profile = planar_profile
@@ -794,7 +891,13 @@ class MotorWorldV1:
         self._last_command_id = 0
         self._pending: tuple[MotorFeedbackV1, ...] = ()
         self._latest_feedback = self._measure(self._body, 0.0, self._profile.surface_present,
-                                             event_tick=0, delay=0, planar=self._planar, oral=self._oral, oral_seal=self._oral_seal)
+                                             event_tick=0, delay=0, planar=self._planar, oral=self._oral, oral_seal=self._oral_seal,
+                                             oral_extraction=self._oral_extraction)
+
+    @property
+    def oral_extraction_body(self) -> OralExtractionWorldStateV1 | None:
+        """Inspect physical stroke/supply externally; consumers use delivered sensing."""
+        return self._oral_extraction
 
     @property
     def oral_seal_body(self) -> OralSealWorldStateV1 | None:
@@ -893,12 +996,14 @@ class MotorWorldV1:
         Generation overflow is rejected before replacing any owned value.
         """
         fresh = MotorWorldV1(MotorStreamRefV1(self._stream.stream_id, self._stream.generation + 1), self._profile,
-                             planar_profile=self._planar_profile, oral_profile=self._oral_profile, oral_seal_profile=self._oral_seal_profile)
+                             planar_profile=self._planar_profile, oral_profile=self._oral_profile, oral_seal_profile=self._oral_seal_profile,
+                             oral_extraction_profile=self._oral_extraction_profile)
         self._stream = fresh.stream
         self._body = fresh.body
         self._planar = fresh.planar_body
         self._oral = fresh.oral_body
         self._oral_seal = fresh.oral_seal_body
+        self._oral_extraction = fresh.oral_extraction_body
         self._tick = 0
         self._last_command_id = 0
         self._pending = ()
@@ -909,6 +1014,7 @@ class MotorWorldV1:
         self, body: MotorBodyStateV1, angular_rate: float, surface_present: bool, *, event_tick: int, delay: int,
         planar: PlanarWorldStateV1 | None = None, oral: OralWorldStateV1 | None = None,
         oral_seal: OralSealWorldStateV1 | None = None,
+        oral_extraction: OralExtractionWorldStateV1 | None = None,
     ) -> MotorFeedbackV1:
         """Sense actual geometry; omit declared channels without repairing them.
 
@@ -935,8 +1041,16 @@ class MotorWorldV1:
         if oral_seal is not None and self._oral_seal_profile is not None:
             seal_feedback = OralSealFeedbackV1(oral_seal.closure if self._oral_seal_profile.closure_available else None,
                                                oral_seal.sealed if self._oral_seal_profile.seal_available else None)
+        extraction_feedback = None
+        extraction_profile = self._oral_extraction_profile
+        if oral_extraction is not None and extraction_profile is not None:
+            extraction_feedback = OralExtractionFeedbackV1(
+                oral_extraction.stroke if extraction_profile.stroke_available else None,
+                oral_extraction.interval_milk_units if event_tick > 0 and extraction_profile.milk_available else None,
+                event_tick - 1 if event_tick > 0 else None,
+            )
         return MotorFeedbackV1(
-            planar=planar_feedback, oral=oral_feedback, oral_seal=seal_feedback,
+            planar=planar_feedback, oral=oral_feedback, oral_seal=seal_feedback, oral_extraction=extraction_feedback,
             stream=self._stream, sample_id=event_tick + 1, event_tick=event_tick, available_tick=event_tick + delay,
             body_tilt_degrees=None if "body_tilt_degrees" in missing else body.body_tilt_degrees,
             support_extension=None if "support_extension" in missing else body.support_extension,
@@ -1013,6 +1127,60 @@ class MotorWorldV1:
         closure = _clamp(state.closure + self._profile.dt_seconds * (2.0 * drive + forcing))
         return _oral_seal_state(closure, planar, oral, profile)
 
+    def _advance_oral_extraction(
+        self, command: MotorCommandV1 | None, *, body: MotorBodyStateV1, planar: PlanarWorldStateV1 | None,
+        oral: OralWorldStateV1 | None, seal: OralSealWorldStateV1 | None, surface_present: bool,
+    ) -> OralExtractionWorldStateV1 | None:
+        """Compute stroke and transfer locally before the step's atomic replacement.
+
+        Drive affects only extraction; the existing body/reach/closure equations
+        are untouched. At start-of-step the old oral motor competence gates motion.
+        Transfer additionally requires supported posture and closure throughout.
+        Linear/clipped body displacement and reach plus bounded yaw give a safe
+        upper bound on tip travel, including interior curved excursions. A disk
+        containing that whole bound certifies contact without sampling a future
+        endpoint as though it existed for the entire interval. This deliberately
+        conservative geometry can withhold transfer on an uncertain interval.
+        """
+        profile, state = self._oral_extraction_profile, self._oral_extraction
+        if profile is None or state is None:
+            return None
+        previous_planar, previous_oral, previous_seal = self._planar, self._oral, self._oral_seal
+        oral_profile, seal_profile = self._oral_profile, self._oral_seal_profile
+        if (planar is None or oral is None or seal is None or previous_planar is None or previous_oral is None
+                or previous_seal is None or oral_profile is None or seal_profile is None):
+            raise RuntimeError("extraction requires its complete physical context")
+        contact, loading = _motor_support(self._body, self._profile, surface_present)
+        drive = 0.0
+        if (command is not None and command.oral_extraction_drive is not None and profile.motor_enabled
+                and contact and loading >= 0.75 and abs(self._body.body_tilt_degrees) <= 12.0):
+            drive = command.oral_extraction_drive
+        stroke = _clamp(state.stroke + self._profile.dt_seconds * _EXTRACTION_RATE_UNITS_S * drive)
+        displacement = max(0.0, stroke - state.stroke)
+        transfer = 0.0
+        conservative_body = MotorBodyStateV1(max(abs(body.body_tilt_degrees), abs(self._body.body_tilt_degrees)),
+                                             min(body.support_extension, self._body.support_extension))
+        _, minimum_load = _motor_support(conservative_body, self._profile, surface_present)
+        supplier = profile.supplying_surface
+        if (displacement > 0.0 and supplier is not None and minimum_load >= 0.75
+                and conservative_body.body_tilt_degrees <= 12.0 and min(seal.closure, previous_seal.closure) >= 0.5 - 1e-12):
+            angle = math.radians(previous_planar.heading_degrees)
+            tip = (previous_planar.position[0] + previous_oral.extension_metres * math.cos(angle),
+                   previous_planar.position[1] + previous_oral.extension_metres * math.sin(angle))
+            yaw = abs((planar.heading_degrees - previous_planar.heading_degrees + 180.0) % 360.0 - 180.0)
+            travel = (math.hypot(planar.position[0] - previous_planar.position[0], planar.position[1] - previous_planar.position[1])
+                      + abs(oral.extension_metres - previous_oral.extension_metres)
+                      + max(oral.extension_metres, previous_oral.extension_metres) * math.radians(yaw))
+            if (_extraction_path_inside_disk(supplier, tip, travel)
+                    and any(_extraction_path_inside_disk(disk, tip, travel) for disk in oral_profile.surfaces)
+                    and any(_extraction_path_inside_disk(disk, tip, travel) for disk in seal_profile.sealable_surfaces)):
+                transfer = min(state.remaining_supply_units, displacement * _MILK_UNITS_PER_STROKE)
+        # Derive inventory from ONE accumulated total, rather than independently
+        # subtracting tiny transfers from a large reservoir and adding them to
+        # another accumulator. The latter can manufacture round-off stock.
+        total = min(profile.initial_supply_units, state.transferred_milk_units + transfer)
+        return OralExtractionWorldStateV1(stroke, profile.initial_supply_units - total, total, transfer)
+
     def step(self, command: MotorCommandV1 | None = None) -> tuple[MotorFeedbackV1, ...]:
         """Advance once and return newly available sensor reports in acquisition order.
 
@@ -1035,6 +1203,8 @@ class MotorWorldV1:
             raise ValueError("oral drive requires the explicit oral physical profile")
         if command is not None and command.oral_closure_drive is not None and self._oral_seal_profile is None:
             raise ValueError("closure drive requires the explicit oral seal physical profile")
+        if command is not None and command.oral_extraction_drive is not None and self._oral_extraction_profile is None:
+            raise ValueError("extraction drive requires the explicit extraction physical profile")
         if self._tick >= _MOTOR_COUNTER_LIMIT - max(1, self._profile.sensor_delay_ticks) - 1:
             raise OverflowError("motor time/sample identity exhausted; reset required")
         if command is not None:
@@ -1062,12 +1232,15 @@ class MotorWorldV1:
         next_planar = self._advance_planar(command, surface_present)
         next_oral = self._advance_oral(command, next_planar, surface_present)
         next_seal = self._advance_oral_seal(command, next_planar, next_oral, surface_present)
+        next_extraction = self._advance_oral_extraction(
+            command, body=next_body, planar=next_planar, oral=next_oral, seal=next_seal, surface_present=surface_present,
+        )
         next_tick = self._tick + 1
         pending = self._pending
         if not dropout:
             measurement = self._measure(next_body, angular_rate, surface_present,
                                         event_tick=next_tick, delay=self._profile.sensor_delay_ticks, planar=next_planar, oral=next_oral,
-                                        oral_seal=next_seal)
+                                        oral_seal=next_seal, oral_extraction=next_extraction)
             pending += (measurement,)
         delivered = tuple(item for item in pending if item.available_tick <= next_tick)
         future = tuple(item for item in pending if item.available_tick > next_tick)
@@ -1080,6 +1253,7 @@ class MotorWorldV1:
         self._planar = next_planar
         self._oral = next_oral
         self._oral_seal = next_seal
+        self._oral_extraction = next_extraction
         self._tick = next_tick
         self._pending = future
         if delivered:

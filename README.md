@@ -16,6 +16,54 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## NCA8 update: P16-2C-L-A direct-drive extraction and milk sensing
+
+Entry: accepted K at `868629601c66b5d34a08e2edc3dae39051db3b19`, tree
+`6ed63c2827d4f28496b8e22a9803a03ccb00bca3`. High-Level Architecture v10.1 and
+Project Planning v18 remain authoritative. This physical-only, default-disabled
+extension is a candidate until qualification, manual review and Howard's acceptance.
+
+An explicit low-level drive changes a separate normalized extraction stroke.
+Only actual positive displacement, supported whole-interval contact/seal and a
+finite supplying surface can produce milk transfer. Neutral, return, blocked or
+saturated strokes do not manufacture milk. Holding a seal alone is not feeding.
+The fixed 2-stroke-units/second rate and 1-model-volume-unit/full-stroke yield
+are engineering surrogates, not physiological measurements or millilitres.
+
+The provider remains the existing `MotorWorldV1`: one clock, one interval per
+step, atomic state replacement, original acquisition/delivery times and reset.
+The conservative tip-path certificate includes curved motion; endpoint contact
+alone cannot credit an entire interval. Boundary intervals may undercount transfer.
+The optional v5 feedback facet reports stroke and milk for its original physical
+interval. Missing measurement differs from known zero; reset has no prior interval.
+Private supply/total state is for observers, never a cognitive sensory shortcut.
+Old v1-v4 wire forms and old physics remain unchanged with the extension absent.
+
+This does NOT connect extraction to a Suckle IP, BodyMap target or sensorimotor
+rhythm. There is no new task/PNM/outcome/eligibility mechanism, nourishment,
+swallowing, hunger relief, Rest, durable learning, Goal/SEC/Emotion machinery,
+autonomous post-latch Suckle or B99 completion. Accepted H/I/J/K remain intact.
+
+Menu: **Main -> 4 -> 15 -> 28**, after normal startup/profile choices. Existing
+J option 26 and K option 27 are unchanged. In the L-A submenu choose 1 for
+stroke/seal/supply contrasts, 2 for repetition/resolution, 3 for geometry/loss,
+4 for sensing/off controls, 5 for all 26 cases, or 6 for retained read-only detail.
+
+The same external experiment and renderer are available from any working directory:
+
+    python scripts/review_nca8_feeding.py --oral-extraction --case all --detail
+
+The review's declared motor sequences are test inputs, not Navigation decisions.
+All cases are finite (at most 80 lower ticks); physical and delivered sensory lanes
+are exported separately. Resolution controls preserve 0.6 seconds and the same
+drive-change times, not the number of function calls. Rendering and diagnostic
+capacity never change the commands or physical state. A failed check exits nonzero.
+
+`cca8_run.py v0.30.39` lists 113 components and the unchanged eight host/legacy
+behavioral primitives. `nca8_oral_extraction_demo` is an external review service,
+not an IP. Static checks, broader qualification, patch rehearsal, Windows
+validation and acceptance are separate checkpoints, not implied by menu access.
+
 ## NCA8 candidate: P16-2C-K original Suckle participation and Phase F
 
 Entry: accepted J at clean `30e03737b1cfd285ec8bbf292360efb53a03d277`,

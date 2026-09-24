@@ -219,7 +219,7 @@ def test_unknown_case_does_not_default_to_success(bad):
 def test_host_components_are_services_not_additional_IPs():
     import cca8_run
     rows = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
-    assert cca8_run.__version__ == "0.30.38" and len(cca8_run._cca8_component_rows()) == 112
+    assert cca8_run.__version__ == "0.30.39" and len(cca8_run._cca8_component_rows()) == 113
     assert len(cca8_run.PRIMITIVES) == 8
     assert rows["nca8_suckle_learning"] == "nca8_suckle_learning"
     assert rows["nca8_suckle_learning_demo"] == "nca8_suckle_learning_demo"

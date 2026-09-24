@@ -298,4 +298,4 @@ def test_registry_has_real_modules_without_new_behavioral_primitives():
     rows = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert rows['nca8_seek_learning'] == 'nca8_seek_learning'
     assert rows['nca8_seek_learning_demo'] == 'nca8_seek_learning_demo'
-    assert len(cca8_run._cca8_component_rows()) == 112 and len(cca8_run.PRIMITIVES) == 8
+    assert len(cca8_run._cca8_component_rows()) == 113 and len(cca8_run.PRIMITIVES) == 8
