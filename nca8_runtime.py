@@ -51,6 +51,7 @@ from nca8_righting import RightingApplicationV1, RightingContextV1, RightingIPV1
 from nca8_maternal_attention import MaternalFocalAllocationV1, MaternalOutcomeAttentionV1
 from nca8_seek_attention import SeekingFocalAllocationV1, SeekingOutcomeAttentionV1
 from nca8_suckle_attention import SuckleFocalAllocationV1, SuckleOutcomeAttentionV1
+from nca8_suckle_extraction_attention import ExtractionFocalAllocationV1, SuckleExtractionAttentionV1
 from nca8_outcome_attention import RightingFocalAllocationV1
 
 from nca8_adapters import (
@@ -108,7 +109,7 @@ from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 from nca8_visual import VisualNavMapStateV1
 
-__version__ = "0.21.0"
+__version__ = "0.22.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -1627,6 +1628,7 @@ class RightingPreviewResultV1:
     maternal_outcome_allocation: MaternalFocalAllocationV1 | None = None
     seeking_outcome_allocation: SeekingFocalAllocationV1 | None = None
     suckle_outcome_allocation: SuckleFocalAllocationV1 | None = None
+    extraction_outcome_allocation: ExtractionFocalAllocationV1 | None = None
 
     def as_dict(self) -> dict[str, object]:
         """Return a detached review record; exporting never replays the calculation."""
@@ -1644,6 +1646,8 @@ class RightingPreviewResultV1:
                if self.maternal_outcome_allocation is not None else {}),
             **({"seeking_outcome_allocation": self.seeking_outcome_allocation.as_dict()}
                if self.seeking_outcome_allocation is not None else {}),
+            **({"extraction_outcome_allocation": self.extraction_outcome_allocation.as_dict()}
+               if self.extraction_outcome_allocation is not None else {}),
             **({"suckle_outcome_allocation": self.suckle_outcome_allocation.as_dict()}
                if self.suckle_outcome_allocation is not None else {}),
         }
@@ -1829,24 +1833,28 @@ class Nca8RightingPreviewSessionV1:
 
     def _allocate_feeding_outcome_work(
         self, working: WorkingNavMapStateV1 | None, *, cycle_id: int, cutoff_tick: int,
-        seeking_attention: SeekingOutcomeAttentionV1 | None, suckle_attention: SuckleOutcomeAttentionV1,
-    ) -> tuple[SeekingFocalAllocationV1 | None, SuckleFocalAllocationV1, NavigationDecisionV1 | None]:
-        """Transport question heads to Navigation, then consume only its chosen head.
+        seeking_attention: SeekingOutcomeAttentionV1 | None, suckle_attention: SuckleOutcomeAttentionV1 | None,
+        extraction_attention: SuckleExtractionAttentionV1 | None = None,
+    ) -> tuple[SeekingFocalAllocationV1 | None, SuckleFocalAllocationV1 | None,
+               ExtractionFocalAllocationV1 | None, NavigationDecisionV1 | None]:
+        """Offer all same-source heads to Navigation BEFORE any owner consumes.
 
-        The coordinator owns neither the tie policy nor an extra focal allocation.
-        Candidate reads are non-consuming; Navigation chooses/reserves first.
-        Losing owners are not called, so their requests and dependencies retain
-        their original lifetimes. With no pending candidate, allocation methods
-        only report ordinary/dependent/other-source dispositions, not interpretation.
-        This J branch leaves the accepted seeking-only path unchanged when disabled.
+        This is the existing bounded transport/dispatch seam, not another selector.
+        Navigation validates and reserves one grant. Losing owners are not invoked.
+        Empty candidacy permits only ordinary/dependency/other-source dispositions;
+        several dependencies impose one hold, never additional interpretations.
         """
         if not self.navigation.enabled:
             return (SeekingFocalAllocationV1("navigation_disabled") if seeking_attention is not None else None,
-                    SuckleFocalAllocationV1("navigation_disabled"), None)
+                    SuckleFocalAllocationV1("navigation_disabled") if suckle_attention is not None else None,
+                    ExtractionFocalAllocationV1("navigation_disabled") if extraction_attention is not None else None, None)
         seeking_candidate = (seeking_attention.interpretation_candidate(working, cycle_id=cycle_id)
                              if seeking_attention is not None else None)
-        suckle_candidate = suckle_attention.interpretation_candidate(working, cycle_id=cycle_id)
-        candidates = tuple(item for item in (seeking_candidate, suckle_candidate) if item is not None)
+        suckle_candidate = (suckle_attention.interpretation_candidate(working, cycle_id=cycle_id)
+                            if suckle_attention is not None else None)
+        extraction_candidate = (extraction_attention.interpretation_candidate(working, cycle_id=cycle_id)
+                               if extraction_attention is not None else None)
+        candidates = tuple(item for item in (seeking_candidate, suckle_candidate, extraction_candidate) if item is not None)
         if working is not None and candidates:
             winner = self.navigation.allocate_outcome_interpretation(working, candidates, cycle_id=cycle_id, at_tick=cutoff_tick)
             grant = self.navigation.last_decision
@@ -1856,15 +1864,24 @@ class Nca8RightingPreviewSessionV1:
             if seeking_attention is not None:
                 seeking_allocation = (seeking_attention.allocate(working, cycle_id=cycle_id) if winner is seeking_candidate
                                       else SeekingFocalAllocationV1("deferred_other_interpretation"))
-            suckle_allocation = (suckle_attention.allocate(working, cycle_id=cycle_id, grant=grant) if winner is suckle_candidate
-                                 else SuckleFocalAllocationV1("deferred_other_interpretation"))
-            return seeking_allocation, suckle_allocation, grant
+            suckle_allocation = None
+            if suckle_attention is not None:
+                suckle_allocation = (suckle_attention.allocate(working, cycle_id=cycle_id, grant=grant) if winner is suckle_candidate
+                                     else SuckleFocalAllocationV1("deferred_other_interpretation"))
+            extraction_allocation = None
+            if extraction_attention is not None:
+                extraction_allocation = (extraction_attention.allocate(working, cycle_id=cycle_id, grant=grant)
+                                         if winner is extraction_candidate else ExtractionFocalAllocationV1("deferred_other_interpretation"))
+            return seeking_allocation, suckle_allocation, extraction_allocation, grant
         seeking_allocation = seeking_attention.allocate(working, cycle_id=cycle_id) if seeking_attention is not None else None
-        return seeking_allocation, suckle_attention.allocate(working, cycle_id=cycle_id), None
+        suckle_allocation = suckle_attention.allocate(working, cycle_id=cycle_id) if suckle_attention is not None else None
+        extraction_allocation = extraction_attention.allocate(working, cycle_id=cycle_id) if extraction_attention is not None else None
+        return seeking_allocation, suckle_allocation, extraction_allocation, None
 
     def select_prepared(
         self, opportunity: RightingSourceOpportunityV1, *, maternal_attention: MaternalOutcomeAttentionV1 | None = None,
         seeking_attention: SeekingOutcomeAttentionV1 | None = None, suckle_attention: SuckleOutcomeAttentionV1 | None = None,
+        extraction_attention: SuckleExtractionAttentionV1 | None = None,
     ) -> RightingPreviewResultV1:
         """Use the actual Attention and Navigation owners in D, once per source basis.
 
@@ -1889,6 +1906,8 @@ class Nca8RightingPreviewSessionV1:
             raise TypeError("seeking focal work requires the configured source-owned outcome route")
         if suckle_attention is not None and not isinstance(suckle_attention, SuckleOutcomeAttentionV1):
             raise TypeError("Suckle focal work requires the configured source-owned outcome route")
+        if extraction_attention is not None and not isinstance(extraction_attention, SuckleExtractionAttentionV1):
+            raise TypeError("extraction focal work requires the configured source-owned route")
         cycle, source = opportunity.cycle_id, opportunity.source
         bids = list(opportunity.competing_bids)
         source_bid = None
@@ -1919,11 +1938,12 @@ class Nca8RightingPreviewSessionV1:
                                    else MaternalFocalAllocationV1("navigation_disabled"))
         seeking_allocation = None
         suckle_allocation = None
+        extraction_allocation = None
         interpretation_decision = None
-        if suckle_attention is not None:
-            seeking_allocation, suckle_allocation, interpretation_decision = self._allocate_feeding_outcome_work(
+        if suckle_attention is not None or extraction_attention is not None:
+            seeking_allocation, suckle_allocation, extraction_allocation, interpretation_decision = self._allocate_feeding_outcome_work(
                 working, cycle_id=cycle, cutoff_tick=opportunity.cutoff_tick,
-                seeking_attention=seeking_attention, suckle_attention=suckle_attention,
+                seeking_attention=seeking_attention, suckle_attention=suckle_attention, extraction_attention=extraction_attention,
             )
         elif seeking_attention is not None:
             seeking_allocation = (seeking_attention.allocate(working, cycle_id=cycle) if self.navigation.enabled
@@ -1945,6 +1965,14 @@ class Nca8RightingPreviewSessionV1:
                 hold_reason = "feeding_dependent_unresolved"
             else:
                 raise RuntimeError("Suckle cannot add a second demanding interpretation")
+        if extraction_allocation is not None and not extraction_allocation.permits_primitive_selection:
+            if hold_reason is None:
+                hold_reason = f"extraction_{extraction_allocation.kind}"
+            elif (hold_reason in {"seeking_dependent_unresolved", "suckle_dependent_unresolved", "feeding_dependent_unresolved"}
+                  and extraction_allocation.kind == "dependent_unresolved"):
+                hold_reason = "feeding_dependent_unresolved"
+            else:
+                raise RuntimeError("extraction cannot add another demanding interpretation")
         if interpretation_decision is not None:
             decision = interpretation_decision  # Navigation reserved the opportunity before request consumption.
         elif hold_reason is not None:
@@ -1956,7 +1984,7 @@ class Nca8RightingPreviewSessionV1:
         result = RightingPreviewResultV1(
             cycle, opportunity.cutoff_tick, source, selection, decision, None, self.righting.task,
             opportunity.source_status, opportunity.persistence_rank, allocation, source_bid if outcome_owner is not None else None,
-            maternal_allocation, seeking_allocation, suckle_allocation,
+            maternal_allocation, seeking_allocation, suckle_allocation, extraction_allocation,
         )
         self._selected = result
         return result

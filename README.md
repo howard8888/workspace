@@ -69,6 +69,56 @@ Host cca8_run.py v0.30.41 registers115 components and the unchanged eight host/l
 behavioral primitives. Scoped validation excludes only the two declared Pyvis export
 tests; Pylint/mypy remain owner-run. Preflight owns the one repository-wide run.
 Manual/Windows qualification and Howard's acceptance are separate from implementation.
+## P16-2C-L-E — Extraction discrepancy, Attention and one interpretation
+
+L-D's original extraction result can now make a bounded contribution to the
+ordinary feeding-source bid. This extension is default-disabled through
+`SuckleProfileV1.extraction_outcome_attention_enabled`. It requires extraction
+correspondence, not the old latch I/J/K consumers. The original result, quantities,
+coverage and task/target deadlines remain unchanged.
+
+The causal path is original L-D publication -> source-owned question -> ordinary
+Attention -> current feeding WNM -> one Navigation-granted interpretation. The
+existing allocator considers at most three same-source heads (seeking, latch,
+extraction) before any is consumed. Oldest original admission and stable request
+identity select one winner. Losing requests retain their original expiry.
+Outcome questions are not IPs. Interpretation neither reapplies an IP nor supplies
+another PNM, motor target, remedy, retry, learning update or extraction batch.
+
+The initial engineering profile admits actual sampled touch/seal loss, a known
+incompatible part/parent relationship, or at least 0.02 m of original mouth/detail
+displacement. L-D's 0.005 m comparison tolerance is not changed. A geometric seal
+mismatch cannot bypass the significance threshold when touch/seal sensing does not
+show loss. Milk was not predicted: zero, partial or unavailable milk evidence does
+not itself trigger this discrepancy route. Interruption or unknown motion alone
+is not reclassified as an executed prediction failure.
+
+There is at most one new extraction question, lasting eight physical ticks from
+its original publication/admission, plus one dependency and up to eight diagnostic
+dispositions. Rank 40 combines by maximum, never by adding several outcome ranks.
+A source that remains inaccessible cannot be fabricated or refreshed by the
+question. This is not general source reinstatement or general uncertainty/stall
+escalation. Original motor, evidence, question and learning lifetimes stay separate.
+
+Interpretation records still-relevant, historically-resolved or unresolved current
+relevance. Restored current contact does not repair an earlier failed expectation;
+a current stroke endpoint cannot prove an earlier reciprocation. K remains the
+old latch eligibility owner. The one-contribution L-C cap remains unchanged.
+
+Review through Main -> Watch Cognition Run (1) -> NCA8 (4) -> Feeding (15) -> 32,
+or run the shared command:
+
+    python scripts/review_nca8_feeding.py --suckle-extraction-attention --case all --detail
+
+The 26 finite physical/cognitive cases include fixed-input route-on/off source
+competition, an already-focal source, unavailable-source expiry, independent old
+owner settings, negative milk controls and adverse execution. Three-way contention
+uses separately labelled original-evidence contract fixtures in tests, not an
+assertion that three simultaneous questions arose naturally in these trajectories.
+Options 26 through 31 retain their prior reviews. Scoped validation excludes only
+the two Pyvis export files; Pylint/mypy/Pyvis remain owner-run checks. No new
+nourishment, Rest, durable learning or default-runtime promotion is claimed.
+
 ## P16-2C-L-D — Original extraction correspondence and interval milk evidence
 
 This optional experimental reader evaluates the original Navigation-selected

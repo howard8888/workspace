@@ -34,10 +34,11 @@ from nca8_visual import VisualDetectionV1
 if TYPE_CHECKING:
     from nca8_seek_attention import SeekingOutcomeAttentionV1
     from nca8_suckle_attention import SuckleOutcomeAttentionV1
+    from nca8_suckle_extraction_attention import SuckleExtractionAttentionV1
     from nca8_seek_learning import SeekingLearningHookV1
     from nca8_suckle_learning import SuckleLearningHookV1
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "FeedingDetailSeedV1", "FeedingDetailProfileV1", "FeedingDetailNavMapStateV1",
     "FeedingDetailCandidateV1", "FeedingDetailSourceV1", "__version__",
@@ -457,6 +458,7 @@ class FeedingDetailSourceV1:
         self._influence: tuple[str, int] | None = None
         self._outcome_attention: SeekingOutcomeAttentionV1 | None = None
         self._suckle_outcome_attention: SuckleOutcomeAttentionV1 | None = None
+        self._extraction_outcome_attention: SuckleExtractionAttentionV1 | None = None
         self._learning_hook: SeekingLearningHookV1 | None = None
         self._suckle_learning_hook: SuckleLearningHookV1 | None = None
 
@@ -477,6 +479,24 @@ class FeedingDetailSourceV1:
             raise RuntimeError("configure seeking relevance only once before source updates")
         import nca8_seek_attention  # pylint: disable=import-outside-toplevel
         self._outcome_attention = nca8_seek_attention.SeekingOutcomeAttentionV1(self._stream, self._profile.seed)
+
+    @property
+    def extraction_outcome_attention(self) -> SuckleExtractionAttentionV1 | None:
+        """Read L-E's bounded question owner, not an IP or a new executive."""
+        return self._extraction_outcome_attention
+
+    def configure_extraction_outcome_attention(self, *, diagnostic_capacity: int = 8) -> None:
+        """Attach one historical-extraction route before processing this generation.
+
+        The local import retains the existing source-schema/executive boundary.
+        No source fact, original task lifetime, motor right or learner is changed.
+        """
+        if self._current is not None or self._extraction_outcome_attention is not None:
+            raise RuntimeError("configure extraction relevance once before source updates")
+        import nca8_suckle_extraction_attention  # pylint: disable=import-outside-toplevel
+        self._extraction_outcome_attention = nca8_suckle_extraction_attention.SuckleExtractionAttentionV1(
+            self._stream, self._profile.seed, diagnostic_capacity=diagnostic_capacity,
+        )
 
     @property
     def suckle_outcome_attention(self) -> SuckleOutcomeAttentionV1 | None:

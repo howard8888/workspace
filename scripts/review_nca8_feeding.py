@@ -27,6 +27,8 @@ contribution; task-PNM/milk scoring, nourishment and full feeding remain deferre
 The --suckle-extraction-outcomes route adds original C2 relation/interval-milk
 accounting, with a separate unchanged-action consumer-off control. It grants no
 next task, interpretation, nourishment, new participation or learning.
+The --suckle-extraction-attention route adds a bounded measured-discrepancy
+question and one Navigation-granted interpretation, never another extraction batch.
 The default source/access route and its complete exports remain unchanged.
 This helper writes no repository files; neither review closes P16-2C or B99.
 Any failed review check produces a nonzero exit. Run from any directory.
@@ -44,6 +46,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from nca8_suckle_extraction_attention_demo import (
+    EXTRACTION_ATTENTION_CASES_V1, render_extraction_attention_v1, run_extraction_attention_v1,
+)
 from nca8_suckle_extraction_outcomes_demo import (
     SUCKLE_EXTRACTION_OUTCOME_CASES_V1, render_suckle_extraction_outcome_v1, run_suckle_extraction_outcome_v1,
 )
@@ -71,6 +76,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run a declared finite case; never infer or repair an unknown selector."""
     parser = argparse.ArgumentParser(description=__doc__)
     family = parser.add_mutually_exclusive_group()
+    family.add_argument("--suckle-extraction-attention", action="store_true", help="review extraction relevance and one Navigation interpretation")
     family.add_argument("--suckle-extraction-outcomes", action="store_true", help="review original extraction and measured interval milk; no next action")
     family.add_argument("--suckle-extraction", action="store_true", help="review one Navigation-selected Suckle extraction contribution")
     family.add_argument("--oral-extraction-control", action="store_true", help="review supplied BodyMap extraction/return control")
@@ -89,12 +95,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--detail", action="store_true", help="include actual source-selection timeline")
     parser.add_argument("--json", action="store_true", help="export complete detached evidence rather than text")
     args = parser.parse_args(argv)
-    allowed = (SUCKLE_EXTRACTION_OUTCOME_CASES_V1 if args.suckle_extraction_outcomes else SUCKLE_EXTRACTION_CASES_V1 if args.suckle_extraction else ORAL_EXTRACTION_CONTROL_CASES_V1 if args.oral_extraction_control else ORAL_EXTRACTION_CASES_V1 if args.oral_extraction else SUCKLE_LEARNING_CASES_V1 if args.suckle_learning else SUCKLE_ATTENTION_CASES_V1 if args.suckle_attention else SUCKLE_OUTCOME_CASES_V1 if args.suckle_outcomes else SUCKLE_LATCH_CASES_V1 if args.suckle else ORAL_SEAL_CASES_V1 if args.oral_seal else SEEKING_LEARNING_CASES_V1 if args.seek_learning else SEEKING_ATTENTION_CASES_V1 if args.seek_attention else
+    allowed = (EXTRACTION_ATTENTION_CASES_V1 if args.suckle_extraction_attention else SUCKLE_EXTRACTION_OUTCOME_CASES_V1 if args.suckle_extraction_outcomes else SUCKLE_EXTRACTION_CASES_V1 if args.suckle_extraction else ORAL_EXTRACTION_CONTROL_CASES_V1 if args.oral_extraction_control else ORAL_EXTRACTION_CASES_V1 if args.oral_extraction else SUCKLE_LEARNING_CASES_V1 if args.suckle_learning else SUCKLE_ATTENTION_CASES_V1 if args.suckle_attention else SUCKLE_OUTCOME_CASES_V1 if args.suckle_outcomes else SUCKLE_LATCH_CASES_V1 if args.suckle else ORAL_SEAL_CASES_V1 if args.oral_seal else SEEKING_LEARNING_CASES_V1 if args.seek_learning else SEEKING_ATTENTION_CASES_V1 if args.seek_attention else
                SEEK_NIPPLE_OUTCOME_CASES_V1 if args.seek_outcomes else SEEK_NIPPLE_CASES_V1 if args.seek else
                ORAL_CONTACT_CASES_V1 if args.oral else FEEDING_DETAIL_CASES_V1)
     if args.case != "all" and args.case not in allowed:
         parser.error("case is not available in this review; choose: all, " + ", ".join(allowed))
     cases = allowed if args.case == "all" else (args.case,)
+    if args.suckle_extraction_attention:
+        extraction_attention_results = tuple(run_extraction_attention_v1(case) for case in cases)
+        print(json.dumps([item.as_dict() for item in extraction_attention_results], sort_keys=True, allow_nan=False) if args.json else
+              "\n\n".join(render_extraction_attention_v1(item, detail=args.detail) for item in extraction_attention_results))
+        return int(any(item.review_status != "PASS" for item in extraction_attention_results))
     if args.suckle_extraction_outcomes:
         extraction_outcomes = tuple(run_suckle_extraction_outcome_v1(case) for case in cases)
         print(json.dumps([item.as_dict() for item in extraction_outcomes], sort_keys=True, allow_nan=False) if args.json else

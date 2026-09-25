@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 # a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "SourceNavMapStateV1",
     "AttentionBidV1",
@@ -711,8 +711,8 @@ class NavigationRuntimeV1:
     ) -> OutcomeInterpretationCandidateV1 | None:
         """Grant one question BEFORE any domain owner consumes its pending request.
 
-        J supplies at most two same-source heads (seeking and Suckle), not a new
-        scheduler or a task repertoire. All candidates validate before commitment.
+        L-E supplies at most three same-source heads (seeking, latch and extraction),
+        not a new scheduler or a task repertoire. All candidates validate before commitment.
         Oldest original admission wins, with request identity as an explicit stable
         tie-break; caller/registration order has no effect. The winner reserves
         this opportunity with a nonprimitive Navigation decision. Only afterward
@@ -728,8 +728,8 @@ class NavigationRuntimeV1:
             raise ValueError("interpretation arbitration requires Navigation's current WNM")
         if self._last_decision is not None and self._last_decision.cycle_id >= cycle:
             raise ValueError("the existing focal allocation has already been used")
-        if not isinstance(candidates, tuple) or len(candidates) > 2:
-            raise ValueError("J accepts at most two same-source interpretation candidates")
+        if not isinstance(candidates, tuple) or len(candidates) > 3:
+            raise ValueError("at most three same-source interpretation candidates")
         for candidate in candidates:
             if not isinstance(candidate, OutcomeInterpretationCandidateV1):
                 raise TypeError("interpretation candidates are question records, not IPs")

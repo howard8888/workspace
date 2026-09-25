@@ -26,9 +26,9 @@ from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetDispos
 from nca8_suckle import SuckleExtractionApplicationV1
 from nca8_suckle_outcomes import SuckleEndpointV1, SuckleIntervalEvidenceV1
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = ["SuckleExtractionClaimV1", "SuckleExtractionOutcomeV1", "SuckleExtractionOutcomeFrameV1",
-           "SuckleExtractionOutcomeRuntimeV1", "__version__"]
+           "SuckleExtractionOutcomeRuntimeV1", "validate_suckle_extraction_outcome_v1", "__version__"]
 _GEOMETRY_TOLERANCE = 0.005
 _RELATIONS = ("mouth_position", "detail_anchor", "sealed_contact", "finite_reciprocation")
 _ENDS = frozenset({LocalTargetDispositionV1.CANCELLED, LocalTargetDispositionV1.INTERRUPTED,
@@ -203,6 +203,7 @@ class SuckleExtractionOutcomeFrameV1:
     outcomes: tuple[SuckleExtractionOutcomeV1, ...]
     pending: SuckleExtractionClaimV1 | None
     comparison_enabled: bool
+    attention_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Expose new results once; retained history is a separate diagnostic read."""
@@ -210,7 +211,8 @@ class SuckleExtractionOutcomeFrameV1:
                 "registration": self.registration.as_dict() if self.registration else None,
                 "outcomes": [item.as_dict() for item in self.outcomes], "pending": self.pending.as_dict() if self.pending else None,
                 "comparison_enabled": self.comparison_enabled, "durable_updates": 0,
-                "attention_route": "unimplemented_for_extraction", "learning_route": "unimplemented_for_extraction"}
+                "attention_route": "suckle_extraction_attention_v1" if self.attention_enabled else "unimplemented_for_extraction",
+                "learning_route": "unimplemented_for_extraction"}
 
 
 @dataclass(slots=True)
@@ -470,3 +472,96 @@ class SuckleExtractionOutcomeRuntimeV1:
             relations = tuple(zip(_RELATIONS, (*verdicts, movement)))
         return SuckleExtractionOutcomeV1(claim, cutoff, end, status, evidence.installed, evidence.command_ticks,
                                          evidence.termination, samples, evidence.confirmations, relations, self.compare_predictions)
+
+
+
+def validate_suckle_extraction_outcome_v1(
+    outcome: SuckleExtractionOutcomeV1, *, stream: MotorStreamRefV1, cutoff_tick: int,
+) -> None:
+    """Validate original evidence before a downstream relevance contribution.
+
+    This is a bounded consistency check, not authentication, perfect causal credit,
+    or a second result publication. Existing claim, endpoint and local-report
+    validators check the original immutable objects. A private temporary reader
+    reuses the UNCHANGED original finish calculation; it does not consume input,
+    access a current source or alter the real publisher. Historical milk and
+    relation records therefore cannot gain behavioral influence from forged scores.
+    Actual provenance still comes from the core routing the new publication tuple.
+    """
+    cutoff = _tick(cutoff_tick)
+    if not isinstance(outcome, SuckleExtractionOutcomeV1) or not isinstance(stream, MotorStreamRefV1):
+        raise TypeError("extraction relevance requires a typed original result and stream")
+    claim = outcome.claim
+    if not isinstance(claim, SuckleExtractionClaimV1):
+        raise TypeError("extraction result lost its original claim")
+    replace(claim)
+    preview = claim.application.projection
+    if preview.basis.stream != stream or preview.pnm.primitive_id != "ip:suckle":
+        raise ValueError("extraction result belongs to another stream, generation or operation")
+    evaluated, end = _tick(outcome.evaluated_tick), _tick(outcome.end_tick)
+    if not claim.start_tick <= evaluated <= cutoff or not claim.start_tick <= end <= claim.due_tick:
+        raise ValueError("extraction result changed its original event or publication window")
+    if not isinstance(outcome.installed, bool) or not isinstance(outcome.comparison_enabled, bool):
+        raise TypeError("extraction installation and comparison flags must be Boolean")
+    statuses = {"not_applied", "execution_unknown_after_fault", "uninstalled_unresolved", "observed_without_command",
+                "no_command_evidence", "local_sequence_observed", "interrupted", "expired_unresolved"}
+    if not isinstance(outcome.status, str) or outcome.status not in statuses:
+        raise ValueError("unknown original extraction disposition")
+    if outcome.termination is not None and outcome.termination not in {item.value for item in _ENDS} | {"replacement"}:
+        raise ValueError("unknown original extraction termination")
+    for values, bound in ((outcome.command_ticks, 8), (outcome.samples, 8), (outcome.confirmations, 4), (outcome.relations, 4)):
+        if not isinstance(values, tuple) or len(values) > bound:
+            raise ValueError("extraction result exceeds its immutable bounded evidence contract")
+    if (len(outcome.relations) != 4 or any(not isinstance(row, tuple) or len(row) != 2 for row in outcome.relations)
+            or tuple(row[0] for row in outcome.relations) != _RELATIONS):
+        raise ValueError("extraction result changed its original relation vocabulary or order")
+    for tick in outcome.command_ticks:
+        if not claim.start_tick <= _tick(tick) < end:
+            raise ValueError("extraction exposure is outside its accounted original contribution")
+    if tuple(sorted(set(outcome.command_ticks))) != outcome.command_ticks:
+        raise ValueError("extraction exposure must be distinct and ordered")
+    if (outcome.command_ticks or outcome.confirmations) and (not outcome.installed or not claim.targets):
+        raise ValueError("extraction exposure/progress requires reported original installation")
+    if outcome.installed and not claim.targets:
+        raise ValueError("nonapplication cannot claim installation")
+    if not claim.targets and (outcome.samples or outcome.termination is not None or end != claim.start_tick):
+        raise ValueError("veto cannot contain an applied outcome")
+    original_body = preview.basis.oral_feedback
+    if original_body is None:
+        raise ValueError("original extraction claim lacks its body acquisition")
+    previous_event, previous_id = claim.start_tick, original_body.sample_id
+    for endpoint in outcome.samples:
+        if not isinstance(endpoint, SuckleEndpointV1):
+            raise TypeError("extraction result requires its original typed acquisitions")
+        replace(endpoint)
+        sample = endpoint.feedback
+        sample.validate_available(stream=stream, at_tick=evaluated)
+        if (not previous_event < sample.event_tick <= end or sample.sample_id <= previous_id
+                or sample.available_tick > claim.last_acceptable_availability_tick):
+            raise ValueError("extraction acquisition changed identity, order or original timing")
+        previous_event, previous_id = sample.event_tick, sample.sample_id
+    achieved = outcome.status == "local_sequence_observed"
+    if claim.targets:
+        LocalTargetReportV1(claim.targets[0], LocalTargetDispositionV1.ACHIEVED if achieved else LocalTargetDispositionV1.UNRESOLVED,
+                            evaluated, "original_result_validation", outcome.confirmations[-1] if outcome.confirmations else None,
+                            extraction_confirmations=outcome.confirmations)
+    for sample in outcome.confirmations:
+        if not any(endpoint.feedback == sample for endpoint in outcome.samples):
+            raise ValueError("endpoint reference is not the original accounted acquisition")
+    if achieved and (end != outcome.confirmations[-1].event_tick or outcome.termination not in (None, "expired")):
+        raise ValueError("achieved extraction changed its endpoint or revived a cancellation")
+    forced = outcome.status if outcome.status in {"not_applied", "execution_unknown_after_fault"} else None
+    if outcome.status == "not_applied" and (claim.targets or evaluated != claim.start_tick):
+        raise ValueError("nonapplication must retain its original veto opportunity")
+    if forced is None:
+        complete = len(outcome.samples) == end - claim.start_tick
+        if not ((evaluated >= claim.due_tick and complete and (achieved or outcome.termination is not None))
+                or evaluated > claim.last_acceptable_availability_tick):
+            raise ValueError("extraction result published before its original evidence policy allowed")
+    # Reuse the publisher's pure calculation on a private snapshot, never its live state.
+    reader = SuckleExtractionOutcomeRuntimeV1(stream, compare_predictions=outcome.comparison_enabled)
+    reader._claim = claim
+    evidence = _Evidence(outcome.installed, end, outcome.termination, outcome.command_ticks,
+                         outcome.samples, outcome.confirmations, achieved)
+    if reader._finish(evidence, evaluated, forced_status=forced) != outcome:
+        raise ValueError("extraction result disagrees with its original canonical evidence and comparison")

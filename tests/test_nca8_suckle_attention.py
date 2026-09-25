@@ -498,7 +498,7 @@ def test_Navigation_rejects_bad_candidates_before_any_reservation(defect):
     elif defect == "duplicate":
         offered = (candidate, candidate)
     elif defect == "too_many":
-        offered = (candidate,) * 3
+        offered = tuple(replace(candidate, request_id=f"question:{i}") for i in range(4))
     elif defect == "IP":
         offered = (SuckleIPV1,)
     else:

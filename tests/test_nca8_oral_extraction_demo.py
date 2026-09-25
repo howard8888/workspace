@@ -283,7 +283,7 @@ def test_registry_versions_and_preserved_task_factory():
     import cca8_support_world
     from nca8_suckle_demo import create_suckle_trial_v1
     rows = cca8_run._cca8_component_rows()
-    assert cca8_run.__version__ == "0.30.42" and len(rows) == 117
+    assert cca8_run.__version__ == "0.30.43" and len(rows) == 119
     assert cca8_motor_contracts.__version__ == "0.6.0"
     assert cca8_support_world.__version__ == "0.7.0"
     assert ("nca8_oral_extraction_demo", "nca8_oral_extraction_demo") in cca8_run._CCA8_COMPONENT_REGISTRY
