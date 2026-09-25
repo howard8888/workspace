@@ -35,7 +35,7 @@ from nca8_primitives import PrimitiveApplicationV1
 # Small validators intentionally remain local for readable standalone modules.
 # pylint: disable=duplicate-code
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     "Nca8PredictionRuntimeV1",
     "PendingPredictionTraceV1",
@@ -464,7 +464,7 @@ class SuckleExtractionPreviewV1:
     and finite reciprocation are conditional, not observations. The lower target
     owns individual stroke endpoints. No milk yield is predicted from an unknown
     supply. This preview uses the existing single PNM slot; its task-level
-    extraction/milk comparator is explicitly unimplemented, not a closure claim.
+    extraction/milk reader is independently optional. It is never a closure claim.
     """
 
     pnm: ProjectedNavMapV1
@@ -475,6 +475,7 @@ class SuckleExtractionPreviewV1:
     outward_extent: float
     repetitions: int
     horizon_ticks: int
+    outcomes_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.pnm, ProjectedNavMapV1) or not isinstance(self.basis, FeedingDetailNavMapStateV1):
@@ -497,6 +498,8 @@ class SuckleExtractionPreviewV1:
             raise ValueError("extraction prediction describes one or two finite cycles")
         if isinstance(self.horizon_ticks, bool) or not isinstance(self.horizon_ticks, int) or not 1 <= self.horizon_ticks <= 8:
             raise ValueError("extraction prediction requires an original one-to-eight-tick horizon")
+        if not isinstance(self.outcomes_enabled, bool):
+            raise TypeError("extraction outcome disclosure must be Boolean")
         object.__setattr__(self, "outward_extent", float(self.outward_extent))
 
     def as_dict(self) -> dict[str, object]:
@@ -508,7 +511,12 @@ class SuckleExtractionPreviewV1:
                 "outward_extent": self.outward_extent, "repetitions": self.repetitions,
                 "horizon_ticks": self.horizon_ticks, "model": "suckle_bounded_extraction_v1",
                 "status": "conditional_not_observed", "predicted_relation": "sealed_contact_during_finite_reciprocation",
-                "milk_prediction": "not_supplied_supply_unverified", "task_outcome_consumer": "unimplemented_unscored",
+                "milk_prediction": "not_supplied_supply_unverified", "task_outcome_consumer":
+                "suckle_extraction_correspondence_v1" if self.outcomes_enabled else "unimplemented_unscored",
+                **({"observation_policy": {"start_tick": self.basis.cutoff_tick,
+                     "end_tick": self.basis.cutoff_tick + self.horizon_ticks,
+                     "last_acceptable_availability_tick": self.basis.cutoff_tick + self.horizon_ticks + 8,
+                     "milk_yield_predicted": False}} if self.outcomes_enabled else {}),
                 "local_target_completion_is_pnm_fulfilment": False, "full_suckle_complete": False,
                 "learned_operation": False}
 

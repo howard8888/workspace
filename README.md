@@ -69,6 +69,44 @@ Host cca8_run.py v0.30.41 registers115 components and the unchanged eight host/l
 behavioral primitives. Scoped validation excludes only the two declared Pyvis export
 tests; Pylint/mypy remain owner-run. Preflight owns the one repository-wide run.
 Manual/Windows qualification and Howard's acceptance are separate from implementation.
+## P16-2C-L-D — Original extraction correspondence and interval milk evidence
+
+This optional experimental reader evaluates the original Navigation-selected
+extraction contribution. It consumes the existing frozen Suckle interval lane at
+C2; it does not change the Suckle action policy, the one-contribution cap, motor
+permission, Attention/Navigation allocation, I/J/K, or the L-A/L-B mechanism.
+The registered original claim, returned commanded exposure, ordered local movement,
+paired sampled scene/contact relations and interval milk quantities remain separate.
+
+Enable `SuckleProfileV1.extraction_outcomes_enabled` with the existing extraction
+profile. It is independent of the closure I/J/K options and defaults to false.
+`extraction_prediction_comparison_enabled=False` removes only task-relation scoring;
+original registration, exposure, sensing and quantity/coverage remain available.
+The original extraction preview never predicted milk yield: a dry surface is not
+therefore a failed milk forecast. No new Attention route or learning hook is supplied.
+
+The original at-most-eight-tick movement window receives a separately fixed
+eight-tick sensory-arrival allowance. A shorter actual completion or interruption
+limits the accounted contribution without erasing its delayed acquisitions.
+Each original interval is counted at most once; repeated report/delivery references
+are not independent experience. Known sum, missing intervals and original-detail
+association are explicit. Partial coverage cannot establish a physical total.
+At most one claim/result, eight acquisitions and four endpoint references are retained.
+These are engineering bounds, not physiological measurements or learned competence.
+
+Menu: Main → Watch Cognition Run (1) → NCA8 (4) → Feeding (15) → 31.
+Earlier J26/K27/L-A28/L-B29/L-C30 routes remain unchanged.
+
+    python scripts/review_nca8_feeding.py --suckle-extraction-outcomes --case all --detail
+
+The shared review runs thirty-one finite cases and a separate same-condition reader-off
+control. Physical totals are observer-only, displayed beside delivered knowledge.
+Dry/depleted supply, missing/delayed sensing, interruption, original-recipient routing
+and consumer/comparison-off controls must not become new motor choices. Constructed
+same-movement/different-scene tests are labelled fixtures, not fabricated physical runs.
+Full feeding, nourishment, causal credit, another extraction batch and durable learning
+remain unimplemented. The package manifest lists every changed file for staging.
+
 
 ## NCA8 update: P16-2C-L-B supplied extraction/return targets
 

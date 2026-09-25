@@ -162,7 +162,7 @@ def test_unknown_case_is_not_repaired(bad):
 def test_host_registry_adds_J_services_not_IPs():
     import cca8_run
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
-    assert cca8_run.__version__ == "0.30.41" and len(cca8_run._cca8_component_rows()) == 115
+    assert cca8_run.__version__ == "0.30.42" and len(cca8_run._cca8_component_rows()) == 117
     assert len(cca8_run.PRIMITIVES) == 8
     assert registry["nca8_suckle_attention"] == "nca8_suckle_attention"
     assert registry["nca8_suckle_attention_demo"] == "nca8_suckle_attention_demo"

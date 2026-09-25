@@ -53,6 +53,7 @@ from nca8_seek_nipple import SeekNippleProfileV1, SeekNippleIPV1, SeekNippleAppl
 from nca8_suckle import (SuckleProfileV1, SuckleIPV1, SuckleApplicationV1, SuckleAssessmentV1,
                          SuckleExtractionApplicationV1, SuckleExtractionAssessmentV1)
 from nca8_suckle_outcomes import SuckleIntervalEvidenceV1, SuckleOutcomeV1, SuckleOutcomeFrameV1, SuckleOutcomeRuntimeV1
+from nca8_suckle_extraction_outcomes import SuckleExtractionOutcomeFrameV1, SuckleExtractionOutcomeRuntimeV1
 from nca8_suckle_attention import SuckleAttentionFrameV1, SuckleMismatchRequestV1
 from nca8_seek_outcomes import SeekNippleIntervalEvidenceV1, SeekNippleOutcomeFrameV1, SeekNippleOutcomeRuntimeV1, SeekNippleOutcomeV1
 from nca8_seek_attention import SeekingAttentionFrameV1, SeekingMismatchRequestV1
@@ -77,7 +78,7 @@ from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, Senso
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1, SensorimotorTargetKindV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.21.0"
+__version__ = "0.22.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -129,6 +130,7 @@ class IntegratedRightingCycleV1:
     suckle_attention: SuckleAttentionFrameV1 | None = None
     suckle_learning_report: SuckleLearningPhaseFReportV1 | None = None
     suckle_extraction: SuckleExtractionAssessmentV1 | None = None
+    extraction_correspondence: SuckleExtractionOutcomeFrameV1 | None = None
 
     @property
     def status(self) -> str:
@@ -162,6 +164,7 @@ class IntegratedRightingCycleV1:
                                 "not_established_visual_fixture" if self.visual_source is not None else "not_established_H6A"),
             "durable_learning_updates": 0,
             **({"suckle_extraction": self.suckle_extraction.as_dict()} if self.suckle_extraction is not None else {}),
+            **({"extraction_correspondence": self.extraction_correspondence.as_dict()} if self.extraction_correspondence is not None else {}),
             **({"suckle_initial_latch": self.suckle_task.as_dict(),
                 "suckle_learning_status": "eligibility_only" if self.suckle_learning_report is not None else "unimplemented_no_participation"}
                if self.suckle_task is not None else {}),
@@ -280,6 +283,9 @@ class IntegratedRightingCoreV1:
                                  if seek_nipple_profile is not None and seek_nipple_profile.outcomes_enabled else None)
         self.suckle_outcomes = (SuckleOutcomeRuntimeV1(stream, compare_predictions=suckle_profile.prediction_comparison_enabled)
                                 if suckle_profile is not None and suckle_profile.outcomes_enabled else None)
+        self.extraction_outcomes = (SuckleExtractionOutcomeRuntimeV1(
+            stream, compare_predictions=suckle_profile.extraction_prediction_comparison_enabled)
+            if suckle_profile is not None and suckle_profile.extraction_outcomes_enabled else None)
         self.stand_follow_enabled = stand_follow_enabled
         if visual_profile is None and (translation_capability is not None or translation_mapping_sign != 1):
             raise ValueError("translation capability/calibration requires an opt-in visual operation")
@@ -342,6 +348,8 @@ class IntegratedRightingCoreV1:
             self.seek_nipple.cancel()
         if self.suckle is not None:
             self.suckle.cancel()
+        if self.extraction_outcomes is not None:
+            self.extraction_outcomes.close(reason=self._fault)
         if self.suckle_outcomes is not None:
             self.suckle_outcomes.close(reason=self._fault)
         if self.seeking_outcomes is not None:
@@ -420,7 +428,7 @@ class IntegratedRightingCoreV1:
         if not isinstance(suckle_intervals, tuple) or len(suckle_intervals) > 16 or any(
                 not isinstance(item, SuckleIntervalEvidenceV1) for item in suckle_intervals):
             raise ValueError("Suckle intervals require a bounded immutable typed batch")
-        if self.suckle_outcomes is None and suckle_intervals:
+        if self.suckle_outcomes is None and self.extraction_outcomes is None and suckle_intervals:
             raise ValueError("Suckle interval input requires the explicit correspondence profile")
         if visual_bid_priority is not None:
             if self.visual is None or not isinstance(visual_bid_priority, tuple) or len(visual_bid_priority) != 2:
@@ -488,6 +496,10 @@ class IntegratedRightingCoreV1:
         applied = self.scheduler.phase_c_apply_frozen(cycle, self.trace)
         if tuple(item.result_id for item in applied) != (ingress.result_id,):
             raise RuntimeError("the frozen summary sidecar lost its ingress association")
+        extraction_owner = self.extraction_outcomes
+        extraction_before = extraction_owner.history() if extraction_owner is not None else ()
+        if extraction_owner is not None:
+            extraction_owner.consume_intervals(suckle_intervals, cutoff_tick=tick)
         suckle_owner = self.suckle_outcomes
         suckle_before = suckle_owner.history()[-1].number if suckle_owner is not None and suckle_owner.history() else 0
         suckle_results: tuple[SuckleOutcomeV1, ...] = ()
@@ -780,6 +792,9 @@ class IntegratedRightingCoreV1:
             self.seek_nipple.authorized(application, tuple(item.current for item in reservations))
         if isinstance(application, (SuckleApplicationV1, SuckleExtractionApplicationV1)) and self.suckle is not None:
             self.suckle.authorized(application, tuple(item.current for item in reservations))
+        extraction_registration = None
+        if extraction_owner is not None and isinstance(application, SuckleExtractionApplicationV1) and proposal is not None:
+            extraction_registration = extraction_owner.register(application, proposal, tuple(item.current for item in reservations))
         suckle_registration = None
         if suckle_owner is not None and isinstance(application, SuckleApplicationV1) and proposal is not None:
             suckle_registration = suckle_owner.register(application, proposal, tuple(item.current for item in reservations))
@@ -954,6 +969,9 @@ class IntegratedRightingCoreV1:
             seeking_task=self.seek_nipple.assessment() if self.seek_nipple is not None else None,
             suckle_task=self.suckle.assessment() if self.suckle is not None else None,
             suckle_extraction=self.suckle.extraction_assessment() if self.suckle is not None else None,
+            extraction_correspondence=SuckleExtractionOutcomeFrameV1(
+                tick, extraction_registration, extraction_owner.history() if not extraction_before else (),
+                extraction_owner.pending(), extraction_owner.compare_predictions) if extraction_owner is not None else None,
             suckle_correspondence=SuckleOutcomeFrameV1(
                 tick, tuple(item for item in suckle_owner.history() if item.number > suckle_before),
                 suckle_registration, suckle_owner.pending(), suckle_owner.compare_predictions,
@@ -1195,8 +1213,10 @@ class IntegratedRightingTrialV1:
                if self.core.feeding_detail is not None and self.core.feeding_detail.learning_hook is not None else {}),
             **(self.core.feeding_detail.suckle_learning_hook.retained_counts()
                if self.core.feeding_detail is not None and self.core.feeding_detail.suckle_learning_hook is not None else {}),
-            **({"suckle_staged_intervals": len(self._suckle_intervals), **self.core.suckle_outcomes.retained_counts()}
-               if self.core.suckle_outcomes is not None else {}),
+            **(self.core.extraction_outcomes.retained_counts() if self.core.extraction_outcomes is not None else {}),
+            **({"suckle_staged_intervals": len(self._suckle_intervals)}
+               if self.core.suckle_outcomes is not None or self.core.extraction_outcomes is not None else {}),
+            **(self.core.suckle_outcomes.retained_counts() if self.core.suckle_outcomes is not None else {}),
             **({"seeking_staged_intervals": len(self._seeking_intervals), **self.core.seeking_outcomes.retained_counts()}
                if self.core.seeking_outcomes is not None else {}),
             **({"maternal_staged_intervals": len(self._maternal_intervals), **self.core.maternal_outcomes.retained_counts()}
@@ -1242,6 +1262,9 @@ class IntegratedRightingTrialV1:
                if self.core.feeding_detail is not None else {}),
             **({"suckle_pending_requests": [item.as_dict() for item in self.core.feeding_detail.suckle_outcome_attention.pending()]}
                if self.core.feeding_detail is not None and self.core.feeding_detail.suckle_outcome_attention is not None else {}),
+            **({"extraction_pending_claim": self.core.extraction_outcomes.pending().as_dict() if self.core.extraction_outcomes.pending() else None,
+                "extraction_outcome_history": [item.as_dict() for item in self.core.extraction_outcomes.history()]}
+               if self.core.extraction_outcomes is not None else {}),
             **({"suckle_pending_claims": [item.as_dict() for item in self.core.suckle_outcomes.pending()],
                 "suckle_outcome_history": [item.as_dict() for item in self.core.suckle_outcomes.history()]}
                if self.core.suckle_outcomes is not None else {}),
@@ -1310,6 +1333,12 @@ class IntegratedRightingTrialV1:
                                    details={"tick": self.tick, "directive": motor.directive, "receipt": result.receipt.receipt_id})
             if result.reservations:
                 self.controller.install_authorized(result.reservations, at_tick=self.tick)
+                if self.core.extraction_outcomes is not None:
+                    extraction_claim = result.extraction_correspondence.registration if result.extraction_correspondence is not None else None
+                    if extraction_claim is not None:
+                        self.core.extraction_outcomes.installed(extraction_claim, at_tick=self.tick)
+                    else:
+                        self.core.extraction_outcomes.end_execution(at_tick=self.tick, reason="replacement")
                 if self.core.suckle_outcomes is not None:
                     suckle_claim = result.suckle_correspondence.registration if result.suckle_correspondence is not None else None
                     if suckle_claim is not None:
@@ -1342,6 +1371,8 @@ class IntegratedRightingTrialV1:
                                                 "installation_count": self.controller.installation_count})
             elif motor.cancel_previous:
                 self.controller.cancel_execution(at_tick=self.tick)
+                if self.core.extraction_outcomes is not None:
+                    self.core.extraction_outcomes.end_execution(at_tick=self.tick)
                 if self.core.suckle_outcomes is not None:
                     self.core.suckle_outcomes.end_execution(at_tick=self.tick)
                 if self.core.seeking_outcomes is not None:
@@ -1379,7 +1410,7 @@ class IntegratedRightingTrialV1:
         if self.core.outcomes is not None and len(self._outcome_intervals) >= 16:
             self._stop("outcome_ingress_overflow_before_physical_step")
             raise OverflowError("sixteen lower intervals await focal outcome admission; physical time was not advanced")
-        if self.core.suckle_outcomes is not None and len(self._suckle_intervals) >= 16:
+        if (self.core.suckle_outcomes is not None or self.core.extraction_outcomes is not None) and len(self._suckle_intervals) >= 16:
             self._stop("suckle_ingress_overflow_before_physical_step")
             raise OverflowError("sixteen Suckle intervals await C2; no further physical step")
         if self.core.seeking_outcomes is not None and len(self._seeking_intervals) >= 16:
@@ -1424,7 +1455,8 @@ class IntegratedRightingTrialV1:
                                              SensorimotorTargetKindV1.ORIENTATION_ADJUST, SensorimotorTargetKindV1.SUPPORT_EXTENSION})
                                    if self._stand_follow_enabled else result.reports)
                 self._outcome_intervals.append(RightingIntervalEvidenceV1(tick, command, support_reports, delivered))
-            if self.core.maternal_outcomes is not None or self.core.seeking_outcomes is not None or self.core.suckle_outcomes is not None:
+            if (self.core.maternal_outcomes is not None or self.core.seeking_outcomes is not None
+                    or self.core.suckle_outcomes is not None or self.core.extraction_outcomes is not None):
                 observations: list[VisualObservationV1] = []
                 for sample in delivered:
                     observation = admit_motor_visual_surface_v1(self._world.visual_surface(feedback=sample), sample)
@@ -1434,7 +1466,7 @@ class IntegratedRightingTrialV1:
                     self._maternal_intervals.append(MaternalIntervalEvidenceV1(tick, command, result.reports, delivered, tuple(observations)))
                 if self.core.seeking_outcomes is not None:
                     self._seeking_intervals.append(SeekNippleIntervalEvidenceV1(tick, command, result.reports, delivered, tuple(observations)))
-                if self.core.suckle_outcomes is not None:
+                if self.core.suckle_outcomes is not None or self.core.extraction_outcomes is not None:
                     self._suckle_intervals.append(SuckleIntervalEvidenceV1(tick, command, result.reports, delivered, tuple(observations)))
             self.core.trace.append(
                 "hierarchy_input", "physical interval completed; due sensing staged for later consumers",
@@ -1479,6 +1511,8 @@ class IntegratedRightingTrialV1:
         if self.core.handoff.has_pending_request:
             raise RuntimeError("resolve the pending focal handoff before cancellation")
         self.controller.cancel_execution(at_tick=self.tick)
+        if self.core.extraction_outcomes is not None:
+            self.core.extraction_outcomes.end_execution(at_tick=self.tick)
         if self.core.suckle_outcomes is not None:
             self.core.suckle_outcomes.end_execution(at_tick=self.tick)
         if self.core.seeking_outcomes is not None:

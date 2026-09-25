@@ -312,7 +312,7 @@ def test_cli_failed_review_produces_nonzero_exit(monkeypatch):
 
 def test_registry_reports_new_production_modules_not_full_suckle():
     import cca8_run
-    assert cca8_run.__version__ == "0.30.41"
-    assert len(cca8_run._cca8_component_rows()) == 115 and len(cca8_run.PRIMITIVES) == 8
+    assert cca8_run.__version__ == "0.30.42"
+    assert len(cca8_run._cca8_component_rows()) == 117 and len(cca8_run.PRIMITIVES) == 8
     rows = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert rows["nca8_suckle"] == "nca8_suckle" and rows["nca8_suckle_demo"] == "nca8_suckle_demo"

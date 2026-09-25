@@ -208,7 +208,7 @@ def test_default_H_factory_has_no_extraction_route_and_registry_has_one_new_serv
     trial = create_suckle_trial_v1(outcomes_enabled=True, outcome_attention_enabled=True, learning_hook_enabled=True)
     assert trial.core.suckle.profile.extraction_enabled is False
     assert trial.latest_feedback.oral_extraction is None
-    assert cca8_run.__version__ == "0.30.41"
-    assert len(cca8_run._cca8_component_rows()) == 115
+    assert cca8_run.__version__ == "0.30.42"
+    assert len(cca8_run._cca8_component_rows()) == 117
     assert ("nca8_suckle_extraction_demo", "nca8_suckle_extraction_demo") in cca8_run._CCA8_COMPONENT_REGISTRY
     assert len(cca8_run.PRIMITIVES) == 8

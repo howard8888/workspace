@@ -370,5 +370,5 @@ def test_registry_contains_two_real_components_without_new_host_primitives():
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_seek_attention"] == "nca8_seek_attention"
     assert registry["nca8_seek_attention_demo"] == "nca8_seek_attention_demo"
-    assert cca8_run.__version__ == "0.30.41"
-    assert len(cca8_run._cca8_component_rows()) == 115 and len(cca8_run.PRIMITIVES) == 8
+    assert cca8_run.__version__ == "0.30.42"
+    assert len(cca8_run._cca8_component_rows()) == 117 and len(cca8_run.PRIMITIVES) == 8
