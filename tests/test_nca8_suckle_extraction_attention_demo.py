@@ -173,5 +173,5 @@ def test_retained_detail_runs_no_second_experiment(monkeypatch, capsys):
 def test_registry_contains_services_not_extra_IPs():
     import cca8_run
     rows = cca8_run._cca8_component_rows()
-    assert len(rows) == 119
+    assert len(rows) == 121
     assert {"nca8_suckle_extraction_attention", "nca8_suckle_extraction_attention_demo"} <= {r[0] for r in rows}

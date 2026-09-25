@@ -26,7 +26,7 @@ from nca8_prediction import ProjectedNavMapV1, SucklePreviewV1, SuckleExtraction
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
 from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetReportV1, OralExtractionTargetV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = ["SuckleProfileV1", "SuckleTaskV1", "SuckleApplicationV1", "SuckleAssessmentV1", "SuckleIPV1", "SuckleExtractionEpisodeV1", "SuckleExtractionApplicationV1",
            "SuckleExtractionAssessmentV1", "__version__"]
 
@@ -62,6 +62,8 @@ class SuckleProfileV1:
     interpretation, never automatic IP reapplication or new motor permission.
     K's separate default-disabled hook records bounded participation at F. It
     requires correspondence, not J, and never implements a durable learning rule.
+    L-F separately enables one extraction recipient with a 24-physical-tick window;
+    it requires L-D correspondence, not the old latch owners or L-E Attention.
     """
 
     enabled: bool = True
@@ -75,14 +77,18 @@ class SuckleProfileV1:
     extraction_outcomes_enabled: bool = False
     extraction_prediction_comparison_enabled: bool = True
     extraction_outcome_attention_enabled: bool = False
+    extraction_learning_hook_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not all(isinstance(value, bool) for value in (
                 self.enabled, self.influence_enabled, self.outcomes_enabled, self.prediction_comparison_enabled,
                 self.outcome_attention_enabled, self.learning_hook_enabled, self.extraction_enabled,
-                self.extraction_outcomes_enabled, self.extraction_prediction_comparison_enabled, self.extraction_outcome_attention_enabled)):
+                self.extraction_outcomes_enabled, self.extraction_prediction_comparison_enabled, self.extraction_outcome_attention_enabled,
+                self.extraction_learning_hook_enabled)):
             raise TypeError("Suckle switches must be Boolean")
         _index(self.extraction_repetitions, 1, 2)
+        if self.extraction_learning_hook_enabled and not self.extraction_outcomes_enabled:
+            raise ValueError("extraction participation requires original extraction correspondence")
         if self.extraction_outcome_attention_enabled and not self.extraction_outcomes_enabled:
             raise ValueError("extraction relevance requires original extraction correspondence")
         if self.extraction_outcomes_enabled and not self.extraction_enabled:
@@ -114,11 +120,14 @@ class SuckleProfileV1:
                     "extraction_repetitions": self.extraction_repetitions, "extraction_extent": 0.10,
                     "extraction_task_correspondence": "suckle_extraction_correspondence_v1" if self.extraction_outcomes_enabled else "unimplemented_unscored",
                     **({"extraction_prediction_comparison_enabled": self.extraction_prediction_comparison_enabled}
-                       if self.extraction_outcomes_enabled else {}), "extraction_learning": "unimplemented"}
+                       if self.extraction_outcomes_enabled else {}),
+                    "extraction_learning": "suckle_extraction_no_learning_v1" if self.extraction_learning_hook_enabled else "unimplemented"}
                    if self.extraction_enabled else {}),
                 **({"extraction_outcome_attention": "suckle_extraction_attention_v1", "maximum_extraction_questions": 1,
                     "extraction_question_lifetime_ticks": 8, "interpretation_policy": "one_opportunity_then_later_response"}
                    if self.extraction_outcome_attention_enabled else {}),
+                **({"maximum_extraction_learning_participants": 1, "extraction_eligibility_lifetime_ticks": 24,
+                    "extraction_learning_maturity": "eligibility_only"} if self.extraction_learning_hook_enabled else {}),
                 "full_suckle_task": "not_implemented"}
 
 
@@ -305,13 +314,15 @@ class SuckleExtractionAssessmentV1:
     application: SuckleExtractionApplicationV1 | None
     target: CommittedBodyTargetV1 | None
     local_report: LocalTargetReportV1 | None
+    participation_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Serialize bounded evidence, not a replayable permission or feeding result."""
         return {"status": self.status, "application": self.application.as_dict() if self.application else None,
                 "target": self.target.as_dict() if self.target else None,
                 "local_report": self.local_report.as_dict() if self.local_report else None,
-                "participation": "not_implemented_for_extraction", "task_pnm_correspondence":
+                "participation": "separate_source_owned_F_hook" if self.participation_enabled else "not_implemented_for_extraction",
+                "task_pnm_correspondence":
                 "separate_extraction_correspondence_owner" if self.application is not None and self.application.projection.outcomes_enabled
                 else "unimplemented_unscored",
                 "maximum_extraction_contributions": 1, "full_suckle_complete": False, "milk_received": "not_inferred",
@@ -541,7 +552,7 @@ class SuckleIPV1:
         if not self.profile.extraction_enabled:
             return None
         return SuckleExtractionAssessmentV1(self._extraction_status, self._extraction_application,
-                                            self._extraction_target, self._extraction_report)
+                                            self._extraction_target, self._extraction_report, self.profile.extraction_learning_hook_enabled)
 
     def _prepare_extraction(
         self, basis: FeedingDetailNavMapStateV1, report: LocalTargetReportV1 | None, *, movement_blocked: bool,

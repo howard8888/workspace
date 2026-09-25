@@ -73,13 +73,14 @@ from nca8_learning import LearningPhaseFReportV1
 from nca8_maternal_learning import MaternalLearningPhaseFReportV1
 from nca8_seek_learning import SeekingLearningPhaseFReportV1
 from nca8_suckle_learning import SuckleLearningPhaseFReportV1
+from nca8_suckle_extraction_learning import ExtractionLearningPhaseFReportV1
 from nca8_runtime import Nca8RightingPreviewSessionV1, RightingPreviewResultV1
 from nca8_scheduler import CircuitPollSourceV1, Nca8DeterministicSchedulerV1, SchedulerCycleSnapshotV1
 from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, SensorimotorProfileV1, SensorimotorStepV1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1, SensorimotorTargetKindV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.23.0"
+__version__ = "0.24.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -133,6 +134,7 @@ class IntegratedRightingCycleV1:
     suckle_extraction: SuckleExtractionAssessmentV1 | None = None
     extraction_correspondence: SuckleExtractionOutcomeFrameV1 | None = None
     extraction_attention: ExtractionAttentionFrameV1 | None = None
+    extraction_learning_report: ExtractionLearningPhaseFReportV1 | None = None
 
     @property
     def status(self) -> str:
@@ -169,7 +171,11 @@ class IntegratedRightingCycleV1:
             "durable_learning_updates": 0,
             **({"suckle_extraction": self.suckle_extraction.as_dict()} if self.suckle_extraction is not None else {}),
             **({"extraction_correspondence": self.extraction_correspondence.as_dict()} if self.extraction_correspondence is not None else {}),
-            **({"extraction_attention": self.extraction_attention.as_dict()} if self.extraction_attention is not None else {}),
+            **({"extraction_attention": {**self.extraction_attention.as_dict(),
+                **({"learning_route": "separate_source_owned_F_hook"} if self.extraction_learning_report is not None else {})}}
+               if self.extraction_attention is not None else {}),
+            **({"extraction_learning_reconciliation": self.extraction_learning_report.as_dict()}
+               if self.extraction_learning_report is not None else {}),
             **({"suckle_initial_latch": self.suckle_task.as_dict(),
                 "suckle_learning_status": "eligibility_only" if self.suckle_learning_report is not None else "unimplemented_no_participation"}
                if self.suckle_task is not None else {}),
@@ -278,6 +284,8 @@ class IntegratedRightingCoreV1:
             self.feeding_detail.configure_suckle_outcome_attention()
         if self.feeding_detail is not None and suckle_profile is not None and suckle_profile.extraction_outcome_attention_enabled:
             self.feeding_detail.configure_extraction_outcome_attention()
+        if self.feeding_detail is not None and suckle_profile is not None and suckle_profile.extraction_learning_hook_enabled:
+            self.feeding_detail.configure_extraction_learning_hook(diagnostic_capacity=min(8, learning_diagnostic_capacity))
         if self.feeding_detail is not None and suckle_profile is not None and suckle_profile.learning_hook_enabled:
             self.feeding_detail.configure_suckle_learning_hook(diagnostic_capacity=learning_diagnostic_capacity)
         if self.feeding_detail is not None and seek_nipple_profile is not None and seek_nipple_profile.outcome_attention_enabled:
@@ -371,6 +379,8 @@ class IntegratedRightingCoreV1:
             self.feeding_detail.learning_hook.close()
         if self.feeding_detail is not None and self.feeding_detail.suckle_learning_hook is not None:
             self.feeding_detail.suckle_learning_hook.close()
+        if self.feeding_detail is not None and self.feeding_detail.extraction_learning_hook is not None:
+            self.feeding_detail.extraction_learning_hook.close()
         if self.maternal_outcomes is not None:
             self.maternal_outcomes.close(reason=self._fault)
         hook = self.cognition.sensory.learning_hook
@@ -905,10 +915,13 @@ class IntegratedRightingCoreV1:
         seeking_learning_report: SeekingLearningPhaseFReportV1 | None = None
         suckle_hook = self.feeding_detail.suckle_learning_hook if self.feeding_detail is not None else None
         suckle_learning_report: SuckleLearningPhaseFReportV1 | None = None
+        extraction_hook = self.feeding_detail.extraction_learning_hook if self.feeding_detail is not None else None
+        extraction_learning_report: ExtractionLearningPhaseFReportV1 | None = None
 
         def reconcile_learning() -> None:
             """Visit configured source participants once in F, never scan the learning ledger."""
             nonlocal learning_report, maternal_learning_report, seeking_learning_report, suckle_learning_report
+            nonlocal extraction_learning_report
             if hook is not None:
                 learning_report = hook.reconcile(
                     cycle_id=cycle, cutoff_tick=tick, registration=claim_registration,
@@ -975,10 +988,26 @@ class IntegratedRightingCoreV1:
                                            "offered_outcomes": suckle_learning_report.offered_outcomes,
                                            "dispositions": ",".join(item.status for item in suckle_learning_report.dispositions),
                                            "durable_learning_updates": 0, "ledger_rows_executed": 0})
+            if extraction_hook is not None:
+                extraction_learning_report = extraction_hook.reconcile(
+                    cycle_id=cycle, cutoff_tick=tick, registration=extraction_registration,
+                    outcomes=extraction_results, requests=extraction_requests,
+                    interpretation=extraction_allocation.interpretation
+                    if extraction_allocation is not None and extraction_allocation.kind == "interpretation" else None,
+                    comparison_enabled=extraction_owner.compare_predictions if extraction_owner is not None else False,
+                    attention_enabled=extraction_attention is not None,
+                )
+                self.trace.append("hierarchy_extraction_learning_hook", "F reconciled original extraction participation; no durable update",
+                                  cycle_id=cycle, phase=CyclePhase.LEARNING_SCHEDULE.name,
+                                  details={"recipient": extraction_learning_report.recipient_id,
+                                           "participants": len(extraction_learning_report.pending),
+                                           "offered_outcomes": extraction_learning_report.offered_outcomes,
+                                           "dispositions": ",".join(item.status for item in extraction_learning_report.dispositions),
+                                           "durable_learning_updates": 0, "ledger_rows_executed": 0})
             self.trace.append("hierarchy_learning", "F reconciliation: no durable learner or new physical outcome", cycle_id=cycle,
                               phase=CyclePhase.LEARNING_SCHEDULE.name, details={"durable_learning_updates": 0})
 
-        if hook is None and maternal_hook is None and seeking_hook is None and suckle_hook is None:
+        if hook is None and maternal_hook is None and seeking_hook is None and suckle_hook is None and extraction_hook is None:
             # Preserve the retained empty-F trace and original scheduler call.
             reconcile_learning()
             schedule = self.scheduler.phase_f_finish(cycle, self.trace)
@@ -1003,7 +1032,9 @@ class IntegratedRightingCoreV1:
             suckle_extraction=self.suckle.extraction_assessment() if self.suckle is not None else None,
             extraction_correspondence=SuckleExtractionOutcomeFrameV1(
                 tick, extraction_registration, extraction_owner.history() if not extraction_before else (),
-                extraction_owner.pending(), extraction_owner.compare_predictions, extraction_attention is not None) if extraction_owner is not None else None,
+                extraction_owner.pending(), extraction_owner.compare_predictions, extraction_attention is not None,
+                extraction_hook is not None) if extraction_owner is not None else None,
+            extraction_learning_report=extraction_learning_report,
             extraction_attention=ExtractionAttentionFrameV1(extraction_requests, extraction_attention.pending(), feeding_bid, extraction_allocation)
             if extraction_attention is not None and extraction_allocation is not None else None,
             suckle_correspondence=SuckleOutcomeFrameV1(
@@ -1247,6 +1278,8 @@ class IntegratedRightingTrialV1:
                if self.core.feeding_detail is not None and self.core.feeding_detail.learning_hook is not None else {}),
             **(self.core.feeding_detail.suckle_learning_hook.retained_counts()
                if self.core.feeding_detail is not None and self.core.feeding_detail.suckle_learning_hook is not None else {}),
+            **(self.core.feeding_detail.extraction_learning_hook.retained_counts()
+               if self.core.feeding_detail is not None and self.core.feeding_detail.extraction_learning_hook is not None else {}),
             **(self.core.extraction_outcomes.retained_counts() if self.core.extraction_outcomes is not None else {}),
             **(self.core.feeding_detail.extraction_outcome_attention.retained_counts()
                if self.core.feeding_detail is not None and self.core.feeding_detail.extraction_outcome_attention is not None else {}),
@@ -1300,6 +1333,8 @@ class IntegratedRightingTrialV1:
                if self.core.feeding_detail is not None and self.core.feeding_detail.suckle_outcome_attention is not None else {}),
             **({"extraction_pending_requests": [item.as_dict() for item in self.core.feeding_detail.extraction_outcome_attention.pending()]}
                if self.core.feeding_detail is not None and self.core.feeding_detail.extraction_outcome_attention is not None else {}),
+            **({"extraction_learning_participation": [item.as_dict() for item in self.core.feeding_detail.extraction_learning_hook.pending()]}
+               if self.core.feeding_detail is not None and self.core.feeding_detail.extraction_learning_hook is not None else {}),
             **({"extraction_pending_claim": self.core.extraction_outcomes.pending().as_dict() if self.core.extraction_outcomes.pending() else None,
                 "extraction_outcome_history": [item.as_dict() for item in self.core.extraction_outcomes.history()]}
                if self.core.extraction_outcomes is not None else {}),

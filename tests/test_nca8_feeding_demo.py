@@ -275,6 +275,6 @@ def test_script_json_matches_complete_common_result_and_unknown_case_fails(resul
 
 
 def test_source_slice_registry_is_truthful_without_changing_host_primitive_count():
-    assert cca8_run.__version__ == "0.30.43" and len(cca8_run._cca8_component_rows()) == 119
+    assert cca8_run.__version__ == "0.30.44" and len(cca8_run._cca8_component_rows()) == 121
     rows = str(cca8_run._cca8_component_rows())
     assert "nca8_feeding" in rows and "nca8_feeding_demo" in rows

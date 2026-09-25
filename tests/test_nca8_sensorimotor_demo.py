@@ -363,7 +363,7 @@ def test_registry_reports_all_production_modules_without_registering_an_smp_as_a
     import cca8_run
     import nca8_body_targets
     import nca8_sensorimotor
-    assert cca8_run.__version__ == "0.30.43"
+    assert cca8_run.__version__ == "0.30.44"
     assert nca8_body_targets.__version__ == "0.13.0"
     assert nca8_sensorimotor.__version__ == "0.6.0"
     assert demo.__version__ == "0.5.0"
@@ -371,5 +371,5 @@ def test_registry_reports_all_production_modules_without_registering_an_smp_as_a
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_sensorimotor"] == "nca8_sensorimotor"
     assert registry["nca8_sensorimotor_demo"] == "nca8_sensorimotor_demo"
-    assert len(cca8_run._cca8_component_rows()) == 119
+    assert len(cca8_run._cca8_component_rows()) == 121
     assert len(cca8_run.PRIMITIVES) == 8

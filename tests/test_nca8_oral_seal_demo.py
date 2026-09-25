@@ -150,8 +150,8 @@ def test_cli_json_and_unknown_selector(tmp_path):
 
 def test_registry_and_task_repertoire_keep_honest_scope():
     import cca8_run
-    assert cca8_run.__version__ == "0.30.43"
-    assert len(cca8_run._cca8_component_rows()) == 119
+    assert cca8_run.__version__ == "0.30.44"
+    assert len(cca8_run._cca8_component_rows()) == 121
     assert len(cca8_run.PRIMITIVES) == 8
     rows = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert rows["nca8_oral_seal_demo"] == "nca8_oral_seal_demo"

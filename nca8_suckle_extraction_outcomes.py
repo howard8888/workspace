@@ -26,7 +26,7 @@ from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetDispos
 from nca8_suckle import SuckleExtractionApplicationV1
 from nca8_suckle_outcomes import SuckleEndpointV1, SuckleIntervalEvidenceV1
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __all__ = ["SuckleExtractionClaimV1", "SuckleExtractionOutcomeV1", "SuckleExtractionOutcomeFrameV1",
            "SuckleExtractionOutcomeRuntimeV1", "validate_suckle_extraction_outcome_v1", "__version__"]
 _GEOMETRY_TOLERANCE = 0.005
@@ -204,6 +204,7 @@ class SuckleExtractionOutcomeFrameV1:
     pending: SuckleExtractionClaimV1 | None
     comparison_enabled: bool
     attention_enabled: bool = False
+    learning_hook_enabled: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Expose new results once; retained history is a separate diagnostic read."""
@@ -212,7 +213,7 @@ class SuckleExtractionOutcomeFrameV1:
                 "outcomes": [item.as_dict() for item in self.outcomes], "pending": self.pending.as_dict() if self.pending else None,
                 "comparison_enabled": self.comparison_enabled, "durable_updates": 0,
                 "attention_route": "suckle_extraction_attention_v1" if self.attention_enabled else "unimplemented_for_extraction",
-                "learning_route": "unimplemented_for_extraction"}
+                "learning_route": "suckle_extraction_no_learning_v1" if self.learning_hook_enabled else "unimplemented_for_extraction"}
 
 
 @dataclass(slots=True)

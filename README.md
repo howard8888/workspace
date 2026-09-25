@@ -16,6 +16,47 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## P16-2C-L-F — Extraction participation and actual Phase F
+
+The extraction-only hook is default-disabled through
+`SuckleProfileV1.extraction_learning_hook_enabled`. It requires L-D extraction
+correspondence, not latch I/J/K or enabled L-E Attention. An already-sealed
+extraction can therefore establish its own recipient without an earlier latch task.
+
+The existing feeding-detail source records the exact selected/authorized extraction
+claim at the actual F callback, before outer installation. Later canonical L-D
+publications reach this recipient. A meaningful L-E question waits for its actual
+Navigation-allocated interpretation; F does not classify significance, interpret
+current relevance, consume questions or select a remedy. A retained old
+`response_reconsideration` reference is not a newly performed interpretation.
+
+Eligibility ends BEFORE the original extraction application's cutoff plus 24
+physical ticks. This fixed engineering profile is not a biological time constant
+or a renewed motor lease. K retains its independent four-cognitive-cycle window.
+One original participant, one result and one question dependency suffice for the
+one-contribution profile; up to eight diagnostic dispositions are retained separately.
+Replay guards cannot restore consumed/expired eligibility. Reset/fault closes the
+old hook; cancellation does not erase already-realized evidence or restore movement.
+
+Matched/mismatched relations remain distinct from unknown relations and interrupted
+execution. Milk amount/coverage is observational context, not a yield prediction
+error, reward, nourishment or task completion. Every disposition reports zero
+durable learning. Hook-off controls retain the same source bids, applications,
+PNMs, commitments, targets, motor commands, physical samples, L-D outcomes and L-E
+allocations. No retry, further extraction batch, physiological completion, Rest,
+new learner, new executive or default-runtime promotion is introduced.
+
+Review through Main -> Watch Cognition Run (1) -> NCA8 (4) -> Feeding (15) -> 33,
+or use the same shared functions through:
+
+    python scripts/review_nca8_feeding.py --suckle-extraction-learning --case all --detail
+
+The 28 finite reviews include nominal/mismatch and hook-off controls, independent
+old-owner settings, unknown/missing evidence, cancellation, source competition,
+and nominal physical-time cadence controls. Raw L-C/D/E records retain their
+producer-local scope; the integrated cycle and correspondence frame report the
+separate F route. Prior options 18–32 remain available. P16-2C and B99 stay open.
+
 ## NCA8 update: P16-2C-L-C selected first Suckle extraction
 
 Entry: accepted/amended L-B at `d3bbd4bfa4a40f144329927c261de49701c8e640`,

@@ -185,6 +185,6 @@ def test_shared_submenu_retains_results_without_another_trial(monkeypatch, capsy
 def test_new_components_are_services_not_new_task_IPs():
     import cca8_run
     rows = cca8_run._cca8_component_rows()
-    assert cca8_run.__version__ == "0.30.43" and len(rows) == 119
+    assert cca8_run.__version__ == "0.30.44" and len(rows) == 121
     assert len(cca8_run.PRIMITIVES) == 8
     assert {r[0] for r in rows} >= {"nca8_suckle_extraction_outcomes", "nca8_suckle_extraction_outcomes_demo"}

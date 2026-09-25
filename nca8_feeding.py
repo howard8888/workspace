@@ -37,8 +37,9 @@ if TYPE_CHECKING:
     from nca8_suckle_extraction_attention import SuckleExtractionAttentionV1
     from nca8_seek_learning import SeekingLearningHookV1
     from nca8_suckle_learning import SuckleLearningHookV1
+    from nca8_suckle_extraction_learning import SuckleExtractionLearningHookV1
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 __all__ = [
     "FeedingDetailSeedV1", "FeedingDetailProfileV1", "FeedingDetailNavMapStateV1",
     "FeedingDetailCandidateV1", "FeedingDetailSourceV1", "__version__",
@@ -461,6 +462,7 @@ class FeedingDetailSourceV1:
         self._extraction_outcome_attention: SuckleExtractionAttentionV1 | None = None
         self._learning_hook: SeekingLearningHookV1 | None = None
         self._suckle_learning_hook: SuckleLearningHookV1 | None = None
+        self._extraction_learning_hook: SuckleExtractionLearningHookV1 | None = None
 
     @property
     def outcome_attention(self) -> SeekingOutcomeAttentionV1 | None:
@@ -553,6 +555,26 @@ class FeedingDetailSourceV1:
             raise RuntimeError("configure Suckle participation once before source updates")
         import nca8_suckle_learning  # pylint: disable=import-outside-toplevel
         self._suckle_learning_hook = nca8_suckle_learning.SuckleLearningHookV1(
+            self._stream, self._profile.seed, diagnostic_capacity=diagnostic_capacity,
+        )
+
+    @property
+    def extraction_learning_hook(self) -> SuckleExtractionLearningHookV1 | None:
+        """Read the separate original-extraction recipient, not the old latch hook."""
+        return self._extraction_learning_hook
+
+    def configure_extraction_learning_hook(self, *, diagnostic_capacity: int = 8) -> None:
+        """Attach the extraction-only no-learning owner before any source processing.
+
+        Failed configuration leaves the extension absent. The source owns one
+        bounded participant for the original extraction even when no earlier latch
+        task exists. This adds no sensory fact, focal allocation or body permission.
+        Late import retains the existing source-schema dependency direction.
+        """
+        if self._current is not None or self._extraction_learning_hook is not None:
+            raise RuntimeError("configure extraction participation once before source updates")
+        import nca8_suckle_extraction_learning  # pylint: disable=import-outside-toplevel
+        self._extraction_learning_hook = nca8_suckle_extraction_learning.SuckleExtractionLearningHookV1(
             self._stream, self._profile.seed, diagnostic_capacity=diagnostic_capacity,
         )
 
