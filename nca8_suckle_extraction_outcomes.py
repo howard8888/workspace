@@ -229,6 +229,47 @@ class _Evidence:
     achieved: bool = False
 
 
+def _outcome_from_evidence(
+    claim: SuckleExtractionClaimV1, evidence: _Evidence, cutoff: int, *,
+    compare_predictions: bool, forced_status: str | None = None,
+) -> SuckleExtractionOutcomeV1:
+    """Build the canonical result without mutating an owner or supplied evidence.
+
+    The live publisher and downstream consistency validator use this same bounded
+    calculation. Callers retain their own identity, event-time and evidence checks.
+    No input is consumed or published here, and no current source, physical world,
+    action permission or learning state is read or changed.
+    """
+    end = min(claim.due_tick, evidence.end_tick if evidence.end_tick is not None else claim.due_tick) if claim.targets else claim.start_tick
+    samples = tuple(item for item in evidence.samples if item.feedback.event_tick <= end)
+    if forced_status is not None:
+        status = forced_status
+    elif not evidence.installed:
+        status = "uninstalled_unresolved"
+    elif not evidence.command_ticks:
+        status = "observed_without_command" if samples else "no_command_evidence"
+    elif evidence.achieved:
+        status = "local_sequence_observed"
+    elif evidence.termination is not None and evidence.termination != "expired":
+        status = "interrupted"
+    else:
+        status = "expired_unresolved"
+    if not compare_predictions:
+        relations = tuple((name, "comparison_disabled") for name in _RELATIONS)
+    elif forced_status is not None or not evidence.installed or not evidence.command_ticks:
+        relations = tuple((name, "not_applied" if not claim.targets else "unresolved_execution") for name in _RELATIONS)
+    else:
+        context = tuple(_context_relations(claim, item) for item in samples)
+        complete = len(samples) == end - claim.start_tick and bool(samples)
+        verdicts = tuple("mismatch" if any(row[index] == "mismatch" for row in context) else
+                         "matched" if complete and all(row[index] == "matched" for row in context) else "unknown"
+                         for index in range(3))
+        movement = "matched" if evidence.achieved else "interrupted" if status == "interrupted" else "unknown"
+        relations = tuple(zip(_RELATIONS, (*verdicts, movement)))
+    return SuckleExtractionOutcomeV1(claim, cutoff, end, status, evidence.installed, evidence.command_ticks,
+                                     evidence.termination, samples, evidence.confirmations, relations, compare_predictions)
+
+
 class SuckleExtractionOutcomeRuntimeV1:
     """One bounded original-extraction reader, independent of old I/J/K owners.
 
@@ -445,34 +486,7 @@ class SuckleExtractionOutcomeRuntimeV1:
         claim = self._claim
         if claim is None:
             raise RuntimeError("cannot publish without an original selected claim")
-        end = self._effective_end(evidence) if claim.targets else claim.start_tick
-        samples = tuple(item for item in evidence.samples if item.feedback.event_tick <= end)
-        if forced_status is not None:
-            status = forced_status
-        elif not evidence.installed:
-            status = "uninstalled_unresolved"
-        elif not evidence.command_ticks:
-            status = "observed_without_command" if samples else "no_command_evidence"
-        elif evidence.achieved:
-            status = "local_sequence_observed"
-        elif evidence.termination is not None and evidence.termination != "expired":
-            status = "interrupted"
-        else:
-            status = "expired_unresolved"
-        if not self.compare_predictions:
-            relations = tuple((name, "comparison_disabled") for name in _RELATIONS)
-        elif forced_status is not None or not evidence.installed or not evidence.command_ticks:
-            relations = tuple((name, "not_applied" if not claim.targets else "unresolved_execution") for name in _RELATIONS)
-        else:
-            context = tuple(_context_relations(claim, item) for item in samples)
-            complete = len(samples) == end - claim.start_tick and bool(samples)
-            verdicts = tuple("mismatch" if any(row[index] == "mismatch" for row in context) else
-                             "matched" if complete and all(row[index] == "matched" for row in context) else "unknown"
-                             for index in range(3))
-            movement = "matched" if evidence.achieved else "interrupted" if status == "interrupted" else "unknown"
-            relations = tuple(zip(_RELATIONS, (*verdicts, movement)))
-        return SuckleExtractionOutcomeV1(claim, cutoff, end, status, evidence.installed, evidence.command_ticks,
-                                         evidence.termination, samples, evidence.confirmations, relations, self.compare_predictions)
+        return _outcome_from_evidence(claim, evidence, cutoff, compare_predictions=self.compare_predictions, forced_status=forced_status)
 
 
 
@@ -483,9 +497,9 @@ def validate_suckle_extraction_outcome_v1(
 
     This is a bounded consistency check, not authentication, perfect causal credit,
     or a second result publication. Existing claim, endpoint and local-report
-    validators check the original immutable objects. A private temporary reader
-    reuses the UNCHANGED original finish calculation; it does not consume input,
-    access a current source or alter the real publisher. Historical milk and
+    validators check the original immutable objects. A shared pure helper reuses
+    the UNCHANGED original finish calculation; it does not consume input, construct
+    a temporary reader, access a current source or alter the real publisher. Historical milk and
     relation records therefore cannot gain behavioral influence from forged scores.
     Actual provenance still comes from the core routing the new publication tuple.
     """
@@ -560,9 +574,7 @@ def validate_suckle_extraction_outcome_v1(
                 or evaluated > claim.last_acceptable_availability_tick):
             raise ValueError("extraction result published before its original evidence policy allowed")
     # Reuse the publisher's pure calculation on a private snapshot, never its live state.
-    reader = SuckleExtractionOutcomeRuntimeV1(stream, compare_predictions=outcome.comparison_enabled)
-    reader._claim = claim
     evidence = _Evidence(outcome.installed, end, outcome.termination, outcome.command_ticks,
                          outcome.samples, outcome.confirmations, achieved)
-    if reader._finish(evidence, evaluated, forced_status=forced) != outcome:
+    if _outcome_from_evidence(claim, evidence, evaluated, compare_predictions=outcome.comparison_enabled, forced_status=forced) != outcome:
         raise ValueError("extraction result disagrees with its original canonical evidence and comparison")

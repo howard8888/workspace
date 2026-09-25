@@ -662,15 +662,16 @@ class IntegratedRightingCoreV1:
                                       details={"request_id": request.request_id, "significance": request.significance,
                                                "pnm_id": request.outcome.claim.preview.pnm.pnm_id, "expires_at_tick": request.expires_at_tick})
             if extraction_attention is not None:
-                original = self.suckle.extraction_assessment().application if self.suckle is not None else None
+                extraction_assessment = self.suckle.extraction_assessment() if self.suckle is not None else None
+                original = extraction_assessment.application if extraction_assessment is not None else None
                 extraction_requests = extraction_attention.admit(extraction_results, feeding_source, original, cutoff_tick=tick)
                 feeding_bid = extraction_attention.contribute_bid(feeding_bid)
-                for request in extraction_requests:
+                for extraction_request in extraction_requests:
                     self.trace.append("hierarchy_extraction_outcome_request", "original extraction discrepancy requests its source, not an IP",
                                       cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
-                                      details={"request_id": request.request_id, "relations": ",".join(request.relations),
-                                               "pnm_id": request.outcome.claim.application.projection.pnm.pnm_id,
-                                               "expires_at_tick": request.expires_at_tick})
+                                      details={"request_id": extraction_request.request_id, "relations": ",".join(extraction_request.relations),
+                                               "pnm_id": extraction_request.outcome.claim.application.projection.pnm.pnm_id,
+                                               "expires_at_tick": extraction_request.expires_at_tick})
             if feeding_bid is not None:
                 competing_bids = (*competing_bids, feeding_bid)
             self.trace.append("hierarchy_feeding_source", "feeding-detail evidence updated; nomination, when present, is not an oral action",
@@ -1297,6 +1298,7 @@ class IntegratedRightingTrialV1:
         task = self.core.cognition.righting.task
         receipt = self.core.handoff.receipt
         extraction = self.core.suckle.extraction_assessment() if self.core.suckle is not None else None
+        pending_extraction = self.core.extraction_outcomes.pending() if self.core.extraction_outcomes is not None else None
         return {
             "profile": "stand_follow_v1" if self._stand_follow_enabled else "integrated_righting_v1",
             "stream": self._world.stream.as_dict(),
@@ -1335,7 +1337,7 @@ class IntegratedRightingTrialV1:
                if self.core.feeding_detail is not None and self.core.feeding_detail.extraction_outcome_attention is not None else {}),
             **({"extraction_learning_participation": [item.as_dict() for item in self.core.feeding_detail.extraction_learning_hook.pending()]}
                if self.core.feeding_detail is not None and self.core.feeding_detail.extraction_learning_hook is not None else {}),
-            **({"extraction_pending_claim": self.core.extraction_outcomes.pending().as_dict() if self.core.extraction_outcomes.pending() else None,
+            **({"extraction_pending_claim": pending_extraction.as_dict() if pending_extraction is not None else None,
                 "extraction_outcome_history": [item.as_dict() for item in self.core.extraction_outcomes.history()]}
                if self.core.extraction_outcomes is not None else {}),
             **({"suckle_pending_claims": [item.as_dict() for item in self.core.suckle_outcomes.pending()],

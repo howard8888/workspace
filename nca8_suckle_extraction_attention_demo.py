@@ -107,6 +107,7 @@ class ExtractionAttentionExperimentV1:
         if self.case in {"competing_source", "maintain_source"}:
             competition_ok = bool(own and pair and own[0].calculation.attention.selected_source_state is not None
                                   and pair[0].calculation.attention.selected_source_state is not None
+                                  and pair[0].feeding_detail_source is not None
                                   and own[0].calculation.attention.selected_source_state is own[0].feeding_detail_source
                                   and pair[0].calculation.attention.selected_source_state.source_map_ref
                                   != pair[0].feeding_detail_source.source_map_ref)
@@ -122,7 +123,10 @@ class ExtractionAttentionExperimentV1:
                 or c.extraction_attention.source_bid.prediction_or_envelope_failure_rank == 40
                 for c in self.run.cycles if c.extraction_attention is not None and c.extraction_attention.created)),
             ("real_Attention_consequence", competition_ok),
-            ("grant_matches_question_and_current_WNM", all(c.calculation.navigation.reason
+            ("grant_matches_question_and_current_WNM", all(c.extraction_attention is not None
+                and c.extraction_attention.allocation.interpretation is not None
+                and c.calculation.navigation.wnm is not None and c.feeding_detail_source is not None
+                and c.calculation.navigation.reason
                 == "outcome_interpretation:" + c.extraction_attention.allocation.interpretation.request.request_id
                 and c.calculation.navigation.wnm.primary_source_state is c.feeding_detail_source for c in interpreted_cycles)),
             ("no_extra_IP_projection_handoff_or_target", all(c.calculation.navigation.application is None
@@ -168,7 +172,10 @@ def run_extraction_attention_v1(case: str = "mismatch", *, trace_capacity: int =
     profile = extraction_attention_profile_v1(case)
     trial = create_suckle_extraction_trial_v1(profile, trace_capacity=trace_capacity)
     run = collect_seek_nipple_evidence_v1(trial, profile.latch.run)
-    owner = trial.core.feeding_detail.extraction_outcome_attention
+    source = trial.core.feeding_detail
+    if source is None:
+        raise RuntimeError("extraction Attention review requires its feeding-detail source")
+    owner = source.extraction_outcome_attention
     dispositions = owner.dispositions() if owner is not None else ()
     control_profile = replace(profile, latch=replace(profile.latch, suckle=replace(
         profile.latch.suckle, extraction_outcome_attention_enabled=False)))

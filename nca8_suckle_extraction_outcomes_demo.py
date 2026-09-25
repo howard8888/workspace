@@ -73,6 +73,7 @@ class SuckleExtractionOutcomeExperimentV1:
                   "extraction_outcome_endpoint_refs": 4, "extraction_outcome_command_ticks": 8, "suckle_staged_intervals": 16}
         quantities = {"nominal": .2, "dry": 0, "depleted": .05, "one_cycle": .1, "comparison_off": .2,
                       "without_closure_owner": .2, "latch_then_extract": .2}
+        known_sums = tuple(result.milk_evidence()["known_interval_sum"] for result in outcomes)
         old_frames = ("suckle_correspondence", "suckle_attention", "suckle_learning_report", "seeking_correspondence",
                       "seeking_attention", "seeking_learning_report", "maternal_correspondence", "learning_report")
         return (
@@ -92,8 +93,8 @@ class SuckleExtractionOutcomeExperimentV1:
             ("interval_sum_not_unknown_total", all(
                 (r.milk_evidence()["exact_observed_total"] is not None) == (r.milk_evidence()["coverage"] == "complete")
                 for r in outcomes)),
-            ("declared_known_quantity", all(abs(float(r.milk_evidence()["known_interval_sum"]) - quantities[self.case]) < 1e-9
-                                            for r in outcomes) if self.case in quantities else True),
+            ("declared_known_quantity", all(isinstance(total, float) and abs(total - quantities[self.case]) < 1e-9
+                                            for total in known_sums) if self.case in quantities else True),
             ("dry_not_a_milk_prediction_failure", all(dict(r.relations)["finite_reciprocation"] == "matched"
                                                      and dict(r.relations)["sealed_contact"] == "matched" for r in outcomes)
              if self.case == "dry" else True),

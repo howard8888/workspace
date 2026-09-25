@@ -1,9 +1,22 @@
+"""Run an optional manual OpenAI connectivity check using the current environment.
+
+This developer script makes one API request only when OPENAI_API_KEY is set.
+It prints the response or diagnostic exception without changing CCA8 source or
+configuration. Importing the script does not issue a request; run main explicitly.
+"""
+
 import os
 from openai import OpenAI
 import openai
 
 
 def main() -> None:
+    """Report key availability, then attempt the existing single smoke-test request.
+
+    A missing key returns without constructing a client. Authentication, quota,
+    connection, HTTP-status and unexpected failures retain their existing printed
+    diagnostics. The key itself is not printed and failures are not retried.
+    """
     api_key = os.environ.get("OPENAI_API_KEY", "")
 
     if not api_key:

@@ -104,7 +104,9 @@ def main() -> int:
         proposal = mapper.propose(request, at_tick=0)
         print(f"  Starting body tilt={tilt:+.1f} degrees")
         _show(proposal)
-        assert proposal.bindings[0].target.endpoint == (18.0 if tilt > 0 else -18.0)
+        target = proposal.bindings[0].target
+        assert isinstance(target, BodyRelativeTargetV1)
+        assert target.endpoint == (18.0 if tilt > 0 else -18.0)
         assert not mapper.reservations(at_tick=0)
     print("  BodyMap computed the signs. No target was supplied directly by the fixture.")
 
@@ -113,7 +115,9 @@ def main() -> int:
     smaller = replace(capabilities[0], maximum_step=4.0, maximum_excursion=6.0, maximum_rate=20.0)
     limited = _configured(first, (smaller, capabilities[1])).propose(request, at_tick=0)
     _show(limited)
-    assert limited.bindings[0].target.endpoint == 26.0
+    limited_target = limited.bindings[0].target
+    assert isinstance(limited_target, BodyRelativeTargetV1)
+    assert limited_target.endpoint == 26.0
     print("  Now offer only the extension capability:")
     _show(_configured(first, (capabilities[1],)).propose(request, at_tick=0))
 

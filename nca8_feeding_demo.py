@@ -335,7 +335,7 @@ def run_feeding_detail_menu_v1() -> None:
         if choice == "29":
             run_oral_extraction_control_menu_v1()
             continue
-        elif choice == "28":
+        if choice == "28":
             run_oral_extraction_menu_v1()
             continue
         if choice == "27":
