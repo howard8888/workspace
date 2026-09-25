@@ -33,11 +33,12 @@ import math
 
 from cca8_motor_contracts import (
     MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, OralFeedbackV1, OralSealFeedbackV1, PlanarFeedbackV1, OralExtractionFeedbackV1,
+    FeedingDeficitFeedbackV1,
 )
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
-    "MotorBodyStateV1",
+    "MotorBodyStateV1", "FeedingConsequenceProfileV1", "FeedingConsequenceStateV1",
     "MotorWorldPerturbationV1",
     "MotorWorldProfileV1",
     "OralSealWorldStateV1", "OralSealWorldProfileV1", "OralClosurePerturbationV1",
@@ -830,6 +831,57 @@ def _extraction_path_inside_disk(
     return math.hypot(tip[0] - disk.position[0], tip[1] - disk.position[1]) + travel_bound <= disk.radius + 1e-12
 
 
+@dataclass(frozen=True, slots=True)
+class FeedingConsequenceProfileV1:
+    """Optional deterministic downstream intake/uptake competence, not cognition.
+
+    Previous intake is processed before new interval milk is added. The assumed
+    conversion is one model-volume unit to one synthetic deficit unit. These are
+    not mL, calories, learned parameters or a swallow controller. Sensor controls
+    affect measurement only. Fixed unavailable ticks are external test conditions,
+    never task instructions. The profile supplies no fed/reward/Rest label.
+    """
+
+    initial_deficit_units: float = 0.50
+    uptake_units_per_second: float = 0.50
+    initial_pending_units: float = 0.0
+    sensor_available: bool = True
+    unavailable_ticks: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("initial_deficit_units", "uptake_units_per_second", "initial_pending_units"):
+            object.__setattr__(self, name, _motor_number(getattr(self, name), name, 0.0, 8.0))
+        if not isinstance(self.sensor_available, bool):
+            raise TypeError("feeding-deficit sensing switch must be Boolean")
+        if (not isinstance(self.unavailable_ticks, tuple) or len(self.unavailable_ticks) > 160
+                or any(isinstance(t, bool) or not isinstance(t, int) or not 0 <= t <= 160 for t in self.unavailable_ticks)
+                or tuple(sorted(set(self.unavailable_ticks))) != self.unavailable_ticks):
+            raise ValueError("feeding-deficit dropout ticks must be distinct ordered physical ticks in [0,160]")
+
+
+@dataclass(frozen=True, slots=True)
+class FeedingConsequenceStateV1:
+    """Actual private body state; only measured deficit may cross into cognition.
+
+    The pending pool is observer-only. Its bound accommodates the declared finite
+    supply plus initial pending material; saturation of deficit is a body equation,
+    not a declaration of task success. No learning or cognitive lifetime is stored.
+    """
+
+    pending_units: float
+    deficit_units: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "pending_units", _motor_number(self.pending_units, "pending intake", 0.0,
+                                                               _MAX_MILK_SUPPLY_UNITS + 8.0))
+        object.__setattr__(self, "deficit_units", _motor_number(self.deficit_units, "feeding deficit", 0.0, 8.0))
+
+    def as_dict(self) -> dict[str, object]:
+        """Export observer quantities without handing them back to a source owner."""
+        return {"pending_units": self.pending_units, "deficit_units": self.deficit_units,
+                "units": "synthetic_feeding_deficit", "observer_only": True}
+
+
 class MotorWorldV1:
     """A small deterministic body simulator with explicit command and sensing time.
 
@@ -856,6 +908,7 @@ class MotorWorldV1:
         oral_profile: OralWorldProfileV1 | None = None,
         oral_seal_profile: OralSealWorldProfileV1 | None = None,
         oral_extraction_profile: OralExtractionWorldProfileV1 | None = None,
+        feeding_consequence_profile: FeedingConsequenceProfileV1 | None = None,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("stream must be MotorStreamRefV1")
@@ -870,6 +923,12 @@ class MotorWorldV1:
         if oral_extraction_profile is not None and (not isinstance(oral_extraction_profile, OralExtractionWorldProfileV1)
                                                     or oral_seal_profile is None):
             raise TypeError("extraction profile requires the typed seal, oral and planar physical profiles")
+        if feeding_consequence_profile is not None and (not isinstance(feeding_consequence_profile, FeedingConsequenceProfileV1)
+                                                        or oral_extraction_profile is None):
+            raise TypeError("downstream consequence requires its explicit typed profile and extraction provider")
+        self._feeding_consequence_profile = feeding_consequence_profile
+        self._feeding_consequence = (None if feeding_consequence_profile is None else FeedingConsequenceStateV1(
+            feeding_consequence_profile.initial_pending_units, feeding_consequence_profile.initial_deficit_units))
         self._oral_extraction_profile = oral_extraction_profile
         self._oral_extraction = (None if oral_extraction_profile is None else
                                  OralExtractionWorldStateV1(oral_extraction_profile.initial_stroke,
@@ -892,7 +951,12 @@ class MotorWorldV1:
         self._pending: tuple[MotorFeedbackV1, ...] = ()
         self._latest_feedback = self._measure(self._body, 0.0, self._profile.surface_present,
                                              event_tick=0, delay=0, planar=self._planar, oral=self._oral, oral_seal=self._oral_seal,
-                                             oral_extraction=self._oral_extraction)
+                                             oral_extraction=self._oral_extraction, feeding_consequence=self._feeding_consequence)
+
+    @property
+    def feeding_consequence_body(self) -> FeedingConsequenceStateV1 | None:
+        """Read private physical intake/deficit for observers, never cognitive decisions."""
+        return self._feeding_consequence
 
     @property
     def oral_extraction_body(self) -> OralExtractionWorldStateV1 | None:
@@ -997,13 +1061,15 @@ class MotorWorldV1:
         """
         fresh = MotorWorldV1(MotorStreamRefV1(self._stream.stream_id, self._stream.generation + 1), self._profile,
                              planar_profile=self._planar_profile, oral_profile=self._oral_profile, oral_seal_profile=self._oral_seal_profile,
-                             oral_extraction_profile=self._oral_extraction_profile)
+                             oral_extraction_profile=self._oral_extraction_profile,
+                             feeding_consequence_profile=self._feeding_consequence_profile)
         self._stream = fresh.stream
         self._body = fresh.body
         self._planar = fresh.planar_body
         self._oral = fresh.oral_body
         self._oral_seal = fresh.oral_seal_body
         self._oral_extraction = fresh.oral_extraction_body
+        self._feeding_consequence = fresh.feeding_consequence_body
         self._tick = 0
         self._last_command_id = 0
         self._pending = ()
@@ -1015,6 +1081,7 @@ class MotorWorldV1:
         planar: PlanarWorldStateV1 | None = None, oral: OralWorldStateV1 | None = None,
         oral_seal: OralSealWorldStateV1 | None = None,
         oral_extraction: OralExtractionWorldStateV1 | None = None,
+        feeding_consequence: FeedingConsequenceStateV1 | None = None,
     ) -> MotorFeedbackV1:
         """Sense actual geometry; omit declared channels without repairing them.
 
@@ -1049,7 +1116,13 @@ class MotorWorldV1:
                 oral_extraction.interval_milk_units if event_tick > 0 and extraction_profile.milk_available else None,
                 event_tick - 1 if event_tick > 0 else None,
             )
+        deficit_feedback = None
+        consequence_profile = self._feeding_consequence_profile
+        if feeding_consequence is not None and consequence_profile is not None:
+            visible = consequence_profile.sensor_available and event_tick not in consequence_profile.unavailable_ticks
+            deficit_feedback = FeedingDeficitFeedbackV1(feeding_consequence.deficit_units if visible else None)
         return MotorFeedbackV1(
+            feeding_deficit=deficit_feedback,
             planar=planar_feedback, oral=oral_feedback, oral_seal=seal_feedback, oral_extraction=extraction_feedback,
             stream=self._stream, sample_id=event_tick + 1, event_tick=event_tick, available_tick=event_tick + delay,
             body_tilt_degrees=None if "body_tilt_degrees" in missing else body.body_tilt_degrees,
@@ -1181,6 +1254,23 @@ class MotorWorldV1:
         total = min(profile.initial_supply_units, state.transferred_milk_units + transfer)
         return OralExtractionWorldStateV1(stroke, profile.initial_supply_units - total, total, transfer)
 
+    def _advance_feeding_consequence(self, extraction: OralExtractionWorldStateV1 | None) -> FeedingConsequenceStateV1 | None:
+        """Compute delayed processing from previous intake and actual new transfer.
+
+        No observer total, task, prediction, selection or success flag participates.
+        This is computed within the existing atomic physical step. Neutral motor
+        evolution still processes old intake; measurement availability does not
+        change the body. Unsupported provider combinations fail before commit.
+        """
+        state, profile = self._feeding_consequence, self._feeding_consequence_profile
+        if state is None or profile is None:
+            return None
+        if extraction is None:
+            raise RuntimeError("feeding consequence lost its declared physical intake source")
+        uptake = min(state.pending_units, profile.uptake_units_per_second * self._profile.dt_seconds)
+        return FeedingConsequenceStateV1(state.pending_units - uptake + extraction.interval_milk_units,
+                                         max(0.0, state.deficit_units - uptake))
+
     def step(self, command: MotorCommandV1 | None = None) -> tuple[MotorFeedbackV1, ...]:
         """Advance once and return newly available sensor reports in acquisition order.
 
@@ -1235,12 +1325,13 @@ class MotorWorldV1:
         next_extraction = self._advance_oral_extraction(
             command, body=next_body, planar=next_planar, oral=next_oral, seal=next_seal, surface_present=surface_present,
         )
+        next_consequence = self._advance_feeding_consequence(next_extraction)
         next_tick = self._tick + 1
         pending = self._pending
         if not dropout:
             measurement = self._measure(next_body, angular_rate, surface_present,
                                         event_tick=next_tick, delay=self._profile.sensor_delay_ticks, planar=next_planar, oral=next_oral,
-                                        oral_seal=next_seal, oral_extraction=next_extraction)
+                                        oral_seal=next_seal, oral_extraction=next_extraction, feeding_consequence=next_consequence)
             pending += (measurement,)
         delivered = tuple(item for item in pending if item.available_tick <= next_tick)
         future = tuple(item for item in pending if item.available_tick > next_tick)
@@ -1254,6 +1345,7 @@ class MotorWorldV1:
         self._oral = next_oral
         self._oral_seal = next_seal
         self._oral_extraction = next_extraction
+        self._feeding_consequence = next_consequence
         self._tick = next_tick
         self._pending = future
         if delivered:

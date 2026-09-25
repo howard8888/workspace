@@ -15,6 +15,7 @@ import json
 
 import cca8_cli
 
+from cca8_support_world import FeedingConsequenceProfileV1
 from cca8_support_world import OralExtractionWorldProfileV1, PlanarObjectV1
 from nca8_body_targets import BodyAxisCapabilityV1, BodyTranslationCapabilityV1, nominal_body_capabilities_v1, oral_body_capability_v1, oral_extraction_capability_v1
 from nca8_followmom import FollowMomProfileV1
@@ -23,7 +24,7 @@ from nca8_seek_nipple_demo import SeekNippleExperimentV1, collect_seek_nipple_ev
 from nca8_suckle import SuckleExtractionApplicationV1, SuckleApplicationV1
 from nca8_suckle_demo import SuckleExperimentProfileV1, suckle_profile_v1, suckle_owner_limits_v1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["SUCKLE_EXTRACTION_CASES_V1", "SuckleExtractionExperimentProfileV1", "SuckleExtractionExperimentV1",
            "suckle_extraction_profile_v1", "create_suckle_extraction_trial_v1", "run_suckle_extraction_v1",
            "render_suckle_extraction_v1", "run_suckle_extraction_menu_v1", "__version__"]
@@ -86,6 +87,7 @@ def suckle_extraction_profile_v1(case: str = "nominal") -> SuckleExtractionExper
 
 def create_suckle_extraction_trial_v1(
     profile: SuckleExtractionExperimentProfileV1, *, trace_capacity: int = 256,
+    feeding_consequence_profile: FeedingConsequenceProfileV1 | None = None,
 ) -> IntegratedRightingTrialV1:
     """Construct one integrated organism; construction performs no selection or step."""
     if not isinstance(profile, SuckleExtractionExperimentProfileV1):
@@ -93,7 +95,7 @@ def create_suckle_extraction_trial_v1(
     latch, run = profile.latch, profile.latch.run
     return IntegratedRightingTrialV1(
         run.physical, stream_id="selected_suckle_extraction_body", planar_profile=run.planar, oral_profile=run.oral,
-        oral_seal_profile=latch.seal, oral_extraction_profile=profile.extraction, suckle_profile=latch.suckle,
+        oral_seal_profile=latch.seal, oral_extraction_profile=profile.extraction, feeding_consequence_profile=feeding_consequence_profile, suckle_profile=latch.suckle,
         capabilities=(*nominal_body_capabilities_v1(), oral_body_capability_v1(),
                       *((latch.capability,) if latch.capability is not None else ()),
                       *((profile.capability,) if profile.capability is not None else ())),

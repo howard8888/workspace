@@ -40,7 +40,7 @@ from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1, admit_motor_
 from cca8_support_world import (
     MotorBodyStateV1, MotorWorldProfileV1, MotorWorldV1, PlanarWorldProfileV1, PlanarWorldStateV1,
     OralWorldProfileV1, OralWorldStateV1, OralSealWorldProfileV1, OralSealWorldStateV1,
-    OralExtractionWorldProfileV1, OralExtractionWorldStateV1,
+    OralExtractionWorldProfileV1, OralExtractionWorldStateV1, FeedingConsequenceProfileV1, FeedingConsequenceStateV1,
 )
 from nca8_adapters import admit_motor_visual_surface_v1
 from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetReservationV1, BodyTranslationCapabilityV1
@@ -51,7 +51,7 @@ from nca8_feeding import FeedingDetailProfileV1, FeedingDetailSourceV1, FeedingD
 from nca8_followmom import FollowMomProfileV1, FollowMomIPV1, FollowMomApplicationV1, FollowMomAssessmentV1
 from nca8_seek_nipple import SeekNippleProfileV1, SeekNippleIPV1, SeekNippleApplicationV1, SeekNippleAssessmentV1
 from nca8_suckle import (SuckleProfileV1, SuckleIPV1, SuckleApplicationV1, SuckleAssessmentV1,
-                         SuckleExtractionApplicationV1, SuckleExtractionAssessmentV1)
+                         SuckleExtractionApplicationV1, SuckleExtractionAssessmentV1, SuckleFeedingAssessmentV1)
 from nca8_suckle_outcomes import SuckleIntervalEvidenceV1, SuckleOutcomeV1, SuckleOutcomeFrameV1, SuckleOutcomeRuntimeV1
 from nca8_suckle_extraction_outcomes import SuckleExtractionOutcomeFrameV1, SuckleExtractionOutcomeRuntimeV1
 from nca8_suckle_attention import SuckleAttentionFrameV1, SuckleMismatchRequestV1
@@ -80,7 +80,7 @@ from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, Senso
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1, SensorimotorTargetKindV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.24.0"
+__version__ = "0.25.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -135,6 +135,7 @@ class IntegratedRightingCycleV1:
     extraction_correspondence: SuckleExtractionOutcomeFrameV1 | None = None
     extraction_attention: ExtractionAttentionFrameV1 | None = None
     extraction_learning_report: ExtractionLearningPhaseFReportV1 | None = None
+    sustained_feeding: SuckleFeedingAssessmentV1 | None = None
 
     @property
     def status(self) -> str:
@@ -169,6 +170,7 @@ class IntegratedRightingCycleV1:
                                 "not_established_maternal" if self.maternal_source is not None else
                                 "not_established_visual_fixture" if self.visual_source is not None else "not_established_H6A"),
             "durable_learning_updates": 0,
+            **({"sustained_feeding": self.sustained_feeding.as_dict()} if self.sustained_feeding is not None else {}),
             **({"suckle_extraction": self.suckle_extraction.as_dict()} if self.suckle_extraction is not None else {}),
             **({"extraction_correspondence": self.extraction_correspondence.as_dict()} if self.extraction_correspondence is not None else {}),
             **({"extraction_attention": {**self.extraction_attention.as_dict(),
@@ -277,15 +279,18 @@ class IntegratedRightingCoreV1:
                 raise TypeError("Suckle integration requires its explicit initial-latch profile")
             if feeding_detail_profile is None:
                 raise ValueError("Suckle requires the separate feeding-detail source")
-        self.feeding_detail = None if feeding_detail_profile is None else FeedingDetailSourceV1(stream, feeding_detail_profile)
+        self.feeding_detail = None if feeding_detail_profile is None else FeedingDetailSourceV1(
+            stream, feeding_detail_profile, sensed_need_enabled=suckle_profile.sustained_feeding_enabled if suckle_profile is not None else False,
+        )
         self.suckle = (SuckleIPV1(self.feeding_detail, suckle_profile)
                        if self.feeding_detail is not None and suckle_profile is not None else None)
         if self.feeding_detail is not None and suckle_profile is not None and suckle_profile.outcome_attention_enabled:
             self.feeding_detail.configure_suckle_outcome_attention()
         if self.feeding_detail is not None and suckle_profile is not None and suckle_profile.extraction_outcome_attention_enabled:
-            self.feeding_detail.configure_extraction_outcome_attention()
+            self.feeding_detail.configure_extraction_outcome_attention(sequential=suckle_profile.sustained_feeding_enabled)
         if self.feeding_detail is not None and suckle_profile is not None and suckle_profile.extraction_learning_hook_enabled:
-            self.feeding_detail.configure_extraction_learning_hook(diagnostic_capacity=min(8, learning_diagnostic_capacity))
+            self.feeding_detail.configure_extraction_learning_hook(diagnostic_capacity=min(8, learning_diagnostic_capacity),
+                                                                  sequential=suckle_profile.sustained_feeding_enabled)
         if self.feeding_detail is not None and suckle_profile is not None and suckle_profile.learning_hook_enabled:
             self.feeding_detail.configure_suckle_learning_hook(diagnostic_capacity=learning_diagnostic_capacity)
         if self.feeding_detail is not None and seek_nipple_profile is not None and seek_nipple_profile.outcome_attention_enabled:
@@ -299,7 +304,8 @@ class IntegratedRightingCoreV1:
         self.suckle_outcomes = (SuckleOutcomeRuntimeV1(stream, compare_predictions=suckle_profile.prediction_comparison_enabled)
                                 if suckle_profile is not None and suckle_profile.outcomes_enabled else None)
         self.extraction_outcomes = (SuckleExtractionOutcomeRuntimeV1(
-            stream, compare_predictions=suckle_profile.extraction_prediction_comparison_enabled)
+            stream, compare_predictions=suckle_profile.extraction_prediction_comparison_enabled,
+            sequential=suckle_profile.sustained_feeding_enabled)
             if suckle_profile is not None and suckle_profile.extraction_outcomes_enabled else None)
         self.stand_follow_enabled = stand_follow_enabled
         if visual_profile is None and (translation_capability is not None or translation_mapping_sign != 1):
@@ -516,8 +522,9 @@ class IntegratedRightingCoreV1:
         if tuple(item.result_id for item in applied) != (ingress.result_id,):
             raise RuntimeError("the frozen summary sidecar lost its ingress association")
         extraction_owner = self.extraction_outcomes
-        extraction_before = extraction_owner.history() if extraction_owner is not None else ()
         extraction_results = extraction_owner.consume_intervals(suckle_intervals, cutoff_tick=tick) if extraction_owner is not None else ()
+        if self.suckle is not None and self.suckle.profile.sustained_feeding_enabled:
+            self.suckle.observe_extraction_outcomes(extraction_results, cutoff_tick=tick)
         suckle_owner = self.suckle_outcomes
         suckle_before = suckle_owner.history()[-1].number if suckle_owner is not None and suckle_owner.history() else 0
         suckle_results: tuple[SuckleOutcomeV1, ...] = ()
@@ -615,8 +622,20 @@ class IntegratedRightingCoreV1:
         if self.feeding_detail is not None:
             if maternal_source is None:
                 raise RuntimeError("feeding detail requires this cycle's applied maternal basis")
-            feeding_source = (self.feeding_detail.update(maternal_source, oral_feedback=feedback)
-                              if self.seek_nipple is not None or self.suckle is not None else self.feeding_detail.update(maternal_source))
+            if self.suckle is not None and self.suckle.profile.sustained_feeding_enabled:
+                # A separate C1 visit to the existing sensory owner precedes need
+                # consumers. It neither repeats the support update nor uses F.
+                need = self.cognition.sensory.apply_feeding_evidence(feedback, stream=self.cognition.stream,
+                                                                    cycle_id=cycle, cutoff_tick=tick)
+                feeding_source = self.feeding_detail.update(maternal_source, oral_feedback=feedback, feeding_need=need)
+                self.trace.append("hierarchy_feeding_need", "body-sensory current need; not task completion or motor permission",
+                                  cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
+                                  details={"owner": "body_sensory", "event_tick": need.event_tick,
+                                           "deficit_units": need.deficit_units, "current": need.current,
+                                           "new_acquisition": need.new_acquisition})
+            else:
+                feeding_source = (self.feeding_detail.update(maternal_source, oral_feedback=feedback)
+                                  if self.seek_nipple is not None or self.suckle is not None else self.feeding_detail.update(maternal_source))
             if self.seek_nipple is not None:
                 # Read actual prior resource ownership, not maternal completion.
                 # Old incompatible rights must end through their closed handoff
@@ -638,13 +657,10 @@ class IntegratedRightingCoreV1:
                 ) if self.suckle.profile.extraction_enabled else False
                 self.suckle.prepare(feeding_source, reports=reports, movement_blocked=closure_blocked or support_pending,
                                     extraction_movement_blocked=extraction_blocked or support_pending)
-            feeding_candidate = self.feeding_detail.candidate()
-            feeding_bid = None if feeding_candidate is None else self.cognition.attention.build_bid(feeding_candidate, cycle_id=cycle)
             if seeking_attention is not None:
                 seeking_requests = seeking_attention.admit(
                     seeking_results, feeding_source, self.seek_nipple.task if self.seek_nipple is not None else None, cutoff_tick=tick,
                 )
-                feeding_bid = seeking_attention.contribute_bid(feeding_bid)
                 for seeking_request in seeking_requests:
                     self.trace.append("hierarchy_seeking_outcome_request", "seeking discrepancy requested current source consideration, not an action",
                                       cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
@@ -655,7 +671,6 @@ class IntegratedRightingCoreV1:
                 suckle_requests = suckle_attention.admit(
                     suckle_results, feeding_source, self.suckle.task if self.suckle is not None else None, cutoff_tick=tick,
                 )
-                feeding_bid = suckle_attention.contribute_bid(feeding_bid)
                 for request in suckle_requests:
                     self.trace.append("hierarchy_suckle_outcome_request", "Suckle discrepancy requests its source, not another IP application",
                                       cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
@@ -665,13 +680,22 @@ class IntegratedRightingCoreV1:
                 extraction_assessment = self.suckle.extraction_assessment() if self.suckle is not None else None
                 original = extraction_assessment.application if extraction_assessment is not None else None
                 extraction_requests = extraction_attention.admit(extraction_results, feeding_source, original, cutoff_tick=tick)
-                feeding_bid = extraction_attention.contribute_bid(feeding_bid)
                 for extraction_request in extraction_requests:
                     self.trace.append("hierarchy_extraction_outcome_request", "original extraction discrepancy requests its source, not an IP",
                                       cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
                                       details={"request_id": extraction_request.request_id, "relations": ",".join(extraction_request.relations),
                                                "pnm_id": extraction_request.outcome.claim.application.projection.pnm.pnm_id,
                                                "expires_at_tick": extraction_request.expires_at_tick})
+            # All original questions are admitted before nomination. A now
+            # satisfied need cannot erase an independent outstanding question.
+            feeding_candidate = self.feeding_detail.candidate()
+            feeding_bid = None if feeding_candidate is None else self.cognition.attention.build_bid(feeding_candidate, cycle_id=cycle)
+            if seeking_attention is not None:
+                feeding_bid = seeking_attention.contribute_bid(feeding_bid)
+            if suckle_attention is not None:
+                feeding_bid = suckle_attention.contribute_bid(feeding_bid)
+            if extraction_attention is not None:
+                feeding_bid = extraction_attention.contribute_bid(feeding_bid)
             if feeding_bid is not None:
                 competing_bids = (*competing_bids, feeding_bid)
             self.trace.append("hierarchy_feeding_source", "feeding-detail evidence updated; nomination, when present, is not an oral action",
@@ -1031,8 +1055,9 @@ class IntegratedRightingCoreV1:
             seeking_task=self.seek_nipple.assessment() if self.seek_nipple is not None else None,
             suckle_task=self.suckle.assessment() if self.suckle is not None else None,
             suckle_extraction=self.suckle.extraction_assessment() if self.suckle is not None else None,
+            sustained_feeding=self.suckle.feeding_assessment() if self.suckle is not None else None,
             extraction_correspondence=SuckleExtractionOutcomeFrameV1(
-                tick, extraction_registration, extraction_owner.history() if not extraction_before else (),
+                tick, extraction_registration, tuple(item for item in extraction_owner.history() if item.evaluated_tick == tick),
                 extraction_owner.pending(), extraction_owner.compare_predictions, extraction_attention is not None,
                 extraction_hook is not None) if extraction_owner is not None else None,
             extraction_learning_report=extraction_learning_report,
@@ -1095,6 +1120,7 @@ class IntegratedRightingTrialV1:
         seek_nipple_profile: SeekNippleProfileV1 | None = None, oral_profile: OralWorldProfileV1 | None = None,
         suckle_profile: SuckleProfileV1 | None = None, oral_seal_profile: OralSealWorldProfileV1 | None = None,
         oral_extraction_profile: OralExtractionWorldProfileV1 | None = None,
+        feeding_consequence_profile: FeedingConsequenceProfileV1 | None = None,
     ) -> None:
         profile = MotorWorldProfileV1() if physical_profile is None else physical_profile
         if not isinstance(profile, MotorWorldProfileV1) or profile.dt_seconds != 0.05:
@@ -1140,13 +1166,18 @@ class IntegratedRightingTrialV1:
             raise ValueError("extraction sensing requires the explicit Suckle/contact/seal integration")
         if suckle_profile is not None and suckle_profile.extraction_enabled and oral_extraction_profile is None:
             raise ValueError("selected extraction requires an explicit physical profile, not a fabricated actuator")
+        if suckle_profile is not None and suckle_profile.sustained_feeding_enabled and feeding_consequence_profile is None:
+            raise ValueError("sustained feeding requires a separately declared body-consequence provider")
+        if feeding_consequence_profile is not None and oral_extraction_profile is None:
+            raise ValueError("body feeding consequences require an actual oral intake provider")
         self._stand_follow_enabled = stand_follow_enabled
         self._righting_target_inset_degrees = righting_target_inset_degrees
         self._translation_fixture, self._translation_capability = translation_fixture, translation_capability
         self._translation_mapping_sign = translation_mapping_sign
         self._world = MotorWorldV1(MotorStreamRefV1(stream_id, 1), profile, planar_profile=planar_profile,
                                    oral_profile=oral_profile, oral_seal_profile=oral_seal_profile,
-                                   oral_extraction_profile=oral_extraction_profile)
+                                   oral_extraction_profile=oral_extraction_profile,
+                                   feeding_consequence_profile=feeding_consequence_profile)
         self._context, self._capabilities, self._control_profile = context, capabilities, control_profile
         self._righting_enabled, self._influence_enabled, self._handoff_enabled = righting_enabled, influence_enabled, handoff_enabled
         self._trace_capacity = trace_capacity
@@ -1228,6 +1259,11 @@ class IntegratedRightingTrialV1:
         return self._world.oral_extraction_body
 
     @property
+    def observer_feeding_consequence(self) -> FeedingConsequenceStateV1 | None:
+        """Read private body consequences for external evaluation, never cognition."""
+        return self._world.feeding_consequence_body
+
+    @property
     def stopped(self) -> bool:
         """Report a sticky runtime failure; a terminal task alone does not stop time."""
         return self._fault is not None or self.core.fault is not None or self.controller.fault is not None
@@ -1252,6 +1288,8 @@ class IntegratedRightingTrialV1:
             "focal_records": len(self._history), "focal_trace": self.core.trace.retained_count,
             "pending_sensor_deliveries": self._world.pending_feedback_count,
             **cognition.mapper.retained_counts(), **self.controller.retained_counts(),
+            **(cognition.sensory.feeding_retained_counts()
+               if self.core.suckle is not None and self.core.suckle.profile.sustained_feeding_enabled else {}),
             **({f"visual_{key}": value for key, value in self.core.visual.retained_counts().items()} if self.core.visual is not None else {}),
             **({f"maternal_{key}": value for key, value in self.core.maternal.retained_counts().items()}
                if self.core.maternal is not None else {}),

@@ -283,9 +283,9 @@ def test_registry_versions_and_preserved_task_factory():
     import cca8_support_world
     from nca8_suckle_demo import create_suckle_trial_v1
     rows = cca8_run._cca8_component_rows()
-    assert cca8_run.__version__ == "0.30.44" and len(rows) == 121
-    assert cca8_motor_contracts.__version__ == "0.6.0"
-    assert cca8_support_world.__version__ == "0.7.0"
+    assert cca8_run.__version__ == "0.30.45" and len(rows) == 123
+    assert cca8_motor_contracts.__version__ == "0.7.0"
+    assert cca8_support_world.__version__ == "0.8.0"
     assert ("nca8_oral_extraction_demo", "nca8_oral_extraction_demo") in cca8_run._CCA8_COMPONENT_REGISTRY
     assert len(cca8_run.PRIMITIVES) == 8
     trial = create_suckle_trial_v1(outcomes_enabled=True, outcome_attention_enabled=True, learning_hook_enabled=True)

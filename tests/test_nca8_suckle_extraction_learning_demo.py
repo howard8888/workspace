@@ -181,7 +181,7 @@ def test_retained_menu_detail_does_not_execute_again(monkeypatch, capsys):
 def test_host_registers_two_services_not_new_behavioral_primitives():
     import cca8_run
     rows = cca8_run._cca8_component_rows()
-    assert cca8_run.__version__ == "0.30.44" and len(rows) == 121
+    assert cca8_run.__version__ == "0.30.45" and len(rows) == 123
     assert len(cca8_run.PRIMITIVES) == 8
     assert {"nca8_suckle_extraction_learning", "nca8_suckle_extraction_learning_demo"} <= {r[0] for r in rows}
 

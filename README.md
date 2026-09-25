@@ -16,6 +16,74 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## P16-2C-M — Sustained feeding and sensed bodily satisfaction
+
+Entry: clean `711fbf064e1904cc01e06f1dd2fcdce528debb2d`, following the committed
+L-F static-analysis repair. Host **0.30.45** registers **123 components**; the
+**8 host/legacy behavioral primitives** remain unchanged. The added
+`nca8_feeding_state.py` is a shared data contract, not another cognitive part;
+`nca8_sustained_feeding_demo.py` is the common observer/review implementation.
+M is an opt-in candidate for qualification and Howard's acceptance. Rest and the
+integrated final P16-2C handover remain the next separately approved update;
+P16-2C, P16-2D/B99 and default promotion are not completed by M.
+
+Use Main -> 1 -> 4 -> 15 -> **34**. In that review, 1 runs nominal seeking/latch/
+sustained feeding and the already-sealed controls, 5 runs all 29 cases, and 6
+reads retained detail without another physical execution. Existing choices
+18-33 remain unchanged. The developer entry uses the same functions:
+
+    python scripts/review_nca8_feeding.py --sustained-feeding --case nominal --detail
+    python scripts/review_nca8_feeding.py --sustained-feeding --case all
+
+`SuckleProfileV1.sustained_feeding_enabled` defaults to False. Enabling it requires
+extraction correspondence and an explicit `FeedingConsequenceProfileV1` in the
+body provider. Previous one-contribution, latch, seeking, maternal and Righting
+profiles remain independently usable controls. The fixed developmental
+`feeding_need` flag still means availability; it is not overwritten as sensed need.
+
+The physical provider processes previously received material before adding this
+interval's actual milk receipt. Its optional feedback-v6 facet carries only the
+measured remaining deficit (or unavailable) with original acquisition identity and
+time. Body sensory applies this evidence in C1 before feeding nomination. The
+private pending pool, milk reservoir and observer totals do not enter cognition.
+Default competence is an initial 0.50 synthetic deficit and uptake of 0.50 model
+volume units/second at the existing 0.05-second physical tick. These are NOT mL,
+calories, biological hunger constants, learned parameters or a swallowing model.
+
+Current need and supported relations constrain the existing feeding source and
+Suckle operation. Attention selects the source; Navigation selects every fresh
+Suckle contribution; BodyMap authorizes the finite target and the existing SMP
+executes it. SMP completion alone never restarts extraction. Each application has
+its own original PNM, target, handoff and outcome. Suckle's intrinsic requirement
+withholds a new contribution on the first adequate body reading, then confirms
+completion using two distinct low readings (deficit <= 0.01) spanning 4-8 physical
+ticks, with current evidence no older than 8 ticks. Missing evidence breaks proof.
+Initially adequate means not required, not fictitious executed feeding success.
+
+One first-feeding episode per generation permits at most 8 contributions and
+96 physical ticks from its first extraction. These limits produce incomplete
+budget exits, never success or an automatic new episode. Complete measured zero
+transfer can withhold further unproductive contributions; missing/partial sensing
+is not measured zero. Task completion requests retirement of its own oral authority,
+not another task's later support reservation. It neither repairs an interrupted
+original result nor grants permission to Rest.
+
+L-D/L-E/L-F retain bounded sequential original identities. An A outcome and a new
+B registration can meet at the same F while retaining their own claims and clocks.
+The existing three-head feeding question tournament still grants one demanding
+interpretation. L-F retains strict per-application 24-tick eligibility and zero
+durable updates; Phase F owns no uptake, need evaluation, selection or completion.
+
+The nominal review includes seeking at tick 0, latch selection at 8, extractions
+at 20/32/44, confirmation pending at 52 and completion at 56; 0.60 model-volume
+units are received. These are observed outcomes, not an input action script.
+Uptake-off can receive milk without reducing deficit, milk-sensor-off can retain
+unknown yield while sensing bodily satisfaction, and internal-sensor-off cannot
+substitute observed receipt for missing need evidence. Dry supply, missing data,
+interruption, variable need and cadence controls test the separate mechanisms.
+The detailed release evidence and Windows qualification belong to the candidate
+package; this README alone is not a test or acceptance certificate.
+
 ## P16-2C-L-F — Extraction participation and actual Phase F
 
 The extraction-only hook is default-disabled through

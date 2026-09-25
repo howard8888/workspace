@@ -176,7 +176,7 @@ def test_registry_versions_and_real_suckle_remains_unextended():
     import nca8_body_targets as targets
     import nca8_sensorimotor as motor
     from nca8_suckle_demo import create_suckle_trial_v1
-    assert cca8_run.__version__ == "0.30.44" and len(cca8_run._cca8_component_rows()) == 121
+    assert cca8_run.__version__ == "0.30.45" and len(cca8_run._cca8_component_rows()) == 123
     assert contracts.__version__ == "0.6.0" and targets.__version__ == "0.13.0" and motor.__version__ == "0.6.0"
     assert ("nca8_oral_extraction_control_demo", "nca8_oral_extraction_control_demo") in cca8_run._CCA8_COMPONENT_REGISTRY
     assert len(cca8_run.PRIMITIVES) == 8

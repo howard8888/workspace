@@ -33,7 +33,7 @@ from nca8_prediction import ProjectedNavMapV1, SeekNipplePreviewV1
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
 from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 __all__ = ["SeekNippleProfileV1", "SeekNippleTaskV1", "SeekNippleApplicationV1", "SeekNippleAssessmentV1", "SeekNippleIPV1", "__version__"]
 
 _MAX_TICKS = 48
@@ -324,7 +324,7 @@ class SeekNippleIPV1:
             self._reason = "cancelled"
         elif not self.profile.enabled:
             self._reason = "seeking_disabled"
-        elif not self.source.profile.feeding_need:
+        elif not self.source.feeding_required:
             self._reason = "no_declared_feeding_need"
         elif not basis.oral_evidence_current or distance is None:
             self._reason = "current_mouth_detail_unavailable"

@@ -42,10 +42,11 @@ from nca8_suckle_demo import run_suckle_menu_v1
 from nca8_suckle_outcomes_demo import run_suckle_outcome_menu_v1
 from nca8_suckle_attention_demo import run_suckle_attention_menu_v1
 from nca8_suckle_learning_demo import run_suckle_learning_menu_v1
+from nca8_sustained_feeding_demo import run_sustained_feeding_menu_v1
 from nca8_sensorimotor import SensorimotorStepV1
 from nca8_stand_follow_demo import StandFollowPhysicalSampleV1, StandFollowProfileV1, stand_follow_profile_v1
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 __all__ = [
     "FEEDING_DETAIL_CASES_V1", "FeedingDetailExperimentV1", "feeding_detail_profiles_v1", "create_feeding_detail_trial_v1",
     "run_feeding_detail_v1", "render_feeding_detail_v1", "run_feeding_detail_menu_v1", "__version__",
@@ -317,9 +318,13 @@ def run_feeding_detail_menu_v1() -> None:
         print("  31) Original extraction correspondence and interval milk evidence (P16-2C-L-D)")
         print("  32) Extraction discrepancy to Attention and one Navigation interpretation (P16-2C-L-E)")
         print("  33) Extraction participation and actual Phase F (P16-2C-L-F; no durable learning)")
+        print("  34) Sustained feeding and sensed need completion (P16-2C-M; no Rest or durable learning)")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:
             return
+        if choice == "34":
+            run_sustained_feeding_menu_v1()
+            continue
         if choice == "33":
             run_extraction_learning_menu_v1()
             continue

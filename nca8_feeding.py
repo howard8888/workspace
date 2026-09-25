@@ -28,6 +28,7 @@ from cca8_navmap_kernel import (
     NavMapV2, NavPointV1, NavProvenanceV1, NavRelationV1, NavSourceClassV1,
 )
 from nca8_contracts import CircuitValidityV1
+from nca8_feeding_state import FeedingNeedStateV1, FEEDING_ADEQUACY_LIMIT_V1
 from nca8_maternal import MaternalNavMapStateV1
 from nca8_visual import VisualDetectionV1
 
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
     from nca8_suckle_learning import SuckleLearningHookV1
     from nca8_suckle_extraction_learning import SuckleExtractionLearningHookV1
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 __all__ = [
     "FeedingDetailSeedV1", "FeedingDetailProfileV1", "FeedingDetailNavMapStateV1",
     "FeedingDetailCandidateV1", "FeedingDetailSourceV1", "__version__",
@@ -140,12 +141,17 @@ class FeedingDetailNavMapStateV1:
     seed: FeedingDetailSeedV1
     enabled: bool = True
     oral_feedback: MotorFeedbackV1 | None = field(default=None, kw_only=True)
+    feeding_need: FeedingNeedStateV1 | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.maternal, MaternalNavMapStateV1) or not isinstance(self.seed, FeedingDetailSeedV1):
             raise TypeError("feeding detail requires a typed original maternal basis and seed")
         if not isinstance(self.enabled, bool):
             raise TypeError("source enablement must be Boolean")
+        if self.feeding_need is not None and (not isinstance(self.feeding_need, FeedingNeedStateV1)
+                or self.feeding_need.stream != self.stream or self.feeding_need.cycle_id != self.applied_cycle
+                or self.feeding_need.cutoff_tick != self.cutoff_tick):
+            raise ValueError("feeding detail requires this opportunity's body-owned need context")
         if self.oral_feedback is not None:
             if not isinstance(self.oral_feedback, MotorFeedbackV1):
                 raise TypeError("oral source evidence must be canonical motor feedback")
@@ -393,6 +399,7 @@ class FeedingDetailNavMapStateV1:
                 "active_relation_labels": list(self.active_relation_labels), "feeding_motor_authority": False,
                 "contact_evidence": "not_supplied" if self.oral_feedback is None else self.oral_contact,
                 "latch_evidence": "not_supplied", "milk_evidence": "not_supplied", "durable_learning_updates": 0,
+                **({"feeding_need": self.feeding_need.as_dict()} if self.feeding_need is not None else {}),
                 **({"oral_relation": {"body_acquisition": self.oral_feedback.as_dict(),
                                       "paired_current": self.oral_evidence_current,
                                       "mouth_position": None if self.mouth_position is None else self.mouth_position.as_dict(),
@@ -418,6 +425,8 @@ class FeedingDetailCandidateV1:
 
     source_map_state: FeedingDetailNavMapStateV1
     current_task_persistence_rank: int = 0
+    new_task_need_rank: int = 10
+    reason: str = "current_feeding_detail_with_supplied_developmental_need"
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_map_state, FeedingDetailNavMapStateV1) or not self.source_map_state.focal_accessible:
@@ -425,16 +434,16 @@ class FeedingDetailCandidateV1:
         if (isinstance(self.current_task_persistence_rank, bool) or not isinstance(self.current_task_persistence_rank, int)
                 or self.current_task_persistence_rank not in (0, 20)):
             raise ValueError("feeding persistence uses only the declared zero/twenty ranks")
+        if isinstance(self.new_task_need_rank, bool) or self.new_task_need_rank not in (0, 10):
+            raise ValueError("feeding candidate need uses only zero/ten ranks")
 
     candidate_id = "source:feeding_detail"
     protected_safety_rank = 0
-    new_task_need_rank = 10
     prediction_or_envelope_failure_rank = 0
     novelty_or_ambiguity_rank = 0
     activation_rank = 60
     safety_escalation = False
     stable_tie_key = "feeding_detail"
-    reason = "current_feeding_detail_with_supplied_developmental_need"
 
     @property
     def published_cycle(self) -> int:
@@ -450,9 +459,12 @@ class FeedingDetailSourceV1:
     stand in for finding, contact or nourishment. Reset creates a fresh owner.
     """
 
-    def __init__(self, stream: MotorStreamRefV1, profile: FeedingDetailProfileV1) -> None:
+    def __init__(self, stream: MotorStreamRefV1, profile: FeedingDetailProfileV1, *, sensed_need_enabled: bool = False) -> None:
         if not isinstance(stream, MotorStreamRefV1) or not isinstance(profile, FeedingDetailProfileV1):
             raise TypeError("feeding source requires a stream and explicit profile")
+        if not isinstance(sensed_need_enabled, bool):
+            raise TypeError("sensed need enablement must be Boolean")
+        self._sensed_need_enabled = sensed_need_enabled
         self._stream, self._profile = stream, profile
         self._durable = _build_seed(profile.seed)
         self._current: FeedingDetailNavMapStateV1 | None = None
@@ -487,7 +499,7 @@ class FeedingDetailSourceV1:
         """Read L-E's bounded question owner, not an IP or a new executive."""
         return self._extraction_outcome_attention
 
-    def configure_extraction_outcome_attention(self, *, diagnostic_capacity: int = 8) -> None:
+    def configure_extraction_outcome_attention(self, *, diagnostic_capacity: int = 8, sequential: bool = False) -> None:
         """Attach one historical-extraction route before processing this generation.
 
         The local import retains the existing source-schema/executive boundary.
@@ -497,7 +509,7 @@ class FeedingDetailSourceV1:
             raise RuntimeError("configure extraction relevance once before source updates")
         import nca8_suckle_extraction_attention  # pylint: disable=import-outside-toplevel
         self._extraction_outcome_attention = nca8_suckle_extraction_attention.SuckleExtractionAttentionV1(
-            self._stream, self._profile.seed, diagnostic_capacity=diagnostic_capacity,
+            self._stream, self._profile.seed, diagnostic_capacity=diagnostic_capacity, sequential=sequential,
         )
 
     @property
@@ -563,7 +575,7 @@ class FeedingDetailSourceV1:
         """Read the separate original-extraction recipient, not the old latch hook."""
         return self._extraction_learning_hook
 
-    def configure_extraction_learning_hook(self, *, diagnostic_capacity: int = 8) -> None:
+    def configure_extraction_learning_hook(self, *, diagnostic_capacity: int = 8, sequential: bool = False) -> None:
         """Attach the extraction-only no-learning owner before any source processing.
 
         Failed configuration leaves the extension absent. The source owns one
@@ -575,7 +587,7 @@ class FeedingDetailSourceV1:
             raise RuntimeError("configure extraction participation once before source updates")
         import nca8_suckle_extraction_learning  # pylint: disable=import-outside-toplevel
         self._extraction_learning_hook = nca8_suckle_extraction_learning.SuckleExtractionLearningHookV1(
-            self._stream, self._profile.seed, diagnostic_capacity=diagnostic_capacity,
+            self._stream, self._profile.seed, diagnostic_capacity=diagnostic_capacity, sequential=sequential,
         )
 
     @property
@@ -595,6 +607,7 @@ class FeedingDetailSourceV1:
 
     def update(
         self, maternal: MaternalNavMapStateV1, *, oral_feedback: MotorFeedbackV1 | None = None,
+        feeding_need: FeedingNeedStateV1 | None = None,
     ) -> FeedingDetailNavMapStateV1:
         """Apply one already-frozen maternal/visual basis atomically before Attention.
 
@@ -607,7 +620,10 @@ class FeedingDetailSourceV1:
         previous = self._current
         if previous is not None and (maternal.applied_cycle <= previous.applied_cycle or maternal.cutoff_tick <= previous.cutoff_tick):
             raise ValueError("feeding updates must advance focal and physical cutoffs")
-        current = FeedingDetailNavMapStateV1(maternal, self._profile.seed, self._profile.source_enabled, oral_feedback=oral_feedback)
+        if self._sensed_need_enabled != (feeding_need is not None):
+            raise ValueError("sensed feeding mode requires its explicit current body-need record")
+        current = FeedingDetailNavMapStateV1(maternal, self._profile.seed, self._profile.source_enabled,
+                                              oral_feedback=oral_feedback, feeding_need=feeding_need)
         self._current = current
         if self._influence is not None and current.cutoff_tick >= self._influence[1]:
             self._influence = None
@@ -616,10 +632,36 @@ class FeedingDetailSourceV1:
     def candidate(self) -> FeedingDetailCandidateV1 | None:
         """Request focal consideration only; no source read renews task/motor rights."""
         current = self._current
-        if current is None or not current.focal_accessible or not self._profile.attention_enabled or not self._profile.feeding_need:
+        if current is None or not current.focal_accessible or not self._profile.attention_enabled:
             return None
-        rank = 20 if self._influence is not None and current.cutoff_tick < self._influence[1] else 0
-        return FeedingDetailCandidateV1(current, rank)
+        if not self._sensed_need_enabled:
+            if not self._profile.feeding_need:
+                return None
+            rank = 20 if self._influence is not None and current.cutoff_tick < self._influence[1] else 0
+            return FeedingDetailCandidateV1(current, rank)
+        # A legitimate independent outcome question may retain a source bid after
+        # need satisfaction. It grants no new need, task, or movement permission.
+        question = any(owner is not None and any(request.expires_at_tick > current.cutoff_tick for request in owner.pending())
+                       for owner in (self._outcome_attention, self._suckle_outcome_attention, self._extraction_outcome_attention))
+        if not self.feeding_required and not question:
+            return None
+        rank = 20 if self.feeding_required and self._influence is not None and current.cutoff_tick < self._influence[1] else 0
+        return FeedingDetailCandidateV1(current, rank, 10 if self.feeding_required else 0,
+                                        "current_measured_feeding_need" if self.feeding_required else "independent_feeding_outcome_question")
+
+    @property
+    def feeding_required(self) -> bool:
+        """Read the declared current need constraint, not an Attention/task decision.
+
+        The legacy profile is unchanged. Sustained mode additionally requires the
+        body owner's current nonzero need; missing evidence cannot authorize an
+        action and measured adequacy is not a feeding-completion or Rest flag.
+        """
+        if not self._sensed_need_enabled:
+            return self._profile.feeding_need
+        need = self._current.feeding_need if self._current is not None else None
+        return bool(self._profile.feeding_need and need is not None and need.current
+                    and need.deficit_units is not None and need.deficit_units > FEEDING_ADEQUACY_LIMIT_V1)
 
     def retain_influence(self, task_id: str, *, cycle_id: int, expires_at_tick: int) -> None:
         """Retain one selected-task relevance request for at most eight physical ticks.

@@ -3,7 +3,7 @@
 """L-F: extraction-specific participation and an actual no-learning F consumer.
 
 The existing feeding-detail source owns one participant for the one-contribution
-extraction profile. Its eligibility ends before the original application cutoff
+extraction profile and at most eight original participants in sustained mode. Its eligibility ends before the original application cutoff
 plus 24 physical ticks, independently of latch K, current focality, motor leases,
 L-D arrival allowance and L-E questions. This is an engineering test profile, not
 a biological time constant. Registration records selection/authorization BEFORE
@@ -31,7 +31,7 @@ from nca8_suckle_extraction_outcomes import (
     SuckleExtractionClaimV1, SuckleExtractionOutcomeV1, validate_suckle_extraction_outcome_v1,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["ExtractionParticipationV1", "ExtractionTeachingDispositionV1", "ExtractionLearningPhaseFReportV1",
            "SuckleExtractionLearningHookV1", "__version__"]
 _ELIGIBILITY_TICKS = 24
@@ -151,23 +151,44 @@ class ExtractionLearningPhaseFReportV1:
                 "ledger_rows_executed": 0, "restores_motor_permission": False}
 
 
+@dataclass(frozen=True, slots=True)
+class _LearningOrigin:
+    """Owner-local state for one original; not another owner or a callable learner.
+
+    Records remain bounded by the episode's admitted origins. A disposed
+    participant retains only the replay references needed to prevent revival.
+    Diagnostic retention and current focality cannot replace these conditions.
+    """
+
+    registration: SuckleExtractionClaimV1 | None = None
+    participant: ExtractionParticipationV1 | None = None
+    seen: SuckleExtractionOutcomeV1 | None = None
+    dependency: ExtractionMismatchRequestV1 | None = None
+    interpretation_seen: bool = False
+
+
 class SuckleExtractionLearningHookV1:
     """One source-owned extraction recipient, independent of K and diagnostics.
 
     reconcile validates the complete bounded batch before committing temporary
     state. Foreign/altered dependencies raise without a partial transaction. Valid
     unregistered, duplicate, unknown and expired evidence gets an explicit no-update
-    disposition. One original registration, result and request reference remain as
+    disposition. Each admitted original keeps registration, result and request references as
     bounded replay guards even after eligibility ends; they cannot teach again.
+    The default profile admits one original; sustained mode admits at most eight.
     Diagnostic history is disposable and never consulted by the mechanism.
     """
 
-    def __init__(self, stream: MotorStreamRefV1, seed: FeedingDetailSeedV1, *, diagnostic_capacity: int = 8) -> None:
+    def __init__(self, stream: MotorStreamRefV1, seed: FeedingDetailSeedV1, *, diagnostic_capacity: int = 8, sequential: bool = False) -> None:
         if not isinstance(stream, MotorStreamRefV1) or not isinstance(seed, FeedingDetailSeedV1):
             raise TypeError("extraction participation requires its typed stream and feeding seed")
         _index(diagnostic_capacity, "diagnostic_capacity", minimum=1)
         if diagnostic_capacity > 8:
             raise ValueError("extraction participation diagnostics cannot exceed eight entries")
+        if not isinstance(sequential, bool):
+            raise TypeError("sequential extraction participation must be Boolean")
+        self.sequential = sequential
+        self._origins: dict[str, _LearningOrigin] = {}
         self.stream, self.seed = stream, seed
         self.recipient_id = "feeding_detail_association:feeding_detail:extraction_consequence"
         self._registration: SuckleExtractionClaimV1 | None = None
@@ -180,8 +201,8 @@ class SuckleExtractionLearningHookV1:
         self._closed = False
 
     def pending(self) -> tuple[ExtractionParticipationV1, ...]:
-        """Read at most one immutable participant without renewing eligibility."""
-        return () if self._participant is None else (self._participant,)
+        """Read eligible original participants within the one/eight profile bound."""
+        return tuple(item.participant for item in self._origins.values() if item.participant is not None)
 
     def history(self) -> tuple[ExtractionTeachingDispositionV1, ...]:
         """Read the separate bounded diagnostic ring; it is never replay input."""
@@ -189,18 +210,22 @@ class SuckleExtractionLearningHookV1:
 
     def retained_counts(self) -> dict[str, int]:
         """Count live eligibility separately from fixed-size replay guards/history."""
-        return {"extraction_learning_participants": int(self._participant is not None),
-                "extraction_learning_registrations": int(self._registration is not None),
-                "extraction_learning_seen_outcomes": int(self._seen is not None),
-                "extraction_learning_dependencies": int(self._dependency is not None),
+        counts = {"extraction_learning_participants": len(self.pending()),
+                "extraction_learning_registrations": sum(item.registration is not None for item in self._origins.values()),
+                "extraction_learning_seen_outcomes": sum(item.seen is not None for item in self._origins.values()),
+                "extraction_learning_dependencies": sum(item.dependency is not None for item in self._origins.values()),
                 "extraction_learning_dispositions": len(self._history)}
+        if self.sequential:
+            counts["extraction_learning_originals"] = len(self._origins)
+        return counts
 
     def close(self) -> None:
         """Permanently revoke this generation on reset/fault, not undo physical work."""
+        self._origins = {identity: replace(item, participant=None, dependency=None) for identity, item in self._origins.items()}
         self._participant, self._dependency = None, None
         self._closed = True
 
-    def _claim(self, claim: SuckleExtractionClaimV1) -> None:
+    def _claim(self, claim: SuckleExtractionClaimV1, state: _LearningOrigin) -> None:
         """Reuse original prospective/permission validation for this source recipient."""
         if not isinstance(claim, SuckleExtractionClaimV1):
             raise TypeError("extraction participation requires its original claim, not a latch task")
@@ -209,18 +234,29 @@ class SuckleExtractionLearningHookV1:
         if basis.stream != self.stream or basis.seed != self.seed:
             raise ValueError("extraction participation belongs to another stream, generation or feeding source")
         _index(claim.start_tick, "original_cutoff_tick")
-        if self._registration is not None and claim is not self._registration:
+        if claim.application.task.sustained != self.sequential:
+            raise ValueError("extraction participation mode does not match its originating task")
+        if state.registration is not None and claim is not state.registration:
             raise ValueError("copied or altered claim cannot replace original extraction participation")
+        if self.sequential and self._origins:
+            first = next(iter(self._origins.values()))
+            original_claim = first.registration if first.registration is not None else (first.seen.claim if first.seen is not None else None)
+            if original_claim is None:
+                raise ValueError("retained extraction origin is missing its original episode basis")
+            original, current = original_claim.application.task, claim.application.task
+            if ((current.task_id, current.region_id, current.started_cycle, current.started_tick) !=
+                    (original.task_id, original.region_id, original.started_cycle, original.started_tick)):
+                raise ValueError("extraction evidence cannot rewrite the original sustained episode basis")
 
-    def _outcome(self, outcome: SuckleExtractionOutcomeV1, cycle: int, tick: int) -> None:
+    def _outcome(self, outcome: SuckleExtractionOutcomeV1, state: _LearningOrigin, cycle: int, tick: int) -> None:
         """Validate canonical earlier publication, never read intervals or republish it."""
         validate_suckle_extraction_outcome_v1(outcome, stream=self.stream, cutoff_tick=tick)
-        self._claim(outcome.claim)
+        self._claim(outcome.claim, state)
         if outcome.claim.application.cycle_id >= cycle:
             raise ValueError("a just-selected extraction has no physical outcome at F")
-        if self._seen is not None and outcome is not self._seen:
+        if state.seen is not None and outcome is not state.seen:
             raise ValueError("conflicting or copied extraction result cannot replace canonical evidence")
-        if self._seen is None and outcome.evaluated_tick != tick:
+        if state.seen is None and outcome.evaluated_tick != tick:
             raise ValueError("new extraction evidence must arrive at its actual C2 publication")
 
     def _request(self, request: ExtractionMismatchRequestV1, outcome: SuckleExtractionOutcomeV1) -> None:
@@ -257,7 +293,7 @@ class SuckleExtractionLearningHookV1:
             names.add(witness.relation)
 
     def _interpretation(self, result: ExtractionInterpretationV1, dependency: ExtractionMismatchRequestV1 | None,
-                        cycle: int, tick: int) -> None:
+                        state: _LearningOrigin, *, cycle: int, tick: int) -> None:
         """Require current performed D work on the exact original dependency.
 
         A later response_reconsideration can retain the old result; its old cycle
@@ -266,7 +302,7 @@ class SuckleExtractionLearningHookV1:
         later focal work without changing that work's meaning.
         """
         if (not isinstance(result, ExtractionInterpretationV1) or result.cycle_id != cycle or result.cutoff_tick != tick
-                or self._interpretation_seen):
+                or state.interpretation_seen):
             raise ValueError("extraction F requires one actually performed current-opportunity interpretation")
         _index(result.cycle_id, "interpretation_cycle", minimum=1)
         _index(result.cutoff_tick, "interpretation_tick")
@@ -300,6 +336,94 @@ class SuckleExtractionLearningHookV1:
         outcomes: tuple[SuckleExtractionOutcomeV1, ...] = (), requests: tuple[ExtractionMismatchRequestV1, ...] = (),
         interpretation: ExtractionInterpretationV1 | None = None, comparison_enabled: bool = True, attention_enabled: bool = True,
     ) -> ExtractionLearningPhaseFReportV1:
+        """Reconcile all due original recipients at one F, committing only after validation.
+
+        Sequential mode admits at most eight origins and one new registration,
+        publication, question and actual interpretation per opportunity. The old
+        publication and new registration may concern different contributions.
+        Their 24-tick clocks, replay guards and dependencies remain independent.
+        This iteration concerns only the source's bounded recipients; it is not
+        a scan of maps, a new learner, or a task/need/completion evaluator.
+        """
+        cycle, tick = _index(cycle_id, "cycle_id", minimum=1), _index(cutoff_tick, "cutoff_tick")
+        if self._closed or cycle <= self._last_cycle or tick <= self._last_tick:
+            raise RuntimeError("extraction participation is closed or F was already reconciled")
+        if not isinstance(comparison_enabled, bool) or not isinstance(attention_enabled, bool):
+            raise TypeError("extraction teaching settings must be Boolean")
+        if not isinstance(outcomes, tuple) or len(outcomes) > 1 or not isinstance(requests, tuple) or len(requests) > 1:
+            raise ValueError("one extraction publication and new dependency per opportunity")
+        if not attention_enabled and (requests or interpretation is not None):
+            raise ValueError("disabled extraction Attention cannot supply focal interpretation")
+        origins = dict(self._origins)
+        claims: list[SuckleExtractionClaimV1] = []
+        if registration is not None:
+            self._claim(registration, _LearningOrigin())
+            claims.append(registration)
+        for outcome in outcomes:
+            validate_suckle_extraction_outcome_v1(outcome, stream=self.stream, cutoff_tick=tick)
+            claims.append(outcome.claim)
+        for request in requests:
+            if not isinstance(request, ExtractionMismatchRequestV1) or not outcomes:
+                raise ValueError("new extraction request requires this opportunity's outcome")
+            self._request(request, outcomes[0])
+        if interpretation is not None:
+            if not isinstance(interpretation, ExtractionInterpretationV1):
+                raise TypeError("extraction F requires a typed performed interpretation")
+            claims.append(interpretation.request.outcome.claim)
+        for claim in claims:
+            self._claim(claim, origins.get(claim.application.application_id, _LearningOrigin()))
+            identity = claim.application.application_id
+            if identity not in origins:
+                if len(origins) >= (8 if self.sequential else 1):
+                    raise ValueError("extraction participation original-identity bound forbids replacement or restart")
+                origins[identity] = _LearningOrigin()
+        if registration is not None and self.sequential:
+            previous = tuple(item.registration for item in self._origins.values() if item.registration is not None)
+            if previous:
+                original = previous[-1].application
+                current = registration.application
+                if (current.task.task_id != original.task.task_id or current.task.started_tick != original.task.started_tick
+                        or current.task.region_id != original.task.region_id or current.task.applications != original.task.applications + 1
+                        or current.cycle_id <= original.cycle_id or registration.start_tick <= previous[-1].start_tick):
+                    raise ValueError("extraction registration must continue the same bounded episode in order")
+        # No state mutation occurs until every per-origin transaction succeeds.
+        next_origins: dict[str, _LearningOrigin] = {}
+        dispositions: list[ExtractionTeachingDispositionV1] = []
+        new_participant = None
+        inspected = 0
+        for identity, state in origins.items():
+            own_registration = registration if registration is not None and registration.application.application_id == identity else None
+            own_outcomes = tuple(item for item in outcomes if item.claim.application.application_id == identity)
+            own_requests = tuple(item for item in requests if item.outcome.claim.application.application_id == identity)
+            own_interpretation = (interpretation if interpretation is not None
+                                  and interpretation.request.outcome.claim.application.application_id == identity else None)
+            updated, report = self._reconcile_origin(
+                state, cycle_id=cycle, cutoff_tick=tick, registration=own_registration, outcomes=own_outcomes,
+                requests=own_requests, interpretation=own_interpretation,
+                comparison_enabled=comparison_enabled, attention_enabled=attention_enabled,
+            )
+            next_origins[identity] = updated
+            dispositions.extend(report.dispositions)
+            inspected += report.inspected_participants
+            if report.new_participation is not None:
+                new_participant = report.new_participation
+        pending = tuple(item.participant for item in next_origins.values() if item.participant is not None)
+        report = ExtractionLearningPhaseFReportV1(self.recipient_id, cycle, tick, new_participant,
+                                                tuple(dispositions), pending, len(outcomes), inspected)
+        self._origins = next_origins
+        # Preserve the accepted singleton inspection attributes in the old mode.
+        latest = next(reversed(next_origins.values())) if next_origins else _LearningOrigin()
+        self._registration, self._participant = latest.registration, latest.participant
+        self._seen, self._dependency, self._interpretation_seen = latest.seen, latest.dependency, latest.interpretation_seen
+        self._last_cycle, self._last_tick = cycle, tick
+        self._history.extend(dispositions)
+        return report
+
+    def _reconcile_origin(
+        self, state: _LearningOrigin, *, cycle_id: int, cutoff_tick: int, registration: SuckleExtractionClaimV1 | None = None,
+        outcomes: tuple[SuckleExtractionOutcomeV1, ...] = (), requests: tuple[ExtractionMismatchRequestV1, ...] = (),
+        interpretation: ExtractionInterpretationV1 | None = None, comparison_enabled: bool = True, attention_enabled: bool = True,
+    ) -> tuple[_LearningOrigin, ExtractionLearningPhaseFReportV1]:
         """Atomically reconcile one actual F opportunity without durable learning.
 
         Validate the bounded input, expire eligibility before admitting evidence,
@@ -317,27 +441,27 @@ class SuckleExtractionLearningHookV1:
         if not isinstance(outcomes, tuple) or len(outcomes) > 1 or not isinstance(requests, tuple) or len(requests) > 1:
             raise ValueError("one extraction result and dependency per original contribution")
         for outcome in outcomes:
-            self._outcome(outcome, cycle, tick)
+            self._outcome(outcome, state, cycle, tick)
             if outcome.comparison_enabled != comparison_enabled:
                 raise ValueError("extraction teaching cannot change the original comparison setting")
-        dependency = self._dependency
+        dependency = state.dependency
         for request in requests:
-            if not outcomes or self._seen is not None:
+            if not outcomes or state.seen is not None:
                 raise ValueError("extraction dependency requires this opportunity's new C2 publication")
             self._request(request, outcomes[0])
             dependency = request
         if not attention_enabled and (requests or interpretation is not None):
             raise ValueError("disabled extraction Attention cannot supply focal interpretation")
         if registration is not None:
-            self._claim(registration)
-            if self._registration is not None or self._seen is not None or outcomes:
+            self._claim(registration, state)
+            if state.registration is not None or state.seen is not None or outcomes:
                 raise ValueError("one original extraction registration per generation; no replacement or late participation")
             if registration.application.cycle_id != cycle or registration.start_tick != tick:
                 raise ValueError("extraction participation belongs to its original application opportunity")
         if interpretation is not None:
-            self._interpretation(interpretation, dependency, cycle, tick)
+            self._interpretation(interpretation, dependency, state, cycle=cycle, tick=tick)
 
-        participant = self._participant
+        participant = state.participant
         inspected = int(participant is not None)
         dispositions: list[ExtractionTeachingDispositionV1] = []
 
@@ -350,7 +474,7 @@ class SuckleExtractionLearningHookV1:
         if participant is not None and tick >= participant.expires_before_tick:
             report(participant.claim, "eligibility_expired", participant.outcome)
             participant = None
-        seen = self._seen
+        seen = state.seen
         for outcome in outcomes:
             if seen is not None:
                 report(outcome.claim, "duplicate_ignored", outcome)
@@ -401,10 +525,6 @@ class SuckleExtractionLearningHookV1:
             self.recipient_id, cycle, tick, new_participation, tuple(dispositions),
             () if participant is None else (participant,), len(outcomes), inspected,
         )
-        if registration is not None:
-            self._registration = registration
-        self._participant, self._seen, self._dependency = participant, seen, dependency
-        self._interpretation_seen = self._interpretation_seen or interpretation is not None
-        self._last_cycle, self._last_tick = cycle, tick
-        self._history.extend(dispositions)
-        return result_report
+        next_state = _LearningOrigin(registration if registration is not None else state.registration,
+                                     participant, seen, dependency, state.interpretation_seen or interpretation is not None)
+        return next_state, result_report

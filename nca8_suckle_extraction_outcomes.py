@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 """L-D: original extraction correspondence and independently measured interval milk.
 
-This one-contribution, operation-local reader consumes the existing C2 interval
-lane. It cannot see a plant, current WNM, private supply, or diagnostic history.
+This operation-local reader consumes the existing C2 interval lane. The accepted
+profile retains one original; the sustained opt-in profile retains at most eight
+sequential originals with one unresolved claim and unchanged per-claim clocks. It cannot see a plant, current WNM, private supply, or diagnostic history.
 It has no route to Attention, IP selection, BodyMap permission or learning. The
 original prediction concerns sampled sealed contact and finite reciprocation;
 milk yield was not predicted. Known measured quantity and interval coverage are
@@ -26,7 +27,7 @@ from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetDispos
 from nca8_suckle import SuckleExtractionApplicationV1
 from nca8_suckle_outcomes import SuckleEndpointV1, SuckleIntervalEvidenceV1
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 __all__ = ["SuckleExtractionClaimV1", "SuckleExtractionOutcomeV1", "SuckleExtractionOutcomeFrameV1",
            "SuckleExtractionOutcomeRuntimeV1", "validate_suckle_extraction_outcome_v1", "__version__"]
 _GEOMETRY_TOLERANCE = 0.005
@@ -280,9 +281,15 @@ class SuckleExtractionOutcomeRuntimeV1:
     with explicit execution uncertainty, never manufacturing nonapplication.
     """
 
-    def __init__(self, stream: MotorStreamRefV1, *, compare_predictions: bool = True) -> None:
+    def __init__(self, stream: MotorStreamRefV1, *, compare_predictions: bool = True, sequential: bool = False) -> None:
         if not isinstance(stream, MotorStreamRefV1) or not isinstance(compare_predictions, bool):
             raise TypeError("extraction correspondence requires a stream and Boolean comparison option")
+        if not isinstance(sequential, bool):
+            raise TypeError("sequential extraction mode must be Boolean")
+        self.sequential = sequential
+        self._claims: dict[str, SuckleExtractionClaimV1] = {}
+        self._results: dict[str, SuckleExtractionOutcomeV1] = {}
+        self._past_evidence: dict[str, _Evidence] = {}
         self.stream, self.compare_predictions = stream, compare_predictions
         self._claim: SuckleExtractionClaimV1 | None = None
         self._evidence = _Evidence()
@@ -295,22 +302,28 @@ class SuckleExtractionOutcomeRuntimeV1:
         return self._claim if self._result is None else None
 
     def history(self) -> tuple[SuckleExtractionOutcomeV1, ...]:
-        """Read the sole frozen result without republishing or rescoring it."""
-        return () if self._result is None else (self._result,)
+        """Read bounded frozen original results without republishing or rescoring them."""
+        return tuple(self._results.values())
 
     def retained_counts(self) -> dict[str, int]:
         """Report actual bounded state, counting endpoint references separately."""
-        return {"extraction_pending_claims": int(self.pending() is not None), "extraction_outcome_history": int(self._result is not None),
-                "extraction_outcome_samples": len(self._evidence.samples),
-                "extraction_outcome_endpoint_refs": len(self._evidence.confirmations),
-                "extraction_outcome_command_ticks": len(self._evidence.command_ticks)}
+        retained = tuple(self._past_evidence.values()) + ((self._evidence,) if self._result is None and self._claim is not None else ())
+        counts = {"extraction_pending_claims": int(self.pending() is not None), "extraction_outcome_history": len(self._results),
+                "extraction_outcome_samples": sum(len(item.samples) for item in retained),
+                "extraction_outcome_endpoint_refs": sum(len(item.confirmations) for item in retained),
+                "extraction_outcome_command_ticks": sum(len(item.command_ticks) for item in retained)}
+        if self.sequential:
+            counts["extraction_original_claims"] = len(self._claims)
+        return counts
 
     def register(
         self, application: SuckleExtractionApplicationV1, proposal: BodyTargetProposalV1, targets: tuple[CommittedBodyTargetV1, ...],
     ) -> SuckleExtractionClaimV1:
         """Bind actual selected request/proposal/permission before physical dispatch."""
-        if self._closed or self._claim is not None:
-            raise RuntimeError("one extraction claim per generation; closed/repeated registration is forbidden")
+        if self._closed or self._claim is not None and (not self.sequential or self._result is None):
+            raise RuntimeError("extraction registration requires an open owner with no unresolved previous claim")
+        if len(self._claims) >= (8 if self.sequential else 1):
+            raise OverflowError("extraction original-identity capacity exhausted; no eviction or reset")
         if not isinstance(application, SuckleExtractionApplicationV1) or not isinstance(proposal, BodyTargetProposalV1):
             raise TypeError("register only the distinct selected extraction application and BodyMap proposal")
         if (application.contribution.origin.stream != self.stream or proposal.request is not application.contribution
@@ -322,9 +335,23 @@ class SuckleExtractionOutcomeRuntimeV1:
             if not isinstance(committed, CommittedBodyTargetV1) or committed.target is not binding.target:
                 raise ValueError("registration cannot substitute a copied or different target")
         claim = SuckleExtractionClaimV1(application, targets)
-        self._claim = claim
-        if not targets:
-            self._result = self._finish(self._evidence, self._last_cutoff, forced_status="not_applied")
+        if application.task.sustained != self.sequential or application.application_id in self._claims:
+            raise ValueError("extraction registration changed mode or reused an original application identity")
+        if self._claim is not None:
+            old = self._claim.application
+            if (application.task.task_id != old.task.task_id or application.task.region_id != old.task.region_id
+                    or application.task.started_tick != old.task.started_tick or application.task.started_cycle != old.task.started_cycle
+                    or application.task.applications != old.task.applications + 1 or application.cycle_id <= old.cycle_id
+                    or claim.start_tick <= self._claim.start_tick):
+                raise ValueError("sequential extraction must preserve its original episode and increasing contribution identities")
+        evidence = _Evidence()
+        result = (_outcome_from_evidence(claim, evidence, self._last_cutoff, compare_predictions=self.compare_predictions,
+                                        forced_status="not_applied") if not targets else None)
+        self._claim, self._evidence, self._result = claim, evidence, result
+        self._claims[application.application_id] = claim
+        if result is not None:
+            self._results[application.application_id] = result
+            self._past_evidence[application.application_id] = evidence
         return claim
 
     def installed(self, claim: SuckleExtractionClaimV1, *, at_tick: int) -> None:
@@ -351,6 +378,8 @@ class SuckleExtractionOutcomeRuntimeV1:
             raise ValueError("fault closure needs a bounded reason")
         if not self._closed and self._claim is not None and self._result is None:
             self._result = self._finish(self._evidence, max(0, self._last_cutoff), forced_status="execution_unknown_after_fault")
+            self._results[self._claim.application.application_id] = self._result
+            self._past_evidence[self._claim.application.application_id] = self._evidence
         self._closed = True
 
     def consume_intervals(
@@ -383,12 +412,27 @@ class SuckleExtractionOutcomeRuntimeV1:
                 if report.committed_target.target.origin.stream != self.stream:
                     raise ValueError("local evidence belongs to a different stream or generation")
             for report in reports:
-                self._read_report(evidence, report)
+                if self._claim is not None and self._claim.targets and report.committed_target is self._claim.targets[0]:
+                    self._read_report(evidence, report, self._claim)
+                else:
+                    original = next((claim for claim in self._claims.values()
+                                     if claim.targets and report.committed_target is claim.targets[0]), None)
+                    if not self.sequential or original is None or original.application.application_id not in self._past_evidence:
+                        raise ValueError("extraction report has no retained original installed target")
+                    # Validate a historical report against ITS original, not the
+                    # latest application. Closed results are never rewritten.
+                    historical = replace(self._past_evidence[original.application.application_id])
+                    self._read_report(historical, report, original)
             if command is not None and command.oral_extraction_drive not in (None, 0.0):
                 self._read_command(evidence, interval, reports)
             for endpoint in interval.endpoints():
                 endpoint.feedback.validate_available(stream=self.stream, at_tick=cutoff)
-                self._read_sample(evidence, endpoint)
+                self._read_sample(evidence, endpoint, self._claim)
+                if self.sequential:
+                    for identity, old_evidence in self._past_evidence.items():
+                        original = self._claims[identity]
+                        if original is not self._claim:
+                            self._read_sample(replace(old_evidence), endpoint, original)
         result = self._result
         if result is None and self._claim is not None:
             end = self._effective_end(evidence)
@@ -401,6 +445,9 @@ class SuckleExtractionOutcomeRuntimeV1:
         # No validation or calculation below this line can fail: batch commit.
         if self._result is None:
             self._evidence, self._result = evidence, result
+            if result is not None:
+                self._results[result.claim.application.application_id] = result
+                self._past_evidence[result.claim.application.application_id] = evidence
         self._last_interval, self._last_cutoff, self._last_command = cutoff - 1, cutoff, command_id
         return published
 
@@ -418,9 +465,8 @@ class SuckleExtractionOutcomeRuntimeV1:
             raise OverflowError("extraction exposure exceeds the original maximum eight-tick window")
         evidence.command_ticks += (interval.tick,)
 
-    def _read_report(self, evidence: _Evidence, report: LocalTargetReportV1) -> None:
-        """Consume the existing validated endpoint prefix; never recalculate motor phases."""
-        claim = self._claim
+    def _read_report(self, evidence: _Evidence, report: LocalTargetReportV1, claim: SuckleExtractionClaimV1) -> None:
+        """Consume a validated endpoint prefix against its supplied original claim."""
         if claim is None or not evidence.installed or not claim.targets or report.committed_target is not claim.targets[0]:
             raise ValueError("extraction report lacks its identical original installed target")
         replace(report)  # Validate its actual endpoint evidence, not just local_achieved.
@@ -433,7 +479,7 @@ class SuckleExtractionOutcomeRuntimeV1:
                 raise ValueError("terminated execution cannot acquire an unobserved new pattern")
             evidence.confirmations = confirmations
         for sample in (*confirmations, *((report.feedback,) if report.feedback is not None else ())):
-            self._read_sample(evidence, SuckleEndpointV1(sample, None))
+            self._read_sample(evidence, SuckleEndpointV1(sample, None), claim)
         if report.disposition is LocalTargetDispositionV1.ACHIEVED:
             if evidence.termination not in (None, "expired"):
                 raise ValueError("cancelled execution cannot be revived as achieved")
@@ -443,9 +489,9 @@ class SuckleExtractionOutcomeRuntimeV1:
             evidence.termination = report.disposition.value
             evidence.end_tick = min(report.reported_tick, claim.due_tick)
 
-    def _read_sample(self, evidence: _Evidence, endpoint: SuckleEndpointV1) -> None:
-        """Coalesce report/delivery references; enrich absent paired scene only once."""
-        claim, sample = self._claim, endpoint.feedback
+    def _read_sample(self, evidence: _Evidence, endpoint: SuckleEndpointV1, claim: SuckleExtractionClaimV1 | None) -> None:
+        """Coalesce original references without reattributing old input to a new task."""
+        sample = endpoint.feedback
         if claim is None:
             return
         basis = claim.application.projection.basis.oral_feedback

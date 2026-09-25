@@ -12,8 +12,10 @@ unchanged, including interruption, uncertain milk coverage and unpredicted yield
 The fixed initial profile admits measured loss of touch/seal, incompatible part
 organization, or at least 0.02 metres of corresponding anchor/mouth displacement.
 It does not promote uncertainty, dry supply or generic interruption into mismatch.
-One original question lives eight ticks; one dependency and an eight-entry
-independent diagnostic ring do not extend any task, motor or learning lifetime.
+Each original question lives eight ticks. The default admits one original;
+sustained mode permits at most eight with one offered extraction question head.
+Dependencies and the independent eight-entry diagnostic ring do not extend any
+task, motor or learning lifetime.
 """
 from __future__ import annotations
 
@@ -28,7 +30,7 @@ from nca8_suckle import SuckleExtractionApplicationV1
 from nca8_suckle_extraction_outcomes import SuckleExtractionOutcomeV1, validate_suckle_extraction_outcome_v1
 from nca8_suckle_outcomes import SuckleEndpointV1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["ExtractionQuestionEvidenceV1", "ExtractionMismatchRequestV1", "ExtractionInterpretationV1",
            "ExtractionFocalAllocationV1", "ExtractionAttentionFrameV1", "SuckleExtractionAttentionV1", "__version__"]
 
@@ -153,11 +155,17 @@ class SuckleExtractionAttentionV1:
     matching nonprimitive decision. Close is sticky; reset constructs a new owner.
     """
 
-    def __init__(self, stream: MotorStreamRefV1, seed: FeedingDetailSeedV1, *, diagnostic_capacity: int = 8) -> None:
+    def __init__(self, stream: MotorStreamRefV1, seed: FeedingDetailSeedV1, *, diagnostic_capacity: int = 8, sequential: bool = False) -> None:
         if not isinstance(stream, MotorStreamRefV1) or not isinstance(seed, FeedingDetailSeedV1):
             raise TypeError("extraction relevance requires a typed stream and source seed")
         if isinstance(diagnostic_capacity, bool) or not isinstance(diagnostic_capacity, int) or not 1 <= diagnostic_capacity <= 8:
             raise ValueError("extraction relevance diagnostics require capacity in [1,8]")
+        if not isinstance(sequential, bool):
+            raise TypeError("sequential extraction relevance must be Boolean")
+        self.sequential = sequential
+        self._applications: dict[str, SuckleExtractionApplicationV1] = {}
+        self._outcomes: dict[str, SuckleExtractionOutcomeV1] = {}
+        self._dependencies: tuple[ExtractionInterpretationV1, ...] = ()
         self.stream, self.seed = stream, seed
         self._pending: tuple[ExtractionMismatchRequestV1, ...] = ()
         self._dependency: ExtractionInterpretationV1 | None = None
@@ -177,15 +185,18 @@ class SuckleExtractionAttentionV1:
         return tuple(self._history)
 
     def retained_counts(self) -> dict[str, int]:
-        """Expose one question/result/dependency, not copied independent experiences."""
-        return {"extraction_attention_pending_requests": len(self._pending),
-                "extraction_attention_dependency": int(self._dependency is not None),
-                "extraction_attention_seen_outcomes": int(self._seen is not None),
+        """Expose bounded original associations separately from disposable diagnostics."""
+        counts = {"extraction_attention_pending_requests": len(self._pending),
+                "extraction_attention_dependency": len(self._dependencies),
+                "extraction_attention_seen_outcomes": len(self._outcomes),
                 "extraction_attention_dispositions": len(self._history)}
+        if self.sequential:
+            counts["extraction_attention_original_applications"] = len(self._applications)
+        return counts
 
     def close(self) -> None:
         """Revoke question/dependency use without editing outcome history or any IP."""
-        self._pending, self._dependency = (), None
+        self._pending, self._dependencies, self._dependency = (), (), None
         self._closed = True
 
     @staticmethod
@@ -258,35 +269,65 @@ class SuckleExtractionAttentionV1:
                     or application.projection.basis.maternal.seed != source.maternal.seed
                     or application.projection.basis.cutoff_tick > cutoff):
                 raise ValueError("extraction application and current source organization disagree")
-        if self._application is not None and application is not self._application:
-            raise ValueError("original extraction application cannot be replaced or restarted")
+        applications = dict(self._applications)
+        if application is not None:
+            original = applications.get(application.application_id)
+            if original is not None and application is not original:
+                raise ValueError("original extraction application cannot be replaced by a copy")
+            if original is not None and self._application is not None and application is not self._application:
+                raise ValueError("latest extraction application cannot regress to an earlier retained original")
+            if original is None:
+                if len(applications) >= (8 if self.sequential else 1):
+                    raise ValueError("original extraction application cannot be replaced or restarted beyond its bound")
+                if application.task.sustained != self.sequential:
+                    raise ValueError("extraction relevance mode does not match its originating task")
+                if self._application is not None:
+                    previous = self._application
+                    if (application.task.task_id != previous.task.task_id or application.task.started_tick != previous.task.started_tick
+                            or application.task.region_id != previous.task.region_id or application.task.started_cycle != previous.task.started_cycle
+                            or application.cycle_id <= previous.cycle_id
+                            or application.task.applications != previous.task.applications + 1):
+                        raise ValueError("sequential relevance preserves the original episode and ordered contributions")
+                applications[application.application_id] = application
+        elif self._application is not None:
+            raise ValueError("original extraction application cannot disappear")
         if not isinstance(outcomes, tuple) or len(outcomes) > 1:
-            raise ValueError("one original extraction publication per generation")
+            raise ValueError("one original extraction publication per opportunity")
+        seen_outcomes = dict(self._outcomes)
+        new_result = None
         for result in outcomes:
             validate_suckle_extraction_outcome_v1(result, stream=self.stream, cutoff_tick=cutoff)
-            if result.claim.application is not application:
-                raise ValueError("extraction result is not the original selected application")
-            if self._seen is not None and result != self._seen:
-                raise ValueError("conflicting or second extraction publication cannot be a replay")
-            if self._seen is None and result.evaluated_tick != cutoff:
-                raise ValueError("admit a new extraction result at its actual publication, not a history read")
-        pending, dependency = self._pending, self._dependency
+            identity = result.claim.application.application_id
+            if result.claim.application is not applications.get(identity):
+                raise ValueError("extraction result is not a retained original selected application")
+            seen = seen_outcomes.get(identity)
+            if seen is not None and result != seen:
+                raise ValueError("conflicting extraction publication cannot be a replay")
+            if seen is None:
+                if result.evaluated_tick != cutoff:
+                    raise ValueError("admit a new extraction result at its actual publication, not a history read")
+                seen_outcomes[identity] = result
+                new_result = result
         dispositions: list[tuple[str, str, int]] = []
-        if pending and cutoff >= pending[0].expires_at_tick:
-            dispositions.append((pending[0].request_id, "expired_uninterpreted", cutoff))
-            pending = ()
-        if dependency is not None and cutoff >= dependency.request.expires_at_tick:
-            dispositions.append((dependency.request.request_id, "dependent_response_expired", cutoff))
-            dependency = None
+        pending = tuple(item for item in self._pending if cutoff < item.expires_at_tick)
+        for item in self._pending:
+            if cutoff >= item.expires_at_tick:
+                dispositions.append((item.request_id, "expired_uninterpreted", cutoff))
+        dependencies = tuple(item for item in self._dependencies if cutoff < item.request.expires_at_tick)
+        for dependency in self._dependencies:
+            if cutoff >= dependency.request.expires_at_tick:
+                dispositions.append((dependency.request.request_id, "dependent_response_expired", cutoff))
         created: tuple[ExtractionMismatchRequestV1, ...] = ()
-        seen = self._seen
-        if outcomes and seen is None:
-            seen = outcomes[0]
-            evidence = self._significance(seen)
+        if new_result is not None:
+            evidence = self._significance(new_result)
             if evidence:
-                created = (ExtractionMismatchRequestV1(f"extraction_mismatch:{seen.claim.application.application_id}", seen, cutoff, evidence),)
-                pending = created
-        self._pending, self._dependency, self._seen = pending, dependency, seen
+                created = (ExtractionMismatchRequestV1(f"extraction_mismatch:{new_result.claim.application.application_id}",
+                                                      new_result, cutoff, evidence),)
+                pending = (*pending, *created)
+        self._pending, self._dependencies = pending, dependencies
+        self._dependency = dependencies[0] if dependencies else None
+        self._seen = new_result if new_result is not None else self._seen
+        self._applications, self._outcomes = applications, seen_outcomes
         self._source, self._application = source, application
         self._last_admission = cutoff
         self._history.extend(dispositions)
@@ -372,7 +413,9 @@ class SuckleExtractionAttentionV1:
             status = ("unresolved_current_relevance" if "unknown" in statuses else
                       "still_relevant" if "still_relevant" in statuses else "historical_resolved")
             interpretation = ExtractionInterpretationV1(request, cycle_id, source.cutoff_tick, working.working_id, source, status, relevance)
-            self._pending, self._dependency = (), interpretation
+            self._pending = self._pending[1:]
+            self._dependencies = (*self._dependencies, interpretation)
+            self._dependency = self._dependencies[0]
             self._last_allocation_cycle = cycle_id
             self._history.append((request.request_id, "interpreted", source.cutoff_tick))
             return ExtractionFocalAllocationV1("interpretation", interpretation)
@@ -382,6 +425,7 @@ class SuckleExtractionAttentionV1:
             return ExtractionFocalAllocationV1("ordinary")
         if dependency.status == "unresolved_current_relevance":
             return ExtractionFocalAllocationV1("dependent_unresolved", dependency)
-        self._dependency = None
+        self._dependencies = self._dependencies[1:]
+        self._dependency = self._dependencies[0] if self._dependencies else None
         self._history.append((dependency.request.request_id, "response_reconsidered", self._last_admission))
         return ExtractionFocalAllocationV1("response_reconsideration", dependency)

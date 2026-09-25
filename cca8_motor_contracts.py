@@ -26,12 +26,13 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "MOTOR_COMMAND_SCHEMA_V1",
     "MOTOR_FEEDBACK_SCHEMA_V1",
     "MOTOR_FRAME_V1",
     "PlanarDriveV1", "PlanarFeedbackV1", "OralFeedbackV1", "OralSealFeedbackV1", "OralExtractionFeedbackV1",
+    "FeedingDeficitFeedbackV1",
     "MotorCommandV1",
     "MotorFeedbackV1",
     "MotorStreamRefV1",
@@ -338,6 +339,34 @@ class OralExtractionFeedbackV1:
 
 
 @dataclass(frozen=True, slots=True)
+class FeedingDeficitFeedbackV1:
+    """One measured synthetic body-deficit channel, not a task-completion flag.
+
+    The enclosing MotorFeedbackV1 supplies acquisition identity and timing. None
+    explicitly means unavailable, never zero need. Units are a declared physical
+    surrogate, not calories, biological hunger, reward, or permission to Rest.
+    No private intake pool, supply reservoir or evaluator result is transported.
+    """
+
+    deficit_units: float | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "deficit_units", _optional_number(self.deficit_units, "feeding deficit", 0.0, 8.0))
+
+    def as_dict(self) -> dict[str, object]:
+        """Detach the single measured channel, retaining explicit unknown evidence."""
+        return {"deficit_units": self.deficit_units, "units": "synthetic_feeding_deficit"}
+
+    @classmethod
+    def from_dict(cls, value: object) -> FeedingDeficitFeedbackV1:
+        """Reject undeclared fields and units rather than accept a supplied fed flag."""
+        packet = _fields(value, frozenset({"deficit_units", "units"}))
+        if packet["units"] != "synthetic_feeding_deficit":
+            raise ValueError("unsupported feeding-deficit units")
+        return cls(_optional_number(packet["deficit_units"], "feeding deficit", 0.0, 8.0))
+
+
+@dataclass(frozen=True, slots=True)
 class MotorCommandV1:
     """Signed normalized drives for one external interval [tick, tick+1).
 
@@ -494,8 +523,12 @@ class MotorFeedbackV1:
     oral: OralFeedbackV1 | None = field(default=None, kw_only=True)
     oral_seal: OralSealFeedbackV1 | None = field(default=None, kw_only=True)
     oral_extraction: OralExtractionFeedbackV1 | None = field(default=None, kw_only=True)
+    feeding_deficit: FeedingDeficitFeedbackV1 | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
+        if self.feeding_deficit is not None and (not isinstance(self.feeding_deficit, FeedingDeficitFeedbackV1)
+                                                or self.oral_extraction is None):
+            raise TypeError("feeding deficit requires its typed facet and declared extraction/body context")
         if self.oral_extraction is not None and (not isinstance(self.oral_extraction, OralExtractionFeedbackV1) or self.oral_seal is None):
             raise TypeError("extraction feedback requires its typed facet and the seal sensing context")
         if self.oral_seal is not None and (not isinstance(self.oral_seal, OralSealFeedbackV1) or self.oral is None):
@@ -541,7 +574,8 @@ class MotorFeedbackV1:
     def as_dict(self) -> dict[str, object]:
         """Return a detached JSON-safe sensor packet retaining original identity."""
         return {
-            "schema": ("body_motor_feedback_v5" if self.oral_extraction is not None else
+            "schema": ("body_motor_feedback_v6" if self.feeding_deficit is not None else
+                       "body_motor_feedback_v5" if self.oral_extraction is not None else
                        "body_motor_feedback_v4" if self.oral_seal is not None else
                        "body_motor_feedback_v3" if self.oral is not None else
                        MOTOR_FEEDBACK_SCHEMA_V1 if self.planar is None else "body_motor_feedback_v2"),
@@ -554,6 +588,7 @@ class MotorFeedbackV1:
             **({"oral": self.oral.as_dict()} if self.oral is not None else {}),
             **({"oral_seal": self.oral_seal.as_dict()} if self.oral_seal is not None else {}),
             **({"oral_extraction": self.oral_extraction.as_dict()} if self.oral_extraction is not None else {}),
+            **({"feeding_deficit": self.feeding_deficit.as_dict()} if self.feeding_deficit is not None else {}),
             "angle_units": "degrees",
             "extension_units": "normalized",
             "body_tilt_degrees": self.body_tilt_degrees,
@@ -572,7 +607,8 @@ class MotorFeedbackV1:
         packet shape. Unknown task, policy, outcome and scenario keys are errors.
         No raw mapping is retained, and changing it later cannot mutate a record.
         """
-        extraction = isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v5"
+        feeding = isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v6"
+        extraction = feeding or isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v5"
         seal = extraction or isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v4"
         oral = seal or isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v3"
         extended = oral or isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v2"
@@ -580,8 +616,8 @@ class MotorFeedbackV1:
             "schema", "stream", "sample_id", "event_tick", "available_tick", "frame_id", "angle_units", "extension_units",
             "body_tilt_degrees", "support_extension", "support_contact", "useful_loading", "destabilization",
         } | ({"planar"} if extended else set()) | ({"oral"} if oral else set()) | ({"oral_seal"} if seal else set())
-            | ({"oral_extraction"} if extraction else set())))
-        schema = "body_motor_feedback_v5" if extraction else "body_motor_feedback_v4" if seal else "body_motor_feedback_v3" if oral else (
+            | ({"oral_extraction"} if extraction else set()) | ({"feeding_deficit"} if feeding else set())))
+        schema = "body_motor_feedback_v6" if feeding else "body_motor_feedback_v5" if extraction else "body_motor_feedback_v4" if seal else "body_motor_feedback_v3" if oral else (
             "body_motor_feedback_v2" if extended else MOTOR_FEEDBACK_SCHEMA_V1)
         if packet["schema"] != schema:
             raise ValueError("unsupported motor feedback schema")
@@ -603,6 +639,7 @@ class MotorFeedbackV1:
             oral=OralFeedbackV1.from_dict(packet["oral"]) if oral else None,
             oral_seal=OralSealFeedbackV1.from_dict(packet["oral_seal"]) if seal else None,
             oral_extraction=OralExtractionFeedbackV1.from_dict(packet["oral_extraction"]) if extraction else None,
+            feeding_deficit=FeedingDeficitFeedbackV1.from_dict(packet["feeding_deficit"]) if feeding else None,
             body_tilt_degrees=_optional_number(packet["body_tilt_degrees"], "body_tilt_degrees", -90.0, 90.0),
             support_extension=_optional_number(packet["support_extension"], "support_extension", 0.0, 1.0),
             support_contact=contact,

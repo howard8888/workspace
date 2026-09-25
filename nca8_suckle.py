@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""P16-2C-H: the initial latch contribution of Navigation-selected Suckle.
+"""Navigation-selected Suckle: retained latch and opt-in sustained first feeding.
 
 This task organizes closure at a currently represented feeding contact. It uses
 one source-linked WNM, an original sparse PNM and protected BodyMap mapping;
@@ -10,14 +10,23 @@ supplied competence, not tissue mechanics or learned surface recognition.
 The first profile ends at an evidence-supported latch subtask. Two distinct
 paired seal/contact acquisitions spanning four physical ticks establish that
 narrow result. Closure achievement, touch, predicted seal, milk transfer and
-completion of the full Suckle feeding task are different claims. No milk,
-rhythmic extraction, Suckle outcome-learning route or durable change is added.
+completion of the full Suckle feeding task are different claims. The retained
+latch profile alone supplies no milk or full-feeding completion.
+
+The opt-in M profile uses separately sensed body need, sequential original
+extraction contributions and Suckle-owned intrinsic confirmation. Navigation
+selects each contribution; BodyMap/SMP retain execution authority. Body uptake
+belongs to the external provider, not this task. No Rest or durable learning is
+introduced, and prior one-contribution profiles keep their accepted behavior.
 """
 
 from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
+
+from nca8_feeding_state import FeedingNeedStateV1, FEEDING_ADEQUACY_LIMIT_V1, FEEDING_EVIDENCE_AGE_V1
 
 from nca8_body_targets import OralClosureRequestV1, OralExtractionRequestV1
 from nca8_executive import WorkingNavMapStateV1
@@ -26,14 +35,20 @@ from nca8_prediction import ProjectedNavMapV1, SucklePreviewV1, SuckleExtraction
 from nca8_primitives import PrimitiveApplicationV1, PrimitiveApplicabilityV1, PrimitiveKindV1, TaskActionKindV1, TaskActionV1
 from nca8_sensorimotor_contracts import CommittedBodyTargetV1, LocalTargetReportV1, OralExtractionTargetV1, SensorimotorTargetKindV1, TargetOriginV1
 
-__version__ = "0.8.0"
+if TYPE_CHECKING:
+    from nca8_suckle_extraction_outcomes import SuckleExtractionOutcomeV1
+
+__version__ = "0.9.0"
 __all__ = ["SuckleProfileV1", "SuckleTaskV1", "SuckleApplicationV1", "SuckleAssessmentV1", "SuckleIPV1", "SuckleExtractionEpisodeV1", "SuckleExtractionApplicationV1",
-           "SuckleExtractionAssessmentV1", "__version__"]
+           "SuckleExtractionAssessmentV1", "SuckleFeedingTaskV1", "SuckleFeedingAssessmentV1", "__version__"]
 
 _MAX_TICKS = 48
 _MAX_OPPORTUNITIES = 12
 _DESIRED_CLOSURE = 0.6
 _CLOSURE_TOLERANCE = 0.025
+_FEEDING_MAX_TICKS = 96
+_FEEDING_MAX_APPLICATIONS = 8
+_FEEDING_CONFIRMATION_SPAN = 4
 
 
 def _index(value: int, minimum: int, maximum: int) -> None:
@@ -78,15 +93,18 @@ class SuckleProfileV1:
     extraction_prediction_comparison_enabled: bool = True
     extraction_outcome_attention_enabled: bool = False
     extraction_learning_hook_enabled: bool = False
+    sustained_feeding_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not all(isinstance(value, bool) for value in (
                 self.enabled, self.influence_enabled, self.outcomes_enabled, self.prediction_comparison_enabled,
                 self.outcome_attention_enabled, self.learning_hook_enabled, self.extraction_enabled,
                 self.extraction_outcomes_enabled, self.extraction_prediction_comparison_enabled, self.extraction_outcome_attention_enabled,
-                self.extraction_learning_hook_enabled)):
+                self.extraction_learning_hook_enabled, self.sustained_feeding_enabled)):
             raise TypeError("Suckle switches must be Boolean")
         _index(self.extraction_repetitions, 1, 2)
+        if self.sustained_feeding_enabled and not self.extraction_outcomes_enabled:
+            raise ValueError("sustained feeding requires original extraction correspondence and sensed body need")
         if self.extraction_learning_hook_enabled and not self.extraction_outcomes_enabled:
             raise ValueError("extraction participation requires original extraction correspondence")
         if self.extraction_outcome_attention_enabled and not self.extraction_outcomes_enabled:
@@ -116,19 +134,24 @@ class SuckleProfileV1:
                 "learning": "suckle_no_learning_v1" if self.learning_hook_enabled else "unimplemented_no_participation",
                 **({"maximum_learning_participants": 8, "eligibility_lifetime_cycles": 4,
                     "learning_maturity": "eligibility_only"} if self.learning_hook_enabled else {}),
-                **({"extraction_contribution": "selected_first_contribution_v1", "maximum_extraction_contributions": 1,
+                **({"extraction_contribution": "selected_sustained_contributions_v1" if self.sustained_feeding_enabled else "selected_first_contribution_v1", "maximum_extraction_contributions": _FEEDING_MAX_APPLICATIONS if self.sustained_feeding_enabled else 1,
                     "extraction_repetitions": self.extraction_repetitions, "extraction_extent": 0.10,
                     "extraction_task_correspondence": "suckle_extraction_correspondence_v1" if self.extraction_outcomes_enabled else "unimplemented_unscored",
                     **({"extraction_prediction_comparison_enabled": self.extraction_prediction_comparison_enabled}
                        if self.extraction_outcomes_enabled else {}),
                     "extraction_learning": "suckle_extraction_no_learning_v1" if self.extraction_learning_hook_enabled else "unimplemented"}
                    if self.extraction_enabled else {}),
-                **({"extraction_outcome_attention": "suckle_extraction_attention_v1", "maximum_extraction_questions": 1,
+                **({"extraction_outcome_attention": "suckle_extraction_attention_v1", "maximum_extraction_questions": _FEEDING_MAX_APPLICATIONS if self.sustained_feeding_enabled else 1,
                     "extraction_question_lifetime_ticks": 8, "interpretation_policy": "one_opportunity_then_later_response"}
                    if self.extraction_outcome_attention_enabled else {}),
-                **({"maximum_extraction_learning_participants": 1, "extraction_eligibility_lifetime_ticks": 24,
+                **({"maximum_extraction_learning_participants": _FEEDING_MAX_APPLICATIONS if self.sustained_feeding_enabled else 1, "extraction_eligibility_lifetime_ticks": 24,
                     "extraction_learning_maturity": "eligibility_only"} if self.extraction_learning_hook_enabled else {}),
-                "full_suckle_task": "not_implemented"}
+                **({"sustained_feeding": {"maximum_ticks": _FEEDING_MAX_TICKS, "maximum_applications": _FEEDING_MAX_APPLICATIONS,
+                    "adequacy_threshold": FEEDING_ADEQUACY_LIMIT_V1, "confirmation_span_ticks": _FEEDING_CONFIRMATION_SPAN,
+                    "confirmation_samples": 2, "maximum_evidence_age_ticks": FEEDING_EVIDENCE_AGE_V1,
+                    "need_owner": "body_sensory", "completion_owner": "ip:suckle", "automatic_rest": False}}
+                   if self.sustained_feeding_enabled else {}),
+                "full_suckle_task": "sustained_first_feeding_v1" if self.sustained_feeding_enabled else "not_implemented"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +243,77 @@ class SuckleAssessmentV1:
 
 
 @dataclass(frozen=True, slots=True)
+class SuckleFeedingTaskV1:
+    """One first-feeding requirement owned by the selected Suckle operation.
+
+    This task is distinct from an earlier completed latch and from each fresh
+    contribution application. Its original physical deadline never renews. The
+    eight-application limit is containment, not a success counter. Only Suckle's
+    current-body-evidence rule may complete this requirement, without task credit,
+    support adequacy, reward, learning or a permission to Rest being implied.
+    """
+
+    task_id: str
+    region_id: str
+    started_cycle: int
+    started_tick: int
+    applications: int = 0
+    status: str = "active"
+
+    def __post_init__(self) -> None:
+        _identifier(self.task_id)
+        _identifier(self.region_id)
+        _index(self.started_cycle, 1, 2**63 - _FEEDING_MAX_TICKS - 1)
+        _index(self.started_tick, 0, 2**63 - _FEEDING_MAX_TICKS - 1)
+        _index(self.applications, 0, _FEEDING_MAX_APPLICATIONS)
+        if self.status not in {"active", "completed", "budget_exhausted", "cancelled", "not_applied", "contribution_incomplete",
+                               "support_interrupted", "contact_lost", "detail_contradicted"}:
+            raise ValueError("unknown sustained-feeding task disposition")
+
+    @property
+    def expires_at_tick(self) -> int:
+        """Keep a fixed exclusive physical deadline, independent of focal cadence."""
+        return self.started_tick + _FEEDING_MAX_TICKS
+
+    def as_dict(self) -> dict[str, object]:
+        """Describe the original requirement without awarding action-specific credit."""
+        return {"task_id": self.task_id, "region_id": self.region_id, "started_cycle": self.started_cycle,
+                "started_tick": self.started_tick, "expires_at_tick": self.expires_at_tick,
+                "applications": self.applications, "maximum_applications": _FEEDING_MAX_APPLICATIONS,
+                "status": self.status, "full_suckle_complete": self.status == "completed",
+                "scope": "synthetic_first_feeding_need", "causal_credit": "not_established", "permits_rest": False}
+
+
+@dataclass(frozen=True, slots=True)
+class SuckleFeedingAssessmentV1:
+    """A detached description of Suckle's need/continuation/closure decision.
+
+    Confirmation contains at most two original body readings, not a new sensor
+    or Phase-F computation. Last outcome keeps its original application and
+    historical disposition. Inspection never starts a new episode or motor step.
+    """
+
+    task: SuckleFeedingTaskV1 | None
+    reason: str
+    need: FeedingNeedStateV1 | None
+    confirmation: tuple[FeedingNeedStateV1, ...]
+    outcome: SuckleExtractionOutcomeV1 | None
+    retirement_requested: bool
+
+    def as_dict(self) -> dict[str, object]:
+        """Report requirement satisfaction without claiming safe Rest or learning."""
+        return {"profile": "sustained_first_feeding_v1", "owner": "ip:suckle", "reason": self.reason,
+                "task": self.task.as_dict() if self.task is not None else None,
+                "need": self.need.as_dict() if self.need is not None else None,
+                "confirmation": [item.as_dict() for item in self.confirmation],
+                "last_outcome_application": self.outcome.claim.application.application_id if self.outcome is not None else None,
+                "last_outcome_status": self.outcome.status if self.outcome is not None else None,
+                "retirement_requested": self.retirement_requested,
+                "full_suckle_complete": self.task is not None and self.task.status == "completed",
+                "rest_selected": False, "durable_learning_updates": 0}
+
+
+@dataclass(frozen=True, slots=True)
 class SuckleExtractionEpisodeV1:
     """Original finite context for one extraction application, not another task IP.
 
@@ -235,6 +329,7 @@ class SuckleExtractionEpisodeV1:
     started_tick: int
     applications: int
     latch: SuckleTaskV1 | None = None
+    sustained: bool = False
 
     def __post_init__(self) -> None:
         _identifier(self.task_id)
@@ -242,6 +337,16 @@ class SuckleExtractionEpisodeV1:
         _index(self.started_cycle, 1, 2**63 - _MAX_TICKS - 1)
         _index(self.started_tick, 0, 2**63 - _MAX_TICKS - 1)
         _index(self.applications, 1, _MAX_OPPORTUNITIES)
+        if not isinstance(self.sustained, bool):
+            raise TypeError("extraction episode mode must be Boolean")
+        if self.sustained:
+            _index(self.applications, 1, _FEEDING_MAX_APPLICATIONS)
+            _index(self.started_tick, 0, 2**63 - _FEEDING_MAX_TICKS - 1)
+            if self.latch is not None and (not isinstance(self.latch, SuckleTaskV1) or self.latch.status != "latch_established"
+                    or self.latch.region_id != self.region_id or self.task_id == self.latch.task_id
+                    or self.started_tick < self.latch.started_tick or self.started_cycle < self.latch.started_cycle):
+                raise ValueError("sustained feeding must preserve a distinct historical completed latch")
+            return
         if self.latch is not None:
             if (not isinstance(self.latch, SuckleTaskV1) or self.latch.status != "latch_established"
                     or (self.task_id, self.region_id, self.started_cycle, self.started_tick, self.applications) !=
@@ -251,14 +356,20 @@ class SuckleExtractionEpisodeV1:
         elif self.applications != 1:
             raise ValueError("an already-sealed episode begins with its first actual application")
 
+    @property
+    def expires_at_tick(self) -> int:
+        """Use this episode's original physical budget, never a prior latch deadline."""
+        return self.started_tick + (_FEEDING_MAX_TICKS if self.sustained else _MAX_TICKS)
+
     def as_dict(self) -> dict[str, object]:
         """Expose the original episode bounds; one contribution is not satiety."""
         return {"task_id": self.task_id, "region_id": self.region_id, "started_cycle": self.started_cycle,
                 "started_tick": self.started_tick, "applications": self.applications,
-                "expires_before_cycle": self.started_cycle + _MAX_OPPORTUNITIES,
-                "expires_at_tick": self.started_tick + _MAX_TICKS,
+                "expires_before_cycle": None if self.sustained else self.started_cycle + _MAX_OPPORTUNITIES,
+                "expires_at_tick": self.expires_at_tick,
                 "original_latch": self.latch.as_dict() if self.latch is not None else None,
-                "scope": "one_extraction_contribution", "full_suckle_complete": False}
+                "scope": "sustained_feeding_contribution" if self.sustained else "one_extraction_contribution",
+                "full_suckle_complete": False}
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,9 +400,10 @@ class SuckleExtractionApplicationV1(PrimitiveApplicationV1):
                 or self.contribution.origin_status != "selected_suckle_extraction"
                 or (self.contribution.outward_extent, self.contribution.repetitions, self.contribution.lease_ticks) !=
                    (preview.outward_extent, preview.repetitions, preview.horizon_ticks)
-                or not self.task.started_cycle <= self.cycle_id < self.task.started_cycle + _MAX_OPPORTUNITIES
-                or not self.task.started_tick <= preview.basis.cutoff_tick < self.task.started_tick + _MAX_TICKS
-                or preview.horizon_ticks != min(8, self.task.started_tick + _MAX_TICKS - preview.basis.cutoff_tick)
+                or self.cycle_id < self.task.started_cycle
+                or (not self.task.sustained and self.cycle_id >= self.task.started_cycle + _MAX_OPPORTUNITIES)
+                or not self.task.started_tick <= preview.basis.cutoff_tick < self.task.expires_at_tick
+                or preview.horizon_ticks != min(8, self.task.expires_at_tick - preview.basis.cutoff_tick)
                 or self.expected_relations != preview.pnm.expected_relations):
             raise ValueError("extraction application, source, original projection and finite episode disagree")
 
@@ -325,7 +437,7 @@ class SuckleExtractionAssessmentV1:
                 "task_pnm_correspondence":
                 "separate_extraction_correspondence_owner" if self.application is not None and self.application.projection.outcomes_enabled
                 else "unimplemented_unscored",
-                "maximum_extraction_contributions": 1, "full_suckle_complete": False, "milk_received": "not_inferred",
+                "maximum_extraction_contributions": _FEEDING_MAX_APPLICATIONS if self.application is not None and self.application.task.sustained else 1, "full_suckle_complete": False, "milk_received": "not_inferred",
                 "durable_learning_updates": 0}
 
 
@@ -359,6 +471,13 @@ class SuckleIPV1:
         self._extraction_target: CommittedBodyTargetV1 | None = None
         self._extraction_report: LocalTargetReportV1 | None = None
         self._extraction_status = "not_prepared"
+        self._feeding_task: SuckleFeedingTaskV1 | None = None
+        self._feeding_proof: list[FeedingNeedStateV1] = []
+        self._feeding_entry_closed = False
+        self._feeding_no_yield = False
+        self._extraction_history: list[SuckleExtractionApplicationV1] = []
+        self._feeding_results: dict[str, SuckleExtractionOutcomeV1] = {}
+
         self._reason = "not_prepared"
         self._busy, self._blocked, self._cancel_previous, self._cancelled = False, False, False, False
 
@@ -390,9 +509,11 @@ class SuckleIPV1:
         """Expose actual bounded owner storage independently from observer exports."""
         return {"tasks": int(self._task is not None), "source_bases": int(self._basis is not None),
                 "targets": int(self._target is not None), "applications": len(self._history), "latch_samples": len(self._proof),
-                **({"extraction_applications": int(self._extraction_application is not None),
+                **({"extraction_applications": len(self._extraction_history) if self.profile.sustained_feeding_enabled else int(self._extraction_application is not None),
                     "extraction_targets": int(self._extraction_target is not None),
-                    "extraction_reports": int(self._extraction_report is not None)} if self.profile.extraction_enabled else {})}
+                    "extraction_reports": int(self._extraction_report is not None)} if self.profile.extraction_enabled else {}),
+                **({"feeding_tasks": int(self._feeding_task is not None), "feeding_confirmation_samples": len(self._feeding_proof),
+                    "feeding_retained_results": len(self._feeding_results)} if self.profile.sustained_feeding_enabled else {})}
 
     def cancel(self) -> None:
         """Make cancellation sticky; the caller separately retires motor authority."""
@@ -403,6 +524,9 @@ class SuckleIPV1:
         if self._extraction_application is not None:
             self.source.clear_influence(task_id=self._extraction_application.task.task_id)
             self._extraction_status = "cancelled"
+        if self._feeding_task is not None and self._feeding_task.status == "active":
+            self._feeding_task = replace(self._feeding_task, status="cancelled")
+            self.source.clear_influence(task_id=self._feeding_task.task_id)
         self._cancelled, self._cancel_previous, self._reason = True, self.authorized_target is not None, "cancelled"
 
     @staticmethod
@@ -516,7 +640,7 @@ class SuckleIPV1:
             self._reason = "cancelled"
         elif not self.profile.enabled:
             self._reason = "suckle_disabled"
-        elif not self.source.profile.feeding_need:
+        elif not self.source.feeding_required:
             self._reason = "no_declared_feeding_need"
         elif not basis.oral_evidence_current:
             self._reason = "current_mouth_detail_unavailable"
@@ -541,7 +665,12 @@ class SuckleIPV1:
         }
         if self._task is not None and self._task.status != "active" and self._extraction_application is None:
             self.source.clear_influence(task_id=self._task.task_id)
-        if self.profile.extraction_enabled:
+        if self.profile.sustained_feeding_enabled:
+            self._prepare_sustained_feeding(
+                basis, next((item for item in reports if item.committed_target is self._extraction_target), None),
+                movement_blocked=movement_blocked or extraction_movement_blocked,
+            )
+        elif self.profile.extraction_enabled:
             self._prepare_extraction(
                 basis, next((item for item in reports if item.committed_target is self._extraction_target), None),
                 movement_blocked=movement_blocked or extraction_movement_blocked,
@@ -553,6 +682,185 @@ class SuckleIPV1:
             return None
         return SuckleExtractionAssessmentV1(self._extraction_status, self._extraction_application,
                                             self._extraction_target, self._extraction_report, self.profile.extraction_learning_hook_enabled)
+
+    def feeding_assessment(self) -> SuckleFeedingAssessmentV1 | None:
+        """Read the optional body-evidence task without invoking a completion rule."""
+        if not self.profile.sustained_feeding_enabled:
+            return None
+        outcome = self._feeding_results.get(self._extraction_application.application_id) if self._extraction_application is not None else None
+        return SuckleFeedingAssessmentV1(self._feeding_task, self._reason,
+                                         self._basis.feeding_need if self._basis is not None else None,
+                                         tuple(self._feeding_proof), outcome, self._cancel_previous)
+
+    def extraction_applications(self) -> tuple[SuckleExtractionApplicationV1, ...]:
+        """Read bounded original applications; these are not a next-action script."""
+        if self.profile.sustained_feeding_enabled:
+            return tuple(self._extraction_history)
+        return () if self._extraction_application is None else (self._extraction_application,)
+
+    def observe_extraction_outcomes(self, outcomes: tuple[SuckleExtractionOutcomeV1, ...], *, cutoff_tick: int) -> None:
+        """Retain canonical original C2 evidence for Suckle's continuation requirement.
+
+        Validate the complete batch before mutation. No interval reconstruction,
+        diagnostic read, free focal interpretation, new participant, uptake or
+        motor grant occurs here. Original mismatch/unknown dispositions survive
+        later satisfaction. The default single-contribution path does not call it.
+        """
+        if not self.profile.sustained_feeding_enabled:
+            raise RuntimeError("sustained outcome consumption requires its explicit profile")
+        if not isinstance(outcomes, tuple) or len(outcomes) > 1:
+            raise ValueError("one active contribution can publish at most one new outcome")
+        from nca8_suckle_extraction_outcomes import validate_suckle_extraction_outcome_v1  # pylint: disable=import-outside-toplevel
+        for result in outcomes:
+            validate_suckle_extraction_outcome_v1(result, stream=self.source.current.stream if self.source.current is not None
+                                                 else result.claim.application.projection.basis.stream, cutoff_tick=cutoff_tick)
+            if not any(result.claim.application is original for original in self._extraction_history):
+                raise ValueError("feeding outcome must retain its actual original selected application")
+            previous = self._feeding_results.get(result.claim.application.application_id)
+            if previous is not None and result is not previous:
+                raise ValueError("feeding result replay cannot replace an original result")
+            if previous is None and result.evaluated_tick != cutoff_tick:
+                raise ValueError("feeding outcomes arrive at publication, not from diagnostic history")
+        for result in outcomes:
+            self._feeding_results[result.claim.application.application_id] = result
+
+    def _observe_feeding_satisfaction(self, need: FeedingNeedStateV1 | None) -> None:
+        """Apply only Suckle's fixed intrinsic condition, never task arbitration.
+
+        Two original readings span four physical ticks and at most eight. A
+        missing/unknown/stale acquisition breaks confirmation. Duplicate reads
+        cannot add dwell. The enclosing preparation enforces the original task
+        deadline first, so later body satisfaction cannot repair an expired task.
+        """
+        task = self._feeding_task
+        if (task is None or need is None or not need.current or not need.new_acquisition
+                or need.deficit_units is None or need.deficit_units > FEEDING_ADEQUACY_LIMIT_V1
+                or need.event_tick is None or need.event_tick <= task.started_tick):
+            self._feeding_proof.clear()
+            return
+        if self._feeding_proof:
+            last = self._feeding_proof[-1]
+            first_event = self._feeding_proof[0].event_tick
+            if (last.event_tick is None or need.event_tick <= last.event_tick or need.sample_id == last.sample_id
+                    or need.event_tick - last.event_tick > FEEDING_EVIDENCE_AGE_V1):
+                self._feeding_proof.clear()
+            elif first_event is not None and need.event_tick - first_event > FEEDING_EVIDENCE_AGE_V1:
+                # An intervening low sample does not keep the earliest one young.
+                # Retain the recent low reading to form an actually eligible pair.
+                self._feeding_proof = [last]
+        self._feeding_proof.append(need)
+        if len(self._feeding_proof) > 2:
+            self._feeding_proof = [self._feeding_proof[0], self._feeding_proof[-1]]
+        first = self._feeding_proof[0].event_tick
+        if len(self._feeding_proof) == 2 and first is not None and need.event_tick - first >= _FEEDING_CONFIRMATION_SPAN:
+            self._feeding_task = replace(task, status="completed")
+
+    def _end_feeding(self, status: str) -> None:
+        """End this requirement and request scoped retirement, never another task."""
+        if self._feeding_task is not None:
+            self._feeding_task = replace(self._feeding_task, status=status)
+            self.source.clear_influence(task_id=self._feeding_task.task_id)
+        self._reason = f"feeding_{status}"
+        self._cancel_previous = self.authorized_target is not None
+
+    def _prepare_sustained_feeding(
+        self, basis: FeedingDetailNavMapStateV1, report: LocalTargetReportV1 | None, *, movement_blocked: bool,
+    ) -> None:
+        """Prepare the same Suckle IP using current need and its previous contribution.
+
+        This owner-local requirement check cannot select itself, make a PNM,
+        install a target or choose Rest. Every fresh contribution still requires
+        Navigation and BodyMap. Serious/incomplete previous work stops further
+        extraction rather than inventing a general retry or a free interpretation.
+        Outcome questions and learning eligibility have separate lifetimes.
+        """
+        need, task = basis.feeding_need, self._feeding_task
+        if need is None:
+            raise ValueError("sustained feeding requires its declared body-owned need representation")
+        if report is not None:
+            self._extraction_report = report
+        if task is not None and task.status == "active" and basis.cutoff_tick >= task.expires_at_tick:
+            self._end_feeding("budget_exhausted")
+            return
+        if task is not None and task.status != "active":
+            self._end_feeding(task.status)
+            return
+        if self._cancelled:
+            self._reason, self._cancel_previous = "feeding_cancelled", self.authorized_target is not None
+            return
+        if not self.profile.enabled:
+            self._reason, self._cancel_previous = "suckle_disabled", self.authorized_target is not None
+            return
+        if task is not None:
+            self._observe_feeding_satisfaction(need)
+            if self._feeding_task is not None and self._feeding_task.status == "completed":
+                self._end_feeding("completed")
+                return
+        if self._feeding_entry_closed:
+            self._reason, self._cancel_previous = "feeding_not_required_at_entry", self.authorized_target is not None
+            return
+        if task is None and need.current and need.deficit_units is not None and need.deficit_units <= FEEDING_ADEQUACY_LIMIT_V1:
+            self._feeding_entry_closed = True
+            self._reason, self._cancel_previous = "feeding_not_required_at_entry", self.authorized_target is not None
+            return
+        app, target = self._extraction_application, self._extraction_target
+        if task is not None and self._support_contradicted(basis):
+            self._end_feeding("support_interrupted")
+            return
+        if task is not None and basis.contact_correspondence_status in {"no_touch", "touch_elsewhere"}:
+            self._end_feeding("contact_lost")
+            return
+        if task is not None and basis.association_status in {"detail_category_contradicted", "part_geometry_contradicted", "parent_seed_mismatch"}:
+            self._end_feeding("detail_contradicted")
+            return
+        self._cancel_previous = False if app is not None else self._cancel_previous
+        outcome = self._feeding_results.get(app.application_id) if app is not None else None
+        if app is not None:
+            if target is None:
+                self._end_feeding("not_applied")
+                return
+            if outcome is None:
+                self._extraction_status = "lease_expired" if basis.cutoff_tick >= target.expires_at_tick else "local_execution_pending"
+                self._reason = ("feeding_confirmation_pending" if need.current and need.deficit_units is not None
+                                and need.deficit_units <= FEEDING_ADEQUACY_LIMIT_V1 else "feeding_awaiting_original_outcome")
+                # The existing local protection/lease still enforces motor bounds.
+                return
+            self._extraction_status = "local_achieved" if outcome.status == "local_sequence_observed" else outcome.status
+            if outcome.status != "local_sequence_observed" or any(value in {"mismatch", "unknown", "interrupted"} for _, value in outcome.relations):
+                self._end_feeding("contribution_incomplete")
+                return
+            milk = outcome.milk_evidence()
+            if milk["coverage"] == "complete" and milk["quantity_status"] == "known_zero":
+                self._feeding_no_yield = True
+        if not self.source.feeding_required:
+            self._reason = ("feeding_confirmation_pending" if need.current and need.deficit_units is not None
+                            and need.deficit_units <= FEEDING_ADEQUACY_LIMIT_V1 else "feeding_need_evidence_unavailable")
+            return
+        if self._feeding_no_yield:
+            self._reason = "feeding_no_yield_waiting_for_body_consequence"
+            return
+        if task is not None and task.applications >= _FEEDING_MAX_APPLICATIONS:
+            self._end_feeding("budget_exhausted")
+            return
+        if self._task is not None and self._task.status != "latch_established":
+            self._extraction_status = "awaiting_latch" if self._task.status == "active" else self._task.status
+            return
+        if self._task is None and basis.seal_correspondence_status != "compatible":
+            # Preserve the established latch/SeekNipple applicability path. A
+            # sensed need does not skip uncompleted contact or closure work.
+            self._extraction_status = "awaiting_latch"
+            return
+        body = basis.oral_feedback
+        if not basis.focal_accessible or not self._supported(basis):
+            self._reason = "feeding_current_source_or_support_unavailable"
+        elif basis.seal_correspondence_status != "compatible":
+            self._reason = "feeding_current_seal_not_supported"
+        elif body is None or body.oral_extraction is None or body.oral_extraction.stroke is None:
+            self._reason = "feeding_stroke_evidence_unavailable"
+        elif movement_blocked:
+            self._reason = "feeding_awaiting_incompatible_movement_release"
+        else:
+            self._reason, self._extraction_status, self._cancel_previous = "initiate_extraction", "ready", False
 
     def _prepare_extraction(
         self, basis: FeedingDetailNavMapStateV1, report: LocalTargetReportV1 | None, *, movement_blocked: bool,
@@ -649,16 +957,26 @@ class SuckleIPV1:
     def _apply_extraction(self, wnm: WorkingNavMapStateV1, *, cycle_id: int) -> SuckleExtractionApplicationV1:
         """Construct one selected projection/request; no lower target or world access."""
         basis = self._basis
-        if basis is None or basis.detail_position is None or self._extraction_application is not None:
+        if basis is None or basis.detail_position is None or (self._extraction_application is not None and not self.profile.sustained_feeding_enabled):
             raise RuntimeError("selected extraction lost its original basis or exceeded its one-contribution bound")
         latch = self._task
-        task = SuckleExtractionEpisodeV1(
-            latch.task_id if latch is not None else f"suckle_extraction:{basis.stream.generation}:{cycle_id}",
-            basis.seed.detail_region_id, latch.started_cycle if latch is not None else cycle_id,
-            latch.started_tick if latch is not None else basis.cutoff_tick,
-            latch.applications + 1 if latch is not None else 1, latch,
-        )
-        horizon = min(8, task.started_tick + _MAX_TICKS - basis.cutoff_tick)
+        feeding_task = None
+        if self.profile.sustained_feeding_enabled:
+            feeding_task = self._feeding_task or SuckleFeedingTaskV1(
+                f"suckle_feeding:{basis.stream.generation}:{cycle_id}", basis.seed.detail_region_id, cycle_id, basis.cutoff_tick)
+            if feeding_task.status != "active" or feeding_task.applications >= _FEEDING_MAX_APPLICATIONS or self._feeding_entry_closed:
+                raise RuntimeError("sustained feeding cannot restart or exceed its original budget")
+            feeding_task = replace(feeding_task, applications=feeding_task.applications + 1)
+            task = SuckleExtractionEpisodeV1(feeding_task.task_id, feeding_task.region_id, feeding_task.started_cycle,
+                                             feeding_task.started_tick, feeding_task.applications, latch, sustained=True)
+        else:
+            task = SuckleExtractionEpisodeV1(
+                latch.task_id if latch is not None else f"suckle_extraction:{basis.stream.generation}:{cycle_id}",
+                basis.seed.detail_region_id, latch.started_cycle if latch is not None else cycle_id,
+                latch.started_tick if latch is not None else basis.cutoff_tick,
+                latch.applications + 1 if latch is not None else 1, latch,
+            )
+        horizon = min(8, task.expires_at_tick - basis.cutoff_tick)
         app_id = f"suckle_extraction_application:{basis.stream.generation}:{cycle_id}"
         relations = ("MOUTH:sealed_contact_maintained_conditionally", "DETAIL:original_scene_anchor",
                      "EXTRACTION:finite_reciprocation_under_contact")
@@ -675,12 +993,17 @@ class SuckleIPV1:
                                              request.outward_extent, request.repetitions, horizon, outcomes_enabled=self.profile.extraction_outcomes_enabled)
         result = SuckleExtractionApplicationV1(
             app_id, self.primitive_id, self.primitive_kind, cycle_id, wnm.working_id,
-            ("feeding:first_extraction_contribution",), relations, pnm.observation_condition,
+            (("feeding:sustained_extraction_contribution" if self.profile.sustained_feeding_enabled else "feeding:first_extraction_contribution"),),
+            relations, pnm.observation_condition,
             TaskActionV1(f"transport:{app_id}", cycle_id, TaskActionKindV1.NO_ACTION, app_id, ()), None,
             task, request, preview,
         )
         if self.profile.influence_enabled:
             self.source.retain_influence(task.task_id, cycle_id=cycle_id, expires_at_tick=basis.cutoff_tick + horizon)
+        if feeding_task is not None:
+            self._feeding_task = feeding_task
+            self._extraction_history.append(result)
+            self._extraction_target, self._extraction_report = None, None
         self._extraction_application, self._applied_cycle = result, cycle_id
         self._extraction_status = "selected"
         return result

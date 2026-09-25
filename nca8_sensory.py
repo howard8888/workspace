@@ -32,6 +32,7 @@ from nca8_outcome_attention import RightingOutcomeAttentionV1
 from nca8_learning import RightingLearningHookV1
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1
+from nca8_feeding_state import FeedingNeedStateV1
 from nca8_support_dynamics import SupportDynamicsTrackerV1, SupportDynamicsV1
 from nca8_contracts import CircuitResultV1, CircuitTimingV1, LogicalAvailabilityV1
 from nca8_maps import (
@@ -48,7 +49,7 @@ from nca8_maps import (
 # slice readable without a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "NCA8_BODY_SENSORY_CIRCUIT_ID_V1",
     "Nca8BodySensoryApplicationV1",
@@ -229,6 +230,8 @@ class Nca8BodySensoryModuleV1:
         self._motor_context: tuple[str, str, int] | None = None
         self._outcome_attention: RightingOutcomeAttentionV1 | None = None
         self._learning_hook: RightingLearningHookV1 | None = None
+        self._feeding_need: FeedingNeedStateV1 | None = None
+        self._feeding_watermark: MotorFeedbackV1 | None = None
 
 
     @property
@@ -504,6 +507,53 @@ class Nca8BodySensoryModuleV1:
         self._last_application = application
         return application
 
+
+    @property
+    def feeding_need(self) -> FeedingNeedStateV1 | None:
+        """Read current interoceptive evidence; reading cannot satisfy any task."""
+        return self._feeding_need
+
+    def feeding_retained_counts(self) -> dict[str, int]:
+        """Report the two bounded body-evidence references, never a task or learner."""
+        return {"body_feeding_current_records": int(self._feeding_need is not None),
+                "body_feeding_watermarks": int(self._feeding_watermark is not None)}
+
+    def apply_feeding_evidence(
+        self, feedback: MotorFeedbackV1 | None, *, stream: MotorStreamRefV1, cycle_id: int, cutoff_tick: int,
+    ) -> FeedingNeedStateV1:
+        """Publish the optional measured need in C1 before feeding applicability.
+
+        This separate body-sensory entry does not apply support twice or mutate
+        posture geometry. Entire input validation precedes publication. A changed
+        duplicate, foreign generation or reversed acquisition rejects; absent or
+        unavailable sensing yields no value, never zero. Only one reading and an
+        ordering watermark are retained. No uptake, task completion, Attention,
+        motor permission, reward or learning is performed by this sensory owner.
+        """
+        previous, watermark = self._feeding_need, self._feeding_watermark
+        if previous is not None and (stream != previous.stream or cycle_id <= previous.cycle_id or cutoff_tick <= previous.cutoff_tick):
+            raise ValueError("feeding body evidence requires a new opportunity in the same generation")
+        if feedback is not None:
+            if not isinstance(feedback, MotorFeedbackV1):
+                raise TypeError("feeding body evidence must be canonical admitted feedback")
+            replace(feedback)
+            feedback.validate_available(stream=stream, at_tick=cutoff_tick)
+        duplicate = feedback is not None and watermark is not None and feedback.sample_id == watermark.sample_id
+        if feedback is not None and watermark is not None:
+            if duplicate and feedback != watermark:
+                raise ValueError("feeding acquisition identity cannot change its contents")
+            if feedback.sample_id < watermark.sample_id or not duplicate and feedback.event_tick <= watermark.event_tick:
+                raise ValueError("feeding body acquisition order cannot run backwards")
+        measured = feedback.feeding_deficit if feedback is not None else None
+        result = FeedingNeedStateV1(
+            stream, cycle_id, cutoff_tick, feedback.sample_id if feedback is not None else None,
+            feedback.event_tick if feedback is not None else None, feedback.available_tick if feedback is not None else None,
+            measured.deficit_units if measured is not None else None, feedback is not None and not duplicate,
+        )
+        self._feeding_need = result
+        if feedback is not None:
+            self._feeding_watermark = feedback
+        return result
 
     def apply_motor_evidence(
         self, evidence: FocalMotorEvidenceV1 | None, *, stream: MotorStreamRefV1,
