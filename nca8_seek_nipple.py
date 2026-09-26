@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""P16-2C-C: bounded Navigation-selected approach to represented feeding detail.
+"""P16-2C-C: bounded ExecNav-selected approach to represented feeding detail.
 
 SeekNipple uses one current source-linked WNM and the existing task/PNM/BodyMap
 boundary. It organizes a limited mouth/detail relation, never drives an actuator
@@ -13,7 +13,7 @@ that the mouth reached the represented detail within five millimetres. This
 engineering reach criterion is independent of touch; even a true touch cannot
 identify a nipple surface, seal a latch or establish milk. P16-2C-D may opt in to
 separate original-PNM correspondence. P16-2C-E may allocate its source-owned
-interpretation instead of a new primitive in the existing focal slot. Neither
+interpretation instead of a new procedure in the existing focal slot. Neither
 extension changes these task rules or renews their budgets. P16-2C-F can retain
 source-owned participation and reconcile it at F without durable learning.
 Full feeding and newborn qualification remain deferred.
@@ -168,7 +168,7 @@ class SeekNippleAssessmentV1:
 
 
 class SeekNippleIPV1:
-    """Organize one finite seeking task through the common Navigation interface.
+    """Organize one finite seeking task through the common ExecNav interface.
 
     prepare() updates only current readiness, finite lifetime and elementary
     reach evidence. It does not choose a task, compute a new prospective approach

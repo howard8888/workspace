@@ -189,7 +189,7 @@ def test_create_then_reset_explains_isolation_and_preserves_lifecycle_rules(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Option 2 creates generation one, then resets that same session without running a cycle."""
+    """Option 2 creates Session Generation one, then resets that same session without running a cycle."""
     responses = iter(("2", "2", ""))
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
 

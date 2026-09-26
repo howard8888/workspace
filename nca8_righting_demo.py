@@ -4,7 +4,7 @@
 
 All measurements here are explicitly replay/synthetic inputs, not a physical run
 or successful recovery. The runner supplies activity and observations, never a
-body target or the winning task. Actual source maintenance, Attention, Navigation,
+body target or the winning task. Actual source maintenance, Attention, ExecNav,
 Righting/PNM and BodyMap mapping run through Nca8RightingPreviewSessionV1. No H2
 world or H4 executor is constructed and the caller's A0 session is not touched.
 """

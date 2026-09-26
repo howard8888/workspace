@@ -6,7 +6,7 @@ The retained H factory and C collector supply the only physical/cognitive loop.
 The cases change explicit route/comparison switches and a fixed competing-source
 schedule, never task selection or physical rules. A nonsealable H surface gives
 an executed seal discrepancy. Paired on/off cases share their physical profiles,
-evidence timing and non-outcome Attention inputs; ordinary Attention and Navigation
+evidence timing and non-outcome Attention inputs; ordinary Attention and ExecNav
 still decide. These live runs do not claim a naturally occurring simultaneous
 seeking/Suckle queue: that separate allocation contract has controlled unit tests.
 

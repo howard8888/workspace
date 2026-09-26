@@ -9,7 +9,7 @@ from nca8_runtime import NCA8_NO_ACTION, Nca8SessionConfigV1, Nca8SessionV1
 
 
 def test_bodymap_authorizes_body_relative_standup_target_and_envelope() -> None:
-    """A Navigation-selected task should be mapped through BodyMap before dispatch."""
+    """A ExecNav-selected task should be mapped through BodyMap before dispatch."""
     session = Nca8SessionV1()
 
     result = session.run_cognitive_cycle()

@@ -619,7 +619,7 @@ def validate_suckle_claim_v1(claim: SuckleClaimV1, *, stream: MotorStreamRefV1) 
     the small claim reruns the same invariant checks used by I/J, retaining all
     original preview/request/target references. No fabricated outcome, installation,
     execution, teaching signal or new motor permission is introduced. Stream and
-    task-level primitive identity remain separate from the shared feeding source.
+    task-level procedure identity remain separate from the shared feeding source.
     """
     if not isinstance(stream, MotorStreamRefV1) or not isinstance(claim, SuckleClaimV1):
         raise TypeError("Suckle participation needs its canonical stream and original claim")

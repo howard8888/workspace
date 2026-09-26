@@ -3,8 +3,8 @@
 """P16-2C-D: original seeking predictions matched to authorized, observed effects.
 
 This local correspondence owner reads immutable pre-handoff claims, actual oral
-command exposure and paired motor/visual acquisitions. It does not read current
-source state or private physics, select an operation, change a target, establish
+command exposure and paired motor/visual acquisitions. It does not read the current
+Selected NM Configuration or private physics, select an operation, change a target, establish
 latch, or assign causal credit. Matching the original endpoint and completing a
 reach task are different questions. Default C experiments do not create this
 owner. P16-2C-E can opt in to source-owned Attention/interpretation using the
@@ -132,7 +132,7 @@ class SeekNippleIntervalEvidenceV1:
             SeekNippleEndpointV1(sample, observation)
 
     def endpoints(self) -> tuple[SeekNippleEndpointV1, ...]:
-        """Pair by original identity, never by list position or current source state."""
+        """Pair by original identity, never by list position or the current Selected NM Configuration."""
         return tuple(SeekNippleEndpointV1(sample, next((item for item in self.observations if item.sample_id == sample.sample_id), None))
                      for sample in self.deliveries)
 

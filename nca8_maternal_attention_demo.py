@@ -51,7 +51,7 @@ _OWNER_LIMITS = {
 
 
 def create_maternal_attention_trial_v1(case: str, *, trace_capacity: int = 256) -> IntegratedRightingTrialV1:
-    """Construct a fixed experiment; no source/primitive is selected by this function.
+    """Construct a fixed experiment; no source/procedure is selected by this function.
 
     Positive drift is a small external movement after local target achievement,
     when no local target is being pursued. One such endpoint is routine under the

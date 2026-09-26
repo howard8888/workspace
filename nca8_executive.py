@@ -1,23 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Attention, source-linked WNM, and Navigation for NCA8 Gate A.
+"""Attention and Executive Navigation Module (ExecNav) services for NCA8.
 
 Purpose
 -------
-Phase 1D introduces the first focal cognitive commitment.  Attention selects
-one currently available map-state candidate without selecting an action.
-Navigation then constructs or refreshes one source-linked Working Navigation
-Map (WNM), asks the available task-level primitives for explicit applicability
-records, and deterministically selects/applies zero or one primitive.
+Attention selects an eligible NM using its admitted Configuration and nomination;
+it does not select an action or choose preferred values for that Configuration.
+In Architecture v10.2, the same Selected NM remains with its owner in the Working
+Navigation Map (WNM) role. This implementation uses an immutable source-linked
+``WorkingNavMapStateV1`` sample to expose that focal basis with a fixed evidence cutoff.
+ExecNav refreshes the sample, queries the supplied task-level procedures, and selects
+and applies zero or one procedure, or reserves the opportunity for interpretation or hold.
 
 Authority boundary
 ------------------
-Attention owns focal source selection only.  It never names or applies a
-primitive.  Navigation owns the WNM and focal primitive arbitration/application,
-but it does not own sensory maps, durable learning, BodyMap execution, PNM
-outcome truth, or the physical environment.  Domain knowledge belongs in the
-candidate and primitive contracts rather than hidden ``if fallen then stand``
-branches in these generic services.
+Attention owns the NM choice. ExecNav coordinates focal work and procedure selection,
+not a second sensory map store, general learner, bodily executor, or physical world.
+Domain-specific transformations and interpretation remain with their declared owners;
+these services must not hide an ``if fallen then stand`` policy.
+
+Names such as ``NavigationRuntimeV1`` and the ``selected_primitive_id`` field are
+retained compatibility identifiers. They denote ExecNav/procedure interfaces here;
+their spelling neither adds a Part nor changes the source's ownership or permissions.
 """
 
 from __future__ import annotations
@@ -115,7 +119,7 @@ def _bounded_unique_strings(
 # This Protocol intentionally defines a read-only structural contract.
 # Attention accepts candidates without depending on their concrete owning class.
 class AttentionCandidateV1(Protocol):
-    """Structural contract for a map-state candidate submitted to Attention."""
+    """Structural contract for an NM nomination carrying its admitted Configuration."""
 
     @property
     def candidate_id(self) -> str:
@@ -124,7 +128,7 @@ class AttentionCandidateV1(Protocol):
 
     @property
     def source_map_state(self) -> SourceNavMapStateV1:
-        """Return the current source NavMap state."""
+        """Return the candidate NM's admitted Configuration sample."""
         ...
 
     @property
@@ -183,7 +187,7 @@ class AttentionDispositionV1(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class AttentionBidV1:
-    """One explicit bid from a current map-state candidate.
+    """One explicit bid from an available Candidate NM and its Configuration.
 
     Priority components remain separate and inspectable.  This is a deterministic
     engineering baseline, not a claim that the mammalian brain computes one
@@ -343,7 +347,7 @@ class AttentionSelectionV1:
 
     @property
     def selected_source_state(self) -> SourceNavMapStateV1 | None:
-        """Return the selected source state without granting it WNM authority."""
+        """Return the Selected NM's Configuration sample before ExecNav establishes focal use."""
         return self.selected_bid.source_map_state if self.selected_bid is not None else None
 
     def as_dict(self) -> dict[str, object]:
@@ -361,14 +365,17 @@ class AttentionSelectionV1:
 
 @dataclass(frozen=True, slots=True)
 class WorkingNavMapStateV1:
-    """Zero-or-one source-linked bounded working state owned by Navigation.
+    """Immutable source-linked sample of the Selected NM's focal Configuration.
 
-    The record copies only minimum-sufficient active relation labels and bounded
-    context references.  It never writes transformed content back to the durable
-    source map or its current sensory state. The optional P16-1E-C support facet
-    is actual bounded working content from the same source, not renderer data.
-    It is not added to working_relations and is omitted from the A0 primitive's
-    argument view. Old immutable WNM snapshots do not refresh themselves.
+    ExecNav retains minimum-sufficient active relation labels and bounded context
+    references. This record is an engineering sample, not another enduring NM or
+    a second biological WNM owner. Its construction does not write transformed
+    content into the source; that implementation limit does not prohibit owner-local
+    source learning in the Architecture v10.2 target.
+
+    The optional P16-1E-C support facet is working content from the same source,
+    not renderer data. It is separate from ``working_relations`` and excluded from
+    the A0 procedure's argument view. An old immutable sample cannot refresh itself.
     """
 
     working_id: str
@@ -453,7 +460,7 @@ class WorkingNavMapStateV1:
 
 @dataclass(frozen=True, slots=True)
 class OutcomeInterpretationCandidateV1:
-    """A read-only question offered for Navigation's existing focal allocation.
+    """A read-only question offered for ExecNav's existing focal allocation.
 
     This is not an IP, a second WNM or an execution request. The source reference
     must be the exact current source selected by Attention. Admission and expiry
@@ -479,7 +486,7 @@ class OutcomeInterpretationCandidateV1:
 
 @dataclass(frozen=True, slots=True)
 class NavigationDecisionV1:
-    """One complete Navigation arbitration result for a selected WNM."""
+    """One complete ExecNav arbitration result for the Selected NM in focal WNM use."""
 
     decision_id: str
     cycle_id: int
@@ -514,11 +521,11 @@ class NavigationDecisionV1:
 
     @property
     def selected_primitive_id(self) -> str | None:
-        """Return the selected primitive ID, when one application exists."""
+        """Return the selected procedure ID, when one Procedure Application exists."""
         return self.application.primitive_id if self.application is not None else None
 
     def as_dict(self) -> dict[str, object]:
-        """Return a deterministic JSON-safe Navigation decision."""
+        """Return a deterministic JSON-safe ExecNav decision."""
         return {
             "decision_id": self.decision_id,
             "cycle_id": self.cycle_id,
@@ -531,7 +538,7 @@ class NavigationDecisionV1:
 
 
 class AttentionRuntimeV1:
-    """Select one current map-state source using visible deterministic priorities."""
+    """Select one eligible NM using visible deterministic priorities."""
 
     def __init__(self, *, enabled: bool = True) -> None:
         if not isinstance(enabled, bool):
@@ -580,7 +587,7 @@ class AttentionRuntimeV1:
         current_wnm: WorkingNavMapStateV1 | None,
         cycle_id: int,
     ) -> AttentionSelectionV1:
-        """Maintain, switch, or release the WNM source without selecting an IP/LP."""
+        """Maintain, switch, or release the Selected NM without selecting an IP/LP."""
         cycle = _positive_int(cycle_id, field_name="cycle_id")
         if len(bids) > _MAX_ATTENTION_CANDIDATES:
             raise ValueError(f"Attention supports at most {_MAX_ATTENTION_CANDIDATES} candidates")
@@ -635,7 +642,11 @@ class AttentionRuntimeV1:
 
 
 class NavigationRuntimeV1:
-    """Own one WNM and its single interpretation, ordinary IP application or hold."""
+    """Maintain a Selected-NM-linked WNM sample and one focal allocation.
+
+    ExecNav can allocate an interpretation, a task Procedure Application, or a hold.
+    The underlying NMs remain with their owners; this runtime is not their memory store.
+    """
 
     def __init__(self, *, enabled: bool = True, motor_preview_enabled: bool = False) -> None:
         if not isinstance(enabled, bool):
@@ -650,26 +661,26 @@ class NavigationRuntimeV1:
 
     @property
     def enabled(self) -> bool:
-        """Return whether focal Navigation arbitration is enabled."""
+        """Return whether focal ExecNav arbitration is enabled."""
         return self._enabled
 
     @property
     def current_wnm(self) -> WorkingNavMapStateV1 | None:
-        """Return the current immutable source-linked WNM, when present."""
+        """Return the current immutable Selected-NM-linked WNM sample, when present."""
         return self._current_wnm
 
     @property
     def last_decision(self) -> NavigationDecisionV1 | None:
-        """Return the most recent immutable Navigation result."""
+        """Return the most recent immutable ExecNav result."""
         return self._last_decision
 
     def update_wnm(
         self, selection: AttentionSelectionV1, *, support_dynamics: SupportDynamicsV1 | None = None,
     ) -> WorkingNavMapStateV1 | None:
-        """Refresh one selected source, including optional read-only measured content.
+        """Refresh the Selected-NM-linked WNM sample, including admitted measured content.
 
         The source owner supplies an already applied immutable facet. Its source,
-        owner and application cycle must agree with the chosen WNM. A missing
+        owner and application cycle must agree with the Selected NM and this focal use. A missing
         facet clears older content rather than reusing a stale working snapshot.
         Release creates no WNM even if nonfocal source dynamics continue updating.
         """
@@ -715,7 +726,7 @@ class NavigationRuntimeV1:
         not a new scheduler or a task repertoire. All candidates validate before commitment.
         Oldest original admission wins, with request identity as an explicit stable
         tie-break; caller/registration order has no effect. The winner reserves
-        this opportunity with a nonprimitive Navigation decision. Only afterward
+        this opportunity with a non-task ExecNav decision. Only afterward
         may the caller invoke its domain interpreter. A later commit in this same
         opportunity is prohibited even if interpretation fails. An empty candidate
         tuple consumes nothing and leaves ordinary IP selection available.
@@ -746,12 +757,12 @@ class NavigationRuntimeV1:
         return winner
 
     def record_focal_hold(self, wnm: WorkingNavMapStateV1, *, cycle_id: int, reason: str) -> NavigationDecisionV1:
-        """Record a nonprimitive allocation without secretly evaluating a task.
+        """Record a non-task allocation without secretly evaluating a task.
 
         The approved domain coordinator supplies the reason after establishing
         this very WNM. A demanding interpretation, or its unresolved dependency,
-        excludes a simultaneous ordinary primitive application. This service
-        does not interpret the outcome itself and names no domain or primitive.
+        excludes a simultaneous ordinary procedure application. This service
+        does not interpret the outcome itself and names no domain or procedure.
         The hold cannot later be relabelled as a new task in the same opportunity.
         """
         cycle = _positive_int(cycle_id, field_name="cycle_id")
@@ -771,7 +782,7 @@ class NavigationRuntimeV1:
         *,
         cycle_id: int,
     ) -> NavigationDecisionV1:
-        """Evaluate all primitives unless this opportunity was allocated elsewhere."""
+        """Evaluate the supplied procedure repertoire unless this opportunity was allocated elsewhere."""
         cycle = _positive_int(cycle_id, field_name="cycle_id")
         if cycle <= self._focal_hold_cycle:
             raise ValueError("a focal hold cannot also execute an ordinary primitive")
@@ -788,7 +799,7 @@ class NavigationRuntimeV1:
             return decision
 
         # P16-1E-C grants representation, not richer selector authority. The
-        # argument view is not stored or selected as another WNM. Both primitive
+        # argument view is not stored or selected as another WNM. Both procedure
         # queries and apply() receive only the pre-existing A0 content.
         primitive_view = replace(wnm, support_dynamics=None) if wnm.support_dynamics is not None else wnm
         # H5 explicitly admits the enhanced facet only to an opt-in preview

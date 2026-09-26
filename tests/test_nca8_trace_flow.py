@@ -80,7 +80,7 @@ def test_flow_explains_input_counts_without_inventing_packet_contents(gate_event
 
 
 def test_flow_preserves_source_configuration_and_operation_distinctions(gate_events) -> None:
-    """Readable source terminology must not claim Attention chooses a primitive or desired reality."""
+    """Readable source terminology must not claim Attention chooses a procedure or desired reality."""
     text = _flat(_text(tuple(event for event in gate_events if event.cycle_id == 1)))
     assert "Source NavMap posture_support@r1" in text
     assert "through current configuration posture_support:current" in text
@@ -150,7 +150,7 @@ def test_blocked_handoff_remains_at_its_recorded_position_and_is_not_sensory_fai
 
 @pytest.mark.parametrize("disabled", ("attention_enabled", "navigation_enabled"))
 def test_other_ablations_explain_no_operation_without_inventing_body_rejection(disabled) -> None:
-    """A missing focal source or disabled Navigation is distinct from a denied body handoff."""
+    """A missing focal source or disabled ExecNav is distinct from a denied body handoff."""
     session = Nca8SessionV1(Nca8SessionConfigV1(**{disabled: False}))
     session.run_cognitive_cycle()
     text = _flat(_text(session.trace_snapshot()))

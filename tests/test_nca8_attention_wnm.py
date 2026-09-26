@@ -8,7 +8,7 @@ from nca8_runtime import NCA8_NO_ACTION, Nca8SessionConfigV1, Nca8SessionV1
 
 
 def test_attention_selects_current_map_state_without_selecting_primitive() -> None:
-    """Attention should choose the body-state source while primitive authority remains separate."""
+    """Attention should choose the cortical POSTURE-SUPPORT NM while procedure authority remains separate."""
     session = Nca8SessionV1()
 
     result = session.run_cognitive_cycle()
@@ -23,7 +23,7 @@ def test_attention_selects_current_map_state_without_selecting_primitive() -> No
 
 
 def test_wnm_is_bounded_source_linked_and_does_not_write_back() -> None:
-    """The WNM should preserve one source reference and minimum current relations only."""
+    """The immutable WNM sample should preserve one source reference and minimum current relations only."""
     session = Nca8SessionV1()
     durable_signature = session._map_library.durable_record_signature()  # pylint: disable=protected-access
 

@@ -3,7 +3,7 @@
 """Menu/CLI visual-source and frame-transform fixtures, explicitly without motion.
 
 The existing H5 preview composition supplies the genuine POSTURE-SUPPORT owner,
-Attention, Navigation/WNM, Righting and BodyMap helper. A separate visual owner
+Attention, ExecNav/WNM, Righting and BodyMap helper. A separate visual owner
 publishes its own candidate to that same selector. The supplied visual approach
 requirement is mapped only when vision is the selected source. No visual task IP,
 MOM ANM, physical provider, handoff, target installation or learner is introduced.

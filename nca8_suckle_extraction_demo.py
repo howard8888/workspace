@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""L-C: the first genuine Navigation-selected Suckle extraction contribution.
+"""L-C: the first genuine ExecNav-selected Suckle extraction contribution.
 
 Profiles choose initial conditions and ablations, never an action list. The common
 integrated hierarchy/collector performs all cognitive, handoff and lower work.

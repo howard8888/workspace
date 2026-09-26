@@ -170,7 +170,7 @@ def test_c2_displays_two_distinct_evidence_routes(gate_events) -> None:
 
 
 def test_pnm_and_task_request_are_distinct_outputs_not_a_serial_control_funnel(gate_events) -> None:
-    """Creating an expectation must not be drawn as the source of the body action request."""
+    """Creating an prediction must not be drawn as the source of the body action request."""
     diagrams = _diagrams(_text(gate_events))
     navigation = _words(_node(diagrams, 16))
     pnm = _words(_node(diagrams, 18))
@@ -242,7 +242,7 @@ def test_unrecognized_event_has_no_guessed_part_or_ports(channel) -> None:
 
 
 def test_other_primitive_query_does_not_get_renamed_standup(gate_events) -> None:
-    """Preserve a different recorded primitive identity without inventing a canonical part for it."""
+    """Preserve a different recorded procedure identity without inventing a canonical part for it."""
     event = next(event for event in gate_events if event.channel == "navigation")
     details = dict(event.details)
     details["primitive_id"] = "ip:unrecognized"

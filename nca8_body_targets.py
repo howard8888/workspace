@@ -329,7 +329,7 @@ class OralReachRequestV1:
     The request selects no task and carries no desired success or hidden physical
     destination. BodyMap resolves the current represented point into its actual
     body-forward axis. The first experiment supplies this requirement explicitly;
-    it does not claim Navigation selected SeekNipple or acquired a learned LP.
+    it does not claim ExecNav selected SeekNipple or acquired a learned LP.
     """
 
     origin: TargetOriginV1
@@ -457,7 +457,7 @@ class OralExtractionRequestV1:
     """Finite extract/return requirement with explicit origin, never permission.
 
     The fixture default remains unchanged. L-C's selected contribution requires
-    its separate application, projection and consumed handoff; provenance alone
+    its separate application, prediction and consumed handoff; provenance alone
     cannot authorize movement. The whole pattern has one original lease and no
     milk target, expected success or lower motor-command script.
     """
@@ -483,7 +483,7 @@ class OralExtractionRequestV1:
             raise ValueError("extraction requires positive outward movement")
 
     def as_dict(self) -> dict[str, object]:
-        """Describe the supplied requirement, without pretending Navigation selected it."""
+        """Describe the supplied requirement, without pretending ExecNav selected it."""
         return {"origin": self.origin.as_dict(), "source_map_ref": self.source_map_ref.as_dict(), "region_id": self.region_id,
                 "outward_extent": self.outward_extent, "repetitions": self.repetitions, "lease_ticks": self.lease_ticks,
                 "origin_status": self.origin_status, "is_task_pnm": False}

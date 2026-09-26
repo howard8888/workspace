@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Navigation arbitration and StandUp primitive tests for NCA8 Gate A."""
+"""ExecNav arbitration and StandUp procedure tests for NCA8 Gate A."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from nca8_runtime import Nca8SessionV1
 
 
 class _LowPriorityEligiblePrimitiveV1:
-    """Test primitive proving registration order cannot displace visible priority."""
+    """Test procedure proving registration order cannot displace visible priority."""
 
     primitive_id = "ip:test_low_priority"
 
@@ -45,7 +45,7 @@ class _LowPriorityEligiblePrimitiveV1:
 
 
 def test_navigation_selects_and_applies_standup_from_wnm_relations() -> None:
-    """The first focal application should come from Navigation, not the runner or BodyMap."""
+    """The first focal application should come from ExecNav, not the runner or BodyMap."""
     session = Nca8SessionV1()
 
     result = session.run_cognitive_cycle()

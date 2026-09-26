@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """Runner-facing NavMap runtime integration and diagnostic reporting for CCA8.
 
+This is the retained host/legacy observation bridge. The Phase-1-through-8 names,
+accepted-current records, WorkingMap surface and operative-WNM transactions below
+describe that implementation, not the v10.2 Attention/ExecNav source-role mechanism.
+
 Purpose
 -------
 This module owns the ctx-local NavMap runtime bridge that was historically
@@ -676,14 +680,16 @@ def working_navmap_surface_history_append_v1(
 
 
 def working_navmap_surface_from_accepted_current_v1(ctx: Any, accepted_record: dict[str, Any]) -> dict[str, Any]:
-    """Copy accepted-current into a ctx-local Working NavMap surface register.
+    """Build the retained host's diagnostic WorkingMap surface from accepted-current data.
 
-    This is the first explicit handoff seam from the NavMap predictive path toward
-    a future WorkingMap / Navigation Module surface. It is deliberately diagnostic-only:
-    it copies the existing accepted-current payload into ``ctx.working_navmap_surface_v1``
-    and appends a bounded ctx-local history. It does not write WorldGraph facts,
-    write Column engrams, alter ``ctx.working_world``, update BodyMap, choose policies,
-    or change the accepted-current semantics.
+    Copy the existing accepted-current payload into ``ctx.working_navmap_surface_v1``
+    and append a bounded ctx-local history. Do not write WorldGraph facts or Column
+    engrams, alter ``ctx.working_world``, update BodyMap, choose policies, or change
+    the accepted-current semantics.
+
+    This compatibility inspection bridge does not establish the v10.2 WNM role,
+    select an NM, or give a rendered surface ExecNav authority. The actual legacy
+    record names and downstream inspection interfaces remain unchanged.
     """
     if ctx is None or not isinstance(accepted_record, dict) or not accepted_record:
         return {}
@@ -2193,7 +2199,7 @@ def navmap_ctx_observation_update_step_v1(ctx: Ctx, env_obs: EnvObservation) -> 
 
     # Phase 7 generalized temporal binding. It runs after current maternal,
     # terrain, and feeding overlays are available, attaches compact samples to
-    # the existing bounded Sequential/Error window, and compares one-step
+    # the existing bounded legacy seqerr window, and compares one-step
     # dynamic envelopes with current evidence. It cannot select a primitive,
     # create an episodic record, or model detailed movement.
     try:

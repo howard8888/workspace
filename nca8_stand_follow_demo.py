@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Continuous P16-2B-C stand-to-follow review on the existing isolated hierarchy.
 
-One body, clock, Attention/Navigation pair, source ensemble and target executor
+One body, clock, Attention/ExecNav pair, source ensemble and target executor
 run throughout. This external driver supplies only fixed initial conditions,
 capabilities and sensory/physical interventions. It never selects a task from a
 stage, a completion flag or a private-world milestone. Righting and Follow-Mom

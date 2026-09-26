@@ -5,7 +5,7 @@
 These are concrete responsibilities of the existing body-sensory source and Rest
 operation, not another comparator executive or central learning writer. Immutable
 original applications and actual returned physical intervals are the only outcome
-basis. A meaningful question competes through the existing Navigation allocator;
+basis. A meaningful question competes through the existing ExecNav allocator;
 Phase F may reconcile its already-performed result but cannot interpret it. No
 method here issues a target, advances the world, selects an IP or changes durable
 knowledge. Diagnostic retention and evidence/eligibility lifetimes are separate.
@@ -82,7 +82,7 @@ class RestClaimV1:
         return self.start_tick + self.application.projection.horizon_ticks
 
     def as_dict(self) -> dict[str, object]:
-        """Serialize original expectation and permission as distinct descriptions."""
+        """Serialize original prediction and permission as distinct descriptions."""
         return {"application": self.application.as_dict(), "target": None if self.target is None else self.target.as_dict(),
                 "due_tick": self.due_tick, "last_arrival_tick": self.due_tick + 8}
 
@@ -194,7 +194,7 @@ class RestQuestionV1:
 
     @property
     def request_id(self) -> str:
-        """Stable tie key inside Navigation's existing same-source allocation."""
+        """Stable tie key inside ExecNav's existing same-source allocation."""
         return f"rest_question:{self.outcome.claim.application_id}"
 
     @property
@@ -210,7 +210,7 @@ class RestQuestionV1:
 
 @dataclass(frozen=True, slots=True)
 class RestInterpretationV1:
-    """An actually Navigation-granted current-relevance result with its original question."""
+    """An actually ExecNav-granted current-relevance result with its original question."""
 
     request: RestQuestionV1
     cycle_id: int
@@ -490,7 +490,7 @@ class RestOutcomeRuntimeV1:
         self, working: WorkingNavMapStateV1 | None, *, cycle_id: int, grant: NavigationDecisionV1 | None = None,
         deferred: bool = False,
     ) -> RestFocalAllocationV1:
-        """Interpret only after an actual Navigation grant; preserve losing requests."""
+        """Interpret only after an actual ExecNav grant; preserve losing requests."""
         candidate = self.interpretation_candidate(working, cycle_id=cycle_id)
         if cycle_id <= self._last_allocation or not isinstance(deferred, bool):
             raise ValueError("Rest allocation must be one increasing opportunity")

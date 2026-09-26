@@ -4,7 +4,7 @@
 
 A question is not an IP, and this owner cannot select its own focal work. It
 augments an existing feeding bid; after ordinary Attention establishes WNM,
-Navigation grants one of all eligible same-source questions before consumption.
+ExecNav grants one of all eligible same-source questions before consumption.
 Interpretation concerns present relevance only, never cause, a remedy, another
 extraction batch, motor permission, or learning. Original L-D evidence is retained
 unchanged, including interruption, uncertain milk coverage and unpredicted yield.
@@ -91,7 +91,7 @@ class ExtractionMismatchRequestV1:
 
 @dataclass(frozen=True, slots=True)
 class ExtractionInterpretationV1:
-    """Navigation-granted present relevance; it cannot repair the original outcome."""
+    """ExecNav-granted present relevance; it cannot repair the original outcome."""
 
     request: ExtractionMismatchRequestV1
     cycle_id: int
@@ -112,7 +112,7 @@ class ExtractionInterpretationV1:
 
 @dataclass(frozen=True, slots=True)
 class ExtractionFocalAllocationV1:
-    """This domain's result inside Navigation's allocation, not a second scheduler."""
+    """This domain's result inside ExecNav's allocation, not a second scheduler."""
 
     kind: str
     interpretation: ExtractionInterpretationV1 | None = None
@@ -151,8 +151,8 @@ class SuckleExtractionAttentionV1:
 
     Admit only the actual publication and original extraction application, never a
     latch-task substitute or diagnostic-history read. All validation precedes an
-    atomic admission. Candidacy is read-only; consumption needs Navigation's prior
-    matching nonprimitive decision. Close is sticky; reset constructs a new owner.
+    atomic admission. Candidacy is read-only; consumption needs ExecNav's prior
+    matching non-task decision. Close is sticky; reset constructs a new owner.
     """
 
     def __init__(self, stream: MotorStreamRefV1, seed: FeedingDetailSeedV1, *, diagnostic_capacity: int = 8, sequential: bool = False) -> None:
@@ -395,7 +395,7 @@ class SuckleExtractionAttentionV1:
     def allocate(
         self, working: WorkingNavMapStateV1 | None, *, cycle_id: int, grant: NavigationDecisionV1 | None = None,
     ) -> ExtractionFocalAllocationV1:
-        """Consume only Navigation's prior exact grant; later holds never reinterpret."""
+        """Consume only ExecNav's prior exact grant; later holds never reinterpret."""
         same = self._validate_working(working, cycle_id)
         if not same or working is None:
             self._last_allocation_cycle = cycle_id

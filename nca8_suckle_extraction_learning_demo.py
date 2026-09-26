@@ -3,7 +3,7 @@
 """L-F shared extraction-participation review with complete hook-off controls.
 
 The accepted extraction factory and collector perform all source processing,
-Navigation, BodyMap authorization, physical execution and outcome publication.
+ExecNav, BodyMap authorization, physical execution and outcome publication.
 This observer supplies only fixed conditions and the new optional hook switch.
 Removing the hook must remove only participation/reconciliation reporting, not
 change a single cognitive decision, physical sample, original outcome or L-E

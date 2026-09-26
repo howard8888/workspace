@@ -508,7 +508,7 @@ def test_protected_stop_after_world_return_does_not_claim_motion_rollback() -> N
 
 
 def test_explicit_session_reset_discards_stopped_receipts_and_stale_input() -> None:
-    """Reset starts a new generation; an old receipt cannot authorize the new session."""
+    """Reset starts a new Session Generation; an old receipt cannot authorize the new session."""
     session = Nca8SessionV1()
     session.run_cognitive_cycle()
     old = session._cognitive_runtime.handoff.receipt

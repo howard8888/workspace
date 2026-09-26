@@ -461,7 +461,7 @@ def test_retained_LE_response_reference_is_not_reconsumed(originals):
 
 
 def test_actual_unknown_relevance_remains_pending_without_F_interpretation(originals):
-    """Controlled current-source dropout with real L-E/Navigation interpretation."""
+    """Controlled current-source dropout with real L-E/ExecNav interpretation."""
     hook, _, last = fresh(originals, "mismatch")
     source = replace(last.feeding_detail_source, oral_feedback=None)
     outcome = last.extraction_correspondence.outcomes[0]
@@ -538,7 +538,7 @@ def test_diagnostic_capacity_does_not_change_functional_participation(originals)
 
 
 def allocate_question(owner, source):
-    """Perform the real existing Navigation grant for a controlled current source."""
+    """Perform the real existing ExecNav grant for a controlled current source."""
     attention, navigation = AttentionRuntimeV1(), NavigationRuntimeV1(motor_preview_enabled=True)
     bid = attention.build_bid(FeedingDetailCandidateV1(source, 0), cycle_id=source.applied_cycle)
     working = navigation.update_wnm(attention.select((bid,), current_wnm=None, cycle_id=source.applied_cycle))

@@ -2,6 +2,11 @@
 """
 CCA8 Controller: drives, primitives ("policies"), and action center.
 
+This is the retained host/legacy controller, not the NCA8 ExecNav/IP System.
+The Primitive class, PRIMITIVES catalog, policy names, graph writes and Action Center
+below describe this implementation. Architecture v10.2 calls task-level IPs/LPs
+Procedures; that terminology does not rename or certify this older controller.
+
 Concepts
 --------
 - Drives: numeric homeostatic values (hunger, fatigue, warmth) → derive 'drive:*' flags (ephemeral tags that are not written to worldgraph)

@@ -13,10 +13,10 @@ from cca8_world_graph import WorldGraph
 
 
 class _PolicyRuntimeStub:
-    """Small deterministic primitive registry for the status panel."""
+    """Small deterministic legacy-policy registry for the status panel."""
 
     def list_loaded_names(self) -> list[str]:
-        """Return a stable pair of currently loaded primitive names."""
+        """Return a stable pair of currently loaded legacy-policy names."""
         return ["policy:stand_up", "policy:follow_mom"]
 
 

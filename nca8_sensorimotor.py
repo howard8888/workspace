@@ -134,7 +134,7 @@ class LocalMotorPredictionV1:
 
     The saved basis is a real sensor acquisition. The predicted coordinate is
     never installed in BodyMap or used to establish achievement. Contact=True
-    means a short continuity expectation under non-withdrawing commands; None
+    means a short continuity prediction under non-withdrawing commands; None
     means this small model makes no contact claim. No private surface height,
     disturbance label, task success, or future measurement enters this record.
     """
@@ -259,7 +259,7 @@ class SensorimotorExecutorV1:
 
     The H4 fixture has one single-use installation slot and one executor owner
     per BodyMap generation. install() is an explicit test-harness authorization,
-    not a cognitive receipt or a result of Navigation. A second fixture install
+    not a cognitive receipt or a result of ExecNav. A second fixture install
     is rejected even after completion. H6 instead binds one installation_source
     and uses install_authorized() for each separately consumed focal envelope.
     Fixture and integrated installation modes cannot be mixed.

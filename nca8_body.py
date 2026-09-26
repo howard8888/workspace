@@ -4,21 +4,20 @@
 
 Purpose
 -------
-The body-sensory circuit owns the current POSTURE-SUPPORT NavMap state. This
-module maintains a separate egocentric BodyMap state derived from that evidence,
-publishes one bounded POSTURE-SUPPORT candidate when focal escalation is needed,
-and maps an already selected task action into a body-relative target, protected
-action envelope, and lower-action request.
+The body-sensory service maintains the current POSTURE-SUPPORT Configuration.
+This Python module maintains separate egocentric BodyMap state from that evidence,
+nominates the cortical POSTURE-SUPPORT NM when focal work is needed, and maps an
+already selected task action into a body-relative target, protected envelope,
+and lower-action request. A nomination does not make BodyMap itself a Candidate NM.
 
 Authority boundary
 ------------------
-BodyMap owns current body/peripersonal state, protected safety, and task-to-body
-mapping. Its candidate is an Attention input, not an Attention selection. It may
-authorize or reject a task selected by Navigation, but it never becomes WNM and
-never invents ``STAND_UP`` or any other cognitive task on its own.
+BodyMap owns current body/peripersonal state, protected constraints, and task-to-body
+mapping. It checks bodily permission for an ExecNav-selected task; it does not
+select that task, become WNM, or invent ``STAND_UP`` on its own.
 
 P18-H3 adds an opt-in local motor-target helper in nca8_body_targets.py. Its
-current sensor basis is separate from the existing coarse A0 state. Configuring
+current sensor basis is separate from the retained coarse A0 state. Configuring
 it does not enable motor execution or change the A0 authorization path.
 """
 
@@ -192,10 +191,10 @@ class BodyMapStateV1:
 
 @dataclass(frozen=True, slots=True)
 class PostureSupportCandidateV1:
-    """One bounded body-state map candidate published for future Attention.
+    """One bounded POSTURE-SUPPORT NM nomination for future Attention.
 
-    The candidate preserves the exact current source map state.  It does not
-    contain a primitive, task action, priority score, or selection result.
+    The candidate preserves the exact admitted Configuration of its originating NM.  It does not
+    contain a procedure, task action, priority score, or selection result.
     """
 
     candidate_id: str
@@ -330,7 +329,7 @@ class EnvelopeStatusV1(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class BodyTaskTargetV1:
-    """One body-relative target derived from a Navigation-authorized task action."""
+    """One body-relative target derived from an ExecNav-authorized task action."""
 
     target_id: str
     task_action_id: str
@@ -704,7 +703,7 @@ class Nca8BodyRuntimeV1:
         """Update the current envelope status from later current body evidence.
 
         This method cannot choose a new task.  It only closes or retains the
-        envelope previously authorized from a Navigation-selected application.
+        envelope previously authorized from an ExecNav-selected application.
         """
         envelope = self._current_envelope
         state = self._current_state

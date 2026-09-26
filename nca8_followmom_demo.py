@@ -226,7 +226,7 @@ def run_follow_mom_v1(
     # pylint: enable=duplicate-code
 
     def focal() -> None:
-        """Schedule admissible inputs, never choose the resulting source or primitive."""
+        """Schedule admissible inputs, never choose the resulting Selected NM or procedure."""
         tick = trial.tick
         enabled = not (case == "brief_gap" and tick == 12 or case == "prolonged_gap" and 12 <= tick <= 28)
         priority = (10, 60) if case in {"competing_on", "competing_off"} and tick == 4 else None
@@ -270,7 +270,7 @@ def run_maternal_source_replay_v1(case: str) -> MaternalSourceReplayV1:
 
     Returning-target motion is supplied here, not implemented physical Mom motion.
     Source labels describe measured kinematics, not proof of who caused movement.
-    The ordinary owner and IP preparation functions are called, but Navigation
+    The ordinary owner and IP preparation functions are called, but ExecNav
     never selects an application and no executor or physical provider is created.
     """
     if not isinstance(case, str) or case not in MATERNAL_REPLAY_CASES_V1:

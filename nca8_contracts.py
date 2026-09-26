@@ -359,7 +359,7 @@ class CycleCommitmentV1:
     """Immutable Phase-E commitment record for one logical cognitive cycle.
 
     The record exposes the complete authority chain when focal cognition occurs:
-    Attention selection, source-linked WNM, selected primitive/application, PNM,
+    Attention selection, Selected-NM-linked WNM sample, Procedure Application, PNM,
     task action, and optional action envelope. A monitoring/null cycle retains
     ``None`` for fields whose owning subsystem created no corresponding result.
     """

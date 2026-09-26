@@ -63,7 +63,7 @@ def create_maternal_learning_trial_v1(
     the already qualified 2B-D external intervals [6,8) and [14,16); stand drift
     offsets them by 40. Support loss and missing-current cases keep their 2B-D
     timing. Narrowing limits the supplied translation capability to 0.10 metre,
-    without changing the original projection. Faster cadence changes only focal
+    without changing the original prediction. Faster cadence changes only focal
     sampling, not physical time or the four-cycle eligibility definition.
     """
     if not isinstance(case, str) or case not in MATERNAL_LEARNING_CASES_V1:

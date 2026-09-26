@@ -9,7 +9,7 @@ that frozen set.  Brief events can be retained in bounded per-source latches,
 while ordinary delayed results use a separate bounded staged-result store.
 
 This module contains engineering timing machinery only.  It does not know what
-a NavMap, Attention candidate, primitive, PNM, or action means and therefore
+a NavMap, Attention candidate, procedure, PNM, or action means and therefore
 cannot become a hidden cognitive authority.
 """
 

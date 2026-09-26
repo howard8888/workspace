@@ -30,7 +30,7 @@ def test_null_cycle_has_no_focal_operation_pnm_or_task_action() -> None:
 
 
 def test_body_candidate_is_published_before_phase_d_but_not_selected() -> None:
-    """BodyMap may publish a map-state candidate without becoming Attention or WNM."""
+    """BodyMap may publish a cortical-NM nomination without becoming Attention or WNM."""
     session = Nca8SessionV1(Nca8SessionConfigV1(attention_enabled=False))
 
     result = session.run_cognitive_cycle()

@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Current PNM and event-matched pending outcome support for NCA8 Gate A.
+"""Sparse Predicted NavMap records and originating-claim bookkeeping for NCA8.
 
 Purpose
 -------
-A Projected NavMap (PNM) is created only after Navigation applies one selected
-focal primitive and before its task action reaches the environment boundary.
-It contains only the minimum expected task-level relations for that concrete
-application.  Later current body evidence closes the originating expectation as
-success, failure, unresolved, expired, or not applied.
+A task-linked Predicted NavMap (PNM) expresses expected relations for a selected
+Procedure Application before bodily dispatch. The retained A0 path serializes the
+selected procedure's expected relations here; richer preview paths register their
+original typed predictions. ``ProjectedNavMapV1`` remains the compatible Python name.
+
+The A0 comparator uses later admitted body evidence to report supported success,
+failure, unresolved evidence, expiry, or nonapplication. Those dispositions must not
+all be called completion. Domain-specific correspondence and interpretation keep
+their own owners in the later Righting, maternal, seeking, Suckle, and Rest paths.
 
 Authority boundary
 ------------------
-Prediction records are prospective and never become present truth, WNM content,
-or action authority.  The prediction runtime cannot dispatch an action or read
-the physical environment.  It compares only a later NCA8-owned current
-``NavMapStateV1`` whose sampled event follows the originating application.
+This is implementation machinery for task prediction and its declared comparisons,
+not a universal Prediction Part, task selector, or memory writer. Prospective records
+cannot become current observation, another WNM, or bodily permission. The service
+neither dispatches an action nor reads the physical environment. Earlier pending
+records retain their originating application and source-linked identifiers; a later
+Selected NM does not replace that original basis.
 """
 
 from __future__ import annotations
@@ -92,7 +98,7 @@ def _bounded_unique_strings(
 
 
 class PredictionOutcomeStatusV1(str, Enum):
-    """Terminal and nonterminal states of one operation-linked expectation."""
+    """Terminal and nonterminal states of one operation-linked prediction."""
 
     PENDING = "pending"
     SUCCESS = "success"
@@ -171,7 +177,7 @@ class SupportPreviewV1:
 
     The wrapped ``pnm`` is one prospective representation, not a second PNM.
     This record retains only the originating measured support facet and bounded
-    expectations; it never copies a durable map or invokes the physical plant.
+    predictions; it never copies a durable map or invokes the physical plant.
     Expected coordinates/loading are conditional reference-model predictions,
     not observations or guaranteed BodyMap endpoints. ``None`` preserves an
     unknown/unpredicted channel. The physical horizon is separate from the old
@@ -238,7 +244,7 @@ class SupportPreviewV1:
 
 @dataclass(frozen=True, slots=True)
 class RestPreviewV1:
-    """Original sparse Rest expectation; no body command or completed-rest flag.
+    """Original sparse Rest prediction; no body command or completed-rest flag.
 
     The task predicts only its selected coordinate change conditional on the
     current supported body. BodyMap independently limits/maps the target. The
@@ -296,7 +302,7 @@ class RestPreviewV1:
 
 @dataclass(frozen=True, slots=True)
 class VisualTranslationPreviewV1:
-    """Sparse source-relative expectation of one supplied translation operation.
+    """Sparse source-relative prediction of one supplied translation operation.
 
     This is neither body permission nor a plant simulation. The selected fixture
     predicts a bounded SELF displacement while retaining the original target and
@@ -460,7 +466,7 @@ class SeekNipplePreviewV1:
 
 @dataclass(frozen=True, slots=True)
 class SucklePreviewV1:
-    """Original sparse expectation for Suckle's initial latch contribution.
+    """Original sparse prediction for Suckle's initial latch contribution.
 
     The original detail and mouth positions remain anchors. Closure is expected
     to increase under declared competence; seal is conditional on the represented
@@ -516,7 +522,7 @@ class SucklePreviewV1:
 
 @dataclass(frozen=True, slots=True)
 class SuckleExtractionPreviewV1:
-    """Sparse original task expectation for one selected extraction contribution.
+    """Sparse original task prediction for one selected extraction contribution.
 
     The supported mouth/detail relation is the anchor; maintained sealed contact
     and finite reciprocation are conditional, not observations. The lower target
@@ -581,7 +587,7 @@ class SuckleExtractionPreviewV1:
 
 @dataclass(frozen=True, slots=True)
 class PendingPredictionTraceV1:
-    """One bounded operation-linked expectation awaiting matching evidence."""
+    """One bounded operation-linked prediction awaiting matching evidence."""
 
     trace_id: str
     pnm: ProjectedNavMapV1
@@ -732,7 +738,7 @@ class Nca8PredictionRuntimeV1:
         *,
         expiry_cycles: int = 2,
     ) -> ProjectedNavMapV1:
-        """Create one PNM before dispatch and preserve any displaced expectation."""
+        """Create one PNM before dispatch and preserve any displaced prediction."""
         if not isinstance(application, PrimitiveApplicationV1):
             raise TypeError("application must be a PrimitiveApplicationV1")
         if self._preview is not None:
@@ -934,7 +940,7 @@ class Nca8PredictionRuntimeV1:
         return self._preview if isinstance(self._preview, MaternalApproachPreviewV1) else None
 
     def adopt_maternal_preview(self, preview: MaternalApproachPreviewV1) -> None:
-        """Register the selected IP's expectation without making it an observed fact."""
+        """Register the selected IP's prediction without making it an observed fact."""
         if not isinstance(preview, MaternalApproachPreviewV1):
             raise TypeError("expected an original maternal projection")
         self._adopt_preview(preview)
@@ -956,7 +962,7 @@ class Nca8PredictionRuntimeV1:
         return self._preview if isinstance(self._preview, SucklePreviewV1) else None
 
     def adopt_suckle_preview(self, preview: SucklePreviewV1) -> None:
-        """Register the original selected latch expectation, not observed fulfilment."""
+        """Register the original selected latch prediction, not observed fulfilment."""
         if not isinstance(preview, SucklePreviewV1):
             raise TypeError("Suckle registration requires its typed original prediction")
         self._adopt_preview(preview)
@@ -973,7 +979,7 @@ class Nca8PredictionRuntimeV1:
         self._adopt_preview(preview)
 
     def adopt_suckle_extraction_preview(self, preview: SuckleExtractionPreviewV1) -> None:
-        """Retain a selected extraction expectation without scoring closure or milk."""
+        """Retain a selected extraction prediction without scoring closure or milk."""
         if not isinstance(preview, SuckleExtractionPreviewV1):
             raise TypeError("extraction registration requires its typed original prediction")
         self._adopt_preview(preview)

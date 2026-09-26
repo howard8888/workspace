@@ -516,7 +516,7 @@ def test_explicit_strategic_associative_jump_changes_operative_wnm() -> None:
 
 
 def test_primitive_map_is_task_level_and_contains_no_motor_trajectory() -> None:
-    """Stored primitive structure should stop at precondition/intent/expectation."""
+    """Stored legacy PRIMITIVE-role content should stop at precondition/intent/expectation."""
     navmap = navmap_memory_build_primitive_map_v1("policy:follow_mom")
 
     assert navmap.role == "behavioral_primitive_map"

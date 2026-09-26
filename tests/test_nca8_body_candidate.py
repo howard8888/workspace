@@ -10,7 +10,7 @@ from nca8_runtime import Nca8SessionV1
 
 
 def _map_state_v1(profile_id: str, cycle_id: int):
-    """Return one canonical current map state for BodyMap tests."""
+    """Return one canonical Configuration sample for BodyMap tests."""
     library = create_posture_support_map_library_v1()
     evidence = library.evaluate_profile(profile_id)
     return library.update_current_state(

@@ -3,9 +3,9 @@
 """One explicitly supplied operation fixture for P16-2A-B translation qualification.
 
 The LEARNED interface kind permits an externally supplied task transformation
-without adding an innate visual primitive. Nothing is acquired here: the fixture
+without adding an innate visual procedure. Nothing is acquired here: the fixture
 and its region handle are installed before the trial and are labelled as such in
-every application. Navigation still performs ordinary applicability/selection.
+every application. ExecNav still performs ordinary applicability/selection.
 One application is permitted, not a covert Follow-Mom loop or route planner.
 Its source-relative proposal/PNM and BodyMap's independent egocentric target
 remain separate calculations with their original evidence and finite bounds.

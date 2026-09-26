@@ -803,7 +803,7 @@ class OralExtractionWorldProfileV1:
     it is not a continuous fluid model or physiological rate. The provider's
     existing step, clock, delayed/dropout sensing and reset are reused. Channel
     availability changes observations only, not the actual physical trajectory.
-    No Navigation/BodyMap/SMP extraction path is installed by this profile.
+    No ExecNav/BodyMap/SMP extraction path is installed by this profile.
     """
 
     initial_stroke: float = 0.0

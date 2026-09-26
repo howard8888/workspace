@@ -2,6 +2,10 @@
 # -*- coding: utf-8 -*-
 """Finite, read-only cognitive oscilloscope snapshots for CCA8.
 
+These diagnostic points describe retained host/legacy mechanisms. Names such as
+Sequential/Error, goal/emotion, primitive and WorldGraph identify inspected legacy
+fields; they are not additional or renamed Architecture v10.2 Parts.
+
 Purpose
 -------
 This module implements the first diagnostic-instrumentation slice for Main
@@ -418,7 +422,7 @@ def _dp04_local_maps(ctx: Any, env_obs: Any) -> dict[str, Any]:
 
 
 def _dp05_temporal(ctx: Any) -> dict[str, Any]:
-    """Sample bounded Sequential/Error and generalized live-dynamics state."""
+    """Sample bounded legacy sequential/error and generalized live-dynamics state."""
     live = _safe_call(lambda: cca8_live_dynamics.live_dynamics_summary_v1(ctx), {})
     maternal = _safe_call(lambda: cca8_maternal_temporal.maternal_temporal_shadow_summary_v1(ctx), {})
     seqerr = getattr(ctx, "seqerr_last", {})
@@ -564,7 +568,7 @@ def _dp11_wnm(ctx: Any) -> dict[str, Any]:
 
 
 def _dp12_drives(ctx: Any, drives: Any) -> dict[str, Any]:
-    """Sample compact drives, developmental context, and goal/emotion status."""
+    """Sample compact drives, developmental context, and legacy goal/emotion status."""
     flags = _safe_call(lambda: list(drives.flags()), []) if drives is not None else []
     signal = {
         "hunger": getattr(drives, "hunger", None),

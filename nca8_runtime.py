@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Isolated A0 runtime with P16-1R-B internal/external domain separation.
+"""Isolated A0 core and opt-in NCA8 source/focal coordination services.
 
-Phase 1A established a second state-isolated brain. Phase 1B installed the
-Phase-A-to-F deterministic commitment boundary. Phase 1C added an NCA8-owned
-current POSTURE-SUPPORT NavMap state and protected BodyMap state. Phase 1D now
-completes the first vertical cognitive path:
+The retained Gate-A path began with Phase 1A isolation, Phase 1B deterministic
+A-F commitment, Phase 1C POSTURE-SUPPORT Configuration and protected BodyMap
+state, and Phase 1D focal selection and StandUp application. In that path:
 
-``Observation_n -> body state -> Attention -> WNM -> Navigation -> StandUp IP
--> PNM -> BodyMap/action envelope -> Action_n -> Observation_(n+1) -> outcome``.
+``admitted observation -> source Configuration / BodyMap evidence -> Attention
+-> Selected-NM-linked WNM sample -> ExecNav-selected StandUp Procedure Application
+-> task prediction + separate body request -> protected handoff -> later evidence``.
 
-The implementation remains narrow. Attention selects a map-state source but
-never names StandUp. Navigation evaluates and applies the primitive. Prediction
-creates the PNM before dispatch. BodyMap may authorize or reject the task-to-body
-handoff. The environment adapter alone translates internal ``STAND_UP`` to the
-compatibility token ``policy:stand_up``. Later current body evidence, never the
-command itself, determines success or failure.
+Attention chooses the NM, not StandUp or preferred sensory values. ExecNav selects
+the procedure. The A0 prediction service records PNM before dispatch; BodyMap checks
+the task-to-body handoff. The adapter alone translates ``STAND_UP`` to the compatible
+``policy:stand_up`` token. A command is never evidence that its intended effect occurred.
+The sampled WNM implements focal access; it is not a second biological NM.
 
 P16-1R-B boundary contract
 -------------------------
@@ -29,7 +28,8 @@ Numbering contract
 ------------------
 CognitiveCycle ``n`` consumes ``Observation_n`` and commits ``Action_n``.
 The resulting ``Observation_(n+1)`` is buffered and cannot be processed until
-CognitiveCycle ``n+1``.
+CognitiveCycle ``n+1``. Opt-in source/focal services below preserve their separately
+declared profiles; this A0 sequence does not claim their complete physiological scope.
 """
 
 from __future__ import annotations
@@ -507,7 +507,7 @@ class Nca8CognitiveRuntimeV1:
 
     @property
     def body_sensory(self) -> Nca8BodySensoryModuleV1:
-        """Return the owning body-sensory circuit."""
+        """Return the body-sensory service maintaining the POSTURE-SUPPORT source."""
         return self._body_sensory
 
     @property
@@ -522,7 +522,7 @@ class Nca8CognitiveRuntimeV1:
 
     @property
     def navigation(self) -> NavigationRuntimeV1:
-        """Return the distinct Navigation service."""
+        """Return the distinct ExecNav service."""
         return self._navigation
 
     @property
@@ -532,7 +532,7 @@ class Nca8CognitiveRuntimeV1:
 
     @property
     def primitives(self) -> tuple[PrimitiveRuntimeV1, ...]:
-        """Return the explicit Gate-A primitive repertoire."""
+        """Return the explicit Gate-A task-procedure repertoire."""
         return self._primitives
 
     @property
@@ -1664,7 +1664,7 @@ class RightingSourceOpportunityV1:
 
     This owner-local working record holds no new source or permission. Its
     immutable references keep the cutoff and source basis fixed while selection
-    and projection occur. It is consumed only by the session that prepared it.
+    and prediction occur. It is consumed only by the session that prepared it.
     """
 
     cycle_id: int
@@ -1682,18 +1682,18 @@ class Nca8RightingPreviewSessionV1:
     Input is canonical admitted/replayed motor sensing, not a private world or
     evaluator label. Each call publishes the enhanced facet of one continuing
     POSTURE-SUPPORT source, asks Attention to select one source, and passes a
-    bounded supplied repertoire to the existing Navigation selector. The selected
+    bounded supplied repertoire to the existing ExecNav selector. The selected
     Righting application is consumed by Prediction and H3 BodyMap. No H4 executor
     or H2 world is constructed. Existing A0 sessions and defaults remain unchanged.
 
-    A controlled competing bid or additional primitive can be supplied in tests;
+    A controlled competing bid or additional procedure can be supplied in tests;
     it has to win through the same selectors. This is a transparent small-repertoire
     baseline, not scalable candidate recruitment. Reset means a fresh session with
     a new body stream generation, never restoration of a diagnostic record.
 
     H6-B can disable only the existing Prediction registration consumer. The IP
-    still forms its sparse projection, and handoff origin checks still require
-    that original projection. No substantive task-PNM outcome consumer exists
+    still forms its sparse prediction, and handoff origin checks still require
+    that original prediction. No substantive task-PNM outcome consumer exists
     here: it remains P16-1G. This control must not be presented as removal of all
     prediction or as evidence that task prediction is unnecessary biologically.
     """
@@ -1770,7 +1770,7 @@ class Nca8RightingPreviewSessionV1:
     ) -> RightingPreviewResultV1:
         """Run the unchanged no-dispatch H5 review through its three shared stages.
 
-        H6 uses these same source/selection/projection calculations between real
+        H6 uses these same source/selection/prediction calculations between real
         scheduler C, D and E boundaries. This convenience method still reserves
         no resource, issues no handoff and invokes no lower or physical actor.
         """
@@ -1850,10 +1850,10 @@ class Nca8RightingPreviewSessionV1:
         extraction_attention: SuckleExtractionAttentionV1 | None = None,
     ) -> tuple[SeekingFocalAllocationV1 | None, SuckleFocalAllocationV1 | None,
                ExtractionFocalAllocationV1 | None, NavigationDecisionV1 | None]:
-        """Offer all same-source heads to Navigation BEFORE any owner consumes.
+        """Offer all same-source heads to ExecNav BEFORE any owner consumes.
 
         This is the existing bounded transport/dispatch seam, not another selector.
-        Navigation validates and reserves one grant. Losing owners are not invoked.
+        ExecNav validates and reserves one grant. Losing owners are not invoked.
         Empty candidacy permits only ordinary/dependency/other-source dispositions;
         several dependencies impose one hold, never additional interpretations.
         """
@@ -1928,12 +1928,12 @@ class Nca8RightingPreviewSessionV1:
         seeking_attention: SeekingOutcomeAttentionV1 | None = None, suckle_attention: SuckleOutcomeAttentionV1 | None = None,
         extraction_attention: SuckleExtractionAttentionV1 | None = None,
     ) -> RightingPreviewResultV1:
-        """Use the actual Attention and Navigation owners in D, once per source basis.
+        """Use the actual Attention and ExecNav owners in D, once per source basis.
 
         Optional domain outcome owners may interpret only their selected source,
-        consuming the one demanding opportunity instead of a new primitive.
+        consuming the one demanding opportunity instead of a new procedure.
         No new WNM, task budget or motor grant is created by interpretation.
-        J offers seeking/Suckle question heads to Navigation before consumption;
+        J offers seeking/Suckle question heads to ExecNav before consumption;
         selecting a question never selects its originating IP for reapplication.
 
         In the opt-in integrated profile, an unfinished support task may nominate
@@ -2043,7 +2043,7 @@ class Nca8RightingPreviewSessionV1:
                 raise RuntimeError("one opportunity cannot carry both support and feeding interpretation grants")
             interpretation_decision = support_decision
         if interpretation_decision is not None:
-            decision = interpretation_decision  # Navigation reserved the opportunity before request consumption.
+            decision = interpretation_decision  # ExecNav reserved the opportunity before request consumption.
         elif hold_reason is not None:
             if working is None:
                 raise RuntimeError("a nonprimitive focal allocation requires the selected source")

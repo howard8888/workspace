@@ -4,7 +4,7 @@
 
 This external fixture reuses the H4 advance/admission/reset boundary and scalar
 executor. A supported start already places the mouth at a visual detail; that
-initial condition is not a result of Navigation-selected seeking in this trial.
+initial condition is not a result of ExecNav-selected seeking in this trial.
 The fixture supplies one closure/opening requirement. No Suckle IP, task PNM,
 feeding milestone, milk, nourishment, rest or durable learning is implemented.
 

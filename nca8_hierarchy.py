@@ -3,7 +3,7 @@
 """P18-H6-A: selected Righting, finite target installation and returning sensing.
 
 IntegratedRightingCoreV1 owns only focal cognition and an internal handoff. It
-uses the existing A-F scheduler and H5 source/selection/projection stages; it
+uses the existing A-F scheduler and H5 source/selection/prediction stages; it
 never calls a physical provider. IntegratedRightingTrialV1 is the separate
 synchronous outer driver. It consumes the closed handoff once, installs H3
 targets in H4, and calls H2 once per lower tick. Four 0.05-second updates form
@@ -1741,7 +1741,7 @@ class IntegratedRightingTrialV1:
                                details={"tick": self.tick})
 
     def reset(self) -> None:
-        """Revoke old owners and replace all current evidence/rights in a new generation."""
+        """Revoke old owners and replace all current evidence/rights in a new Session Generation."""
         if self._busy or self.core.running:
             raise RuntimeError("cannot reset during focal or physical work")
         self.core.stop("generation_reset")

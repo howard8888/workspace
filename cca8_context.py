@@ -246,7 +246,7 @@ class Ctx:
 
     posture_discrepancy_history: list[str] = field(default_factory=list) #per-session list of discrepancies motor command vs what environment reports
 
-    # Sequential / error unit (CCA7 cerebellum-inspired) — temporal deltas + prediction errors (stub)
+    # Legacy sequential/error unit (CCA7 cerebellum-inspired) — temporal deltas + prediction errors (stub)
     # -----------------------------------------------------------------------------------------
     # Diagnostic-first: tracks short windows of sensory change over time. Does NOT change policy selection yet.
     seqerr_enabled: bool = True
@@ -901,7 +901,7 @@ class Ctx:
     terrain_surfacegrid_cells_per_unit_v1: float = 4.0
 
     # Phase 7 generalized temporal binding and live dynamics. Compact typed
-    # samples are attached to the existing bounded Sequential/Error window; no
+    # samples are attached to the existing bounded legacy seqerr window; no
     # second clock, unbounded history, full-map movie, or detailed motor
     # trajectory is introduced. Current overlays remain source-linked to the
     # Phase 4 maternal, Phase 5 feeding, Phase 6 terrain, and lower-controller

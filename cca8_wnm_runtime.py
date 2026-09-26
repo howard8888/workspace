@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """Single-operative WNM and bounded-ready-set runtime for CCA8 Phases 5 through 8.
 
+This is the retained host/legacy WNM runtime. Its historical Planning-v13 requirement
+and explicit map/ready-set transactions are implementation provenance, not the current
+v10.2 same-Selected-NM focal mechanism or authority to change today's work order.
+
 Purpose
 -------
 Planning v13 requires the first genuine navigation among NavMaps rather than a

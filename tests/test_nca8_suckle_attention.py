@@ -88,7 +88,7 @@ def admit(owner, cycle, outcomes, source=None, task=None):
 
 
 def navigation_fixture(source):
-    """Use actual Attention and Navigation to establish the fixture source as WNM."""
+    """Use actual Attention and ExecNav to establish the fixture source as WNM."""
     attention, navigation = AttentionRuntimeV1(), NavigationRuntimeV1(motor_preview_enabled=True)
     bid = attention.build_bid(FeedingDetailCandidateV1(source, 0), cycle_id=source.applied_cycle)
     selection = attention.select((bid,), current_wnm=None, cycle_id=source.applied_cycle)
@@ -96,7 +96,7 @@ def navigation_fixture(source):
 
 
 def interpret(owner, source):
-    """Navigation reserves the one opportunity before the source owner consumes it."""
+    """ExecNav reserves the one opportunity before the source owner consumes it."""
     navigation, working, _ = navigation_fixture(source)
     candidate = owner.interpretation_candidate(working, cycle_id=source.applied_cycle)
     winner = navigation.allocate_outcome_interpretation(working, (candidate,), cycle_id=source.applied_cycle, at_tick=source.cutoff_tick)
@@ -375,7 +375,7 @@ def simultaneous_fixture(older_suckle=False, *, unknown=False):
 
     The donor trials are independent, with explicitly identical stream/seed names
     for this contract test. This is not a claim of simultaneous physical tasks.
-    Only the shared session's actual Attention/Navigation path selects focal work.
+    Only the shared session's actual Attention/ExecNav path selects focal work.
     """
     donor = trial_fixture(route=False)
     first = donor.focal_step()

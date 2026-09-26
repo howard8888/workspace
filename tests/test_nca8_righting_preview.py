@@ -1,4 +1,4 @@
-"""H5 source, task, projection and BodyMap proofs with no actuator side effects."""
+"""H5 source, task, prediction and BodyMap proofs with no actuator side effects."""
 
 from __future__ import annotations
 

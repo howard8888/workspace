@@ -437,7 +437,7 @@ def test_disabled_phase4b_path_has_no_temporal_side_effects() -> None:
 
 
 def test_disabled_sequential_unit_prevents_phase4b_window_updates() -> None:
-    """Phase 4B should respect the existing Sequential/Error enable switch."""
+    """Phase 4B should respect the existing legacy seqerr enable switch."""
     ctx = _ctx_with_bodymap()
     ctx.seqerr_enabled = False
     env_obs = _observation(maternal=(3.0, 0.0), time_value=0.0, step_index=0)

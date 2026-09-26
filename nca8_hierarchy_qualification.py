@@ -9,7 +9,7 @@ external condition; they never supply an answer to Righting. Each run advances
 80 physical intervals of 0.05 seconds, regardless of focal cadence or task exit.
 
 The task-PNM control disables only the implemented Prediction registration
-consumer. Sparse projection generation and mandatory handoff integrity remain.
+consumer. Sparse prediction generation and mandatory handoff integrity remain.
 A null motor result cannot establish either predictive usefulness or biological
 redundancy; task-PNM correspondence and outcomes remain P16-1G. Likewise, a local
 achievement and current activity adequacy are not supported task completion.

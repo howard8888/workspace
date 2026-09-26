@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """Phase 5 feeding close-up, WNM zoom round-trip, and map-native expectations.
 
+This module describes the retained host/legacy Phase-5 implementation. Its operative-WNM
+transactions and feeding expectations are actual compatibility mechanisms, not a claim
+that it implements the v10.2 same-Selected-NM WNM or NCA8 Suckle procedure paths.
+
 Purpose
 -------
 Phase 5 is the first CCA8 slice in which zoom changes the operative Working

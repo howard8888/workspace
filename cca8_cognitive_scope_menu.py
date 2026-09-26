@@ -162,7 +162,7 @@ def open_worldgraph_pyvis_flow_v1(world: Any) -> None:
 
 
 def show_architecture_status_v1(world: Any, ctx: Any, policy_rt: Any) -> None:
-    """Display the coherent WNM/Columns/WorldGraph architecture panel."""
+    """Display the retained host WNM/Columns/WorldGraph status panel."""
     print()
     print(cca8_reporting.architecture_status_text_v1(world, ctx, column_mem, policy_rt))
     print()
@@ -198,7 +198,7 @@ def show_timekeeping_status_v1(env: Any, ctx: Any) -> None:
 
 
 def show_skill_telemetry_v1(ctx: Any) -> None:
-    """Display current primitive execution and learning telemetry."""
+    """Display current legacy-policy execution and learning telemetry."""
     print()
     print("PRIMITIVE SKILL TELEMETRY")
     print("=" * 78)

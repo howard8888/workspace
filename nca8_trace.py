@@ -174,7 +174,7 @@ def _detail_str_v1(details: Mapping[str, TraceScalarV1], key: str) -> str | None
 
 
 def _explain_session_v1(event: Nca8TraceEventV1) -> str | None:
-    """Explain session lifecycle events without changing generation semantics."""
+    """Explain session lifecycle events without changing Session Generation semantics."""
     if event.message != "isolated Phase-1D Gate-A session reset":
         return None
     details = _details_v1(event)
@@ -448,7 +448,7 @@ def _explain_attention_v1(event: Nca8TraceEventV1) -> str | None:
 
 
 def _explain_wnm_v1(event: Nca8TraceEventV1) -> str | None:
-    """Explain construction or absence of the one source-linked WNM."""
+    """Explain construction or absence of the one source-linked WNM sample."""
     if event.message == "source-linked WNM constructed or refreshed from Attention's selected state":
         return (
             "Navigation constructed or refreshed the one source-linked WNM from Attention's selected current "
@@ -460,7 +460,7 @@ def _explain_wnm_v1(event: Nca8TraceEventV1) -> str | None:
 
 
 def _explain_navigation_v1(event: Nca8TraceEventV1) -> str | None:
-    """Explain primitive applicability and Navigation's exclusive action choice."""
+    """Explain procedure applicability and ExecNav's task-procedure choice."""
     details = _details_v1(event)
     if event.message == "primitive applicability evaluated from the WNM":
         primitive_id = _detail_str_v1(details, "primitive_id") or "the primitive"
@@ -641,7 +641,7 @@ def _explanatory_details_v1(event: Nca8TraceEventV1) -> tuple[tuple[str, TraceSc
     """Return visible details for explanatory output without changing stored details.
 
     ``body_authorized=False`` is suppressed only for a true no-task NO_ACTION
-    dispatch. When a primitive and PNM existed but BodyMap rejected the action
+    dispatch. When a procedure and PNM existed but BodyMap rejected the action
     envelope, the field remains visible because the false value is explanatory.
     The compact renderer and JSON export always retain the original field.
     """
@@ -748,7 +748,7 @@ class _FlowContextV1:
     """Hold only earlier retained trace evidence during one rendering call.
 
     These local references are not runtime state. They let an outcome quote its
-    own earlier PNM rather than inventing an expectation, and let Attention's
+    own earlier PNM rather than inventing an prediction, and let Attention's
     configuration reference resolve to the source-map ID actually recorded.
     A session-reset event clears the context. Map evidence is cleared at every
     new cycle and every gap; missing retained evidence stays explicitly missing.
@@ -1198,7 +1198,7 @@ def _flow_source_v1(details: Mapping[str, TraceScalarV1], context: _FlowContextV
 
 
 def _flow_focal_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> FlowStepV1 | None:
-    """Keep Attention's source choice separate from Navigation's operation choice."""
+    """Keep Attention's source choice separate from ExecNav's operation choice."""
     details = _details_v1(event)
     if event.channel == "attention":
         if event.message == "POSTURE-SUPPORT map-state candidate submitted as an Attention bid":
@@ -1417,7 +1417,7 @@ def _flow_outcome_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> F
 
 
 def _flow_action_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> FlowStepV1 | None:
-    """Explain expectation, permission, commitment, and dispatch as separate events."""
+    """Explain prediction, permission, commitment, and dispatch as separate events."""
     details = _details_v1(event)
     if event.channel == "outcome":
         return _flow_outcome_step_v1(event, context)

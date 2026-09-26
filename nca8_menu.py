@@ -379,14 +379,14 @@ def _print_cycle_result_v1(session: Nca8SessionV1) -> None:
 
 
 def _fresh_gate_a_session_v1(session: Nca8SessionV1 | None) -> Nca8SessionV1:
-    """Create one brand-new Gate-A session whose first lifecycle generation is one.
+    """Create one brand-new Gate-A session whose first Session Generation is one.
 
     Menu option 5 promises a fresh demonstration rather than an additional reset
     of whichever session happened to be retained from earlier menu activity. The
     retained session's immutable configuration is preserved when one exists, but
     none of its mutable episode state is reused. A newly constructed session has
     already performed its one required initialization reset, so the caller must
-    use ``run_gate_a(reset_first=False)`` to avoid a misleading second generation.
+    use ``run_gate_a(reset_first=False)`` to avoid a misleading second Session Generation.
     """
     print("[nca8:session] Creating a fresh isolated NCA8 session.")
     config = session.config if session is not None else None

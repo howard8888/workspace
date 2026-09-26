@@ -2257,7 +2257,7 @@ def _store_sparse_event(ctx: Any, state: TemporalBindingStateV1) -> None:
 
 
 def _update_seqerr_last(ctx: Any, state: TemporalBindingStateV1) -> None:
-    """Expose the generalized result through the existing Sequential/Error surface."""
+    """Expose the generalized result through the existing legacy seqerr surface."""
     raw = getattr(ctx, "seqerr_last", None)
     last = dict(raw) if isinstance(raw, dict) else {}
     last[_BUCKET_KEY] = {

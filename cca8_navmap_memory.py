@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """Phase 8 long-term NavMap memory, sparse retrieval, and consolidation.
 
+This is retained host/legacy memory machinery. Its PRIMITIVE map role represents
+stored procedure-related content; it is not an executable v10.2 Learned Procedure.
+The terminology below names actual legacy records and transactions, not new Parts.
+
 Purpose
 -------
 Planning v13 requires a long-term map fabric that is richer than the sparse
@@ -2047,7 +2051,7 @@ def _activation(name: str, provenance: NavProvenanceV1, strength: float = 1.0) -
 
 
 def navmap_memory_build_primitive_map_v1(policy_name: str) -> NavMapV2:
-    """Return one compact task-level primitive map without motor trajectory detail."""
+    """Return one compact legacy PRIMITIVE-role map of procedure-related content without motor trajectory detail."""
     _require_nonempty_text(policy_name, field_name="policy_name")
     fragment = _identifier_fragment(policy_name)
     provenance = _memory_provenance(

@@ -5,7 +5,7 @@
 P16-2C-E reuses the conservative one-opportunity policy already qualified for
 Righting and maternal outcomes. Local original-endpoint comparison remains in
 D. Here a fixed significance rule can request consideration of current feeding
-content. Only ordinary Attention and Navigation can allocate its interpretation;
+content. Only ordinary Attention and ExecNav can allocate its interpretation;
 no comparator selects an IP, changes the source, or controls a motor.
 
 A request adds outcome rank40 only to an already eligible feeding bid. There is
@@ -328,7 +328,7 @@ class SeekingOutcomeAttentionV1:
     ) -> OutcomeInterpretationCandidateV1 | None:
         """Offer the oldest eligible question without interpreting or consuming it.
 
-        Used only by J's pre-consumption Navigation arbitration. Existing seeking
+        Used only by J's pre-consumption ExecNav arbitration. Existing seeking
         allocation remains unchanged when J is absent. A losing request, dependency,
         diagnostic history and last-allocation marker are all untouched by this read.
         """
@@ -350,7 +350,7 @@ class SeekingOutcomeAttentionV1:
     def allocate(self, working: WorkingNavMapStateV1 | None, *, cycle_id: int) -> SeekingFocalAllocationV1:
         """Consume at most one question in the existing selected-source opportunity.
 
-        Interpretation never shares a slot with a new primitive. A resolved
+        Interpretation never shares a slot with a new procedure. A resolved
         dependency only permits later reconsideration through ordinary current
         applicability and BodyMap; an unknown one waits or expires. No old motor
         command is replayed. Foreign-source work and lower protection continue.

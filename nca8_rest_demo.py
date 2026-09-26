@@ -207,7 +207,7 @@ class RestExperimentV1:
     installations: int
 
     def applications(self) -> tuple[RestApplicationV1, ...]:
-        """Read actual Navigation-selected Rest applications, not planned stages."""
+        """Read actual ExecNav-selected Rest applications, not planned stages."""
         return tuple(c.calculation.navigation.application for c in self.cycles
                      if isinstance(c.calculation.navigation.application, RestApplicationV1))
 
@@ -411,7 +411,7 @@ class RestWalkthroughV1:
             output.write("\n")
 
     def reset(self) -> None:
-        """Replace this organism's generation and retained records, never another session."""
+        """Replace this organism's Session Generation and retained records, never another session."""
         self.trial.reset()
         _configure_controls(self.trial, self.profile)
         self._cycles.clear()

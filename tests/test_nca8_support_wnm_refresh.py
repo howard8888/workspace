@@ -214,7 +214,7 @@ def test_wnm_rejects_wrong_source_timing_or_owner_without_replacing_valid_workin
 def test_primitive_cannot_read_measured_facet_in_either_applicability_or_application():
     seen = []
     class InspectingStandUp(StandUpIPV1):
-        """A test primitive attempts to observe the field, proving an actual argument boundary."""
+        """A test procedure attempts to observe the field, proving an actual argument boundary."""
         def evaluate_applicability(self, wnm, *, cycle_id):
             seen.append(('query', wnm.support_dynamics))
             assert wnm.support_dynamics is None

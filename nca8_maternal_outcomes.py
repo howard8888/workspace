@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Execution-sensitive maternal PNM correspondence, not task or causal evaluation.
 
-The optional P16-2B-B consumer retains the original Follow-Mom projection before
+The optional P16-2B-B consumer retains the original Follow-Mom prediction before
 handoff, its actual authorized translation, and a bounded pending obligation.
 The existing core calls it in C2 with frozen returned intervals and canonical
 paired motor/visual acquisitions. It compares the original physical endpoint,
@@ -11,7 +11,7 @@ selects no task, performs no demanding interpretation and changes no learner.
 
 ``maternal_correspondence_v1`` compares SELF position, the stationary maternal
 anchor, and separation with fixed 0.02-metre residual tolerances. The event is
-cutoff + the original projection horizon; its acquisition may become available
+cutoff + the original prediction horizon; its acquisition may become available
 up to eight ticks later. These are engineering assumptions, not biological
 constants. Missing/ambiguous association is not a fabricated failed forecast.
 An authorized endpoint different from the proposal leaves incompatible forecast
@@ -110,11 +110,11 @@ class MaternalIntervalEvidenceV1:
 
 @dataclass(frozen=True, slots=True)
 class MaternalClaimV1:
-    """Pre-handoff projection, proposed request and exact original permission records.
+    """Pre-handoff prediction, proposed request and exact original permission records.
 
     Diagnostic exports confer no execution rights. An unchanged maternal anchor
     can remain testable after BodyMap narrows the SELF contribution; neither the
-    original projection nor the authorized target is replaced with a nicer one.
+    original prediction nor the authorized target is replaced with a nicer one.
     """
 
     preview: MaternalApproachPreviewV1

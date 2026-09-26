@@ -95,7 +95,7 @@ def _observation(
 
 
 def _update_dependencies(ctx: Ctx, env_obs: EnvObservation) -> None:
-    """Run BodyMap, Sequential/Error, Phase 2, and maternal Phases 4A-4C."""
+    """Run BodyMap, legacy seqerr, Phase 2, and maternal Phases 4A-4C."""
     update_body_world_from_obs(ctx, env_obs)
     seqerr_update_from_obs(ctx, env_obs)
     navmap_v2_shadow_observation_step_v1(ctx, env_obs)

@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Task-level primitive contracts and the developmental StandUp IP for NCA8.
+"""Task-level Procedure contracts and the developmental StandUp IP for NCA8.
 
 Purpose
 -------
-Phase 1D introduces one genuine focal operation.  The common primitive contract
-keeps applicability, operation, and expected consequence separate and visible.
-The developmental ``StandUpIPV1`` evaluates only the current source-linked WNM;
-it never reads the environment, scenario stage, milestones, legacy policy
-selection, BodyMap internals, or trace output.
+The common contract separates applicability, Procedure Application, expected
+consequence, and requested bodily bounds. The retained A0 ``StandUpIPV1`` evaluates
+only the current Selected-NM-linked WNM sample. It does not read environment stages,
+milestones, legacy policy selection, BodyMap internals, or trace output.
 
 Authority boundary
 ------------------
-A primitive can report applicability and, only after Navigation selects it,
-return one bounded application.  It cannot select itself, create the PNM,
-authorize lower body execution, dispatch an environment token, or declare its
-own outcome successful.  Those authorities remain with Navigation, Prediction,
-BodyMap, the action adapter, and later evidence respectively.
+A procedure reports applicability and is applied only after ExecNav selects it.
+The A0 procedure returns expected relations and a separate task request; the
+prediction service serializes those relations as PNM and BodyMap checks bodily
+permission. Returning a record is not observed completion or permission to dispatch.
+Other task procedures may form their own typed PNM under the same ExecNav boundary;
+this common interface is not a universal prediction or completion owner.
+
+Compatibility and terminology
+----------------------------
+IP means Instinctive Procedure and LP means Learned Procedure. Their inherited or
+acquired origin does not place them at different control levels. Names containing
+``Primitive`` remain exact Python/API identifiers in this slice. Sensorimotor
+Primitive (SMP) retains Primitive for the separate lower target-execution role.
 """
 
 from __future__ import annotations
@@ -99,7 +106,7 @@ def _bounded_unique_strings(
 
 
 class PrimitiveKindV1(str, Enum):
-    """Developmental origin of one task-level primitive."""
+    """Developmental origin of one task-level procedure."""
 
     INSTINCTIVE = "instinctive"
     LEARNED = "learned"
@@ -114,7 +121,7 @@ class TaskActionKindV1(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class PrimitiveApplicabilityV1:
-    """One inspectable applicability result produced before Navigation chooses.
+    """One inspectable applicability result produced before ExecNav chooses.
 
     Separate rank components are a deterministic engineering baseline rather
     than a claim that biology computes one literal scalar utility.  Vetoes are
@@ -174,7 +181,7 @@ class PrimitiveApplicabilityV1:
         )
 
     def deterministic_sort_key(self) -> tuple[int, int, int, int, int, str]:
-        """Return an ascending key whose first value is Navigation's winner."""
+        """Return an ascending key whose first value is ExecNav's winner."""
         return (
             -self.safety_rank,
             -self.fit_rank,
@@ -258,7 +265,7 @@ class TaskActionV1:
 
 @dataclass(frozen=True, slots=True)
 class ActionEnvelopeRequestV1:
-    """Primitive-requested bounds for a later BodyMap authorization decision."""
+    """Procedure-requested bounds for a later BodyMap authorization decision."""
 
     request_id: str
     task_action_id: str
@@ -314,7 +321,7 @@ class ActionEnvelopeRequestV1:
 
 @dataclass(frozen=True, slots=True)
 class PrimitiveApplicationV1:
-    """One concrete operation produced only after Navigation selects a primitive."""
+    """One Procedure Application record produced after ExecNav selects a procedure."""
 
     application_id: str
     primitive_id: str
@@ -396,7 +403,7 @@ class PrimitiveApplicationV1:
 
 
 class PrimitiveRuntimeV1(Protocol):
-    """Structural contract consumed by the generic Navigation runtime."""
+    """Structural contract consumed by the generic ExecNav runtime."""
 
     primitive_id: str
 
@@ -419,7 +426,7 @@ class PrimitiveRuntimeV1(Protocol):
 
 
 class StandUpIPV1:
-    """Minimal developmentally supplied righting primitive used for Gate A.
+    """Minimal developmentally supplied righting procedure used for Gate A.
 
     The hard newborn environment ignores task progress during its initial birth
     setup and requires repeated StandUp commands once struggle begins.  A bound
@@ -437,7 +444,7 @@ class StandUpIPV1:
 
     @property
     def application_count(self) -> int:
-        """Return how many times Navigation has applied this primitive."""
+        """Return how many times ExecNav has applied this procedure."""
         return self._application_count
 
     @property
@@ -551,5 +558,5 @@ class StandUpIPV1:
 
 
 def create_gate_a_primitives_v1() -> tuple[PrimitiveRuntimeV1, ...]:
-    """Return the explicit minimal developmental primitive repertoire for Gate A."""
+    """Return the explicit minimal developmental procedure repertoire for Gate A."""
     return (StandUpIPV1(),)

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """P18-H5 task-level Righting: relational contribution and unexecuted preview.
 
-Navigation, not this module or the test runner, selects an applicable operation.
+ExecNav, not this module or the test runner, selects an applicable operation.
 Righting reads the enhanced POSTURE-SUPPORT facet of that selected source. It
 organizes one limited contribution; BodyMap still maps it and lower control is
 not called. The inherited organizing competence is a small deterministic Python
@@ -194,7 +194,7 @@ def _validate_completion_samples(samples: tuple[MotorFeedbackV1, ...], task: Rig
 
 @dataclass(frozen=True, slots=True)
 class RightingApplicationV1(PrimitiveApplicationV1):
-    """The common Navigation application plus its actual typed H5 computation.
+    """The common ExecNav application plus its actual typed H5 computation.
 
     NO_ACTION in the inherited transport field means no motor task is dispatched
     by this preview. The separate contribution is consumed by H3 to propose
@@ -241,10 +241,10 @@ def _unit_prediction(value: float) -> float:
 
 
 class RightingIPV1:
-    """One inherited task operation under the existing primitive selection API.
+    """One inherited task operation under the existing procedure-selection API.
 
     Preparing an opportunity only ages an existing task and accepts explicit
-    context changes. Applicability is read-only. Only apply(), after Navigation's
+    context changes. Applicability is read-only. Only apply(), after ExecNav's
     choice, starts a task and produces a contribution and prospective change.
     The task is not a hidden motor sequence, and application count never selects
     a pre-scripted next target. H5 retains at most eight application descriptions.
@@ -473,7 +473,7 @@ class RightingIPV1:
     def apply(
         self, wnm: WorkingNavMapStateV1, applicability: PrimitiveApplicabilityV1, *, cycle_id: int,
     ) -> RightingApplicationV1:
-        """Apply the Navigation-selected operation once; return its real computation.
+        """Apply the ExecNav-selected operation once; return its real computation.
 
         Revalidate against the current source/opportunity before any task change.
         The sparse reference prediction is calculated here, not by asking the

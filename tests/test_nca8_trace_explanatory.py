@@ -62,7 +62,7 @@ def test_fresh_gate_a_menu_demonstration_always_starts_at_generation_one(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Menu 5 should replace any retained session rather than reset it into generation two."""
+    """Menu 5 should replace any retained session rather than reset it into Session Generation two."""
     prior_session = Nca8SessionV1(Nca8SessionConfigV1(seed=31))
     prior_session.reset()
     assert prior_session.status().lifecycle_generation == 2
@@ -85,7 +85,7 @@ def test_fresh_gate_a_menu_demonstration_always_starts_at_generation_one(
 
 
 def test_explicit_reset_still_increments_lifecycle_generation() -> None:
-    """The generation fix must not weaken ordinary explicit-reset bookkeeping."""
+    """The Session Generation fix must not weaken ordinary explicit-reset bookkeeping."""
     session = Nca8SessionV1()
 
     assert session.status().lifecycle_generation == 1

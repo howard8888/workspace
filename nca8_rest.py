@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Navigation-selected first Rest on the existing POSTURE-SUPPORT source.
+"""ExecNav-selected first Rest on the existing POSTURE-SUPPORT source.
 
 Rest owns its developmental applicability, finite task organization and intrinsic
 supported-dwell condition. It neither simulates the body nor dispatches a motor
@@ -121,7 +121,7 @@ class RestTaskV1:
 
 @dataclass(frozen=True, slots=True)
 class RestApplicationV1(PrimitiveApplicationV1):
-    """One ordinary Navigation application with its typed Rest relation and PNM."""
+    """One ordinary ExecNav application with its typed Rest relation and PNM."""
 
     task: RestTaskV1
     contribution: RestBodyRequestV1
@@ -172,7 +172,7 @@ def rest_geometry_v1(feedback: MotorFeedbackV1 | None) -> bool | None:
 
 
 class RestIPV1:
-    """Finite Rest owner; only Navigation calls apply and BodyMap grants movement.
+    """Finite Rest owner; only ExecNav calls apply and BodyMap grants movement.
 
     Preparation maintains current need and local intrinsic completion using actual
     timed source acquisitions. It performs no demanding outcome interpretation.

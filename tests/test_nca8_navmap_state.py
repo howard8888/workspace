@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Durable NavMap versus transient NavMap-state tests for NCA8 Phase 1C."""
+"""Durable NavMap versus transient Configuration-sample tests for NCA8 Phase 1C."""
 
 from __future__ import annotations
 

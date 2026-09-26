@@ -12,7 +12,7 @@ are not manufactured by a request.
 The named maternal_outcome_attention_v1 profile interprets one original claim
 only after its source becomes WNM. That interpretation occupies the existing
 focal opportunity; a dependent response must wait for a later opportunity and
-ordinary Navigation/BodyMap checks. This is the existing conservative 1G-B
+ordinary ExecNav/BodyMap checks. This is the existing conservative 1G-B
 allocation policy applied to a distinct domain, not a CompareOutcome IP or a
 universal biological timing rule. Local protection continues independently.
 
@@ -132,7 +132,7 @@ class MaternalInterpretationV1:
 
 @dataclass(frozen=True, slots=True)
 class MaternalFocalAllocationV1:
-    """A scheduling disposition, never a chosen primitive or new body request."""
+    """A scheduling disposition, never a chosen procedure or new body request."""
 
     kind: str
     interpretation: MaternalInterpretationV1 | None = None
@@ -440,7 +440,7 @@ class MaternalOutcomeAttentionV1:
         """Consume one request only on its selected source; reconsider a response later.
 
         An unresolved interpretation retains its dependency until the original
-        request expires. It blocks only new primitive selection on that source;
+        request expires. It blocks only new procedure selection on that source;
         it cannot halt another source, ordinary maintenance or lower protection.
         Expiry releases a dependency, not a remembered motor command. Every later
         response still needs current applicability and BodyMap authorization.

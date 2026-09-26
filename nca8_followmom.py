@@ -163,7 +163,7 @@ class FollowMomAssessmentV1:
 
 
 class FollowMomIPV1:
-    """Choose repeated limited approaches only through ordinary Navigation selection.
+    """Choose repeated limited approaches only through ordinary ExecNav selection.
 
     Preparing an opportunity updates finite task lifetime, local-report readiness
     and simple current-proximity evidence, not a second demanding operation.
@@ -260,7 +260,7 @@ class FollowMomIPV1:
         self, basis: MaternalNavMapStateV1, feedback: MotorFeedbackV1 | None, *, reports: tuple[LocalTargetReportV1, ...] = (),
         support_recovery_pending: bool = False,
     ) -> None:
-        """Update the current eligible opportunity before Attention and Navigation.
+        """Update the current eligible opportunity before Attention and ExecNav.
 
         The body check is a task precondition only; BodyMap repeats its protected
         permission check during E. Reports must belong to the same body stream
@@ -402,7 +402,7 @@ class FollowMomIPV1:
         return result
 
     def authorized(self, application: FollowMomApplicationV1, targets: tuple[CommittedBodyTargetV1, ...]) -> None:
-        """Remember actual E permission, not an assumed effect of primitive application."""
+        """Remember actual E permission, not an assumed effect of procedure application."""
         if (not self._history or application is not self._history[-1] or application.cycle_id != self._applied_cycle
                 or self._authorized_cycle == self._applied_cycle):
             raise ValueError("authorization must answer the original selected maternal application")

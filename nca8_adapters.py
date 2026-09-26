@@ -689,7 +689,7 @@ def environment_token_for_task_action_v1(task_action: TaskActionV1 | None) -> st
     """Map one internal task action onto the shared physical-world vocabulary.
 
     The environment token is a compatibility seam only.  NCA8 cognition never
-    treats ``policy:stand_up`` as its primitive or internal action identity.
+    treats ``policy:stand_up`` as its procedure or internal action identity.
     """
     if task_action is None:
         return None

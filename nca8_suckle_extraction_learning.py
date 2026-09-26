@@ -11,7 +11,7 @@ outer installation; it cannot certify movement or anticipate the new action's
 outcome. No old latch task is required for an already-sealed extraction.
 
 The F callback supplies new canonical L-D publications and original L-E requests.
-Only a performed current-opportunity Navigation interpretation can satisfy a
+Only a performed current-opportunity ExecNav interpretation can satisfy a
 focal dependency. This owner neither determines significance/current relevance
 nor consumes a question. Known relations survive an interrupted sequence; milk
 quantity/coverage remains observational context, never reward or nourishment.
@@ -68,7 +68,7 @@ class ExtractionParticipationV1:
 
     @property
     def pnm_id(self) -> str:
-        """Identify the earlier claim independently of the current projection."""
+        """Identify the earlier claim independently of the current prediction."""
         return self.claim.application.projection.pnm.pnm_id
 
     def as_dict(self) -> dict[str, object]:
@@ -265,7 +265,7 @@ class SuckleExtractionLearningHookV1:
         Witnesses must be references to the canonical acquisitions and to known
         mismatches. Thresholding/classifying significance remains L-E's job. These
         checks establish consistency, not authentication of arbitrary caller objects;
-        the actual core routes the original publication and Navigation result.
+        the actual core routes the original publication and ExecNav result.
         """
         if not isinstance(request, ExtractionMismatchRequestV1) or request.outcome is not outcome:
             raise ValueError("extraction dependency must retain its actual original outcome")

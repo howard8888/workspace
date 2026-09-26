@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Navigation-selected Suckle: retained latch and opt-in sustained first feeding.
+"""ExecNav-selected Suckle: retained latch and opt-in sustained first feeding.
 
 This task organizes closure at a currently represented feeding contact. It uses
 one source-linked WNM, an original sparse PNM and protected BodyMap mapping;
@@ -14,7 +14,7 @@ completion of the full Suckle feeding task are different claims. The retained
 latch profile alone supplies no milk or full-feeding completion.
 
 The opt-in M profile uses separately sensed body need, sequential original
-extraction contributions and Suckle-owned intrinsic confirmation. Navigation
+extraction contributions and Suckle-owned intrinsic confirmation. ExecNav
 selects each contribution; BodyMap/SMP retain execution authority. Body uptake
 belongs to the external provider, not this task. No Rest or durable learning is
 introduced, and prior one-contribution profiles keep their accepted behavior.
@@ -73,7 +73,7 @@ class SuckleProfileV1:
     The complete feeding task remains unfinished. Optional correspondence observes
     the original closure/seal prediction without changing task or motor decisions.
     J's separate, default-disabled outcome_attention_enabled switch allows those
-    outcomes to request source consideration and a Navigation-allocated
+    outcomes to request source consideration and an ExecNav-allocated
     interpretation, never automatic IP reapplication or new motor permission.
     K's separate default-disabled hook records bounded participation at F. It
     requires correspondence, not J, and never implements a durable learning rule.
@@ -376,7 +376,7 @@ class SuckleExtractionEpisodeV1:
 class SuckleExtractionApplicationV1(PrimitiveApplicationV1):
     """One genuine selected use of ip:suckle; never accepted by closure-only I/K.
 
-    A separate task projection precedes BodyMap mapping. Neither the task request
+    A separate task prediction precedes BodyMap mapping. Neither the task request
     nor this immutable provenance establishes installation, movement or milk.
     """
 
@@ -770,7 +770,7 @@ class SuckleIPV1:
 
         This owner-local requirement check cannot select itself, make a PNM,
         install a target or choose Rest. Every fresh contribution still requires
-        Navigation and BodyMap. Serious/incomplete previous work stops further
+        ExecNav and BodyMap. Serious/incomplete previous work stops further
         extraction rather than inventing a general retry or a free interpretation.
         Outcome questions and learning eligibility have separate lifetimes.
         """
@@ -955,7 +955,7 @@ class SuckleIPV1:
                     and target.expires_at_tick <= at_tick <= target.expires_at_tick + 2)
 
     def _apply_extraction(self, wnm: WorkingNavMapStateV1, *, cycle_id: int) -> SuckleExtractionApplicationV1:
-        """Construct one selected projection/request; no lower target or world access."""
+        """Construct one selected prediction/request; no lower target or world access."""
         basis = self._basis
         if basis is None or basis.detail_position is None or (self._extraction_application is not None and not self.profile.sustained_feeding_enabled):
             raise RuntimeError("selected extraction lost its original basis or exceeded its one-contribution bound")

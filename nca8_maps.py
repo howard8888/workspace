@@ -1,28 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Durable NavMap and transient NavMap-state ownership for NCA8 Phase 1C.
+"""Durable NavMap records and current Configuration samples for NCA8.
 
 Purpose
 -------
-Phase 1C gives the new runtime its first meaningful internal representation:
-a current SELF-ground posture/support state.  The durable
-:class:`cca8_navmap_kernel.NavMapV2` is a developmentally seeded, immutable
-relational state space containing canonical upright-support and lateral-ground
-geometry.  :class:`NavMapStateV1` separately records which configuration is
-active now, its activation/current-evidence status, logical timing, and refresh
-history.
+The retained Phase-1C/A0 scaffold uses an immutable, developmentally seeded
+:class:`cca8_navmap_kernel.NavMapV2` with canonical upright-support and lateral-ground
+geometry. :class:`NavMapStateV1` records its current Configuration, activation,
+evidential status, logical timing, and refresh history. State remains part of the
+Python type name; Configuration names the represented current expression.
 
-The explicit ``posture:fallen`` / ``posture:standing`` observation tokens are a
-temporary interpreted-perception scaffold.  They select a canonical geometry
-profile; they do not revise the durable map.  Runtime activation, support,
-currentness, ambiguity, and timing never enter ``NavMapV2``.
+The A0 ``posture:fallen`` / ``posture:standing`` tokens select a geometry profile;
+they do not revise the durable map. Later measured facets can update this same
+source's current expression through explicitly admitted evidence, without making
+those facets separate NMs. No durable learner is implemented by this storage service.
 
 Authority boundary
 ------------------
-This module owns durable map records and current map states only.  It contains
-no Attention, WNM, Navigation, primitive selection, PNM, task action, learning,
-or environment access.  ``CurrentMapViewV1`` is diagnostic and has no world or
-executive authority.
+This Python module provides map storage and current-update operations for the
+owning sensory service. It does not add a cognitive Part, select the NM or task,
+create a PNM, authorize movement, or access the environment. ``CurrentMapViewV1``
+is a diagnostic view, not another WNM or independent current-world authority.
 """
 
 from __future__ import annotations
@@ -215,7 +213,7 @@ class SupportConfigurationV1:
 
     The sensory owner replaces one current register after Phase-C admission.
     This is not another durable NM or another WNM. The original A0 configuration
-    still supplies BodyMap and primitive decisions. P16-1E-C may use this register
+    still supplies BodyMap and procedure decisions. P16-1E-C may use this register
     in a source-local dynamics facet copied into read-only WNM content, without
     granting it behavioral authority. The received sample and any discrepancy
     remain inspectable even when not accepted as current.
@@ -543,7 +541,7 @@ class MotorSupportConfigurationV1:
 class NavMapStateV1:
     """Transient active configuration of one immutable durable NavMap revision.
 
-    The state ID identifies one current slot owned by the body-sensory circuit.
+    The compatibility state ID identifies a current slot maintained by the sensory service.
     Repeated equivalent observations refresh this slot rather than creating a
     durable map revision.  Timing, activation, current support, and open-world
     interpretation live here and never inside ``NavMapV2``.
@@ -1097,7 +1095,7 @@ class Nca8MapLibraryV1:
         publication of that UNKNOWN compatibility slot, not a physical event.
         Only the enhanced facet carries the measured physical times and geometry.
         No v1 support packet or durable seed is changed. The caller is the source
-        owner and supplies an already validated, eligible focal projection.
+        owner and supplies an already validated, eligible focal evidence sample.
         """
         if not isinstance(configuration, MotorSupportConfigurationV1):
             raise TypeError("configuration must be MotorSupportConfigurationV1")

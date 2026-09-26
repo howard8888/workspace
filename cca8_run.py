@@ -3,6 +3,11 @@
 """
 *************************************
 
+Implementation scope: this runner hosts retained legacy cognition and separate NCA8
+review routes. Policy/Primitive, Action Center, WorkingMap and WorldGraph descriptions
+below identify the host mechanisms; they do not replace Architecture v10.2 Parts or
+the task-level Instinctive/Learned Procedure terminology of the NCA8 path.
+
 Software was developed in a Windows environment but should run with minimal changes in a macOS or Linux environment.
 Requires Python 3.13
 Please contact __  for inquiries about additional software modules, related
@@ -323,7 +328,7 @@ terrain_summary_v1 = cca8_terrain.terrain_summary_v1
 render_terrain_lines_v1 = cca8_terrain.render_terrain_lines_v1
 
 # --- Phase 7 generalized temporal binding / live-dynamics seam ---------------
-# Compact typed samples reuse the existing bounded Sequential/Error window.
+# Compact typed samples reuse the existing bounded legacy seqerr window.
 # Dynamic envelopes remain EXPECTED, structured residuals remain source-linked,
 # and lower-controller feedback contains no detailed movement trajectory.
 live_dynamics_reset_v1 = cca8_live_dynamics.live_dynamics_reset_v1
@@ -444,7 +449,7 @@ def _surfacegrid_ascii_terminal_block_v1(
 
 
 # --- Observation-ingestion compatibility seam ---------------------------------
-# BodyMap construction, sequential/error processing, observation masking,
+# BodyMap construction, legacy seqerr processing, observation masking,
 # keyframe detection, short-lived map handoffs, sparse WorldGraph writes, and
 # cycle JSON logging now live in cca8_observation_runtime. Runtime-sensitive
 # callbacks resolve through the runner at call time to preserve historical
@@ -1777,7 +1782,7 @@ def experiments_menu_49_interactive(ctx: Ctx) -> None:
 #       - full/mini snapshots, WorkingMap displays, time/drive/skill HUDs, cycle footers, transcript teeing,
 #         and developer-facing LOC utilities live in cca8_reporting.py.
 #   • Observation runtime subsystem:
-#       - BodyMap construction/update, sequential/error processing, observation masking, keyframe detection,
+#       - BodyMap construction/update, legacy seqerr processing, observation masking, keyframe detection,
 #         short-lived map handoffs, sparse WorldGraph writes, and cycle JSON logging live in
 #         cca8_observation_runtime.py.
 #   • Working memory subsystem:
@@ -3197,7 +3202,7 @@ def _sorted_bids(world) -> list[str]:
 # EnvObservation -> BodyMap updates moved to cca8_observation_runtime.py.
 
 
-# Sequential/error observation processing moved to cca8_observation_runtime.py.
+# Legacy seqerr observation processing moved to cca8_observation_runtime.py.
 
 
 # Spatial observation-edge writing moved to cca8_observation_runtime.py.

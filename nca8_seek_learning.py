@@ -13,7 +13,7 @@ interpretation, if any. It performs no rich interpretation, task selection, body
 execution or durable learning. With the Attention route disabled, discrepancies
 wait conservatively for eligibility expiry rather than buying free focal work.
 Accepted known relations remain evidence-only: no cause, latch, nourishment,
-learned identity, calibrated movement or acquired primitive is inferred.
+learned identity, calibrated movement or acquired procedure is inferred.
 """
 
 from __future__ import annotations

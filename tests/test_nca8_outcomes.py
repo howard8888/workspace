@@ -37,7 +37,7 @@ def supported(event, **changes):
 
 
 def fixture(*, capabilities=None, install=True, compare=True):
-    """Use actual Navigation, Righting and BodyMap to produce a supplied test grant."""
+    """Use actual ExecNav, Righting and BodyMap to produce a supplied test grant."""
     session = Nca8RightingPreviewSessionV1(STREAM, capabilities=capabilities)
     result = session.preview(sensor(0), cutoff_tick=0)
     application, proposal = result.navigation.application, result.proposal

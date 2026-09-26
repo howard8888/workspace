@@ -3,9 +3,9 @@
 """P16-1G-B: source-owned task discrepancy requests and bounded focal interpretation.
 
 This is a domain-local extension of the POSTURE-SUPPORT owner, not another
-Evaluator, task primitive or learning module. C2 admits the actual 1G-A terminal
+Evaluator, task procedure or learning module. C2 admits the actual 1G-A terminal
 claim results and performs only fixed significance checks. The source's bid may
-carry a separate outcome rank; Attention still chooses. Only after Navigation
+carry a separate outcome rank; Attention still chooses. Only after ExecNav
 establishes that source as the current WNM may allocate() spend the one focal
 allocation. A dependent response is reconsidered at a later eligible opportunity,
 never in the interpretation call. Neither route grants body/motor permission.
@@ -118,9 +118,9 @@ class RightingInterpretationV1:
 class RightingFocalAllocationV1:
     """One scheduling disposition; a result is not a new task application.
 
-    interpretation and dependent_unresolved suppress ordinary primitive
+    interpretation and dependent_unresolved suppress ordinary procedure
     arbitration for this opportunity. response_reconsideration permits the
-    normal selector to recheck current evidence later; it names no primitive.
+    normal selector to recheck current evidence later; it names no procedure.
     ordinary and other_source leave independent processing unchanged.
     """
 
@@ -148,7 +148,7 @@ class RightingOutcomeAttentionV1:
     only canonical 1G-A results under the frozen source cutoff, not local warning
     labels. contribute_bid() changes only the existing outcome ranking component.
     allocate() requires this cycle's selected WNM. It performs no environment,
-    motor, primitive or durable-learning call. Overflow rejects the entire batch
+    motor, procedure or durable-learning call. Overflow rejects the entire batch
     before changing relevance; a core caller then stops rather than hiding work.
 
     Outcome numbers are monotonic publisher identities. A duplicate cannot
@@ -416,7 +416,7 @@ class RightingOutcomeAttentionV1:
         """Spend at most one interpretation slot, or release a later reconsideration.
 
         This method is called only after Attention and WNM establishment. It
-        neither calls nor names a primitive. A request is consumed exactly once.
+        neither calls nor names a procedure. A request is consumed exactly once.
         Unresolved current relevance retains only its bounded dependency; it
         cannot stop another source, source updating or protected lower execution.
         A later ordinary selector, current task and BodyMap still decide whether

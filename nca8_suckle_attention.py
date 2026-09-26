@@ -3,11 +3,11 @@
 """P16-2C-J: Suckle discrepancy to feeding relevance and focal interpretation.
 
 This source-owned extension describes questions, not IPs. Original I outcomes
-remain immutable. Ordinary Attention selects the feeding source; Navigation
+remain immutable. Ordinary Attention selects the feeding source; ExecNav
 chooses one question BEFORE its consumption and reserves its existing focal
 allocation. Interpretation evaluates present relevance only, not cause, remedy,
 IP applicability, latch completion or bodily permission. A later ordinary
-Attention/Navigation decision is required for any new IP application.
+Attention/ExecNav decision is required for any new IP application.
 
 The fixed first profile requests rank 40 for an executed missing expected seal,
 a contradicted feeding-part identity, a closure error of at least 0.05, or an
@@ -92,7 +92,7 @@ class SuckleInterpretationV1:
 
 @dataclass(frozen=True, slots=True)
 class SuckleFocalAllocationV1:
-    """One domain's disposition inside Navigation's existing allocation, not another slot."""
+    """One domain's disposition inside ExecNav's existing allocation, not another slot."""
 
     kind: str
     interpretation: SuckleInterpretationV1 | None = None
@@ -131,8 +131,8 @@ class SuckleOutcomeAttentionV1:
     """Own finite relevance/dependency state for one feeding-source generation.
 
     Admission performs only integrity/significance checks on newly published I
-    evidence. Candidacy is read-only. Consumption requires a prior nonprimitive
-    Navigation decision on the same WNM and question. No method applies an IP,
+    evidence. Candidacy is read-only. Consumption requires a prior non-task
+    ExecNav decision on the same WNM and question. No method applies an IP,
     writes a sensory source or owns a motor target. Closing is sticky; resetting
     constructs a new owner rather than reviving historical permissions.
     """
@@ -338,9 +338,9 @@ class SuckleOutcomeAttentionV1:
     def allocate(
         self, working: WorkingNavMapStateV1 | None, *, cycle_id: int, grant: NavigationDecisionV1 | None = None,
     ) -> SuckleFocalAllocationV1:
-        """Consume a question only after Navigation has reserved this focal opportunity.
+        """Consume a question only after ExecNav has reserved this focal opportunity.
 
-        Pending-question consumption requires an explicit matching nonprimitive
+        Pending-question consumption requires an explicit matching non-task
         decision. A dependency can only withhold or permit LATER ordinary selection;
         it never chooses/restarts an IP. Calls concerning another source do not
         consume feeding work. No question is interpreted merely because it exists.

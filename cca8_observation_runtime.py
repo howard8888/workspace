@@ -2,6 +2,10 @@
 # -*- coding: utf-8 -*-
 """Environment-observation ingestion and BodyMap runtime integration for CCA8.
 
+This module belongs to the retained host/legacy observation path. Its sequential/error
+(seqerr) stub is not the complete Sequential Expectation and Correction Module (SEC).
+Legacy WorkingMap and WorldGraph names remain actual software interfaces.
+
 Purpose
 -------
 This module owns the runner-facing observation-ingestion path that was
@@ -372,7 +376,7 @@ def update_body_world_from_obs(ctx: Ctx, env_obs: EnvObservation) -> None:
 def seqerr_update_from_obs(ctx: Ctx, env_obs: EnvObservation) -> None:
     # pylint: disable=too-many-locals, too-many-branches, too-many-statements
     """
-    Sequential/error v1 (stub): compute short-window temporal deltas + prediction error.
+    Legacy sequential/error v1 (stub): compute short-window temporal deltas + prediction error.
 
     Intent
     ------
@@ -1068,7 +1072,7 @@ def inject_obs_into_world(
         # BodyMap update should never be allowed to break env stepping.
         pass
 
-    # Sequential/error stub (CCA7-inspired): temporal deltas + prediction error on the sensory stream.
+    # Legacy sequential/error stub (CCA7-inspired): temporal deltas + prediction error on the sensory stream.
     # Diagnostic-first; does not affect policy selection unless you explicitly enable attention later.
     try:
         runtime.seqerr_update_from_obs(ctx, env_obs)

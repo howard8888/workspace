@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """Phase 4B maternal Sequential/Temporal compression shadow for CCA8.
 
+Sequential/Temporal and seqerr name the retained host's short-window shadow here.
+They are not a demonstration of the complete v10.2 SEC sequence-learning contract.
+
 Purpose
 -------
 Phase 4B consumes the geometry-derived SELF-maternal distance and bearing
@@ -13,7 +16,7 @@ sequence into compact static temporal readouts:
 * bounded support, freshness, and rate-uncertainty diagnostics; and
 * explicit ``UNKNOWN`` or insufficient-history outcomes.
 
-The module reuses the existing bounded Sequential/Error ring buffer on
+The module reuses the existing bounded legacy seqerr ring buffer on
 ``ctx.seqerr_history``.  It adds one compact JSON-safe sample under the
 ``navmap_temporal.self_maternal`` key of each participating frame.  It never
 stores a complete :class:`~cca8_navmap_kernel.NavMapV2` in the temporal window,
@@ -519,7 +522,7 @@ def _ctx_float(ctx: Any, name: str, default: float) -> float:
 
 
 def _seqerr_window_capacity(ctx: Any) -> int:
-    """Return the existing bounded Sequential/Error window capacity."""
+    """Return the existing bounded legacy seqerr window capacity."""
     value = _ctx_int(ctx, "seqerr_window", _DEFAULT_SEQERR_WINDOW)
     return max(2, min(_MAX_SEQERR_WINDOW, value))
 
@@ -716,7 +719,7 @@ def _ref_from_dict(value: Any) -> Optional[NavMapRefV1]:
 
 
 def _sample_from_dict(value: Any) -> Optional[MaternalTemporalSampleV1]:
-    """Decode one compact sample from the shared Sequential/Error window."""
+    """Decode one compact sample from the shared legacy seqerr window."""
     if not isinstance(value, dict):
         return None
     source_ref = _ref_from_dict(value.get("source_evidence_map_ref"))

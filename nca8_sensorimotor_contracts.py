@@ -80,7 +80,7 @@ def _real(value: object, name: str) -> float:
 
 
 class SensorimotorTargetKindV1(str, Enum):
-    """Supported body resources, not Navigation-selected task primitives.
+    """Supported body resources, not ExecNav-selected task procedures.
 
     ORAL_REACH is the optional single body-forward reach coordinate. It grants
     neither a head-orientation strategy nor latch/suckling competence.
@@ -185,7 +185,7 @@ class LocalTargetDispositionV1(str, Enum):
 class TargetOriginV1:
     """Associate a target with one task application and envelope in one body stream.
 
-    These are bounded diagnostic references. They do not copy a primitive,
+    These are bounded diagnostic references. They do not copy a procedure,
     instantiate a task or replace actual receipt/envelope ownership checks.
     Task and envelope lifetimes may exceed a single target's finite lease.
     """

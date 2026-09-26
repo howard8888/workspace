@@ -1,26 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""First NCA8 body-sensory scaffold and current NavMap-state update path.
+"""NCA8 body-sensory service and owner-local POSTURE-SUPPORT updates.
 
-Phase 1C purpose
-----------------
-The shared environment currently supplies interpreted posture tokens rather
-than realistic vestibular, proprioceptive, loading, and contact streams.  This
-module treats ``posture:fallen`` and ``posture:standing`` as an explicit,
-temporary perception scaffold.  It converts the scaffold into one canonical
-SELF-ground geometry profile, evaluates that profile through the immutable
-NavMap kernel, and updates the current :class:`nca8_maps.NavMapStateV1` owned by
-this body-sensory circuit.
+Retained A0 scaffold
+-------------------
+The A0 environment supplies interpreted ``posture:fallen`` and ``posture:standing``
+tokens, not reconstructed vestibular/proprioceptive/contact evidence. This service
+converts them to a canonical SELF-ground geometry profile and updates the current
+:class:`nca8_maps.NavMapStateV1` Configuration. Missing posture stays ``UNKNOWN``;
+conflicting tokens stay ``AMBIGUOUS``. Neither case manufactures a definite posture.
 
-Missing posture evidence remains ``UNKNOWN``.  Simultaneous fallen and standing
-evidence remains ``AMBIGUOUS``.  Neither case fabricates the opposite posture or
-selects one canonical geometry profile.
+Separately configured measured-evidence paths
+-------------------------------------------
+Support packets and the local dynamics facet retain the original A0 read-only
+scope. The opt-in motor path admits its own timed feedback and maintains the same
+POSTURE-SUPPORT source's enhanced Configuration. Later optional consequence and
+learning-reconciliation hooks keep their explicit original-source contracts.
+The admitted feeding-need path is limited internal-body evidence, not a complete
+C01-I interoceptive/context-learning implementation or hidden access to physiology.
 
 Authority boundary
 ------------------
-The body-sensory module owns sensory interpretation and its current NavMap
-state.  It does not select Attention, form a WNM, arbitrate IPs/LPs, generate a
-PNM, produce a task action, or revise durable NavMap content.
+``Nca8BodySensoryModuleV1`` is a compatible software name, not an additional
+canonical Body-Sensory Module. This service implements declared sensory/source
+responsibilities. Its source can be nominated for Attention; this service cannot
+select it as WNM, choose a task procedure, create a task PNM, authorize movement, or infer durable
+learning merely from a current Configuration update.
 """
 
 from __future__ import annotations
@@ -152,7 +157,7 @@ class Nca8BodySensorySampleV1:
 
 @dataclass(frozen=True, slots=True)
 class Nca8BodySensoryApplicationV1:
-    """One Phase-C body-sensory application and its owned current map state."""
+    """One Phase-C body-sensory update and its owner-local Configuration sample."""
 
     result_id: str
     observation_number: int
@@ -192,18 +197,17 @@ class Nca8BodySensoryApplicationV1:
 
 
 class Nca8BodySensoryModuleV1:
-    """Own the first body-sensory interpretation and current NavMap state.
+    """Implement body-sensory admission and this source's current Configuration.
 
-    The module is polled during Phase A.  It publishes one immutable
-    ``CircuitResultV1`` whose declared availability is ``THIS_CYCLE``.  During
-    Phase C, only the scheduler-applied result can update the owned current map
-    state. Durable map revision is intentionally unavailable here.
+    In A0, Phase-A polling publishes an immutable ``CircuitResultV1`` with
+    ``THIS_CYCLE`` availability; Phase C applies only the eligible admitted basis.
+    The optional P15-1E-A support packet and P16-1E-C dynamics facet do not change
+    the A0 procedure's evidence or enable durable map revision.
 
-    P15-1E-A optionally stages an independent support packet alongside the A0
-    scaffold. Its measured configuration remains a separate read-only companion.
-    P16-1E-C optionally adds a local dynamics facet for source-linked WNM refresh;
-    no measured value reaches BodyMap, Attention ranking, primitive selection,
-    prediction or learning. Reset replaces this owner, watermark and history.
+    Separately configured motor-evidence paths publish the enhanced facet used by
+    later procedures. Their optional consequence/relevance and no-durable-learning
+    hooks are not disabled by the earlier A0 restriction. Reset replaces this
+    source owner, its watermarks and temporary history, not another session's data.
     """
 
     def __init__(
@@ -614,7 +618,7 @@ class Nca8BodySensoryModuleV1:
 
         The extension stores no separate sensory world. Its requests reference
         original task outcomes; interpretation may run only when this source is
-        actually selected as WNM. Ordinary A0/H5/H6/1G-A construct no extension.
+        actually selected for WNM use. Ordinary A0/H5/H6/1G-A construct no extension.
         """
         return self._outcome_attention
 
@@ -659,7 +663,7 @@ class Nca8BodySensoryModuleV1:
     def retain_motor_context(self, task_id: str, context_id: str, *, cycle_id: int, expires_at_tick: int) -> None:
         """Accept one bounded selected-task continuation request, not source facts.
 
-        A preview coordinator calls this only after Navigation selected an
+        A preview coordinator calls this only after ExecNav selected an
         application on this source. The effect is a persistence-rank contribution
         to the next source bid. It changes no acquisition, geometry, timestamp or
         durable organization and conveys no motor permission. The task retains

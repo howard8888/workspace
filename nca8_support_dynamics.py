@@ -10,8 +10,9 @@ packet can retain a labelled old measurement briefly, never extrapolated geometr
 or a freshly observed trend. Invalid/contradictory evidence breaks the history.
 
 The immutable output is a measured facet of the same POSTURE-SUPPORT source.
-Navigation may copy it into the one WNM as read-only working content. It is kept
-out of the A0 primitive's input view until a separately reviewed behavioral slice.
+ExecNav may include it in the Selected-NM-linked working sample. The retained
+A0 procedure's argument view excludes it; later measured-motor paths have their
+own separately qualified evidence contracts.
 The tracker is an owner-local service, not an additional cognitive PART or memory
 system. Storage is constant: one last good configuration and one current snapshot.
 """
@@ -218,7 +219,7 @@ class SupportDynamicsV1:
         return "appeared" if after else "disappeared"
 
     def as_dict(self) -> dict[str, object]:
-        """Return complete detached source/parameter/evidence content for inspection or a WNM copy."""
+        """Return complete detached source/parameter/evidence content for inspection or a source-linked WNM sample."""
         return {
             "configuration": self.configuration.as_dict(),
             "profile": self.profile.as_dict(),

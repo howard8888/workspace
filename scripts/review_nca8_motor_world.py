@@ -6,7 +6,7 @@ Run from the repository root: python scripts/review_nca8_motor_world.py
 Every run owns a fresh HybridEnvironment. The preset drives and physical-time
 perturbations are disclosed test inputs. Sensor reports retain their original
 acquisition/availability times; reading a body for this display is evaluator-only.
-No file, live robot, global RNG, task primitive or learned parameter is modified.
+No file, live robot, global RNG, task procedure or learned parameter is modified.
 """
 
 from __future__ import annotations

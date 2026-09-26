@@ -7,7 +7,7 @@ admitted sensing, supplies one relation requirement, and lets BodyMap calculate
 a finite oral target. It reuses the H4 trial's advance/admission/fault/reset
 boundary and the existing scalar executor. No second motor loop is implemented.
 
-There are no Navigation calls, SeekNipple IP, task PNM, latch, milk, rest or
+There are no ExecNav calls, SeekNipple IP, task PNM, latch, milk, rest or
 learning. A source update labelled cycle 1 is a fixture opportunity, not an A-F
 cognitive cycle. The earlier P16-2C-A experiment separately qualifies focal
 access. This slice proves lower capability before task-level integration.

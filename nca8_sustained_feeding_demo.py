@@ -136,7 +136,7 @@ class SustainedFeedingExperimentV1:
     run: SeekNippleExperimentV1
 
     def applications(self) -> tuple[SuckleExtractionApplicationV1, ...]:
-        """Read actual Navigation applications rather than counting lower strokes."""
+        """Read actual ExecNav applications rather than counting lower strokes."""
         return tuple(c.calculation.navigation.application for c in self.run.cycles
                      if isinstance(c.calculation.navigation.application, SuckleExtractionApplicationV1))
 

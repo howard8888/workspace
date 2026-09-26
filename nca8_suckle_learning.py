@@ -14,7 +14,7 @@ execution or durable learning. With the Attention route disabled, discrepancies
 wait conservatively for eligibility expiry rather than buying free focal work.
 Registration records selection and permission before outer installation; it is
 not proof of execution. Accepted known relations remain evidence-only: no cause,
-latch proof, milk, nourishment, calibration or acquired primitive is inferred.
+latch proof, milk, nourishment, calibration or acquired procedure is inferred.
 F uses the already performed J interpretation; it never recomputes relevance,
 consumes an Attention question or extends that question's independent lifetime.
 """

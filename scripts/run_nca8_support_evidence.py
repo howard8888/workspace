@@ -97,12 +97,12 @@ def run_support_case_v1(
 
     Recovery and disturbed cases use the same initial physical body and the
     same A0 decision machinery; their surface forcing differs. The no-action
-    control uses the recovery world with Navigation disabled, not a world in
+    control uses the recovery world with ExecNav disabled, not a world in
     which time stops. Failures propagate to the command boundary: there is
     no legacy fallback, replacement input or unsafe automatic action retry.
     The default retains the 1E-B provider-only experiment. With dynamics=True,
     the source computes actual finite differences and bounded continuity and
-    Navigation copies them into its selected WNM. The A0 primitive cannot read
+    ExecNav includes them in its Selected-NM-linked WNM sample. The A0 procedure cannot read
     that facet. These are represented changes, not learned calibration or proof
     that measured values selected the action.
     """

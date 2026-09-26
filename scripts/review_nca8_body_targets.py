@@ -5,7 +5,7 @@
 Run: python scripts/review_nca8_body_targets.py
 Initial readings come from fresh H2 provider resets. Later changed/missing samples
 are explicitly supplied fixtures. The real BodyMap helper forms and reserves the
-targets; no motor drive, local controller, task primitive or learner is invoked.
+targets; no motor drive, local controller, task procedure or learner is invoked.
 All output is read-only inspection of these disposable private test instances.
 """
 
@@ -72,7 +72,7 @@ def _configured(
 
 
 def _request(stream: MotorStreamRefV1) -> BodyMovementRequestV1:
-    """Supply a task fixture; the review does not invoke Navigation or Righting."""
+    """Supply a task fixture; the review does not invoke ExecNav or Righting."""
     return BodyMovementRequestV1(TargetOriginV1(stream, "task:fixture", "application:1", "envelope:1"), 0.0, 0.6)
 
 

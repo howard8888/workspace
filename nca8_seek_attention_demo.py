@@ -88,7 +88,7 @@ def seeking_attention_profile_v1(case: str = "competing_on") -> SeekNippleExperi
 
 
 def create_seeking_attention_trial_v1(case: str = "competing_on", *, trace_capacity: int = 256) -> IntegratedRightingTrialV1:
-    """Construct a fresh isolated trial; choose no primitive or body requirement."""
+    """Construct a fresh isolated trial; choose no procedure or body requirement."""
     profile = seeking_attention_profile_v1(case)
     oral = oral_body_capability_v1()
     if case == "narrowed":

@@ -1,4 +1,4 @@
-"""Selected initial latch: current evidence, finite identity, projection and permission."""
+"""Selected initial latch: current evidence, finite identity, prediction and permission."""
 
 from dataclasses import replace
 import json
@@ -32,7 +32,7 @@ def selected():
 
 def sample(trial, initial, owner, *, cycle, tick, event=None, sample_id=None, closure=0.6, sealed=True, contact=True,
            feedback_changes=None, movement_blocked=False):
-    """Inject a declared typed source fixture, not a physical or Navigation result.
+    """Inject a declared typed source fixture, not a physical or ExecNav result.
 
     Both sensory products refer to the same occurrence. Independent tests below
     change identity, event, currentness or missing measurements explicitly.

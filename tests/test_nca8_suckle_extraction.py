@@ -1,4 +1,4 @@
-"""L-C selected applicability, original projection/handoff and preservation contracts.
+"""L-C selected applicability, original prediction/handoff and preservation contracts.
 
 Changed evidence/competing questions are labelled test fixtures. They do not claim
 hidden supply awareness, milk-based task completion or a new learning algorithm.
@@ -146,7 +146,7 @@ def test_motor_payload_requires_the_extraction_projection_not_merely_any_oral_ta
     _trial, cycle, app = selected
     committed = cycle.reservations[0].current
     if field == "lease_ticks":
-        # A wider original projection/episode mismatch is rejected by the application.
+        # A wider original prediction/episode mismatch is rejected by the application.
         with pytest.raises(ValueError):
             replace(app, contribution=replace(app.contribution, lease_ticks=value))
         return

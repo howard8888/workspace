@@ -37,7 +37,7 @@ class Nca8MotorEnvelopeV1:
     envelope links it to actual finite BodyMap targets without rewriting it or
     claiming movement. A targets-empty envelope means no new task output unless
     cancel_previous explicitly revokes the old execution (for a context change or terminal task).
-    The lower installation reader receives only targets, never this projection.
+    The lower installation reader receives only targets, never this prediction.
     """
 
     stream: MotorStreamRefV1
