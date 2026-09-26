@@ -8,10 +8,10 @@ prediction correspondence without changing that default. --seek-attention adds
 source relevance and one focal interpretation. --seek-learning adds source-owned
 participation and the real Phase-F callback, with zero durable learning.
 The --oral route supplies a reach fixture; --oral-seal supplies bounded closure
-with independently measured seal evidence. Neither is Navigation-selected
+with independently measured seal evidence. Neither is ExecNav-selected
 Suckle, a latch task verdict, or observed milk.
-The --suckle route selects the initial latch contribution through Navigation;
-milk and full Suckle remain deferred. The --suckle-outcomes route adds original
+The --suckle route selects the initial latch contribution through ExecNav;
+that isolated route excludes milk and full feeding. The --suckle-outcomes route adds original
 Suckle correspondence without Attention or learning consequences.
 The --suckle-attention route adds the J relevance/interpretation consumer;
 request selection is not IP reapplication and supplies no movement permission.
@@ -22,20 +22,22 @@ The --oral-extraction route supplies fixed direct motor drives and observes phys
 milk transfer/sensing; it is not autonomous Suckle or BodyMap target execution.
 The --oral-extraction-control route supplies a BodyMap requirement and observes the
 existing executor following it. It still does not select a Suckle IP or complete feeding.
-The --suckle-extraction route makes one genuine Navigation-selected extraction
-contribution; task-PNM/milk scoring, nourishment and full feeding remain deferred.
+The --suckle-extraction route makes one genuine ExecNav-selected extraction
+contribution; that route excludes task-PNM/milk scoring, nourishment and full feeding.
 The --suckle-extraction-outcomes route adds original C2 relation/interval-milk
 accounting, with a separate unchanged-action consumer-off control. It grants no
 next task, interpretation, nourishment, new participation or learning.
 The --suckle-extraction-attention route adds a bounded measured-discrepancy
-question and one Navigation-granted interpretation, never another extraction batch.
+question and one ExecNav-granted interpretation, never another extraction batch.
 The --suckle-extraction-learning route adds original extraction participation and
 actual Phase-F reconciliation, with independent 24-physical-tick eligibility. Its
 hook-off control preserves all cognitive decisions and physical evidence.
 The --sustained-feeding route adds repeated selected Suckle contributions, a declared
 body uptake/need model and evidence-confirmed task satisfaction. It does not select
-Rest or implement durable learning. The default source/access exports are unchanged.
-This helper writes no repository files; no review alone closes P16-2C or B99.
+Rest or implement durable learning. The --rest route retains safe Rest and the isolated
+feeding-to-Rest walkthrough from P16-2C-N; it does not establish B99 or default promotion.
+The default source/access exports are unchanged. This helper writes no repository files.
+A passing review is scoped software evidence, not a new project-wide acceptance decision.
 Any failed review check produces a nonzero exit. Run from any directory.
 """
 
@@ -89,18 +91,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     family.add_argument("--rest", action="store_true", help="review safe Rest and integrated feeding-to-Rest; no B99 claim")
     family.add_argument("--sustained-feeding", action="store_true", help="review repeated selected Suckle and sensed need completion; no Rest")
     family.add_argument("--suckle-extraction-learning", action="store_true", help="review extraction participation and no-learning Phase F")
-    family.add_argument("--suckle-extraction-attention", action="store_true", help="review extraction relevance and one Navigation interpretation")
+    family.add_argument("--suckle-extraction-attention", action="store_true", help="review extraction relevance and one ExecNav interpretation")
     family.add_argument("--suckle-extraction-outcomes", action="store_true", help="review original extraction and measured interval milk; no next action")
-    family.add_argument("--suckle-extraction", action="store_true", help="review one Navigation-selected Suckle extraction contribution")
+    family.add_argument("--suckle-extraction", action="store_true", help="review one ExecNav-selected Suckle extraction contribution")
     family.add_argument("--oral-extraction-control", action="store_true", help="review supplied BodyMap extraction/return control")
     family.add_argument("--oral-extraction", action="store_true", help="review direct-drive physical extraction/milk sensing only")
     family.add_argument("--suckle-learning", action="store_true", help="review original Suckle participation and no-learning Phase F")
-    family.add_argument("--suckle-attention", action="store_true", help="review Suckle relevance and one Navigation interpretation; no learning")
+    family.add_argument("--suckle-attention", action="store_true", help="review Suckle relevance and one ExecNav interpretation; no learning")
     family.add_argument("--suckle-outcomes", action="store_true", help="review execution-sensitive Suckle correspondence; no milk or learning")
     family.add_argument("--suckle", action="store_true", help="review selected initial latch; no milk or full Suckle task")
     family.add_argument("--oral-seal", action="store_true", help="review supplied closure and independently observed seal; no Suckle")
     family.add_argument("--oral", action="store_true", help="review the separate supplied-target/contact foundation")
-    family.add_argument("--seek", action="store_true", help="review Navigation-selected bounded seeking; no latch or milk")
+    family.add_argument("--seek", action="store_true", help="review ExecNav-selected bounded seeking; no latch or milk")
     family.add_argument("--seek-outcomes", action="store_true", help="compare original seeking PNM with actual execution and later evidence")
     family.add_argument("--seek-attention", action="store_true", help="review seeking outcome relevance and one focal interpretation")
     family.add_argument("--seek-learning", action="store_true", help="review original seeking participation and no-learning Phase F")

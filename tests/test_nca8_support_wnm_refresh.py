@@ -301,7 +301,7 @@ def test_new_trace_events_have_true_C1_D_placement_bounded_details_and_no_future
     text = '\n'.join(render_flow_trace_lines_v1(session.trace_snapshot()))
     assert 'Body-sensory local support dynamics' in text
     assert 'Same WNM - read-only measured support facet' in text
-    assert 'excluded from primitive queries and application' in ' '.join(line.strip(' :|') for line in text.splitlines())
+    assert 'excluded from procedure queries and application' in ' '.join(line.strip(' :|') for line in text.splitlines())
     assert 'finite-difference/continuity approximation' in text
     assert 'UNCLASSIFIED' not in text
     assert session.trace_canonical_bytes() == before

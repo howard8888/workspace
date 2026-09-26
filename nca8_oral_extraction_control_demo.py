@@ -262,7 +262,7 @@ def render_oral_extraction_control_v1(result: OralExtractionControlExperimentV1,
     if not isinstance(result, OralExtractionControlExperimentV1) or not isinstance(detail, bool):
         raise TypeError("renderer needs a completed experiment and Boolean detail flag")
     rows = [f"P16-2C-L-B {result.settings.case}: {result.review_status}",
-            "SUPPLIED requirement -> BodyMap -> one installed lower pattern (NOT Navigation-selected Suckle)",
+            "SUPPLIED requirement -> BodyMap -> one installed lower pattern (NOT ExecNav-selected Suckle)",
             f"installations={result.installation_count}; focal calls=0; durable updates=0",
             f"physical transfer={result.physical[-1].transferred_milk_units:.6f} model units; NOT nourishment"]
     for name, passed in result.checks:

@@ -82,13 +82,13 @@ def test_flow_explains_input_counts_without_inventing_packet_contents(gate_event
 def test_flow_preserves_source_configuration_and_operation_distinctions(gate_events) -> None:
     """Readable source terminology must not claim Attention chooses a procedure or desired reality."""
     text = _flat(_text(tuple(event for event in gate_events if event.cycle_id == 1)))
-    assert "Source NavMap posture_support@r1" in text
+    assert "Referenced NavMap posture_support@r1" in text
     assert "through current configuration posture_support:current" in text
     assert "source, not its desired configuration" in text
     assert "Current POSTURE-SUPPORT configuration -> BodyMap" in text
     assert "BodyMap" in text and "never becomes the WNM" in text
-    assert "Navigation selects and applies" in text
-    assert "Selected primitive: ip:stand_up" in text
+    assert "ExecNav selects and applies" in text
+    assert "Selected procedure: ip:stand_up" in text
     assert "recorded above, not a second operation" in text
     assert "complete geometric or motor implementation" in text
 
@@ -110,7 +110,7 @@ def test_success_and_cycle_six_null_dispatch_are_not_a_rejected_action(gate_even
     cycle_six = _flat(text.split("COGNITIVE CYCLE 6\n", 1)[1])
     assert "Recorded prediction outcome: success" in cycle_six
     assert "evidence cycle 6]: posture = standing; physical support = stable" in cycle_six
-    assert "No task was selected by Navigation" in cycle_six
+    assert "No task was selected by ExecNav" in cycle_six
     assert "Action_6:NO_ACTION" in cycle_six
     assert "Environment step after dispatch: 6" in cycle_six
     assert "Observation_7" in cycle_six
@@ -154,7 +154,7 @@ def test_other_ablations_explain_no_operation_without_inventing_body_rejection(d
     session = Nca8SessionV1(Nca8SessionConfigV1(**{disabled: False}))
     session.run_cognitive_cycle()
     text = _flat(_text(session.trace_snapshot()))
-    assert "No task was selected by Navigation" in text
+    assert "No task was selected by ExecNav" in text
     assert "Commit Action_1:NO_ACTION" in text
     assert "BodyMap blocks" not in text
     assert "NOT APPLIED" not in text
@@ -162,7 +162,7 @@ def test_other_ablations_explain_no_operation_without_inventing_body_rejection(d
         assert "session-start record has Attention disabled" in text
         assert "No Working Navigation Map is available" in text
     else:
-        assert "Navigation is disabled for this experiment" in text
+        assert "ExecNav is disabled for this experiment" in text
         assert "Working relations:" in text
 
 
@@ -435,7 +435,7 @@ def test_future_message_in_a_known_channel_uses_the_original_record() -> None:
     assert "Untranslated event" in text
     assert "new future navigation event" in text
     assert "new_key=4" in text
-    assert "Navigation selects and applies" not in text
+    assert "ExecNav selects and applies" not in text
 
 
 def test_missing_authorization_field_is_not_treated_as_permission_or_rejection() -> None:

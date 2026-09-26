@@ -271,8 +271,8 @@ def test_menu_trace_displays_domains_without_advancing_the_session(
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
     assert nca8_menu.run_nca8_experimental_menu_v1(session) is session
     output = capsys.readouterr().out
-    assert "Accepted Architecture v10.1 and Planning v18 govern new work" in output
-    assert "Planning v16 P16-1R-B separates" in output
+    assert "Terminology follows Architecture v10.2" in output
+    assert "The retained P16-1R-B boundary separates" in output
     assert "DOMAIN: EXTERNAL BODY + WORLD" in _words(output)
     assert "P16-1R-B REFERENCE ORDER - NOT ADDITIONAL TRACE EVENTS" in output
     assert (session.status(), session.trace_canonical_bytes(), session.pending_observation) == before

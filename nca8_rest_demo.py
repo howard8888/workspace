@@ -445,10 +445,10 @@ def render_rest_cycle_v1(cycle: IntegratedRightingCycleV1) -> str:
         lines.append(f"  Feeding need={feedback.feeding_deficit.as_dict() if feedback.feeding_deficit else 'unavailable'}.")
         lines.append(f"  Oral={feedback.oral.as_dict() if feedback.oral else 'unavailable'}; "
                      f"closure/seal={feedback.oral_seal.as_dict() if feedback.oral_seal else 'unavailable'}.")
-    lines.extend(["D / ATTENTION AND NAVIGATION: one selected source and one demanding operation",
+    lines.extend(["D / ATTENTION AND EXECNAV: one selected source and one demanding operation",
                   f"  WNM source={wnm.primary_source_state.source_map_ref.map_id if wnm else '(none)'}; "
                   f"selected IP={cycle.commitment.selected_primitive_id or '(none)'}.",
-                  f"  Navigation reason={calculation.navigation.reason}.",
+                  f"  ExecNav reason={calculation.navigation.reason}.",
                   "E / TASK PNM AND BODYMAP: expected change is not execution",
                   f"  Original PNM={cycle.commitment.pnm_id or '(none)'}; receipt={cycle.receipt.receipt_id}."])
     application = calculation.navigation.application
@@ -483,7 +483,7 @@ def render_rest_v1(result: RestExperimentV1, *, detail: bool = False) -> str:
     if not isinstance(result, RestExperimentV1) or not isinstance(detail, bool):
         raise TypeError("Rest renderer requires a retained result and Boolean detail")
     lines = [f"P16-2C-N Rest: {result.profile.case} -- {result.review_status}",
-             "  Existing source -> Navigation-selected Rest -> BodyMap -> lower execution -> later supported dwell.",
+             "  Existing source -> ExecNav-selected Rest -> BodyMap -> lower execution -> later supported dwell.",
              "  Synthetic body-bearing competence; no durable learning, automatic benchmark stage or B99 claim.",
              "  " + json.dumps(result.metrics(), sort_keys=True)]
     lines.extend(f"  {'PASS' if ok else 'FAIL'} {name}" for name, ok in result.checks())

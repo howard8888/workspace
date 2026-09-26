@@ -293,8 +293,9 @@ def _explain_runtime_v1(event: Nca8TraceEventV1) -> str | None:
         )
     if event.message == "Phase_D FOCAL_COMMITMENT completed":
         return (
-            "Phase D completed the causal commitment sequence: Attention selected a current NavMapState source, the one "
-            "WNM was constructed or released, and Navigation selected zero or one focal primitive."
+            "Phase D completed the causal commitment sequence: Attention selected an eligible NM through its configuration "
+            "reference, the source-linked WNM sample was constructed or released, and ExecNav selected zero or one focal "
+            "procedure."
         )
     if not event.message.startswith("Phase_E PROJECT_DISPATCH committed Action_"):
         return None
@@ -305,15 +306,15 @@ def _explain_runtime_v1(event: Nca8TraceEventV1) -> str | None:
         pnm_id = _detail_str_v1(details, "pnm")
         if selected_primitive is not None or pnm_id is not None:
             return (
-                f"{event.message} because BodyMap did not authorize the task selected by Navigation. The selected "
-                "primitive and PNM remain visible in the trace, but no task action crossed the boundary."
+                f"{event.message} because BodyMap did not authorize the task selected by ExecNav. The selected "
+                "procedure and PNM remain visible in the trace, but no task action crossed the boundary."
             )
         return (
-            f"{event.message} because Phase D selected no primitive. No PNM, task action, or BodyMap action envelope "
+            f"{event.message} because Phase D selected no procedure. No PNM, task action, or BodyMap action envelope "
             "was created."
         )
     return (
-        f"{event.message} after Navigation's primitive application, PNM creation, and BodyMap authorization were in "
+        f"{event.message} after ExecNav's procedure application, PNM creation, and BodyMap authorization were in "
         "place. The committed task action can now cross the body/environment boundary."
     )
 
@@ -356,7 +357,7 @@ def _explain_body_v1(event: Nca8TraceEventV1) -> str | None:
     """Explain protected BodyMap state and its Attention-candidate publication."""
     if event.message == "BodyMapState updated from current POSTURE-SUPPORT evidence":
         return (
-            "BodyMap copied the current POSTURE-SUPPORT state into its protected current-body register. BodyMap may "
+            "BodyMap copied the current POSTURE-SUPPORT configuration into its protected current-body register. BodyMap may "
             "gate and authorize body actions, but it is not the WNM."
         )
     if event.message == "POSTURE-SUPPORT map-state candidate published for Attention":
@@ -400,7 +401,7 @@ def _explain_outcome_v1(event: Nca8TraceEventV1) -> str | None:
     if event.message != "later body evidence evaluated an operation-linked pending prediction":
         return None
     details = _details_v1(event)
-    application_id = _detail_str_v1(details, "application_id") or "the originating primitive application"
+    application_id = _detail_str_v1(details, "application_id") or "the originating procedure application"
     status = _detail_str_v1(details, "status") or "evaluated"
     return (
         f"PredictionRuntime compared later current body evidence with the pending PNM linked to '{application_id}' and "
@@ -414,10 +415,10 @@ def _explain_attention_v1(event: Nca8TraceEventV1) -> str | None:
     source_state_id = _detail_str_v1(details, "source_state_id")
 
     if event.message == "POSTURE-SUPPORT map-state candidate submitted as an Attention bid":
-        candidate_source_text = source_state_id or "the current POSTURE-SUPPORT state"
+        candidate_source_text = source_state_id or "the current POSTURE-SUPPORT configuration"
         return (
-            f"Attention received a bid for current NavMapState '{candidate_source_text}'. The safety and task-need ranks score "
-            "the map-state candidate only; Attention is not choosing a primitive."
+            f"Attention received an NM bid through current configuration '{candidate_source_text}'. The safety and task-need ranks score "
+            "the NM candidate only; Attention is not choosing a procedure."
         )
 
     source_text = (
@@ -428,20 +429,20 @@ def _explain_attention_v1(event: Nca8TraceEventV1) -> str | None:
 
     if event.message == "Attention switched the primary source map state":
         return (
-            f"Attention switched its primary source selection to {source_text}. Attention selected a source map state; "
-            "it did not choose StandUp or any other primitive."
+            f"Attention switched its primary source selection to {source_text}. Attention selected the NM through its configuration reference; "
+            "it did not choose StandUp or any other procedure."
         )
 
     if event.message == "Attention maintained the primary source map state":
         return (
             f"Attention maintained {source_text} as the primary source for focal processing. Attention itself still "
-            "selected no primitive."
+            "selected no procedure."
         )
 
     if event.message == "Attention released the primary source map state":
         return (
-            "Attention released the primary source because no current posture-recovery candidate remained. It selected "
-            "no replacement source and no primitive."
+            "Attention released focal use and selected no replacement NM or task procedure. This record alone does not identify "
+            "why no NM was selected."
         )
 
     return None
@@ -451,11 +452,12 @@ def _explain_wnm_v1(event: Nca8TraceEventV1) -> str | None:
     """Explain construction or absence of the one source-linked WNM sample."""
     if event.message == "source-linked WNM constructed or refreshed from Attention's selected state":
         return (
-            "Navigation constructed or refreshed the one source-linked WNM from Attention's selected current "
-            "NavMapState. The WNM is a working representation and does not overwrite sensory truth or the innate NM."
+            "ExecNav constructed or refreshed the source-linked WNM sample for Attention's Selected NM. "
+            "The same NM serves in the WNM role in the target; this scaffold's working sample is not a second "
+            "durable map or permission to replace evidence with prediction."
         )
     if event.message == "no WNM exists because Attention released or selected no source":
-        return "No WNM was created because Attention selected no current NavMapState source."
+        return "No WNM sample was created because Attention selected no NM."
     return None
 
 
@@ -463,10 +465,10 @@ def _explain_navigation_v1(event: Nca8TraceEventV1) -> str | None:
     """Explain procedure applicability and ExecNav's task-procedure choice."""
     details = _details_v1(event)
     if event.message == "primitive applicability evaluated from the WNM":
-        primitive_id = _detail_str_v1(details, "primitive_id") or "the primitive"
+        primitive_id = _detail_str_v1(details, "primitive_id") or "the procedure"
         return (
-            f"Navigation asked primitive '{primitive_id}' whether it applied to the current WNM. Eligibility, fit, "
-            "safety, and veto fields expose the primitive's answer before Navigation arbitrates."
+            f"ExecNav asked procedure '{primitive_id}' whether it applied to the current WNM. Eligibility, fit, "
+            "safety, and veto fields expose the procedure's answer before ExecNav arbitrates."
         )
     if event.message != "Navigation commitment completed":
         return None
@@ -475,11 +477,11 @@ def _explain_navigation_v1(event: Nca8TraceEventV1) -> str | None:
     if selected_primitive_id is None:
         reason = _detail_str_v1(details, "reason")
         if reason == "no_wnm":
-            return "Navigation selected no primitive because no WNM exists."
-        return "Navigation evaluated the available primitive information and selected no focal primitive."
+            return "ExecNav selected no procedure because no WNM exists."
+        return "ExecNav evaluated the available procedure information and selected no focal procedure."
     application_text = f", producing application '{application_id}'" if application_id is not None else ""
     return (
-        f"Navigation selected and applied primitive '{selected_primitive_id}' as this cycle's one focal primitive"
+        f"ExecNav selected and applied procedure '{selected_primitive_id}' as this cycle's one focal procedure"
         f"{application_text}. Attention did not make this action choice."
     )
 
@@ -493,8 +495,8 @@ def _explain_pnm_v1(event: Nca8TraceEventV1) -> str | None:
     expected = _detail_str_v1(details, "expected_relations") or "its expected relations"
     condition = _detail_str_v1(details, "observation_condition") or "later evidence"
     return (
-        f"PredictionRuntime created PNM '{pnm_id}' before task-action dispatch. It projects '{expected}' and must be "
-        f"tested by '{condition}'; a PNM is projected information, not accepted-current truth."
+        f"PredictionRuntime created PNM '{pnm_id}' before task-action dispatch. It predicts '{expected}' and must be "
+        f"tested by '{condition}'; a PNM is predicted information, not an observation or confirmed completion."
     )
 
 
@@ -596,8 +598,8 @@ def _explain_support_dynamics_v1(event: Nca8TraceEventV1) -> str | None:
         )
     if event.channel == "wnm_support" and event.message == "selected WNM refreshed its read-only measured support facet":
         return (
-            "Navigation copied this cycle's selected-source support facet into the same WNM. "
-            "The A0 primitive receives a view without that facet; measured trends do not yet choose an action."
+            "ExecNav copied this cycle's selected-source support facet into the same WNM. "
+            "The A0 procedure receives a view without that facet; measured trends do not yet choose an action."
         )
     return None
 
@@ -736,10 +738,10 @@ _FLOW_REASON_TEXT_V1 = {
     "bodymap_current_support_is_not_inadequate": "The current physical support does not meet the inadequate-support requirement.",
     "primitive_application_has_no_envelope_request": "The selected operation supplied no action-permission request.",
     "authorized_current_fallen_body_recovery": "Current fallen-posture and inadequate-support evidence permits this recovery request.",
-    "navigation_ablation_disabled": "Navigation is disabled for this experiment.",
+    "navigation_ablation_disabled": "ExecNav is disabled for this experiment.",
     "no_wnm": "There is no Working Navigation Map on which to operate.",
-    "no_eligible_primitive": "No available primitive met the requirements for selection.",
-    "selected_by_visible_navigation_components": "Navigation selected the operation after evaluating its applicability.",
+    "no_eligible_primitive": "No available procedure met the requirements for selection.",
+    "selected_by_visible_navigation_components": "ExecNav selected the operation after evaluating its applicability.",
 }
 
 
@@ -831,7 +833,7 @@ def _flow_input_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> Fl
                 f"next observation number: {_flow_value_v1(details, 'pending_observation_number')}. "
                 "The stored episode_index is the environment-run counter, not a cognitive-episode counter.",
                 f"Attention available: {_flow_value_v1(details, 'attention_enabled')}. "
-                f"Navigation available: {_flow_value_v1(details, 'navigation_enabled')}. "
+                f"ExecNav available: {_flow_value_v1(details, 'navigation_enabled')}. "
                 f"Body-to-environment handoff available: {_flow_value_v1(details, 'body_action_handoff_enabled')}. "
                 "These switches permit mechanisms; they do not authorize a particular action.",
             ),
@@ -1190,7 +1192,7 @@ def _flow_source_v1(details: Mapping[str, TraceScalarV1], context: _FlowContextV
     state_id = _detail_str_v1(details, "source_state_id")
     source_map = context.source_maps.get(state_id) if state_id is not None else None
     if source_map is not None:
-        return f"Source NavMap {source_map}, accessed through current configuration {state_id}."
+        return f"Referenced NavMap {source_map}, accessed through current configuration {state_id}."
     return (
         f"Source configuration reference: {_flow_value_v1(details, 'source_state_id')}. "
         "Its enduring source-map ID is not available from earlier retained mapping records."
@@ -1208,7 +1210,7 @@ def _flow_focal_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Flo
                     _flow_source_v1(details, context),
                     f"Priority ranks: safety = {_flow_value_v1(details, 'protected_safety_rank')}; "
                     f"task need = {_flow_value_v1(details, 'new_task_need_rank')}. "
-                    "These rank a source candidate, not a primitive or a probability of success.",
+                    "These rank a source candidate, not a procedure or a probability of success.",
                 ),
                 incoming=f"BodyMap -> [source nomination {_flow_value_v1(details, 'candidate_id')}]",
                 outgoing=(
@@ -1226,9 +1228,9 @@ def _flow_focal_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Flo
                     )
                     return FlowStepV1(
                         title="Attention has no selected focal source",
-                        explanations=(setting, "Attention selected no primitive; that is Navigation's job."),
+                        explanations=(setting, "Attention selected no procedure; that is ExecNav's job."),
                         incoming="Available source bids + prior focal-source context",
-                        outgoing="[No selected source] -> Navigation; no WNM source is supplied",
+                        outgoing="[No selected source] -> ExecNav; no WNM source is supplied",
                     )
                 state_id = _detail_str_v1(details, "source_state_id")
                 source_id = context.source_maps.get(state_id) if state_id is not None else None
@@ -1244,20 +1246,21 @@ def _flow_focal_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Flo
                     ),
                     incoming="[Available source bids] from candidacy + prior focal-source context",
                     outgoing=(
-                        f"[Source selection {_flow_value_v1(details, 'selection_id')}] -> Navigation for WNM maintenance; "
+                        f"[Source selection {_flow_value_v1(details, 'selection_id')}] -> ExecNav for WNM maintenance; "
                         "source selection is not a StandUp command"
                     ),
                 )
     if event.channel == "wnm":
         if event.message == "source-linked WNM constructed or refreshed from Attention's selected state":
             return FlowStepV1(
-                title=f"Navigation copies/refreshes source-linked working content in {_flow_value_v1(details, 'working_id')}",
+                title=f"ExecNav copies/refreshes source-linked working content in {_flow_value_v1(details, 'working_id')}",
                 explanations=(
-                    f"Selected source {_flow_value_v1(details, 'source_map')} -> working representation "
+                    f"Selected NM {_flow_value_v1(details, 'source_map')} -> source-linked WNM sample "
                     f"{_flow_value_v1(details, 'working_id')}.",
                     f"Working relations: {_flow_relations_v1(_flow_value_v1(details, 'working_relations'))}.",
-                    "Navigation copies or refreshes source-linked working content in this scaffold. "
-                    "The WNM is not another durable map and cannot overwrite the source's sensory evidence.",
+                    "ExecNav copies or refreshes source-linked working content in this scaffold. "
+                    "In the target, the same Selected NM serves in the WNM role. A sampled record is not a second "
+                    "durable map; predicted change is not new sensory evidence.",
                 ),
                 incoming=(
                     f"Attention source selection + [source {_flow_value_v1(details, 'source_map')} / "
@@ -1265,55 +1268,55 @@ def _flow_focal_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Flo
                 ),
                 outgoing=(
                     f"[WNM relations: {_flow_relations_v1(_flow_value_v1(details, 'working_relations'))}] "
-                    "maintained by Navigation -> primitive applicability; no source write-back"
+                    "maintained by ExecNav -> procedure applicability; this A0 sample has no source write-back"
                 ),
             )
         if event.message == "no WNM exists because Attention released or selected no source":
             return FlowStepV1(
                 title="No Working Navigation Map is available",
                 explanations=(
-                    "Attention selected no source, so Navigation has no WNM for a focal operation. This is not a BodyMap deletion.",
+                    "Attention selected no source, so ExecNav has no WNM for a focal operation. This is not a BodyMap deletion.",
                 ),
                 incoming="Attention -> [no selected source]",
-                outgoing="Navigation holds no WNM; no working content supplied for a focal operation. BodyMap remains separate",
+                outgoing="ExecNav holds no WNM; no working content supplied for a focal operation. BodyMap remains separate",
             )
     if event.channel == "navigation":
         if event.message == "primitive applicability evaluated from the WNM":
             return FlowStepV1(
                 title=f"Evaluate applicability of {_flow_value_v1(details, 'primitive_id')}; do not execute a body action",
                 explanations=(
-                    f"Primitive {_flow_value_v1(details, 'primitive_id')}: eligible = {_flow_value_v1(details, 'eligible')}; "
+                    f"Procedure {_flow_value_v1(details, 'primitive_id')}: eligible = {_flow_value_v1(details, 'eligible')}; "
                     f"fit rank = {_flow_value_v1(details, 'fit_rank')}; safety rank = {_flow_value_v1(details, 'safety_rank')}; "
                     f"vetoes = {_flow_value_v1(details, 'vetoes')}.",
                     "This is an applicability check, not a dispatched body action.",
                 ),
-                incoming="Navigation -> [current WNM relations] -> primitive applicability check",
+                incoming="ExecNav -> [current WNM relations] -> procedure applicability check",
                 outgoing=(
                     f"[Applicability report: eligible={_flow_value_v1(details, 'eligible')}; "
                     f"fit={_flow_value_v1(details, 'fit_rank')}; "
-                    f"safety={_flow_value_v1(details, 'safety_rank')}; vetoes={_flow_value_v1(details, 'vetoes')}] -> Navigation"
+                    f"safety={_flow_value_v1(details, 'safety_rank')}; vetoes={_flow_value_v1(details, 'vetoes')}] -> ExecNav"
                 ),
             )
         if event.message == "Navigation commitment completed":
             if details.get("selected_primitive_id") is None and "selected_primitive_id" in details:
                 return FlowStepV1(
-                    title="Navigation selects no focal operation",
-                    explanations=(_flow_reason_v1(details), "No task was selected by Navigation."),
-                    incoming="Current WNM/absence + Navigation setting + applicability reports",
-                    outgoing="No primitive application -> cycle driver; no new task request or PNM",
+                    title="ExecNav selects no focal operation",
+                    explanations=(_flow_reason_v1(details), "No task was selected by ExecNav."),
+                    incoming="Current WNM/absence + ExecNav setting + applicability reports",
+                    outgoing="No procedure application -> cycle driver; no new task request or PNM",
                 )
             return FlowStepV1(
                 title=(
-                    f"Navigation selects and applies {_flow_value_v1(details, 'selected_primitive_id')} -> "
+                    f"ExecNav selects and applies {_flow_value_v1(details, 'selected_primitive_id')} -> "
                     f"{_flow_value_v1(details, 'application_id')}"
                 ),
                 explanations=(
-                    f"Selected primitive: {_flow_value_v1(details, 'selected_primitive_id')}; "
+                    f"Selected procedure: {_flow_value_v1(details, 'selected_primitive_id')}; "
                     f"application: {_flow_value_v1(details, 'application_id')}.",
                     _flow_reason_v1(details),
-                    "Primitive application -> task request. Selection is not BodyMap permission or proof that the body moved.",
+                    "Procedure application -> task request. Selection is not BodyMap permission or proof that the body moved.",
                 ),
-                incoming="[Current WNM] + primitive applicability reports",
+                incoming="[Current WNM] + procedure applicability reports",
                 outgoing=(
                     f"[Application {_flow_value_v1(details, 'application_id')}] -> prediction service for PNM "
                     "and BodyMap for task handoff in E; these are two separate consumers"
@@ -1324,13 +1327,13 @@ def _flow_focal_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Flo
             title="Finish this cycle's focal selection",
             explanations=(
                 f"Attention decision: {_flow_value_v1(details, 'attention_disposition')}; WNM: {_flow_value_v1(details, 'wnm')}; "
-                f"selected primitive: {_flow_value_v1(details, 'selected_primitive')}; "
+                f"selected procedure: {_flow_value_v1(details, 'selected_primitive')}; "
                 f"application: {_flow_value_v1(details, 'focal_operation')}.",
                 "These are the focal decisions already recorded above, not a second operation. Physical dispatch has not occurred here.",
             ),
-            incoming="Attention selection + Navigation working representation and decision",
+            incoming="Attention selection + ExecNav working representation and decision",
             outgoing=(
-                f"[Focal decision: primitive {_flow_value_v1(details, 'selected_primitive')}; "
+                f"[Focal decision: procedure {_flow_value_v1(details, 'selected_primitive')}; "
                 f"application {_flow_value_v1(details, 'focal_operation')}] -> Phase E; no second operation"
             ),
         )
@@ -1425,7 +1428,7 @@ def _flow_action_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Fl
         return FlowStepV1(
             title="Prediction service records the selected operation's expectation before dispatch",
             explanations=(
-                "The Projected NavMap (PNM) records the selected operation's expected result before dispatch.",
+                "The Predicted NavMap (PNM) records the selected operation's expected result before dispatch.",
                 f"Application {_flow_value_v1(details, 'application_id')} -> prediction {_flow_value_v1(details, 'pnm_id')}.",
                 f"Expected relations: {_flow_relations_v1(_flow_value_v1(details, 'expected_relations'))}.",
                 f"Evidence condition: {_flow_value_v1(details, 'observation_condition')}. "
@@ -1433,7 +1436,7 @@ def _flow_action_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Fl
                 "tests the expectation. "
                 "An expectation is not current-world truth, and creating it does not send an action.",
             ),
-            incoming=f"Navigation -> [application {_flow_value_v1(details, 'application_id')} and expectation request]",
+            incoming=f"ExecNav -> [application {_flow_value_v1(details, 'application_id')} and expectation request]",
             outgoing=(
                 f"[PNM {_flow_value_v1(details, 'pnm_id')}: "
                 f"{_flow_relations_v1(_flow_value_v1(details, 'expected_relations'))}] -> prediction service retained for later evidence; "
@@ -1485,7 +1488,7 @@ def _flow_action_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Fl
                     f"permission envelope: {_flow_value_v1(details, 'envelope')}.",
                 ),
                 incoming=(
-                    f"Navigation application -> [task {_flow_value_v1(details, 'task_action')}] + "
+                    f"ExecNav application -> [task {_flow_value_v1(details, 'task_action')}] + "
                     "[BodyMap current posture/support] + handoff setting"
                 ),
                 outgoing=(
@@ -1499,8 +1502,8 @@ def _flow_action_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Fl
         if "task_action" in details and details["task_action"] is None:
             proposed = _detail_str_v1(details, "selected_primitive")
             explanation = (
-                "A primitive was selected, but the commitment contains no authorized task action."
-                if proposed is not None else "No focal primitive was selected; the commitment contains no task action."
+                "A procedure was selected, but the commitment contains no authorized task action."
+                if proposed is not None else "No focal procedure was selected; the commitment contains no task action."
             )
             return FlowStepV1(
                 title=f"Commit Action_{action_number}:NO_ACTION",
@@ -1508,7 +1511,7 @@ def _flow_action_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Fl
                     explanation,
                     "The output is now fixed. NO_ACTION still permits the environment to advance; it does not stop simulated time.",
                 ),
-                incoming="[Navigation decision] + any BodyMap handoff disposition",
+                incoming="[ExecNav decision] + any BodyMap handoff disposition",
                 outgoing=(
                 f"[Action_{action_number}:NO_ACTION] -> internal acceptance; outer world may advance time after close"
                 if details.get("boundary_protocol") == "p16_1r_b_v1" else
@@ -1522,7 +1525,7 @@ def _flow_action_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> Fl
                 "Commitment is not the physical dispatch itself; the boundary record below reports that dispatch.",
                 f"PNM reference: {_flow_value_v1(details, 'pnm')}; permission envelope: {_flow_value_v1(details, 'envelope')}.",
             ),
-            incoming="[Navigation application] + [PNM reference] + [BodyMap handoff result]",
+            incoming="[ExecNav application] + [PNM reference] + [BodyMap handoff result]",
             outgoing=(
                 f"[Fixed Action_{action_number}:{task}] -> internal lower-action acceptance; no world step yet"
                 if details.get("boundary_protocol") == "p16_1r_b_v1" else
@@ -1580,7 +1583,7 @@ def _flow_finish_step_v1(event: Nca8TraceEventV1, _context: _FlowContextV1) -> F
             title=f"Durable learning updates recorded: {_flow_value_v1(details, 'durable_updates')}",
             explanations=(
                 f"Durable updates recorded: {_flow_value_v1(details, 'durable_updates')}. "
-                "In initial Gate A this slot makes no durable map, primitive, or memory-learning changes. "
+                "In initial Gate A this slot makes no durable map, procedure, or memory-learning changes. "
                 "Current-configuration updates earlier in the cycle are not durable learning.",
                 "TARGET DISTINCTION: Architecture v09.9 keeps F as a regular learning-reconciliation opportunity, "
                 "not the only permitted learning time or another focal WNM operation. This A0 record remains a "
@@ -1655,7 +1658,7 @@ def _flow_support_dynamics_step_v1(event: Nca8TraceEventV1, _context: _FlowConte
         title="Refresh the selected WNM's read-only measured support facet",
         incoming=f"[Selected source {source}] -> its facet applied in cycle {_flow_value_v1(details, 'applied_cycle')}",
         outgoing=f"[WNM {_flow_value_v1(details, 'working_id')}: {status}; sample={sample}, age={age}] -> "
-                 "read-only working content; excluded from primitive queries and application",
+                 "read-only working content; excluded from procedure queries and application",
         explanations=(
             explanation, timing, rates, directions,
             f"Actual WNM refreshed cycle={_flow_value_v1(details, 'refreshed_cycle')}. "
@@ -1815,8 +1818,8 @@ def _flow_component_v1(event: Nca8TraceEventV1) -> tuple[str, str]:
     """
     if event.channel == "navigation" and event.message == "primitive applicability evaluated from the WNM":
         if dict(event.details).get("primitive_id") == "ip:stand_up":
-            return "PART", "StandUp Instinctive Primitive (IP)"
-        return "PART", "Navigation Module - primitive query"
+            return "PART", "StandUp Instinctive Procedure (IP)"
+        return "PART", "Executive Navigation Module (ExecNav) - procedure query"
     components = {
         "session": ("SERVICE", "Session setup"),
         "firewall": ("SERVICE", "Observation adapter and pending-input buffer"),
@@ -1825,12 +1828,12 @@ def _flow_component_v1(event: Nca8TraceEventV1) -> tuple[str, str]:
         "runtime": ("SERVICE", "Cognitive-cycle driver"),
         "sensory": ("SERVICE", "A0 body-sensory scaffold"),
         "maps": ("REPRESENTATION", "POSTURE-SUPPORT current configuration"),
-        "body": ("PART", "BodyMap"),
-        "bodymap": ("PART", "BodyMap"),
-        "attention": ("PART", "Attention"),
-        "wnm": ("REPRESENTATION", "Working Navigation Map (WNM) - maintained by Navigation"),
-        "navigation": ("PART", "Navigation Module"),
-        "pnm": ("REPRESENTATION", "Projected NavMap (PNM) - held by prediction service"),
+        "body": ("PART", "BodyMap Module"),
+        "bodymap": ("PART", "BodyMap Module"),
+        "attention": ("PART", "Attention Module"),
+        "wnm": ("REPRESENTATION", "Working Navigation Map (WNM) - Selected-NM role; A0 sample"),
+        "navigation": ("PART", "Executive Navigation Module (ExecNav)"),
+        "pnm": ("REPRESENTATION", "Predicted NavMap (PNM) - held by A0 prediction service"),
         "outcome": ("SERVICE", "A0 prediction evaluation"),
         "dispatch": ("SERVICE", "Lower-action / environment adapter"),
         "handoff": ("SERVICE", "Internal lower-action handoff"),
@@ -2364,7 +2367,7 @@ def render_flow_trace_lines_v1(
         "functional machine; Python filenames, calls and storage addresses appear in the explanations below.",
         "LEGEND: solid +---+ boxes are PARTS (CCA8 functional components); bracketed [---] boxes are "
         "REPRESENTATIONS; dashed +- -+ boxes are SERVICES / SCAFFOLDS. Phase headings are timing groups, not parts.",
-        "PART does not mean one chip or a fully implemented brain circuit. A0 approximates Attention, Navigation, "
+        "PART does not mean one chip or a fully implemented brain circuit. A0 approximates Attention, ExecNav, "
         "StandUp IP and BodyMap. POSTURE-SUPPORT, WNM and PNM are representations. A0 body-sensory processing "
         "and prediction evaluation are software services, not newly invented architectural modules. "
         "Repeated part names show repeated operations of the same session component, not extra parts.",

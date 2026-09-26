@@ -223,7 +223,7 @@ def render_suckle_attention_v1(result: SuckleAttentionExperimentV1, *, detail: b
         raise TypeError("Suckle Attention rendering requires a completed experiment and Boolean detail")
     metrics = result.metrics()
     lines = [f"P16-2C-J / {result.evidence.profile.run.case} / SUCKLE ATTENTION REVIEW: {result.review_status}",
-             "  Original discrepancy -> feeding relevance -> ordinary Attention -> WNM -> Navigation interpretation.",
+             "  Original discrepancy -> feeding relevance -> ordinary Attention -> WNM -> ExecNav interpretation.",
              f"  Route={metrics['route_enabled']}; cutoff12 source={metrics['cutoff12_source']}; "
              f"disposition={metrics['cutoff12_disposition']}; original outcomes={metrics['outcome_statuses']}",
              f"  Requests={metrics['request_ticks']}; original expiries={metrics['request_expiries']}; "
@@ -233,7 +233,7 @@ def render_suckle_attention_v1(result: SuckleAttentionExperimentV1, *, detail: b
              "  No milk, nourishment, Rest, Suckle learning or full-feeding/B99 claim."]
     lines.extend(f"  {'PASS' if passed else 'FAIL'}: {name}" for name, passed in result.checks())
     if detail:
-        lines.append("  cutoff | focal source | Navigation operation | J allocation | present relevance")
+        lines.append("  cutoff | focal source | ExecNav operation | J allocation | present relevance")
         for cycle in result.evidence.run.cycles:
             frame = cycle.suckle_attention
             interpretation = frame.allocation.interpretation if frame is not None else None
@@ -255,7 +255,7 @@ def run_suckle_attention_menu_v1() -> None:
               "4": ("seek_then_latch", "stand_follow"), "5": SUCKLE_ATTENTION_CASES_V1}
     retained: tuple[SuckleAttentionExperimentV1, ...] = ()
     while True:
-        print("\nP16-2C-J -- SUCKLE DISCREPANCY / ATTENTION / ONE NAVIGATION INTERPRETATION")
+        print("\nP16-2C-J -- SUCKLE DISCREPANCY / ATTENTION / ONE EXECNAV INTERPRETATION")
         print("  1) Competing and maintained source: route on/off / 2) Match, comparison-off and missing evidence")
         print("  3) Capability, interrupted execution and protection / 4) Continuous earlier tasks")
         print("  5) All cases / 6) Inspect retained detail (no new movement) / [Enter] Return")

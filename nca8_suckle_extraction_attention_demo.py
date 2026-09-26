@@ -187,7 +187,7 @@ def run_extraction_attention_v1(case: str = "mismatch", *, trace_capacity: int =
 def render_extraction_attention_v1(result: ExtractionAttentionExperimentV1, *, detail: bool = False) -> str:
     """Show historical discrepancy and present interpretation as different facts."""
     lines = [f"L-E extraction Attention: {result.case} -- {result.review_status}",
-             "  Original L-D mismatch -> ordinary feeding bid -> Attention/WNM -> one Navigation interpretation.",
+             "  Original L-D mismatch -> ordinary feeding bid -> Attention/WNM -> one ExecNav interpretation.",
              f"  Questions={len(result.requests())}; performed interpretations={len(result.interpretations())}.",
              "  Outcome questions are not IPs; no remedy, new motor permission, retry or learning is supplied."]
     for outcome in _outcomes(result.run):
@@ -216,7 +216,7 @@ def run_extraction_attention_menu_v1() -> None:
     }
     retained: tuple[ExtractionAttentionExperimentV1, ...] = ()
     while True:
-        print("\nL-E: extraction discrepancy and one Navigation interpretation")
+        print("\nL-E: extraction discrepancy and one ExecNav interpretation")
         print("1 causal Attention; 2 negative/independent controls; 3 bounded adverse; 4 continuity; 5 all; 6 retained detail; 0 back")
         choice = cca8_cli.read_menu_input_v1()
         if choice in {"", "0"}:

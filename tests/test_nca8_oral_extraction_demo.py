@@ -274,7 +274,7 @@ def test_extraction_menu_retained_read_and_invalid_choice_never_rerun(monkeypatc
     output = capsys.readouterr().out
     assert len(calls) == 6 and len(set(calls)) == 6
     assert "No retained results." in output and "Unknown choice" in output
-    assert "SENSED" in output and "not Navigation/Suckle" in output
+    assert "SENSED" in output and "not ExecNav/Suckle" in output
 
 
 def test_registry_versions_and_preserved_task_factory():

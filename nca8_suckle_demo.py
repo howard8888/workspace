@@ -311,7 +311,7 @@ def render_suckle_v1(result: SuckleExperimentV1, *, detail: bool = False) -> str
             lines.append(f"  {cycle.calculation.cutoff_tick:4} | {source.source_map_ref.map_id if source else '(none)'} | "
                          f"{cycle.commitment.selected_primitive_id or '(none)'} | "
                          f"{cycle.suckle_task.reason if cycle.suckle_task else '(none)'} | {motor.directive if motor else '(none)'}")
-        lines.append("  Original projections and latch evidence: " + json.dumps(
+        lines.append("  Original predictions and latch evidence: " + json.dumps(
             [{"cutoff": cycle.calculation.cutoff_tick,
               "preview": cycle.receipt.dispatch.motor.projection.as_dict()
               if cycle.receipt.dispatch.motor is not None and cycle.receipt.dispatch.motor.projection is not None else None,

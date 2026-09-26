@@ -1345,7 +1345,7 @@ def architecture_status_text_v1(world, ctx, column_memory, policy_rt=None) -> st
         loaded_names = []
 
     lines = [
-        "CCA8 ARCHITECTURE / MEMORY STATUS",
+        "CCA8 HOST / LEGACY ARCHITECTURE AND MEMORY STATUS",
         "=" * 78,
         "",
         "CURRENT COGNITION",
@@ -1390,14 +1390,14 @@ def architecture_status_text_v1(world, ctx, column_memory, policy_rt=None) -> st
             f"{pointer_count} unique_engram_ids={len(pointer_ids)} dangling={dangling_pointer_count}"
         ),
         "",
-        "POLICY / PRIMITIVE RUNTIME",
+        "LEGACY POLICY / PRIMITIVE RUNTIME",
         f"  loaded={len(loaded_names)} -> {', '.join(loaded_names) if loaded_names else '(none reported)'}",
         "",
-        "ARCHITECTURAL CONTRACT",
-        "  WorldGraph should become the thin associative/episodic lookup into rich Column NavMaps.",
-        "  Columns hold the durable map content; retrieval supplies candidates, not present-world authority.",
-        "  Exactly one operative WNM has accepted-current authority; BodyMap remains a protected fast path.",
-        "  Legacy predicates, projections, caches, and migration records remain subject to the memory audit.",
+        "ARCHITECTURE v10.2 TARGET / NOT A RENAME OF THIS HOST",
+        "  WorldIndex is the target sparse binding/reinstatement part; WorldGraph above is the retained host/API.",
+        "  In the target, actual NM owners hold durable content; retrieval supplies candidates, not present-world authority.",
+        "  Attention selects an NM; that same NM serves in the zero-or-one WNM role. ExecNav selects the procedure.",
+        "  BodyMap retains protection. The host readouts above do not certify the complete target architecture.",
     ]
     return "\n".join(lines)
 

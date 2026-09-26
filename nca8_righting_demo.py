@@ -155,7 +155,7 @@ def render_righting_preview_v1(example: RightingPreviewExampleV1) -> str:
         f"  rates / second: |tilt|={_quantity(tilt_rate)}; load={_quantity(load_rate)}; instability={_quantity(instability_rate)}",
         f"  owner persistence rank={result.persistence_rank}; Attention={result.attention.disposition.value}; "
         f"selected source={selected.source_map_ref.map_id if selected is not None else '(none)'}",
-        f"  Navigation selected={result.navigation.selected_primitive_id or '(none)'}",
+        f"  ExecNav selected={result.navigation.selected_primitive_id or '(none)'}",
     ])
     if result.task is not None:
         lines.append(

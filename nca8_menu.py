@@ -33,10 +33,10 @@ __version__ = "0.37.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
-_INTRODUCTION_V1 = """Current checkpoint: A0 / retained Gate A.
-Accepted Architecture v10.1 and Planning v18 govern new work.
+_INTRODUCTION_V1 = """Current checkpoint: retained Gate A plus isolated reviews through P16-2C-N.
+Terminology follows Architecture v10.2; compatibility identifiers and runtime routing are unchanged.
 Options 1-5 retain Gate A; option 6 reviews P18-H4 supplied-target motor control.
-H4 is not yet integrated Righting or a new default cognitive runtime.
+The retained H4 review is lower-only, not integrated Righting or a new default cognitive runtime.
 Option 7 runs the H5 relational Righting preview without installing targets or moving a body.
 Option 8 runs the separate H6-A hierarchy and H6-B qualification controls with finite targets and local movement.
 H6-B and P16-1G-A/B/C are accepted checkpoints. Option 8 includes the opt-in outcome/Attention reviews.
@@ -51,23 +51,23 @@ Option 13 retains the accepted maternal no-learning hook and actual Phase F (P16
 Option 14 offers combined P16-2B-F qualification for full P16-2B review before feeding.
 P16-2B and P16-2C-A/B/C/D/E are accepted at their declared experimental scopes.
 Option 15 retains feeding-detail/source access; its option 18 reviews the separate P16-2C-B oral-target/contact foundation.
-The oral fixture supplies a relation requirement, not a Navigation-selected feeding task.
-Option 15 -> 19 retains selected SeekNipple (P16-2C-C); latch, milk, rest and B99 remain open.
+The oral fixture supplies a relation requirement, not an ExecNav-selected feeding task.
+Option 15 -> 19 retains selected SeekNipple (P16-2C-C); that isolated review excludes latch, milk and Rest.
 Option 15 -> 20 retains original seeking PNM/execution correspondence (P16-2C-D).
 Option 15 -> 21 retains seeking outcome relevance and the one focal allocation (P16-2C-E).
 Option 15 -> 22 reviews original seeking participation and actual Phase F (P16-2C-F); durable learning remains open.
 Option 15 -> 23/24/25 retain oral seal, selected initial latch and original Suckle correspondence (G/H/I).
-Option 15 -> 26 reviews Suckle discrepancy, ordinary Attention and one Navigation-allocated interpretation (J).
-Outcome questions are not IPs; interpretation adds no task reapplication, movement grant or Suckle learning.
+Option 15 -> 26 reviews Suckle discrepancy, ordinary Attention and one ExecNav-allocated interpretation (J).
+Later-evidence questions are not IPs; interpretation adds no task reapplication, movement grant or Suckle learning.
 Option 15 -> 27 reviews original Suckle participation and actual Phase F (K); eligibility only, no durable learning.
 K consumes an already performed J interpretation; independent eligibility expiry never renews a task or question.
 Option 15 -> 34 retains sustained feeding and sensed need completion (M).
 Option 15 -> 35 offers safe Rest and the isolated, explicitly stepped overview-to-feeding-to-Rest walkthrough (N).
-The Rest review is the P16-2C closure candidate; hard-newborn B99 and default promotion remain separate.
-Planning v16 P16-1R-B separates internal handoff and cycle closure from the
+P16-2C is accepted at its bounded experimental scope; hard-newborn B99 and default promotion remain open.
+The retained P16-1R-B boundary separates internal handoff and cycle closure from the
 external world step and returning-input admission. Gate-A decisions are unchanged.
 
-This demonstration runs a short sequence of NCA8 cognitive cycles for the
+Options 1-5 inspect or operate the retained Gate-A NCA8 demonstration for the
 newborn goat's StandUp task. A fixed maximum number of cycles prevents the
 demonstration from running indefinitely.
 
@@ -76,11 +76,12 @@ is created. Current body and physical-support evidence updates that NavMap's
 present NM configuration. The durable innate NavMap itself is not rewritten
 by every new observation.
 
-If physical support is inadequate, Attention can make the current
-POSTURE-SUPPORT configuration the focal working representation, the WNM.
-Navigation can then select the StandUp Instinctive Primitive (IP), and a
-Projected NavMap (PNM) is created to represent what that operation expects
-to happen.
+If physical support is inadequate, Attention can select the POSTURE-SUPPORT NM.
+The same Selected NM serves in the WNM role; its Configuration supplies the
+working content. Gate A serializes that content in a source-linked sample,
+not a second biological map. ExecNav can then select the retained StandUp
+Instinctive Procedure (IP), and a Predicted NavMap (PNM) records the sparse
+expected change before dispatch. The later Righting reviews remain separate.
 
 Most NavMaps represent relationships in an allocentric-compatible form.
 BodyMap converts the task-relevant NavMap relationship into a body-relative
@@ -107,14 +108,14 @@ never proves that the goat actually stood up.
 
 This Gate-A demonstration uses only the NCA8 cognitive modules. The legacy CCA8
 controller does not choose, replace, or rescue the NCA8 action. The
-Sequential/Error Correcting (SEC) Module, WorldIndex, and durable learning
+Sequential Expectation and Correction Module (SEC), WorldIndex, and durable learning
 or plasticity are not yet active in this demonstration."""
 
 _STATUS_KEY_V1 = """Session / isolated
   One self-contained NCA8 working instance. It owns its changeable cognitive
   state separately from legacy CCA8 and other independently created NCA8 sessions.
 
-Generation
+Session Generation
   Starts at 1 when a new session is created. Resetting that same session advances
   this number. Option 5 creates another fresh session, starting at generation 1.
 
@@ -135,19 +136,19 @@ Cognitive cycles completed / pending observation
   already used; a failed boundary can leave no pending observation.
 
 Attention / last Attention decision
-  Attention chooses the NM configuration to focus on, not the primitive action.
-  Its last decision can be to switch, maintain, or release that focus.
+  Attention chooses an eligible NM, not its desired factual values or the task
+  procedure. Its last decision can switch, maintain, or release that focal role.
 
 WNM -- Working Navigation Map
-  The one source-linked focal working representation used for the current task.
-  There is no WNM when Attention has selected no source configuration.
+  The zero-or-one focal working role of the Selected NM, not a separate NM store.
+  Gate A uses a source-linked sample. No Selected NM means no current WNM.
 
-Navigation / selected primitive
-  Navigation maintains the WNM and selects the task-level primitive to apply.
-  This checkpoint uses the StandUp Instinctive Primitive (IP); Learned Primitives
-  (LPs) are not yet implemented in this NCA8 demonstration.
+ExecNav / selected procedure
+  ExecNav maintains focal use of the Selected NM and selects the task procedure.
+  This retained Gate-A review uses the StandUp Instinctive Procedure (IP);
+  Learned Procedures (LPs) are not implemented in this demonstration.
 
-PNM -- Projected NavMap
+PNM -- Predicted NavMap
   Represents what the selected operation expects to happen. It is a prediction,
   not an observation showing that the expected result has already happened.
 
@@ -171,9 +172,9 @@ Current posture / physical support
   What the current POSTURE-SUPPORT NM configuration represents about the body.
   Before the first cognitive cycle, no body observation has yet been processed.
 
-Last StandUp prediction outcome
+Last StandUp prediction assessment
   Whether later body evidence confirmed or contradicted an earlier StandUp
-  expectation. It is not a success claim made by issuing the action command.
+  prediction. It is not a success claim made by issuing the action command.
 
 Trace entries retained
   How many explanatory entries are still held, followed by the maximum capacity.
@@ -202,9 +203,9 @@ _CYCLE_EXPLANATION_V1 = """This advances the current isolated NCA8 session by ex
 One cognitive cycle:
   1. takes the next waiting sensory observation;
   2. updates the NCA8 representations that are allowed to use that observation;
-  3. lets Attention choose the focal NM configuration;
-  4. lets Navigation select a task-level primitive when appropriate;
-  5. creates a PNM when an action is expected;
+  3. lets Attention select the NM for the focal WNM role;
+  4. lets ExecNav select a task-level procedure when appropriate;
+  5. creates the sparse task-linked PNM for the selected operation;
   6. lets BodyMap map and check the proposed body action;
   7. commits and accepts the permitted action, or NO_ACTION, internally;
   8. completes Phase F, scheduler housekeeping and internal cycle closure;
@@ -227,8 +228,8 @@ scaffolds have dashed outlines. Python implementation details are below the
 main diagram. Arrows between boxes show record order, not signal wiring;
 follow the named input source and output destination for the data path.
 
-Phase C is shown as C1 (apply input and update current representations) followed by C2 (resolve
-earlier-operation outcomes using the updated evidence). These are display
+Phase C is shown as C1 (apply input and update current representations) followed
+by C2 (assess later evidence for earlier operations). These are display
 subsections of the existing Phase C, not additional scheduler phases.
 Unnumbered context notes explain the source code; they are not trace events.
 
@@ -314,7 +315,7 @@ def _print_status_v1(session: Nca8SessionV1 | None, *, include_key: bool = True)
         print(f"Reset required before further cycles: {'yes' if status.reset_required else 'no'}")
         print()
         print(f"Attention: {'enabled' if config.attention_enabled else 'disabled'}")
-        print(f"Navigation: {'enabled' if config.navigation_enabled else 'disabled'}")
+        print(f"ExecNav: {'enabled' if config.navigation_enabled else 'disabled'}")
         print(f"Body-to-environment action handoff: {'enabled' if config.body_action_handoff_enabled else 'disabled'}")
         print(f"Read-only support measurements: {'enabled' if config.support_observation_enabled else 'disabled'}")
         if config.support_dynamics_enabled:
@@ -325,9 +326,9 @@ def _print_status_v1(session: Nca8SessionV1 | None, *, include_key: bool = True)
         print(f"Current physical support: {status.current_support or '(not yet processed)'}")
         print(f"Last Attention decision: {status.attention_disposition or '(none yet)'}")
         print(f"Current WNM: {status.wnm_id or '(none)'}")
-        print(f"Selected primitive: {status.selected_primitive_id or '(none)'}")
+        print(f"Selected procedure: {status.selected_primitive_id or '(none)'}")
         print(f"Current PNM: {status.current_pnm_id or '(none)'}")
-        print(f"Last StandUp prediction outcome: {status.last_prediction_outcome or '(none yet)'}")
+        print(f"Last StandUp prediction assessment: {status.last_prediction_outcome or '(none yet)'}")
         print(f"Trace entries retained: {status.trace_retained} / {status.trace_capacity}")
     if include_key:
         _print_panel_v1("TERM KEY", _STATUS_KEY_V1)
@@ -420,7 +421,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
         print("  12) Maternal outcome-to-Attention review (P16-2B-D; one focal allocation)")
         print("  13) Maternal participation, no-learning and Phase-F review (P16-2B-E)")
         print("  14) Combined Follow-Mom qualification (P16-2B-F; before feeding)")
-        print("  15) Feeding: detail, seeking, initial latch and Suckle correspondence (P16-2C-A/I)")
+        print("  15) Feeding and safe Rest: retained P16-2C reviews (A-N)")
         print("  [Enter] Return to Main Menu")
         choice = cca8_cli.read_menu_input_v1()
         if not choice:

@@ -373,7 +373,7 @@ def render_oral_extraction_v1(result: OralExtractionExperimentV1, *, detail: boo
         raise TypeError("extraction rendering requires a completed experiment and Boolean detail")
     lines = [f"P16-2C-L-A / {result.profile.case} / ORAL EXTRACTION PHYSICAL REVIEW: {result.review_status}",
              f"  Metrics: {result.metrics()}",
-             "  INPUT: declared direct motor drives, not Navigation/Suckle or BodyMap/SMP authorization.",
+             "  INPUT: declared direct motor drives, not ExecNav/Suckle or BodyMap/SMP authorization.",
              "  Stroke rate=2 normalized units/s; yield=1 uncalibrated model-volume unit/full stroke.",
              "  Seal is not extraction; actual milk in the mouth is not nourishment or task completion.",
              "  PHYSICAL includes private supply/total; SENSED includes only delivered interval measurements.",

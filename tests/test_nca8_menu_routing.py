@@ -26,8 +26,8 @@ def test_opening_and_leaving_nca8_menu_does_not_construct_a_session(
     output = capsys.readouterr().out
     assert result is None
     assert "NCA8 -- EXPERIMENTAL RUNTIME / HIERARCHICAL MOTOR REVIEW" in output
-    assert "Current checkpoint: A0 / retained Gate A." in output
-    assert "Accepted Architecture v10.1 and Planning v18 govern new work." in output
+    assert "Current checkpoint: retained Gate A plus isolated reviews through P16-2C-N." in output
+    assert "Terminology follows Architecture v10.2; compatibility identifiers and runtime routing are unchanged." in output
     assert "controller does not choose, replace, or rescue the NCA8 action" in output
     assert "not a complete geometric coordinate transformation" in output
 
@@ -139,7 +139,7 @@ def test_status_explains_real_settings_without_mutating_session(
     assert "Current physical support: (not yet processed)" in output
     assert "Trace entries retained: 2 / 17" in output
     label = "enabled" if enabled else "disabled"
-    for heading in ("Attention", "Navigation", "Body-to-environment action handoff", "Read-only support measurements"):
+    for heading in ("Attention", "ExecNav", "Body-to-environment action handoff", "Read-only support measurements"):
         assert f"{heading}: {label}" in output
     assert "not a cognitive episode" in output
     assert "environment-run counter starts at 1 again" in output
@@ -177,9 +177,9 @@ def test_status_after_gate_a_reports_current_values_not_the_startup_example(
     assert "Current physical support: stable" in output
     assert "Last Attention decision: release" in output
     assert "Current WNM: (none)" in output
-    assert "Selected primitive: (none)" in output
+    assert "Selected procedure: (none)" in output
     assert "Current PNM: (none)" in output
-    assert "Last StandUp prediction outcome: success" in output
+    assert "Last StandUp prediction assessment: success" in output
     assert "Trace entries retained: 158 / 256" in output
     assert session.status() == before
     assert session.trace_canonical_bytes() == trace_before
@@ -265,7 +265,7 @@ def test_two_step_choices_then_trace_show_both_cycles_and_do_not_reset(
     assert "committed output: Action_2:STAND_UP" in output
     assert "Open CognitiveCycle_3" not in output
     assert "not just the last cycle" in output
-    assert "PNM when an action is expected" in output
+    assert "sparse task-linked PNM for the selected operation" in output
 
 
 def test_trace_without_session_explains_absence_without_creating_one(
@@ -405,3 +405,20 @@ def test_unknown_choice_still_returns_to_menu_without_constructing_a_session(
 
     assert nca8_menu.run_nca8_experimental_menu_v1(None) is None
     assert "Please choose 1-15, or press Enter to return." in capsys.readouterr().out
+
+
+def test_v102_introduction_keeps_gate_a_and_post_n_review_scopes_distinct(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A terminology update must neither invent missing learning nor describe accepted Rest as still absent."""
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": "")
+    assert nca8_menu.run_nca8_experimental_menu_v1(None) is None
+    output = " ".join(capsys.readouterr().out.split())
+    assert "The same Selected NM serves in the WNM role" in output
+    assert "Gate A serializes that content in a source-linked sample" in output
+    assert "P16-2C is accepted at its bounded experimental scope" in output
+    assert "hard-newborn B99 and default promotion remain open" in output
+    assert "15) Feeding and safe Rest: retained P16-2C reviews (A-N)" in output
+    assert "latch, milk, rest and B99 remain open" not in output
+    assert "The Rest review is the P16-2C closure candidate" not in output

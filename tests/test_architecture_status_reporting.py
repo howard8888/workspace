@@ -25,13 +25,13 @@ def test_architecture_overview_states_the_current_map_first_contract() -> None:
     text = architecture_overview_text_v1()
 
     assert "map-first cognitive architecture" in text
-    assert "ONE operative Working Navigation Map" in text
+    assert "the SAME Selected NM serves in the WNM role" in text
     assert "WorldGraph" in text
-    assert "sparse associative, episodic, action, and retrieval index" in text
+    assert "WorldIndex holds sparse bindings" in text
     assert "Columns" in text
-    assert "rich durable store for NavMaps" in text
-    assert "Action_n is dispatched before CognitiveCycle_n closes" in text
-    assert "Legacy symbolic content remains" in text
+    assert "actual NM-owning hosts" in text
+    assert "internal handoff precede cognitive-cycle closure" in text
+    assert "host/default runtime retains PolicyRuntime, WorldGraph, Columns, WorkingMap" in text
     assert "symbolic declarative memory" not in text
 
 
@@ -67,3 +67,20 @@ def test_architecture_status_panel_is_coherent_and_read_only() -> None:
     assert "retrieval supplies candidates, not present-world authority" in text
     assert world.to_dict() == world_before
     assert column_memory.list_ids() == column_ids_before
+
+
+def test_v102_overview_separates_functional_parts_legacy_names_and_implemented_scope() -> None:
+    """New labels must not silently turn a compatibility store or an experiment into the full target."""
+    text = " ".join(architecture_overview_text_v1().split())
+    for expected in (
+        "Attention Module", "Executive Navigation Module (ExecNav)", "Instinctive Procedure System",
+        "Predicted NavMap (PNM)", "BodyMap Module", "Sensorimotor Primitive (SMP) retains Primitive",
+        "Sequential Expectation and Correction Module (SEC)", "WorldIndex Module",
+        "zero-or-one WNM role", "not a detached second map or a guarantee of current truth",
+        "WorldGraph is a Python/API name", "P16-2C-N", "separately selected Rest",
+        "not a central learner or the sole time of plasticity", "not establish general LP acquisition",
+    ):
+        assert expected in text
+    assert "sparse WorldGraph memory activation" not in text
+    assert "Exactly one NavMap has detailed accepted-current cognitive authority" not in text
+    assert "Sensorimotor Procedure" not in text

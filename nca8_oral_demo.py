@@ -358,7 +358,7 @@ def render_oral_contact_v1(result: OralContactExperimentV1, *, detail: bool = Fa
     metrics = result.metrics()
     lines = [f"P16-2C-B / {result.case} / ORAL FOUNDATION REVIEW: {result.review_status}",
              "Supplied relation fixture -> BodyMap -> existing target executor -> actual reach -> sensed touch.",
-             "One body-forward axis, no head turn. No Navigation/SeekNipple/task PNM/latch/milk/rest/learning.",
+             "One body-forward axis, no head turn. No ExecNav/SeekNipple/task PNM/latch/milk/rest/learning.",
              f"  Physical ticks={result.elapsed_ticks}; dt=0.05s; focal calls=0; installations={result.installations}; open-loop={result.open_loop}.",
              f"  Physical touch first={metrics['first_physical_touch_tick']}; sensed event={metrics['first_sensed_touch_event']}; "
              f"available={metrics['first_touch_available_tick']}.",

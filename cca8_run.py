@@ -6975,35 +6975,37 @@ commonly discussed in AI. It maintains identity, evidence status, uncertainty,
 continuity, relationships, and other cognitively meaningful structure.)\n""")
             input("Press Enter for page 2 of 4...\n\n")
 
-            print("""How CCA8 implements the cycle (page 2 of 4)
---------------------------------------------
+            print("""How the retained host implements the cycle (page 2 of 4)
+--------------------------------------------------------
 
-The agent's brain or control system is represented by the CCA8 cognitive
-architecture. CCA8 receives evidence from the environment ("perceive"), updates
-its internal representations of SELF and the world ("update"), selects an
-appropriate response ("decide"), and dispatches that result ("act"). The result
-may be an external action, an internal feedback result for later reprocessing,
-or an explicit null external output. CCA8 then begins the next cognitive cycle.
+This retained host receives environmental evidence, updates NavMaps for SELF
+and the world, selects a policy, and dispatches a permitted result. Output can
+be an external action, internal feedback, or an explicit null output. Actual
+consequences become evidence for later cognitive cycles.
 
-CCA8 is map-first. Its internal model is organized primarily through Navigation
-Maps ("NavMaps"). A NavMap is more than a geometric map -- it can represent SELF
-and other entities, their locations and relationships, identity and continuity,
-evidence status, and uncertainty. New evidence updates these representations,
-which then inform subsequent cognition and behavior.
+CCA8's map-first target uses NavMaps for entities, spatial and other relations,
+identity, continuity, evidence status and uncertainty. New evidence updates
+current representations; a NavMap is not merely a geometric picture.
 
-At a high level, one cognitive cycle will:
+This menu exercises the retained host/legacy cycle, not the isolated NCA8
+reviews. Its policy and WorldGraph names remain implementation names.
+At a high level, this retained cycle will:
   1) --> Let the simulated environment (or the real world in robotics)
           report what the agent is sensing now -->
   2) Update internal NavMaps using that evidence and compare the resulting
         state with what was expected -->
   3) Record any mismatch as a prediction-error or residual signal -->
-  4) Select a behavioral primitive, let the Navigation Module apply it to the
-        current Working Navigation Map, and dispatch the resulting action,
-        feedback, or null external output -->
+  4) Select a retained policy/behavioral primitive and dispatch its permitted
+        action, feedback, or null external output -->
      REPEAT
 
 Action_n is selected and dispatched during Cognitive Cycle_n. Its consequences
-are observed later as part of Observation_(n+1).\n""")
+are observed later as part of Observation_(n+1).
+
+The Architecture v10.2 target separates Attention's NM choice from ExecNav's
+Procedure choice. The same Selected NM serves in the WNM role; a Predicted
+NavMap is not a new observation. This terminology does not certify that the
+retained host implements every target mechanism.\n""")
             input("Press Enter for page 3 of 4...\n\n")
 
             print("""How to read this terminal output, i.e., demonstration (page 3 of 4)
@@ -7028,6 +7030,10 @@ Navigation Map. In the current Python implementation, the corresponding runtime
 behavior is often called a "policy," and the selection/dispatch machinery is
 often called the "Action Center." The [controller] label covers diagnostics from
 this path but note that "controller" is not the published name of a separate CCA module.
+
+Those publication terms are historical. Architecture v10.2 uses Instinctive or
+Learned Procedure, Executive Navigation Module (ExecNav), and the Selected-NM
+WNM role. The retained Action Center and policies are not new canonical parts.
 
 During the first cycle there may be no previous action, expectation, or outcome,
 so some fields may say "missing" or "incomplete." This is normal.

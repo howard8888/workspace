@@ -191,7 +191,7 @@ def test_retained_rendering_and_small_trace_do_not_change_any_source_or_motion(c
     assert tuple(c.feeding_detail_source for c in full.run.cycles) == tuple(c.feeding_detail_source for c in small.run.cycles)
     assert full.metrics() == small.metrics()
     before = json.dumps(full.as_dict(), sort_keys=True)
-    assert "P16-2C-H" in demo.render_suckle_v1(full) and "Original projections" in demo.render_suckle_v1(full, detail=True)
+    assert "P16-2C-H" in demo.render_suckle_v1(full) and "Original predictions" in demo.render_suckle_v1(full, detail=True)
     exported = full.as_dict()
     exported["cycles"].clear()
     assert json.dumps(full.as_dict(), sort_keys=True) == before
@@ -275,7 +275,7 @@ def test_menu_retained_detail_does_not_reexecute(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert calls == ["nominal", "nonsealable", "missing_seal", "already_sealed", "closed_without_seal"]
     assert "No completed results" in output and "Unknown choice" in output
-    assert "Original projections" in output and "SELECTED INITIAL LATCH REVIEW: PASS" in output
+    assert "Original predictions" in output and "SELECTED INITIAL LATCH REVIEW: PASS" in output
 
 
 def test_feeding_menu_routes_new_option_without_running_old_demo(monkeypatch):

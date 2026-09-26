@@ -62,9 +62,9 @@ def _words(text: str) -> str:
     (12, "PART", "Attention"),
     (13, "PART", "Attention"),
     (14, "REPRESENTATION", "Working Navigation Map (WNM)"),
-    (15, "PART", "StandUp Instinctive Primitive (IP)"),
-    (16, "PART", "Navigation Module"),
-    (18, "REPRESENTATION", "Projected NavMap (PNM)"),
+    (15, "PART", "StandUp Instinctive Procedure (IP)"),
+    (16, "PART", "Executive Navigation Module (ExecNav)"),
+    (18, "REPRESENTATION", "Predicted NavMap (PNM)"),
     (19, "PART", "BodyMap"),
     (20, "SERVICE", "Cognitive-cycle driver"),
     (21, "SERVICE", "Internal lower-action handoff"),
@@ -97,7 +97,7 @@ def test_parts_catalog_has_no_invented_sensory_prediction_or_learning_module(gat
     diagrams = _diagrams(_text(gate_events))
     parts = set(re.findall(r"\[#\d+\] PART: ([^|\n]+)", diagrams))
     assert {part.strip() for part in parts} == {
-        "Attention", "BodyMap", "Navigation Module", "StandUp Instinctive Primitive (IP)",
+        "Attention Module", "BodyMap Module", "Executive Navigation Module (ExecNav)", "StandUp Instinctive Procedure (IP)",
     }
     for forbidden in ("PART: SEC", "PART: WorldIndex", "PART: WNM", "PART: PNM", "PART: A0", "PART: Prediction"):
         assert forbidden not in diagrams
@@ -177,7 +177,7 @@ def test_pnm_and_task_request_are_distinct_outputs_not_a_serial_control_funnel(g
     bodymap = _words(_node(diagrams, 19))
     assert "two separate consumers" in navigation
     assert "task request goes separately to BodyMap" in pnm
-    assert "INPUT: Navigation application -> [task STAND_UP]" in bodymap
+    assert "INPUT: ExecNav application -> [task STAND_UP]" in bodymap
     assert "INPUT: PNM" not in bodymap
 
 
@@ -248,6 +248,6 @@ def test_other_primitive_query_does_not_get_renamed_standup(gate_events) -> None
     details["primitive_id"] = "ip:unrecognized"
     changed = replace(event, details=tuple(sorted(details.items())))
     node = _words(_node(_diagrams(_text((changed,))), changed.sequence))
-    assert node.startswith("PART: Navigation Module - primitive query")
+    assert node.startswith("PART: Executive Navigation Module (ExecNav) - procedure query")
     assert "ip:unrecognized" in node
-    assert "StandUp Instinctive Primitive" not in node
+    assert "StandUp Instinctive Procedure" not in node

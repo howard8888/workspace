@@ -15,7 +15,7 @@ It calls the existing session API for a fixed, bounded number of cycles; it
 never supplies a scripted list of actions, reads simulator state, changes
 stored observations, or declares A99/Righting competence. The existing A0
 selector still uses coarse posture evidence, while measured support is a
-read-only companion. The no-action control explicitly disables Navigation.
+read-only companion. The no-action control explicitly disables ExecNav.
 
 Every printed "input" sample has been processed in that cycle. The following
 "pending" sample comes from the completed outer world step and is not yet
@@ -128,12 +128,12 @@ def run_support_case_v1(
     if dynamics:
         print("Source dynamics: support_trend_v1; two-sample event differences; bounded continuity; no learning.")
         print("Deadbands: angle 1 degree/event; loading/destabilization 0.02/event; pair gap <=2; held evidence age <=2.")
-        print("Measured working facet: behavioral_authority=False; omitted from A0 primitive input.")
+        print("Measured working facet: behavioral_authority=False; omitted from A0 procedure input.")
     else:
         print("Measured companion: read-only; behavioral_authority=False; no learning or CCA trajectory estimator.")
     print("Coarse A0 posture still selects the task. This experiment is separate from retained Gate A.")
     if case == "no-action":
-        print("Control: Navigation disabled; null output still advances the physical world once per cycle.")
+        print("Control: ExecNav disabled; null output still advances the physical world once per cycle.")
     for _ in range(cycles):
         result = session.run_cognitive_cycle()
         current = session.support_configuration

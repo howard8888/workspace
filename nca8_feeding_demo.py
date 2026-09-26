@@ -284,7 +284,7 @@ def render_feeding_detail_v1(result: FeedingDetailExperimentV1, *, detail: bool 
              f"  Durable maps unchanged={result.durable_unchanged}; owner-bound violations={result.bound_violations or 'none'}."]
     lines.extend(f"  {'PASS' if passed else 'FAIL'}: {name}" for name, passed in result.checks())
     if detail:
-        lines.append("  tick | visual event | feeding association | actual WNM source | actual primitive")
+        lines.append("  tick | visual event | feeding association | actual WNM source | actual procedure")
         for cycle in result.cycles:
             source = cycle.feeding_detail_source
             if not isinstance(source, FeedingDetailNavMapStateV1):
@@ -304,20 +304,20 @@ def run_feeding_detail_menu_v1() -> None:
         for index, case in enumerate(FEEDING_DETAIL_CASES_V1, 1):
             print(f"  {index}) {case}")
         print("  18) Oral target/contact foundation (P16-2C-B; supplied requirement)")
-        print("  19) Navigation-selected SeekNipple (P16-2C-C; no latch, milk or rest)")
+        print("  19) ExecNav-selected SeekNipple (P16-2C-C; no latch, milk or rest)")
         print("  20) Original seeking prediction and actual execution (P16-2C-D)")
         print("  21) Seeking mismatch and one focal interpretation (P16-2C-E)")
         print("  22) Seeking participation and actual Phase F (P16-2C-F; no durable learning)")
         print("  23) Supplied oral closure and observed seal (P16-2C-G; no Suckle or milk)")
-        print("  24) Navigation-selected Suckle: initial latch (P16-2C-H; no milk)")
+        print("  24) ExecNav-selected Suckle: initial latch (P16-2C-H; no milk)")
         print("  25) Original Suckle prediction and actual execution (P16-2C-I)")
-        print("  26) Suckle discrepancy to Attention and one Navigation interpretation (P16-2C-J)")
+        print("  26) Suckle discrepancy to Attention and one ExecNav interpretation (P16-2C-J)")
         print("  27) Original Suckle participation and Phase F (P16-2C-K; no durable learning)")
         print("  28) Direct-drive physical extraction and milk sensing (P16-2C-L-A; not autonomous Suckle)")
         print("  29) BodyMap extraction/return target control (P16-2C-L-B; supplied requirement)")
-        print("  30) Navigation-selected Suckle extraction (P16-2C-L-C; first bounded contribution)")
+        print("  30) ExecNav-selected Suckle extraction (P16-2C-L-C; first bounded contribution)")
         print("  31) Original extraction correspondence and interval milk evidence (P16-2C-L-D)")
-        print("  32) Extraction discrepancy to Attention and one Navigation interpretation (P16-2C-L-E)")
+        print("  32) Extraction discrepancy to Attention and one ExecNav interpretation (P16-2C-L-E)")
         print("  33) Extraction participation and actual Phase F (P16-2C-L-F; no durable learning)")
         print("  34) Sustained feeding and sensed need completion (P16-2C-M; no Rest or durable learning)")
         print("  35) Safe Rest and integrated P16-2C walkthrough (N; no durable learning)")

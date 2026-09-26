@@ -60,7 +60,7 @@ def test_rendering_does_not_recalculate_or_mutate_a_result(index):
     assert example.result.as_dict() == before
     assert "physical steps=0" in text
     assert "task success not established" in text
-    assert "Navigation selected=" in text
+    assert "ExecNav selected=" in text
 
 
 def test_menu_and_script_use_identical_shared_review_output(monkeypatch, capsys):

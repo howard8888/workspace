@@ -81,7 +81,7 @@ def test_trace_capacity_and_rendering_cannot_change_control(capacity, runs, monk
     monkeypatch.setattr(demo.SensorimotorTrialV1, "advance", forbidden)
     for _ in range(3):
         text = demo.render_oral_extraction_control_v1(result, detail=True)
-        assert "NOT Navigation-selected Suckle" in text and "sensed=" in text and "endpoints=" in text
+        assert "NOT ExecNav-selected Suckle" in text and "sensed=" in text and "endpoints=" in text
         detached = result.as_dict()
         detached["physical"].clear()
         assert len(result.physical) == 13 and result.review_status == "PASS"

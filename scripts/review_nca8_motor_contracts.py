@@ -149,7 +149,7 @@ def main() -> int:
     forbidden = {"cca8_env", "nca8_runtime", "nca8_body", "nca8_primitives"}
     assert not forbidden.intersection(sys.modules)
     assert rng_before == random.getstate()
-    print("  provider, runtime, BodyMap actor, task primitive imported: False")
+    print("  provider, runtime, BodyMap actor, task procedure imported: False")
     print("  motor execution / NavMap revision / learning performed: False")
     print("  RNG unchanged: True; finite JSON export: True")
     print("\nCONTRACT FIXTURES PASSED -- H2 movement and H4 feedback control are not implemented here.")

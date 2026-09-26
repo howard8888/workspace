@@ -295,7 +295,7 @@ def render_sustained_feeding_v1(result: SustainedFeedingExperimentV1, *, detail:
     if not isinstance(result, SustainedFeedingExperimentV1) or not isinstance(detail, bool):
         raise TypeError("sustained renderer needs a typed retained experiment and Boolean detail")
     lines = [f"P16-2C-M sustained feeding: {result.profile.case} -- {result.review_status}",
-             "  Navigation-selected contributions -> physical milk -> delayed uptake -> sensed need -> Suckle completion.",
+             "  ExecNav-selected contributions -> physical milk -> delayed uptake -> sensed need -> Suckle completion.",
              "  Synthetic body competence; not biological nutrition, reward, learned change or permission to Rest.",
              "  " + json.dumps(result.metrics(), sort_keys=True, allow_nan=False)]
     lines.extend(f"  {'PASS' if ok else 'FAIL'} {name}" for name, ok in result.checks())

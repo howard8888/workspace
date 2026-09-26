@@ -344,7 +344,7 @@ def render_oral_seal_v1(result: OralSealExperimentV1, *, detail: bool = False) -
     if not isinstance(result, OralSealExperimentV1) or not isinstance(detail, bool):
         raise TypeError("seal rendering requires a typed result and Boolean detail flag")
     lines = [f"P16-2C-G / {result.case} / ORAL CLOSURE AND SEAL REVIEW: {result.review_status}",
-             "Supplied target; no Navigation-selected Suckle, milk, nourishment or Rest.",
+             "Supplied target; no ExecNav-selected Suckle, milk, nourishment or Rest.",
              "Coordinate achievement != physical seal != current feeding-contact correspondence != latch task completion.",
              json.dumps(result.metrics(), sort_keys=True, allow_nan=False),
              f"CHECKS: {sum(passed for _, passed in result.checks())}/{len(result.checks())}"]

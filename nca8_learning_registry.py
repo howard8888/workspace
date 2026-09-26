@@ -260,7 +260,7 @@ _CAPABILITIES = (
             'Context-specific useful mappings can strengthen and unreliable mappings can revise or differentiate. Emotion may '
             'add significance; it cannot override current protected bodily evidence.'
         ),
-        'Learn a task-to-body/support mapping with intermediate feedback while Navigation’s task stays controlled.',
+        'Learn a task-to-body/support mapping with intermediate feedback while ExecNav’s task stays controlled.',
         'P16-3F-B1',
         'Working',
         'A101 §103.11',
@@ -268,11 +268,11 @@ _CAPABILITIES = (
     LearningCapabilityV1(
         'L09',
         'SEC sequence, timing and error adaptation',
-        'Sequential/Error Correcting Module',
+        "Sequential Expectation and Correction Module",
         'Functional abstraction',
         (
-            'Improve short-sequence expectations, timing, calibration and learned corrective assistance in its participating '
-            'sensory, cognitive, body or motor domain.'
+            "Improve short-sequence predictions, timing, calibration and learned corrective assistance in its participating "
+            "sensory, cognitive, body or motor domain."
         ),
         (
             'When relevant local transition evidence or prediction error arrives, including while lower execution continues. '
@@ -355,8 +355,8 @@ _CAPABILITIES = (
             'experience, prediction accuracy from desirability, and changed execution from failed prediction.'
         ),
         (
-            'Use corresponding evidence to improve a future operation-conditioned projection; preserve the old tested claim '
-            'and separate value from accuracy.'
+            "Use corresponding evidence to improve a future operation-conditioned prediction; preserve the old tested claim and "
+            "separate value from accuracy."
         ),
         'P16-3F-B2',
         'Working',
@@ -365,7 +365,7 @@ _CAPABILITIES = (
     LearningCapabilityV1(
         'L13',
         'Learned operation applicability and preference',
-        'Primitive access/selection circuitry and relevant learned connections',
+        'Procedure access/selection circuitry and relevant learned connections',
         'Cognitive mechanism',
         (
             'Learn which available operation fits a context, how useful its effects are, and when persistence or repetition '
@@ -377,7 +377,7 @@ _CAPABILITIES = (
         ),
         (
             'Refine contextual preference, cost and limits; uncertainty can justify no change. Emotion/drive influences '
-            'modulate use but do not replace Navigation’s focal selection or BodyMap’s constraints.'
+            'modulate use but do not replace ExecNav’s focal selection or BodyMap’s constraints.'
         ),
         (
             'Learn context-sensitive preference among genuine applicable competitors; list order and protected veto remain '

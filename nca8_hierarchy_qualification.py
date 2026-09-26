@@ -508,7 +508,7 @@ def render_hierarchy_qualification_summary_v1(results: tuple[HierarchyQualificat
     lines.extend([
         "  Assistance uses matched tilt30/extension0.9 starts with Righting disabled. Any improvement is not credited to an absent command.",
         "  Local success, current adequacy and supported task completion remain distinct. No criterion, tolerance or physics was tuned to force success.",
-        "  Retained H4 fixed-target/open-loop controls are separate lower-only experiments, not Navigation-selected tasks.",
+        "  Retained H4 fixed-target/open-loop controls are separate lower-only experiments, not ExecNav-selected tasks.",
         "Review candidate only: local validation and manual acceptance are still required; P16-1G and A99 remain open.",
     ])
     return "\n".join(lines)

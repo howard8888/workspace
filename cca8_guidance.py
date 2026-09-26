@@ -115,7 +115,7 @@ def architecture_explanation_menu_v1(
     print("Architecture explanation options:")
     print("  1) Concise map-first architecture overview")
     print("  2) Open the full README/compendium system documentation")
-    print("  3) Technical primer: bindings, tags, edges, drives, and primitives")
+    print("  3) Legacy technical primer: bindings, tags, edges, drives, and primitives")
     print("  [Enter] Return to Main Menu")
 
     try:
@@ -147,101 +147,125 @@ def architecture_overview_text_v1() -> str:
     """Return the concise terminal explanation of the current CCA8 architecture.
 
     The overview deliberately separates the mature map-first target from the
-    mixed-source migration checkpoint that currently runs. It is short enough
-    for an interactive terminal but preserves the governing distinctions among
-    evidence, protected safety, the operative WNM, long-term memory, primitive
-    selection, same-cycle output, and later outcome evidence.
+    retained host/legacy runtime and the isolated post-N review paths. The text
+    distinguishes NM ownership, focal selection, task procedures, body targets,
+    physical consequences and later evidence without changing runtime routing.
     """
     return """
 CCA8 ARCHITECTURE OVERVIEW
 ==========================
 
 CCA8 is a recurrent, embodied, map-first cognitive architecture inspired by a
-mountain-goat-level mammalian brain. Its central cognitive representation is a
-Navigation Map (NavMap), not a detached table of symbolic state variables.
+mountain-goat-level mammalian brain. This overview uses Architecture v10.2's
+functional target and terminology; it is not a claim that every part already
+runs in the software. Python names and the retained legacy runtime stay distinct.
 
-The target information path is:
+The focal task route is:
 
-    external world / body
-        -> agent-visible sensory evidence
-        -> evidence and Local NavMaps + bounded temporal processing
-        -> protected BodyMap safety path
-        -> sparse WorldGraph memory activation
-        -> rich NavMaps reinstated from Columns
-        -> alignment, comparison, and structured residuals
-        -> ONE operative Working Navigation Map (WNM) + bounded ready set
-        -> Policy / Primitive selection and arbitration
-        -> selected primitive operates on the operative WNM
-        -> Action_n, feedback, WNM transition, retrieval request, or NO_ACTION
-        -> Action_n is dispatched before CognitiveCycle_n closes
-        -> Observation_(n+1) enters cognition in the next cycle or later
+    sensory / association owner maintains an available NavMap (NM)
+        -> Attention selects an eligible NM, not its desired factual values
+        -> the SAME Selected NM serves in the WNM role
+        -> ExecNav selects one task-level Instinctive or Learned Procedure
+        -> Procedure Application: sparse Predicted NavMap + separate task request
+        -> BodyMap checks this body and forms body-relative targets and bounds
+        -> permitted commitment and internal lower-action handoff
+        -> Sensorimotor Primitives -> detailed motor / actuator control
+        -> physical body / world determines what actually happens
+        -> later admitted evidence updates its owner and tests earlier predictions
+
+This is not a compulsory pipeline for all processing. Local sensing, association,
+WorldIndex-assisted reinstatement, body feedback and authorized lower control can
+continue while another NM is focal. Protected correction need not wait for a new
+focal decision. A new demanding task still requires the Attention/ExecNav route.
 
 Key architectural roles
 -----------------------
 
-  Navigation Map / NavMap
-      A bounded, addressable, spatially organized and relationally linked
-      representation with an explicit frame, scale, provenance, support, and
-      uncertainty. Stable environmental maps are allocentric-biased; local
-      sensory, body, object, and action maps may use other explicit frames.
+  NavMap / NM and Configuration
+      An NM is enduring inherited or learned relational organization in its
+      owning circuitry. Its Configuration is its active or reinstated expression,
+      including relevant change, timing and uncertainty. Physical maps are
+      allocentric-compatible; abstract maps may use intrinsic relations.
+      Association is native; a universal memory hierarchy is not required.
 
-  Operative WNM
-      Exactly one NavMap has detailed accepted-current cognitive authority at a
-      time. Ready, expected, retrieved, inferred, and imagined maps may affect
-      processing but are not co-equal present worlds.
+  Attention Module and Working Navigation Map (WNM)
+      Attention selects an eligible active or reinstated LSNM or ANM. The same
+      Selected NM occupies the zero-or-one WNM role through recurrent use with
+      ExecNav. WNM is not a detached second map or a guarantee of current truth.
+      Other NMs may stay active or Ready without becoming additional WNMs.
 
-  BodyMap
-      A protected fast body and near-space safety path. It may veto unsafe
-      action and remains independently protective while ordinary cognition
-      migrates toward WNM-derived readouts.
+  Executive Navigation Module (ExecNav) and task procedures
+      ExecNav selects and coordinates one demanding IP or LP. IP means Instinctive
+      Procedure; LP means Learned Procedure. The Instinctive Procedure System
+      owns IP organization; LPs remain in their actual NM-owning hosts.
+      An ordinary operation or lower correction is not automatically a task IP.
+      Purposeful behavior does not require a dedicated Goal Module.
 
-  WorldGraph
-      The intended sparse associative, episodic, action, and retrieval index.
-      It helps answer "where should memory look?" It is not the complete world
-      model or automatic current truth. Legacy symbolic content remains during
-      migration and is subject to audit, demotion, derivation, or retirement.
+  Predicted NavMap (PNM)
+      Sparse predicted relations for the selected Procedure Application, not a
+      complete future world or an observed result. The task request goes
+      separately to BodyMap. Earlier pending predictions retain their origin;
+      they are not additional current PNMs or renewed movement permissions.
 
-  Columns
-      The rich durable store for NavMaps, prototypes, trajectories,
-      transformations, and other engrams. Retrieved content remains a candidate
-      until aligned, compared with current evidence, and explicitly accepted.
+  BodyMap Module and lower action
+      BodyMap maintains protected body/peripersonal evidence and constraints,
+      maps the task onto this body's available capability, and can veto movement.
+      Sensorimotor Primitive (SMP) retains Primitive: it executes a supplied
+      body-relative target within bounds. Detailed motor control and physical
+      effectors are separate. BodyMap never becomes WNM or chooses a new task.
 
-  Sequential/Error and live dynamics
-      Bounded histories are compressed into motion, rate, duration, phase,
-      contact, support, slip, progress, and uncertainty. CCA8 does not preserve
-      a complete movie of successive NavMaps.
+  Sequential Expectation and Correction Module (SEC)
+      Recipient-specific sequence predictions, timing, calibration and correction
+      across sensory, cognitive and motor work. SEC is not a second executive or
+      the owner of every prediction. Sensory-local prediction and SMP-local
+      prediction remain distinct from SEC assistance and the task-linked PNM.
 
-  Policy / Primitive system
-      Several primitives may be applicable. Protected safety and arbitration
-      select one current working primitive. The primitive then operates on the
-      WNM and may produce action, expectation, feedback, retrieval, or a map
-      transition. Detailed motor trajectories remain below CCA8 in lower
-      controllers or the HAL.
+  WorldIndex Module and local learning
+      WorldIndex holds sparse bindings and helps reinstate content in its actual
+      NM/LP owners. It is not a rich world store or compulsory retrieval gateway;
+      learned direct associations also provide access. Lasting learning belongs
+      to the participating owners. Phase F is a reconciliation/maintenance
+      opportunity, not a central learner or the sole time of plasticity.
+
+  Internal-body evidence, drive, modulation and Emotion
+      C01-I owns admitted internal evidence and learned body-context relations.
+      Homeostatic Drive supplies need-related influence; Neuromodulatory Control
+      supplies recipient-specific modulation; Emotion learns significance.
+      These are not interchangeable with actual physiology, automatic bodily
+      regulation, task selection, nourishment, reward or observed completion.
 
 Authority rules
 ---------------
 
-  * OBSERVED, MAINTAINED, EXPECTED, RETRIEVED, INFERRED, IMAGINED, and
-    ACCEPTED-CURRENT content remain distinguishable.
-  * Reliable current evidence defeats unsupported expectation or memory.
-  * UNKNOWN and DEFER are valid outcomes.
-  * A command does not prove success; later sensory evidence supplies the
-    ordinary outcome signal.
-  * Diagnostic traces observe the architecture but are not cognitive memory.
+  * Observed, maintained, reinstated and predicted content remain distinguishable.
+    A remembered NM can be selected without becoming a fresh observation.
+  * Current evidence can contradict a prediction or remembered relationship.
+  * Unknown evidence, deferred action, interruption and completion differ.
+  * Selection, body permission, dispatch, physical effect and later confirmed
+    completion are separate achievements. A command does not prove success.
+  * Task commitment and internal handoff precede cognitive-cycle closure.
+    Physical execution and returning-input admission remain external boundary work.
+  * Diagnostics describe real recorded work; they do not supply cognitive input.
 
 Current implementation versus target
 ------------------------------------
 
-CCA8 is deliberately migrating one bounded domain at a time. StandUp and
-FollowMom already use bounded map-native applicability authority, and feeding,
-terrain, temporal, WNM-transition, and Column-memory paths are implemented.
-Other consumers still use BodyMap, WorkingMap/MapSurface, SurfaceGrid,
-WorldGraph history, drives, and compatibility bridges. The architecture audit
-must therefore identify canonical maps, derived projections, protected fast
-paths, temporary scaffolding, and structures ready for retirement.
+The host/default runtime retains PolicyRuntime, WorldGraph, Columns, WorkingMap
+and related compatibility machinery. Its existing map-based StandUp/FollowMom,
+feeding and memory paths are legacy/migration implementations, not a certificate
+that the v10.2 functional machine is fully realized. WorldGraph is a Python/API
+name; it is not the architectural WorldIndex renamed into existence.
 
-Use Main Menu #1 to watch cognition run and Main Menu #2 to inspect the same
-cycle with the Cognitive Storage Oscilloscope / System Inspector.
+The separate NCA8 menu retains Gate A and isolated bounded experiments through
+P16-2C-N: Righting, maternal following, feeding-detail access, seeking, latch,
+extraction, sustained feeding with sensed need, and separately selected Rest.
+These use declared synthetic providers. They do not establish general LP
+acquisition, mature SEC/Emotion learning, hard-newborn B99 or default promotion.
+
+Use Main Menu #1 for runtime choices and Main Menu #2 to inspect the host's
+Cognitive Storage Oscilloscope / System Inspector. The NCA8 submenu provides
+its own isolated reviews and retained-trace inspection. No menu label grants
+an experiment authority over the host or changes the selected runtime.
 """.strip()
 
 
@@ -255,7 +279,7 @@ def print_architecture_overview_v1(policy_rt: Any = None) -> None:
         names = []
 
     if names:
-        print("\nBehavioral primitives currently loaded for this profile:")
+        print("\nLegacy behavioral primitives currently loaded for this profile:")
         for name in names:
             print(f"  - {name}")
     print()

@@ -229,7 +229,7 @@ def run_suckle_extraction_menu_v1() -> None:
               "5": SUCKLE_EXTRACTION_CASES_V1}
     retained: tuple[SuckleExtractionExperimentV1, ...] = ()
     while True:
-        print("\nL-C: Navigation-selected Suckle extraction (not complete feeding)")
+        print("\nL-C: ExecNav-selected Suckle extraction (not complete feeding)")
         print("1 selected/latch controls; 2 authority; 3 evidence/adverse; 4 continuity; 5 all; 6 retained detail; 0 back")
         choice = cca8_cli.read_menu_input_v1()
         if choice in {"", "0"}:

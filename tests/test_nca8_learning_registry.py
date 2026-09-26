@@ -62,3 +62,15 @@ def test_l12_partial_hook_does_not_promote_l11_l13_or_lp():
     assert all(by_id[key].maturity == 'documentation_contract_only' for key in ('L11', 'L13', 'L14'))
     assert 'GO-LP-DESIGN' in by_id['L14'].promotion_phase
     assert by_id['L12'].promotion_phase == 'P16-3F-B2'
+
+
+def test_v102_ledger_names_do_not_promote_learning_or_rename_capability_interfaces():
+    """Card descriptions follow the glossary while IDs, maturity and the historical contract reference stay intact."""
+    rows = {row.capability_id: row for row in learning_capabilities_v1()}
+    assert rows["L09"].owner == "Sequential Expectation and Correction Module"
+    assert rows["L13"].owner == "Procedure access/selection circuitry and relevant learned connections"
+    assert all(row.as_dict()["durable_rule_implemented"] is False for row in rows.values())
+    assert rows["L09"].architecture_source == "A101 §103.12"
+    text = render_learning_ledger_v1(detail=True)
+    assert "Sequential Expectation and Correction Module" in text
+    assert "Sequential/Error Correcting Module" not in text

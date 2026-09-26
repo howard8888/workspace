@@ -386,7 +386,7 @@ def render_seek_nipple_v1(result: SeekNippleExperimentV1, *, detail: bool = Fals
              "  PNM correspondence and feeding learning remain deferred; Rest and B99 remain open."]
     lines.extend(f"  {'PASS' if passed else 'FAIL'}: {name}" for name, passed in result.checks())
     if detail:
-        lines.append("  tick | focal source | selected primitive | task reason | body directive")
+        lines.append("  tick | focal source | selected procedure | task reason | body directive")
         for cycle in result.cycles:
             source, motor = cycle.calculation.attention.selected_source_state, cycle.receipt.dispatch.motor
             lines.append(f"  {cycle.calculation.cutoff_tick:4} | {source.source_map_ref.map_id if source is not None else '(none)'} | "
@@ -413,7 +413,7 @@ def run_seek_nipple_menu_v1() -> None:
     }
     retained: tuple[SeekNippleExperimentV1, ...] = ()
     while True:
-        print("\nP16-2C-C -- NAVIGATION-SELECTED SEEKING / NO LATCH, MILK OR REST")
+        print("\nP16-2C-C -- EXECNAV-SELECTED SEEKING / NO LATCH, MILK OR REST")
         print("  1) Reach versus touch / 2) Task, source, need and capability controls")
         print("  3) Intermediate reach and body geometry / 4) Gaps, protection and cancellation")
         print("  5) Prediction registration, relevance and cadence / 6) Continuous stand-follow-seeking")

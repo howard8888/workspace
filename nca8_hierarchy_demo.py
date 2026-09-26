@@ -101,7 +101,7 @@ def focal_hierarchy_lines_v1(result: IntegratedRightingCycleV1) -> list[str]:
                      f"tilt={_value(feedback.body_tilt_degrees)} load={_value(feedback.useful_loading)}")
     else:
         lines.append("  C  POSTURE-SUPPORT: current physical input unavailable")
-    lines.append(f"  D  Attention={calc.attention.disposition.value}; Navigation={calc.navigation.selected_primitive_id or 'none'}; "
+    lines.append(f"  D  Attention={calc.attention.disposition.value}; ExecNav={calc.navigation.selected_primitive_id or 'none'}; "
                  f"task={task.task_id if task else 'none'}")
     if isinstance(app, RightingApplicationV1):
         request, projection = app.contribution, app.projection
