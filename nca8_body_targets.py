@@ -29,6 +29,7 @@ from cca8_navmap_kernel import NavMapRefV1, NavPointV1
 from nca8_visual import VisualNavMapStateV1
 from nca8_maternal import MaternalNavMapStateV1
 from nca8_feeding import FeedingDetailNavMapStateV1
+from nca8_maps import MotorSupportConfigurationV1
 from nca8_sensorimotor_contracts import (
     BodyRelativeTargetV1, BodyTranslationTargetV1, OralExtractionTargetV1,
     CommittedBodyTargetV1,
@@ -36,11 +37,11 @@ from nca8_sensorimotor_contracts import (
     TargetOriginV1, oral_basis_compatible_v1, oral_closure_basis_compatible_v1, scalar_motor_coordinate_v1,
 )
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"
 __all__ = [
     "PlanarBodyObservationV1", "VisualApproachRequestV1", "VisualBodyPreviewV1",
     "BodyAxisCapabilityV1", "BodyTranslationCapabilityV1",
-    "BodyMovementRequestV1",
+    "BodyMovementRequestV1", "RestBodyRequestV1",
     "BodyTargetBindingV1",
     "BodyTargetMapperV1",
     "BodyTargetProposalV1",
@@ -276,6 +277,49 @@ class BodyMovementRequestV1:
             "desired_extension": self.desired_extension,
             "lease_ticks": self.lease_ticks,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class RestBodyRequestV1:
+    """Selected Rest relation for BodyMap, never an actuator or success instruction.
+
+    Release/stowing asks for zero oral closure/reach. Settling asks for a body
+    clearance relation, which BodyMap converts using this body's actual tilt.
+    A hold has no displacement. Original selected task, source and time remain
+    attached; a constraint marker alone never grants a reservation or installation.
+    """
+
+    origin: TargetOriginV1
+    source_map_ref: NavMapRefV1
+    contribution: str
+    lease_ticks: int = 8
+    desired_clearance: float = 0.20
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.origin, TargetOriginV1) or not isinstance(self.source_map_ref, NavMapRefV1):
+            raise TypeError("Rest request needs original task/body/source identities")
+        if not isinstance(self.contribution, str) or self.contribution not in {"release", "withdraw", "settle", "hold"}:
+            raise ValueError("unknown Rest contribution")
+        if not self.origin.task_id.startswith("rest:") or not self.origin.application_id.startswith("rest_application:"):
+            raise ValueError("Rest request cannot masquerade as another task")
+        _index(self.lease_ticks, "Rest lease", 1, 8)
+        if _scalar(self.desired_clearance, "Rest clearance", 0.0, 1.0) != 0.20:
+            raise ValueError("the declared first-rest clearance is fixed at .20")
+
+    @property
+    def kind(self) -> SensorimotorTargetKindV1:
+        """Return the required resource, not a task choice or execution grant."""
+        if self.contribution == "release":
+            return SensorimotorTargetKindV1.ORAL_CLOSURE
+        if self.contribution == "withdraw":
+            return SensorimotorTargetKindV1.ORAL_REACH
+        return SensorimotorTargetKindV1.SUPPORT_EXTENSION
+
+    def as_dict(self) -> dict[str, object]:
+        """Export requested relations without claiming bodily achievement."""
+        return {"origin": self.origin.as_dict(), "source_map_ref": self.source_map_ref.as_dict(),
+                "contribution": self.contribution, "lease_ticks": self.lease_ticks,
+                "desired_clearance": self.desired_clearance, "origin_status": "selected_rest"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -521,7 +565,7 @@ class BodyTargetProposalV1:
     any resource. It also does not replace an already reserved target.
     """
 
-    request: BodyMovementRequestV1 | VisualApproachRequestV1 | OralReachRequestV1 | OralClosureRequestV1 | OralExtractionRequestV1
+    request: BodyMovementRequestV1 | VisualApproachRequestV1 | OralReachRequestV1 | OralClosureRequestV1 | OralExtractionRequestV1 | RestBodyRequestV1
     created_tick: int
     bindings: tuple[BodyTargetBindingV1, ...]
     withheld: tuple[tuple[SensorimotorTargetKindV1, str], ...]
@@ -532,7 +576,7 @@ class BodyTargetProposalV1:
     extraction_preview: OralExtractionPreviewV1 | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.request, (BodyMovementRequestV1, VisualApproachRequestV1, OralReachRequestV1, OralClosureRequestV1, OralExtractionRequestV1)):
+        if not isinstance(self.request, (BodyMovementRequestV1, VisualApproachRequestV1, OralReachRequestV1, OralClosureRequestV1, OralExtractionRequestV1, RestBodyRequestV1)):
             raise TypeError("proposal requires BodyMovementRequestV1")
         _index(self.created_tick, "created_tick")
         if not isinstance(self.replaces, tuple) or len(self.replaces) > 2:
@@ -563,7 +607,14 @@ class BodyTargetProposalV1:
             raise ValueError("only a closure request can carry its preview")
         if self.extraction_preview is not None and not isinstance(self.request, OralExtractionRequestV1):
             raise ValueError("only extraction can carry its original preview")
-        if isinstance(self.request, OralExtractionRequestV1):
+        if isinstance(self.request, RestBodyRequestV1):
+            expected.add(self.request.kind)
+            if any(item is not None for item in (self.visual_preview, self.oral_preview, self.closure_preview, self.extraction_preview)):
+                raise ValueError("Rest cannot borrow another task's geometric preview")
+            if any(not isinstance(item.target, BodyRelativeTargetV1)
+                   or item.target.rest_constraint != self.request.contribution for item in self.bindings):
+                raise ValueError("Rest proposal requires its exact declared constraint")
+        elif isinstance(self.request, OralExtractionRequestV1):
             expected.add(SensorimotorTargetKindV1.ORAL_EXTRACTION)
             if (self.extraction_preview is None or self.extraction_preview.request is not self.request
                     or self.visual_preview is not None or self.oral_preview is not None or self.closure_preview is not None):
@@ -1035,6 +1086,8 @@ class BodyTargetMapperV1:
             original = reservation.current.target.basis.planar
             if original is None or original.frame_id != feedback.planar.frame_id:
                 return "translation_frame_changed"
+        if isinstance(reservation.current.target, BodyRelativeTargetV1) and reservation.current.target.rest_constraint is not None:
+            return self._rest_refusal(reservation.current.target.rest_constraint, feedback, target=reservation.current.target)
         refusal = self._axis_refusal(reservation.current.target.kind, feedback)
         if refusal is None and reservation.current.target.kind is SensorimotorTargetKindV1.ORAL_REACH and feedback is not None:
             target = reservation.current.target
@@ -1149,6 +1202,102 @@ class BodyTargetMapperV1:
             self._reservations[kind] for kind in SensorimotorTargetKindV1
             if kind in self._reservations and tick < self._reservations[kind].current.expires_at_tick
         )
+
+    def _rest_refusal(
+        self, contribution: str, feedback: MotorFeedbackV1 | None, *, target: BodyRelativeTargetV1 | None = None,
+    ) -> str | None:
+        """Enforce the selected Rest's local constraints, without choosing a task.
+
+        This special withdrawal permission never changes ordinary seeking's
+        contact stop. Measured limb or body support must exist throughout a
+        resting transition. Unknown support, still-sealed withdrawal or changed
+        body anchors withhold movement; an old completion label is not evidence.
+        """
+        kind = (SensorimotorTargetKindV1.ORAL_CLOSURE if contribution == "release" else
+                SensorimotorTargetKindV1.ORAL_REACH if contribution == "withdraw" else SensorimotorTargetKindV1.SUPPORT_EXTENSION)
+        if not self._enabled:
+            return "bodymap_disabled"
+        if kind not in self._capabilities:
+            return "capability_unavailable"
+        if feedback is None or scalar_motor_coordinate_v1(feedback, kind) is None:
+            return "current_rest_coordinate_unavailable"
+        bearing = feedback.body_bearing
+        limb = feedback.support_contact is True and feedback.useful_loading is not None and feedback.useful_loading > 0.0
+        body = bearing is not None and bearing.contact is True and bearing.bearing is not None and bearing.bearing > 0.0
+        if not limb and not body:
+            return "rest_support_unavailable"
+        if feedback.destabilization is None or feedback.destabilization > .35:
+            return "rest_support_unstable"
+        if contribution in {"release", "withdraw"}:
+            if feedback.oral is None or feedback.oral_seal is None or feedback.oral.contact is None:
+                return "rest_oral_evidence_unavailable"
+            if target is not None and not oral_basis_compatible_v1(target.basis, feedback):
+                return "rest_oral_anchor_changed"
+            if contribution == "release" and target is not None and not oral_closure_basis_compatible_v1(target.basis, feedback):
+                return "rest_release_anchor_changed"
+            if contribution == "withdraw" and (feedback.oral_seal.sealed is not False
+                                                or feedback.oral_seal.closure is None or feedback.oral_seal.closure > .025):
+                return "rest_withdrawal_requires_release"
+        else:
+            if bearing is None or bearing.bearing is None or bearing.contact is None:
+                return "rest_body_bearing_unknown"
+            if (feedback.oral is None or feedback.oral.contact is not False or feedback.oral.extension_metres is None
+                    or feedback.oral.extension_metres > .0025 or feedback.oral_seal is None
+                    or feedback.oral_seal.sealed is not False or feedback.oral_seal.closure is None
+                    or feedback.oral_seal.closure > .025):
+                return "rest_lowering_requires_oral_stow"
+        return None
+
+    def propose_rest(
+        self, request: RestBodyRequestV1, source: MotorSupportConfigurationV1, *, at_tick: int,
+    ) -> BodyTargetProposalV1:
+        """Map one actual Rest relation using current body geometry and finite rates.
+
+        No live foreign target is implicitly cancelled to make room. Oral release,
+        stowing and lowering are separate fresh task contributions. Supported
+        lateral bodies can already meet clearance and need no forced rotation.
+        """
+        tick = self._check_tick(at_tick)
+        if not isinstance(request, RestBodyRequestV1) or request.origin.stream != self._stream:
+            raise ValueError("Rest request belongs to another body")
+        if (not isinstance(source, MotorSupportConfigurationV1) or source.stream != self._stream
+                or source.source_map_ref != request.source_map_ref or source.cutoff_tick != tick):
+            raise ValueError("Rest mapping requires its current source/cutoff")
+        if tick > _MAX_INDEX - request.lease_ticks:
+            raise ValueError("Rest target exceeds finite time")
+        feedback = self._current_feedback(tick)
+        if feedback != source.feedback:
+            raise ValueError("Rest mapping cannot replace its source's body acquisition")
+        reason = self._rest_refusal(request.contribution, feedback)
+        if not source.current:
+            reason = "current_rest_source_unavailable"
+        if self.reservations(at_tick=tick):
+            reason = "incompatible_body_resource_reserved"
+        number = _index(self._proposal_number + 1, "proposal number", 1)
+        bindings: tuple[BodyTargetBindingV1, ...] = ()
+        if reason is None:
+            if feedback is None:
+                raise RuntimeError("Rest mapping lost current evidence")
+            current = scalar_motor_coordinate_v1(feedback, request.kind)
+            if current is None:
+                raise RuntimeError("Rest mapping lost its measured coordinate")
+            goal = 0.0
+            if request.contribution in {"settle", "hold"}:
+                if feedback.body_tilt_degrees is None:
+                    reason = "rest_tilt_unknown"
+                else:
+                    cosine = math.cos(math.radians(feedback.body_tilt_degrees))
+                    goal = current if request.contribution == "hold" else min(current, .20 / max(cosine, 1e-12))
+            if reason is None:
+                binding = self._make_binding(request, request.kind, goal, feedback=feedback, number=number)
+                target = binding.target
+                if not isinstance(target, BodyRelativeTargetV1):
+                    raise RuntimeError("Rest mapping produced a non-scalar body target")
+                target = replace(target, rest_constraint=request.contribution)
+                bindings = (BodyTargetBindingV1(target, binding.capability),)
+        proposal = BodyTargetProposalV1(request, tick, bindings, () if reason is None else ((request.kind, reason),))
+        self._pending, self._proposal_number, self._last_tick = proposal, number, tick
+        return proposal
 
     def _axis_refusal(self, kind: SensorimotorTargetKindV1, feedback: MotorFeedbackV1 | None) -> str | None:
         """Check only the evidence and capability required by the requested family."""
@@ -1485,7 +1634,7 @@ class BodyTargetMapperV1:
         return proposal
 
     def _make_binding(
-        self, request: BodyMovementRequestV1, kind: SensorimotorTargetKindV1,
+        self, request: BodyMovementRequestV1 | RestBodyRequestV1, kind: SensorimotorTargetKindV1,
         goal: float, *, feedback: MotorFeedbackV1, number: int,
     ) -> BodyTargetBindingV1:
         """Calculate an anchored bounded increment, not a low-level drive command."""
@@ -1600,7 +1749,7 @@ class BodyTargetMapperV1:
             raise ValueError("proposal has no usable target to reserve")
         if (tick != proposal.created_tick
                 and (proposal.visual_preview is not None or proposal.oral_preview is not None or proposal.closure_preview is not None
-                     or proposal.extraction_preview is not None)):
+                     or proposal.extraction_preview is not None or isinstance(proposal.request, RestBodyRequestV1))):
             raise ValueError("scene-directed target must commit at its original reviewed visual cutoff")
         feedback = self._current_feedback(tick)
         live = self.reservations(at_tick=tick)
@@ -1623,7 +1772,10 @@ class BodyTargetMapperV1:
             kind = binding.target.kind
             if kind in occupied:
                 raise ValueError("resource already has a reserved target")
-            if feedback != binding.target.basis or self._axis_refusal(kind, feedback) is not None:
+            refusal = (self._rest_refusal(proposal.request.contribution, feedback, target=binding.target)
+                       if isinstance(proposal.request, RestBodyRequestV1) and isinstance(binding.target, BodyRelativeTargetV1)
+                       else self._axis_refusal(kind, feedback))
+            if feedback != binding.target.basis or refusal is not None:
                 raise ValueError("target proposal no longer has a valid current body basis")
             committed = CommittedBodyTargetV1(binding.target, execution, tick)
             added.append(BodyTargetReservationV1(committed, committed, binding.capability, tick))

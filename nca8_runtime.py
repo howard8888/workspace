@@ -43,6 +43,8 @@ from nca8_translation import TranslationApplicationV1
 from nca8_followmom import FollowMomApplicationV1
 from nca8_seek_nipple import SeekNippleApplicationV1
 from nca8_suckle import SuckleApplicationV1, SuckleExtractionApplicationV1
+from nca8_rest import RestApplicationV1, RestIPV1, RestProfileV1
+from nca8_rest_outcomes import RestFocalAllocationV1
 from nca8_maternal import MaternalNavMapStateV1
 from nca8_feeding import FeedingDetailNavMapStateV1
 from nca8_body_targets import BodyAxisCapabilityV1, BodyTargetProposalV1, BodyTranslationCapabilityV1, nominal_body_capabilities_v1
@@ -109,7 +111,7 @@ from nca8_support_dynamics import SupportDynamicsV1
 from nca8_trace import Nca8TraceBufferV1, Nca8TraceEventV1
 from nca8_visual import VisualNavMapStateV1
 
-__version__ = "0.22.0"
+__version__ = "0.23.0"
 __all__ = [
     "NCA8_NO_ACTION",
     "Nca8CognitiveCycleResultV1",
@@ -1629,6 +1631,7 @@ class RightingPreviewResultV1:
     seeking_outcome_allocation: SeekingFocalAllocationV1 | None = None
     suckle_outcome_allocation: SuckleFocalAllocationV1 | None = None
     extraction_outcome_allocation: ExtractionFocalAllocationV1 | None = None
+    rest_outcome_allocation: RestFocalAllocationV1 | None = None
 
     def as_dict(self) -> dict[str, object]:
         """Return a detached review record; exporting never replays the calculation."""
@@ -1646,6 +1649,8 @@ class RightingPreviewResultV1:
                if self.maternal_outcome_allocation is not None else {}),
             **({"seeking_outcome_allocation": self.seeking_outcome_allocation.as_dict()}
                if self.seeking_outcome_allocation is not None else {}),
+            **({"rest_outcome_allocation": self.rest_outcome_allocation.as_dict()}
+               if self.rest_outcome_allocation is not None else {}),
             **({"extraction_outcome_allocation": self.extraction_outcome_allocation.as_dict()}
                if self.extraction_outcome_allocation is not None else {}),
             **({"suckle_outcome_allocation": self.suckle_outcome_allocation.as_dict()}
@@ -1702,6 +1707,7 @@ class Nca8RightingPreviewSessionV1:
         visual_preview_enabled: bool = False, monitor_support_completion: bool = False,
         righting_target_inset_degrees: float = 0.0,
         translation_capability: BodyTranslationCapabilityV1 | None = None, translation_mapping_sign: int = 1,
+        rest_profile: RestProfileV1 | None = None,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("preview requires a MotorStreamRefV1")
@@ -1727,6 +1733,13 @@ class Nca8RightingPreviewSessionV1:
         self.influence_enabled = influence_enabled
         self.maps = create_posture_support_map_library_v1()
         self.sensory = Nca8BodySensoryModuleV1(self.maps)
+        self.rest: RestIPV1 | None = None
+        if rest_profile is not None:
+            self.rest = RestIPV1(self.maps.posture_support_ref, rest_profile)
+            if len(self._primitives) >= 8 or any(item.primitive_id == self.rest.primitive_id for item in self._primitives):
+                raise ValueError("Rest cannot duplicate or exceed the existing primitive repertoire")
+            self._primitives = (*self._primitives, self.rest)
+            self.sensory.configure_rest_outcomes(stream, rest_profile)
         if not isinstance(outcome_attention_enabled, bool):
             raise TypeError("outcome_attention_enabled must be Boolean")
         if outcome_attention_enabled:
@@ -1878,6 +1891,38 @@ class Nca8RightingPreviewSessionV1:
         extraction_allocation = extraction_attention.allocate(working, cycle_id=cycle_id) if extraction_attention is not None else None
         return seeking_allocation, suckle_allocation, extraction_allocation, None
 
+    def _allocate_support_outcome_work(
+        self, working: WorkingNavMapStateV1 | None, *, cycle_id: int, cutoff_tick: int,
+    ) -> tuple[RightingFocalAllocationV1 | None, RestFocalAllocationV1 | None, NavigationDecisionV1 | None]:
+        """Transport Righting/Rest heads to the existing allocator before consumption.
+
+        No ranking, interpretation or task choice is performed in this integration
+        seam. The losing owner is not invoked to interpret. Old independent
+        dependencies impose one hold, never two demanding cognitive operations.
+        """
+        righting, rest = self.sensory.outcome_attention, self.sensory.rest_outcomes
+        if rest is None:
+            raise ValueError("shared support allocation requires the opt-in Rest source route")
+        if not self.navigation.enabled:
+            return (None if righting is None else RightingFocalAllocationV1("navigation_disabled"),
+                    RestFocalAllocationV1("navigation_disabled"), None)
+        first = None if righting is None else righting.interpretation_candidate(working, cycle_id=cycle_id)
+        second = rest.interpretation_candidate(working, cycle_id=cycle_id)
+        candidates = tuple(item for item in (first, second) if item is not None)
+        if candidates and working is not None:
+            winner = self.navigation.allocate_outcome_interpretation(working, candidates, cycle_id=cycle_id, at_tick=cutoff_tick)
+            grant = self.navigation.last_decision
+            if winner is None or grant is None:
+                raise RuntimeError("Navigation lost a support interpretation grant")
+            righting_allocation = None if righting is None else (
+                righting.allocate(working, cycle_id=cycle_id, grant=grant, require_grant=True) if winner is first else
+                RightingFocalAllocationV1("deferred_other_interpretation"))
+            rest_allocation = (rest.allocate(working, cycle_id=cycle_id, grant=grant) if winner is second else
+                               RestFocalAllocationV1("deferred_other_question"))
+            return righting_allocation, rest_allocation, grant
+        return (None if righting is None else righting.allocate(working, cycle_id=cycle_id, require_grant=True),
+                rest.allocate(working, cycle_id=cycle_id), None)
+
     def select_prepared(
         self, opportunity: RightingSourceOpportunityV1, *, maternal_attention: MaternalOutcomeAttentionV1 | None = None,
         seeking_attention: SeekingOutcomeAttentionV1 | None = None, suckle_attention: SuckleOutcomeAttentionV1 | None = None,
@@ -1922,14 +1967,27 @@ class Nca8RightingPreviewSessionV1:
                 False, "source:posture_support",
             )
         outcome_owner = self.sensory.outcome_attention
+        if self.rest is not None and self.rest.wants_attention:
+            if source_bid is None:
+                source_bid = AttentionBidV1(f"support_bid:{cycle}", "source:posture_support", source, "body_sensory", cycle,
+                                            0, 20, 0, 0, 0, 20, ("developmental_rest_current_need",), False, "source:posture_support")
+            else:
+                source_bid = replace(source_bid, reasons=(*source_bid.reasons, "developmental_rest_current_need"))
         if outcome_owner is not None:
             source_bid = outcome_owner.contribute_bid(source_bid)
+        if self.sensory.rest_outcomes is not None:
+            source_bid = self.sensory.rest_outcomes.contribute_bid(source_bid)
         if source_bid is not None:
             bids.append(source_bid)
         selection = self.attention.select(bids, current_wnm=self.navigation.current_wnm, cycle_id=cycle)
         working = self.navigation.update_wnm(selection)
         allocation = None
-        if outcome_owner is not None:
+        rest_allocation = None
+        support_decision = None
+        if self.sensory.rest_outcomes is not None:
+            allocation, rest_allocation, support_decision = self._allocate_support_outcome_work(
+                working, cycle_id=cycle, cutoff_tick=opportunity.cutoff_tick)
+        elif outcome_owner is not None:
             allocation = (outcome_owner.allocate(working, cycle_id=cycle) if self.navigation.enabled
                           else RightingFocalAllocationV1("navigation_disabled"))
         maternal_allocation = None
@@ -1973,6 +2031,17 @@ class Nca8RightingPreviewSessionV1:
                 hold_reason = "feeding_dependent_unresolved"
             else:
                 raise RuntimeError("extraction cannot add another demanding interpretation")
+        if rest_allocation is not None and not rest_allocation.permits_primitive_selection:
+            if hold_reason is None:
+                hold_reason = f"rest_{rest_allocation.kind}"
+            elif hold_reason == "dependent_unresolved" and rest_allocation.kind == "dependent_unresolved":
+                hold_reason = "support_dependent_unresolved"
+            else:
+                raise RuntimeError("Rest cannot add another demanding operation")
+        if support_decision is not None:
+            if interpretation_decision is not None:
+                raise RuntimeError("one opportunity cannot carry both support and feeding interpretation grants")
+            interpretation_decision = support_decision
         if interpretation_decision is not None:
             decision = interpretation_decision  # Navigation reserved the opportunity before request consumption.
         elif hold_reason is not None:
@@ -1984,7 +2053,7 @@ class Nca8RightingPreviewSessionV1:
         result = RightingPreviewResultV1(
             cycle, opportunity.cutoff_tick, source, selection, decision, None, self.righting.task,
             opportunity.source_status, opportunity.persistence_rank, allocation, source_bid if outcome_owner is not None else None,
-            maternal_allocation, seeking_allocation, suckle_allocation, extraction_allocation,
+            maternal_allocation, seeking_allocation, suckle_allocation, extraction_allocation, rest_allocation,
         )
         self._selected = result
         return result
@@ -2024,6 +2093,10 @@ class Nca8RightingPreviewSessionV1:
                 application.contribution, application.projection.basis, at_tick=cutoff_tick,
                 lease_ticks=application.projection.horizon_ticks, replace_existing=replace_existing,
             )
+        elif isinstance(application, RestApplicationV1):
+            if self.task_pnm_consumer_enabled:
+                self.prediction.adopt_rest_preview(application.projection)
+            proposal = self.mapper.propose_rest(application.contribution, application.projection.basis, at_tick=cutoff_tick)
         elif isinstance(application, SuckleExtractionApplicationV1):
             if self.task_pnm_consumer_enabled:
                 self.prediction.adopt_suckle_extraction_preview(application.projection)

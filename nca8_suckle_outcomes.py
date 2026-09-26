@@ -28,7 +28,7 @@ from nca8_sensorimotor_contracts import BodyRelativeTargetV1, CommittedBodyTarge
 from nca8_suckle import SuckleApplicationV1
 from nca8_visual import VisualObservationV1
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = ["SuckleEndpointV1", "SuckleIntervalEvidenceV1", "SuckleClaimV1", "SuckleOutcomeV1", "SuckleOutcomeFrameV1",
            "SuckleOutcomeRuntimeV1", "validate_suckle_claim_v1", "validate_suckle_outcome_v1", "__version__"]
 _RELATIONS = ("mouth_position", "detail_anchor", "closure", "seal")
@@ -307,6 +307,8 @@ class SuckleOutcomeRuntimeV1:
         self._recent: deque[SuckleEndpointV1] = deque(maxlen=16)
         self._awaiting: SuckleClaimV1 | None = None
         self._installed_target: CommittedBodyTargetV1 | None = None
+        self._rest_target: CommittedBodyTargetV1 | None = None
+        self._rest_end_tick: int | None = None
         self._execution_end_tick: int | None = None
         self._last_interval, self._last_cutoff = -1, -1
         self._last_command_id = self._last_registration_cycle = self._number = 0
@@ -374,6 +376,23 @@ class SuckleOutcomeRuntimeV1:
         self._pending[claim.preview.pnm.pnm_id].installed = True
         self._installed_target, self._execution_end_tick, self._awaiting = claim.targets[0], None, None
 
+    def observe_rest_installation(self, target: CommittedBodyTargetV1, *, at_tick: int) -> None:
+        """Record an actually accepted foreign Rest target, never attribute its action here.
+
+        Rest reuses support/closure/reach resources. Preserve the full real command
+        and sensor batch rather than manufacture neutral copies. Only the exact
+        installation witnessed at this cutoff may explain its foreign reports.
+        This method creates no claim, source relevance, participant or permission.
+        """
+        tick = _tick(at_tick)
+        if (not isinstance(target, CommittedBodyTargetV1) or not isinstance(target.target, BodyRelativeTargetV1)
+                or target.target.rest_constraint is None or target.target.origin.stream != self.stream
+                or target.committed_tick != tick or tick != self._last_cutoff):
+            raise ValueError("foreign Rest evidence requires its actual current body installation")
+        if self._rest_target is not None and target.committed_tick <= self._rest_target.committed_tick:
+            raise ValueError("foreign Rest installation cannot be replayed or moved backward")
+        self._rest_target, self._rest_end_tick = target, None
+
     def end_execution(self, *, at_tick: int, reason: str = "cancelled") -> None:
         """Stop pursuit, retaining prior exposure and already realized endpoint claims.
 
@@ -384,6 +403,8 @@ class SuckleOutcomeRuntimeV1:
         tick = _tick(at_tick)
         if reason not in {"cancelled", "replacement"} or tick < self._last_cutoff:
             raise ValueError("Suckle execution end has a historical time or invalid reason")
+        if self._rest_target is not None and self._rest_end_tick is None:
+            self._rest_end_tick = tick
         if self._installed_target is not None and self._execution_end_tick is None:
             self._execution_end_tick = tick
         for item in self._pending.values():
@@ -411,6 +432,7 @@ class SuckleOutcomeRuntimeV1:
         if self._last_interval + len(intervals) + 1 != cutoff:
             raise ValueError("Suckle intervals must account for every elapsed physical interval")
         previous_command, ended_at = self._last_command_id, self._execution_end_tick
+        rest_ended = self._rest_end_tick
         known = {item.feedback.sample_id: item for item in self._recent}
         for index, interval in enumerate(intervals):
             if not isinstance(interval, SuckleIntervalEvidenceV1) or interval.tick != self._last_interval + index + 1:
@@ -424,7 +446,7 @@ class SuckleOutcomeRuntimeV1:
                 raise ValueError("Suckle interval cannot repeat the closure resource")
             if any(r.committed_target.target.origin.stream != self.stream for r in interval.reports):
                 raise ValueError("Suckle execution report belongs to a foreign generation")
-            if any(r.committed_target is not self._installed_target for r in closure_reports):
+            if any(r.committed_target is not self._installed_target and r.committed_target is not self._rest_target for r in closure_reports):
                 raise ValueError("closure report does not describe the original installed target")
             if command is not None and command.oral_closure_drive not in (None, 0.0):
                 if not closure_reports:
@@ -433,11 +455,15 @@ class SuckleOutcomeRuntimeV1:
                 if (not report.committed_target.committed_tick <= interval.tick < report.committed_target.expires_at_tick
                         or report.reported_tick != interval.tick or report.disposition.value not in {"active", "partial"}):
                     raise ValueError("closure command lacks current live permission within its lease")
-                if ended_at is not None and interval.tick >= ended_at:
+                end = rest_ended if report.committed_target is self._rest_target else ended_at
+                if end is not None and interval.tick >= end:
                     raise ValueError("closure command follows revoked execution")
             for report in closure_reports:
                 if report.disposition.value in _END_DISPOSITIONS:
-                    ended_at = report.reported_tick if ended_at is None else min(ended_at, report.reported_tick)
+                    if report.committed_target is self._rest_target:
+                        rest_ended = report.reported_tick if rest_ended is None else min(rest_ended, report.reported_tick)
+                    else:
+                        ended_at = report.reported_tick if ended_at is None else min(ended_at, report.reported_tick)
             for endpoint in interval.endpoints():
                 sample = endpoint.feedback
                 sample.validate_available(stream=self.stream, at_tick=cutoff)
@@ -476,6 +502,8 @@ class SuckleOutcomeRuntimeV1:
             for report in interval.reports:
                 if report.disposition.value not in _END_DISPOSITIONS:
                     continue
+                if report.committed_target is self._rest_target and self._rest_end_tick is None:
+                    self._rest_end_tick = report.reported_tick
                 if report.committed_target is self._installed_target and self._execution_end_tick is None:
                     self._execution_end_tick = report.reported_tick
                 for item in self._pending.values():

@@ -26,7 +26,7 @@ from typing import Protocol
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     "BodyRelativeTargetV1", "BodyTranslationTargetV1", "OralExtractionTargetV1",
     "CommittedBodyTargetV1",
@@ -245,6 +245,7 @@ class BodyRelativeTargetV1:
     max_rate: float
     lease_ticks: int = _MAX_LEASE_TICKS
     max_corrections: int = _MAX_CORRECTIONS
+    rest_constraint: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "target_id", _text(self.target_id, "target_id"))
@@ -285,6 +286,19 @@ class BodyRelativeTargetV1:
             raise ValueError("max_rate exceeds the declared motor capability or is not positive")
         if not lower <= self.endpoint <= upper:
             raise ValueError("anchored target endpoint is outside the physical coordinate range")
+        if self.rest_constraint is not None:
+            expected = {"release": SensorimotorTargetKindV1.ORAL_CLOSURE,
+                        "withdraw": SensorimotorTargetKindV1.ORAL_REACH,
+                        "settle": SensorimotorTargetKindV1.SUPPORT_EXTENSION,
+                        "hold": SensorimotorTargetKindV1.SUPPORT_EXTENSION}
+            if not isinstance(self.rest_constraint, str) or self.rest_constraint not in expected:
+                raise ValueError("unknown Rest constraint")
+            if (self.kind is not expected[self.rest_constraint] or self.offset > 0.0
+                    or not self.origin.application_id.startswith("rest_application:")
+                    or not self.origin.task_id.startswith("rest:")):
+                raise ValueError("Rest constraints require the original Rest family and nonpositive displacement")
+            if self.rest_constraint == "hold" and self.offset != 0.0:
+                raise ValueError("a Rest hold cannot request displacement")
 
     @property
     def basis_coordinate(self) -> float:
@@ -316,6 +330,7 @@ class BodyRelativeTargetV1:
             "max_rate": self.max_rate,
             "lease_ticks": self.lease_ticks,
             "max_corrections": self.max_corrections,
+            **({"rest_constraint": self.rest_constraint} if self.rest_constraint is not None else {}),
             **({"coordinate_frame": "body_forward_oral_v1", "coordinate_units": "metres", "rate_units": "metres_per_second"}
                if self.kind is SensorimotorTargetKindV1.ORAL_REACH else {}),
         }

@@ -25,12 +25,12 @@ from collections import deque
 from dataclasses import dataclass, replace
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
-from nca8_executive import AttentionBidV1, WorkingNavMapStateV1
+from nca8_executive import AttentionBidV1, WorkingNavMapStateV1, OutcomeInterpretationCandidateV1, NavigationDecisionV1
 from nca8_maps import DurableNavMapRefV1, NavMapStateV1
 from nca8_outcomes import RightingClaimOutcomeV1
 from nca8_righting import RightingContextV1, RightingTaskV1, righting_support_adequacy_v1
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "RightingMismatchRequestV1", "RightingInterpretationV1", "RightingFocalAllocationV1",
     "RightingOutcomeAttentionV1", "__version__",
@@ -392,7 +392,27 @@ class RightingOutcomeAttentionV1:
         return replace(ordinary, prediction_or_envelope_failure_rank=max(ordinary.prediction_or_envelope_failure_rank, 40),
                        reasons=(*ordinary.reasons, "task_pnm_outcome_request"))
 
-    def allocate(self, working: WorkingNavMapStateV1 | None, *, cycle_id: int) -> RightingFocalAllocationV1:
+    def interpretation_candidate(self, working: WorkingNavMapStateV1 | None, *, cycle_id: int) -> OutcomeInterpretationCandidateV1 | None:
+        """Offer the old Righting head to the shared allocator without interpreting it.
+
+        This additive N seam leaves the original single-owner route unchanged.
+        A losing head retains its original admission/expiry and can compete later.
+        """
+        source, task = self._source, self._task
+        if source is None or source.applied_cycle != cycle_id:
+            raise ValueError("Righting question requires current source admission")
+        if (working is None or working.primary_source_state.source_map_ref != self.source_ref or not self._pending
+                or task is not None and (cycle_id - task.started_cycle >= 20 or self._last_admission - task.started_tick >= 80)):
+            return None
+        if working.primary_source_state is not source or working.refreshed_cycle != cycle_id:
+            raise ValueError("Righting question cannot use a copied WNM source")
+        request = self._pending[0]
+        return OutcomeInterpretationCandidateV1(request.request_id, source, request.admitted_tick, request.expires_at_tick)
+
+    def allocate(
+        self, working: WorkingNavMapStateV1 | None, *, cycle_id: int,
+        grant: NavigationDecisionV1 | None = None, require_grant: bool = False,
+    ) -> RightingFocalAllocationV1:
         """Spend at most one interpretation slot, or release a later reconsideration.
 
         This method is called only after Attention and WNM establishment. It
@@ -410,6 +430,14 @@ class RightingOutcomeAttentionV1:
             raise ValueError("allocation must use the actual current WNM")
         if working is not None and working.primary_source_state.source_map_ref == self.source_ref and working.primary_source_state is not source:
             raise ValueError("interpretation must use this owner's exact eligible source sample")
+        if not isinstance(require_grant, bool):
+            raise TypeError("shared Righting allocation gate must be Boolean")
+        if require_grant:
+            candidate = self.interpretation_candidate(working, cycle_id=cycle_id)
+            if candidate is not None and (not isinstance(grant, NavigationDecisionV1) or grant.cycle_id != cycle_id
+                    or grant.wnm is not working or grant.application is not None
+                    or grant.reason != f"outcome_interpretation:{candidate.request_id}"):
+                raise ValueError("shared support interpretation requires Navigation's actual matching grant")
         self._last_allocation_cycle = cycle_id
         if working is None or working.primary_source_state.source_map_ref != self.source_ref:
             return RightingFocalAllocationV1("other_source")

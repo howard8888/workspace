@@ -177,7 +177,7 @@ def test_release_registry_contains_data_and_observer_not_new_task_primitives():
     import cca8_run
     import nca8_feeding_state
     rows = cca8_run._cca8_component_rows()
-    assert cca8_run.__version__ == "0.30.45" and len(rows) == 123
+    assert cca8_run.__version__ == "0.30.46" and len(rows) == 126
     assert len(cca8_run.PRIMITIVES) == 8
     for module in (nca8_feeding_state, demo):
         matches = [(version, path) for name, version, path in rows if name == module.__name__]

@@ -40,7 +40,7 @@ from nca8_primitives import (
 )
 from nca8_sensorimotor_contracts import TargetOriginV1
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __all__ = [
     "RightingActivityV1", "RightingContextV1", "RightingTaskV1", "RightingApplicationV1", "RightingIPV1",
     "righting_support_adequacy_v1", "__version__",
@@ -105,6 +105,17 @@ def righting_support_adequacy_v1(feedback: MotorFeedbackV1 | None, context: Righ
         raise TypeError("adequacy requires RightingContextV1")
     if feedback is not None and not isinstance(feedback, MotorFeedbackV1):
         raise TypeError("adequacy requires motor feedback or None")
+    if feedback is not None and context.activity is RightingActivityV1.REST and feedback.body_bearing is not None:
+        bearing = feedback.body_bearing
+        if feedback.destabilization is None:
+            return None
+        limb_known = feedback.support_contact is not None and feedback.useful_loading is not None
+        body_known = bearing.contact is not None and bearing.bearing is not None
+        limb_supported = limb_known and feedback.support_contact is True and feedback.useful_loading is not None and feedback.useful_loading >= 0.0
+        body_supported = body_known and bearing.contact is True and bearing.bearing is not None and bearing.bearing > 0.0
+        if limb_supported or body_supported:
+            return feedback.destabilization <= context.criterion[2]
+        return False if limb_known and body_known else None
     if feedback is None or feedback.support_contact is None or feedback.useful_loading is None or feedback.destabilization is None:
         return None
     maximum_tilt, minimum_load, maximum_instability = context.criterion
@@ -368,6 +379,10 @@ class RightingIPV1:
         feedback = source.feedback
         if self._task is not None and (source.stream != self._task.stream or source.source_map_ref != self._task.source_map_ref):
             return "task_source_or_stream_changed"
+        if self._context.activity is RightingActivityV1.REST and feedback.body_bearing is not None:
+            adequate = righting_support_adequacy_v1(feedback, self._context)
+            return ("currently_adequate_not_dwell" if adequate is True else
+                    "support_relation_unknown" if adequate is None else "support_needed")
         if feedback.support_contact is None or feedback.useful_loading is None or feedback.destabilization is None:
             return "support_relation_unknown"
         max_tilt, min_load, max_instability = self._context.criterion

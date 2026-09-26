@@ -25,7 +25,7 @@ from nca8_seek_nipple import SeekNippleApplicationV1
 from nca8_sensorimotor_contracts import BodyRelativeTargetV1, CommittedBodyTargetV1, LocalTargetReportV1, SensorimotorTargetKindV1
 from nca8_visual import VisualObservationV1
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = ["SeekNippleEndpointV1", "SeekNippleIntervalEvidenceV1", "SeekNippleClaimV1", "SeekNippleOutcomeV1",
            "SeekNippleOutcomeFrameV1", "SeekNippleOutcomeRuntimeV1", "validate_seeking_outcome_v1", "validate_seeking_claim_v1", "__version__"]
 _RELATIONS = ("mouth_position", "detail_anchor", "separation")
@@ -251,6 +251,8 @@ class SeekNippleOutcomeRuntimeV1:
         self._recent: deque[SeekNippleEndpointV1] = deque(maxlen=16)
         self._awaiting: SeekNippleClaimV1 | None = None
         self._installed_target: CommittedBodyTargetV1 | None = None
+        self._rest_target: CommittedBodyTargetV1 | None = None
+        self._rest_end_tick: int | None = None
         self._execution_end_tick: int | None = None
         self._last_interval = -1
         self._last_cutoff = -1
@@ -337,6 +339,23 @@ class SeekNippleOutcomeRuntimeV1:
         self._pending[claim.preview.pnm.pnm_id].installed = True
         self._installed_target, self._execution_end_tick, self._awaiting = claim.targets[0], None, None
 
+    def observe_rest_installation(self, target: CommittedBodyTargetV1, *, at_tick: int) -> None:
+        """Record an actually accepted foreign Rest target, never attribute its action here.
+
+        Rest reuses support/closure/reach resources. Preserve the full real command
+        and sensor batch rather than manufacture neutral copies. Only the exact
+        installation witnessed at this cutoff may explain its foreign reports.
+        This method creates no claim, source relevance, participant or permission.
+        """
+        tick = _tick(at_tick)
+        if (not isinstance(target, CommittedBodyTargetV1) or not isinstance(target.target, BodyRelativeTargetV1)
+                or target.target.rest_constraint is None or target.target.origin.stream != self.stream
+                or target.committed_tick != tick or tick != self._last_cutoff):
+            raise ValueError("foreign Rest evidence requires its actual current body installation")
+        if self._rest_target is not None and target.committed_tick <= self._rest_target.committed_tick:
+            raise ValueError("foreign Rest installation cannot be replayed or moved backward")
+        self._rest_target, self._rest_end_tick = target, None
+
     def end_execution(self, *, at_tick: int, reason: str = "cancelled") -> None:
         """End pursuit, preserving already realized endpoint and buffered exposure.
 
@@ -347,6 +366,8 @@ class SeekNippleOutcomeRuntimeV1:
         tick = _tick(at_tick)
         if reason not in {"cancelled", "replacement"} or tick < self._last_cutoff:
             raise ValueError("seeking execution end has an invalid reason or historical time")
+        if self._rest_target is not None and self._rest_end_tick is None:
+            self._rest_end_tick = tick
         if self._installed_target is not None and self._execution_end_tick is None:
             self._execution_end_tick = tick
         for item in self._pending.values():
@@ -369,7 +390,7 @@ class SeekNippleOutcomeRuntimeV1:
             raise ValueError("at most sixteen frozen seeking intervals are permitted")
         previous_command = self._last_command_id
         known = {item.feedback.sample_id: item for item in self._recent}
-        ended_at = self._execution_end_tick
+        ended_at, rest_ended = self._execution_end_tick, self._rest_end_tick
         for index, interval in enumerate(intervals):
             if not isinstance(interval, SeekNippleIntervalEvidenceV1) or interval.tick != self._last_interval + index + 1:
                 raise ValueError("seeking intervals must be contiguous and consumed once")
@@ -385,7 +406,7 @@ class SeekNippleOutcomeRuntimeV1:
             for report in interval.reports:
                 if report.committed_target.target.origin.stream != self.stream:
                     raise ValueError("seeking execution evidence belongs to a foreign generation")
-            if any(report.committed_target is not self._installed_target for report in oral_reports):
+            if any(report.committed_target is not self._installed_target and report.committed_target is not self._rest_target for report in oral_reports):
                 raise ValueError("oral report does not describe the original installed target")
             if command is not None and command.oral_drive not in (None, 0.0):
                 if not oral_reports:
@@ -394,14 +415,18 @@ class SeekNippleOutcomeRuntimeV1:
                 if (not report.committed_target.committed_tick <= interval.tick < report.committed_target.expires_at_tick
                         or report.reported_tick != interval.tick or report.disposition.value not in {"active", "partial"}):
                     raise ValueError("oral command lacks current live permission inside the original lease")
-                if ended_at is not None and interval.tick >= ended_at:
+                end = rest_ended if report.committed_target is self._rest_target else ended_at
+                if end is not None and interval.tick >= end:
                     raise ValueError("oral command follows explicit cancellation")
                 if any(item.ended_tick is not None and interval.tick >= item.ended_tick for item in self._pending.values()
                        if item.claim.targets and item.claim.targets[0] is report.committed_target):
                     raise ValueError("oral command follows revoked seeking execution")
             for report in oral_reports:
                 if report.disposition.value in {"cancelled", "interrupted", "unavailable", "blocked"}:
-                    ended_at = report.reported_tick if ended_at is None else min(ended_at, report.reported_tick)
+                    if report.committed_target is self._rest_target:
+                        rest_ended = report.reported_tick if rest_ended is None else min(rest_ended, report.reported_tick)
+                    else:
+                        ended_at = report.reported_tick if ended_at is None else min(ended_at, report.reported_tick)
             for endpoint in interval.endpoints():
                 sample = endpoint.feedback
                 sample.validate_available(stream=self.stream, at_tick=cutoff)
@@ -441,6 +466,8 @@ class SeekNippleOutcomeRuntimeV1:
             for report in interval.reports:
                 if report.disposition.value not in {"cancelled", "interrupted", "unavailable", "blocked"}:
                     continue
+                if report.committed_target is self._rest_target and self._rest_end_tick is None:
+                    self._rest_end_tick = report.reported_tick
                 if report.committed_target is self._installed_target and self._execution_end_tick is None:
                     self._execution_end_tick = report.reported_tick
                 for item in self._pending.values():

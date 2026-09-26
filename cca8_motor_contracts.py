@@ -24,10 +24,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
+    "BodyBearingFeedbackV1",
     "MOTOR_COMMAND_SCHEMA_V1",
     "MOTOR_FEEDBACK_SCHEMA_V1",
     "MOTOR_FRAME_V1",
@@ -367,6 +368,40 @@ class FeedingDeficitFeedbackV1:
 
 
 @dataclass(frozen=True, slots=True)
+class BodyBearingFeedbackV1:
+    """Measured body-ground contact and normalized bearing, not limb competence.
+
+    This independent optional body facet supplies neither a resting label nor
+    task success. Both measurements may be unavailable. Contradictions remain
+    visible to the body/source owner rather than being repaired at transport.
+    The enclosing MotorFeedbackV1 supplies original stream and acquisition time.
+    """
+
+    contact: bool | None
+    bearing: float | None
+
+    def __post_init__(self) -> None:
+        if self.contact is not None and not isinstance(self.contact, bool):
+            raise TypeError("body contact requires Boolean or unavailable")
+        object.__setattr__(self, "bearing", _optional_number(self.bearing, "body bearing", 0.0, 1.0))
+
+    def as_dict(self) -> dict[str, object]:
+        """Export measurements only; this value cannot authorize any action."""
+        return {"contact": self.contact, "bearing": self.bearing, "units": "normalized_body_bearing"}
+
+    @classmethod
+    def from_dict(cls, value: object) -> BodyBearingFeedbackV1:
+        """Decode the exact body-bearing seam without accepting evaluator fields."""
+        packet = _fields(value, frozenset({"contact", "bearing", "units"}))
+        if packet["units"] != "normalized_body_bearing":
+            raise ValueError("unsupported body-bearing units")
+        contact = packet["contact"]
+        if contact is not None and not isinstance(contact, bool):
+            raise TypeError("body contact requires Boolean or unavailable")
+        return cls(contact, _optional_number(packet["bearing"], "body bearing", 0.0, 1.0))
+
+
+@dataclass(frozen=True, slots=True)
 class MotorCommandV1:
     """Signed normalized drives for one external interval [tick, tick+1).
 
@@ -524,8 +559,11 @@ class MotorFeedbackV1:
     oral_seal: OralSealFeedbackV1 | None = field(default=None, kw_only=True)
     oral_extraction: OralExtractionFeedbackV1 | None = field(default=None, kw_only=True)
     feeding_deficit: FeedingDeficitFeedbackV1 | None = field(default=None, kw_only=True)
+    body_bearing: BodyBearingFeedbackV1 | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
+        if self.body_bearing is not None and not isinstance(self.body_bearing, BodyBearingFeedbackV1):
+            raise TypeError("body bearing requires its independent typed measurement facet")
         if self.feeding_deficit is not None and (not isinstance(self.feeding_deficit, FeedingDeficitFeedbackV1)
                                                 or self.oral_extraction is None):
             raise TypeError("feeding deficit requires its typed facet and declared extraction/body context")
@@ -573,7 +611,7 @@ class MotorFeedbackV1:
 
     def as_dict(self) -> dict[str, object]:
         """Return a detached JSON-safe sensor packet retaining original identity."""
-        return {
+        packet: dict[str, object] = {
             "schema": ("body_motor_feedback_v6" if self.feeding_deficit is not None else
                        "body_motor_feedback_v5" if self.oral_extraction is not None else
                        "body_motor_feedback_v4" if self.oral_seal is not None else
@@ -597,6 +635,9 @@ class MotorFeedbackV1:
             "useful_loading": self.useful_loading,
             "destabilization": self.destabilization,
         }
+        if self.body_bearing is not None:
+            packet.update(base_schema=packet["schema"], schema="body_motor_feedback_v7", body_bearing=self.body_bearing.as_dict())
+        return packet
 
     @classmethod
     def from_dict(cls, value: object) -> MotorFeedbackV1:
@@ -607,6 +648,16 @@ class MotorFeedbackV1:
         packet shape. Unknown task, policy, outcome and scenario keys are errors.
         No raw mapping is retained, and changing it later cannot mutate a record.
         """
+        if isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v7":
+            base_schema = value.get("base_schema")
+            if base_schema not in {MOTOR_FEEDBACK_SCHEMA_V1, *(f"body_motor_feedback_v{n}" for n in range(2, 7))}:
+                raise ValueError("body-bearing packet requires a declared v1-v6 base schema")
+            if "body_bearing" not in value:
+                raise ValueError("body-bearing measurement is missing")
+            base = {key: item for key, item in value.items() if key not in {"base_schema", "body_bearing"}}
+            base["schema"] = base_schema
+            original = cls.from_dict(base)
+            return replace(original, body_bearing=BodyBearingFeedbackV1.from_dict(value["body_bearing"]))
         feeding = isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v6"
         extraction = feeding or isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v5"
         seal = extraction or isinstance(value, Mapping) and value.get("schema") == "body_motor_feedback_v4"

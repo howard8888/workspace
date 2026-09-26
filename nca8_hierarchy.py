@@ -38,6 +38,7 @@ from dataclasses import dataclass, replace
 
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1, admit_motor_feedback_batch_v1
 from cca8_support_world import (
+    BodyBearingProfileV1,
     MotorBodyStateV1, MotorWorldProfileV1, MotorWorldV1, PlanarWorldProfileV1, PlanarWorldStateV1,
     OralWorldProfileV1, OralWorldStateV1, OralSealWorldProfileV1, OralSealWorldStateV1,
     OralExtractionWorldProfileV1, OralExtractionWorldStateV1, FeedingConsequenceProfileV1, FeedingConsequenceStateV1,
@@ -67,7 +68,9 @@ from nca8_outcomes import (
     RightingClaimOutcomeV1, RightingClaimRegistrationV1, RightingIntervalEvidenceV1, RightingOutcomeRuntimeV1,
     RightingTaskAssessmentV1,
 )
-from nca8_righting import RightingApplicationV1, RightingContextV1
+from nca8_righting import RightingApplicationV1, RightingContextV1, RightingActivityV1
+from nca8_rest import RestApplicationV1, RestProfileV1
+from nca8_rest_outcomes import RestCycleFrameV1, RestPhaseFReportV1
 from nca8_outcome_attention import RightingMismatchRequestV1
 from nca8_learning import LearningPhaseFReportV1
 from nca8_maternal_learning import MaternalLearningPhaseFReportV1
@@ -80,7 +83,7 @@ from nca8_sensorimotor import LocalControlEventV1, SensorimotorExecutorV1, Senso
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1, LocalTargetReportV1, SensorimotorTargetKindV1
 from nca8_trace import Nca8TraceBufferV1
 
-__version__ = "0.25.0"
+__version__ = "0.26.0"
 __all__ = [
     "IntegratedRightingCycleV1", "IntegratedRightingCoreV1", "IntegratedRightingTrialV1", "__version__",
 ]
@@ -136,6 +139,7 @@ class IntegratedRightingCycleV1:
     extraction_attention: ExtractionAttentionFrameV1 | None = None
     extraction_learning_report: ExtractionLearningPhaseFReportV1 | None = None
     sustained_feeding: SuckleFeedingAssessmentV1 | None = None
+    rest: RestCycleFrameV1 | None = None
 
     @property
     def status(self) -> str:
@@ -171,6 +175,7 @@ class IntegratedRightingCycleV1:
                                 "not_established_visual_fixture" if self.visual_source is not None else "not_established_H6A"),
             "durable_learning_updates": 0,
             **({"sustained_feeding": self.sustained_feeding.as_dict()} if self.sustained_feeding is not None else {}),
+            **({"rest": self.rest.as_dict()} if self.rest is not None else {}),
             **({"suckle_extraction": self.suckle_extraction.as_dict()} if self.suckle_extraction is not None else {}),
             **({"extraction_correspondence": self.extraction_correspondence.as_dict()} if self.extraction_correspondence is not None else {}),
             **({"extraction_attention": {**self.extraction_attention.as_dict(),
@@ -240,6 +245,7 @@ class IntegratedRightingCoreV1:
         feeding_detail_profile: FeedingDetailProfileV1 | None = None,
         seek_nipple_profile: SeekNippleProfileV1 | None = None,
         suckle_profile: SuckleProfileV1 | None = None,
+        rest_profile: RestProfileV1 | None = None,
     ) -> None:
         _bounded_count(trace_capacity, "trace_capacity", 1, 4096)
         if not all(isinstance(flag, bool) for flag in (
@@ -334,8 +340,10 @@ class IntegratedRightingCoreV1:
             additional_primitives=tuple(item for item in (self.translation, self.follow_mom, self.seek_nipple, self.suckle) if item is not None),
             visual_preview_enabled=self.visual is not None, translation_capability=translation_capability,
             translation_mapping_sign=translation_mapping_sign, monitor_support_completion=stand_follow_enabled,
-            righting_target_inset_degrees=righting_target_inset_degrees,
+            righting_target_inset_degrees=righting_target_inset_degrees, rest_profile=rest_profile,
         )
+        self.rest = self.cognition.rest
+        self.rest_outcomes = self.cognition.sensory.rest_outcomes
         if task_learning_hook_enabled:
             self.cognition.sensory.configure_learning_hook(stream, diagnostic_capacity=learning_diagnostic_capacity)
         self.handoff = Nca8InternalHandoffV1(generation=stream.generation, enabled=handoff_enabled)
@@ -365,6 +373,10 @@ class IntegratedRightingCoreV1:
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("core stop requires a nonempty reason")
         self._fault = reason[:100]
+        if self.rest is not None:
+            self.rest.close(self._fault)
+        if self.rest_outcomes is not None:
+            self.rest_outcomes.close()
         if self.seek_nipple is not None:
             self.seek_nipple.cancel()
         if self.suckle is not None:
@@ -409,6 +421,7 @@ class IntegratedRightingCoreV1:
         maternal_intervals: tuple[MaternalIntervalEvidenceV1, ...] = (),
         seeking_intervals: tuple[SeekNippleIntervalEvidenceV1, ...] = (),
         suckle_intervals: tuple[SuckleIntervalEvidenceV1, ...] = (),
+        rest_intervals: tuple[RightingIntervalEvidenceV1, ...] = (),
         visual_bid_priority: tuple[int, int] | None = None,
     ) -> IntegratedRightingCycleV1:
         """Freeze one eligible summary, choose/project/authorize, finish F and close.
@@ -455,6 +468,8 @@ class IntegratedRightingCoreV1:
             raise ValueError("Suckle intervals require a bounded immutable typed batch")
         if self.suckle_outcomes is None and self.extraction_outcomes is None and suckle_intervals:
             raise ValueError("Suckle interval input requires the explicit correspondence profile")
+        if not isinstance(rest_intervals, tuple) or len(rest_intervals) > 16 or (self.rest_outcomes is None and rest_intervals):
+            raise ValueError("Rest intervals need the explicit bounded source-owned route")
         if visual_bid_priority is not None:
             if self.visual is None or not isinstance(visual_bid_priority, tuple) or len(visual_bid_priority) != 2:
                 raise ValueError("priority control needs a configured visual source and two integer ranks")
@@ -471,7 +486,7 @@ class IntegratedRightingCoreV1:
             return self._run_cycle(
                 feedback, tick=cutoff_tick, context=context, competing_bids=competing_bids, reports=local_reports, events=local_events,
                 outcome_intervals=outcome_intervals, visual_observation=visual_observation, visual_bid_priority=visual_bid_priority,
-                maternal_intervals=maternal_intervals, seeking_intervals=seeking_intervals, suckle_intervals=suckle_intervals,
+                maternal_intervals=maternal_intervals, seeking_intervals=seeking_intervals, suckle_intervals=suckle_intervals, rest_intervals=rest_intervals,
             )
         except BaseException:
             self.stop("internal_hierarchy_cycle_failed_no_world_call")
@@ -486,6 +501,7 @@ class IntegratedRightingCoreV1:
         visual_observation: VisualObservationV1 | None, visual_bid_priority: tuple[int, int] | None,
         maternal_intervals: tuple[MaternalIntervalEvidenceV1, ...], seeking_intervals: tuple[SeekNippleIntervalEvidenceV1, ...],
         suckle_intervals: tuple[SuckleIntervalEvidenceV1, ...],
+        rest_intervals: tuple[RightingIntervalEvidenceV1, ...],
     ) -> IntegratedRightingCycleV1:
         """Implement the guarded C/D/E owner stages between real scheduler boundaries."""
         cycle = self.scheduler.last_completed_cycle + 1
@@ -521,6 +537,15 @@ class IntegratedRightingCoreV1:
         applied = self.scheduler.phase_c_apply_frozen(cycle, self.trace)
         if tuple(item.result_id for item in applied) != (ingress.result_id,):
             raise RuntimeError("the frozen summary sidecar lost its ingress association")
+        rest_owner = self.rest_outcomes
+        rest_results = () if rest_owner is None else rest_owner.consume(rest_intervals, cutoff_tick=tick)
+        if self.rest is not None:
+            for rest_result in rest_results:
+                self.rest.observe_outcome(rest_result.claim.application, rest_result.status)
+        need = None
+        if self.rest is not None or self.suckle is not None and self.suckle.profile.sustained_feeding_enabled:
+            need = self.cognition.sensory.apply_feeding_evidence(feedback, stream=self.cognition.stream,
+                                                                cycle_id=cycle, cutoff_tick=tick)
         extraction_owner = self.extraction_outcomes
         extraction_results = extraction_owner.consume_intervals(suckle_intervals, cutoff_tick=tick) if extraction_owner is not None else ()
         if self.suckle is not None and self.suckle.profile.sustained_feeding_enabled:
@@ -625,8 +650,8 @@ class IntegratedRightingCoreV1:
             if self.suckle is not None and self.suckle.profile.sustained_feeding_enabled:
                 # A separate C1 visit to the existing sensory owner precedes need
                 # consumers. It neither repeats the support update nor uses F.
-                need = self.cognition.sensory.apply_feeding_evidence(feedback, stream=self.cognition.stream,
-                                                                    cycle_id=cycle, cutoff_tick=tick)
+                if need is None:
+                    raise RuntimeError("the configured body-sensory need visit did not return its evidence")
                 feeding_source = self.feeding_detail.update(maternal_source, oral_feedback=feedback, feeding_need=need)
                 self.trace.append("hierarchy_feeding_need", "body-sensory current need; not task completion or motor permission",
                                   cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
@@ -729,6 +754,16 @@ class IntegratedRightingCoreV1:
                                            "command_intervals": claim.command_intervals})
             if task_outcome.completion_supported and task_outcome.task_id is not None:
                 prepared = self.cognition.complete_prepared_task(prepared, task_outcome.supported_samples, task_id=task_outcome.task_id)
+        if self.rest is not None and rest_owner is not None:
+            if need is None:
+                raise RuntimeError("Rest requires the declared body-sensory need representation")
+            self.rest.prepare(prepared.source.motor_support, need, cycle_id=cycle, cutoff_tick=tick,
+                              movement_blocked=bool(self.cognition.mapper.reservations(at_tick=tick)))
+            rest_owner.admit(prepared.source, rest_results, at_tick=tick)
+            self.trace.append("hierarchy_rest_current", "Rest owner: current need/support, not M's completion or evaluator output",
+                              cycle_id=cycle, phase=CyclePhase.UPDATE_OUTCOMES.name,
+                              details={"reason": self.rest.reason, "safe_rest": self.rest.current_safe_rest,
+                                       "outcomes": len(rest_results), "need_event": need.event_tick})
         outcome_owner = self.cognition.sensory.outcome_attention
         created_requests = () if outcome_owner is None else outcome_owner.admit(
             claim_outcomes, prepared.source, self.cognition.righting.task, prepared.context, cutoff_tick=tick,
@@ -816,7 +851,7 @@ class IntegratedRightingCoreV1:
                                        "outcome_rank": selected.outcome_source_bid.prediction_or_envelope_failure_rank
                                        if selected.outcome_source_bid is not None else 0})
         application = selected.navigation.application
-        if application is not None and not isinstance(application, (RightingApplicationV1, TranslationApplicationV1, FollowMomApplicationV1, SeekNippleApplicationV1, SuckleApplicationV1, SuckleExtractionApplicationV1)):
+        if application is not None and not isinstance(application, (RightingApplicationV1, TranslationApplicationV1, FollowMomApplicationV1, SeekNippleApplicationV1, SuckleApplicationV1, SuckleExtractionApplicationV1, RestApplicationV1)):
             raise TypeError("this integrated profile has no consumer for the selected application")
         self.trace.append(
             "hierarchy_selection", ("Attention selected the source; Navigation recorded the single focal allocation"
@@ -824,7 +859,7 @@ class IntegratedRightingCoreV1:
                                     else "Attention selected the source; Navigation selected the task"), cycle_id=cycle,
             phase=CyclePhase.FOCAL_COMMITMENT.name,
             details={"attention": selected.attention.disposition.value, "primitive": selected.navigation.selected_primitive_id,
-                     "task_id": (application.task.task_id if isinstance(application, (SeekNippleApplicationV1, SuckleApplicationV1, SuckleExtractionApplicationV1)) else
+                     "task_id": (application.task.task_id if isinstance(application, (SeekNippleApplicationV1, SuckleApplicationV1, SuckleExtractionApplicationV1, RestApplicationV1)) else
                                  selected.task.task_id if selected.task is not None else None),
                      "strategy": application.strategy if isinstance(application, RightingApplicationV1) else None},
         )
@@ -837,7 +872,8 @@ class IntegratedRightingCoreV1:
             cycle_id=cycle, phase=CyclePhase.PROJECT_DISPATCH.name,
             details={"enabled": self.cognition.task_pnm_consumer_enabled,
                      "registered": self.cognition.prediction.current_pnm is not None,
-                     "consumer": ("adopt_suckle_extraction_preview" if isinstance(application, SuckleExtractionApplicationV1) else
+                     "consumer": ("adopt_rest_preview" if isinstance(application, RestApplicationV1) else
+                                   "adopt_suckle_extraction_preview" if isinstance(application, SuckleExtractionApplicationV1) else
                                    "adopt_suckle_preview" if isinstance(application, SuckleApplicationV1) else
                                   "adopt_seeking_preview" if isinstance(application, SeekNippleApplicationV1) else
                                   "adopt_maternal_preview" if isinstance(application, FollowMomApplicationV1) else
@@ -859,6 +895,11 @@ class IntegratedRightingCoreV1:
             self.seek_nipple.authorized(application, tuple(item.current for item in reservations))
         if isinstance(application, (SuckleApplicationV1, SuckleExtractionApplicationV1)) and self.suckle is not None:
             self.suckle.authorized(application, tuple(item.current for item in reservations))
+        rest_registration = None
+        if isinstance(application, RestApplicationV1) and self.rest is not None and rest_owner is not None:
+            target = reservations[0].current if reservations else None
+            self.rest.bind_authorization(application, target)
+            rest_registration = rest_owner.register(application, target)
         extraction_registration = None
         if extraction_owner is not None and isinstance(application, SuckleExtractionApplicationV1) and proposal is not None:
             extraction_registration = extraction_owner.register(application, proposal, tuple(item.current for item in reservations))
@@ -895,10 +936,10 @@ class IntegratedRightingCoreV1:
                               details={"pnm_id": claim_registration.preview.pnm.pnm_id, "endpoint_event_tick": claim_registration.due_tick,
                                        "compatible": ",".join(claim_registration.compatible_relations),
                                        "unevaluable": ",".join(claim_registration.unevaluable_relations), "target_count": len(reservations)})
-        projection = application.projection if isinstance(application, (RightingApplicationV1, TranslationApplicationV1, FollowMomApplicationV1, SeekNippleApplicationV1, SuckleApplicationV1, SuckleExtractionApplicationV1)) else None
+        projection = application.projection if isinstance(application, (RightingApplicationV1, TranslationApplicationV1, FollowMomApplicationV1, SeekNippleApplicationV1, SuckleApplicationV1, SuckleExtractionApplicationV1, RestApplicationV1)) else None
         origin = reservations[0].current.target.origin if reservations else None
         terminal_task = calculation.task is not None and calculation.task.status != "active"
-        if self.stand_follow_enabled:
+        if self.stand_follow_enabled or self.rest is not None:
             # Retire the terminal transition once. A historical completed Righting
             # task must never cancel a later, independently authorized translation.
             terminal_task = terminal_task and (previous_support_task is None or previous_support_task.status == "active")
@@ -906,9 +947,11 @@ class IntegratedRightingCoreV1:
             item.current is self.seek_nipple.authorized_target for item in self.cognition.mapper.reservations(at_tick=tick)))
         suckle_cancel = (self.suckle is not None and self.suckle.cancel_previous and any(
             item.current is self.suckle.authorized_target for item in self.cognition.mapper.reservations(at_tick=tick)))
+        rest_cancel = (self.rest is not None and self.rest.cancel_previous and any(
+            item.current is self.rest.authorized_target for item in self.cognition.mapper.reservations(at_tick=tick)))
         motor = Nca8MotorEnvelopeV1(
             self.cognition.stream, tick, projection, tuple(item.current for item in reservations),
-            tuple(item.current for item in proposal.replaces) if proposal is not None and reservations else (), changed_context or terminal_task or seeking_cancel or suckle_cancel or (self.follow_mom is not None and self.follow_mom.cancel_previous),
+            tuple(item.current for item in proposal.replaces) if proposal is not None and reservations else (), changed_context or terminal_task or seeking_cancel or suckle_cancel or rest_cancel or (self.follow_mom is not None and self.follow_mom.cancel_previous),
         )
         decision = calculation.navigation
         commitment = CycleCommitmentV1(
@@ -916,7 +959,8 @@ class IntegratedRightingCoreV1:
             calculation.attention.selection_id, decision.wnm.working_id if decision.wnm is not None else None,
             decision.selected_primitive_id, application.application_id if application is not None else None,
             projection.pnm.pnm_id if projection is not None else None,
-            ("SUCKLE_EXTRACTION" if isinstance(application, SuckleExtractionApplicationV1) else
+            ("REST" if isinstance(application, RestApplicationV1) else
+             "SUCKLE_EXTRACTION" if isinstance(application, SuckleExtractionApplicationV1) else
              "SUCKLE_INITIAL_LATCH" if isinstance(application, SuckleApplicationV1) else
              "SEEK_NIPPLE" if isinstance(application, SeekNippleApplicationV1) else
              "FOLLOW_MOM" if isinstance(application, FollowMomApplicationV1) else
@@ -942,11 +986,19 @@ class IntegratedRightingCoreV1:
         suckle_learning_report: SuckleLearningPhaseFReportV1 | None = None
         extraction_hook = self.feeding_detail.extraction_learning_hook if self.feeding_detail is not None else None
         extraction_learning_report: ExtractionLearningPhaseFReportV1 | None = None
+        rest_hook = None if rest_owner is None else rest_owner.participation
+        rest_learning_report: RestPhaseFReportV1 | None = None
 
         def reconcile_learning() -> None:
             """Visit configured source participants once in F, never scan the learning ledger."""
             nonlocal learning_report, maternal_learning_report, seeking_learning_report, suckle_learning_report
-            nonlocal extraction_learning_report
+            nonlocal extraction_learning_report, rest_learning_report
+            if rest_hook is not None:
+                rest_learning_report = rest_hook.reconcile(cycle_id=cycle, cutoff_tick=tick, registration=rest_registration,
+                                                            outcomes=rest_results, allocation=selected.rest_outcome_allocation)
+                self.trace.append("hierarchy_rest_learning", "source-owned Rest participation at F; no task or support evaluation",
+                                  cycle_id=cycle, phase=CyclePhase.LEARNING_SCHEDULE.name,
+                                  details={"dispositions": len(rest_learning_report.dispositions), "durable_learning_updates": 0})
             if hook is not None:
                 learning_report = hook.reconcile(
                     cycle_id=cycle, cutoff_tick=tick, registration=claim_registration,
@@ -1032,7 +1084,7 @@ class IntegratedRightingCoreV1:
             self.trace.append("hierarchy_learning", "F reconciliation: no durable learner or new physical outcome", cycle_id=cycle,
                               phase=CyclePhase.LEARNING_SCHEDULE.name, details={"durable_learning_updates": 0})
 
-        if hook is None and maternal_hook is None and seeking_hook is None and suckle_hook is None and extraction_hook is None:
+        if hook is None and maternal_hook is None and seeking_hook is None and suckle_hook is None and extraction_hook is None and rest_hook is None:
             # Preserve the retained empty-F trace and original scheduler call.
             reconcile_learning()
             schedule = self.scheduler.phase_f_finish(cycle, self.trace)
@@ -1056,6 +1108,8 @@ class IntegratedRightingCoreV1:
             suckle_task=self.suckle.assessment() if self.suckle is not None else None,
             suckle_extraction=self.suckle.extraction_assessment() if self.suckle is not None else None,
             sustained_feeding=self.suckle.feeding_assessment() if self.suckle is not None else None,
+            rest=RestCycleFrameV1(self.rest.task, self.rest.reason, self.rest.current_safe_rest, rest_registration, rest_results,
+                                 selected.rest_outcome_allocation, rest_learning_report) if self.rest is not None else None,
             extraction_correspondence=SuckleExtractionOutcomeFrameV1(
                 tick, extraction_registration, tuple(item for item in extraction_owner.history() if item.evaluated_tick == tick),
                 extraction_owner.pending(), extraction_owner.compare_predictions, extraction_attention is not None,
@@ -1121,6 +1175,7 @@ class IntegratedRightingTrialV1:
         suckle_profile: SuckleProfileV1 | None = None, oral_seal_profile: OralSealWorldProfileV1 | None = None,
         oral_extraction_profile: OralExtractionWorldProfileV1 | None = None,
         feeding_consequence_profile: FeedingConsequenceProfileV1 | None = None,
+        rest_profile: RestProfileV1 | None = None, body_bearing_profile: BodyBearingProfileV1 | None = None,
     ) -> None:
         profile = MotorWorldProfileV1() if physical_profile is None else physical_profile
         if not isinstance(profile, MotorWorldProfileV1) or profile.dt_seconds != 0.05:
@@ -1154,6 +1209,11 @@ class IntegratedRightingTrialV1:
         self._feeding_detail_profile = feeding_detail_profile
         self._seek_nipple_profile = seek_nipple_profile
         self._suckle_profile = suckle_profile
+        if rest_profile is not None and (not isinstance(rest_profile, RestProfileV1) or body_bearing_profile is None
+                                         or feeding_consequence_profile is None or oral_seal_profile is None):
+            raise ValueError("Rest requires its explicit profile and declared body/need/oral providers")
+        self._rest_profile = rest_profile
+        self._rest_intervals: list[RightingIntervalEvidenceV1] = []
         if (suckle_profile is None) != (oral_seal_profile is None):
             raise ValueError("integrated closure sensing requires an explicit Suckle profile and seal provider")
         if suckle_profile is not None and oral_profile is None:
@@ -1177,7 +1237,7 @@ class IntegratedRightingTrialV1:
         self._world = MotorWorldV1(MotorStreamRefV1(stream_id, 1), profile, planar_profile=planar_profile,
                                    oral_profile=oral_profile, oral_seal_profile=oral_seal_profile,
                                    oral_extraction_profile=oral_extraction_profile,
-                                   feeding_consequence_profile=feeding_consequence_profile)
+                                   feeding_consequence_profile=feeding_consequence_profile, body_bearing_profile=body_bearing_profile)
         self._context, self._capabilities, self._control_profile = context, capabilities, control_profile
         self._righting_enabled, self._influence_enabled, self._handoff_enabled = righting_enabled, influence_enabled, handoff_enabled
         self._trace_capacity = trace_capacity
@@ -1204,7 +1264,7 @@ class IntegratedRightingTrialV1:
             translation_mapping_sign=self._translation_mapping_sign, follow_mom_profile=self._follow_mom_profile,
             stand_follow_enabled=self._stand_follow_enabled, righting_target_inset_degrees=self._righting_target_inset_degrees,
             feeding_detail_profile=self._feeding_detail_profile, seek_nipple_profile=self._seek_nipple_profile,
-            suckle_profile=self._suckle_profile,
+            suckle_profile=self._suckle_profile, rest_profile=self._rest_profile,
         )
         self.controller = SensorimotorExecutorV1(
             self.core.cognition.mapper, profile=self._control_profile, installation_source=self.core.handoff,
@@ -1217,6 +1277,7 @@ class IntegratedRightingTrialV1:
         self._maternal_intervals.clear()
         self._seeking_intervals.clear()
         self._suckle_intervals.clear()
+        self._rest_intervals.clear()
 
     @property
     def tick(self) -> int:
@@ -1281,6 +1342,9 @@ class IntegratedRightingTrialV1:
         """
         cognition = self.core.cognition
         return {
+            **({**self.core.rest.retained_counts(), "rest_staged_intervals": len(self._rest_intervals),
+                **(cognition.sensory.rest_outcomes.retained_counts() if cognition.sensory.rest_outcomes is not None else {})}
+               if self.core.rest is not None else {}),
             "durable_maps": cognition.maps.durable_map_count, "current_source_states": cognition.maps.current_state_count,
             "wnm": int(cognition.navigation.current_wnm is not None),
             "current_pnm": int(cognition.prediction.current_pnm is not None),
@@ -1435,17 +1499,30 @@ class IntegratedRightingTrialV1:
                 tuple(replace(item, observations=()) for item in self._seeking_intervals),
                 suckle_intervals=tuple(self._suckle_intervals) if visual_input_enabled else
                 tuple(replace(item, observations=()) for item in self._suckle_intervals),
+                rest_intervals=tuple(self._rest_intervals),
             )
             self._outcome_intervals.clear()
             self._maternal_intervals.clear()
             self._seeking_intervals.clear()
             self._suckle_intervals.clear()
+            self._rest_intervals.clear()
             motor = self.core.handoff.consume_motor(result.receipt)
             self._consumptions += 1
             self.core.trace.append("hierarchy_consumed", "outer driver consumed the closed handoff once", cycle_id=result.commitment.cycle_id,
                                    details={"tick": self.tick, "directive": motor.directive, "receipt": result.receipt.receipt_id})
             if result.reservations:
                 self.controller.install_authorized(result.reservations, at_tick=self.tick)
+                if self.core.rest_outcomes is not None:
+                    rest_claim = result.rest.registration if result.rest is not None else None
+                    if rest_claim is not None:
+                        self.core.rest_outcomes.installed(rest_claim, at_tick=self.tick)
+                        # A genuinely selected/accepted/consumed Rest application
+                        # supplies the NEXT activity context. No frozen basis or old
+                        # Righting criterion changes and a veto cannot change intent.
+                        self.core.cognition.context = RightingContextV1(
+                            f"rest_activity:{rest_claim.application.task.task_id}", RightingActivityV1.REST)
+                    else:
+                        self.core.rest_outcomes.end_execution(at_tick=self.tick, reason="replacement")
                 if self.core.extraction_outcomes is not None:
                     extraction_claim = result.extraction_correspondence.registration if result.extraction_correspondence is not None else None
                     if extraction_claim is not None:
@@ -1478,12 +1555,19 @@ class IntegratedRightingTrialV1:
                         self.core.maternal_outcomes.installed(maternal_claim, at_tick=self.tick)
                 if self.core.outcomes is not None and result.claim_registration is not None:
                     self.core.outcomes.installed(result.claim_registration, at_tick=self.tick)
+                if result.rest is not None and result.rest.registration is not None and result.rest.registration.target is not None:
+                    rest_target = result.rest.registration.target
+                    for observer in (self.core.outcomes, self.core.seeking_outcomes, self.core.suckle_outcomes):
+                        if observer is not None:
+                            observer.observe_rest_installation(rest_target, at_tick=self.tick)
                 self.core.trace.append("hierarchy_installed", "authorized targets installed once; no physical step yet",
                                        cycle_id=result.commitment.cycle_id,
                                        details={"tick": self.tick, "execution": result.reservations[0].current.execution_id,
                                                 "installation_count": self.controller.installation_count})
             elif motor.cancel_previous:
                 self.controller.cancel_execution(at_tick=self.tick)
+                if self.core.rest_outcomes is not None:
+                    self.core.rest_outcomes.end_execution(at_tick=self.tick)
                 if self.core.extraction_outcomes is not None:
                     self.core.extraction_outcomes.end_execution(at_tick=self.tick)
                 if self.core.suckle_outcomes is not None:
@@ -1532,6 +1616,9 @@ class IntegratedRightingTrialV1:
         if self.core.maternal_outcomes is not None and len(self._maternal_intervals) >= 16:
             self._stop("maternal_ingress_overflow_before_physical_step")
             raise OverflowError("sixteen returned maternal intervals await C2; no further physical step")
+        if self.core.rest_outcomes is not None and len(self._rest_intervals) >= 16:
+            self._stop("rest_ingress_overflow_before_physical_step")
+            raise OverflowError("sixteen Rest intervals await C2; no further physical step")
         self._busy = True
         try:
             tick = self.tick
@@ -1559,6 +1646,8 @@ class IntegratedRightingTrialV1:
             self._latest_feedback = admit_motor_feedback_batch_v1(
                 delivered, self._latest_feedback, stream=self.core.cognition.stream, at_tick=self.tick,
             )
+            if self.core.rest_outcomes is not None:
+                self._rest_intervals.append(RightingIntervalEvidenceV1(tick, command, result.reports, delivered))
             if self.core.outcomes is not None:
                 # The Righting consumer receives only its support-resource reports.
                 # Keep the original command and acquisitions: do not fabricate a
@@ -1566,7 +1655,7 @@ class IntegratedRightingTrialV1:
                 support_reports = (tuple(report for report in result.reports
                                          if report.committed_target.target.kind in {
                                              SensorimotorTargetKindV1.ORIENTATION_ADJUST, SensorimotorTargetKindV1.SUPPORT_EXTENSION})
-                                   if self._stand_follow_enabled else result.reports)
+                                   if self._stand_follow_enabled or self.core.rest is not None else result.reports)
                 self._outcome_intervals.append(RightingIntervalEvidenceV1(tick, command, support_reports, delivered))
             if (self.core.maternal_outcomes is not None or self.core.seeking_outcomes is not None
                     or self.core.suckle_outcomes is not None or self.core.extraction_outcomes is not None):
@@ -1624,6 +1713,10 @@ class IntegratedRightingTrialV1:
         if self.core.handoff.has_pending_request:
             raise RuntimeError("resolve the pending focal handoff before cancellation")
         self.controller.cancel_execution(at_tick=self.tick)
+        if self.core.rest is not None:
+            self.core.rest.close("cancelled")
+        if self.core.rest_outcomes is not None:
+            self.core.rest_outcomes.end_execution(at_tick=self.tick)
         if self.core.extraction_outcomes is not None:
             self.core.extraction_outcomes.end_execution(at_tick=self.tick)
         if self.core.suckle_outcomes is not None:

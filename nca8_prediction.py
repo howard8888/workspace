@@ -35,14 +35,14 @@ from nca8_primitives import PrimitiveApplicationV1
 # Small validators intentionally remain local for readable standalone modules.
 # pylint: disable=duplicate-code
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 __all__ = [
     "Nca8PredictionRuntimeV1",
     "PendingPredictionTraceV1",
     "PredictionOutcomeStatusV1",
     "PredictionOutcomeV1",
     "ProjectedNavMapV1",
-    "SupportPreviewV1", "VisualTranslationPreviewV1", "MaternalApproachPreviewV1", "SeekNipplePreviewV1", "SucklePreviewV1", "SuckleExtractionPreviewV1",
+    "RestPreviewV1", "SupportPreviewV1", "VisualTranslationPreviewV1", "MaternalApproachPreviewV1", "SeekNipplePreviewV1", "SucklePreviewV1", "SuckleExtractionPreviewV1",
     "__version__",
 ]
 
@@ -234,6 +234,64 @@ class SupportPreviewV1:
             "uncertainty": "conditional_unvalidated_reference_model", "executed_obligation": False,
             "motor_authority": False, "establishes_task_success": False,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class RestPreviewV1:
+    """Original sparse Rest expectation; no body command or completed-rest flag.
+
+    The task predicts only its selected coordinate change conditional on the
+    current supported body. BodyMap independently limits/maps the target. The
+    full quiet/resting relation is a later task condition, not this endpoint.
+    """
+
+    pnm: ProjectedNavMapV1
+    basis: MotorSupportConfigurationV1
+    task_id: str
+    contribution: str
+    predicted_coordinate: float
+    horizon_ticks: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.pnm, ProjectedNavMapV1) or not isinstance(self.basis, MotorSupportConfigurationV1):
+            raise TypeError("Rest preview requires its source and PNM")
+        if (self.pnm.primitive_id != "ip:rest" or self.pnm.created_cycle != self.basis.applied_cycle
+                or not self.basis.current or self.basis.feedback is None):
+            raise ValueError("Rest preview requires its originating current source")
+        if not isinstance(self.contribution, str) or self.contribution not in {"release", "withdraw", "settle", "hold"}:
+            raise ValueError("invalid Rest preview contribution")
+        if not isinstance(self.task_id, str) or not self.task_id.startswith("rest:") or len(self.task_id) > 100:
+            raise ValueError("Rest preview requires an original bounded task")
+        if (isinstance(self.predicted_coordinate, bool) or not isinstance(self.predicted_coordinate, (int, float))
+                or not math.isfinite(self.predicted_coordinate) or not 0.0 <= self.predicted_coordinate <= 1.0):
+            raise ValueError("Rest preview coordinate must be finite, measured-frame compatible")
+        if isinstance(self.horizon_ticks, bool) or not isinstance(self.horizon_ticks, int) or not 1 <= self.horizon_ticks <= 8:
+            raise ValueError("Rest preview has a one-to-eight tick horizon")
+        feedback = self.basis.feedback
+        if self.contribution == "release":
+            current = feedback.oral_seal.closure if feedback.oral_seal is not None else None
+            goal, maximum_step, rate = 0.0, .60, 2.0
+        elif self.contribution == "withdraw":
+            current = feedback.oral.extension_metres if feedback.oral is not None else None
+            goal, maximum_step, rate = 0.0, .15, .5
+        else:
+            current = feedback.support_extension
+            if current is None or feedback.body_tilt_degrees is None:
+                raise ValueError("Rest forecast cannot invent current body geometry")
+            goal = current if self.contribution == "hold" else min(current, .20 / max(math.cos(math.radians(feedback.body_tilt_degrees)), 1e-12))
+            maximum_step, rate = .20, 1.0
+        if current is None:
+            raise ValueError("Rest forecast needs the current original coordinate")
+        expected = max(goal, current - min(maximum_step, rate * self.basis.tick_seconds * self.horizon_ticks))
+        if abs(expected - self.predicted_coordinate) > 1e-12:
+            raise ValueError("Rest forecast must retain its original bounded transformation")
+
+    def as_dict(self) -> dict[str, object]:
+        """Export original conditional relations, never acquired body evidence."""
+        return {"pnm": self.pnm.as_dict(), "basis": self.basis.as_dict(), "task_id": self.task_id,
+                "contribution": self.contribution, "predicted_coordinate": self.predicted_coordinate,
+                "horizon_ticks": self.horizon_ticks, "status": "conditional_not_observed",
+                "rest_completion_predicted": False, "motor_authority": False}
 
 
 @dataclass(frozen=True, slots=True)
@@ -641,8 +699,8 @@ class Nca8PredictionRuntimeV1:
         self._current: PendingPredictionTraceV1 | None = None
         self._pending: list[PendingPredictionTraceV1] = []
         self._outcome_history: list[PredictionOutcomeV1] = []
-        self._preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1 | None = None
-        self._preview_history: list[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1] = []
+        self._preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1 | RestPreviewV1 | None = None
+        self._preview_history: list[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1 | RestPreviewV1] = []
         self._last_preview_cycle = 0
 
     @property
@@ -848,7 +906,7 @@ class Nca8PredictionRuntimeV1:
         """Return the visual member of the same single prospective slot, if any."""
         return self._preview if isinstance(self._preview, VisualTranslationPreviewV1) else None
 
-    def preview_history(self) -> tuple[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1, ...]:
+    def preview_history(self) -> tuple[SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1 | RestPreviewV1, ...]:
         """Return at most eight immutable superseded previews, not pending outcomes."""
         return tuple(self._preview_history)
 
@@ -908,13 +966,19 @@ class Nca8PredictionRuntimeV1:
         """Read the extraction member of the same prospective slot, not a second PNM."""
         return self._preview if isinstance(self._preview, SuckleExtractionPreviewV1) else None
 
+    def adopt_rest_preview(self, preview: RestPreviewV1) -> None:
+        """Use the same single prospective slot for a selected Rest application."""
+        if not isinstance(preview, RestPreviewV1):
+            raise TypeError("Rest projection requires RestPreviewV1")
+        self._adopt_preview(preview)
+
     def adopt_suckle_extraction_preview(self, preview: SuckleExtractionPreviewV1) -> None:
         """Retain a selected extraction expectation without scoring closure or milk."""
         if not isinstance(preview, SuckleExtractionPreviewV1):
             raise TypeError("extraction registration requires its typed original prediction")
         self._adopt_preview(preview)
 
-    def _adopt_preview(self, preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1 | None) -> None:
+    def _adopt_preview(self, preview: SupportPreviewV1 | VisualTranslationPreviewV1 | MaternalApproachPreviewV1 | SeekNipplePreviewV1 | SucklePreviewV1 | SuckleExtractionPreviewV1 | RestPreviewV1 | None) -> None:
         """Replace one prospective role; retain bounded immutable earlier meanings."""
         if self._current is not None or self._pending:
             raise ValueError("cannot mix unexecuted previews with pending executed claims")

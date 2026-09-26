@@ -32,12 +32,14 @@ from dataclasses import dataclass, field
 import math
 
 from cca8_motor_contracts import (
+    BodyBearingFeedbackV1,
     MotorCommandV1, MotorFeedbackV1, MotorStreamRefV1, OralFeedbackV1, OralSealFeedbackV1, PlanarFeedbackV1, OralExtractionFeedbackV1,
     FeedingDeficitFeedbackV1,
 )
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
+    "BodyBearingProfileV1", "body_bearing_v1",
     "MotorBodyStateV1", "FeedingConsequenceProfileV1", "FeedingConsequenceStateV1",
     "MotorWorldPerturbationV1",
     "MotorWorldProfileV1",
@@ -832,6 +834,49 @@ def _extraction_path_inside_disk(
 
 
 @dataclass(frozen=True, slots=True)
+class BodyBearingProfileV1:
+    """Optional aggregate body-ground support competence for the Rest experiment.
+
+    Extension*cos(tilt) is a disclosed normalized clearance surrogate. Body
+    bearing rises continuously across [full_clearance, contact_clearance]; it
+    does not become limb loading. Surface loss and angular forcing still act.
+    Sensor controls change observability, not the physical support equation.
+    This is not anatomical pressure, a learned model, or a Rest instruction.
+    """
+
+    contact_clearance: float = 0.30
+    full_clearance: float = 0.20
+    competence_enabled: bool = True
+    sensor_available: bool = True
+    unavailable_ticks: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("contact_clearance", "full_clearance"):
+            object.__setattr__(self, name, _motor_number(getattr(self, name), name, 0.0, 1.0))
+        if not self.full_clearance < self.contact_clearance:
+            raise ValueError("body-bearing transition must have positive clearance span")
+        for name in ("competence_enabled", "sensor_available"):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be Boolean")
+        if (not isinstance(self.unavailable_ticks, tuple) or len(self.unavailable_ticks) > 320
+                or any(isinstance(t, bool) or not isinstance(t, int) or not 0 <= t <= 320 for t in self.unavailable_ticks)
+                or tuple(sorted(set(self.unavailable_ticks))) != self.unavailable_ticks):
+            raise ValueError("body-bearing dropout ticks must be distinct ordered values in [0,320]")
+
+
+def body_bearing_v1(body: MotorBodyStateV1, profile: BodyBearingProfileV1, *, surface_present: bool) -> float:
+    """Compute physical normalized body bearing from geometry, never a task label."""
+    if not isinstance(body, MotorBodyStateV1) or not isinstance(profile, BodyBearingProfileV1):
+        raise TypeError("body bearing requires actual typed geometry and a physical profile")
+    if not isinstance(surface_present, bool):
+        raise TypeError("surface presence must be Boolean")
+    if not surface_present or not profile.competence_enabled:
+        return 0.0
+    clearance = body.support_extension * math.cos(math.radians(body.body_tilt_degrees))
+    return _clamp((profile.contact_clearance - clearance) / (profile.contact_clearance - profile.full_clearance))
+
+
+@dataclass(frozen=True, slots=True)
 class FeedingConsequenceProfileV1:
     """Optional deterministic downstream intake/uptake competence, not cognition.
 
@@ -909,6 +954,7 @@ class MotorWorldV1:
         oral_seal_profile: OralSealWorldProfileV1 | None = None,
         oral_extraction_profile: OralExtractionWorldProfileV1 | None = None,
         feeding_consequence_profile: FeedingConsequenceProfileV1 | None = None,
+        body_bearing_profile: BodyBearingProfileV1 | None = None,
     ) -> None:
         if not isinstance(stream, MotorStreamRefV1):
             raise TypeError("stream must be MotorStreamRefV1")
@@ -926,6 +972,13 @@ class MotorWorldV1:
         if feeding_consequence_profile is not None and (not isinstance(feeding_consequence_profile, FeedingConsequenceProfileV1)
                                                         or oral_extraction_profile is None):
             raise TypeError("downstream consequence requires its explicit typed profile and extraction provider")
+        if body_bearing_profile is not None:
+            if not isinstance(body_bearing_profile, BodyBearingProfileV1):
+                raise TypeError("body-bearing profile must be explicit and typed")
+            physical = profile if profile is not None else MotorWorldProfileV1()
+            if not body_bearing_profile.full_clearance < physical.surface_reach < body_bearing_profile.contact_clearance:
+                raise ValueError("body and limb support must have an explicitly overlapping clearance range")
+        self._body_bearing_profile = body_bearing_profile
         self._feeding_consequence_profile = feeding_consequence_profile
         self._feeding_consequence = (None if feeding_consequence_profile is None else FeedingConsequenceStateV1(
             feeding_consequence_profile.initial_pending_units, feeding_consequence_profile.initial_deficit_units))
@@ -1062,7 +1115,7 @@ class MotorWorldV1:
         fresh = MotorWorldV1(MotorStreamRefV1(self._stream.stream_id, self._stream.generation + 1), self._profile,
                              planar_profile=self._planar_profile, oral_profile=self._oral_profile, oral_seal_profile=self._oral_seal_profile,
                              oral_extraction_profile=self._oral_extraction_profile,
-                             feeding_consequence_profile=self._feeding_consequence_profile)
+                             feeding_consequence_profile=self._feeding_consequence_profile, body_bearing_profile=self._body_bearing_profile)
         self._stream = fresh.stream
         self._body = fresh.body
         self._planar = fresh.planar_body
@@ -1090,7 +1143,10 @@ class MotorWorldV1:
         measured joint velocity, prediction error or task-completion flag.
         """
         contact, loading = _motor_support(body, self._profile, surface_present)
-        instability = _clamp(abs(math.sin(math.radians(body.body_tilt_degrees))) * (1.0 - loading) + abs(angular_rate) / 180.0)
+        bearing = (None if self._body_bearing_profile is None else
+                   body_bearing_v1(body, self._body_bearing_profile, surface_present=surface_present))
+        effective_support = loading if bearing is None else max(loading, bearing)
+        instability = _clamp(abs(math.sin(math.radians(body.body_tilt_degrees))) * (1.0 - effective_support) + abs(angular_rate) / 180.0)
         missing = self._profile.unavailable_channels
         planar_feedback = None
         horizontal = self._planar_profile
@@ -1121,8 +1177,12 @@ class MotorWorldV1:
         if feeding_consequence is not None and consequence_profile is not None:
             visible = consequence_profile.sensor_available and event_tick not in consequence_profile.unavailable_ticks
             deficit_feedback = FeedingDeficitFeedbackV1(feeding_consequence.deficit_units if visible else None)
+        bearing_feedback = None
+        if bearing is not None and self._body_bearing_profile is not None:
+            visible = self._body_bearing_profile.sensor_available and event_tick not in self._body_bearing_profile.unavailable_ticks
+            bearing_feedback = BodyBearingFeedbackV1(bearing > 0.0 if visible else None, bearing if visible else None)
         return MotorFeedbackV1(
-            feeding_deficit=deficit_feedback,
+            body_bearing=bearing_feedback, feeding_deficit=deficit_feedback,
             planar=planar_feedback, oral=oral_feedback, oral_seal=seal_feedback, oral_extraction=extraction_feedback,
             stream=self._stream, sample_id=event_tick + 1, event_tick=event_tick, available_tick=event_tick + delay,
             body_tilt_degrees=None if "body_tilt_degrees" in missing else body.body_tilt_degrees,
@@ -1311,6 +1371,9 @@ class MotorWorldV1:
                 dropout = event.drop_feedback
                 break
         _, previous_loading = _motor_support(self._body, self._profile, surface_present)
+        if self._body_bearing_profile is not None:
+            previous_loading = max(previous_loading, body_bearing_v1(self._body, self._body_bearing_profile,
+                                                                     surface_present=surface_present))
         angular_rate = (90.0 * orientation_drive
                         + 12.0 * math.sin(math.radians(self._body.body_tilt_degrees)) * (1.0 - previous_loading)
                         + external_rate)

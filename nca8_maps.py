@@ -56,7 +56,7 @@ from nca8_sensorimotor_contracts import FocalMotorEvidenceV1
 # understandable without another generic validation dependency.
 # pylint: disable=duplicate-code
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     "NCA8_POSTURE_SUPPORT_MAP_ID_V1",
     "Nca8ContactStateV1",
@@ -521,6 +521,8 @@ class MotorSupportConfigurationV1:
             feedback.body_tilt_degrees, feedback.support_extension, feedback.support_contact,
             feedback.useful_loading, feedback.destabilization,
         )
+        if feedback is not None and feedback.body_bearing is not None:
+            measured = (*measured, feedback.body_bearing.contact, feedback.body_bearing.bearing)
         return (self.current, measured, self.rates)
 
     def as_dict(self) -> dict[str, object]:

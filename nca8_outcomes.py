@@ -32,7 +32,7 @@ from nca8_sensorimotor_contracts import (
     BodyRelativeTargetV1, CommittedBodyTargetV1, LocalTargetDispositionV1, LocalTargetReportV1, SensorimotorTargetKindV1,
 )
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __all__ = [
     "RightingIntervalEvidenceV1", "RightingClaimRegistrationV1", "RightingClaimOutcomeV1",
     "RightingTaskAssessmentV1", "RightingOutcomeRuntimeV1", "__version__",
@@ -221,6 +221,8 @@ class RightingOutcomeRuntimeV1:
         self._last_consumption_cutoff = -1
         self._recent_feedback: deque[MotorFeedbackV1] = deque(maxlen=16)
         self._installed_targets: tuple[CommittedBodyTargetV1, ...] = ()
+        self._rest_target: CommittedBodyTargetV1 | None = None
+        self._rest_end_tick: int | None = None
         self._awaiting: str | None = None
         self._task: RightingTaskV1 | None = None
         self._previous: MotorFeedbackV1 | None = None
@@ -353,6 +355,23 @@ class RightingOutcomeRuntimeV1:
                          "internal handoff ended before lower installation")
             self._awaiting = None
 
+    def observe_rest_installation(self, target: CommittedBodyTargetV1, *, at_tick: int) -> None:
+        """Record an actually accepted foreign Rest target, never attribute its action here.
+
+        Rest reuses support/closure/reach resources. Preserve the full real command
+        and sensor batch rather than manufacture neutral copies. Only the exact
+        installation witnessed at this cutoff may explain its foreign reports.
+        This method creates no claim, source relevance, participant or permission.
+        """
+        tick = _tick(at_tick)
+        if (not isinstance(target, CommittedBodyTargetV1) or not isinstance(target.target, BodyRelativeTargetV1)
+                or target.target.rest_constraint is None or target.target.origin.stream != self.stream
+                or target.committed_tick != tick or tick != self._last_consumption_cutoff):
+            raise ValueError("foreign Rest evidence requires its actual current body installation")
+        if self._rest_target is not None and target.committed_tick <= self._rest_target.committed_tick:
+            raise ValueError("foreign Rest installation cannot be replayed or moved backward")
+        self._rest_target, self._rest_end_tick = target, None
+
     def end_execution(self, *, at_tick: int, reason: str = "cancelled") -> None:
         """End a prior execution without erasing already realized endpoint obligations.
 
@@ -363,6 +382,8 @@ class RightingOutcomeRuntimeV1:
         tick = _tick(at_tick)
         if reason not in {"cancelled", "replacement", "execution_unknown", "not_applied"}:
             raise ValueError("unsupported execution disposition")
+        if self._rest_target is not None and self._rest_end_tick is None:
+            self._rest_end_tick = tick
         origin = self._installed_targets[0].target.origin if self._installed_targets else None
         for claim_id, pending in tuple(self._pending.items()):
             registration = pending.registration
@@ -399,7 +420,8 @@ class RightingOutcomeRuntimeV1:
             report_kinds: set[SensorimotorTargetKindV1] = set()
             for report in interval.reports:
                 committed = report.committed_target
-                if committed.target.origin.stream != self.stream or not any(committed is target for target in self._installed_targets):
+                if (committed.target.origin.stream != self.stream or
+                        not any(committed is target for target in self._installed_targets) and committed is not self._rest_target):
                     raise ValueError("execution report names the wrong action/target/generation")
                 if committed.target.kind in report_kinds:
                     raise ValueError("a returned interval repeats a body resource")
@@ -410,6 +432,8 @@ class RightingOutcomeRuntimeV1:
                 if drive != 0.0 and (report.reported_tick != interval.tick or interval.tick >= committed.expires_at_tick
                                      or report.disposition not in {LocalTargetDispositionV1.ACTIVE, LocalTargetDispositionV1.PARTIAL}):
                     raise ValueError("issued drive requires a current live execution report inside its original lease")
+                if drive and committed is self._rest_target and self._rest_end_tick is not None and interval.tick >= self._rest_end_tick:
+                    raise ValueError("foreign Rest drive cannot revive revoked permission")
             if command is not None and ((_ORIENTATION not in report_kinds and command.orientation_drive != 0)
                                         or (_EXTENSION not in report_kinds and command.extension_drive != 0)):
                 raise ValueError("issued motor drive has no corresponding authorized target")
@@ -444,7 +468,8 @@ class RightingOutcomeRuntimeV1:
             command = interval.command
             if command is not None:
                 self._last_command_id = command.command_id
-            if command is not None and (command.orientation_drive != 0 or command.extension_drive != 0):
+            if (command is not None and (command.orientation_drive != 0 or command.extension_drive != 0)
+                    and any(report.committed_target is own for report in interval.reports for own in self._installed_targets)):
                 self._command_ticks.append(interval.tick)
                 for pending in self._pending.values():
                     registration = pending.registration

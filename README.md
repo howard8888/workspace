@@ -16,6 +16,74 @@ Scientific target: accepted `CCA8_High_Level_Architecture_v10.1.docx`. The adopt
 `CCA8_Project_Planning_v18.docx`. The local source tree, fresh tests and traces determine
 what actually runs. Earlier architecture and phase descriptions below retain their historical/comparator scope.
 
+## P16-2C-N — Safe Rest and integrated walkthrough (qualification candidate)
+
+Entry: clean M `8473b22367e8346eab50415d23177cae0bcc5c69`. Host **0.30.46**
+registers **126 software components**, with the **8 host/legacy behavioral
+primitives** unchanged. Three concrete modules implement the approved Rest task,
+source-owned correspondence/reconciliation, and shared review/walkthrough. They
+are not new architectural brain parts. N is the final planned P16-2C update;
+P16-2C acceptance awaits qualification and Howard's review. Hard-newborn B99,
+durable learning, the general NavMap inspector, and default promotion are separate.
+
+Main -> 1 -> 4 -> 15 -> **35** opens an isolated walkthrough. Choose 1 to start,
+2 to advance exactly one cognitive opportunity and the scheduled physical steps,
+3 to run the remaining fixed schedule, 4/5 to inspect retained cycles, 6 for all
+35 review cases, 8 for a new UTF-8 JSON export, or 9 to reset only this organism.
+Inspection does not advance time. The simulation pauses at the user prompt.
+Existing M option 34 and earlier diagnostic routes remain available.
+
+    python scripts/review_nca8_feeding.py --rest --case nominal --detail
+    python scripts/review_nca8_feeding.py --rest --case all
+
+Rest remains opt-in: without a Rest profile, earlier behavior stays unchanged.
+Its supplied developmental tendency and genuinely current low feeding need
+support a bid on the existing POSTURE-SUPPORT source, not a direct task grant.
+Neither M's completed flag nor an observer milestone selects Rest. Attention and
+Navigation still select the source and task. Each release, withdrawal, settling
+or already-supported hold contribution has an original PNM, separate BodyMap
+request, finite target and once-consumed handoff. Conditions determine which
+contribution is needed; the runner contains no next-action list. A genuine Rest
+withdrawal has a narrow contact-release constraint; ordinary Seek contact stopping
+is not relaxed. Activity changes take effect through the accepted task/handoff
+and cannot rewrite old Righting criteria or cancel unrelated later support rights.
+
+An optional external body-bearing surrogate uses extension*cos(tilt) as a
+normalized clearance proxy. Bearing grows from zero at .30 clearance to full at
+.20 only with a supporting surface and declared competence. It remains separate
+from limb loading; body bearing cannot grant walking or feeding competence. The
+new feedback-v7 wrapper adds actual body contact/bearing to existing feedback
+schemas without a rest-success label. Passive support affects angular drift and
+instability; no task ID, PNM, milestone or desired posture is a physical input.
+These are synthetic aggregate geometry assumptions, NOT measured goat anatomy.
+
+Rest entry uses two distinct low-need acquisitions spanning four ticks, with an
+eight-tick age/gap bound. Completion additionally requires actual oral disengagement,
+body bearing >=.90, instability <=.15, angular motion <=5 degrees/second and
+extension motion <=.05 units/second. Three distinct supported/quiet post-selection
+acquisitions must span at least eight ticks. One episode has at most eight
+applications and 128 physical ticks; exhaustion is an incomplete exit, not success.
+Each target retains its <=8-tick lease. M's 96-tick budget remains unchanged.
+Current safety can become false after a historical Rest completion.
+
+Rest results follow original task/application/target identities, not actuator
+names. Late old feeding and Righting evidence stays old. Same-source Righting and
+Rest questions compete through the existing single Navigation grant. Rest's local
+participation reconciles original evidence at F with independent +24-tick eligibility
+and zero durable updates. F neither interprets the body nor selects/completes Rest.
+
+The supported-overview nominal review uses one body and the existing APIs over
+320 physical ticks: maternal approach, seeking, latch, sustained feeding and Rest.
+Observed M completion is tick112; Rest applications occur at112/124/136/148/160/172/184,
+with supported/quiet completion at204. Those are observed outputs, not an input
+schedule of actions. The already-fed case completes at88; lateral supported
+controls do not force upright movement. Body-support, motor, sensing, need, source,
+focal allocation, cancellation, timing and hook-off controls distinguish causes.
+A closure disturbance after local achievement produces an original endpoint
+mismatch; its source question can win, lose or be disabled without changing that
+historical evidence. Once qualified and accepted, pause P16-2C feature work for the
+walkthrough rather than treating B99 as another hidden completion requirement.
+
 ## P16-2C-M — Sustained feeding and sensed bodily satisfaction
 
 Entry: clean `711fbf064e1904cc01e06f1dd2fcdce528debb2d`, following the committed
@@ -23,8 +91,8 @@ L-F static-analysis repair. Host **0.30.45** registers **123 components**; the
 **8 host/legacy behavioral primitives** remain unchanged. The added
 `nca8_feeding_state.py` is a shared data contract, not another cognitive part;
 `nca8_sustained_feeding_demo.py` is the common observer/review implementation.
-M is an opt-in candidate for qualification and Howard's acceptance. Rest and the
-integrated final P16-2C handover remain the next separately approved update;
+M is the committed predecessor at its declared feeding scope. Rest and the
+integrated final P16-2C handover are supplied by the opt-in N candidate above;
 P16-2C, P16-2D/B99 and default promotion are not completed by M.
 
 Use Main -> 1 -> 4 -> 15 -> **34**. In that review, 1 runs nominal seeking/latch/

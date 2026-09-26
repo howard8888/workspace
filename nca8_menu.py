@@ -29,7 +29,7 @@ from nca8_maternal_learning_demo import run_maternal_learning_menu_v1
 from nca8_followmom_qualification import run_follow_mom_qualification_menu_v1
 from nca8_feeding_demo import run_feeding_detail_menu_v1
 
-__version__ = "0.36.0"
+__version__ = "0.37.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -61,6 +61,9 @@ Option 15 -> 26 reviews Suckle discrepancy, ordinary Attention and one Navigatio
 Outcome questions are not IPs; interpretation adds no task reapplication, movement grant or Suckle learning.
 Option 15 -> 27 reviews original Suckle participation and actual Phase F (K); eligibility only, no durable learning.
 K consumes an already performed J interpretation; independent eligibility expiry never renews a task or question.
+Option 15 -> 34 retains sustained feeding and sensed need completion (M).
+Option 15 -> 35 offers safe Rest and the isolated, explicitly stepped overview-to-feeding-to-Rest walkthrough (N).
+The Rest review is the P16-2C closure candidate; hard-newborn B99 and default promotion remain separate.
 Planning v16 P16-1R-B separates internal handoff and cycle closure from the
 external world step and returning-input admission. Gate-A decisions are unchanged.
 

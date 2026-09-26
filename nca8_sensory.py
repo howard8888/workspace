@@ -29,6 +29,8 @@ from dataclasses import dataclass, replace
 
 from nca8_adapters import Nca8ObservationV1
 from nca8_outcome_attention import RightingOutcomeAttentionV1
+from nca8_rest import RestProfileV1
+from nca8_rest_outcomes import RestOutcomeRuntimeV1
 from nca8_learning import RightingLearningHookV1
 from cca8_motor_contracts import MotorFeedbackV1, MotorStreamRefV1
 from nca8_sensorimotor_contracts import FocalMotorEvidenceV1
@@ -49,7 +51,7 @@ from nca8_maps import (
 # slice readable without a generic validation framework.
 # pylint: disable=duplicate-code
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     "NCA8_BODY_SENSORY_CIRCUIT_ID_V1",
     "Nca8BodySensoryApplicationV1",
@@ -229,6 +231,7 @@ class Nca8BodySensoryModuleV1:
         self._motor_tick_seconds: float | None = None
         self._motor_context: tuple[str, str, int] | None = None
         self._outcome_attention: RightingOutcomeAttentionV1 | None = None
+        self._rest_outcomes: RestOutcomeRuntimeV1 | None = None
         self._learning_hook: RightingLearningHookV1 | None = None
         self._feeding_need: FeedingNeedStateV1 | None = None
         self._feeding_watermark: MotorFeedbackV1 | None = None
@@ -614,6 +617,17 @@ class Nca8BodySensoryModuleV1:
         actually selected as WNM. Ordinary A0/H5/H6/1G-A construct no extension.
         """
         return self._outcome_attention
+
+    @property
+    def rest_outcomes(self) -> RestOutcomeRuntimeV1 | None:
+        """Return this source's optional concrete Rest route, never a second source."""
+        return self._rest_outcomes
+
+    def configure_rest_outcomes(self, stream: MotorStreamRefV1, profile: RestProfileV1) -> None:
+        """Attach correspondence to the existing body source before admitting any input."""
+        if self._rest_outcomes is not None or self._motor_stream is not None:
+            raise ValueError("Rest source correspondence can be configured once before source updates")
+        self._rest_outcomes = RestOutcomeRuntimeV1(stream, self.map_library.posture_support_ref, profile)
 
     def configure_outcome_attention(self, stream: MotorStreamRefV1) -> None:
         """Create the explicitly approved 1G-B source extension once, before sensing.

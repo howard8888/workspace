@@ -402,7 +402,7 @@ def test_script_works_from_another_directory_without_creating_repository_outputs
 
 def test_registry_and_dependency_direction_are_truthful():
     rows = cca8_run._cca8_component_rows()
-    assert cca8_run.__version__ == "0.30.45" and len(rows) == 123 and len(cca8_run.PRIMITIVES) == 8
+    assert cca8_run.__version__ == "0.30.46" and len(rows) == 126 and len(cca8_run.PRIMITIVES) == 8
     assert "nca8_followmom_qualification" in {r[0] for r in rows}
     assert qualification.__version__ == "0.1.0"
     for name in ("nca8_followmom.py", "nca8_hierarchy.py", "nca8_maternal.py", "nca8_maternal_outcomes.py",
