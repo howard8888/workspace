@@ -46,8 +46,9 @@ def _words(text: str) -> str:
 
 
 def _note(text: str, number: int) -> str:
-    """Select the numbered explanation rather than a diagram or the next record."""
-    return _words(text.split(f"  Record #{number} -", 1)[1].split("\n  Record #", 1)[0])
+    """Select one box and its adjacent explanation, excluding the next record."""
+    block = text.split(f"[#{number}]", 1)[1]
+    return _words(re.split(r"\[#\d+\]", block, maxsplit=1)[0])
 
 
 def _with_fields(event: Nca8TraceEventV1, *, remove: tuple[str, ...] = (), **fields) -> Nca8TraceEventV1:
@@ -110,8 +111,9 @@ def test_reader_view_preserves_every_record_and_ascii_width(gate_events, width, 
     text = "\n".join(lines)
     expected = [event.sequence for event in gate_events]
     assert [int(x) for x in re.findall(r"\[#(\d+)\]", text)] == expected
-    assert [int(x) for x in re.findall(r"(?m)^  Record #(\d+) -", text)] == expected
-    assert len(re.findall(r"Technical record #", text)) == (len(expected) if include_details else 0)
+    assert re.search(r"(?m)^  Record #\d+ -", text) is None
+    assert "Technical record #" not in text
+    assert text.count("Original technical evidence:") == (len(expected) if include_details else 0)
     assert tuple(event.as_dict() for event in gate_events) == before
 
 
@@ -281,7 +283,8 @@ def test_gaps_do_not_reconstruct_first_cycle_evidence(gate_events, missing) -> N
     events = tuple(event for event in gate_events[:27] if event.sequence not in missing)
     text = _text(events)
     assert "no earlier NCA8 action exists" not in _words(text)
-    assert [int(x) for x in re.findall(r"(?m)^  Record #(\d+) -", text)] == [event.sequence for event in events]
+    assert [int(x) for x in re.findall(r"\[#(\d+)\]", text)] == [event.sequence for event in events]
+    assert re.search(r"(?m)^  Record #\d+ -", text) is None
     assert "GAP:" in text or "EARLIER RECORDS NOT RETAINED" in text
 
 

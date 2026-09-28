@@ -25,7 +25,9 @@ sentences only from fields already present in each immutable event and never
 writes information back into cognition. The guided flow renderer groups retained
 events into parts-first ASCII boxes: components, representations and software
 services stay distinct. Input/operation/output ports expose the implemented
-routes, with visible gaps and exact technical details below each diagram.
+routes, with visible gaps and exact technical details. Menu option 4 keeps each
+explanation and its technical evidence directly below the record box; other
+callers retain the diagram followed by a separate explanation section.
 C1 (current-input updates) and C2 (earlier-operation outcomes) are display
 subsections of the existing UPDATE_OUTCOMES phase, not new scheduler phases.
 Source-code mechanism descriptions are labeled separately from event data;
@@ -52,7 +54,7 @@ from typing import TypeAlias
 
 # pylint: disable=unnecessary-comprehension
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"
 __all__ = [
     "Nca8TraceBufferV1",
     "Nca8TraceEventV1",
@@ -1816,7 +1818,8 @@ def _flow_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> FlowStepV
 # These functions replace their prose, never their events, order or raw details.
 _FLOW_READER_INTRO_V1 = (
     "PARTS FIRST: each box names the component or information being described. Read its INPUT (information received), "
-    "DO (work performed) and OUTPUT (result and destination). Python functions and storage locations follow the diagram.",
+    "DO (work performed) and OUTPUT (result and destination). Each box is followed immediately by its explanation, "
+    "Python references and original technical evidence, before the next record.",
     "BOX KEY - these are notation examples, not execution records:",
     "+---------------------------+   PART: BodyMap Module\n"
     "[---------------------------]   REPRESENTATION: a NavMap Configuration\n"
@@ -2606,10 +2609,16 @@ def _flow_groups_v1(events: Sequence[Nca8TraceEventV1]) -> list[tuple[Nca8TraceE
     return groups
 
 
-def _flow_technical_v1(event: Nca8TraceEventV1, width: int) -> list[str]:
-    """Show every stored detail below its block, with exact names retained for debugging."""
+def _flow_technical_v1(event: Nca8TraceEventV1, width: int, *, reader_guidance: bool = False) -> list[str]:
+    """Show stored evidence without changing its message, fields or escape rules.
+
+    Option 4 places this evidence beneath the already-numbered record box, so
+    its heading has no second record number. The default heading remains exact
+    for callers that use the separate diagram/explanation layout.
+    """
+    heading = "Original technical evidence" if reader_guidance else f"Technical record #{event.sequence}"
     lines = _flow_wrap_v1(
-        f"Technical record #{event.sequence}: channel={event.channel}; stored phase={event.phase or '(outside phases)'}",
+        f"{heading}: channel={event.channel}; stored phase={event.phase or '(outside phases)'}",
         width, indent="    ",
     )
     lines.extend(_flow_wrap_v1(f"Original message: {event.message}", width, indent="      "))
@@ -2694,7 +2703,8 @@ def _flow_empty_c2_note_v1(*, first_cycle: bool, width: int, reader_guidance: bo
             "This note explains those routines; it does not claim a missing comparison was recorded."
         )
     box = _flow_part_box_v1(title, (note,), width, kind="SERVICE")
-    notes = _flow_wrap_v1(title, width) + _flow_wrap_v1(note, width, indent="  ")
+    # The inline view already shows the title and context note in its box.
+    notes = [""] if reader_guidance else _flow_wrap_v1(title, width) + _flow_wrap_v1(note, width, indent="  ")
     notes.extend(_flow_wrap_v1(explanation, width, indent="    "))
     notes.append("")
     return box, notes
@@ -2714,12 +2724,19 @@ def _flow_render_cycle_v1(
     DOMAIN identifies architectural location independently of the part/service
     category and stored cycle/phase grouping. Mixed boundary calls remain one
     historical event, with no artificial sub-records or chronology changes.
+
+    With reader guidance, each box is immediately followed by its additional
+    explanation and original evidence. The numbered heading and port rows are
+    not repeated. Default callers retain the separate explanation section.
+    Both layouts use the same recognition and provenance updates, once per
+    event; only the destination of the rendered explanation lines differs.
     """
     lines = _flow_cycle_heading_v1(events, width, reader_guidance=reader_guidance)
     lines.append("")
     lines.extend(_flow_wrap_v1(
         "RECORDED FLOW - read the numbered boxes from top to bottom in recorded execution order. "
-        "Detailed explanations follow the diagram." if reader_guidance else
+        "Each explanation and its original technical evidence follow that record's box, before the next record."
+        if reader_guidance else
         "RECORDED FLOW - follow the boxes; explanations follow the diagram.", width,
     ))
     lines.append("")
@@ -2749,7 +2766,10 @@ def _flow_render_cycle_v1(
             box, c2_notes = _flow_empty_c2_note_v1(first_cycle=first_cycle, width=width, reader_guidance=reader_guidance)
             lines.extend(("", "       |  retained order; context note below is not an event", "       v", ""))
             lines.extend(box)
-            explanation_lines.extend(c2_notes)
+            if reader_guidance:
+                lines.extend(c2_notes)
+            else:
+                explanation_lines.extend(c2_notes)
         group_title = _flow_group_title_v1(section)
         if section == "PROJECT_DISPATCH" and separated_cycle:
             group_title = "PHASE E - PREDICT, CHECK THE BODY, COMMIT AND HAND OFF"
@@ -2796,9 +2816,10 @@ def _flow_render_cycle_v1(
             domain = "UNCLASSIFIED - no domain inferred from channel or phase" if untranslated else _flow_domain_v1(event)
             rows = (f"DOMAIN: {domain}", f"INPUT: {step.incoming}", f"DO: {step.title}", f"OUTPUT: {step.outgoing}")
             lines.extend(_flow_part_box_v1(f"[#{event.sequence}] {label}", rows, width, kind=kind))
-            notes.extend(_flow_wrap_v1(f"Record #{event.sequence} - {label}", width, indent="  "))
-            for paragraph in rows:
-                notes.extend(_flow_wrap_v1(paragraph, width, indent="    "))
+            if not reader_guidance:
+                notes.extend(_flow_wrap_v1(f"Record #{event.sequence} - {label}", width, indent="  "))
+                for paragraph in rows:
+                    notes.extend(_flow_wrap_v1(paragraph, width, indent="    "))
             notes.extend(_flow_wrap_v1(
                 "What this means / how the software does it / limits:" if reader_guidance else "Mechanism / storage / limits:",
                 width, indent="    ",
@@ -2811,16 +2832,22 @@ def _flow_render_cycle_v1(
                     implementation += " / nca8_primitives.py"
                 notes.extend(_flow_wrap_v1(f"Implementation: {implementation}", width, indent="    "))
             if include_details or untranslated:
-                notes.extend(_flow_technical_v1(event, width))
+                notes.extend(_flow_technical_v1(event, width, reader_guidance=reader_guidance))
             notes.append("")
+            if reader_guidance:
+                lines.append("")
+                lines.extend(notes)
+                notes.clear()
             context.remember(event)
             previous = event
-        explanation_lines.extend(_flow_wrap_v1(group_title, width))
-        explanation_lines.extend(notes)
-    lines.append("")
-    lines.extend(_flow_wrap_v1("EXPLANATIONS - same record order, with data below the relevant step.", width))
-    lines.append("-" * width)
-    lines.extend(explanation_lines)
+        if not reader_guidance:
+            explanation_lines.extend(_flow_wrap_v1(group_title, width))
+            explanation_lines.extend(notes)
+    if not reader_guidance:
+        lines.append("")
+        lines.extend(_flow_wrap_v1("EXPLANATIONS - same record order, with data below the relevant step.", width))
+        lines.append("-" * width)
+        lines.extend(explanation_lines)
     return lines
 
 
@@ -2845,7 +2872,9 @@ def render_flow_trace_lines_v1(
         events always retain their original message and details, even when this
         option is false. Compact and explanatory legacy renderers remain separate.
     reader_guidance:
-        Use the terminology key and record explanations reviewed for menu option 4.
+        Use the terminology key and single-pass layout reviewed for menu option 4:
+        each numbered box is followed by its explanation and original evidence
+        before the next record, without a second heading or repeated port rows.
         Defaults to False to preserve existing output for developer-script and
         other callers. Only presentation is different: recognition, provenance,
         record order, domain, ASCII safety, width and original details are shared.
@@ -2865,7 +2894,7 @@ def render_flow_trace_lines_v1(
     and source-map references are resolved only from preceding retained records.
     Parts, representations and services use distinct labels and outlines. Their
     input/output ports describe implemented wiring, not causal inference from
-    adjacency. Module/function/storage names below the chart describe the source
+    adjacency. Module/function/storage names in the explanations describe the source
     contract; they are not additional recorded measurements. C1/C2 only subdivide the displayed
     Phase C. An unnumbered C2 absence note never asserts an unrecorded outcome.
     Rendering performs no cognitive steps and neither mutates nor caches input.

@@ -29,7 +29,7 @@ from nca8_maternal_learning_demo import run_maternal_learning_menu_v1
 from nca8_followmom_qualification import run_follow_mom_qualification_menu_v1
 from nca8_feeding_demo import run_feeding_detail_menu_v1
 
-__version__ = "0.37.1"
+__version__ = "0.37.2"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -220,7 +220,8 @@ NCA8 implementation is designed to produce the same result again."""
 
 _TRACE_EXPLANATION_V1 = """This shows the saved trace as narrated text and a cycle-by-cycle flowchart.
 Read the numbered boxes from top to bottom in recorded execution order.
-Detailed explanations and the original technical records follow each diagram.
+Each record appears once. Its explanation and original technical evidence are
+kept directly below its box, before the next record.
 
 NCA8 is the software name for this isolated newer CCA8 runtime. Gate A is the
 retained early StandUp demonstration (also called A0); the later integrated

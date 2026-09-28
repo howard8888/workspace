@@ -367,7 +367,7 @@ def test_registry_reports_all_production_modules_without_registering_an_smp_as_a
     assert nca8_body_targets.__version__ == "0.14.0"
     assert nca8_sensorimotor.__version__ == "0.6.0"
     assert demo.__version__ == "0.5.0"
-    assert nca8_menu.__version__ == "0.37.1"
+    assert nca8_menu.__version__ == "0.37.2"
     registry = dict(cca8_run._CCA8_COMPONENT_REGISTRY)
     assert registry["nca8_sensorimotor"] == "nca8_sensorimotor"
     assert registry["nca8_sensorimotor_demo"] == "nca8_sensorimotor_demo"
