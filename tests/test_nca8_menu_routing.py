@@ -293,7 +293,7 @@ def test_trace_panel_reports_actual_capacity_and_keeps_only_retained_entries(
     session.run_cognitive_cycle()
     before = session.status()
     trace_before = session.trace_canonical_bytes()
-    expected_text = "\n".join(render_flow_trace_lines_v1(session.trace_snapshot()))
+    expected_text = "\n".join(render_flow_trace_lines_v1(session.trace_snapshot(), reader_guidance=True))
     responses = iter(("4", "4", ""))
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
 

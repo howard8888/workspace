@@ -46,13 +46,13 @@ import textwrap
 from functools import lru_cache
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import groupby
 from typing import TypeAlias
 
 # pylint: disable=unnecessary-comprehension
 
-__version__ = "0.9.1"
+__version__ = "0.10.0"
 __all__ = [
     "Nca8TraceBufferV1",
     "Nca8TraceEventV1",
@@ -679,12 +679,15 @@ class FlowStepV1:
     The title states the operation; explanations give the mechanism and storage
     contract. Values must come from this event or earlier retained references.
     These descriptions neither execute the operation nor synthesize new events.
+    Optional evidence_notes preserve already resolved outcome provenance for
+    reader guidance without indexing arbitrary explanatory paragraphs.
     """
 
     title: str
     explanations: tuple[str, ...]
     incoming: str
     outgoing: str
+    evidence_notes: tuple[str, ...] = ()  # Provenance sentences shared by both presentation styles.
 
 _FLOW_PHASE_TITLES_V1 = {
     "POLL_STAGE": "PHASE A - COLLECT COMPLETED PROCESSING RESULTS",
@@ -1388,6 +1391,7 @@ def _flow_outcome_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> F
         )
     return FlowStepV1(
         title=f"Compare PNM {_flow_value_v1(details, 'pnm_id')} with eligible updated POSTURE-SUPPORT evidence",
+        evidence_notes=(expected, observed),
         explanations=(
             "ROLE: the A0 prediction service performs this comparison. This is not a newly adopted Prediction Module "
         "and it is not a call to SEC. The placement of consequential outcome comparison in focal processing "
@@ -1807,6 +1811,505 @@ def _flow_step_v1(event: Nca8TraceEventV1, context: _FlowContextV1) -> FlowStepV
 
 
 
+# Reader guidance is an opt-in presentation used by NCA8 menu option 4. The
+# ordinary builders above still recognize records and resolve their provenance.
+# These functions replace their prose, never their events, order or raw details.
+_FLOW_READER_INTRO_V1 = (
+    "PARTS FIRST: each box names the component or information being described. Read its INPUT (information received), "
+    "DO (work performed) and OUTPUT (result and destination). Python functions and storage locations follow the diagram.",
+    "BOX KEY - these are notation examples, not execution records:",
+    "+---------------------------+   PART: BodyMap Module\n"
+    "[---------------------------]   REPRESENTATION: a NavMap Configuration\n"
+    "+- - - - - - - - - - - - - -+   SERVICE: session setup",
+    "A PART is a named CCA8 functional component, such as Attention or BodyMap Module. It need not be one Python file, "
+    "chip or fully modeled brain circuit. Repeated boxes can describe work by the same Part.",
+    "A REPRESENTATION is information maintained or used by a component. Examples are the POSTURE-SUPPORT NavMap's "
+    "current Configuration, Working Navigation Map (WNM) content and a Predicted NavMap (PNM). BodyMap Module is a Part; "
+    "the body state it maintains is a representation. A representation box's DO line names the software updating that information.",
+    "A SERVICE is software doing a particular job, not an additional brain Part. Session setup prepares software. "
+    "A scaffold is a simplified substitute for a mechanism: the A0 body-sensory scaffold uses a supplied posture label "
+    "and predefined geometry rather than recognizing posture from raw sensors. Not every service is a temporary scaffold.",
+    "ARROWS: read numbered boxes from top to bottom in record order, not as signal wiring. "
+    "For the actual signal paths, follow the named INPUT source and OUTPUT destination. "
+    "A result may go to a non-adjacent box. In this demonstration, the outcome check does not create BodyMap's source nomination.",
+    "PHASES: the software divides each cognitive cycle into six scheduled groups of work, A through F. "
+    "A phase is a timing section, not a Part or a project-development milestone. Phase C, for example, is displayed as "
+    "C1 (apply input and update current NavMap/BodyMap state) and C2 (assess later evidence about earlier attempts). "
+    "These are display subdivisions of Phase C (UPDATE_OUTCOMES), not extra scheduler phases.",
+    "DOMAIN: this label states where the work belongs: CCA8 cognition, runtime infrastructure, the lower-action/embodiment "
+    "boundary, external body/world, or the input boundary. A cycle/phase heading groups records under their stored labels; "
+    "not everything below that heading is cognition. A software service can implement cognitive work or software housekeeping: "
+    "read its DOMAIN. An INTEGRITY CHECK verifies data identity, timing or limits; it is not another Part.",
+    "SCOPE: Gate A is the retained early StandUp demonstration, also called A0 here. It uses simplified Attention, "
+    "Executive Navigation (ExecNav), a StandUp Instinctive Procedure (IP), and BodyMap. The later integrated Righting review "
+    "is separate. The Sequential Expectation and Correction Module (SEC), WorldIndex, Emotion, general sensory/association "
+    "NavMap learning and Learned Procedure (LP) acquisition are not active in this path.",
+    "EVIDENCE: numbered boxes report retained events. Unnumbered CONTEXT NOTES explain source code, not extra events. "
+    "Several records can describe one completed function call; their numbers do not count cognitive operations. "
+    "Missing records do not prove that work never happened, and the display never fills gaps with invented events or measurements.",
+    "VALUES: 'not recorded' means the field is absent; 'none' means an explicit null value; 'no' means false. "
+    "None of these means a measured zero. A prediction is not an observation; an accepted request is not successful movement. "
+    "When technical details are included, the Original message and fields remain below each explanation; "
+    "names such as primitive_id are compatibility names "
+    "for Procedures in this path. Non-printing characters are shown as escapes, not terminal commands.",
+)
+
+
+def _flow_reader_input_v1(event: Nca8TraceEventV1, step: FlowStepV1) -> FlowStepV1:
+    """Explain recognized setup/input records, including already-admitted reset input.
+
+    Values are read only from the event. Statements about reset/filtering are
+    explicitly source-contract descriptions, not reconstructed missing events.
+    The initial packet is already supplied to the runner when setup is logged;
+    the following buffer record reports that assignment rather than doing a
+    second admission pass. A seed's presence does not prove random choices ran.
+    """
+    details = _details_v1(event)
+    if event.channel == "session":
+        return FlowStepV1(
+            title="Create a fresh isolated NCA8 session for the CCA8 demonstration",
+            incoming=(f"Session settings: generation {_flow_value_v1(details, 'generation')} (session creation/reset number); "
+                      f"seed {_flow_value_v1(details, 'seed')} (randomization starting value)"),
+            outgoing=(f"Fresh session with [innate POSTURE-SUPPORT NavMap {_flow_value_v1(details, 'durable_posture_support_map')}]; "
+                      f"initial observation number {_flow_value_v1(details, 'pending_observation_number')}. "
+                      "Reset has already admitted the input; its buffering is reported next"),
+            explanations=(
+                f"Session generation: {_flow_value_v1(details, 'generation')}. A generation counts creation/reset of this session, "
+                "not a cognitive cycle or an evolutionary generation. Reset replaces the session's mutable software state.",
+                f"Randomization seed: {_flow_value_v1(details, 'seed')}. A seed is an integer used to initialize a "
+                "pseudo-random-number generator. Reusing it gives the same starting random state, not a guarantee that every "
+                "experiment is identical. The number has no cognitive meaning; this record does not show a random choice.",
+                f"The innate POSTURE-SUPPORT NavMap is {_flow_value_v1(details, 'durable_posture_support_map')}. "
+                "Setup supplies this preconfigured NavMap; the first cognitive cycle does not learn it. In a map identifier, "
+                "@r followed by a number denotes its durable revision, not the current observation or cycle.",
+                f"Environment run: {_flow_value_v1(details, 'episode_index')}; initial observation number: "
+                f"{_flow_value_v1(details, 'pending_observation_number')}. episode_index counts environment runs, not cognitive episodes.",
+                "SOURCE CONTRACT: reset obtains the first observation from the environment and admits it through the input "
+                "adapter before these setup/buffering records are appended. It supplies that admitted packet to the runner's "
+                "pending-input buffer. No new input signal is being awaited here, and filtering is not repeated when buffering is reported.",
+                f"Mechanisms enabled: Attention {_flow_value_v1(details, 'attention_enabled')}; "
+                f"ExecNav {_flow_value_v1(details, 'navigation_enabled')}; body-to-environment handoff "
+                f"{_flow_value_v1(details, 'body_action_handoff_enabled')}. Enabled means available, not that a NavMap, "
+                "Procedure or action has been selected.",
+            ),
+        )
+    if event.channel == "firewall":
+        number = _flow_value_v1(details, "observation_number")
+        target = "1" if event.message == "Observation_1 buffered as the first cognitive-cycle input" else _flow_value_v1(details, "next_cycle_id")
+        return replace(
+            step,
+            title=f"Store the already-admitted observation (number {number}) for CognitiveCycle_{target}",
+            incoming=f"Input adapter -> [already-admitted observation; number {number}]",
+            outgoing=f"[Observation number {number}] held in the runner's pending-input buffer -> CognitiveCycle_{target}",
+            explanations=(
+                "The pending-input buffer holds the observation the next cycle will use. 'Admitted' means the input adapter "
+                "has already filtered permitted fields and detached the packet from the environment's mutable data. "
+                "Storing it does not interpret posture, update a NavMap, or advance the world.",
+                *step.explanations[1:],
+            ),
+        )
+    if event.channel == "cycle" and " opened with Observation_" in event.message:
+        return replace(step, explanations=(
+            "The driver takes the observation already waiting in its pending-input buffer and opens this cycle. "
+            "It does not obtain a second observation or filter the packet again. Collecting and checking processing results "
+            "comes next; interpreting the body evidence and updating current NavMap/BodyMap state occurs in C1.",
+            *step.explanations[1:],
+        ))
+    return step
+
+
+def _flow_reader_current_v1(event: Nca8TraceEventV1, step: FlowStepV1) -> FlowStepV1:
+    """Clarify recognized scheduling and current-state work without performing it.
+
+    The original builder remains responsible for sensory-profile recognition and
+    for reporting conflicting or unavailable evidence. Added descriptions define
+    terms without recalculating geometry, treating packet counts as maps, or
+    granting a scheduler the authority to change the represented body state.
+    """
+    details = _details_v1(event)
+    if event.message == "Phase_A POLL_STAGE completed":
+        return replace(step, explanations=(
+            f"The scheduler asks {_flow_value_v1(details, 'poll_source_count')} due processing services for completed results. "
+            f"It stores {_flow_value_v1(details, 'staged_result_count')} results in a waiting set. 'Staged' means collected "
+            "but not yet applied to current NavMap or BodyMap state.",
+            f"Result identifiers: {_flow_value_v1(details, 'result_ids')}. observation_ingress identifies the input packet; "
+            "body_sensory identifies a staged body sample and its geometry profile. Neither result is a completed NavMap.",
+            "In this A0 implementation, body-sensory processing has selected a predefined profile from the supplied posture "
+            "label. Its geometry check and current-configuration write occur during C1. Python stores staged samples in "
+            "Nca8BodySensoryModuleV1._pending_samples. The scheduler next checks which results are eligible for this cycle.",
+        ))
+    if event.message == "Phase_B FREEZE_ELIGIBLE froze the eligible set":
+        return replace(
+            step, title=f"Fix which {_flow_value_v1(details, 'eligible_result_count')} collected results this cycle may use",
+            explanations=(
+                f"Eligible result identifiers: {_flow_value_v1(details, 'result_ids')}. 'Freeze' means fix the allowed "
+                "set of results for this cycle's decision, not stop the body or freeze every component's state.",
+                "Results that are not yet eligible wait for another cycle. Already represented information is not erased. "
+                "The fixed set goes to Phase C for application; future input cannot be inserted retrospectively into this decision.",
+            ),
+        )
+    if event.message == "Phase_C UPDATE_OUTCOMES applied frozen results":
+        return replace(step, explanations=(
+            f"The scheduler marks {_flow_value_v1(details, 'applied_result_count')} eligible results with this cycle number "
+            "and returns them to the driver. 'Applied' here is a scheduler bookkeeping mark, not a claim that the scheduler "
+            "has interpreted their content or written any NavMaps.",
+            f"The actual receiving services are: {step.outgoing}.",
+            "Nca8DeterministicSchedulerV1.phase_c_apply_frozen returns the marked results. "
+            "Nca8CognitiveRuntimeV1._apply_phase_c_results checks input identity and calls the appropriate sensory work. "
+            "The following records describe that work; the number of returned results is not a count of updated maps.",
+        ))
+    if event.message == "Phase_F LEARNING_SCHEDULE completed":
+        return replace(step, explanations=(
+            f"Pending results: {_flow_value_v1(details, 'pending_result_count')}; held brief events (latched): "
+            f"{_flow_value_v1(details, 'latched_result_count')}; expired records removed (retired): "
+            f"{_flow_value_v1(details, 'retired_result_count')}.",
+            "Pending results wait until eligible; a latch holds a brief event until it can be used; retirement removes "
+            "expired scheduler records. These are software scheduling counts, not learned memories or completed tasks.",
+        ))
+    if event.channel == "runtime" and " became the applied Phase-C cycle input" in event.message:
+        return replace(
+            step, title=f"Check that the scheduled input is Observation_{_flow_value_v1(details, 'observation_number')}",
+            explanations=(
+                "The driver checks that exactly one observation_ingress result is present and that its observation number "
+                "matches this cycle's expected input. 'Ingress' means incoming input; this result identifies the packet, "
+                "not its sensory interpretation. Missing, duplicate or mismatched identity raises an error.",
+                f"The driver's _last_applied_observation_number becomes {_flow_value_v1(details, 'observation_number')}. "
+                "No posture is recognized and no NavMap or BodyMap is changed by this identity check.",
+            ),
+        )
+    if event.channel == "sensory":
+        posture = _detail_str_v1(details, "posture")
+        profile = _detail_str_v1(details, "geometry_profile")
+        known_pair = (posture, profile) in {
+            ("fallen", "lateral_ground_profile_v1"), ("standing", "upright_support_profile_v1"),
+        }
+        introduction = (
+            "Here 'body-sensory scaffold' means a simplified substitute for body-related perception. The environment "
+            "already supplies posture labels. A known label selects predefined body/ground geometry; missing or conflicting "
+            "labels must remain unresolved rather than being replaced with an invented posture."
+        )
+        if not known_pair:
+            return replace(step, explanations=(introduction, *step.explanations))
+        return replace(
+            step, title=f"Check the geometry profile selected from the supplied posture label ({posture})",
+            explanations=(
+                introduction,
+                f"Recorded result: {_flow_value_v1(details, 'result_id')}; observation number: "
+                f"{_flow_value_v1(details, 'observation_number')}; posture label: {posture}; geometry profile: {profile}. "
+                "Phase A selected this profile. C1 now uses that staged sample; it does not read or filter another observation.",
+                "The map/geometry helpers check body angle against the ground, foot contact, head height and how much "
+                "of the body axis is near the ground. A sideways body with low head and lateral ground contact fits the "
+                "fallen pattern; an upright body with foot contact, elevated head and little lateral contact fits the "
+                "standing pattern. Mixed patterns are ambiguous.",
+                "The classification must agree with the supplied posture label before the map service writes the current "
+                "POSTURE-SUPPORT Configuration. The following map record reports that write; it is not another independent "
+                "sensory computation. This is not recognition from raw sensors or independently measured body loading.",
+                "Python: Nca8BodySensoryModuleV1.apply_result retrieves its _pending_samples entry and checks circuit, "
+                "cycle and observation identity. Nca8MapLibraryV1.evaluate_profile calls "
+                "cca8_navmap_kernel.body_state_evidence, using predefined elements of the innate POSTURE-SUPPORT NavMap. "
+                "Numeric geometry measurements are not recorded here and are not reconstructed by the display.",
+            ),
+        )
+    if event.channel == "maps":
+        return replace(
+            step, title=f"Update the POSTURE-SUPPORT NavMap's current Configuration ({_flow_value_v1(details, 'update_kind')})",
+            incoming="Body-sensory/geometry services -> [interpreted posture, physical support and body-ground contact]",
+            outgoing=(f"Map service holds [Configuration {_flow_value_v1(details, 'state_id')}]: "
+                      f"posture={_flow_value_v1(details, 'posture')}; support={_flow_value_v1(details, 'support')}; "
+                      f"contact={_flow_value_v1(details, 'contact')}. Driver passes this Configuration to BodyMap"),
+            explanations=(
+                f"The enduring NavMap is {_flow_value_v1(details, 'durable_map')}. Its current Configuration is "
+                f"{_flow_value_v1(details, 'state_id')}: the information currently expressed about posture, support and contact. "
+                "Changing that Configuration does not mean learning a new NavMap or revising its durable organization.",
+                f"Recorded update: {_flow_value_v1(details, 'update_kind')}; posture={_flow_value_v1(details, 'posture')}; "
+                f"physical support={_flow_value_v1(details, 'support')}; contact={_flow_value_v1(details, 'contact')}.",
+                "The map service checks the source reference and element identities, then writes or refreshes a NavMapStateV1 "
+                "in Nca8MapLibraryV1._current_states. NavMapStateV1 is the software name for this current Configuration. "
+                "'Created' refers to this current record, not acquisition of the innate NavMap.",
+                "The driver passes this current Configuration to BodyMap. Storing it does not select a focal NavMap or "
+                "authorize movement. A0 does not claim a fully modeled sensory/association circuit behind this map service.",
+            ),
+        )
+    if event.channel == "body" and event.message == "BodyMapState updated from current POSTURE-SUPPORT evidence":
+        return replace(
+            step, title="Update BodyMap's current body-state record from the POSTURE-SUPPORT Configuration",
+            explanations=(
+                f"BodyMap stores posture={_flow_value_v1(details, 'posture')}, physical support="
+                f"{_flow_value_v1(details, 'support')} and contact={_flow_value_v1(details, 'contact')} in "
+                f"{_flow_value_v1(details, 'state_id')}, together with the source and evidence timing.",
+                "Nca8BodyRuntimeV1.update_from_map_state copies the interpreted information into _current_state. "
+                "This is not a second posture-recognition step. BodyMap uses this record to nominate a support problem "
+                "and to check a later action request.",
+                "BodyMap Module is the component; its current body-state record is the representation. Neither is the "
+                "Selected NM in the WNM role. 'Protected' means that wanting or predicting a better posture cannot overwrite "
+                "the evidence about the body's current posture.",
+            ),
+        )
+    if event.channel == "body" and event.message == "POSTURE-SUPPORT map-state candidate published for Attention":
+        return replace(
+            step, title="Propose the POSTURE-SUPPORT NavMap for Attention to consider",
+            explanations=(
+                "A candidate is a proposal, not a selection. Under this A0 rule, current fallen-posture evidence together "
+                "with inadequate physical support allows BodyMap to nominate the POSTURE-SUPPORT NavMap.",
+                f"Candidate identifier: {_flow_value_v1(details, 'candidate_id')}; source Configuration: "
+                f"{_flow_value_v1(details, 'source_state_id')}.",
+                "BodyMap stores the proposal in _posture_support_candidate. During Phase D it can be submitted to Attention. "
+                "This proposal comes from body evidence, not a PNM outcome check. It neither selects StandUp nor permits movement.",
+            ),
+        )
+    if event.channel == "body":
+        return replace(step, title="Supply no POSTURE-SUPPORT proposal to Attention", explanations=(
+            f"Reported posture: {_flow_value_v1(details, 'posture')}; support: {_flow_value_v1(details, 'support')}; "
+            f"candidate event: {_flow_value_v1(details, 'candidate_event')}.",
+            "The current-evidence/fallen/inadequate-support rule produced no candidate. This does not necessarily mean "
+            "the goat is standing: unknown, ambiguous or unusable evidence can also prevent a proposal.",
+        ))
+    return step
+
+
+def _flow_reader_focal_v1(event: Nca8TraceEventV1, step: FlowStepV1) -> FlowStepV1:
+    """Explain proposals, source selection and Procedure selection as distinct work.
+
+    Retain provenance sentences computed by the ordinary builder. A missing
+    selection field is not treated as an explicit null selection. Priority
+    ranks are explained as engineering ordering values, never probabilities.
+    """
+    details = _details_v1(event)
+    if event.channel == "attention" and event.message == "POSTURE-SUPPORT map-state candidate submitted as an Attention bid":
+        return replace(step, title="Turn BodyMap's proposal into a priority bid for Attention", explanations=(
+            *step.explanations,
+            "A bid carries a candidate's priority for comparison with other available candidates. Safety and task-need "
+            "ranks are ordering values, not percentages or probabilities. A rank of 100 does not mean 100% certainty. "
+            "This bid asks which NavMap deserves focus, not which Procedure should execute.",
+        ))
+    if event.channel == "attention":
+        if event.message == "Attention released the primary source map state":
+            return replace(step, explanations=(*step.explanations,
+                "Release means no NavMap is selected for focal working use at this decision. It does not delete the "
+                "NavMap or BodyMap. Do not infer successful standing solely from release.",
+            ))
+        return replace(step, explanations=(*step.explanations,
+            "'Switch' names a source-selection change, including the first selection from no previous source. "
+            "'Maintain' keeps the same source selected; it does not freeze that source's changing Configuration. "
+            "When present, primitive_selected=None means Attention selected no Procedure: ExecNav performs that separate choice.",
+        ))
+    if event.channel == "wnm" and event.message == "source-linked WNM constructed or refreshed from Attention's selected state":
+        return replace(
+            step, title="Make the selected NavMap's current content available for ExecNav's working use",
+            incoming=(f"Attention's selection + [NavMap {_flow_value_v1(details, 'source_map')}, "
+                      f"Configuration {_flow_value_v1(details, 'source_state_id')}]"),
+            outgoing=(f"[Working sample {_flow_value_v1(details, 'working_id')}]: "
+                      f"{_flow_relations_v1(_flow_value_v1(details, 'working_relations'))} -> Procedure applicability checks"),
+            explanations=(
+                f"Selected NavMap: {_flow_value_v1(details, 'source_map')}; current Configuration: "
+                f"{_flow_value_v1(details, 'source_state_id')}; working sample: {_flow_value_v1(details, 'working_id')}.",
+                "Working Navigation Map (WNM) names the Selected NM's focal working role, not another enduring NavMap. "
+                "A0 implements that role with a source-linked copy of the current content, maintained by ExecNav.",
+                f"Working relations: {_flow_relations_v1(_flow_value_v1(details, 'working_relations'))}. "
+                "ExecNav can now ask which Procedure applies to these relations. Creating the sample does not choose a Procedure.",
+                "In this A0 path the working sample is not written back as a change to its source NavMap. The same-NM "
+                "architectural role and this source-linked software copy must not be confused with two biological working maps.",
+            ),
+        )
+    if event.channel == "navigation" and event.message == "primitive applicability evaluated from the WNM":
+        return replace(step, title=f"Check whether Procedure {_flow_value_v1(details, 'primitive_id')} is suitable", explanations=(
+            *step.explanations,
+            "'Eligible' says whether the Procedure meets the conditions for consideration. 'Fit' and 'safety' are priority "
+            "ranks for selection, not measured probabilities. A veto is a reason to exclude the Procedure. This report goes "
+            "back to ExecNav; eligibility alone neither selects the Procedure nor authorizes the body.",
+        ))
+    if event.channel == "navigation":
+        if "selected_primitive_id" not in details:
+            return replace(step, title="Report ExecNav's decision; selected Procedure is not recorded",
+                outgoing=(f"Selected Procedure: not recorded; application identifier: {_flow_value_v1(details, 'application_id')}. "
+                          "No selection is inferred from the missing field"),
+                explanations=(
+                "This record omits selected_primitive_id. The display cannot determine whether a Procedure was selected. "
+                "Missing is different from an explicit None (no selected Procedure). Check the original fields below.",
+                _flow_reason_v1(details),
+            ))
+        return replace(step, explanations=(*step.explanations,
+            "A Procedure Application is one use of a Procedure, not a newly learned Procedure. Where an application "
+            "exists, its expectation goes to the prediction service and its task request goes separately to BodyMap. "
+            "The PNM does not send the body command.",
+        ))
+    if event.channel == "runtime" and event.message == "Phase_D FOCAL_COMMITMENT completed":
+        return replace(step, title="Report the source and Procedure decisions already made in this cycle", explanations=(
+            *step.explanations,
+            "FOCAL_COMMITMENT is the retained software phase name. At this point it means source/Procedure selection "
+            "is finished; the immutable action output is committed later, after Phase E's prediction and BodyMap checks.",
+        ))
+    return step
+
+
+def _flow_reader_action_v1(event: Nca8TraceEventV1, step: FlowStepV1) -> FlowStepV1:
+    """Clarify recognized predictions, permissions and actual boundary dispositions.
+
+    Outcome provenance and unsupported sensory combinations stay with the shared
+    builders. This wording layer does not evaluate outcomes, change permissions
+    or turn a returned world call into evidence that a task succeeded. Historical
+    combined-boundary records keep their original source contract and position.
+    """
+    details = _details_v1(event)
+    if event.channel == "pnm":
+        return replace(step, title="Store the selected Procedure Application's prediction before any dispatch", explanations=(
+            f"Procedure Application: {_flow_value_v1(details, 'application_id')}; Predicted NavMap (PNM): "
+            f"{_flow_value_v1(details, 'pnm_id')}. Expected relations: "
+            f"{_flow_relations_v1(_flow_value_v1(details, 'expected_relations'))}.",
+            "These are predicted relations, not observations about the current body. The A0 prediction service stores "
+            "them to compare with later eligible body evidence. Creating a PNM does not itself move or authorize the body.",
+            f"Recorded evidence condition: {_flow_value_v1(details, 'observation_condition')}. In Gate A, "
+            "next_current_body_support_evidence means the next eligible current body-support evidence tests this expectation. "
+            "The selected application's task request goes separately to BodyMap.",
+        ))
+    if event.channel == "bodymap" and event.message == "BodyMap mapped the selected task to a body-relative target and envelope":
+        return replace(step, explanations=(*step.explanations,
+            "The body target records what the body is asked to do. The Authorized Action Envelope records whether "
+            "that attempt is permitted. Neither is an observed body change. An explicit authorization=no means the "
+            "request was blocked; missing authorization does not mean either yes or no.",
+        ))
+    if event.channel == "bodymap":
+        return replace(step, title="Check the status of an earlier body-action permission using current body evidence", explanations=(
+            f"Earlier Authorized Action Envelope: {_flow_value_v1(details, 'envelope_id')}; recorded status: "
+            f"{_flow_value_v1(details, 'status')}; reason: {_flow_value_v1(details, 'status_reason')}.",
+            "BodyMap checks its previous permission record against its current body-state record. In this simple A0 rule, "
+            "standing/stable marks an authorized attempt completed; fallen/inadequate marks it failed. Missing usable "
+            "evidence, or an already-closed envelope, can leave the previous status unchanged.",
+            "The returned envelope stays in Nca8BodyRuntimeV1._current_envelope. Reporting its status does not prove "
+            "a new transition happened now. This check does not select a new Procedure and is separate from testing the PNM.",
+        ))
+    if event.channel == "outcome":
+        if details.get("status") == "not_applied":
+            return replace(step, explanations=(*step.explanations,
+                "NOT APPLIED means the request was not sent for execution. It must not be described as an attempted "
+                "movement that failed, and it does not require a new sensory observation.",
+            ))
+        return replace(step, explanations=(
+            "The A0 prediction service compares an earlier PNM with the updated POSTURE-SUPPORT Configuration from C1. "
+            "It does not read the environment again and does not receive the BodyMap copy as its comparison input.",
+            "The evidence must have been applied in this cycle, sampled after the prediction was created, and meet the "
+            "prediction's eligibility timing. Standing/stable satisfies this simple upright-support expectation; "
+            "fallen/inadequate contradicts it. Other evidence can leave the claim unresolved until it expires.",
+            *step.evidence_notes,
+            f"Recorded prediction outcome: {_flow_value_v1(details, 'status')}. A terminal result enters "
+            "Nca8PredictionRuntimeV1._outcome_history; an unresolved prediction stays pending. The display reports that "
+            "result rather than recomputing it.",
+            "A favorable later posture does not prove this command alone caused it. This check is neither SEC nor "
+            "durable learning, does not nominate Attention's next source, and is not an additional focal cognitive cycle. "
+            "The later integrated Righting mechanism is separate from this coarse A0 comparison.",
+        ))
+    if event.channel == "runtime":
+        if "task_action" in details and details["task_action"] is None:
+            if "selected_primitive" not in details:
+                cause = "The action explicitly contains no task; whether ExecNav selected a Procedure is not recorded."
+            elif details["selected_primitive"] is None:
+                cause = "ExecNav selected no Procedure, so the committed output contains no task action."
+            else:
+                cause = "ExecNav selected a Procedure, but the committed output contains no authorized task action."
+            return replace(step, explanations=(
+                cause,
+                "NO_ACTION is a real output meaning no new movement request. The outer runner may still advance "
+                "simulated time and obtain another observation; it does not mean the whole simulation has stopped.",
+            ))
+        return replace(step, explanations=(
+            "The driver fixes the action output after the Procedure decision, PNM creation and BodyMap's permission check. "
+            "This immutable commitment cannot be rewritten using the result of a later world step. Committed is not executed.",
+            f"PNM reference: {_flow_value_v1(details, 'pnm')}; permission envelope: {_flow_value_v1(details, 'envelope')}. "
+            "The separate boundary records describe what happens to the request next; this record does not prove that the task succeeded.",
+        ))
+    if event.channel == "handoff":
+        return replace(step, title="Accept the committed request and issue a receipt; do not execute the request", explanations=(
+            "The internal handoff checks that the fixed action, Procedure Application, PNM and BodyMap permission "
+            "refer to the same request. It then holds that request in one slot. Nca8InternalHandoffV1.accept performs these checks.",
+            f"Receipt: {_flow_value_v1(details, 'receipt_id')}; session generation: {_flow_value_v1(details, 'generation')}; "
+            f"disposition: {_flow_value_v1(details, 'disposition')}; execution status: {_flow_value_v1(details, 'execution_status')}.",
+            "A receipt identifies the accepted request for later one-time use. The request is released only after internal "
+            "cycle closure. Consumption marks the receipt used before calling the world, preventing duplicate use. "
+            "Accepting a request is neither movement nor success. NO_ACTION also receives a receipt so time can advance once.",
+        ))
+    if event.channel == "cycle" and details.get("boundary_protocol") == "p16_1r_b_v1":
+        return replace(step, explanations=(
+            f"Input: {_flow_value_v1(details, 'input')}; committed output: {_flow_value_v1(details, 'output')}. "
+            "Phase F and scheduler housekeeping are finished. The internal cycle closes before the world call.",
+            "The driver then releases the accepted handoff receipt for the outer runner to use once. The next observation "
+            "is not available at this internal boundary. Closing a cycle is software accounting, not task completion.",
+            "A later failure does not erase this closure or change its committed action. The later world/input records "
+            "carry this cycle's identifier to show which request they concern; they are not operations inside the closed cycle.",
+        ))
+    if event.channel == "dispatch" and details.get("boundary_protocol") == "p16_1r_b_v1":
+        return replace(
+            step, title="Report that the external world call returned after one use of the handoff receipt",
+            explanations=(
+                f"Ready receipt: {_flow_value_v1(details, 'receipt_id')}; environment action: "
+                f"{_flow_value_v1(details, 'environment_action')}; resulting world step: {_flow_value_v1(details, 'environment_step')}.",
+                "After the internal cycle closes, Nca8EpisodeRunnerV1 consumes the receipt once. "
+                "Nca8EnvironmentBridgeV1.advance_task_action translates the request into the environment's action token "
+                "and advances its private simulated world. A null token permits time to advance without a movement request.",
+                "'Returned' means the world function finished and returned control, not that the goat stood up. The raw "
+                "observation packet still belongs to the bridge; the input adapter next filters and detaches it. "
+                "Neither reward nor the returned packet is fed back into the already-closed cognitive cycle.",
+                f"Environment reward: {_flow_value_v1(details, 'reward')}; done: {_flow_value_v1(details, 'done')}. "
+                "These are external reports, not the PNM assessment. done is the environment's run-termination flag, "
+                "not proof that the selected Procedure succeeded.",
+            ),
+        )
+    if event.channel == "input":
+        return replace(step, title=f"Filter and copy the returned input into Observation_{_flow_value_v1(details, 'observation_number')}",
+            explanations=(
+                "The input adapter admits only fields on its positive whitelist (the explicit list of allowed input fields). "
+                "It detaches the accepted data from the environment's mutable packet, producing an NCA8-owned observation. "
+                "This is input preparation, not sensory interpretation and not another world step.",
+                *step.explanations[1:],
+                "The resulting observation goes to the runner's pending-input buffer. Buffering reports storage of the "
+                "already-filtered packet, not another filtering pass.",
+            ),
+        )
+    if event.channel in ("boundary_failure", "protection"):
+        return replace(step, explanations=(
+            "The runner stops further execution instead of retrying automatically. Known nonexecution, unknown execution "
+            "and a world call that returned before input admission failed are different states; use the recorded status below.",
+            *step.explanations,
+        ))
+    if event.channel == "learning":
+        return replace(step, explanations=(
+            f"Recorded durable updates: {_flow_value_v1(details, 'durable_updates')}. In Gate A this is a placeholder: "
+            "no durable map, Procedure or memory-learning change is implemented. Updating current posture information "
+            "earlier in the cycle was not durable learning.",
+            "The architecture uses Phase F as a regular opportunity to reconcile locally owned learning and maintenance, "
+            "not as the only possible learning time or a central Learning Module. This A0 record does not demonstrate those learners.",
+        ))
+    if event.channel == "support_observation":
+        return replace(step, explanations=(
+            "This optional read-only companion inspects a separately supplied physical-support measurement packet. "
+            "It does not replace A0's posture-label-based decision path or authorize an action.",
+            *step.explanations,
+        ))
+    if event.channel in ("support_dynamics", "wnm_support"):
+        return replace(step, explanations=(
+            "A facet is one part of the same NavMap's current content, not another NavMap. This optional facet records "
+            "how available support measurements change between samples, or how older evidence is retained within limits. "
+            "It does not measure task completion or learn a new Procedure.",
+            *step.explanations,
+        ))
+    return step
+
+
+def _flow_reader_step_v1(event: Nca8TraceEventV1, step: FlowStepV1) -> FlowStepV1:
+    """Refine an already recognized flow step for option 4, never classify a new event.
+
+    Shared builders resolve source/PNM references and missing-data cases first.
+    These prose-only helpers reuse that result; unknown events bypass this path.
+    No session, scheduler, environment or random generator is accepted here.
+    Other renderer callers retain the default presentation unless they explicitly
+    request reader_guidance=True. Raw technical records use the unchanged writer.
+    """
+    for describe in (_flow_reader_input_v1, _flow_reader_current_v1, _flow_reader_focal_v1, _flow_reader_action_v1):
+        revised = describe(event, step)
+        if revised is not step:
+            return revised
+    return step
+
+
 def _flow_component_v1(event: Nca8TraceEventV1) -> tuple[str, str]:
     """Classify an already recognized step, not arbitrary channel names.
 
@@ -2116,7 +2619,7 @@ def _flow_technical_v1(event: Nca8TraceEventV1, width: int) -> list[str]:
     return lines
 
 
-def _flow_cycle_heading_v1(events: Sequence[Nca8TraceEventV1], width: int) -> list[str]:
+def _flow_cycle_heading_v1(events: Sequence[Nca8TraceEventV1], width: int, *, reader_guidance: bool = False) -> list[str]:
     """Identify visible cycle boundaries and missing phases without reconstructing them."""
     cycle_id = events[0].cycle_id
     if cycle_id is None:
@@ -2126,7 +2629,8 @@ def _flow_cycle_heading_v1(events: Sequence[Nca8TraceEventV1], width: int) -> li
             for event in events
         )
         if initial:
-            return ["", "=" * width, "BEFORE COGNITIVE CYCLE 1", "Session setup and pending input", "=" * width]
+            subtitle = "Session setup and preparation of the first input" if reader_guidance else "Session setup and pending input"
+            return ["", "=" * width, "BEFORE COGNITIVE CYCLE 1", subtitle, "=" * width]
         return ["", "=" * width, "RECORDS OUTSIDE A NUMBERED COGNITIVE CYCLE", "=" * width]
     opening = any(
         event.channel == "cycle" and event.message == (
@@ -2141,8 +2645,11 @@ def _flow_cycle_heading_v1(events: Sequence[Nca8TraceEventV1], width: int) -> li
     missing = [title.split(" - ", 1)[0] for key, title in _FLOW_PHASE_TITLES_V1.items() if key not in sections]
     lines = ["", "=" * width, f"COGNITIVE CYCLE {cycle_id}", "=" * width]
     lines.extend(_flow_wrap_v1(
-        "TRACE GROUP: stored cycle_id associates these records; it does not put every operation inside cognition. "
-        "Use DOMAIN for architectural location and the stored phase for the current software schedule.", width,
+        ("TRACE GROUP: these records share a cycle identifier. That includes later world/input work related to its action, "
+         "not just cognition. The phase groups scheduled work; DOMAIN identifies where the work belongs."
+         if reader_guidance else
+         "TRACE GROUP: stored cycle_id associates these records; it does not put every operation inside cognition. "
+         "Use DOMAIN for architectural location and the stored phase for the current software schedule."), width,
     ))
     lines.extend(_flow_wrap_v1(f"Retained records #{events[0].sequence}-#{events[-1].sequence}.", width))
     if not opening or not closing or missing:
@@ -2155,7 +2662,7 @@ def _flow_cycle_heading_v1(events: Sequence[Nca8TraceEventV1], width: int) -> li
     return lines
 
 
-def _flow_empty_c2_note_v1(*, first_cycle: bool, width: int) -> tuple[list[str], list[str]]:
+def _flow_empty_c2_note_v1(*, first_cycle: bool, width: int, reader_guidance: bool = False) -> tuple[list[str], list[str]]:
     """Describe the absence of C2 events without inventing an execution record.
 
     A first-cycle statement requires retained reset/input context with no gap.
@@ -2179,6 +2686,13 @@ def _flow_empty_c2_note_v1(*, first_cycle: bool, width: int) -> tuple[list[str],
         "POSTURE-SUPPORT map state and pending predictions. These are separate checks before Phase D. "
         "This note describes that source-code contract; it is not a fabricated record of a comparison."
     )
+    if reader_guidance:
+        explanation = (
+            "C2 uses later evidence to assess earlier attempts. The source code first checks an old body-action "
+            "permission against BodyMap's current state, then separately compares pending predictions with the "
+            "POSTURE-SUPPORT Configuration from C1. No new observation is obtained for these checks. "
+            "This note explains those routines; it does not claim a missing comparison was recorded."
+        )
     box = _flow_part_box_v1(title, (note,), width, kind="SERVICE")
     notes = _flow_wrap_v1(title, width) + _flow_wrap_v1(note, width, indent="  ")
     notes.extend(_flow_wrap_v1(explanation, width, indent="    "))
@@ -2188,6 +2702,7 @@ def _flow_empty_c2_note_v1(*, first_cycle: bool, width: int) -> tuple[list[str],
 
 def _flow_render_cycle_v1(
     events: Sequence[Nca8TraceEventV1], context: _FlowContextV1, *, width: int, include_details: bool,
+    reader_guidance: bool = False,
 ) -> list[str]:
     """Render parts, representations and services in retained order, never sort by topology.
 
@@ -2200,9 +2715,13 @@ def _flow_render_cycle_v1(
     category and stored cycle/phase grouping. Mixed boundary calls remain one
     historical event, with no artificial sub-records or chronology changes.
     """
-    lines = _flow_cycle_heading_v1(events, width)
+    lines = _flow_cycle_heading_v1(events, width, reader_guidance=reader_guidance)
     lines.append("")
-    lines.extend(_flow_wrap_v1("RECORDED FLOW - follow the boxes; explanations follow the diagram.", width))
+    lines.extend(_flow_wrap_v1(
+        "RECORDED FLOW - read the numbered boxes from top to bottom in recorded execution order. "
+        "Detailed explanations follow the diagram." if reader_guidance else
+        "RECORDED FLOW - follow the boxes; explanations follow the diagram.", width,
+    ))
     lines.append("")
     explanation_lines: list[str] = []
     context.map_evidence = None
@@ -2227,13 +2746,15 @@ def _flow_render_cycle_v1(
             and _flow_section_v1(previous) == _FLOW_C1_V1
             and _FLOW_C2_V1 not in sections and "UPDATE_OUTCOMES" not in sections
         ):
-            box, c2_notes = _flow_empty_c2_note_v1(first_cycle=first_cycle, width=width)
+            box, c2_notes = _flow_empty_c2_note_v1(first_cycle=first_cycle, width=width, reader_guidance=reader_guidance)
             lines.extend(("", "       |  retained order; context note below is not an event", "       v", ""))
             lines.extend(box)
             explanation_lines.extend(c2_notes)
         group_title = _flow_group_title_v1(section)
         if section == "PROJECT_DISPATCH" and separated_cycle:
             group_title = "PHASE E - PREDICT, CHECK THE BODY, COMMIT AND HAND OFF"
+        if reader_guidance and section == "LEARNING_SCHEDULE":
+            group_title = "PHASE F - REPORT THE A0 LEARNING PLACEHOLDER AND FINISH SCHEDULER HOUSEKEEPING"
         lines.extend(_flow_wrap_v1(group_title, width))
         lines.append("-" * width)
         if section == "PROJECT_DISPATCH":
@@ -2269,6 +2790,8 @@ def _flow_render_cycle_v1(
                 )
             else:
                 kind, component = _flow_component_v1(event)
+                if reader_guidance:
+                    step = _flow_reader_step_v1(event, step)
             label = f"{kind}: {component}"
             domain = "UNCLASSIFIED - no domain inferred from channel or phase" if untranslated else _flow_domain_v1(event)
             rows = (f"DOMAIN: {domain}", f"INPUT: {step.incoming}", f"DO: {step.title}", f"OUTPUT: {step.outgoing}")
@@ -2276,7 +2799,10 @@ def _flow_render_cycle_v1(
             notes.extend(_flow_wrap_v1(f"Record #{event.sequence} - {label}", width, indent="  "))
             for paragraph in rows:
                 notes.extend(_flow_wrap_v1(paragraph, width, indent="    "))
-            notes.extend(_flow_wrap_v1("Mechanism / storage / limits:", width, indent="    "))
+            notes.extend(_flow_wrap_v1(
+                "What this means / how the software does it / limits:" if reader_guidance else "Mechanism / storage / limits:",
+                width, indent="    ",
+            ))
             for explanation in step.explanations:
                 notes.extend(_flow_wrap_v1(explanation, width, indent="    "))
             if not untranslated:
@@ -2299,7 +2825,7 @@ def _flow_render_cycle_v1(
 
 
 def render_flow_trace_lines_v1(
-    events: Sequence[Nca8TraceEventV1], *, width: int = 96, include_details: bool = True,
+    events: Sequence[Nca8TraceEventV1], *, width: int = 96, include_details: bool = True, reader_guidance: bool = False,
 ) -> tuple[str, ...]:
     """Return a read-only narrated ASCII flowchart of retained NCA8 trace events.
 
@@ -2318,6 +2844,11 @@ def render_flow_trace_lines_v1(
         Include the exact stored detail fields with each numbered explanation. Unknown
         events always retain their original message and details, even when this
         option is false. Compact and explanatory legacy renderers remain separate.
+    reader_guidance:
+        Use the terminology key and record explanations reviewed for menu option 4.
+        Defaults to False to preserve existing output for developer-script and
+        other callers. Only presentation is different: recognition, provenance,
+        record order, domain, ASCII safety, width and original details are shared.
 
     Returns
     -------
@@ -2351,6 +2882,8 @@ def render_flow_trace_lines_v1(
         raise ValueError("flow trace width must be an integer from 60 to 140")
     if not isinstance(include_details, bool):
         raise TypeError("include_details must be Boolean")
+    if not isinstance(reader_guidance, bool):
+        raise TypeError("reader_guidance must be Boolean")
     snapshot = tuple(events)
     previous_sequence = 0
     for event in snapshot:
@@ -2362,7 +2895,7 @@ def render_flow_trace_lines_v1(
     if not snapshot:
         return ()
     lines = ["NCA8 GUIDED FLOW TRACE", "=" * width]
-    for paragraph in (
+    introductory_paragraphs = _FLOW_READER_INTRO_V1 if reader_guidance else (
         "PARTS FIRST: read each named component's INPUT, DO and OUTPUT. The main diagram describes the "
         "functional machine; Python filenames, calls and storage addresses appear in the explanations below.",
         "LEGEND: solid +---+ boxes are PARTS (CCA8 functional components); bracketed [---] boxes are "
@@ -2391,8 +2924,12 @@ def render_flow_trace_lines_v1(
         "detailed motor execution, or a separate outcome-only focal cycle.",
         "Record numbers identify the existing diagnostic events. Boxes and wrapped lines do not consume trace "
         "capacity. A missing record is not proof that an event never happened. Predictions are not observations.",
-    ):
-        lines.extend(_flow_wrap_v1(paragraph, width))
+    )
+    for paragraph in introductory_paragraphs:
+        # Reader notation examples occupy separate lines; ordinary paragraphs and
+        # the default presentation use the existing bounded ASCII wrapper.
+        for row in paragraph.splitlines() if reader_guidance else (paragraph,):
+            lines.extend(_flow_wrap_v1(row, width))
         lines.append("")
     separated = any(dict(event.details).get("boundary_protocol") == "p16_1r_b_v1" for event in snapshot)
     lines.extend(_flow_separated_note_v1(width) if separated else _flow_target_note_v1(width))
@@ -2413,7 +2950,9 @@ def render_flow_trace_lines_v1(
             context.source_maps.clear()
             context.settings.clear()
             context.initial_cycle_pending = False
-        lines.extend(_flow_render_cycle_v1(group, context, width=width, include_details=include_details))
+        lines.extend(_flow_render_cycle_v1(
+            group, context, width=width, include_details=include_details, reader_guidance=reader_guidance,
+        ))
         previous_event = group[-1]
     return tuple(lines)
 

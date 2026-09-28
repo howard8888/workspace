@@ -380,7 +380,7 @@ def test_menu_four_repeated_rendering_is_read_only_and_matches_public_flow_rende
     before = session.status()
     canonical = session.trace_canonical_bytes()
     pending = session.pending_observation
-    expected = _text(session.trace_snapshot())
+    expected = "\n".join(render_flow_trace_lines_v1(session.trace_snapshot(), reader_guidance=True))
     responses = iter(("4", "4", ""))
     monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
 

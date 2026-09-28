@@ -29,7 +29,7 @@ from nca8_maternal_learning_demo import run_maternal_learning_menu_v1
 from nca8_followmom_qualification import run_follow_mom_qualification_menu_v1
 from nca8_feeding_demo import run_feeding_detail_menu_v1
 
-__version__ = "0.37.0"
+__version__ = "0.37.1"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -219,46 +219,24 @@ With the same starting state, sensory inputs, seed, and logical timing, this
 NCA8 implementation is designed to produce the same result again."""
 
 _TRACE_EXPLANATION_V1 = """This shows the saved trace as narrated text and a cycle-by-cycle flowchart.
-Read each cycle's boxes from top to bottom. Numbered explanations and technical
-details follow that cycle's diagram, in the same record order.
+Read the numbered boxes from top to bottom in recorded execution order.
+Detailed explanations and the original technical records follow each diagram.
 
-Parts-first diagrams name CCA8 components and show INPUT, DO and OUTPUT.
-Representations have bracketed outlines; software services and temporary
-scaffolds have dashed outlines. Python implementation details are below the
-main diagram. Arrows between boxes show record order, not signal wiring;
-follow the named input source and output destination for the data path.
+NCA8 is the software name for this isolated newer CCA8 runtime. Gate A is the
+retained early StandUp demonstration (also called A0); the later integrated
+Righting review is separate. This trace describes what ran, not the full
+scientific architecture. The notation and terminology key follows below.
 
-Phase C is shown as C1 (apply input and update current representations) followed
-by C2 (assess later evidence for earlier operations). These are display
-subsections of the existing Phase C, not additional scheduler phases.
-Unnumbered context notes explain the source code; they are not trace events.
+After option 3, you see retained records from all cycles in this session,
+not just the last cycle. Option 5 starts a fresh automatic Gate-A run;
+option 4 then shows its retained records instead of the previous session's.
 
-It shows session setup and the cognitive-cycle entries that are still retained
-since the session was created or reset.
+Showing the trace is read-only. It does not run a cycle, change the session,
+or influence a cognitive decision. When the record limit is reached, the
+oldest entries are discarded. Missing records stay missing; the display does
+not invent events, measurements or successful outcomes. The count below is
+records retained / record limit, not a count of cognitive cycles."""
 
-After option 3, it shows the retained entries from all the cycles you have run
-in that session, not just the last cycle. After option 5, it shows the retained
-entries from the fresh Gate-A StandUp demonstration.
-
-The numbered flowchart shows retained execution, not a proposed architecture.
-DOMAIN labels distinguish cognition, runtime infrastructure, the lower-action
-boundary, the external body/world and the input boundary. A cycle/phase heading
-only groups recorded labels; it does not make the simulator part of cognition.
-The internal cycle now ends after handoff, Phase F and scheduler housekeeping.
-Separate outer records show the world step, input admission and buffering.
-The world call really occurs after internal closure; this is not a display-only
-reordering. Input admission filters once; later buffering does not filter again.
-
-An unnumbered reference schematic is not an additional set of trace events.
-Older saved traces keep their historical combined-boundary explanation.
-Missing records and unknown events stay visible; no missing steps are invented.
-
-A fixed entry limit prevents the trace from growing indefinitely. Oldest entries
-are discarded when the limit is exceeded, so a long session may no longer show
-its setup or earliest cycles. One cycle produces several trace entries.
-
-Showing the trace is read-only. It does not run another cognitive cycle,
-change the NCA8 session, or influence any cognitive decision."""
 
 _GATE_A_EXPLANATION_V1 = """This creates a fresh isolated NCA8 session and automatically runs successive
 cognitive cycles until the Gate-A StandUp demonstration succeeds or reaches
@@ -452,7 +430,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
                     continue
                 status = session.status()
                 print(f"Trace entries retained: {status.trace_retained} / {status.trace_capacity}")
-                lines = render_flow_trace_lines_v1(session.trace_snapshot())
+                lines = render_flow_trace_lines_v1(session.trace_snapshot(), reader_guidance=True)
                 print("\n".join(lines) if lines else "[nca8:trace] empty")
                 continue
             if choice == "5":

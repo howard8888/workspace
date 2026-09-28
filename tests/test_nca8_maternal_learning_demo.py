@@ -379,7 +379,7 @@ def test_registry_adds_exactly_the_two_real_components_without_new_host_primitiv
     assert cca8_run.__version__ == "0.30.46" and len(rows) == 126
     assert {"nca8_maternal_learning", "nca8_maternal_learning_demo"} <= {row[0] for row in rows}
     assert nca8_maternal_learning.__version__ == demo.__version__ == "0.1.0"
-    assert nca8_trace.__version__ == "0.9.1" and len(cca8_run.PRIMITIVES) == 8
+    assert nca8_trace.__version__ == "0.10.0" and len(cca8_run.PRIMITIVES) == 8
 
 
 @pytest.mark.parametrize("after_install", [False, True])
