@@ -83,19 +83,43 @@ the same unchanged candidate in the same qualification lane.
 
 ### Choose the intended runtime
 
-After startup/profile selection, choose **Profile 1: Mountain Goat**, then:
+Startup and profile selection are unchanged. After choosing **Profile 1: Mountain Goat** (or another existing profile),
+the new Main Menu offers two functional choices:
 
-```text
-Main Menu 1: Watch Cognition Run
-    4: NCA8 — new-architecture experimental runtime
-        15: Feeding review
-            35: Safe Rest and integrated walkthrough — requires the post-N checkout
-            34: Sustained feeding and sensed need — available in the supplied M archive
-```
+    1) Legacy Main Menu
+    2) Run a NCA8 Cognitive Cycle
+    Q) Quit
 
-The visible wording can retain older terminology. **Main Menu 1 → option 4** is the NCA8 route; Main Menu 4 is the separate
-manual-controls workbench. Main Menu 1's earlier watch modes belong to the retained host/legacy runtime. They are not evidence
-that the new architecture is the default, and their saved state and inspectors are not automatically NCA8 state or inspectors.
+**Choice 1** opens the complete previous 13-choice menu, with all existing experiments, utilities, aliases and hidden
+historical commands. Use **B / Back** from that page to return here. Its existing **13 / Quit** still exits the program;
+both explicit quit routes retain the host's `--save` behavior. The menu's existing numbered instructions below refer to
+this retained Legacy Main Menu unless identified as the new two-choice Main Menu.
+
+**Choice 2** reuses the existing NCA8 menu's single-cycle operation (option 3), then its explanatory trace (option 4), without
+asking for the intervening menu selections. First use creates one isolated default Gate-A/A0 StandUp session; later uses
+advance that same session by one cognitive cycle each. The default session uses seed 0 and the existing
+`newborn_goat_first_hour_benchmark_hard` scenario; the startup species/profile selector does not reconfigure this separate
+NCA8 experiment. Existing NCA8 settings and explicit reset/replacement controls remain effective.
+
+The cycle already performs its one external world advancement and buffers the next Observation. The shortcut does not add
+a second cycle or world step. The trace is the existing retained-session text + flowchart, not only the newest cycle; its
+existing capacity (256 events by default) still applies. Press Enter after the display to return to the two-choice menu.
+Errors retain any created session and are not retried automatically; stopped sessions require an explicit NCA8 reset.
+
+For the existing interactive NCA8 menu and all later experiment controls, use:
+
+    Main Menu 1: Legacy Main Menu
+        Legacy 1: Watch Cognition Run
+            4: NCA8 -- new-architecture experimental runtime
+                3: Advance the current session by one cognitive cycle
+                4: Show the existing explanatory trace
+                15: Feeding review
+                    35: Safe Rest and integrated walkthrough -- post-N checkout
+                    34: Sustained feeding and sensed need
+
+The shortcut and the manual NCA8 menu share one retained NCA8 session handle. Legacy cognition keeps its own state;
+NCA8 does not run a legacy policy or use legacy autosave to execute or display a cycle. Legacy Main Menu 4 remains the
+manual-controls workbench. No cognitive mechanism, physical model, trace renderer, CLI default or promotion gate is changed.
 
 NCA8 option 5 is the earlier coarse Gate-A/A0 StandUp demonstration. The richer hierarchical Righting reviews are under NCA8
 option 8; combined Follow-Mom qualification is under option 14. Each experiment has its own declared provider and scope.
@@ -317,7 +341,7 @@ individual narrative and dry-run descriptions; installing this README enables no
 
 ## First pass: see the new architecture, not the legacy storyboard
 
-Start `python cca8_run.py`, choose Profile 1, then **Main 1 → Watch Cognition 4 → NCA8 15 → Feeding 35** on the accepted
+Start `python cca8_run.py`, choose Profile 1, then **Main 1 (Legacy) → Legacy 1 → Watch Cognition 4 → NCA8 15 → Feeding 35** on the accepted
 post-N checkout. The final `35` belongs to the Feeding submenu. It is not the historical hidden host command 35.
 
 **Source boundary:** option 35 and the following controls are documented in the supplied N record and [CL2C]. The inspected M
@@ -1567,7 +1591,8 @@ A: No. It performs read-only host checks and reports configuration. WorldGraph, 
 
 # FAQ / Pitfalls
 
-**Where is NCA8?** Choose Main 1 (Watch Cognition Run), then 4. Main Menu 4 itself is manual controls.
+**Where is NCA8?** New Main Menu 2 runs one retained Gate-A cycle and displays its trace. For the full experimental menu,
+choose Main 1 (Legacy), then Legacy 1 (Watch Cognition Run), then 4. Legacy Main Menu 4 is still manual controls.
 
 **Why is option 35 or `--rest` missing?** The supplied M archive predates N. The N walkthrough requires the real post-N software;
 README replacement cannot provide it. Option 34 reviews M's sustained feeding without Rest.

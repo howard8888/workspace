@@ -192,5 +192,5 @@ def test_release_registry_lists_three_real_services_not_extra_legacy_primitives(
     import cca8_run
     names={name for name,*_ in cca8_run._cca8_component_rows()}
     assert {'nca8_rest','nca8_rest_outcomes','nca8_rest_demo'}<=names
-    assert cca8_run.__version__=='0.30.46' and len(names)==126
+    assert cca8_run.__version__=='0.30.47' and len(names)==126
     assert len(cca8_run.PRIMITIVES)==8

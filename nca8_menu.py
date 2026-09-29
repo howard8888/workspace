@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """Experimental terminal menu for the isolated new CCA8 runtime.
 
-The module is imported lazily only after the user explicitly chooses NCA8 from
-Main Menu #1. It receives and returns only ``Nca8SessionV1``; the legacy world,
+The module is imported lazily only after an explicit NCA8 selection from the
+application menu or the retained Legacy Main Menu. It receives and returns only ``Nca8SessionV1``; the legacy world,
 drives, Ctx, PolicyRuntime, WorkingMap, WorldGraph, and autosave path never
 cross this composition boundary.
 """
@@ -29,7 +29,7 @@ from nca8_maternal_learning_demo import run_maternal_learning_menu_v1
 from nca8_followmom_qualification import run_follow_mom_qualification_menu_v1
 from nca8_feeding_demo import run_feeding_detail_menu_v1
 
-__version__ = "0.37.2"
+__version__ = "0.38.0"
 __all__ = ["run_nca8_experimental_menu_v1", "__version__"]
 
 
@@ -358,6 +358,25 @@ def _print_cycle_result_v1(session: Nca8SessionV1) -> None:
         )
 
 
+def _print_session_trace_v1(session: Nca8SessionV1 | None) -> None:
+    """Display the retained session's existing explanatory text and flowchart.
+
+    Both manual option 4 and the application shortcut use this same read-only
+    operation. It renders the actual retained events with reader guidance, not a
+    recomputed cycle or a second simulation. Missing sessions and bounded trace
+    retention keep their existing messages. Formatting errors propagate to the
+    calling menu boundary and must never cause a cognitive-cycle retry.
+    """
+    _print_panel_v1("EXPLANATORY TRACE FOR THE CURRENT NCA8 SESSION", _TRACE_EXPLANATION_V1)
+    if session is None:
+        print("No NCA8 session has been created, so there is no trace to show.")
+        return
+    status = session.status()
+    print(f"Trace entries retained: {status.trace_retained} / {status.trace_capacity}")
+    lines = render_flow_trace_lines_v1(session.trace_snapshot(), reader_guidance=True)
+    print("\n".join(lines) if lines else "[nca8:trace] empty")
+
+
 def _fresh_gate_a_session_v1(session: Nca8SessionV1 | None) -> Nca8SessionV1:
     """Create one brand-new Gate-A session whose first Session Generation is one.
 
@@ -373,13 +392,43 @@ def _fresh_gate_a_session_v1(session: Nca8SessionV1 | None) -> Nca8SessionV1:
     return Nca8SessionV1(config)
 
 
-def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV1 | None:
-    """Run the explanatory NCA8 submenu without changing cognitive behavior.
+def run_nca8_experimental_menu_v1(
+    session: Nca8SessionV1 | None, *, run_one_cycle_with_trace: bool = False,
+) -> Nca8SessionV1 | None:
+    """Run the existing NCA8 submenu or perform its one-cycle/trace shortcut.
 
-    Merely opening the menu does not construct a session. Runtime exceptions are
-    caught here and cannot mutate the separately owned legacy CCA8 runtime. The
-    established Main Menu, not this submenu, owns the one common return pause.
+    By default, merely opening the menu does not construct a session and all
+    established interactive choices remain available. With the keyword-only flag
+    enabled, reuse or lazily create the same retained Gate-A session, perform
+    option 3 once, display option 4, and return the session without nested input.
+    The cycle call already owns its external world step and next-input buffering;
+    the menu adds no second step, reset, task selection or physical execution.
+
+    The default fresh session remains the Gate-A/A0 StandUp experiment, not the
+    separate enhanced Righting or feeding/Rest reviews. Existing configuration and
+    session state are retained. Subsequent shortcut selections continue that same
+    session unless an existing explicit menu operation resets or replaces it.
+
+    Ordinary shortcut errors and keyboard interruption return any session already
+    constructed, including a stopped or already-advanced session. No failed cycle
+    or trace rendering is retried automatically. The runner owns the common return
+    pause; no legacy world, drives, RNG or autosave object enters this function.
     """
+    if run_one_cycle_with_trace:
+        try:
+            _print_panel_v1("RUN ONE NCA8 COGNITIVE CYCLE", _CYCLE_EXPLANATION_V1)
+            print("Shortcut: retained Gate-A/A0 StandUp path; continue the current session or create it on first use.")
+            session = _ensure_session_v1(session)
+            _print_cycle_result_v1(session)
+            _print_session_trace_v1(session)
+        except (Exception, KeyboardInterrupt) as exc:
+            print(f"[nca8:error] {type(exc).__name__}: {exc}")
+            print("[nca8:shortcut] No automatic retry; any created NCA8 session is retained.")
+            if session is not None and session.status().reset_required:
+                print("[nca8:stopped] Explicit reset is required before further cycles.")
+            print("Use Legacy Main Menu -> Watch Cognition Run -> 4 for NCA8 inspection and explicit reset controls.")
+        return session
+
     while True:
         print()
         print("NCA8 -- EXPERIMENTAL RUNTIME / HIERARCHICAL MOTOR REVIEW")
@@ -425,14 +474,7 @@ def run_nca8_experimental_menu_v1(session: Nca8SessionV1 | None) -> Nca8SessionV
                 _print_cycle_result_v1(session)
                 continue
             if choice == "4":
-                _print_panel_v1("EXPLANATORY TRACE FOR THE CURRENT NCA8 SESSION", _TRACE_EXPLANATION_V1)
-                if session is None:
-                    print("No NCA8 session has been created, so there is no trace to show.")
-                    continue
-                status = session.status()
-                print(f"Trace entries retained: {status.trace_retained} / {status.trace_capacity}")
-                lines = render_flow_trace_lines_v1(session.trace_snapshot(), reader_guidance=True)
-                print("\n".join(lines) if lines else "[nca8:trace] empty")
+                _print_session_trace_v1(session)
                 continue
             if choice == "5":
                 _print_panel_v1("FRESH GATE-A STANDUP DEMONSTRATION", _GATE_A_EXPLANATION_V1)

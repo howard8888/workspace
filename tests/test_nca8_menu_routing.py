@@ -422,3 +422,202 @@ def test_v102_introduction_keeps_gate_a_and_post_n_review_scopes_distinct(
     assert "15) Feeding and safe Rest: retained P16-2C reviews (A-N)" in output
     assert "latch, milk, rest and B99 remain open" not in output
     assert "The Rest review is the P16-2C closure candidate" not in output
+
+
+def test_shortcut_matches_manual_cycle_then_trace_without_nested_input(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The convenience entry must use precisely the manual option-3/option-4 machinery."""
+    responses = iter(("3", "4", ""))
+    monkeypatch.setattr(builtins, "input", lambda _prompt="": next(responses))
+    manual = nca8_menu.run_nca8_experimental_menu_v1(None)
+    capsys.readouterr()
+    assert manual is not None
+
+    def unexpected_input(_prompt: str = "") -> str:
+        raise AssertionError("The shortcut must not ask for nested choices")
+
+    monkeypatch.setattr(builtins, "input", unexpected_input)
+    shortcut = nca8_menu.run_nca8_experimental_menu_v1(None, run_one_cycle_with_trace=True)
+    output = capsys.readouterr().out
+    assert shortcut is not None
+    assert "[nca8:error]" not in output
+    assert shortcut.status() == manual.status()
+    assert shortcut.trace_canonical_bytes() == manual.trace_canonical_bytes()
+    expected = "\n".join(render_flow_trace_lines_v1(shortcut.trace_snapshot(), reader_guidance=True))
+    assert output.count(expected) == 1
+    assert "EXPERIMENTAL RUNTIME / HIERARCHICAL MOTOR REVIEW" not in output
+
+
+def test_shortcut_initializes_once_calls_one_cycle_and_renders_afterward(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Count actual construction, cycle, external step and renderer calls, not only menu labels."""
+    original_init = Nca8SessionV1.__init__
+    original_cycle = Nca8SessionV1.run_cognitive_cycle
+    original_render = nca8_menu.render_flow_trace_lines_v1
+    operations: list[str] = []
+    created: list[Nca8SessionV1] = []
+
+    def initialize(self: Nca8SessionV1, config: Nca8SessionConfigV1 | None = None) -> None:
+        operations.append("initialize")
+        original_init(self, config)
+        created.append(self)
+
+    def cycle(self: Nca8SessionV1):
+        operations.append("cycle")
+        result = original_cycle(self)
+        assert result.cycle_id == 1 and result.environment_step == 1
+        return result
+
+    def render(events, **kwargs):
+        operations.append("render")
+        assert kwargs == {"reader_guidance": True}
+        assert events == created[0].trace_snapshot()
+        assert created[0].status().cognitive_cycles == 1
+        return original_render(events, **kwargs)
+
+    monkeypatch.setattr(Nca8SessionV1, "__init__", initialize)
+    monkeypatch.setattr(Nca8SessionV1, "run_cognitive_cycle", cycle)
+    monkeypatch.setattr(nca8_menu, "render_flow_trace_lines_v1", render)
+    result = nca8_menu.run_nca8_experimental_menu_v1(None, run_one_cycle_with_trace=True)
+    assert operations == ["initialize", "cycle", "render"]
+    assert created == [result]
+    assert result is not None and result.status().lifecycle_generation == 1
+    assert "[nca8:error]" not in capsys.readouterr().out
+
+
+def test_shortcut_preserves_config_and_session_on_repeated_selection(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Repeated selections continue the retained session; they cannot reset to Cycle 1."""
+    config = Nca8SessionConfigV1(seed=27, trace_capacity=120)
+    session = Nca8SessionV1(config)
+    direct = Nca8SessionV1(config)
+    for count in range(1, 4):
+        direct.run_cognitive_cycle()
+        assert nca8_menu.run_nca8_experimental_menu_v1(session, run_one_cycle_with_trace=True) is session
+        assert session.status() == direct.status()
+        assert session.trace_canonical_bytes() == direct.trace_canonical_bytes()
+        assert session.status().cognitive_cycles == count
+        assert session.config is config
+    assert "[nca8:error]" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("disabled", ("attention_enabled", "navigation_enabled", "body_action_handoff_enabled"))
+def test_shortcut_preserves_each_disabled_cognitive_control(
+    disabled: str, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A convenience menu must not turn a disabled control on to manufacture movement."""
+    config = Nca8SessionConfigV1(**{disabled: False})
+    session = Nca8SessionV1(config)
+    direct = Nca8SessionV1(config)
+    expected = direct.run_cognitive_cycle()
+    assert nca8_menu.run_nca8_experimental_menu_v1(session, run_one_cycle_with_trace=True) is session
+    assert session.status() == direct.status()
+    assert session.trace_canonical_bytes() == direct.trace_canonical_bytes()
+    assert expected.environment_step == 1
+    assert expected.environment_action is None
+    assert "[nca8:error]" not in capsys.readouterr().out
+
+
+def test_shared_trace_helper_is_neutral_and_preserves_next_cycle(capsys: pytest.CaptureFixture[str]) -> None:
+    """Repeated display must not change input identity, RNG, trace bytes or the next real result."""
+    session = Nca8SessionV1()
+    direct = Nca8SessionV1()
+    session.run_cognitive_cycle()
+    direct.run_cognitive_cycle()
+    pending = session.pending_observation
+    before = session.status()
+    trace = session.trace_canonical_bytes()
+    rng = session._rng.getstate()  # pylint: disable=protected-access
+    for _ in range(2):
+        nca8_menu._print_session_trace_v1(session)  # pylint: disable=protected-access
+    assert session.status() == before
+    assert session.trace_canonical_bytes() == trace
+    assert session.pending_observation is pending
+    assert session._rng.getstate() == rng  # pylint: disable=protected-access
+    assert session.run_cognitive_cycle() == direct.run_cognitive_cycle()
+    assert session.trace_canonical_bytes() == direct.trace_canonical_bytes()
+    capsys.readouterr()
+
+
+def test_shortcut_keeps_bounded_trace_history(capsys: pytest.CaptureFixture[str]) -> None:
+    """The shortcut reuses real retained history rather than regenerating discarded cycles."""
+    session = Nca8SessionV1(Nca8SessionConfigV1(trace_capacity=5))
+    session.run_cognitive_cycle()
+    assert nca8_menu.run_nca8_experimental_menu_v1(session, run_one_cycle_with_trace=True) is session
+    output = capsys.readouterr().out
+    assert session.status().cognitive_cycles == 2
+    assert "Trace entries retained: 5 / 5" in output
+    assert "EARLIER RECORDS NOT RETAINED" in output
+    assert "Open CognitiveCycle_1" not in output
+
+
+def test_shortcut_initialization_failure_returns_none_without_retry(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Failed initialization must be reported, not repeated or replaced by a legacy run."""
+    calls: list[str] = []
+
+    def fail_init(_self: Nca8SessionV1, _config: Nca8SessionConfigV1 | None = None) -> None:
+        calls.append("initialize")
+        raise RuntimeError("initialization fault")
+
+    monkeypatch.setattr(Nca8SessionV1, "__init__", fail_init)
+    assert nca8_menu.run_nca8_experimental_menu_v1(None, run_one_cycle_with_trace=True) is None
+    assert calls == ["initialize"]
+    output = capsys.readouterr().out
+    assert "initialization fault" in output and "No automatic retry" in output
+
+
+@pytest.mark.parametrize("fault", (RuntimeError, KeyboardInterrupt))
+def test_shortcut_retains_new_stopped_session_after_world_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], fault: type[BaseException],
+) -> None:
+    """A first-call failure after construction cannot lose the session or replay its consumed handoff."""
+    from nca8_adapters import Nca8EnvironmentBridgeV1  # pylint: disable=import-outside-toplevel
+
+    calls: list[object] = []
+
+    def fail_world(_self: Nca8EnvironmentBridgeV1, action: object):
+        calls.append(action)
+        raise fault("external step fault")
+
+    monkeypatch.setattr(Nca8EnvironmentBridgeV1, "advance_task_action", fail_world)
+    session = nca8_menu.run_nca8_experimental_menu_v1(None, run_one_cycle_with_trace=True)
+    assert session is not None
+    assert len(calls) == 1 and session.status().reset_required
+    before = session.status()
+    trace = session.trace_canonical_bytes()
+    assert nca8_menu.run_nca8_experimental_menu_v1(session, run_one_cycle_with_trace=True) is session
+    assert len(calls) == 1
+    assert session.status() == before and session.trace_canonical_bytes() == trace
+    output = capsys.readouterr().out
+    assert "Explicit reset is required" in output
+    assert "No automatic retry" in output
+
+
+def test_shortcut_trace_failure_does_not_rerun_completed_cycle(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Rendering failure leaves the successfully advanced session ready for its next explicit selection."""
+    calls: list[str] = []
+
+    def fail_render(*_args, **_kwargs):
+        calls.append("render")
+        raise RuntimeError("display fault")
+
+    monkeypatch.setattr(nca8_menu, "render_flow_trace_lines_v1", fail_render)
+    session = nca8_menu.run_nca8_experimental_menu_v1(None, run_one_cycle_with_trace=True)
+    assert session is not None
+    assert calls == ["render"]
+    assert session.status().cognitive_cycles == 1
+    assert session.status().pending_observation_number == 2
+    assert session.status().pending_input_available and not session.status().reset_required
+    output = capsys.readouterr().out
+    assert "display fault" in output and "No automatic retry" in output
+    monkeypatch.setattr(nca8_menu, "render_flow_trace_lines_v1", render_flow_trace_lines_v1)
+    assert nca8_menu.run_nca8_experimental_menu_v1(session, run_one_cycle_with_trace=True) is session
+    assert session.status().cognitive_cycles == 2
+    assert "[nca8:error]" not in capsys.readouterr().out

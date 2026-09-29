@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Top-level CCA8 Main Menu submenus and compatibility routing shells.
+"""CCA8 application entry menu, retained legacy submenus and compatibility routing.
 
 Purpose
 -------
-The visible CCA8 Main Menu is intentionally limited to thirteen stable choices.
-This module owns the small intent-oriented submenus beneath that front page:
+The application entry menu offers the complete Legacy Main Menu or one NCA8
+cognitive cycle with its existing explanatory trace. The retained Legacy Main
+Menu is intentionally limited to thirteen stable choices. This module also owns
+the small intent-oriented submenus beneath that legacy page:
 manual controls, memory operations, WorldGraph editing/planning, experiments,
 session management, and developer utilities.
 
@@ -34,7 +36,7 @@ from typing import Any
 
 import cca8_cli
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 __all__ = [
     "SEMANTIC_TOP_LEVEL_CHOICES_V1",
@@ -44,6 +46,7 @@ __all__ = [
     "experiments_menu_v1",
     "manual_controls_menu_v1",
     "memory_operations_menu_v1",
+    "read_application_menu_choice_v1",
     "resolve_top_level_choice_v1",
     "session_management_menu_v1",
     "worldgraph_workbench_menu_v1",
@@ -67,6 +70,50 @@ SEMANTIC_TOP_LEVEL_CHOICES_V1: frozenset[str] = frozenset(
         "quit",
     }
 )
+
+
+def read_application_menu_choice_v1(legacy_menu_active: bool) -> tuple[str, bool]:
+    """Read an application or legacy selection without creating or advancing state.
+
+    The Boolean records only which menu page is visible. Choosing Legacy enters
+    the unchanged thirteen-choice menu; its numbers, aliases and hidden commands
+    are returned untouched for the existing runner router. B/Back returns to the
+    application page without invoking any cognitive or persistence operation.
+
+    Application choice 2 returns the semantic ``nca8-cycle`` route, not the legacy
+    number 2 (which still means inspection). Q/Quit returns the existing quit
+    route so the runner retains its save-on-exit behavior. Invalid or blank input
+    on the application page redraws that page without selecting a default runtime.
+
+    EOFError and KeyboardInterrupt deliberately propagate to the runner's existing
+    terminal-exit boundary. No session, RNG, simulated time or autosave is touched;
+    the returned Boolean is navigation state, not cognitive state.
+    """
+    while True:
+        if legacy_menu_active:
+            print(f"\n{cca8_cli.MAIN_MENU_HEADER}")
+            print("    LEGACY MAIN MENU -- B / Back returns to the two-choice Main Menu.\n")
+            choice = input(cca8_cli.MAIN_MENU_PROMPT).strip()
+            if choice.lower() in ("b", "back"):
+                legacy_menu_active = False
+                continue
+            return choice, True
+
+        print("\nCCA8 MAIN MENU")
+        print("=" * 78)
+        print("  1) Legacy Main Menu")
+        print("  2) Run a NCA8 Cognitive Cycle")
+        print("  Q) Quit")
+        print("\nChoice 2 advances the retained Gate-A NCA8 session once, then shows its trace.")
+        choice = input("Enter Menu Choice: ").strip().lower()
+        if choice == "1":
+            legacy_menu_active = True
+            continue
+        if choice == "2":
+            return "nca8-cycle", False
+        if choice in ("q", "quit"):
+            return "quit", False
+        print("Please choose 1, 2, or Q to quit.")
 
 
 @dataclass(frozen=True, slots=True)
