@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Preservation tests for the two-choice front door and real runner integration.
+"""Preservation tests for the application front door and real runner integration.
 
 The menu helper controls navigation only. These tests also exercise the actual
 runner and NCA8 entry point together, keeping legacy state and the retained NCA8
@@ -63,14 +63,25 @@ def _watch_nca8_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[bool, Nca8S
     return calls
 
 
-def test_front_page_has_legacy_first_and_cycle_second(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """The new numbering must not inherit Planning's superseded opposite order."""
+def test_front_page_has_legacy_then_nca8_then_cca8_cycle(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The front page should preserve the requested ordering and labels."""
     prompts = _input_sequence(monkeypatch, ("2",))
     assert cca8_main_menu.read_application_menu_choice_v1(False) == ("nca8-cycle", False)
     output = capsys.readouterr().out
-    assert output.index("1) Legacy Main Menu") < output.index("2) Run a NCA8 Cognitive Cycle")
-    assert "3)" not in output
+    legacy_pos = output.index("1) Legacy Main Menu")
+    nca8_pos = output.index("2) Run a NCA8 Cognitive Cycle")
+    cca8_pos = output.index("3) Run CCA8 Cognitive Cycle -- NavMap-based, Part-based")
+    assert legacy_pos < nca8_pos < cca8_pos
     assert "Q) Quit" in output
+    assert prompts == ["Enter Menu Choice: "]
+
+
+def test_cca8_cycle_choice_routes_to_same_cycle_as_nca8(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Menu #3 should deliberately share Menu #2's cycle implementation at this checkpoint."""
+    prompts = _input_sequence(monkeypatch, ("3",))
+    assert cca8_main_menu.read_application_menu_choice_v1(False) == ("nca8-cycle", False)
     assert prompts == ["Enter Menu Choice: "]
 
 
@@ -103,7 +114,7 @@ def test_blank_invalid_and_old_numbers_do_not_select_front_page_runtime(
     """Old hidden commands are available through Legacy, not accidental front-page defaults."""
     _input_sequence(monkeypatch, ("", "99", "35", "scope", "nca8-cycle", "Q"))
     assert cca8_main_menu.read_application_menu_choice_v1(False) == ("quit", False)
-    assert capsys.readouterr().out.count("Please choose 1, 2, or Q to quit.") == 5
+    assert capsys.readouterr().out.count("Please choose 1, 2, 3, or Q to quit.") == 5
 
 
 @pytest.mark.parametrize("selection", ("q", "Q", "quit", " Quit "))
@@ -177,6 +188,21 @@ def test_real_runner_shortcut_runs_once_then_returns_to_front(
     assert "Close CognitiveCycle_1" in output
     assert "Open CognitiveCycle_2" not in output
     assert output.index("[nca8:cycle]") < output.index("EXPLANATORY TRACE FOR THE CURRENT NCA8 SESSION")
+
+
+def test_menu_three_reuses_exact_same_cycle_and_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Menu #3 should run the same shortcut and continue the same retained NCA8 session as #2."""
+    monkeypatch.chdir(tmp_path)
+    calls = _watch_nca8_calls(monkeypatch)
+    _input_sequence(monkeypatch, ("2", "", "3", "", "q"))
+    cca8_run.interactive_loop(_runner_args())
+    assert [row[0] for row in calls] == [True, True]
+    first_session = calls[0][2]
+    assert first_session is not None
+    assert calls[1][1] is first_session and calls[1][2] is first_session
+    assert first_session.status().cognitive_cycles == 2
 
 
 def test_repeated_shortcuts_and_legacy_manual_route_share_one_handle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

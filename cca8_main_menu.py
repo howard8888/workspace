@@ -4,9 +4,10 @@
 
 Purpose
 -------
-The application entry menu offers the complete Legacy Main Menu or one NCA8
-cognitive cycle with its existing explanatory trace. The retained Legacy Main
-Menu is intentionally limited to thirteen stable choices. This module also owns
+The application entry menu offers the complete Legacy Main Menu plus two
+user-facing cycle choices that currently share the same retained NCA8 cognitive-cycle
+and explanatory-trace implementation. The retained Legacy Main Menu is intentionally
+limited to thirteen stable choices. This module also owns
 the small intent-oriented submenus beneath that legacy page:
 manual controls, memory operations, WorldGraph editing/planning, experiments,
 session management, and developer utilities.
@@ -36,7 +37,7 @@ from typing import Any
 
 import cca8_cli
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "SEMANTIC_TOP_LEVEL_CHOICES_V1",
@@ -80,10 +81,11 @@ def read_application_menu_choice_v1(legacy_menu_active: bool) -> tuple[str, bool
     are returned untouched for the existing runner router. B/Back returns to the
     application page without invoking any cognitive or persistence operation.
 
-    Application choice 2 returns the semantic ``nca8-cycle`` route, not the legacy
-    number 2 (which still means inspection). Q/Quit returns the existing quit
-    route so the runner retains its save-on-exit behavior. Invalid or blank input
-    on the application page redraws that page without selecting a default runtime.
+    Application choices 2 and 3 both return the semantic ``nca8-cycle`` route, not
+    legacy menu numbers. Choice 3 is a second user-facing name for the same cycle
+    implementation at this checkpoint. Q/Quit returns the existing quit route so
+    the runner retains its save-on-exit behavior. Invalid or blank input on the
+    application page redraws that page without selecting a default runtime.
 
     EOFError and KeyboardInterrupt deliberately propagate to the runner's existing
     terminal-exit boundary. No session, RNG, simulated time or autosave is touched;
@@ -92,7 +94,7 @@ def read_application_menu_choice_v1(legacy_menu_active: bool) -> tuple[str, bool
     while True:
         if legacy_menu_active:
             print(f"\n{cca8_cli.MAIN_MENU_HEADER}")
-            print("    LEGACY MAIN MENU -- B / Back returns to the two-choice Main Menu.\n")
+            print("    LEGACY MAIN MENU -- B / Back returns to the three-choice Main Menu.\n")
             choice = input(cca8_cli.MAIN_MENU_PROMPT).strip()
             if choice.lower() in ("b", "back"):
                 legacy_menu_active = False
@@ -103,17 +105,18 @@ def read_application_menu_choice_v1(legacy_menu_active: bool) -> tuple[str, bool
         print("=" * 78)
         print("  1) Legacy Main Menu")
         print("  2) Run a NCA8 Cognitive Cycle")
+        print("  3) Run CCA8 Cognitive Cycle -- NavMap-based, Part-based")
         print("  Q) Quit")
-        print("\nChoice 2 advances the retained Gate-A NCA8 session once, then shows its trace.")
+        print("\nChoices 2 and 3 advance the same retained Gate-A NCA8 session once, then show its trace.")
         choice = input("Enter Menu Choice: ").strip().lower()
         if choice == "1":
             legacy_menu_active = True
             continue
-        if choice == "2":
+        if choice in ("2", "3"):
             return "nca8-cycle", False
         if choice in ("q", "quit"):
             return "quit", False
-        print("Please choose 1, 2, or Q to quit.")
+        print("Please choose 1, 2, 3, or Q to quit.")
 
 
 @dataclass(frozen=True, slots=True)
